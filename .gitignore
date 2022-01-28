@@ -1,0 +1,4 @@
+.venv
+.vscode
+.abra_rate
+__pycache__
