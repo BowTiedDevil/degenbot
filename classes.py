@@ -1,3 +1,4 @@
+import string
 import time
 import datetime
 import json
@@ -132,8 +133,17 @@ class Erc20Token:
     def get_approval(self, external_address: str):
         return self._contract.allowance.call(self._user.address, external_address)
 
-    def set_approval(self, external_address: str, value: int):
-        if value == "unlimited":
+    def set_approval(self, external_address: string, value: int):
+        """
+        Sets the approval value for an external contract to transfer tokens quantites up to the specified amount from this address.
+        For unlimited approval, set value to -1
+        """
+        assert type(value) is int and (
+            -1 <= value <= 2 ** 256 - 1
+        ), "Approval value MUST be an integer between 0 and 2**256-1, or -1"
+
+        if value == -1:
+            print("Setting unlimited approval!")
             value = 2 ** 256 - 1
 
         try:
@@ -163,10 +173,13 @@ class LiquidityPool:
         tokens: list,
         update_method: str = "polling",
         abi: list = None,
+        # default fee for most UniswapV2 AMMs is 0.3%
+        fee: Decimal = Decimal("0.003"),
     ):
         self.address = address
         self.name = name
         self.router = router
+        self.fee = fee
         self._update_method = update_method
         self._filter = None
         self._filter_active = False
@@ -219,61 +232,84 @@ class LiquidityPool:
         """
         return self.name
 
-    def calculate_tokens_in_at_ratio_out(
-        self,
-        token0_out: bool = False,
-        token1_out: bool = False,
-        token0_per_token1: Decimal = 0,
-        # default fee for most UniswapV2 AMMs is 0.3%
-        fee: Decimal = Decimal("0.003"),
-    ) -> int:
+    def set_swap_target(self, token_in: Erc20Token, targets: list):
+        # example: tokens = [(1, dai) , (1.1, usdc)]
+        # check to ensure that token_in is one of the two tokens held by the LP
+        assert (token_in is self.token0) or (token_in is self.token1)
+        # check that the targets list is contains a definition for the two tokens held by the LP
+        assert (targets[0][1] is self.token0 and targets[1][1] is self.token1) or (
+            targets[0][1] is self.token1 and targets[1][1] is self.token0
+        )
+
+        if token_in is self.token0:
+            if token_in is targets[0][1]:
+                # token_in is the 1st in the list
+                self.ratio_token0_per_token1 = Decimal(str(targets[0][0])) / Decimal(
+                    str(targets[1][0])
+                )
+            if token_in is targets[1][1]:
+                # token_in is the 2nd in the list
+                self.ratio_token0_per_token1 = Decimal(str(targets[1][0])) / Decimal(
+                    str(targets[0][0])
+                )
+
+        if token_in is self.token1:
+            if token_in is targets[0][1]:
+                # token_in is the 1st in the list
+                self.ratio_token1_per_token0 = Decimal(str(targets[0][0])) / Decimal(
+                    str(targets[1][0])
+                )
+            if token_in is targets[1][1]:
+                # token_in is the 2nd in the list
+                self.ratio_token1_per_token0 = Decimal(str(targets[1][0])) / Decimal(
+                    str(targets[0][0])
+                )
+
+    def calculate_tokens_in(self) -> int:
         """
-        Calculates the maximum token input for a given output ratio at current pool reserves
+        Calculates the maximum token inputs for the target output ratios at current pool reserves
         """
-        assert not (token0_out and token1_out)
-        assert token0_per_token1
+        # token1 in, token0 out
+        # dy = x0/C_0to1 - y0/(1-FEE)
+        # or dy = x0*C_1to0 - y0(1/FEE)
+        # return max(0, dy)
+        self.token1_max_swap = max(
+            0,
+            int(
+                self.reserves_token0 * self.ratio_token1_per_token0
+                - self.reserves_token1 / (1 - self.fee)
+            ),
+        )
 
-        # token1 input, token0 output
-        if token0_out:
-            # dy = x0/C - y0/(1-FEE)
-            dy = int(
-                self.reserves_token0 / token0_per_token1
-                - self.reserves_token1 / (1 - fee)
-            )
-            return max(0, dy)
+        # token0 in, token1 out
+        # dx = y0*C_0to1 - x0/(1-FEE)
+        self.token0_max_swap = max(
+            0,
+            int(
+                self.reserves_token1 * self.ratio_token0_per_token1
+                - self.reserves_token0 / (1 - self.fee)
+            ),
+        )
 
-        # token0 input, token1 output
-        if token1_out:
-            # dx = y0*C - x0/(1-FEE)
-            dx = int(
-                self.reserves_token1 * token0_per_token1
-                - self.reserves_token0 / (1 - fee)
-            )
-            return max(0, dx)
-
-    def calculate_tokens_out_from_tokens_in(
+    def calculate_tokens_out(
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        # OLD INPUTS, VERIFY REPLACEMENT WORKS BEFORE REMOVING
-        # quantity_token0_in: int = 0,
-        # quantity_token1_in: int = 0,
-        fee: Decimal = 0,
     ) -> int:
         """
-        Calculates the expected token output for a swap at current pool reserves
+        Calculates the expected token output for a swap at current pool reserves.
         Uses the self.token0 and self.token1 pointer to determine which token is being swapped in
         and uses the appropriate formula
         """
 
         if token_in is self.token0:
-            return (self.reserves_token1 * token_in_quantity * (1 - fee)) // (
-                self.reserves_token0 + token_in_quantity * (1 - fee)
+            return (self.reserves_token1 * token_in_quantity * (1 - self.fee)) // (
+                self.reserves_token0 + token_in_quantity * (1 - self.fee)
             )
 
         if token_in is self.token1:
-            return (self.reserves_token0 * token_in_quantity * (1 - fee)) // (
-                self.reserves_token1 + token_in_quantity * (1 - fee)
+            return (self.reserves_token0 * token_in_quantity * (1 - self.fee)) // (
+                self.reserves_token1 + token_in_quantity * (1 - self.fee)
             )
 
     def update_reserves(self):
@@ -282,12 +318,13 @@ class LiquidityPool:
         Otherwise call getReserves() directly on the LP contract
         """
 
-        # check the filter status before proceeding
-        if not self._filter_active:
-            # recreate the filter
-            self._create_filter()
-
         if self._update_method == "event":
+
+            # check and recreate the filter if it's
+            if not self._filter_active:
+                # recreate the filter
+                self._create_filter()
+
             try:
                 events = self._filter.get_new_entries()
                 if events:
@@ -309,3 +346,13 @@ class LiquidityPool:
                 ) = self._contract.getReserves.call()[0:2]
             except Exception as e:
                 print(f"Exception in (polling) update_reserves: {e}")
+
+        self.calculate_tokens_in()
+
+    def print_swap_targets(self):
+        print(
+            f"Swap target: {self.token0} -> {self.token1} @ {self.ratio_token0_per_token1:.4f} {self.token0}/{self.token1}"
+        )
+        print(
+            f"Swap target: {self.token1} -> {self.token0} @ {self.ratio_token1_per_token0:.4f} {self.token1}/{self.token0}"
+        )
