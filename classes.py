@@ -1,3 +1,4 @@
+from curses.ascii import FF
 import string
 import time
 import datetime
@@ -175,6 +176,7 @@ class LiquidityPool:
         abi: list = None,
         # default fee for most UniswapV2 AMMs is 0.3%
         fee: Decimal = Decimal("0.003"),
+        silent: bool = False,
     ):
         self.address = address
         self.name = name
@@ -208,6 +210,11 @@ class LiquidityPool:
 
         if self._update_method == "event" and self._create_filter():
             self._filter_active = True
+
+        if not silent:
+            print(self.name)
+            print(f"• Token 0: {self.token0.symbol}")
+            print(f"• Token 1: {self.token1.symbol}")
 
     def _create_filter(self):
         """
@@ -278,45 +285,48 @@ class LiquidityPool:
                 self.reserves_token1 + token_in_quantity * (1 - self.fee)
             )
 
-    def print_swap_targets(self):
-        print(
-            f"Swap target: {self.token0} -> {self.token1} @ {self.ratio_token0_per_token1:.4f} {self.token0}/{self.token1}"
-        )
-        print(
-            f"Swap target: {self.token1} -> {self.token0} @ {self.ratio_token1_per_token0:.4f} {self.token1}/{self.token0}"
-        )
-
-    def set_swap_target(self, token_in: Erc20Token, targets: list):
-        # example: tokens = [(1, dai) , (1.1, usdc)]
+    def set_swap_target(
+        self, token_in: Erc20Token, targets: list, silent: bool = False
+    ):
+        # example: token_in=wsohm, targets=[(1, wsohm), (1.1, gohm)])
         # check to ensure that token_in is one of the two tokens held by the LP
         assert (token_in is self.token0) or (token_in is self.token1)
-        # check that the targets list is contains a definition for the two tokens held by the LP
+        # check that the targets list contains only the two tokens held by the LP
         assert (targets[0][1] is self.token0 and targets[1][1] is self.token1) or (
             targets[0][1] is self.token1 and targets[1][1] is self.token0
         )
 
+        if not silent:
+            if token_in is self.token0:
+                token_out = self.token1
+            else:
+                token_out = self.token0
+            print(
+                f"Setting swap target: {token_in} -> {token_out} @ {targets[0][0]} {targets[0][1]} = {targets[1][0]} {targets[1][1]}"
+            )
+
         if token_in is self.token0:
             if token_in is targets[0][1]:
-                # token_in is the 1st in the list
-                self.ratio_token0_per_token1 = Decimal(str(targets[0][0])) / Decimal(
-                    str(targets[1][0])
+                # token0 appears 1st in the list
+                self.ratio_token1_per_token0 = Decimal(str(targets[1][0])) / Decimal(
+                    str(targets[0][0])
                 )
             if token_in is targets[1][1]:
-                # token_in is the 2nd in the list
-                self.ratio_token0_per_token1 = Decimal(str(targets[1][0])) / Decimal(
-                    str(targets[0][0])
+                # token0 appears 2nd in the list
+                self.ratio_token1_per_token0 = Decimal(str(targets[0][0])) / Decimal(
+                    str(targets[1][0])
                 )
 
         if token_in is self.token1:
             if token_in is targets[0][1]:
                 # token_in is the 1st in the list
-                self.ratio_token1_per_token0 = Decimal(str(targets[0][0])) / Decimal(
-                    str(targets[1][0])
+                self.ratio_token0_per_token1 = Decimal(str(targets[1][0])) / Decimal(
+                    str(targets[0][0])
                 )
             if token_in is targets[1][1]:
                 # token_in is the 2nd in the list
-                self.ratio_token1_per_token0 = Decimal(str(targets[1][0])) / Decimal(
-                    str(targets[0][0])
+                self.ratio_token0_per_token1 = Decimal(str(targets[0][0])) / Decimal(
+                    str(targets[1][0])
                 )
 
     def update_reserves(self, silent: bool = False):
@@ -352,7 +362,7 @@ class LiquidityPool:
                 result = self._contract.getReserves.call()[0:2]
                 # Compare reserves to last-known values,
                 # store and print the reserves if they have changed
-                if (result[0], result[1]) != result[0:2]:
+                if (self.reserves_token0, self.reserves_token1) != result[0:2]:
                     self.reserves_token0, self.reserves_token1 = result[0:2]
                     if not silent:
                         print(
