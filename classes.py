@@ -28,7 +28,7 @@ class Router:
         self._user = user
         print(f"• {name}")
 
-    def _str__(self) -> str:
+    def __str__(self) -> str:
         return self.name
 
     def token_swap(
@@ -126,7 +126,7 @@ class Erc20Token:
             self.price = self._price_oracle.price
         print(f"• {self.symbol} ({self.name})")
 
-    def _str__(self):
+    def __str__(self):
         return self.symbol
 
     def get_approval(self, external_address: str):
@@ -213,7 +213,7 @@ class LiquidityPool:
         except Exception as e:
             print(f"Exception in create_filter: {e}")
 
-    def _str__(self):
+    def __str__(self):
         """
         Return the pool name when the object is included in a print statement, or cast as a string
         """
@@ -224,7 +224,8 @@ class LiquidityPool:
         token0_out: bool = False,
         token1_out: bool = False,
         token0_per_token1: Decimal = 0,
-        fee: Decimal = Decimal("0.0"),
+        # default fee for most UniswapV2 AMMs is 0.3%
+        fee: Decimal = Decimal("0.003"),
     ) -> int:
         """
         Calculates the maximum token input for a given output ratio at current pool reserves
@@ -239,10 +240,7 @@ class LiquidityPool:
                 self.reserves_token0 / token0_per_token1
                 - self.reserves_token1 / (1 - fee)
             )
-            if dy > 0:
-                return dy
-            else:
-                return 0
+            return max(0, dy)
 
         # token0 input, token1 output
         if token1_out:
@@ -251,10 +249,7 @@ class LiquidityPool:
                 self.reserves_token1 * token0_per_token1
                 - self.reserves_token0 / (1 - fee)
             )
-            if dx > 0:
-                return dx
-            else:
-                return 0
+            return max(0, dx)
 
     def calculate_tokens_out_from_tokens_in(
         self,
