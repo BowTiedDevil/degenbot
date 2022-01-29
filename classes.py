@@ -269,17 +269,6 @@ class LiquidityPool:
         """
         Calculates the maximum token inputs for the target output ratios at current pool reserves
         """
-        # token1 in, token0 out
-        # dy = x0/C_0to1 - y0/(1-FEE)
-        # or dy = x0*C_1to0 - y0(1/FEE)
-        # return max(0, dy)
-        self.token1_max_swap = max(
-            0,
-            int(
-                self.reserves_token0 * self.ratio_token1_per_token0
-                - self.reserves_token1 / (1 - self.fee)
-            ),
-        )
 
         # token0 in, token1 out
         # dx = y0*C_0to1 - x0/(1-FEE)
@@ -288,6 +277,17 @@ class LiquidityPool:
             int(
                 self.reserves_token1 * self.ratio_token0_per_token1
                 - self.reserves_token0 / (1 - self.fee)
+            ),
+        )
+
+        # token1 in, token0 out
+        # dy = x0/C_0to1 - y0/(1-FEE)
+        # or dy = x0*C_1to0 - y0(1/FEE)
+        self.token1_max_swap = max(
+            0,
+            int(
+                self.reserves_token0 * self.ratio_token1_per_token0
+                - self.reserves_token1 / (1 - self.fee)
             ),
         )
 
