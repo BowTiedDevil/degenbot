@@ -232,6 +232,60 @@ class LiquidityPool:
         """
         return self.name
 
+    def calculate_tokens_in(self) -> int:
+        """
+        Calculates the maximum token inputs for the target output ratios at current pool reserves
+        """
+
+        # token0 in, token1 out
+        # formula: dx = y0*C_0to1 - x0/(1-FEE)
+        self.token0_max_swap = max(
+            0,
+            int(
+                self.reserves_token1 * self.ratio_token0_per_token1
+                - self.reserves_token0 / (1 - self.fee)
+            ),
+        )
+
+        # token1 in, token0 out
+        # formula: dy = x0/C_0to1 - y0/(1-FEE) or dy = x0*C_1to0 - y0(1/FEE)
+        self.token1_max_swap = max(
+            0,
+            int(
+                self.reserves_token0 * self.ratio_token1_per_token0
+                - self.reserves_token1 / (1 - self.fee)
+            ),
+        )
+
+    def calculate_tokens_out(
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+    ) -> int:
+        """
+        Calculates the expected token output for a swap at current pool reserves.
+        Uses the self.token0 and self.token1 pointer to determine which token is being swapped in
+        and uses the appropriate formula
+        """
+
+        if token_in is self.token0:
+            return (self.reserves_token1 * token_in_quantity * (1 - self.fee)) // (
+                self.reserves_token0 + token_in_quantity * (1 - self.fee)
+            )
+
+        if token_in is self.token1:
+            return (self.reserves_token0 * token_in_quantity * (1 - self.fee)) // (
+                self.reserves_token1 + token_in_quantity * (1 - self.fee)
+            )
+
+    def print_swap_targets(self):
+        print(
+            f"Swap target: {self.token0} -> {self.token1} @ {self.ratio_token0_per_token1:.4f} {self.token0}/{self.token1}"
+        )
+        print(
+            f"Swap target: {self.token1} -> {self.token0} @ {self.ratio_token1_per_token0:.4f} {self.token1}/{self.token0}"
+        )
+
     def set_swap_target(self, token_in: Erc20Token, targets: list):
         # example: tokens = [(1, dai) , (1.1, usdc)]
         # check to ensure that token_in is one of the two tokens held by the LP
@@ -265,54 +319,7 @@ class LiquidityPool:
                     str(targets[0][0])
                 )
 
-    def calculate_tokens_in(self) -> int:
-        """
-        Calculates the maximum token inputs for the target output ratios at current pool reserves
-        """
-
-        # token0 in, token1 out
-        # dx = y0*C_0to1 - x0/(1-FEE)
-        self.token0_max_swap = max(
-            0,
-            int(
-                self.reserves_token1 * self.ratio_token0_per_token1
-                - self.reserves_token0 / (1 - self.fee)
-            ),
-        )
-
-        # token1 in, token0 out
-        # dy = x0/C_0to1 - y0/(1-FEE)
-        # or dy = x0*C_1to0 - y0(1/FEE)
-        self.token1_max_swap = max(
-            0,
-            int(
-                self.reserves_token0 * self.ratio_token1_per_token0
-                - self.reserves_token1 / (1 - self.fee)
-            ),
-        )
-
-    def calculate_tokens_out(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-    ) -> int:
-        """
-        Calculates the expected token output for a swap at current pool reserves.
-        Uses the self.token0 and self.token1 pointer to determine which token is being swapped in
-        and uses the appropriate formula
-        """
-
-        if token_in is self.token0:
-            return (self.reserves_token1 * token_in_quantity * (1 - self.fee)) // (
-                self.reserves_token0 + token_in_quantity * (1 - self.fee)
-            )
-
-        if token_in is self.token1:
-            return (self.reserves_token0 * token_in_quantity * (1 - self.fee)) // (
-                self.reserves_token1 + token_in_quantity * (1 - self.fee)
-            )
-
-    def update_reserves(self):
+    def update_reserves(self, silent: bool = False):
         """
         Checks the event filter for the last Sync event if the method is set to "polling"
         Otherwise call getReserves() directly on the LP contract
@@ -327,32 +334,32 @@ class LiquidityPool:
 
             try:
                 events = self._filter.get_new_entries()
+                # retrieve Sync events from the event filter, store and print reserve values from the last-seen event
                 if events:
                     self.reserves_token0, self.reserves_token1 = json.loads(
                         web3.toJSON(events[-1]["args"])
                     ).values()
-                    print(
-                        f"[{self.name} - {datetime.datetime.now().strftime('%I:%M:%S %p')}]\n{self.token0.symbol}: {self.reserves_token0}\n{self.token1.symbol}: {self.reserves_token1}\n"
-                    )
+                    if not silent:
+                        print(
+                            f"[{self.name} - {datetime.datetime.now().strftime('%I:%M:%S %p')}]\n{self.token0.symbol}: {self.reserves_token0}\n{self.token1.symbol}: {self.reserves_token1}\n"
+                        )
             except Exception as e:
                 print(f"Exception in (event) update_reserves: {e}")
                 self._filter_active = False
 
         if self._update_method == "polling":
             try:
-                (
-                    self.reserves_token0,
-                    self.reserves_token1,
-                ) = self._contract.getReserves.call()[0:2]
+                result = self._contract.getReserves.call()[0:2]
+                # Compare reserves to last-known values,
+                # store and print the reserves if they have changed
+                if (result[0], result[1]) != result[0:2]:
+                    self.reserves_token0, self.reserves_token1 = result[0:2]
+                    if not silent:
+                        print(
+                            f"[{self.name} - {datetime.datetime.now().strftime('%I:%M:%S %p')}]\n{self.token0.symbol}: {self.reserves_token0}\n{self.token1.symbol}: {self.reserves_token1}\n"
+                        )
             except Exception as e:
                 print(f"Exception in (polling) update_reserves: {e}")
 
+        # recalculate possible swaps using the new reserves
         self.calculate_tokens_in()
-
-    def print_swap_targets(self):
-        print(
-            f"Swap target: {self.token0} -> {self.token1} @ {self.ratio_token0_per_token1:.4f} {self.token0}/{self.token1}"
-        )
-        print(
-            f"Swap target: {self.token1} -> {self.token0} @ {self.ratio_token1_per_token0:.4f} {self.token1}/{self.token0}"
-        )
