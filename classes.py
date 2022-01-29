@@ -288,46 +288,52 @@ class LiquidityPool:
     def set_swap_target(
         self, token_in: Erc20Token, targets: list, silent: bool = False
     ):
-        # example: token_in=wsohm, targets=[(1, wsohm), (1.1, gohm)])
+        # split the target array into two pieces
+        (a_quantity, a_token) = targets[0]
+        (b_quantity, b_token) = targets[1]
+
         # check to ensure that token_in is one of the two tokens held by the LP
         assert (token_in is self.token0) or (token_in is self.token1)
         # check that the targets list contains only the two tokens held by the LP
-        assert (targets[0][1] is self.token0 and targets[1][1] is self.token1) or (
-            targets[0][1] is self.token1 and targets[1][1] is self.token0
+        assert (a_token is self.token0 and b_token is self.token1) or (
+            b_token is self.token0 and a_token is self.token1
         )
 
         if not silent:
-            if token_in is self.token0:
-                token_out = self.token1
+            if token_in is a_token:
+                quantity_out = b_quantity
+                token_out = b_token
             else:
-                token_out = self.token0
+                quantity_out = a_quantity
+                token_out = a_token
             print(
-                f"Setting swap target: {token_in} -> {token_out} @ {targets[0][0]} {targets[0][1]} = {targets[1][0]} {targets[1][1]}"
+                f"Setting swap target: {token_in} -> {token_out} @  {a_quantity} {a_token} = {b_quantity} {b_token}"
             )
 
         if token_in is self.token0:
-            if token_in is targets[0][1]:
-                # token0 appears 1st in the list
-                self.ratio_token1_per_token0 = Decimal(str(targets[1][0])) / Decimal(
-                    str(targets[0][0])
+            # calculate the ratio of token1/token0, since the swap direction is token0 -> token1
+            if token_in is a_token:
+                self.ratio_token1_per_token0 = Decimal(str(b_quantity)) / Decimal(
+                    str(a_quantity)
                 )
-            if token_in is targets[1][1]:
-                # token0 appears 2nd in the list
-                self.ratio_token1_per_token0 = Decimal(str(targets[0][0])) / Decimal(
-                    str(targets[1][0])
+            if token_in is b_token:
+                self.ratio_token1_per_token0 = Decimal(str(a_quantity)) / Decimal(
+                    str(b_quantity)
                 )
+            print(f"ratio_token1_per_token0 = {self.ratio_token1_per_token0:.4f}")
 
         if token_in is self.token1:
-            if token_in is targets[0][1]:
-                # token_in is the 1st in the list
-                self.ratio_token0_per_token1 = Decimal(str(targets[1][0])) / Decimal(
-                    str(targets[0][0])
+            # calculate the ratio of token0/token1, since the swap direction is token1 -> token0
+            if token_in is a_token:
+                self.ratio_token0_per_token1 = Decimal(str(b_quantity)) / Decimal(
+                    str(a_quantity)
                 )
-            if token_in is targets[1][1]:
+            if token_in is b_token:
                 # token_in is the 2nd in the list
-                self.ratio_token0_per_token1 = Decimal(str(targets[0][0])) / Decimal(
-                    str(targets[1][0])
+                self.ratio_token0_per_token1 = Decimal(str(a_quantity)) / Decimal(
+                    str(b_quantity)
                 )
+            print(f"ratio_token0_per_token1 = {self.ratio_token0_per_token1:.4f}")
 
     def update_reserves(self, silent: bool = False):
         """
