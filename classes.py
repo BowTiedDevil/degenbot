@@ -304,14 +304,12 @@ class LiquidityPool:
             self.ratio_token0_in = Decimal(str(token_in_qty)) / Decimal(
                 str(token_out_qty)
             )
-            print(f"ratio_token0_in = {self.ratio_token0_in:.4f}")
 
         if token_in is self.token1:
             # calculate the ratio of token1/token0 for swap of token1 -> token0
             self.ratio_token1_in = Decimal(str(token_in_qty)) / Decimal(
                 str(token_out_qty)
             )
-            print(f"ratio_token1_in = {self.ratio_token1_in:.4f}")
 
     def update_reserves(self, silent: bool = False):
         """
