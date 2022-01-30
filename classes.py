@@ -213,8 +213,8 @@ class LiquidityPool:
 
         if not silent:
             print(self.name)
-            print(f"• Token 0: {self.token0.symbol}")
-            print(f"• Token 1: {self.token1.symbol}")
+            print(f"• Token 0: {self.token0.symbol} - Reserves: {self.reserves_token0}")
+            print(f"• Token 1: {self.token1.symbol} - Reserves: {self.reserves_token1}")
 
     def _create_filter(self):
         """
@@ -286,53 +286,38 @@ class LiquidityPool:
             )
 
     def set_swap_target(
-        self, token_in: Erc20Token, targets: list, silent: bool = False
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        token_out: Erc20Token,
+        token_out_quantity: int,
+        silent: bool = False,
     ):
-        # split the target array into two pieces
-        (a_quantity, a_token) = targets[0]
-        (b_quantity, b_token) = targets[1]
-
         # check to ensure that token_in is one of the two tokens held by the LP
-        assert (token_in is self.token0) or (token_in is self.token1)
-        # check that the targets list contains only the two tokens held by the LP
-        assert (a_token is self.token0 and b_token is self.token1) or (
-            b_token is self.token0 and a_token is self.token1
-        )
+        assert (
+            token_in is self.token0 or self.token1
+        ), "token_in must be one of the two tokens held by this pool!"
+        assert (
+            token_out is self.token0 or self.token1
+        ), "token_out must be one of the two tokens held by this pool!"
 
         if not silent:
-            if token_in is a_token:
-                quantity_out = b_quantity
-                token_out = b_token
-            else:
-                quantity_out = a_quantity
-                token_out = a_token
             print(
-                f"Setting swap target: {token_in} -> {token_out} @  {a_quantity} {a_token} = {b_quantity} {b_token}"
+                f"Setting swap target for {token_in} -> {token_out} at rate ({token_in_quantity} {token_in} = {token_out_quantity} {token_out})"
             )
 
         if token_in is self.token0:
-            # calculate the ratio of token1/token0, since the swap direction is token0 -> token1
-            if token_in is a_token:
-                self.ratio_token1_per_token0 = Decimal(str(b_quantity)) / Decimal(
-                    str(a_quantity)
-                )
-            if token_in is b_token:
-                self.ratio_token1_per_token0 = Decimal(str(a_quantity)) / Decimal(
-                    str(b_quantity)
-                )
+            # calculate the ratio of token1/token0 for swap of token0 -> token1
+            self.ratio_token1_per_token0 = Decimal(str(token_out_quantity)) / Decimal(
+                str(token_in_quantity)
+            )
             print(f"ratio_token1_per_token0 = {self.ratio_token1_per_token0:.4f}")
 
         if token_in is self.token1:
-            # calculate the ratio of token0/token1, since the swap direction is token1 -> token0
-            if token_in is a_token:
-                self.ratio_token0_per_token1 = Decimal(str(b_quantity)) / Decimal(
-                    str(a_quantity)
-                )
-            if token_in is b_token:
-                # token_in is the 2nd in the list
-                self.ratio_token0_per_token1 = Decimal(str(a_quantity)) / Decimal(
-                    str(b_quantity)
-                )
+            # calculate the ratio of token0/token1 for swap of token1 -> token0
+            self.ratio_token0_per_token1 = Decimal(str(token_out_quantity)) / Decimal(
+                str(token_in_quantity)
+            )
             print(f"ratio_token0_per_token1 = {self.ratio_token0_per_token1:.4f}")
 
     def update_reserves(self, silent: bool = False):
