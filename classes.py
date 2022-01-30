@@ -40,7 +40,7 @@ class Router:
         token_out_quantity: int,
         token_out_address: str,
         slippage: Decimal,
-        deadline: int,
+        deadline: int = 60,
         scale=0,
     ) -> bool:
         try:
