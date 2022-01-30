@@ -1,4 +1,7 @@
-.venv
-.vscode
-.abra_rate
-__pycache__
+# Blacklist everything by default
+/*
+
+# Whitelist some files only
+!.gitignore
+!abis.py
+!classes.py

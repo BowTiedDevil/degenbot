@@ -194,14 +194,10 @@ class LiquidityPool:
             self.abi = self._contract.abi
 
         # set pointers for token0 and token1 to link to our actual token classes
-        self.token0_address = self._contract.token0()
         for token in tokens:
-            if token.address == self.token0_address:
+            if token.address == self._contract.token0():
                 self.token0 = token
-
-        self.token1_address = self._contract.token1()
-        for token in tokens:
-            if token.address == self.token1_address:
+            if token.address == self._contract.token1():
                 self.token1 = token
 
         self.reserves_token0, self.reserves_token1 = self._contract.getReserves.call()[
@@ -239,27 +235,27 @@ class LiquidityPool:
         """
         return self.name
 
-    def calculate_tokens_in(self) -> int:
+    def calculate_tokens_in(self, silent: bool = False) -> int:
         """
         Calculates the maximum token inputs for the target output ratios at current pool reserves
         """
 
         # token0 in, token1 out
-        # formula: dx = y0*C_0to1 - x0/(1-FEE)
+        # formula: dx = y0*C - x0/(1-FEE), where C = token0/token1
         self.token0_max_swap = max(
             0,
             int(
-                self.reserves_token1 * self.ratio_token0_per_token1
+                self.reserves_token1 * self.ratio_token0_in
                 - self.reserves_token0 / (1 - self.fee)
             ),
         )
 
         # token1 in, token0 out
-        # formula: dy = x0/C_0to1 - y0/(1-FEE) or dy = x0*C_1to0 - y0(1/FEE)
+        # formula: dy = x0*C - y0(1/FEE), where C = token1/token0
         self.token1_max_swap = max(
             0,
             int(
-                self.reserves_token0 * self.ratio_token1_per_token0
+                self.reserves_token0 * self.ratio_token1_in
                 - self.reserves_token1 / (1 - self.fee)
             ),
         )
@@ -288,37 +284,34 @@ class LiquidityPool:
     def set_swap_target(
         self,
         token_in: Erc20Token,
-        token_in_quantity: int,
+        token_in_qty,
         token_out: Erc20Token,
-        token_out_quantity: int,
+        token_out_qty,
         silent: bool = False,
     ):
         # check to ensure that token_in is one of the two tokens held by the LP
         assert (
             token_in is self.token0 or self.token1
         ), "token_in must be one of the two tokens held by this pool!"
-        assert (
-            token_out is self.token0 or self.token1
-        ), "token_out must be one of the two tokens held by this pool!"
 
         if not silent:
             print(
-                f"Setting swap target for {token_in} -> {token_out} at rate ({token_in_quantity} {token_in} = {token_out_quantity} {token_out})"
+                f"Setting swap target for {token_in} -> {token_out} at rate ({token_in_qty} {token_in} = {token_out_qty} {token_out})"
             )
 
         if token_in is self.token0:
-            # calculate the ratio of token1/token0 for swap of token0 -> token1
-            self.ratio_token1_per_token0 = Decimal(str(token_out_quantity)) / Decimal(
-                str(token_in_quantity)
+            # calculate the ratio of token0/token1 for swap of token0 -> token1
+            self.ratio_token0_in = Decimal(str(token_in_qty)) / Decimal(
+                str(token_out_qty)
             )
-            print(f"ratio_token1_per_token0 = {self.ratio_token1_per_token0:.4f}")
+            print(f"ratio_token0_in = {self.ratio_token0_in:.4f}")
 
         if token_in is self.token1:
-            # calculate the ratio of token0/token1 for swap of token1 -> token0
-            self.ratio_token0_per_token1 = Decimal(str(token_out_quantity)) / Decimal(
-                str(token_in_quantity)
+            # calculate the ratio of token1/token0 for swap of token1 -> token0
+            self.ratio_token1_in = Decimal(str(token_in_qty)) / Decimal(
+                str(token_out_qty)
             )
-            print(f"ratio_token0_per_token1 = {self.ratio_token0_per_token1:.4f}")
+            print(f"ratio_token1_in = {self.ratio_token1_in:.4f}")
 
     def update_reserves(self, silent: bool = False):
         """
