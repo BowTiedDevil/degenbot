@@ -311,7 +311,12 @@ class LiquidityPool:
                 str(token_out_qty)
             )
 
-    def update_reserves(self, silent: bool = False):
+    def update_reserves(
+        self,
+        silent: bool = False,
+        print_reserves: bool = True,
+        print_ratios: bool = True,
+    ):
         """
         Checks the event filter for the last Sync event if the method is set to "polling"
         Otherwise call getReserves() directly on the LP contract
@@ -332,9 +337,21 @@ class LiquidityPool:
                         web3.toJSON(events[-1]["args"])
                     ).values()
                     if not silent:
+                        print()
                         print(
-                            f"[{self.name} - {datetime.datetime.now().strftime('%I:%M:%S %p')}]\n{self.token0.symbol}: {self.reserves_token0}\n{self.token1.symbol}: {self.reserves_token1}\n"
+                            f"[{self.name} - {datetime.datetime.now().strftime('%I:%M:%S %p')}]"
                         )
+                        if print_reserves:
+                            print(f"{self.token0.symbol}: {self.reserves_token0}")
+                            print(f"{self.token1.symbol}: {self.reserves_token1}")
+                        if print_ratios:
+                            print(
+                                f"{self.token0.symbol}/{self.token1.symbol}: {self.reserves_token0 / self.reserves_token1:.4f}"
+                            )
+                            print(
+                                f"{self.token1.symbol}/{self.token0.symbol}: {self.reserves_token1 / self.reserves_token0:.4f}"
+                            )
+
             except Exception as e:
                 print(f"Exception in (event) update_reserves: {e}")
                 self._filter_active = False
