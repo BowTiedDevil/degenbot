@@ -290,7 +290,7 @@ class LiquidityPool:
         silent: bool = False,
     ):
         # check to ensure that token_in is one of the two tokens held by the LP
-        assert (token_in is self.token0 and token_out is self.token1) and (
+        assert (token_in is self.token0 and token_out is self.token1) or (
             token_in is self.token1 and token_out is self.token0
         ), "Tokens must match the two tokens held by this pool!"
 
