@@ -1,7 +1,0 @@
-# Blacklist everything by default
-/*
-
-# Whitelist some files only
-!.gitignore
-!abis.py
-!classes.py
