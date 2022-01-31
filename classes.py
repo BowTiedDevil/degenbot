@@ -296,7 +296,7 @@ class LiquidityPool:
 
         if not silent:
             print(
-                f"Setting swap target for {token_in} -> {token_out} at rate ({token_in_qty} {token_in} = {token_out_qty} {token_out})"
+                f"Set swap target: {token_in} -> {token_out} @ ({token_in_qty} {token_in} = {token_out_qty} {token_out})"
             )
 
         if token_in is self.token0:
