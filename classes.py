@@ -200,6 +200,14 @@ class LiquidityPool:
             if token.address == self._contract.token1():
                 self.token1 = token
 
+        assert (
+            tokens[0].address == self._contract.token0.call()
+            and tokens[1].address == self._contract.token1.call()
+        ) or (
+            tokens[0].address == self._contract.token1.call()
+            and tokens[1].address == self._contract.token0.call()
+        ), "tokens do not match the pool contract!"
+
         self.reserves_token0, self.reserves_token1 = self._contract.getReserves.call()[
             0:2
         ]
@@ -346,10 +354,10 @@ class LiquidityPool:
                             print(f"{self.token1.symbol}: {self.reserves_token1}")
                         if print_ratios:
                             print(
-                                f"{self.token0.symbol}/{self.token1.symbol}: {self.reserves_token0 / self.reserves_token1:.4f}"
+                                f"{self.token0.symbol}/{self.token1.symbol}: {self.reserves_token0 / self.reserves_token1}"
                             )
                             print(
-                                f"{self.token1.symbol}/{self.token0.symbol}: {self.reserves_token1 / self.reserves_token0:.4f}"
+                                f"{self.token1.symbol}/{self.token0.symbol}: {self.reserves_token1 / self.reserves_token0}"
                             )
 
             except Exception as e:
