@@ -206,7 +206,7 @@ class LiquidityPool:
         ) or (
             tokens[0].address == self._contract.token1.call()
             and tokens[1].address == self._contract.token0.call()
-        ), "tokens do not match the pool contract!"
+        ), "token addresses do not match the on-chain contract!"
 
         self.reserves_token0, self.reserves_token1 = self._contract.getReserves.call()[
             0:2
