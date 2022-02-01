@@ -25,6 +25,8 @@ class LiquidityPool:
         self._update_method = update_method
         self._filter = None
         self._filter_active = False
+        self._ratio_token0_in = None
+        self._ratio_token1_in = None
 
         if abi:
             self._contract = brownie.Contract.from_abi(name="", abi=abi, address=self.address)
@@ -90,23 +92,29 @@ class LiquidityPool:
 
         # token0 in, token1 out
         # formula: dx = y0*C - x0/(1-FEE), where C = token0/token1
-        self.token0_max_swap = max(
-            0,
-            int(
-                self.reserves_token1 * self.ratio_token0_in
-                - self.reserves_token0 / (1 - self.fee)
-            ),
-        )
+        if self._ratio_token0_in:
+            self.token0_max_swap = max(
+                0,
+                int(
+                    self.reserves_token1 * self._ratio_token0_in
+                    - self.reserves_token0 / (1 - self.fee)
+                ),
+            )
+        else:
+            self.token0_max_swap = 0
 
         # token1 in, token0 out
         # formula: dy = x0*C - y0(1/FEE), where C = token1/token0
-        self.token1_max_swap = max(
-            0,
-            int(
-                self.reserves_token0 * self.ratio_token1_in
-                - self.reserves_token1 / (1 - self.fee)
-            ),
-        )
+        if self._ratio_token1_in:
+            self.token1_max_swap = max(
+                0,
+                int(
+                    self.reserves_token0 * self._ratio_token1_in
+                    - self.reserves_token1 / (1 - self.fee)
+                ),
+            )
+        else:
+            self.token1_max_swap = 0
 
     def calculate_tokens_out(
         self,
@@ -144,18 +152,18 @@ class LiquidityPool:
 
         if not silent:
             print(
-                f"Set swap target: {token_in} -> {token_out} @ ({token_in_qty} {token_in} = {token_out_qty} {token_out})"
+                f"{token_in} -> {token_out} @ ({token_in_qty} {token_in} = {token_out_qty} {token_out})"
             )
 
         if token_in is self.token0:
             # calculate the ratio of token0/token1 for swap of token0 -> token1
-            self.ratio_token0_in = Decimal(str(token_in_qty)) / Decimal(
+            self._ratio_token0_in = Decimal(str(token_in_qty)) / Decimal(
                 str(token_out_qty)
             )
 
         if token_in is self.token1:
             # calculate the ratio of token1/token0 for swap of token1 -> token0
-            self.ratio_token1_in = Decimal(str(token_in_qty)) / Decimal(
+            self._ratio_token1_in = Decimal(str(token_in_qty)) / Decimal(
                 str(token_out_qty)
             )
 
