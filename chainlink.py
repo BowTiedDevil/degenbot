@@ -1,6 +1,5 @@
 from brownie import Contract
 
-
 class ChainlinkPriceContract:
     """
     Represents an on-chain Chainlink price oracle

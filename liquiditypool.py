@@ -1,10 +1,8 @@
 import datetime, json
+import brownie
 
+from .router import Router
 from decimal import Decimal
-from brownie import Contract, web3
-
-from degenbot.router import Router
-from degenbot.token import Erc20Token
 
 
 class LiquidityPool:
@@ -19,7 +17,7 @@ class LiquidityPool:
         # default fee for most UniswapV2 AMMs is 0.3%
         fee: Decimal = Decimal("0.003"),
         silent: bool = False,
-    ):
+    ) -> None:
         self.address = address
         self.name = name
         self.router = router
@@ -29,10 +27,10 @@ class LiquidityPool:
         self._filter_active = False
 
         if abi:
-            self._contract = Contract.from_abi(name="", abi=abi, address=self.address)
+            self._contract = brownie.Contract.from_abi(name="", abi=abi, address=self.address)
             self.abi = abi
         else:
-            self._contract = Contract.from_explorer(address=self.address)
+            self._contract = brownie.Contract.from_explorer(address=self.address)
             self.abi = self._contract.abi
 
         # set pointers for token0 and token1 to link to our actual token classes
@@ -72,7 +70,7 @@ class LiquidityPool:
         del self._filter
 
         try:
-            self._filter = web3.eth.contract(
+            self._filter = brownie.web3.eth.contract(
                 address=self.address, abi=self.abi
             ).events.Sync.createFilter(fromBlock="latest")
             self._filter_active = True
@@ -112,7 +110,7 @@ class LiquidityPool:
 
     def calculate_tokens_out(
         self,
-        token_in: Erc20Token,
+        token_in,
         token_in_quantity: int,
     ) -> int:
         """
@@ -133,9 +131,9 @@ class LiquidityPool:
 
     def set_swap_target(
         self,
-        token_in: Erc20Token,
+        token_in,
         token_in_qty,
-        token_out: Erc20Token,
+        token_out,
         token_out_qty,
         silent: bool = False,
     ):
@@ -184,7 +182,7 @@ class LiquidityPool:
                 # retrieve Sync events from the event filter, store and print reserve values from the last-seen event
                 if events:
                     self.reserves_token0, self.reserves_token1 = json.loads(
-                        web3.toJSON(events[-1]["args"])
+                        brownie.web3.toJSON(events[-1]["args"])
                     ).values()
                     if not silent:
                         print()

@@ -1,7 +1,6 @@
 import time
+import brownie 
 from decimal import Decimal
-from brownie import network, Contract
-
 
 class Router:
     """
@@ -12,14 +11,14 @@ class Router:
         self,
         address: str,
         name: str,
-        user: network.account.LocalAccount,
+        user: brownie.network.account.LocalAccount,
         abi: list = None,
     ) -> None:
         self.address = address
         if abi:
-            self._contract = Contract.from_abi(name=name, address=address, abi=abi)
+            self._contract = brownie.Contract.from_abi(name=name, address=address, abi=abi)
         else:
-            self._contract = Contract.from_explorer(address=address)
+            self._contract = brownie.Contract.from_explorer(address=address)
         self.name = name
         self._user = user
         print(f"• {name}")

@@ -1,7 +1,6 @@
-from brownie import network, Contract
-from degenbot.abis import *
-from degenbot.chainlinkpricefeed import ChainlinkPriceContract
-
+import brownie
+from .chainlink import ChainlinkPriceContract
+from .abis import *
 
 class Erc20Token:
     """
@@ -14,7 +13,7 @@ class Erc20Token:
     def __init__(
         self,
         address: str,
-        user: network.account.LocalAccount,
+        user: brownie.network.account.LocalAccount,
         abi: list = None,
         oracle_address: str = None,
     ) -> None:
@@ -22,16 +21,16 @@ class Erc20Token:
         self._user = user
         if abi:
             try:
-                self._contract = Contract.from_abi(
+                self._contract = brownie.Contract.from_abi(
                     name="", address=self.address, abi=abi
                 )
             except:
                 raise
         else:
             try:
-                self._contract = Contract.from_explorer(self.address)
+                self._contract = brownie.Contract.from_explorer(self.address)
             except:
-                self._contract = Contract.from_abi(
+                self._contract = brownie.Contract.from_abi(
                     name="", address=self.address, abi=ERC20
                 )
         self.name = self._contract.name.call()
