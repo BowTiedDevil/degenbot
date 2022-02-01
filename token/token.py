@@ -1,6 +1,7 @@
 import brownie
-from ..chainlink.chainlink import *
-from ..abis.abis import *
+from ..chainlink import *
+from ..abis import *
+
 
 class Erc20Token:
     """

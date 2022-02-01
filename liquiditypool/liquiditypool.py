@@ -2,8 +2,8 @@ import datetime
 import json
 import brownie
 from decimal import Decimal
-from ..token.token import Erc20Token
-from ..router.router import Router
+from ..token import Erc20Token
+from ..router import Router
 
 
 class LiquidityPool:
@@ -30,7 +30,9 @@ class LiquidityPool:
         self._ratio_token1_in = None
 
         if abi:
-            self._contract = brownie.Contract.from_abi(name="", abi=abi, address=self.address)
+            self._contract = brownie.Contract.from_abi(
+                name="", abi=abi, address=self.address
+            )
             self.abi = abi
         else:
             self._contract = brownie.Contract.from_explorer(address=self.address)
