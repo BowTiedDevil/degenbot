@@ -1,4 +1,4 @@
-from brownie import Contract
+import brownie
 
 class ChainlinkPriceContract:
     """
@@ -7,7 +7,7 @@ class ChainlinkPriceContract:
 
     def __init__(self, address: str) -> None:
         try:
-            self._contract: Contract = Contract.from_explorer(address=address)
+            self._contract: brownie.Contract = brownie.Contract.from_explorer(address=address)
             self._decimals: int = self._contract.decimals.call()
             self.price: float = self.update_price
         except:

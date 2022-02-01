@@ -1,5 +1,5 @@
 import time
-import brownie 
+import brownie
 from decimal import Decimal
 
 class Router:

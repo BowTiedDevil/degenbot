@@ -1,5 +1,5 @@
 import brownie
-from ..chainlink.chainlink import ChainlinkPriceContract
+from ..chainlink.chainlink import *
 from ..abis.abis import *
 
 class Erc20Token:
