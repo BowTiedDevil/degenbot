@@ -1,7 +1,7 @@
 import datetime, json
 import brownie
 
-from .router import Router
+from ..router.router import Router
 from decimal import Decimal
 
 
