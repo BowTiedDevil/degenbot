@@ -1,8 +1,7 @@
-import datetime, json
-import brownie
-
-from ..router.router import Router
+import datetime, json, brownie
 from decimal import Decimal
+from ..token.token import Erc20Token
+from ..router.router import Router
 
 
 class LiquidityPool:
@@ -118,7 +117,7 @@ class LiquidityPool:
 
     def calculate_tokens_out(
         self,
-        token_in,
+        token_in: Erc20Token,
         token_in_quantity: int,
     ) -> int:
         """
@@ -139,9 +138,9 @@ class LiquidityPool:
 
     def set_swap_target(
         self,
-        token_in,
+        token_in: Erc20Token,
         token_in_qty,
-        token_out,
+        token_out: Erc20Token,
         token_out_qty,
         silent: bool = False,
     ):
