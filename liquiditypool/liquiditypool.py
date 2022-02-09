@@ -4,6 +4,7 @@ import brownie
 from decimal import Decimal
 from ..token import Erc20Token
 from ..router import Router
+from degenbot import token
 
 
 class LiquidityPool:
@@ -88,7 +89,7 @@ class LiquidityPool:
         """
         return self.name
 
-    def calculate_tokens_in(self, silent: bool = False) -> int:
+    def calculate_tokens_in_from_ratio_out(self, silent: bool = False) -> int:
         """
         Calculates the maximum token inputs for the target output ratios at current pool reserves
         """
@@ -98,10 +99,8 @@ class LiquidityPool:
         if self._ratio_token0_in:
             self.token0_max_swap = max(
                 0,
-                int(
-                    self.reserves_token1 * self._ratio_token0_in
-                    - self.reserves_token0 / (1 - self.fee)
-                ),
+                int(self.reserves_token1 * self._ratio_token0_in)
+                - int(self.reserves_token0 / (1 - self.fee)),
             )
         else:
             self.token0_max_swap = 0
@@ -111,34 +110,53 @@ class LiquidityPool:
         if self._ratio_token1_in:
             self.token1_max_swap = max(
                 0,
-                int(
-                    self.reserves_token0 * self._ratio_token1_in
-                    - self.reserves_token1 / (1 - self.fee)
-                ),
+                int(self.reserves_token0 * self._ratio_token1_in)
+                - int(self.reserves_token1 / (1 - self.fee)),
             )
         else:
             self.token1_max_swap = 0
 
-    def calculate_tokens_out(
+    def calculate_tokens_in_from_tokens_out(
+        self,
+        token_in: Erc20Token,
+        token_out_quantity: int,
+    ) -> int:
+        """
+        Calculates the expected token INPUT for a target OUTPUT at current pool reserves.
+        Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
+        and uses the appropriate formula
+        """
+
+        if token_in is self.token0:
+            return (self.reserves_token0 * token_out_quantity) // int(
+                (1 - self.fee) * (self.reserves_token1 - token_out_quantity)
+            ) + 1
+
+        if token_in is self.token1:
+            return (self.reserves_token1 * token_out_quantity) // int(
+                (1 - self.fee) * (self.reserves_token0 - token_out_quantity)
+            ) + 1
+
+    def calculate_tokens_out_from_tokens_in(
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
     ) -> int:
         """
-        Calculates the expected token output for a swap at current pool reserves.
-        Uses the self.token0 and self.token1 pointer to determine which token is being swapped in
+        Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
+        Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         and uses the appropriate formula
         """
 
         if token_in is self.token0:
-            return (self.reserves_token1 * token_in_quantity * (1 - self.fee)) // (
-                self.reserves_token0 + token_in_quantity * (1 - self.fee)
-            )
+            return int(
+                self.reserves_token1 * token_in_quantity * (1 - self.fee)
+            ) // int(self.reserves_token0 + token_in_quantity * (1 - self.fee))
 
         if token_in is self.token1:
-            return (self.reserves_token0 * token_in_quantity * (1 - self.fee)) // (
-                self.reserves_token1 + token_in_quantity * (1 - self.fee)
-            )
+            return int(
+                self.reserves_token0 * token_in_quantity * (1 - self.fee)
+            ) // int(self.reserves_token1 + token_in_quantity * (1 - self.fee))
 
     def set_swap_target(
         self,
@@ -230,4 +248,4 @@ class LiquidityPool:
                 print(f"Exception in (polling) update_reserves: {e}")
 
         # recalculate possible swaps using the new reserves
-        self.calculate_tokens_in()
+        self.calculate_tokens_in_from_ratio_out()
