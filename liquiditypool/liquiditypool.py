@@ -89,7 +89,7 @@ class LiquidityPool:
         """
         return self.name
 
-    def calculate_tokens_in_from_ratio_out(self, silent: bool = False) -> int:
+    def calculate_tokens_in_from_ratio_out(self) -> int:
         """
         Calculates the maximum token inputs for the target output ratios at current pool reserves
         """
