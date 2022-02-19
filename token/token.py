@@ -14,12 +14,15 @@ class Erc20Token:
     def __init__(
         self,
         address: str,
-        user: brownie.network.account.LocalAccount,
+        user: brownie.network.account.LocalAccount = None,
         abi: list = None,
         oracle_address: str = None,
     ) -> None:
         self.address = address
-        self._user = user
+
+        if user:
+            self._user = user
+
         if abi:
             try:
                 self._contract = brownie.Contract.from_abi(
@@ -37,8 +40,9 @@ class Erc20Token:
         self.name = self._contract.name.call()
         self.symbol = self._contract.symbol.call()
         self.decimals = self._contract.decimals.call()
-        self.balance = self._contract.balanceOf.call(self._user)
-        self.normalized_balance = self.balance / (10 ** self.decimals)
+        if user:
+            self.balance = self._contract.balanceOf.call(self._user)
+            self.normalized_balance = self.balance / (10 ** self.decimals)
         if oracle_address:
             self._price_oracle = ChainlinkPriceContract(address=oracle_address)
             self.price = self._price_oracle.price
@@ -78,4 +82,5 @@ class Erc20Token:
         self.normalized_balance = self.balance / (10 ** self.decimals)
 
     def update_price(self):
-        self.price = self._price_oracle.update_price()
+        self._price_oracle.update_price()
+        self.price = self._price_oracle.price

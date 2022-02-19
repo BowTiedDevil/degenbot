@@ -4,17 +4,16 @@ import brownie
 from decimal import Decimal
 from ..token import Erc20Token
 from ..router import Router
-from degenbot import token
 
 
 class LiquidityPool:
     def __init__(
         self,
         address: str,
-        router: Router,
         name: str,
-        tokens: list,
+        tokens: list[Erc20Token],
         update_method: str = "polling",
+        router: Router = None,
         abi: list = None,
         # default fee for most UniswapV2 AMMs is 0.3%
         fee: Decimal = Decimal("0.003"),
@@ -22,7 +21,8 @@ class LiquidityPool:
     ) -> None:
         self.address = address
         self.name = name
-        self.router = router
+        if router:
+            self.router = router
         self.fee = fee
         self._update_method = update_method
         self._filter = None
@@ -118,28 +118,32 @@ class LiquidityPool:
 
     def calculate_tokens_in_from_tokens_out(
         self,
-        token_in: Erc20Token,
+        token_in: str,
         token_out_quantity: int,
     ) -> int:
         """
-        Calculates the expected token INPUT for a target OUTPUT at current pool reserves.
+        Calculates the required token INPUT of token_in for a target OUTPUT at current pool reserves.
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         and uses the appropriate formula
         """
 
         if token_in is self.token0:
-            return (self.reserves_token0 * token_out_quantity) // int(
-                (1 - self.fee) * (self.reserves_token1 - token_out_quantity)
-            ) + 1
+            return int(
+                (self.reserves_token0 * token_out_quantity)
+                // ((1 - self.fee) * (self.reserves_token1 - token_out_quantity))
+                + 1
+            )
 
         if token_in is self.token1:
-            return (self.reserves_token1 * token_out_quantity) // int(
-                (1 - self.fee) * (self.reserves_token0 - token_out_quantity)
-            ) + 1
+            return int(
+                (self.reserves_token1 * token_out_quantity)
+                // ((1 - self.fee) * (self.reserves_token0 - token_out_quantity))
+                + 1
+            )
 
     def calculate_tokens_out_from_tokens_in(
         self,
-        token_in: Erc20Token,
+        token_in: str,
         token_in_quantity: int,
     ) -> int:
         """
@@ -160,9 +164,9 @@ class LiquidityPool:
 
     def set_swap_target(
         self,
-        token_in: Erc20Token,
+        token_in: str,
         token_in_qty,
-        token_out: Erc20Token,
+        token_out: str,
         token_out_qty,
         silent: bool = False,
     ):
@@ -193,7 +197,7 @@ class LiquidityPool:
         silent: bool = False,
         print_reserves: bool = True,
         print_ratios: bool = True,
-    ):
+    ) -> bool:
         """
         Checks the event filter for the last Sync event if the method is set to "polling"
         Otherwise call getReserves() directly on the LP contract
@@ -201,7 +205,7 @@ class LiquidityPool:
 
         if self._update_method == "event":
 
-            # check and recreate the filter if it's
+            # check and recreate the filter if necessary
             if not self._filter_active:
                 # recreate the filter
                 self._create_filter()
@@ -214,7 +218,6 @@ class LiquidityPool:
                         brownie.web3.toJSON(events[-1]["args"])
                     ).values()
                     if not silent:
-                        print()
                         print(
                             f"[{self.name} - {datetime.datetime.now().strftime('%I:%M:%S %p')}]"
                         )
@@ -249,3 +252,4 @@ class LiquidityPool:
 
         # recalculate possible swaps using the new reserves
         self.calculate_tokens_in_from_ratio_out()
+        return True
