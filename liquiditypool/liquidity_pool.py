@@ -2,6 +2,7 @@ import datetime
 import json
 import brownie
 from decimal import Decimal
+from fractions import Fraction
 from ..token import Erc20Token
 from ..router import Router
 
@@ -16,7 +17,8 @@ class LiquidityPool:
         router: Router = None,
         abi: list = None,
         # default fee for most UniswapV2 AMMs is 0.3%
-        fee: Decimal = Decimal("0.003"),
+        # fee: Decimal = Decimal("0.003"),
+        fee: Fraction = Fraction(3, 1000),
         silent: bool = False,
     ) -> None:
         self.address = address
@@ -30,14 +32,19 @@ class LiquidityPool:
         self._ratio_token0_in = None
         self._ratio_token1_in = None
 
-        if abi:
-            self._contract = brownie.Contract.from_abi(
-                name="", abi=abi, address=self.address
-            )
-            self.abi = abi
-        else:
-            self._contract = brownie.Contract.from_explorer(address=self.address)
+        try:
+            self._contract = brownie.Contract(self.address)
             self.abi = self._contract.abi
+        except Exception as e:
+            print(e)
+            if abi:
+                self._contract = brownie.Contract.from_abi(
+                    name="", abi=abi, address=self.address
+                )
+                self.abi = abi
+            else:
+                self._contract = brownie.Contract.from_explorer(address=self.address)
+                self.abi = self._contract.abi
 
         # set pointers for token0 and token1 to link to our actual token classes
         for token in tokens:
@@ -66,14 +73,22 @@ class LiquidityPool:
             print(f"• Token 0: {self.token0.symbol} - Reserves: {self.reserves_token0}")
             print(f"• Token 1: {self.token1.symbol} - Reserves: {self.reserves_token1}")
 
+    def __eq__(
+        self,
+        other,
+    ) -> bool:
+        return self.address == other.address
+
     def _create_filter(self):
         """
         Create a web3.py event filter to watch for Sync events
         """
 
         # Recreating the filter after a disconnect sometimes fails, returning blank results when .get_new_entries() is called.
-        # Deleting it first seems to fix that behavior
-        del self._filter
+        # "blanking" it first seems to fix that behavior
+        # BUGFIX: this used to delete the filter, but if the follow-up filter creation fails it will crash the bot since self._filter doesn't exist
+        # now sets it to None
+        self._filter = None
 
         try:
             self._filter = brownie.web3.eth.contract(
@@ -118,7 +133,7 @@ class LiquidityPool:
 
     def calculate_tokens_in_from_tokens_out(
         self,
-        token_in: str,
+        token_in: Erc20Token,
         token_out_quantity: int,
     ) -> int:
         """
@@ -127,14 +142,14 @@ class LiquidityPool:
         and uses the appropriate formula
         """
 
-        if token_in is self.token0:
+        if token_in.address == self.token0.address:
             return int(
                 (self.reserves_token0 * token_out_quantity)
                 // ((1 - self.fee) * (self.reserves_token1 - token_out_quantity))
                 + 1
             )
 
-        if token_in is self.token1:
+        if token_in.address == self.token1.address:
             return int(
                 (self.reserves_token1 * token_out_quantity)
                 // ((1 - self.fee) * (self.reserves_token0 - token_out_quantity))
@@ -143,7 +158,7 @@ class LiquidityPool:
 
     def calculate_tokens_out_from_tokens_in(
         self,
-        token_in: str,
+        token_in: Erc20Token,
         token_in_quantity: int,
     ) -> int:
         """
@@ -152,12 +167,12 @@ class LiquidityPool:
         and uses the appropriate formula
         """
 
-        if token_in is self.token0:
+        if token_in.address == self.token0.address:
             return int(
                 self.reserves_token1 * token_in_quantity * (1 - self.fee)
             ) // int(self.reserves_token0 + token_in_quantity * (1 - self.fee))
 
-        if token_in is self.token1:
+        if token_in.address == self.token1.address:
             return int(
                 self.reserves_token0 * token_in_quantity * (1 - self.fee)
             ) // int(self.reserves_token1 + token_in_quantity * (1 - self.fee))
@@ -171,8 +186,12 @@ class LiquidityPool:
         silent: bool = False,
     ):
         # check to ensure that token_in is one of the two tokens held by the LP
-        assert (token_in is self.token0 and token_out is self.token1) or (
-            token_in is self.token1 and token_out is self.token0
+        assert (
+            token_in.address == self.token0.address
+            and token_out.address == self.token1.address
+        ) or (
+            token_in.address == self.token1.address
+            and token_out.address == self.token0.address
         ), "Tokens must match the two tokens held by this pool!"
 
         if not silent:
@@ -180,17 +199,19 @@ class LiquidityPool:
                 f"{token_in} -> {token_out} @ ({token_in_qty} {token_in} = {token_out_qty} {token_out})"
             )
 
-        if token_in is self.token0:
+        if token_in.address == self.token0.address:
             # calculate the ratio of token0/token1 for swap of token0 -> token1
             self._ratio_token0_in = Decimal(str(token_in_qty)) / Decimal(
                 str(token_out_qty)
             )
 
-        if token_in is self.token1:
+        if token_in.address == self.token1.address:
             # calculate the ratio of token1/token0 for swap of token1 -> token0
             self._ratio_token1_in = Decimal(str(token_in_qty)) / Decimal(
                 str(token_out_qty)
             )
+
+        self.calculate_tokens_in_from_ratio_out()
 
     def update_reserves(
         self,
@@ -204,7 +225,6 @@ class LiquidityPool:
         """
 
         if self._update_method == "event":
-
             # check and recreate the filter if necessary
             if not self._filter_active:
                 # recreate the filter
@@ -231,12 +251,16 @@ class LiquidityPool:
                             print(
                                 f"{self.token1.symbol}/{self.token0.symbol}: {self.reserves_token1 / self.reserves_token0}"
                             )
-
+                    # recalculate possible swaps using the new reserves, then return True
+                    self.calculate_tokens_in_from_ratio_out()
+                    return True
+                else:
+                    return False
             except Exception as e:
                 print(f"Exception in (event) update_reserves: {e}")
                 self._filter_active = False
 
-        if self._update_method == "polling":
+        elif self._update_method == "polling":
             try:
                 result = self._contract.getReserves.call()[0:2]
                 # Compare reserves to last-known values,
@@ -247,9 +271,10 @@ class LiquidityPool:
                         print(
                             f"[{self.name} - {datetime.datetime.now().strftime('%I:%M:%S %p')}]\n{self.token0.symbol}: {self.reserves_token0}\n{self.token1.symbol}: {self.reserves_token1}\n"
                         )
+                    # recalculate possible swaps using the new reserves, then return True
+                    self.calculate_tokens_in_from_ratio_out()
+                    return True
+                else:
+                    return False
             except Exception as e:
                 print(f"Exception in (polling) update_reserves: {e}")
-
-        # recalculate possible swaps using the new reserves
-        self.calculate_tokens_in_from_ratio_out()
-        return True

@@ -18,25 +18,30 @@ class Erc20Token:
         abi: list = None,
         oracle_address: str = None,
     ) -> None:
+
         self.address = address
 
         if user:
             self._user = user
 
-        if abi:
-            try:
-                self._contract = brownie.Contract.from_abi(
-                    name="", address=self.address, abi=abi
-                )
-            except:
-                raise
-        else:
-            try:
-                self._contract = brownie.Contract.from_explorer(self.address)
-            except:
-                self._contract = brownie.Contract.from_abi(
-                    name="", address=self.address, abi=ERC20
-                )
+        try:
+            self._contract = brownie.Contract(address)
+        except Exception as e:
+            print(e)
+            if abi:
+                try:
+                    self._contract = brownie.Contract.from_abi(
+                        name="", address=self.address, abi=abi
+                    )
+                except:
+                    raise
+            else:
+                try:
+                    self._contract = brownie.Contract.from_explorer(self.address)
+                except:
+                    self._contract = brownie.Contract.from_abi(
+                        name="", address=self.address, abi=ERC20
+                    )
         self.name = self._contract.name.call()
         self.symbol = self._contract.symbol.call()
         self.decimals = self._contract.decimals.call()
@@ -47,6 +52,9 @@ class Erc20Token:
             self._price_oracle = ChainlinkPriceContract(address=oracle_address)
             self.price = self._price_oracle.price
         print(f"• {self.symbol} ({self.name})")
+
+    def __eq__(self, other) -> bool:
+        return self.address == other.address
 
     def __str__(self):
         return self.symbol

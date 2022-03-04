@@ -2,6 +2,7 @@ import time
 import brownie
 from decimal import Decimal
 
+
 class Router:
     """
     Represents a Uniswap V2 router contract
@@ -15,10 +16,18 @@ class Router:
         abi: list = None,
     ) -> None:
         self.address = address
-        if abi:
-            self._contract = brownie.Contract.from_abi(name=name, address=address, abi=abi)
-        else:
-            self._contract = brownie.Contract.from_explorer(address=address)
+
+        try:
+            self._contract = brownie.Contract(self.address)
+        except Exception as e:
+            print(e)
+            if abi:
+                self._contract = brownie.Contract.from_abi(
+                    name=name, address=address, abi=abi
+                )
+            else:
+                self._contract = brownie.Contract.from_explorer(address=address)
+
         self.name = name
         self._user = user
         print(f"• {name}")
