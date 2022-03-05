@@ -93,10 +93,12 @@ class FlashBorrowToSwap:
 
         recalculate = False
 
+        # calculate initial arbitrage after the object is instantiated, otherwise proceed with normal checks
         if self.best["init"] == True:
             self.best["init"] = False
             recalculate = True
 
+        # flag for recalculation if the borrowing pool has been updated
         if self.borrow_pool.update_reserves(
             silent=silent,
             print_reserves=print_reserves,
@@ -104,6 +106,7 @@ class FlashBorrowToSwap:
         ):
             recalculate = True
 
+        # flag for recalculation if any of the pools along the swap path have been updated
         for pool in self.swap_pools:
             if pool.update_reserves(
                 silent=silent,
