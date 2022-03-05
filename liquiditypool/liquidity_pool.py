@@ -21,10 +21,14 @@ class LiquidityPool:
         fee: Fraction = Fraction(3, 1000),
         silent: bool = False,
     ) -> None:
-        self.address = address
-        self.name = name
+
+        # transforms to checksummed address, prevents web3's filter from throwing errors
+        self.address = brownie.convert.to_address(address)
+
         if router:
             self.router = router
+
+        self.name = name
         self.fee = fee
         self._update_method = update_method
         self._filter = None
