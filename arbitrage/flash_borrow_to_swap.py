@@ -19,7 +19,18 @@ class FlashBorrowToSwap:
         calc_iterations: int = 256,
     ):
 
-        # TODO figure out asserts, ensure all token addresses are unique and passed in the correct order
+        assert (
+            borrow_token.address == swap_token_addresses[0]
+        ), "Token addresses must begin with the borrowed token"
+
+        if borrow_pool.token0 == borrow_token:
+            assert (
+                borrow_pool.token1.address == swap_token_addresses[-1]
+            ), "Token addresses must end with the repaid token"
+        else:
+            assert (
+                borrow_pool.token0.address == swap_token_addresses[-1]
+            ), "Token addresses must end with the repaid token"
 
         self.swap_router_address = swap_router_address
         self._calc_iterations = calc_iterations
