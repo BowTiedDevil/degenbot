@@ -271,7 +271,7 @@ class LiquidityPool:
                 else:
                     return False
             except Exception as e:
-                print(f"Exception in (liquidity_pool) update_reserves (event): {e}")
+                print(f"LiquidityPool: Exception in update_reserves (event): {e}")
                 self._sync_filter_active = False
 
         elif self._update_method == "polling":
@@ -301,4 +301,4 @@ class LiquidityPool:
                 else:
                     return False
             except Exception as e:
-                print(f"Exception in (liquidity_pool) update_reserves (polling): {e}")
+                print(f"LiquidityPool: Exception in update_reserves (polling): {e}")
