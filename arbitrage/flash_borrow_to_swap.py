@@ -16,7 +16,6 @@ class FlashBorrowToSwap:
         swap_router_fee=Fraction(3, 1000),
         name: str = "",
         update_method="polling",
-        calc_iterations: int = 256,
     ):
 
         assert (
@@ -33,7 +32,6 @@ class FlashBorrowToSwap:
             ), "Token addresses must end with the repaid token"
 
         self.swap_router_address = swap_router_address
-        self._calc_iterations = calc_iterations
 
         # build a list of all tokens involved in this swapping path
         self.tokens = []
@@ -65,7 +63,6 @@ class FlashBorrowToSwap:
                     ),
                     name=" - ".join([self.tokens[i].symbol, self.tokens[i + 1].symbol]),
                     tokens=[self.tokens[i], self.tokens[i + 1]],
-                    # may be overridden to "event" in constructor if polling is supported
                     update_method=update_method,
                     fee=swap_router_fee,
                 )
@@ -101,7 +98,6 @@ class FlashBorrowToSwap:
         Checks each liquidity pool for updates by passing a call to .update_reserves(), which returns False if there are no updates.
         Will calculate arbitrage amounts only after checking all pools and finding an update, or on startup (via the 'init' dictionary key)
         """
-
         recalculate = False
 
         # calculate initial arbitrage after the object is instantiated, otherwise proceed with normal checks

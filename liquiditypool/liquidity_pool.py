@@ -31,8 +31,8 @@ class LiquidityPool:
         self.name = name
         self.fee = fee
         self._update_method = update_method
-        self._filter = None
-        self._filter_active = False
+        self._sync_filter = None
+        self._sync_filter_active = False
         self._ratio_token0_in = None
         self._ratio_token1_in = None
 
@@ -69,8 +69,14 @@ class LiquidityPool:
             0:2
         ]
 
-        if self._update_method == "event" and self._create_filter():
-            self._filter_active = True
+        if self._update_method == "event":
+            try:
+                if self._create_filter():
+                    self._sync_filter_active = True
+                else:
+                    self._sync_filter_active = False
+            except Exception as e:
+                print(e)
 
         if not silent:
             print(self.name)
@@ -83,7 +89,7 @@ class LiquidityPool:
     ) -> bool:
         return self.address == other.address
 
-    def _create_filter(self):
+    def _create_filter(self) -> bool:
         """
         Create a web3.py event filter to watch for Sync events
         """
@@ -92,15 +98,17 @@ class LiquidityPool:
         # "blanking" it first seems to fix that behavior
         # BUGFIX: this used to delete the filter, but if the follow-up filter creation fails it will crash the bot since self._filter doesn't exist
         # now sets it to None
-        self._filter = None
+        self._sync_filter = None
 
         try:
-            self._filter = brownie.web3.eth.contract(
+            self._sync_filter = brownie.web3.eth.contract(
                 address=self.address, abi=self.abi
             ).events.Sync.createFilter(fromBlock="latest")
-            self._filter_active = True
+            self._sync_filter_active = True
+            return True
         except Exception as e:
             print(f"Exception in create_filter: {e}")
+            return False
 
     def __str__(self):
         """
@@ -230,13 +238,15 @@ class LiquidityPool:
 
         if self._update_method == "event":
             # check and recreate the filter if necessary
-            if not self._filter_active:
+            if not self._sync_filter_active:
                 # recreate the filter
-                self._create_filter()
-
+                if self._create_filter():
+                    pass
+                else:
+                    return False
             try:
-                events = self._filter.get_new_entries()
                 # retrieve Sync events from the event filter, store and print reserve values from the last-seen event
+                events = self._sync_filter.get_new_entries()
                 if events:
                     self.reserves_token0, self.reserves_token1 = json.loads(
                         brownie.web3.toJSON(events[-1]["args"])
@@ -261,8 +271,8 @@ class LiquidityPool:
                 else:
                     return False
             except Exception as e:
-                print(f"Exception in (event) update_reserves: {e}")
-                self._filter_active = False
+                print(f"Exception in (liquidity_pool) update_reserves (event): {e}")
+                self._sync_filter_active = False
 
         elif self._update_method == "polling":
             try:
@@ -273,12 +283,22 @@ class LiquidityPool:
                     self.reserves_token0, self.reserves_token1 = result[0:2]
                     if not silent:
                         print(
-                            f"[{self.name} - {datetime.datetime.now().strftime('%I:%M:%S %p')}]\n{self.token0.symbol}: {self.reserves_token0}\n{self.token1.symbol}: {self.reserves_token1}\n"
+                            f"[{self.name} - {datetime.datetime.now().strftime('%I:%M:%S %p')}]"
                         )
+                        if print_reserves:
+                            print(f"{self.token0.symbol}: {self.reserves_token0}")
+                            print(f"{self.token1.symbol}: {self.reserves_token1}")
+                        if print_ratios:
+                            print(
+                                f"{self.token0.symbol}/{self.token1.symbol}: {self.reserves_token0 / self.reserves_token1}"
+                            )
+                            print(
+                                f"{self.token1.symbol}/{self.token0.symbol}: {self.reserves_token1 / self.reserves_token0}"
+                            )
                     # recalculate possible swaps using the new reserves, then return True
                     self.calculate_tokens_in_from_ratio_out()
                     return True
                 else:
                     return False
             except Exception as e:
-                print(f"Exception in (polling) update_reserves: {e}")
+                print(f"Exception in (liquidity_pool) update_reserves (polling): {e}")
