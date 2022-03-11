@@ -42,6 +42,7 @@ class Erc20Token:
                     self._contract = brownie.Contract.from_abi(
                         name="", address=self.address, abi=ERC20
                     )
+
         self.name = self._contract.name.call()
         self.symbol = self._contract.symbol.call()
         self.decimals = self._contract.decimals.call()

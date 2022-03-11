@@ -302,3 +302,7 @@ class LiquidityPool:
                     return False
             except Exception as e:
                 print(f"LiquidityPool: Exception in update_reserves (polling): {e}")
+
+        elif self._update_method == "external":
+            self.calculate_tokens_in_from_ratio_out()
+            return True

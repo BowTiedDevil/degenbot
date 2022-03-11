@@ -13,14 +13,22 @@ class ChainlinkPriceContract:
     ) -> None:
 
         try:
-            self._contract: brownie.Contract = brownie.Contract.from_explorer(
-                address=address
-            )
-            self._decimals: int = self._contract.decimals.call()
-            self.update_price()
+            self._contract: brownie.Contract = brownie.Contract(address)
+        except Exception as e:
+            print(e)
 
-        except:
-            raise
+        if self._contract:
+            pass
+        else:
+            try:
+                self._contract: brownie.Contract = brownie.Contract.from_explorer(
+                    address=address
+                )
+            except Exception as e:
+                raise
+
+        self._decimals: int = self._contract.decimals.call()
+        self.update_price()
 
     def update_price(
         self,

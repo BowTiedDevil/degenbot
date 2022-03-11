@@ -49,6 +49,7 @@ class FlashBorrowToSwap:
         # Pool list length Will be 1 less than the token path length, e.g. a token1->token2->token3
         # path will result in a pool list consisting of token1/token2 and token2/token3
         self.swap_pools = []
+        self.swap_pool_addresses = []
         try:
             _factory = Contract(swap_factory_address)
         except Exception as e:
@@ -68,6 +69,8 @@ class FlashBorrowToSwap:
                 )
             )
             print(f"Loaded LP: {self.tokens[i].symbol} - {self.tokens[i+1].symbol}")
+            # build a list of pool addresses in the swap path
+            self.swap_pool_addresses.append(self.swap_pools[i].address)
 
         self.borrow_pool = borrow_pool
         self.borrow_token = borrow_token
