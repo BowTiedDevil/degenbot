@@ -13,19 +13,13 @@ class ChainlinkPriceContract:
     ) -> None:
 
         try:
-            self._contract: brownie.Contract = brownie.Contract(address)
+            self._contract = brownie.Contract(address)
         except Exception as e:
             print(e)
-
-        if self._contract:
-            pass
-        else:
             try:
-                self._contract: brownie.Contract = brownie.Contract.from_explorer(
-                    address=address
-                )
+                self._contract: brownie.Contract = brownie.Contract(address)
             except Exception as e:
-                raise
+                print(e)
 
         self._decimals: int = self._contract.decimals.call()
         self.update_price()
@@ -35,7 +29,7 @@ class ChainlinkPriceContract:
     ) -> None:
         try:
             self.price: float = self._contract.latestRoundData.call()[1] / (
-                10 ** self._decimals
+                10**self._decimals
             )
         except:
             pass
