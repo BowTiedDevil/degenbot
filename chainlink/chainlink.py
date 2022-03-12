@@ -17,7 +17,9 @@ class ChainlinkPriceContract:
         except Exception as e:
             print(e)
             try:
-                self._contract: brownie.Contract = brownie.Contract(address)
+                self._contract: brownie.Contract = brownie.Contract.from_explorer(
+                    address
+                )
             except Exception as e:
                 print(e)
 
