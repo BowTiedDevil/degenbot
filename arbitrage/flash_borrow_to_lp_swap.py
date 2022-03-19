@@ -11,7 +11,6 @@ class FlashBorrowToLpSwap:
         borrow_pool: LiquidityPool,
         borrow_token: Erc20Token,
         swap_factory_address: str,
-        # swap_router_address: str,
         swap_token_addresses: list[Erc20Token],
         swap_router_fee=Fraction(3, 1000),
         name: str = "",
@@ -30,8 +29,6 @@ class FlashBorrowToLpSwap:
             assert (
                 borrow_pool.token0.address == swap_token_addresses[-1]
             ), "Token addresses must end with the repaid token"
-
-        # self.swap_router_address = swap_router_address
 
         # build a list of all tokens involved in this swapping path
         self.tokens = []
@@ -69,8 +66,6 @@ class FlashBorrowToLpSwap:
                 )
             )
             print(f"Loaded LP: {self.tokens[i].symbol} - {self.tokens[i+1].symbol}")
-            # build a list of pool addresses in the swap path
-            self.swap_pool_addresses.append(self.swap_pools[i].address)
 
         self.borrow_pool = borrow_pool
         self.borrow_token = borrow_token
