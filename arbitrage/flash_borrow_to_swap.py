@@ -1,11 +1,11 @@
 from brownie import Contract
 from scipy import optimize
 from fractions import Fraction
-from ..liquiditypool.liquidity_pool import LiquidityPool
+from ..liquiditypool import LiquidityPool
 from ..token import Erc20Token
 
 
-class FlashBorrowToSwap:
+class FlashBorrowToRouterSwap:
     def __init__(
         self,
         borrow_pool: LiquidityPool,
@@ -46,7 +46,7 @@ class FlashBorrowToSwap:
         self.token_path = [token.address for token in self.tokens]
 
         # build the list of intermediate pool pairs for the given multi-token path.
-        # Pool list length Will be 1 less than the token path length, e.g. a token1->token2->token3
+        # Pool list length will be 1 less than the token path length, e.g. a token1->token2->token3
         # path will result in a pool list consisting of token1/token2 and token2/token3
         self.swap_pools = []
         self.swap_pool_addresses = []
