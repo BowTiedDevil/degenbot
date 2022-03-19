@@ -5,13 +5,13 @@ from ..liquiditypool import LiquidityPool
 from ..token import Erc20Token
 
 
-class FlashBorrowToRouterSwap:
+class FlashBorrowToLpSwap:
     def __init__(
         self,
         borrow_pool: LiquidityPool,
         borrow_token: Erc20Token,
         swap_factory_address: str,
-        swap_router_address: str,
+        # swap_router_address: str,
         swap_token_addresses: list[Erc20Token],
         swap_router_fee=Fraction(3, 1000),
         name: str = "",
@@ -31,7 +31,7 @@ class FlashBorrowToRouterSwap:
                 borrow_pool.token0.address == swap_token_addresses[-1]
             ), "Token addresses must end with the repaid token"
 
-        self.swap_router_address = swap_router_address
+        # self.swap_router_address = swap_router_address
 
         # build a list of all tokens involved in this swapping path
         self.tokens = []
@@ -178,6 +178,9 @@ class FlashBorrowToRouterSwap:
                 {
                     "borrow": best_borrow,
                     "profit": best_profit,
+                    "swap_pools": self.swap_pools,
+                    # TODO
+                    # "swap_amounts":
                 }
             )
         else:
