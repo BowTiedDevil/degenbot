@@ -1,23 +1,28 @@
 import datetime
 import json
+from stat import FILE_ATTRIBUTE_DIRECTORY
 import brownie
 from decimal import Decimal
 from fractions import Fraction
 from ..token import Erc20Token
 from ..router import Router
 
+FACTORIES = {
+    "0x9Ad6C38BE94206cA50bb0d90783181662f0Cfa10": "TraderJoe",
+    "0xc35DADB65012eC5796536bD9864eD8773aBc74C4": "SushiSwap",
+}
+
 
 class LiquidityPool:
     def __init__(
         self,
         address: str,
-        name: str,
         tokens: list[Erc20Token],
+        name: str = "",
         update_method: str = "polling",
         router: Router = None,
         abi: list = None,
         # default fee for most UniswapV2 AMMs is 0.3%
-        # fee: Decimal = Decimal("0.003"),
         fee: Fraction = Fraction(3, 1000),
         silent: bool = False,
     ) -> None:
@@ -28,7 +33,6 @@ class LiquidityPool:
         if router:
             self.router = router
 
-        self.name = name
         self.fee = fee
         self._update_method = update_method
         self._sync_filter = None
@@ -56,6 +60,19 @@ class LiquidityPool:
                 self.token0 = token
             if token.address == self._contract.token1():
                 self.token1 = token
+
+        if name:
+            self.name = name
+        else:
+            factory_address = self._contract.factory.call()
+            if factory_address in FACTORIES.keys():
+                self.name = (
+                    FACTORIES[factory_address]
+                    + ": "
+                    + self.token0.symbol
+                    + "-"
+                    + self.token1.symbol
+                )
 
         assert (
             tokens[0].address == self._contract.token0.call()

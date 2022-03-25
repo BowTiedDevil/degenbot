@@ -48,7 +48,7 @@ class Erc20Token:
         self.decimals = self._contract.decimals.call()
         if user:
             self.balance = self._contract.balanceOf.call(self._user)
-            self.normalized_balance = self.balance / (10 ** self.decimals)
+            self.normalized_balance = self.balance / (10**self.decimals)
         if oracle_address:
             self._price_oracle = ChainlinkPriceContract(address=oracle_address)
             self.price = self._price_oracle.price
@@ -69,12 +69,12 @@ class Erc20Token:
         For unlimited approval, set value to -1
         """
         assert type(value) is int and (
-            -1 <= value <= 2 ** 256 - 1
+            -1 <= value <= 2**256 - 1
         ), "Approval value MUST be an integer between 0 and 2**256-1, or -1"
 
         if value == -1:
             print("Setting unlimited approval!")
-            value = 2 ** 256 - 1
+            value = 2**256 - 1
 
         try:
             self._contract.approve(
@@ -88,7 +88,7 @@ class Erc20Token:
 
     def update_balance(self):
         self.balance = self._contract.balanceOf.call(self._user)
-        self.normalized_balance = self.balance / (10 ** self.decimals)
+        self.normalized_balance = self.balance / (10**self.decimals)
 
     def update_price(self):
         self._price_oracle.update_price()

@@ -81,6 +81,8 @@ class FlashBorrowToLpSwap:
             "borrow_token": self.borrow_token,
             "profit": 0,
             "profit_token": self.repay_token,
+            "swap_pools": self.swap_pools,
+            "swap_amounts": [],
         }
 
     def __str__(self):
@@ -173,9 +175,10 @@ class FlashBorrowToLpSwap:
                 {
                     "borrow": best_borrow,
                     "profit": best_profit,
-                    "swap_pools": self.swap_pools,
-                    # TODO
-                    # "swap_amounts":
+                    "swap_amounts": self._build_multipool_amounts_out(
+                        token_in=self.borrow_token,
+                        token_in_quantity=best_borrow,
+                    ),
                 }
             )
         else:
@@ -183,6 +186,7 @@ class FlashBorrowToLpSwap:
                 {
                     "borrow": 0,
                     "profit": 0,
+                    "swap_amounts": [],
                 }
             )
 
@@ -217,8 +221,49 @@ class FlashBorrowToLpSwap:
             )
 
             if i == number_of_pools - 1:
-                # if we've reached the last pool, return the output amount
+                # if we've reached the last pool, build the amounts_out list and then
+                # return the output amount
                 return token_out_quantity
+            else:
+                # otherwise, use the output as input on the next loop
+                token_in = token_out
+                token_in_quantity = token_out_quantity
+
+    def _build_multipool_amounts_out(
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+    ) -> list[list]:
+
+        number_of_pools = len(self.swap_pools)
+
+        pools_amounts_out = []
+
+        for i in range(number_of_pools):
+
+            # determine the output token for pool0
+            if token_in.address == self.swap_pools[i].token0.address:
+                token_out = self.swap_pools[i].token1
+            elif token_in.address == self.swap_pools[i].token1.address:
+                token_out = self.swap_pools[i].token0
+            else:
+                print("wtf?")
+                raise Exception
+
+            # calculate the swap output through pool[i]
+            token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
+                token_in=token_in,
+                token_in_quantity=token_in_quantity,
+            )
+
+            if token_in.address == self.swap_pools[i].token0.address:
+                pools_amounts_out.append([0, token_out_quantity])
+            elif token_in.address == self.swap_pools[i].token1.address:
+                pools_amounts_out.append([token_out_quantity, 0])
+
+            if i == number_of_pools - 1:
+                # if we've reached the last pool, return the amounts_out list
+                return pools_amounts_out
             else:
                 # otherwise, use the output as input on the next loop
                 token_in = token_out
