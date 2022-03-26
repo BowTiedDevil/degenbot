@@ -233,6 +233,7 @@ class FlashBorrowToLpSwap:
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
+        silent: bool = False,
     ) -> list[list]:
 
         number_of_pools = len(self.swap_pools)
@@ -255,6 +256,11 @@ class FlashBorrowToLpSwap:
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
             )
+
+            if not silent:
+                print(
+                    f"Swap {token_in_quantity} {token_in} for {token_out_quantity} {token_out} via {self.pools[i]}"
+                )
 
             if token_in.address == self.swap_pools[i].token0.address:
                 pools_amounts_out.append([0, token_out_quantity])

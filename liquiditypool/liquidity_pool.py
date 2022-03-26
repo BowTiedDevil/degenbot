@@ -195,16 +195,21 @@ class LiquidityPool:
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         and uses the appropriate formula
         """
-
         if token_in.address == self.token0.address:
             return int(
-                self.reserves_token1 * token_in_quantity * (1 - self.fee)
-            ) // int(self.reserves_token0 + token_in_quantity * (1 - self.fee))
+                self.reserves_token1
+                * token_in_quantity
+                * (1 - self.fee)
+                // (self.reserves_token0 + token_in_quantity * (1 - self.fee))
+            )
 
         if token_in.address == self.token1.address:
             return int(
-                self.reserves_token0 * token_in_quantity * (1 - self.fee)
-            ) // int(self.reserves_token1 + token_in_quantity * (1 - self.fee))
+                self.reserves_token0
+                * token_in_quantity
+                * (1 - self.fee)
+                // (self.reserves_token1 + token_in_quantity * (1 - self.fee))
+            )
 
     def set_swap_target(
         self,
