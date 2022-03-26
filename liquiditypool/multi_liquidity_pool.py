@@ -39,7 +39,6 @@ class MultiLiquidityPool:
                     silent=silent,
                 )
             )
-            print(f"added pool: {self._pools[i]}")
         self.pool_addresses = pool_addresses
 
         assert (token_in == self._pools[0].token0) or (
