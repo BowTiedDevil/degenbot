@@ -46,7 +46,6 @@ class FlashBorrowToLpSwap:
         # Pool list length will be 1 less than the token path length, e.g. a token1->token2->token3
         # path will result in a pool list consisting of token1/token2 and token2/token3
         self.swap_pools = []
-        self.swap_pool_addresses = []
         try:
             _factory = Contract(swap_factory_address)
         except Exception as e:
@@ -67,6 +66,8 @@ class FlashBorrowToLpSwap:
             )
             print(f"Loaded LP: {self.tokens[i].symbol} - {self.tokens[i+1].symbol}")
 
+        self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
+
         self.borrow_pool = borrow_pool
         self.borrow_token = borrow_token
 
@@ -77,12 +78,14 @@ class FlashBorrowToLpSwap:
 
         self.best = {
             "init": True,
-            "borrow": 0,
+            "borrow_amount": 0,
             "borrow_token": self.borrow_token,
-            "profit": 0,
+            "borrow_pool_amounts": [],
+            "repay_amount": 0,
+            "profit_amount": 0,
             "profit_token": self.repay_token,
             "swap_pools": self.swap_pools,
-            "swap_amounts": [],
+            "swap_pool_amounts": [],
         }
 
     def __str__(self):
@@ -166,16 +169,31 @@ class FlashBorrowToLpSwap:
             bracket=bracket,
         )
 
-        best_borrow = opt.x
-        best_profit = -opt.fun
+        best_borrow = int(opt.x)
+
+        if self.borrow_token.address == self.borrow_pool.token0.address:
+            borrow_amounts = [best_borrow, 0]
+        elif self.borrow_token.address == self.borrow_pool.token1.address:
+            borrow_amounts = [0, best_borrow]
+        else:
+            print("wtf?")
+            raise Exception
+
+        best_repay = self.borrow_pool.calculate_tokens_in_from_tokens_out(
+            token_in=self.repay_token,
+            token_out_quantity=best_borrow,
+        )
+        best_profit = -int(opt.fun)
 
         # only save opportunities with rational, positive values
         if best_borrow > 0 and best_profit > 0:
             self.best.update(
                 {
-                    "borrow": best_borrow,
-                    "profit": best_profit,
-                    "swap_amounts": self._build_multipool_amounts_out(
+                    "borrow_amount": best_borrow,
+                    "borrow_pool_amounts": borrow_amounts,
+                    "repay_amount": best_repay,
+                    "profit_amount": best_profit,
+                    "swap_pool_amounts": self._build_multipool_amounts_out(
                         token_in=self.borrow_token,
                         token_in_quantity=best_borrow,
                     ),
@@ -184,9 +202,11 @@ class FlashBorrowToLpSwap:
         else:
             self.best.update(
                 {
-                    "borrow": 0,
-                    "profit": 0,
-                    "swap_amounts": [],
+                    "borrow_amount": 0,
+                    "borrow_pool_amounts": [],
+                    "repay_amount": 0,
+                    "profit_amount": 0,
+                    "swap_pool_amounts": [],
                 }
             )
 
@@ -256,11 +276,6 @@ class FlashBorrowToLpSwap:
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
             )
-
-            if not silent:
-                print(
-                    f"Swap {token_in_quantity} {token_in} for {token_out_quantity} {token_out} via {self.pools[i]}"
-                )
 
             if token_in.address == self.swap_pools[i].token0.address:
                 pools_amounts_out.append([0, token_out_quantity])
