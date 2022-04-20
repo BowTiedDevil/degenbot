@@ -17,6 +17,7 @@ class MultiLiquidityPool:
         self.token_out = token_out
         self.token_in_quantity = 0
         self.token_out_quantity = 0
+        self.init = True
 
         assert len(pool_addresses) == len(
             pool_tokens
@@ -67,6 +68,10 @@ class MultiLiquidityPool:
         """
 
         recalculate = False
+
+        if self.init == True:
+            self.init = False
+            recalculate = True
 
         for pool in self._pools:
             if pool.update_reserves(
@@ -147,7 +152,7 @@ class MultiLiquidityPool:
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        silent: bool = False,
+        silent: bool = True,
     ) -> list[list]:
 
         number_of_pools = len(self._pools)
