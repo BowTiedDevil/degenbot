@@ -17,7 +17,7 @@ class LiquidityPool:
     def __init__(
         self,
         address: str,
-        tokens: list[Erc20Token],
+        tokens: list[Erc20Token] = [],
         name: str = "",
         update_method: str = "polling",
         router: Router = None,
@@ -27,7 +27,7 @@ class LiquidityPool:
         silent: bool = False,
     ) -> None:
 
-        # transforms to checksummed address, prevents web3's filter from throwing errors
+        # transforms to checksummed address, prevents web3's event filter from throwing errors
         self.address = brownie.convert.to_address(address)
 
         if router:
@@ -54,17 +54,29 @@ class LiquidityPool:
                 self._contract = brownie.Contract.from_explorer(address=self.address)
                 self.abi = self._contract.abi
 
-        # set pointers for token0 and token1 to link to our actual token classes
-        for token in tokens:
-            if token.address == self._contract.token0():
-                self.token0 = token
-            if token.address == self._contract.token1():
-                self.token1 = token
+        # if a token pair was provided, check and set pointers for token0 and token1
+        if tokens:
+            assert len(tokens) == 2, f"Expected 2 tokens, found {len(tokens)}"
+            for token in tokens:
+                if token.address == self._contract.token0():
+                    self.token0 = token
+                if token.address == self._contract.token1():
+                    self.token1 = token
+            assert (
+                tokens[0].address == self._contract.token0.call()
+                and tokens[1].address == self._contract.token1.call()
+            ) or (
+                tokens[0].address == self._contract.token1.call()
+                and tokens[1].address == self._contract.token0.call()
+            ), "token addresses do not match the on-chain contract!"
+        else:
+            self.token0 = Erc20Token(address=self._contract.token0.call())
+            self.token1 = Erc20Token(address=self._contract.token1.call())
 
         if name:
             self.name = name
         else:
-            factory_address = self._contract.factory.call()
+            factory_address = str(self._contract.factory.call())
             if factory_address in FACTORIES.keys():
                 self.name = (
                     FACTORIES[factory_address]
@@ -73,14 +85,8 @@ class LiquidityPool:
                     + "-"
                     + self.token1.symbol
                 )
-
-        assert (
-            tokens[0].address == self._contract.token0.call()
-            and tokens[1].address == self._contract.token1.call()
-        ) or (
-            tokens[0].address == self._contract.token1.call()
-            and tokens[1].address == self._contract.token0.call()
-        ), "token addresses do not match the on-chain contract!"
+            else:
+                self.name = f"Unknown: {self.token0.symbol}-{self.token1.symbol}"
 
         self.reserves_token0, self.reserves_token1 = self._contract.getReserves.call()[
             0:2

@@ -52,6 +52,8 @@ class Erc20Token:
         if oracle_address:
             self._price_oracle = ChainlinkPriceContract(address=oracle_address)
             self.price = self._price_oracle.price
+        else:
+            self.price = None
         print(f"• {self.symbol} ({self.name})")
 
     def __eq__(self, other) -> bool:
