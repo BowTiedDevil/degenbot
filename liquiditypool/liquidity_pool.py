@@ -1,6 +1,5 @@
 import datetime
 import json
-from stat import FILE_ATTRIBUTE_DIRECTORY
 import brownie
 from decimal import Decimal
 from fractions import Fraction
@@ -10,6 +9,7 @@ from ..router import Router
 FACTORIES = {
     "0x9Ad6C38BE94206cA50bb0d90783181662f0Cfa10": "TraderJoe",
     "0xc35DADB65012eC5796536bD9864eD8773aBc74C4": "SushiSwap",
+    "0xefa94DE7a4656D787667C749f7E1223D71E9FD88": "Pangolin",
 }
 
 
