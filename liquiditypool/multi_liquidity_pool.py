@@ -1,3 +1,4 @@
+import brownie
 from .liquidity_pool import LiquidityPool
 from ..token import Erc20Token
 
@@ -9,6 +10,7 @@ class MultiLiquidityPool:
         token_out: Erc20Token,
         pool_addresses: list[str],
         pool_tokens: list[list[Erc20Token]],
+        name: str = "",
         update_method: str = "polling",
         silent: bool = False,
     ):
@@ -55,6 +57,9 @@ class MultiLiquidityPool:
             assert (self._pools[i].token0 == self._pools[i + 1].token0) or (
                 self._pools[i].token1 == self._pools[i + 1].token1
             ), f"LPs {self._pools[i]} and {self._pools[i+1]} do not share a common token!"
+
+        if name:
+            self.name = name
 
     def update_reserves(
         self,
@@ -147,6 +152,12 @@ class MultiLiquidityPool:
             token_in_quantity=self.token_in_quantity,
             silent=silent,
         )
+
+    def __str__(self):
+        """
+        Return the pool name when the object is included in a print statement, or cast as a string
+        """
+        return self.name
 
     def _build_multipool_amounts_out(
         self,
