@@ -93,6 +93,9 @@ class LiquidityPool:
         ]
 
         if self._update_method == "event":
+            print("***")
+            print("DEPRECATION WARNING: the 'event' update method is inaccurate, please update your bot to use the default 'polling' method going forward")
+            print("***")
             try:
                 if self._create_filter():
                     self._sync_filter_active = True
@@ -265,6 +268,9 @@ class LiquidityPool:
         """
 
         if self._update_method == "event":
+            print("***")
+            print("DEPRECATION WARNING: the 'event' update method is inaccurate, please update your bot to use the default 'polling' method going forward")
+            print("***")
             # check and recreate the filter if necessary
             if not self._sync_filter_active:
                 # recreate the filter
