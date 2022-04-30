@@ -165,7 +165,7 @@ class MultiLiquidityPool:
         token_in: Erc20Token,
         token_in_quantity: int,
         silent: bool = True,
-    ) -> list[list]:
+    ) -> List[list]:
 
         number_of_pools = len(self._pools)
 
