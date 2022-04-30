@@ -3,6 +3,7 @@ from scipy import optimize
 from fractions import Fraction
 from ..liquiditypool import LiquidityPool
 from ..token import Erc20Token
+from typing import List
 
 
 class FlashBorrowToRouterSwap:
@@ -12,7 +13,7 @@ class FlashBorrowToRouterSwap:
         borrow_token: Erc20Token,
         swap_factory_address: str,
         swap_router_address: str,
-        swap_token_addresses: list[Erc20Token],
+        swap_token_addresses: List[Erc20Token],
         swap_router_fee=Fraction(3, 1000),
         name: str = "",
         update_method="polling",
