@@ -266,54 +266,11 @@ class LiquidityPool:
         print_ratios: bool = True,
     ) -> bool:
         """
-        Checks the event filter for the last Sync event if the method is set to "polling"
-        Otherwise call getReserves() directly on the LP contract
+        Checks tracked liquidity pools for updated reserve values when set to "polling", otherwise
+        if set to "external" assumes that internal LP reserves are valid and recalculates token ratios
         """
 
-        if self._update_method == "event":
-            print("***")
-            print(
-                "DEPRECATION WARNING: the 'event' update method is inaccurate, please update your bot to use the default 'polling' method going forward"
-            )
-            print("***")
-            # check and recreate the filter if necessary
-            if not self._sync_filter_active:
-                # recreate the filter
-                if self._create_filter():
-                    pass
-                else:
-                    return False
-            try:
-                # retrieve Sync events from the event filter, store and print reserve values from the last-seen event
-                events = self._sync_filter.get_new_entries()
-                if events:
-                    self.reserves_token0, self.reserves_token1 = json.loads(
-                        brownie.web3.toJSON(events[-1]["args"])
-                    ).values()
-                    if not silent:
-                        print(
-                            f"[{self.name} - {datetime.datetime.now().strftime('%I:%M:%S %p')}]"
-                        )
-                        if print_reserves:
-                            print(f"{self.token0.symbol}: {self.reserves_token0}")
-                            print(f"{self.token1.symbol}: {self.reserves_token1}")
-                        if print_ratios:
-                            print(
-                                f"{self.token0.symbol}/{self.token1.symbol}: {self.reserves_token0 / self.reserves_token1}"
-                            )
-                            print(
-                                f"{self.token1.symbol}/{self.token0.symbol}: {self.reserves_token1 / self.reserves_token0}"
-                            )
-                    # recalculate possible swaps using the new reserves, then return True
-                    self.calculate_tokens_in_from_ratio_out()
-                    return True
-                else:
-                    return False
-            except Exception as e:
-                print(f"LiquidityPool: Exception in update_reserves (event): {e}")
-                self._sync_filter_active = False
-
-        elif self._update_method == "polling":
+        if self._update_method == "polling":
             try:
                 result = self._contract.getReserves.call()[0:2]
                 # Compare reserves to last-known values,
@@ -345,3 +302,10 @@ class LiquidityPool:
         elif self._update_method == "external":
             self.calculate_tokens_in_from_ratio_out()
             return True
+
+        elif self._update_method == "event":
+            print("***")
+            print(
+                "DEPRECATION WARNING: the 'event' update method is deprecated. Please update your bot to use the default 'polling' method going forward"
+            )
+            print("***")
