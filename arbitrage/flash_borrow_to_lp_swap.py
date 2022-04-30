@@ -3,6 +3,7 @@ from scipy import optimize
 from fractions import Fraction
 from ..liquiditypool import LiquidityPool
 from ..token import Erc20Token
+from typing import List
 
 
 class FlashBorrowToLpSwap:
@@ -11,7 +12,7 @@ class FlashBorrowToLpSwap:
         borrow_pool: LiquidityPool,
         borrow_token: Erc20Token,
         swap_factory_address: str,
-        swap_token_addresses: list[Erc20Token],
+        swap_token_addresses: List[Erc20Token],
         swap_router_fee=Fraction(3, 1000),
         name: str = "",
         update_method="polling",
@@ -254,7 +255,7 @@ class FlashBorrowToLpSwap:
         token_in: Erc20Token,
         token_in_quantity: int,
         silent: bool = False,
-    ) -> list[list]:
+    ) -> List[list]:
 
         number_of_pools = len(self.swap_pools)
 
