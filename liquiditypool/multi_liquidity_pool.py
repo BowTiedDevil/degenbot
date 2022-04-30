@@ -1,6 +1,7 @@
 import brownie
 from .liquidity_pool import LiquidityPool
 from ..token import Erc20Token
+from typing import List
 
 
 class MultiLiquidityPool:
@@ -8,8 +9,8 @@ class MultiLiquidityPool:
         self,
         token_in: Erc20Token,
         token_out: Erc20Token,
-        pool_addresses: list[str],
-        pool_tokens: list[list[Erc20Token]],
+        pool_addresses: List[str],
+        pool_tokens: List[List[Erc20Token]],
         name: str = "",
         update_method: str = "polling",
         silent: bool = False,

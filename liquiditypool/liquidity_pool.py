@@ -5,6 +5,7 @@ from decimal import Decimal
 from fractions import Fraction
 from ..token import Erc20Token
 from ..router import Router
+from typing import List
 
 FACTORIES = {
     "0x9Ad6C38BE94206cA50bb0d90783181662f0Cfa10": "TraderJoe",
@@ -17,7 +18,7 @@ class LiquidityPool:
     def __init__(
         self,
         address: str,
-        tokens: list[Erc20Token] = [],
+        tokens: List[Erc20Token] = [],
         name: str = "",
         update_method: str = "polling",
         router: Router = None,
@@ -94,7 +95,9 @@ class LiquidityPool:
 
         if self._update_method == "event":
             print("***")
-            print("DEPRECATION WARNING: the 'event' update method is inaccurate, please update your bot to use the default 'polling' method going forward")
+            print(
+                "DEPRECATION WARNING: the 'event' update method is inaccurate, please update your bot to use the default 'polling' method going forward"
+            )
             print("***")
             try:
                 if self._create_filter():
@@ -269,7 +272,9 @@ class LiquidityPool:
 
         if self._update_method == "event":
             print("***")
-            print("DEPRECATION WARNING: the 'event' update method is inaccurate, please update your bot to use the default 'polling' method going forward")
+            print(
+                "DEPRECATION WARNING: the 'event' update method is inaccurate, please update your bot to use the default 'polling' method going forward"
+            )
             print("***")
             # check and recreate the filter if necessary
             if not self._sync_filter_active:
