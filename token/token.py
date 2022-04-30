@@ -43,12 +43,12 @@ class Erc20Token:
                         name="", address=self.address, abi=ERC20
                     )
 
-        self.name = self._contract.name.call()
-        self.symbol = self._contract.symbol.call()
-        self.decimals = self._contract.decimals.call()
+        self.name = self._contract.name()
+        self.symbol = self._contract.symbol()
+        self.decimals = self._contract.decimals()
         if user:
-            self.balance = self._contract.balanceOf.call(self._user)
-            self.normalized_balance = self.balance / (10**self.decimals)
+            self.balance = self._contract.balanceOf(self._user)
+            self.normalized_balance = self.balance / (10 ** self.decimals)
         if oracle_address:
             self._price_oracle = ChainlinkPriceContract(address=oracle_address)
             self.price = self._price_oracle.price
@@ -63,7 +63,7 @@ class Erc20Token:
         return self.symbol
 
     def get_approval(self, external_address: str):
-        return self._contract.allowance.call(self._user.address, external_address)
+        return self._contract.allowance(self._user.address, external_address)
 
     def set_approval(self, external_address: str, value: int):
         """
@@ -71,12 +71,12 @@ class Erc20Token:
         For unlimited approval, set value to -1
         """
         assert type(value) is int and (
-            -1 <= value <= 2**256 - 1
+            -1 <= value <= 2 ** 256 - 1
         ), "Approval value MUST be an integer between 0 and 2**256-1, or -1"
 
         if value == -1:
             print("Setting unlimited approval!")
-            value = 2**256 - 1
+            value = 2 ** 256 - 1
 
         try:
             self._contract.approve(
@@ -89,8 +89,8 @@ class Erc20Token:
             raise
 
     def update_balance(self):
-        self.balance = self._contract.balanceOf.call(self._user)
-        self.normalized_balance = self.balance / (10**self.decimals)
+        self.balance = self._contract.balanceOf(self._user)
+        self.normalized_balance = self.balance / (10 ** self.decimals)
 
     def update_price(self):
         self._price_oracle.update_price()

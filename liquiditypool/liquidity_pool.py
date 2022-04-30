@@ -64,20 +64,20 @@ class LiquidityPool:
                 if token.address == self._contract.token1():
                     self.token1 = token
             assert (
-                tokens[0].address == self._contract.token0.call()
-                and tokens[1].address == self._contract.token1.call()
+                tokens[0].address == self._contract.token0()
+                and tokens[1].address == self._contract.token1()
             ) or (
-                tokens[0].address == self._contract.token1.call()
-                and tokens[1].address == self._contract.token0.call()
+                tokens[0].address == self._contract.token1()
+                and tokens[1].address == self._contract.token0()
             ), "token addresses do not match the on-chain contract!"
         else:
-            self.token0 = Erc20Token(address=self._contract.token0.call())
-            self.token1 = Erc20Token(address=self._contract.token1.call())
+            self.token0 = Erc20Token(address=self._contract.token0())
+            self.token1 = Erc20Token(address=self._contract.token1())
 
         if name:
             self.name = name
         else:
-            factory_address = str(self._contract.factory.call())
+            factory_address = str(self._contract.factory())
             if factory_address in FACTORIES.keys():
                 self.name = (
                     FACTORIES[factory_address]
@@ -89,9 +89,7 @@ class LiquidityPool:
             else:
                 self.name = f"Unknown: {self.token0.symbol}-{self.token1.symbol}"
 
-        self.reserves_token0, self.reserves_token1 = self._contract.getReserves.call()[
-            0:2
-        ]
+        self.reserves_token0, self.reserves_token1 = self._contract.getReserves()[0:2]
 
         if self._update_method == "event":
             print("***")
@@ -272,7 +270,7 @@ class LiquidityPool:
 
         if self._update_method == "polling":
             try:
-                result = self._contract.getReserves.call()[0:2]
+                result = self._contract.getReserves()[0:2]
                 # Compare reserves to last-known values,
                 # store and print the reserves if they have changed
                 if (self.reserves_token0, self.reserves_token1) != result[0:2]:

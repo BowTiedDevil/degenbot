@@ -23,15 +23,15 @@ class ChainlinkPriceContract:
             except Exception as e:
                 print(e)
 
-        self._decimals: int = self._contract.decimals.call()
+        self._decimals: int = self._contract.decimals()
         self.update_price()
 
     def update_price(
         self,
     ) -> None:
         try:
-            self.price: float = self._contract.latestRoundData.call()[1] / (
-                10**self._decimals
+            self.price: float = self._contract.latestRoundData()[1] / (
+                10 ** self._decimals
             )
         except:
             pass
