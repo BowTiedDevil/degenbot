@@ -264,7 +264,7 @@ class LiquidityPool:
         print_ratios: bool = True,
     ) -> bool:
         """
-        Checks tracked liquidity pools for updated reserve values when set to "polling", otherwise
+        Checks for updated reserve values when set to "polling", otherwise
         if set to "external" assumes that internal LP reserves are valid and recalculates token ratios
         """
 
