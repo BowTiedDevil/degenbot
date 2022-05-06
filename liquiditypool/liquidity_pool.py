@@ -97,13 +97,7 @@ class LiquidityPool:
                 "DEPRECATION WARNING: the 'event' update method is inaccurate, please update your bot to use the default 'polling' method going forward"
             )
             print("***")
-            try:
-                if self._create_filter():
-                    self._sync_filter_active = True
-                else:
-                    self._sync_filter_active = False
-            except Exception as e:
-                print(e)
+            raise Exception
 
         if not silent:
             print(self.name)
@@ -115,27 +109,6 @@ class LiquidityPool:
         other,
     ) -> bool:
         return self.address == other.address
-
-    def _create_filter(self) -> bool:
-        """
-        Create a web3.py event filter to watch for Sync events
-        """
-
-        # Recreating the filter after a disconnect sometimes fails, returning blank results when .get_new_entries() is called.
-        # "blanking" it first seems to fix that behavior
-        # BUGFIX: this used to delete the filter, but if the follow-up filter creation fails it will crash the bot since self._filter doesn't exist
-        # now sets it to None
-        self._sync_filter = None
-
-        try:
-            self._sync_filter = brownie.web3.eth.contract(
-                address=self.address, abi=self.abi
-            ).events.Sync.createFilter(fromBlock="latest")
-            self._sync_filter_active = True
-            return True
-        except Exception as e:
-            print(f"Exception in create_filter: {e}")
-            return False
 
     def __str__(self):
         """
@@ -262,6 +235,8 @@ class LiquidityPool:
         silent: bool = False,
         print_reserves: bool = True,
         print_ratios: bool = True,
+        external_token0_reserves: bool = None,
+        external_token1_reserves: bool = None,
     ) -> bool:
         """
         Checks for updated reserve values when set to "polling", otherwise
@@ -298,6 +273,25 @@ class LiquidityPool:
                 print(f"LiquidityPool: Exception in update_reserves (polling): {e}")
 
         elif self._update_method == "external":
+            assert (
+                external_token0_reserves and external_token1_reserves
+            ), "Reserve values must be provided for both tokens!"
+            self.reserves_token0 = external_token0_reserves
+            self.reserves_token1 = external_token1_reserves
+            if not silent:
+                print(
+                    f"[{self.name} - {datetime.datetime.now().strftime('%I:%M:%S %p')}]"
+                )
+                if print_reserves:
+                    print(f"{self.token0.symbol}: {self.reserves_token0}")
+                    print(f"{self.token1.symbol}: {self.reserves_token1}")
+                if print_ratios:
+                    print(
+                        f"{self.token0.symbol}/{self.token1.symbol}: {self.reserves_token0 / self.reserves_token1}"
+                    )
+                    print(
+                        f"{self.token1.symbol}/{self.token0.symbol}: {self.reserves_token1 / self.reserves_token0}"
+                    )
             self.calculate_tokens_in_from_ratio_out()
             return True
 
