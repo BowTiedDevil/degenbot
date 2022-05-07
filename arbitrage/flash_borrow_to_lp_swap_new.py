@@ -14,26 +14,54 @@ class FlashBorrowToLpSwapNew:
         borrow_pool: LiquidityPool,
         borrow_token: Erc20Token,
         repay_token: Erc20Token,
-        swap_pool_addresses: List[str],
+        swap_pool_addresses: List[str] = None,
+        swap_pools: List[LiquidityPool] = None,
         name: str = "",
         update_method="polling",
     ):
 
+        assert (
+            swap_pools or swap_pool_addresses
+        ), "At least one pool address or LiquidityPool object must be provided"
+        assert not (
+            swap_pool_addresses and swap_pools
+        ), "Choose pool addresses or LiquidityPool objects, not both"
+
+        assert update_method in [
+            "polling",
+            "external",
+        ], "update_method must be 'polling' or 'external'"
+
+        assert not (
+            update_method == "external" and swap_pool_addresses
+        ), "swap pools by address must be updated with the 'polling' method"
+
         self.borrow_pool = borrow_pool
         self.borrow_token = borrow_token
         self.repay_token = repay_token
+        self._update_method = update_method
 
-        # build the list of intermediate pool pairs for the given multi-token path.
-        self.swap_pools = []
-        for address in swap_pool_addresses:
-            self.swap_pools.append(
-                LiquidityPool(
-                    address=address,
-                    update_method=update_method,
+        # if the object was initialized with pool objects directly, use these directly
+        if swap_pools:
+            self.swap_pools = swap_pools
+
+        # otherwise, create internal objects
+        else:
+            self.swap_pools = []
+            for address in swap_pool_addresses:
+                self.swap_pools.append(
+                    LiquidityPool(
+                        address=address,
+                        update_method=update_method,
+                    )
                 )
-            )
+
         self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
         self.swap_pool_tokens = [[pool.token0, pool.token1] for pool in self.swap_pools]
+
+        self.all_pool_addresses = [
+            pool.address for pool in self.swap_pools + [self.borrow_pool]
+        ]
 
         if name:
             self.name = name
@@ -68,6 +96,8 @@ class FlashBorrowToLpSwapNew:
             "swap_pool_tokens": self.swap_pool_tokens,
         }
 
+        self.update_reserves()
+
     def __str__(self):
         return self.name
 
@@ -88,21 +118,29 @@ class FlashBorrowToLpSwapNew:
             self.best["init"] = False
             recalculate = True
 
-        # flag for recalculation if the borrowing pool has been updated
-        if self.borrow_pool.update_reserves(
-            silent=silent,
-            print_reserves=print_reserves,
-            print_ratios=print_ratios,
-        ):
-            recalculate = True
+        if self._update_method != "external":
 
-        # flag for recalculation if any of the pools along the swap path have been updated
-        for pool in self.swap_pools:
-            if pool.update_reserves(
+            # flag for recalculation if the borrowing pool has been updated
+            if self.borrow_pool.update_reserves(
                 silent=silent,
                 print_reserves=print_reserves,
                 print_ratios=print_ratios,
             ):
+                recalculate = True
+
+            # flag for recalculation if any of the pools along the swap path have been updated
+            for pool in self.swap_pools:
+                if pool.update_reserves(
+                    silent=silent,
+                    print_reserves=print_reserves,
+                    print_ratios=print_ratios,
+                ):
+                    recalculate = True
+
+        if self.borrow_pool.new_reserves:
+            recalculate = True
+        for pool in self.swap_pools:
+            if pool.new_reserves:
                 recalculate = True
 
         if recalculate:
