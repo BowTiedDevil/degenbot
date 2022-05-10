@@ -7,12 +7,6 @@ from ..token import Erc20Token
 from ..router import Router
 from typing import List
 
-FACTORIES = {
-    "0x9Ad6C38BE94206cA50bb0d90783181662f0Cfa10": "TraderJoe",
-    "0xc35DADB65012eC5796536bD9864eD8773aBc74C4": "SushiSwap",
-    "0xefa94DE7a4656D787667C749f7E1223D71E9FD88": "Pangolin",
-}
-
 
 class LiquidityPool:
     def __init__(
@@ -78,17 +72,7 @@ class LiquidityPool:
         if name:
             self.name = name
         else:
-            factory_address = str(self._contract.factory())
-            if factory_address in FACTORIES.keys():
-                self.name = (
-                    FACTORIES[factory_address]
-                    + ": "
-                    + self.token0.symbol
-                    + "-"
-                    + self.token1.symbol
-                )
-            else:
-                self.name = f"Unknown: {self.token0.symbol}-{self.token1.symbol}"
+            self.name = f"Unknown: {self.token0.symbol}-{self.token1.symbol}"
 
         self.reserves_token0, self.reserves_token1 = self._contract.getReserves()[0:2]
 

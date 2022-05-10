@@ -72,7 +72,6 @@ class FlashBorrowToLpSwapNew:
                 + " -> ".join([pool.name for pool in self.swap_pools])
             )
 
-        # TODO: build assert to check for valid path through swap_pools
         assert self.borrow_token.address in [
             self.swap_pools[0].token0.address,
             self.swap_pools[0].token1.address,
@@ -82,6 +81,40 @@ class FlashBorrowToLpSwapNew:
             self.swap_pools[-1].token0.address,
             self.swap_pools[-1].token1.address,
         ], "Repay token not found in the last swap pool"
+
+        if self.swap_pools[0].token0.address == borrow_token.address:
+            forward_token_address = self.swap_pools[0].token1.address
+        else:
+            forward_token_address = self.swap_pools[0].token0.address
+
+        token_in_address = forward_token_address
+        for pool in self.swap_pools:
+            if pool.token0.address == token_in_address:
+                forward_token_address = pool.token1.address
+            elif pool.token1.address == token_in_address:
+                forward_token_address = pool.token0.address
+            else:
+                raise Exception("Swap pools are invalid, no swap route possible!")
+
+        # check that successive pools share a common token
+        for i in range(len(self.swap_pools) - 1):
+            assert (
+                len(
+                    set(
+                        [
+                            self.swap_pools[i].token0.address,
+                            self.swap_pools[i].token1.address,
+                        ]
+                    )
+                    & set(
+                        [
+                            self.swap_pools[i + 1].token0.address,
+                            self.swap_pools[i + 1].token1.address,
+                        ]
+                    )
+                )
+                == 1
+            ), f"swap pools {i} and {i+1} do not share a common token!"
 
         self.best = {
             "init": True,
