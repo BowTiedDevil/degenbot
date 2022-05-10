@@ -96,26 +96,6 @@ class FlashBorrowToLpSwapNew:
             else:
                 raise Exception("Swap pools are invalid, no swap route possible!")
 
-        # check that successive pools share a common token
-        for i in range(len(self.swap_pools) - 1):
-            assert (
-                len(
-                    set(
-                        [
-                            self.swap_pools[i].token0.address,
-                            self.swap_pools[i].token1.address,
-                        ]
-                    )
-                    & set(
-                        [
-                            self.swap_pools[i + 1].token0.address,
-                            self.swap_pools[i + 1].token1.address,
-                        ]
-                    )
-                )
-                == 1
-            ), f"swap pools {i} and {i+1} do not share a common token!"
-
         self.best = {
             "init": True,
             "borrow_amount": 0,
