@@ -259,8 +259,17 @@ class LiquidityPool:
             assert (
                 external_token0_reserves and external_token1_reserves
             ), "Reserve values must be provided for both tokens!"
-            self.reserves_token0 = external_token0_reserves
-            self.reserves_token1 = external_token1_reserves
+
+            # skip follow-up processing if the LP object already has the latest reserves
+            if (
+                external_token0_reserves == self.reserves_token0
+                and external_token1_reserves == self.reserves_token1
+            ):
+                return False
+            else:
+                self.reserves_token0 = external_token0_reserves
+                self.reserves_token1 = external_token1_reserves
+
             if not silent:
                 print(
                     f"[{self.name} - {datetime.datetime.now().strftime('%I:%M:%S %p')}]"
