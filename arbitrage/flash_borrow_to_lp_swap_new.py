@@ -302,11 +302,13 @@ class FlashBorrowToLpSwapNew:
                 print("wtf?")
                 raise Exception
 
+            print(f"swapping in {token_in_quantity} {token_in}")
             # calculate the swap output through pool[i]
             token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
             )
+            print(f"swapped for {token_out_quantity}")
 
             if token_in.address == self.swap_pools[i].token0.address:
                 pools_amounts_out.append([0, token_out_quantity])

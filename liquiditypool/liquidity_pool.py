@@ -164,20 +164,18 @@ class LiquidityPool:
         and uses the appropriate formula
         """
         if token_in.address == self.token0.address:
-            return int(
-                self.reserves_token1
-                * token_in_quantity
-                * (1 - self.fee)
-                // (self.reserves_token0 + token_in_quantity * (1 - self.fee))
-            )
+            reserves_in = self.reserves_token0
+            reserves_out = self.reserves_token1
+        elif token_in.address == self.token1.address:
+            reserves_in = self.reserves_token1
+            reserves_out = self.reserves_token0
 
-        if token_in.address == self.token1.address:
-            return int(
-                self.reserves_token0
-                * token_in_quantity
-                * (1 - self.fee)
-                // (self.reserves_token1 + token_in_quantity * (1 - self.fee))
-            )
+        amount_in_with_fee = token_in_quantity * (
+            self.fee.denominator - self.fee.numerator
+        )
+        numerator = amount_in_with_fee * reserves_out
+        denominator = reserves_in * self.fee.denominator + amount_in_with_fee
+        return numerator // denominator
 
     def set_swap_target(
         self,
