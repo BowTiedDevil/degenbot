@@ -34,8 +34,8 @@ class LiquidityPool:
         self._sync_filter_active = False
         self._ratio_token0_in = None
         self._ratio_token1_in = None
-        self.new_reserves = False
-
+        self.new_reserves = None
+        
         try:
             self._contract = brownie.Contract(self.address)
             self.abi = self._contract.abi
@@ -269,6 +269,7 @@ class LiquidityPool:
             else:
                 self.reserves_token0 = external_token0_reserves
                 self.reserves_token1 = external_token1_reserves
+                self.new_reserves = True
 
             if not silent:
                 print(
@@ -285,7 +286,6 @@ class LiquidityPool:
                         f"{self.token1.symbol}/{self.token0.symbol}: {self.reserves_token1 / self.reserves_token0}"
                     )
             self.calculate_tokens_in_from_ratio_out()
-            self.new_reserves = True
             return True
 
         elif self._update_method == "event":

@@ -122,7 +122,7 @@ class FlashBorrowToLpSwapNew:
     ) -> bool:
         """
         Checks each liquidity pool for updates by passing a call to .update_reserves(), which returns False if there are no updates.
-        Will calculate arbitrage amounts only after checking all pools and finding an update, or on startup (via the 'init' dictionary key)
+        Will calculate arbitrage amounts only after checking all pools and finding a reason to update, or on startup (via the 'init' dictionary key)
         """
         recalculate = False
 
@@ -151,9 +151,11 @@ class FlashBorrowToLpSwapNew:
                     recalculate = True
 
         if self.borrow_pool.new_reserves:
+            #print("new borrow reserves found, recalculating")
             recalculate = True
         for pool in self.swap_pools:
             if pool.new_reserves:
+                #print("new swap pool reserves found, recalculating")
                 recalculate = True
 
         if recalculate:
