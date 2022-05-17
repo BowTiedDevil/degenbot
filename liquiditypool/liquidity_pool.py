@@ -220,13 +220,14 @@ class LiquidityPool:
         print_ratios: bool = True,
         external_token0_reserves: bool = None,
         external_token1_reserves: bool = None,
+        override_update_method: str = None,
     ) -> bool:
         """
         Checks for updated reserve values when set to "polling", otherwise
         if set to "external" assumes that internal LP reserves are valid and recalculates token ratios
         """
 
-        if self._update_method == "polling":
+        if self._update_method == "polling" or override_update_method == "polling":
             try:
                 result = self._contract.getReserves()[0:2]
                 # Compare reserves to last-known values,
