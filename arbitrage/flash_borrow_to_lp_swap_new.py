@@ -151,11 +151,9 @@ class FlashBorrowToLpSwapNew:
                     recalculate = True
 
         if self.borrow_pool.new_reserves:
-            #print("new borrow reserves found, recalculating")
             recalculate = True
         for pool in self.swap_pools:
             if pool.new_reserves:
-                #print("new swap pool reserves found, recalculating")
                 recalculate = True
 
         if recalculate:
