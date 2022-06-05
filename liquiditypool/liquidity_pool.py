@@ -71,7 +71,7 @@ class LiquidityPool:
         if name:
             self.name = name
         else:
-            self.name = f"Unknown: {self.token0.symbol}-{self.token1.symbol}"
+            self.name = f"{self.token0.symbol}-{self.token1.symbol}"
 
         self.reserves_token0, self.reserves_token1 = self._contract.getReserves()[0:2]
 
