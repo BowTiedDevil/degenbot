@@ -126,12 +126,12 @@ class FlashBorrowToLpSwapNew:
         """
         recalculate = False
 
-        # calculate initial arbitrage after the object is instantiated, otherwise proceed with normal checks
-        if self.best["init"] == True:
-            self.best["init"] = False
-            recalculate = True
-
         if self._update_method != "external":
+
+            # calculate initial arbitrage after the object is instantiated, otherwise proceed with normal checks
+            if self.best["init"] == True:
+                self.best["init"] = False
+                recalculate = True
 
             # flag for recalculation if the borrowing pool has been updated
             if self.borrow_pool.update_reserves(

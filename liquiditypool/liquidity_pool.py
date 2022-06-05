@@ -20,6 +20,7 @@ class LiquidityPool:
         # default fee for most UniswapV2 AMMs is 0.3%
         fee: Fraction = Fraction(3, 1000),
         silent: bool = False,
+        update_reserves_on_start: bool = True,
     ) -> None:
 
         # transforms to checksummed address, prevents web3's event filter from throwing errors
@@ -73,7 +74,12 @@ class LiquidityPool:
         else:
             self.name = f"{self.token0.symbol}-{self.token1.symbol}"
 
-        self.reserves_token0, self.reserves_token1 = self._contract.getReserves()[0:2]
+        if update_reserves_on_start:
+            self.reserves_token0, self.reserves_token1 = self._contract.getReserves()[
+                0:2
+            ]
+        else:
+            self.reserves_token0 = self.reserves_token1 = 0
 
         if self._update_method == "event":
             print("***")
