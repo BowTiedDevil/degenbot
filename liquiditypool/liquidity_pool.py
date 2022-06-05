@@ -1,11 +1,11 @@
 import datetime
-import json
 import brownie
+import time
 from decimal import Decimal
 from fractions import Fraction
+from typing import List
 from ..token import Erc20Token
 from ..router import Router
-from typing import List
 
 
 class LiquidityPool:
@@ -30,11 +30,10 @@ class LiquidityPool:
 
         self.fee = fee
         self._update_method = update_method
-        self._sync_filter = None
-        self._sync_filter_active = False
         self._ratio_token0_in = None
         self._ratio_token1_in = None
         self.new_reserves = None
+        self.update_timestamp = None
 
         try:
             self._contract = brownie.Contract(self.address)
@@ -79,7 +78,7 @@ class LiquidityPool:
         if self._update_method == "event":
             print("***")
             print(
-                "DEPRECATION WARNING: the 'event' update method is inaccurate, please update your bot to use the default 'polling' method going forward"
+                "DEPRECATION WARNING: the 'event' update method is inaccurate, please update your bot to use the default 'polling' method"
             )
             print("***")
             raise Exception
@@ -226,6 +225,9 @@ class LiquidityPool:
         Checks for updated reserve values when set to "polling", otherwise
         if set to "external" assumes that internal LP reserves are valid and recalculates token ratios
         """
+
+        # record the last time this LP was updated
+        self.update_timestamp = time.monotonic()
 
         if self._update_method == "polling" or override_update_method == "polling":
             try:
