@@ -314,9 +314,9 @@ class FlashBorrowToLpSwapNew:
                 pools_amounts_out.append([token_out_quantity, 0])
 
             if i == number_of_pools - 1:
-                # if we've reached the last pool, return the amounts_out list
+                # if we've reached the last pool, return the pool_amounts_out list
                 return pools_amounts_out
             else:
-                # otherwise, use the output as input on the next loop
+                # otherwise, feed the results back into the loop
                 token_in = token_out
                 token_in_quantity = token_out_quantity

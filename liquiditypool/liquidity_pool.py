@@ -23,7 +23,7 @@ class LiquidityPool:
         update_reserves_on_start: bool = True,
     ) -> None:
 
-        # transforms to checksummed address, prevents web3's event filter from throwing errors
+        # transforms to checksummed address
         self.address = brownie.convert.to_address(address)
 
         if router:
@@ -49,6 +49,8 @@ class LiquidityPool:
             else:
                 self._contract = brownie.Contract.from_explorer(address=self.address)
                 self.abi = self._contract.abi
+
+        self.factory = brownie.convert.to_address(self._contract.factory())
 
         # if a token pair was provided, check and set pointers for token0 and token1
         if tokens:
