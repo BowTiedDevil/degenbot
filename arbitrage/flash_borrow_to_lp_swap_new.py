@@ -109,6 +109,19 @@ class FlashBorrowToLpSwapNew:
             "swap_pool_tokens": self.swap_pool_tokens,
         }
 
+        self.best_future = {
+            "init": True,
+            "borrow_amount": 0,
+            "borrow_token": self.borrow_token,
+            "borrow_pool_amounts": [],
+            "repay_amount": 0,
+            "profit_amount": 0,
+            "profit_token": self.repay_token,
+            "swap_pools": self.swap_pools,
+            "swap_pool_amounts": [],
+            "swap_pool_tokens": self.swap_pool_tokens,
+        }
+
         self.update_reserves()
 
     def _build_multipool_amounts_out(
