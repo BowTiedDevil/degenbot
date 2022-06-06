@@ -1,4 +1,3 @@
-import datetime
 import brownie
 import time
 from decimal import Decimal
@@ -274,9 +273,7 @@ class LiquidityPool:
                 self.new_reserves = True
 
             if not silent:
-                print(
-                    f"[{self.name} - {datetime.datetime.now().strftime('%I:%M:%S %p')}]"
-                )
+                print(f"[{self.name}]")
                 if print_reserves:
                     print(f"{self.token0.symbol}: {self.reserves_token0}")
                     print(f"{self.token1.symbol}: {self.reserves_token1}")
