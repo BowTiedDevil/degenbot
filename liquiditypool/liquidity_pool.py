@@ -96,10 +96,7 @@ class LiquidityPool:
             print(f"• Token 0: {self.token0.symbol} - Reserves: {self.reserves_token0}")
             print(f"• Token 1: {self.token1.symbol} - Reserves: {self.reserves_token1}")
 
-    def __eq__(
-        self,
-        other,
-    ) -> bool:
+    def __eq__(self, other) -> bool:
         return self.address == other.address
 
     def __str__(self):
@@ -136,9 +133,7 @@ class LiquidityPool:
             self.token1_max_swap = 0
 
     def calculate_tokens_in_from_tokens_out(
-        self,
-        token_in: Erc20Token,
-        token_out_quantity: int,
+        self, token_in: Erc20Token, token_out_quantity: int
     ) -> int:
         """
         Calculates the required token INPUT of token_in for a target OUTPUT at current pool reserves.
@@ -161,9 +156,7 @@ class LiquidityPool:
             )
 
     def calculate_tokens_out_from_tokens_in(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
+        self, token_in: Erc20Token, token_in_quantity: int
     ) -> int:
         """
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
