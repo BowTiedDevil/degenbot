@@ -149,27 +149,50 @@ class FlashBorrowToLpSwapNew:
                 token_in = token_out
                 token_in_quantity = token_out_quantity
 
-    def _calculate_arbitrage(self):
+    def _calculate_arbitrage(
+        self,
+        override_future: bool = False,
+        override_future_borrow_pool_reserves_token0: int = 0,
+        override_future_borrow_pool_reserves_token1: int = 0,
+    ):
+
+        if override_future:
+            assert (
+                override_future_borrow_pool_reserves_token0 != 0
+                and override_future_borrow_pool_reserves_token1 != 0
+            ), "Must override reserves for token0 and token1"
+            reserves_token0 = override_future_borrow_pool_reserves_token0
+            reserves_token1 = override_future_borrow_pool_reserves_token1
+        else:
+            assert (
+                override_future_borrow_pool_reserves_token0 == 0
+                and override_future_borrow_pool_reserves_token1 == 0
+            ), "Do not provide override reserves without setting override_future = True"
+            reserves_token0 = self.borrow_pool.reserves_token0
+            reserves_token1 = self.borrow_pool.reserves_token1
 
         # set up the boundaries for the Brent optimizer based on which token is being borrowed
         if self.borrow_token.address == self.borrow_pool.token0.address:
             bounds = (
                 1,
-                self.borrow_pool.reserves_token0,
+                reserves_token0,
             )
             bracket = (
-                0.01 * self.borrow_pool.reserves_token0,
-                0.05 * self.borrow_pool.reserves_token0,
+                0.01 * reserves_token0,
+                0.05 * reserves_token0,
             )
-        else:
+        elif self.borrow_token.address == self.borrow_pool.token1.address:
             bounds = (
                 1,
-                self.borrow_pool.reserves_token1,
+                reserves_token1,
             )
             bracket = (
-                0.01 * self.borrow_pool.reserves_token1,
-                0.05 * self.borrow_pool.reserves_token1,
+                0.01 * reserves_token1,
+                0.05 * reserves_token1,
             )
+        else:
+            print("WTF? Could not identify borrow token")
+            raise Exception
 
         opt = optimize.minimize_scalar(
             lambda x: -float(
@@ -203,30 +226,55 @@ class FlashBorrowToLpSwapNew:
         )
         best_profit = -int(opt.fun)
 
-        # only save opportunities with rational, positive values
-        if best_borrow > 0 and best_profit > 0:
-            self.best.update(
-                {
-                    "borrow_amount": best_borrow,
-                    "borrow_pool_amounts": borrow_amounts,
-                    "repay_amount": best_repay,
-                    "profit_amount": best_profit,
-                    "swap_pool_amounts": self._build_multipool_amounts_out(
-                        token_in=self.borrow_token,
-                        token_in_quantity=best_borrow,
-                    ),
-                }
-            )
+        if override_future:
+            if best_borrow > 0 and best_profit > 0:
+                self.best_future.update(
+                    {
+                        "borrow_amount": best_borrow,
+                        "borrow_pool_amounts": borrow_amounts,
+                        "repay_amount": best_repay,
+                        "profit_amount": best_profit,
+                        "swap_pool_amounts": self._build_multipool_amounts_out(
+                            token_in=self.borrow_token,
+                            token_in_quantity=best_borrow,
+                        ),
+                    }
+                )
+            else:
+                self.best_future.update(
+                    {
+                        "borrow_amount": 0,
+                        "borrow_pool_amounts": [],
+                        "repay_amount": 0,
+                        "profit_amount": 0,
+                        "swap_pool_amounts": [],
+                    }
+                )
         else:
-            self.best.update(
-                {
-                    "borrow_amount": 0,
-                    "borrow_pool_amounts": [],
-                    "repay_amount": 0,
-                    "profit_amount": 0,
-                    "swap_pool_amounts": [],
-                }
-            )
+            # only save opportunities with rational, positive values
+            if best_borrow > 0 and best_profit > 0:
+                self.best.update(
+                    {
+                        "borrow_amount": best_borrow,
+                        "borrow_pool_amounts": borrow_amounts,
+                        "repay_amount": best_repay,
+                        "profit_amount": best_profit,
+                        "swap_pool_amounts": self._build_multipool_amounts_out(
+                            token_in=self.borrow_token,
+                            token_in_quantity=best_borrow,
+                        ),
+                    }
+                )
+            else:
+                self.best.update(
+                    {
+                        "borrow_amount": 0,
+                        "borrow_pool_amounts": [],
+                        "repay_amount": 0,
+                        "profit_amount": 0,
+                        "swap_pool_amounts": [],
+                    }
+                )
 
     def __str__(self) -> str:
         return self.name
@@ -273,6 +321,9 @@ class FlashBorrowToLpSwapNew:
         silent: bool = False,
         print_reserves: bool = True,
         print_ratios: bool = True,
+        override_future: bool = False,
+        override_future_borrow_pool_reserves_token0: int = 0,
+        override_future_borrow_pool_reserves_token1: int = 0,
     ) -> bool:
         """
         Checks each liquidity pool for updates by passing a call to .update_reserves(), which returns False if there are no updates.
@@ -311,7 +362,11 @@ class FlashBorrowToLpSwapNew:
                 recalculate = True
 
         if recalculate:
-            self._calculate_arbitrage()
+            self._calculate_arbitrage(
+                override_future=override_future,
+                override_future_borrow_pool_reserves_token0=override_future_borrow_pool_reserves_token0,
+                override_future_borrow_pool_reserves_token1=override_future_borrow_pool_reserves_token1,
+            )
             return True
         else:
             return False
