@@ -178,9 +178,9 @@ class LiquidityPool:
 
     def set_swap_target(
         self,
-        token_in: str,
+        token_in: Erc20Token,
         token_in_qty,
-        token_out: str,
+        token_out: Erc20Token,
         token_out_qty,
         silent: bool = False,
     ):
