@@ -126,7 +126,7 @@ class FlashBorrowToLpSwapNew:
 
     def _build_multipool_amounts_out(
         self, token_in: Erc20Token, token_in_quantity: int
-    ) -> List[list]:
+    ) -> List[list[int, int]]:
 
         number_of_pools = len(self.swap_pools)
 
