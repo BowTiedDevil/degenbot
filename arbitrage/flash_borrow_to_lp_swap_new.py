@@ -128,8 +128,11 @@ class FlashBorrowToLpSwapNew:
         self.update_reserves()
 
     def _build_multipool_amounts_out(
-        self, token_in: Erc20Token, token_in_quantity: int
-    ) -> List[List[int, int]]:
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        # TODO: fix type hint for output (list of lists of ints), Python 3.8 throws errors
+    ) -> List[list]:
 
         number_of_pools = len(self.swap_pools)
 
