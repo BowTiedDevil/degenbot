@@ -131,8 +131,7 @@ class FlashBorrowToLpSwapNew:
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        # TODO: fix type hint for output (list of lists of ints), Python 3.8 throws errors
-    ) -> List[list]:
+    ) -> List[List[int]]:
 
         number_of_pools = len(self.swap_pools)
 
