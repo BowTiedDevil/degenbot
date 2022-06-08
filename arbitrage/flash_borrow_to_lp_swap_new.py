@@ -189,29 +189,28 @@ class FlashBorrowToLpSwapNew:
             reserves_token0 = self.borrow_pool.reserves_token0
             reserves_token1 = self.borrow_pool.reserves_token1
 
-        # WIP: remove this if unneeded
-        # # set up the boundaries for the Brent optimizer based on which token is being borrowed
-        # if self.borrow_token.address == self.borrow_pool.token0.address:
-        #     bounds = (
-        #         1,
-        #         reserves_token0,
-        #     )
-        #     bracket = (
-        #         0.001 * reserves_token0,
-        #         0.05 * reserves_token0,
-        #     )
-        # elif self.borrow_token.address == self.borrow_pool.token1.address:
-        #     bounds = (
-        #         1,
-        #         reserves_token1,
-        #     )
-        #     bracket = (
-        #         0.001 * reserves_token1,
-        #         0.05 * reserves_token1,
-        #     )
-        # else:
-        #     print("WTF? Could not identify borrow token")
-        #     raise Exception
+        # set up the boundaries for the Brent optimizer based on which token is being borrowed
+        if self.borrow_token.address == self.borrow_pool.token0.address:
+            bounds = (
+                1,
+                reserves_token0,
+            )
+            bracket = (
+                0.001 * reserves_token0,
+                0.01 * reserves_token0,
+            )
+        elif self.borrow_token.address == self.borrow_pool.token1.address:
+            bounds = (
+                1,
+                reserves_token1,
+            )
+            bracket = (
+                0.001 * reserves_token1,
+                0.01 * reserves_token1,
+            )
+        else:
+            print("WTF? Could not identify borrow token")
+            raise Exception
 
         # TODO: extend calculate_multipool_tokens_out_from_tokens_in() to support overriding token reserves for an arbitrary pool,
         # currently only supports overriding the borrow pool reserves
@@ -228,7 +227,9 @@ class FlashBorrowToLpSwapNew:
                     override_reserves_token1=override_future_borrow_pool_reserves_token1,
                 )
             ),
-            method="brent",
+            method="bounded",
+            bounds=bounds,
+            bracket=bracket,
         )
 
         best_borrow = int(opt.x)
