@@ -100,24 +100,27 @@ class FlashBorrowToLpSwapNew:
             "init": True,
             "borrow_amount": 0,
             "borrow_token": self.borrow_token,
+            "borrow_pool": self.borrow_pool,
             "borrow_pool_amounts": [],
             "repay_amount": 0,
             "profit_amount": 0,
             "profit_token": self.repay_token,
             "swap_pools": self.swap_pools,
+            "swap_pool_addresses": self.swap_pool_addresses,
             "swap_pool_amounts": [],
             "swap_pool_tokens": self.swap_pool_tokens,
         }
 
         self.best_future = {
-            "init": True,
             "borrow_amount": 0,
             "borrow_token": self.borrow_token,
+            "borrow_pool": self.borrow_pool,
             "borrow_pool_amounts": [],
             "repay_amount": 0,
             "profit_amount": 0,
             "profit_token": self.repay_token,
             "swap_pools": self.swap_pools,
+            "swap_pool_addresses": self.swap_pool_addresses,
             "swap_pool_amounts": [],
             "swap_pool_tokens": self.swap_pool_tokens,
         }
@@ -184,29 +187,32 @@ class FlashBorrowToLpSwapNew:
             reserves_token0 = self.borrow_pool.reserves_token0
             reserves_token1 = self.borrow_pool.reserves_token1
 
-        # set up the boundaries for the Brent optimizer based on which token is being borrowed
-        if self.borrow_token.address == self.borrow_pool.token0.address:
-            bounds = (
-                1,
-                reserves_token0,
-            )
-            bracket = (
-                0.01 * reserves_token0,
-                0.05 * reserves_token0,
-            )
-        elif self.borrow_token.address == self.borrow_pool.token1.address:
-            bounds = (
-                1,
-                reserves_token1,
-            )
-            bracket = (
-                0.01 * reserves_token1,
-                0.05 * reserves_token1,
-            )
-        else:
-            print("WTF? Could not identify borrow token")
-            raise Exception
+        # WIP: remove this if unneeded
+        # # set up the boundaries for the Brent optimizer based on which token is being borrowed
+        # if self.borrow_token.address == self.borrow_pool.token0.address:
+        #     bounds = (
+        #         1,
+        #         reserves_token0,
+        #     )
+        #     bracket = (
+        #         0.001 * reserves_token0,
+        #         0.05 * reserves_token0,
+        #     )
+        # elif self.borrow_token.address == self.borrow_pool.token1.address:
+        #     bounds = (
+        #         1,
+        #         reserves_token1,
+        #     )
+        #     bracket = (
+        #         0.001 * reserves_token1,
+        #         0.05 * reserves_token1,
+        #     )
+        # else:
+        #     print("WTF? Could not identify borrow token")
+        #     raise Exception
 
+        # TODO: extend calculate_multipool_tokens_out_from_tokens_in() to support overriding token reserves for an arbitrary pool,
+        # currently only supports overriding the borrow pool reserves
         opt = optimize.minimize_scalar(
             lambda x: -float(
                 self.calculate_multipool_tokens_out_from_tokens_in(
@@ -216,11 +222,11 @@ class FlashBorrowToLpSwapNew:
                 - self.borrow_pool.calculate_tokens_in_from_tokens_out(
                     token_in=self.repay_token,
                     token_out_quantity=x,
+                    override_reserves_token0=override_future_borrow_pool_reserves_token0,
+                    override_reserves_token1=override_future_borrow_pool_reserves_token1,
                 )
             ),
-            method="bounded",
-            bounds=bounds,
-            bracket=bracket,
+            method="brent",
         )
 
         best_borrow = int(opt.x)
@@ -233,9 +239,12 @@ class FlashBorrowToLpSwapNew:
             print("wtf?")
             raise Exception
 
+        # TODO: fix the calculate_tokens_in_from_tokens_out() function to deal with overridden reserves
         best_repay = self.borrow_pool.calculate_tokens_in_from_tokens_out(
             token_in=self.repay_token,
             token_out_quantity=best_borrow,
+            override_reserves_token0=override_future_borrow_pool_reserves_token0,
+            override_reserves_token1=override_future_borrow_pool_reserves_token1,
         )
         best_profit = -int(opt.fun)
 
@@ -368,11 +377,25 @@ class FlashBorrowToLpSwapNew:
                 ):
                     recalculate = True
 
+        if override_future:
+
+            recalculate = True
+            assert (
+                override_future_borrow_pool_reserves_token0 != 0
+                and override_future_borrow_pool_reserves_token1 != 0
+            ), "Must override reserves for token0 and token1"
+        else:
+            assert (
+                override_future_borrow_pool_reserves_token0 == 0
+                and override_future_borrow_pool_reserves_token1 == 0
+            ), "Do not provide override reserves without setting override_future = True"
+
         if self.borrow_pool.new_reserves:
             recalculate = True
         for pool in self.swap_pools:
             if pool.new_reserves:
                 recalculate = True
+                break
 
         if recalculate:
             self._calculate_arbitrage(

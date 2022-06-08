@@ -132,7 +132,11 @@ class LiquidityPool:
             self.token1_max_swap = 0
 
     def calculate_tokens_in_from_tokens_out(
-        self, token_in: Erc20Token, token_out_quantity: int
+        self,
+        token_in: Erc20Token,
+        token_out_quantity: int,
+        override_reserves_token0: int = 0,
+        override_reserves_token1: int = 0,
     ) -> int:
         """
         Calculates the required token INPUT of token_in for a target OUTPUT at current pool reserves.
@@ -140,34 +144,65 @@ class LiquidityPool:
         and uses the appropriate formula
         """
 
-        if token_in.address == self.token0.address:
-            return int(
-                (self.reserves_token0 * token_out_quantity)
-                // ((1 - self.fee) * (self.reserves_token1 - token_out_quantity))
-                + 1
-            )
+        assert (override_reserves_token0 == 0 and override_reserves_token1 == 0) or (
+            override_reserves_token0 != 0 and override_reserves_token1 != 0
+        ), "Must provide override values for both token reserves"
 
-        if token_in.address == self.token1.address:
-            return int(
-                (self.reserves_token1 * token_out_quantity)
-                // ((1 - self.fee) * (self.reserves_token0 - token_out_quantity))
-                + 1
-            )
+        if token_in.address == self.token0.address:
+            if override_reserves_token0:
+                reserves_in = override_reserves_token0
+                reserves_out = override_reserves_token1
+            else:
+                reserves_in = self.reserves_token0
+                reserves_out = self.reserves_token1
+        elif token_in.address == self.token1.address:
+            if override_reserves_token1:
+                reserves_in = override_reserves_token1
+                reserves_out = override_reserves_token0
+            else:
+                reserves_in = self.reserves_token1
+                reserves_out = self.reserves_token0
+        else:
+            print("WTF?  Could not identify token_in")
+            raise Exception
+
+        return int(
+            (reserves_in * token_out_quantity)
+            // ((1 - self.fee) * (reserves_out - token_out_quantity))
+            + 1
+        )
 
     def calculate_tokens_out_from_tokens_in(
-        self, token_in: Erc20Token, token_in_quantity: int
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        override_reserves_token0: int = 0,
+        override_reserves_token1: int = 0,
     ) -> int:
         """
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         and uses the appropriate formula
         """
+
+        assert (override_reserves_token0 == 0 and override_reserves_token1 == 0) or (
+            override_reserves_token0 != 0 and override_reserves_token1 != 0
+        ), "Must provide override values for both token reserves"
+
         if token_in.address == self.token0.address:
-            reserves_in = self.reserves_token0
-            reserves_out = self.reserves_token1
+            if override_reserves_token0:
+                reserves_in = override_reserves_token0
+                reserves_out = override_reserves_token1
+            else:
+                reserves_in = self.reserves_token0
+                reserves_out = self.reserves_token1
         elif token_in.address == self.token1.address:
-            reserves_in = self.reserves_token1
-            reserves_out = self.reserves_token0
+            if override_reserves_token1:
+                reserves_in = override_reserves_token1
+                reserves_out = override_reserves_token0
+            else:
+                reserves_in = self.reserves_token1
+                reserves_out = self.reserves_token0
 
         amount_in_with_fee = token_in_quantity * (
             self.fee.denominator - self.fee.numerator
