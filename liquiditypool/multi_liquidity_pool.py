@@ -1,4 +1,3 @@
-import brownie
 from .liquidity_pool import LiquidityPool
 from ..token import Erc20Token
 from typing import List
