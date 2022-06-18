@@ -173,16 +173,20 @@ class FlashBorrowToLpSwapWithFuture:
         pool_overrides: list = None,
     ):
 
+        reserves_token0 = self.borrow_pool.reserves_token0
+        reserves_token1 = self.borrow_pool.reserves_token1
+
+        # override the borrowing pool reserves if any of the pools in pool_overrides
+        # reference this pool
         if override_future:
             for override in pool_overrides:
                 if override[0] == self.borrow_pool:
                     reserves_token0, reserves_token1 = override[1]
+                    print(reserves_token0, reserves_token1)
                     break
-        else:
-            reserves_token0 = self.borrow_pool.reserves_token0
-            reserves_token1 = self.borrow_pool.reserves_token1
 
-        # set up the boundaries for the Brent optimizer based on which token is being borrowed
+        # set up the boundaries for the Brent optimizer based on which token
+        # is being borrowed
         if self.borrow_token.address == self.borrow_pool.token0.address:
             bounds = (
                 1,
@@ -325,11 +329,13 @@ class FlashBorrowToLpSwapWithFuture:
                 raise Exception
 
             for override in pool_overrides:
+                # each override is a tuple of form (LiquidityPool, (reserve0,reserve1))
                 if override[0] == self.swap_pools[i]:
                     if token_in.address == self.swap_pools[i].token0.address:
                         token_in_quantity = override[1][0]
                     if token_in.address == self.swap_pools[i].token1.address:
                         token_in_quantity = override[1][1]
+                    break
 
             # calculate the swap output through pool[i]
             token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
