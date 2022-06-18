@@ -182,7 +182,6 @@ class FlashBorrowToLpSwapWithFuture:
             for override in pool_overrides:
                 if override[0] == self.borrow_pool:
                     reserves_token0, reserves_token1 = override[1]
-                    print(reserves_token0, reserves_token1)
                     break
 
         # set up the boundaries for the Brent optimizer based on which token
