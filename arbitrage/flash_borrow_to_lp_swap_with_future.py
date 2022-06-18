@@ -8,7 +8,7 @@ from ..token import Erc20Token
 # TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
 
 
-class FlashBorrowToLpSwapNew:
+class FlashBorrowToLpSwapWithFuture:
     def __init__(
         self,
         borrow_pool: LiquidityPool,
@@ -170,22 +170,15 @@ class FlashBorrowToLpSwapNew:
     def _calculate_arbitrage(
         self,
         override_future: bool = False,
-        override_future_borrow_pool_reserves_token0: int = 0,
-        override_future_borrow_pool_reserves_token1: int = 0,
+        pool_overrides: list = None,
     ):
 
         if override_future:
-            assert (
-                override_future_borrow_pool_reserves_token0 != 0
-                and override_future_borrow_pool_reserves_token1 != 0
-            ), "Must override reserves for token0 and token1"
-            reserves_token0 = override_future_borrow_pool_reserves_token0
-            reserves_token1 = override_future_borrow_pool_reserves_token1
+            for override in pool_overrides:
+                if override[0] == self.borrow_pool:
+                    reserves_token0, reserves_token1 = override[1]
+                    break
         else:
-            assert (
-                override_future_borrow_pool_reserves_token0 == 0
-                and override_future_borrow_pool_reserves_token1 == 0
-            ), "Do not provide override reserves without setting override_future = True"
             reserves_token0 = self.borrow_pool.reserves_token0
             reserves_token1 = self.borrow_pool.reserves_token1
 
@@ -212,19 +205,20 @@ class FlashBorrowToLpSwapNew:
             print("WTF? Could not identify borrow token")
             raise Exception
 
-        # TODO: extend calculate_multipool_tokens_out_from_tokens_in() to support overriding token reserves for an arbitrary pool,
-        # currently only supports overriding the borrow pool reserves
+        # TODO: extend calculate_multipool_tokens_out_from_tokens_in() to support overriding token reserves
+        # for an arbitrary pool, currently only supports overriding the borrow pool reserves
         opt = optimize.minimize_scalar(
             lambda x: -float(
                 self.calculate_multipool_tokens_out_from_tokens_in(
                     token_in=self.borrow_token,
                     token_in_quantity=x,
+                    pool_overrides=pool_overrides,
                 )
                 - self.borrow_pool.calculate_tokens_in_from_tokens_out(
                     token_in=self.repay_token,
                     token_out_quantity=x,
-                    override_reserves_token0=override_future_borrow_pool_reserves_token0,
-                    override_reserves_token1=override_future_borrow_pool_reserves_token1,
+                    override_reserves_token0=reserves_token0,
+                    override_reserves_token1=reserves_token1,
                 )
             ),
             method="bounded",
@@ -245,8 +239,8 @@ class FlashBorrowToLpSwapNew:
         best_repay = self.borrow_pool.calculate_tokens_in_from_tokens_out(
             token_in=self.repay_token,
             token_out_quantity=best_borrow,
-            override_reserves_token0=override_future_borrow_pool_reserves_token0,
-            override_reserves_token1=override_future_borrow_pool_reserves_token1,
+            override_reserves_token0=reserves_token0,
+            override_reserves_token1=reserves_token1,
         )
         best_profit = -int(opt.fun)
 
@@ -304,12 +298,17 @@ class FlashBorrowToLpSwapNew:
         return self.name
 
     def calculate_multipool_tokens_out_from_tokens_in(
-        self, token_in: Erc20Token, token_in_quantity: int
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        pool_overrides: list = None,
     ) -> int:
         """
-        Calculates the expected token OUTPUT from the last pool for a given token INPUT to the first pool at current pool reserves.
-        Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
-        and uses the appropriate formula
+        Calculates the expected token OUTPUT from the last pool for a given token INPUT to the first pool
+        at current pool reserves. Uses the self.token0 and self.token1 pointers to determine which token
+        is being swapped in and uses the appropriate formula
+
+        2022-06-14 update: add support for overriding pool reserves
         """
 
         number_of_pools = len(self.swap_pools)
@@ -325,6 +324,13 @@ class FlashBorrowToLpSwapNew:
                 print("wtf?")
                 raise Exception
 
+            for override in pool_overrides:
+                if override[0] == self.swap_pools[i]:
+                    if token_in.address == self.swap_pools[i].token0.address:
+                        token_in_quantity = override[1][0]
+                    if token_in.address == self.swap_pools[i].token1.address:
+                        token_in_quantity = override[1][1]
+
             # calculate the swap output through pool[i]
             token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
@@ -332,8 +338,7 @@ class FlashBorrowToLpSwapNew:
             )
 
             if i == number_of_pools - 1:
-                # if we've reached the last pool, build the amounts_out list and then
-                # return the output amount
+                # if we've reached the last pool, return the output amount
                 return token_out_quantity
             else:
                 # otherwise, use the output as input on the next loop
@@ -346,9 +351,7 @@ class FlashBorrowToLpSwapNew:
         print_reserves: bool = True,
         print_ratios: bool = True,
         override_future: bool = False,
-        override_future_borrow_pool_reserves_token0: int = 0,
-        override_future_borrow_pool_reserves_token1: int = 0,
-        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int,int]]]] = [],
+        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
     ) -> bool:
         """
         Checks each liquidity pool for updates by passing a call to .update_reserves(), which returns False if there are no updates.
@@ -381,17 +384,20 @@ class FlashBorrowToLpSwapNew:
                     recalculate = True
 
         if override_future:
-
             recalculate = True
-            assert (
-                override_future_borrow_pool_reserves_token0 != 0
-                and override_future_borrow_pool_reserves_token1 != 0
-            ), "Must override reserves for token0 and token1"
+            assert pool_overrides, "Overrides must be provided!"
+            assert len(pool_overrides) <= len(self.swap_pools) + 1
+            for override in pool_overrides:
+                assert type(override[0]) is LiquidityPool
+                assert type(override[1]) is tuple
+                assert len(override[1]) == 2
+                assert type(override[1][0]) is int
+                assert type(override[1][1]) is int
+                assert override[0] == self.borrow_pool or override[0] in self.swap_pools
         else:
             assert (
-                override_future_borrow_pool_reserves_token0 == 0
-                and override_future_borrow_pool_reserves_token1 == 0
-            ), "Do not provide override reserves without setting override_future = True"
+                not pool_overrides
+            ), "Must not provide overrides without override_future = True"
 
         if self.borrow_pool.new_reserves:
             recalculate = True
@@ -403,8 +409,7 @@ class FlashBorrowToLpSwapNew:
         if recalculate:
             self._calculate_arbitrage(
                 override_future=override_future,
-                override_future_borrow_pool_reserves_token0=override_future_borrow_pool_reserves_token0,
-                override_future_borrow_pool_reserves_token1=override_future_borrow_pool_reserves_token1,
+                pool_overrides=pool_overrides,
             )
             return True
         else:
