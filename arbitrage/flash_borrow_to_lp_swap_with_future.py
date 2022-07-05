@@ -202,8 +202,8 @@ class FlashBorrowToLpSwapWithFuture:
         # is being borrowed
         if self.borrow_token.address == self.borrow_pool.token0.address:
             bounds = (
-                0,
-                borrow_pool_reserves_token0,
+                1,
+                borrow_pool_reserves_token0 - 1,
             )
             bracket = (
                 0.001 * borrow_pool_reserves_token0,
@@ -211,15 +211,15 @@ class FlashBorrowToLpSwapWithFuture:
             )
         elif self.borrow_token.address == self.borrow_pool.token1.address:
             bounds = (
-                0,
-                borrow_pool_reserves_token1,
+                1,
+                borrow_pool_reserves_token1 - 1,
             )
             bracket = (
                 0.001 * borrow_pool_reserves_token1,
                 0.01 * borrow_pool_reserves_token1,
             )
         else:
-            print("WTF? Could not identify borrow token")
+            print("_calculate_arbitrage: WTF? Could not identify borrow token")
             raise Exception
 
         opt = optimize.minimize_scalar(
@@ -239,7 +239,10 @@ class FlashBorrowToLpSwapWithFuture:
             method="bounded",
             bounds=bounds,
             bracket=bracket,
-            options={"xatol": 1.0},
+            options={
+                "xatol": 1.0,
+                # "disp": 3,
+            },
         )
 
         best_borrow = int(opt.x)
@@ -249,7 +252,7 @@ class FlashBorrowToLpSwapWithFuture:
         elif self.borrow_token.address == self.borrow_pool.token1.address:
             borrow_amounts = [0, best_borrow]
         else:
-            print("wtf?")
+            print("_calculate_arbitrage: WTF? Could not identify borrow token")
             raise Exception
 
         best_repay = self.borrow_pool.calculate_tokens_in_from_tokens_out(
