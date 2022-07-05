@@ -1,4 +1,5 @@
 from brownie import Contract
+from brownie.convert.datatypes import Wei
 from scipy import optimize
 from fractions import Fraction
 from typing import List, Tuple
@@ -131,6 +132,7 @@ class FlashBorrowToLpSwapWithFuture:
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
+        pool_overrides: list = [],
     ) -> List[List[int]]:
 
         number_of_pools = len(self.swap_pools)
@@ -148,10 +150,21 @@ class FlashBorrowToLpSwapWithFuture:
                 print("wtf?")
                 raise Exception
 
+            # value of 0 will result in the default behavior (no reserve overrides)
+            override_reserves_token0 = 0
+            override_reserves_token1 = 0
+
+            # override the reserves if found in pool_overrides
+            for override in pool_overrides:
+                if override[0] == self.swap_pools[i]:
+                    override_reserves_token0, override_reserves_token1 = override[1]
+
             # calculate the swap output through pool[i]
             token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
+                override_reserves_token0=override_reserves_token0,
+                override_reserves_token1=override_reserves_token1,
             )
 
             if token_in.address == self.swap_pools[i].token0.address:
@@ -173,43 +186,42 @@ class FlashBorrowToLpSwapWithFuture:
         pool_overrides: list = None,
     ):
 
-        reserves_token0 = self.borrow_pool.reserves_token0
-        reserves_token1 = self.borrow_pool.reserves_token1
+        borrow_pool_reserves_token0 = self.borrow_pool.reserves_token0
+        borrow_pool_reserves_token1 = self.borrow_pool.reserves_token1
 
         # override the borrowing pool reserves if any of the pools in pool_overrides
         # reference this pool
         if override_future:
             for override in pool_overrides:
                 if override[0] == self.borrow_pool:
-                    reserves_token0, reserves_token1 = override[1]
+                    borrow_pool_reserves_token0 = override[1][0]
+                    borrow_pool_reserves_token1 = override[1][1]
                     break
 
         # set up the boundaries for the Brent optimizer based on which token
         # is being borrowed
         if self.borrow_token.address == self.borrow_pool.token0.address:
             bounds = (
-                1,
-                reserves_token0,
+                0,
+                borrow_pool_reserves_token0,
             )
             bracket = (
-                0.001 * reserves_token0,
-                0.01 * reserves_token0,
+                0.001 * borrow_pool_reserves_token0,
+                0.01 * borrow_pool_reserves_token0,
             )
         elif self.borrow_token.address == self.borrow_pool.token1.address:
             bounds = (
-                1,
-                reserves_token1,
+                0,
+                borrow_pool_reserves_token1,
             )
             bracket = (
-                0.001 * reserves_token1,
-                0.01 * reserves_token1,
+                0.001 * borrow_pool_reserves_token1,
+                0.01 * borrow_pool_reserves_token1,
             )
         else:
             print("WTF? Could not identify borrow token")
             raise Exception
 
-        # TODO: extend calculate_multipool_tokens_out_from_tokens_in() to support overriding token reserves
-        # for an arbitrary pool, currently only supports overriding the borrow pool reserves
         opt = optimize.minimize_scalar(
             lambda x: -float(
                 self.calculate_multipool_tokens_out_from_tokens_in(
@@ -220,13 +232,14 @@ class FlashBorrowToLpSwapWithFuture:
                 - self.borrow_pool.calculate_tokens_in_from_tokens_out(
                     token_in=self.repay_token,
                     token_out_quantity=x,
-                    override_reserves_token0=reserves_token0,
-                    override_reserves_token1=reserves_token1,
+                    override_reserves_token0=borrow_pool_reserves_token0,
+                    override_reserves_token1=borrow_pool_reserves_token1,
                 )
             ),
             method="bounded",
             bounds=bounds,
             bracket=bracket,
+            options={"xatol": 1.0},
         )
 
         best_borrow = int(opt.x)
@@ -242,8 +255,8 @@ class FlashBorrowToLpSwapWithFuture:
         best_repay = self.borrow_pool.calculate_tokens_in_from_tokens_out(
             token_in=self.repay_token,
             token_out_quantity=best_borrow,
-            override_reserves_token0=reserves_token0,
-            override_reserves_token1=reserves_token1,
+            override_reserves_token0=borrow_pool_reserves_token0,
+            override_reserves_token1=borrow_pool_reserves_token1,
         )
         best_profit = -int(opt.fun)
 
@@ -258,6 +271,7 @@ class FlashBorrowToLpSwapWithFuture:
                         "swap_pool_amounts": self._build_multipool_amounts_out(
                             token_in=self.borrow_token,
                             token_in_quantity=best_borrow,
+                            pool_overrides=pool_overrides,
                         ),
                     }
                 )
@@ -327,19 +341,22 @@ class FlashBorrowToLpSwapWithFuture:
                 print("wtf?")
                 raise Exception
 
-            for override in pool_overrides:
+            override_reserves_token0 = 0
+            override_reserves_token1 = 0
+
+            for override_pool, override_reserves in pool_overrides:
                 # each override is a tuple of form (LiquidityPool, (reserve0,reserve1))
-                if override[0] == self.swap_pools[i]:
-                    if token_in.address == self.swap_pools[i].token0.address:
-                        token_in_quantity = override[1][0]
-                    if token_in.address == self.swap_pools[i].token1.address:
-                        token_in_quantity = override[1][1]
+                if override_pool == self.swap_pools[i]:
+                    override_reserves_token0 = override_reserves[0]
+                    override_reserves_token1 = override_reserves[1]
                     break
 
             # calculate the swap output through pool[i]
             token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
+                override_reserves_token0=override_reserves_token0,
+                override_reserves_token1=override_reserves_token1,
             )
 
             if i == number_of_pools - 1:
@@ -392,13 +409,22 @@ class FlashBorrowToLpSwapWithFuture:
             recalculate = True
             assert pool_overrides, "Overrides must be provided!"
             assert len(pool_overrides) <= len(self.swap_pools) + 1
-            for override in pool_overrides:
-                assert type(override[0]) is LiquidityPool
-                assert type(override[1]) is tuple
-                assert len(override[1]) == 2
-                assert type(override[1][0]) is int
-                assert type(override[1][1]) is int
-                assert override[0] == self.borrow_pool or override[0] in self.swap_pools
+            for override_pool, override_reserves in pool_overrides:
+                assert (
+                    type(override_pool) is LiquidityPool
+                ), "override does not include a LiquidityPool object!"
+                assert (
+                    type(override_reserves) is tuple
+                ), "overrides not formatted as a tuple"
+                assert len(override_reserves) == 2, "override length must be 2"
+                assert type(override_reserves[0]) in (
+                    int,
+                    Wei,
+                ), f"override for token0 must be int/Wei, is {type(override_reserves[0])}"
+                assert type(override_reserves[1]) in (
+                    int,
+                    Wei,
+                ), f"override for token1 must be int/Wei, is {type(override_reserves[1])}"
         else:
             assert (
                 not pool_overrides

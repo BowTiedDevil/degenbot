@@ -141,7 +141,6 @@ class LiquidityPool:
         """
         Calculates the required token INPUT of token_in for a target OUTPUT at current pool reserves.
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
-        and uses the appropriate formula
         """
 
         assert (override_reserves_token0 == 0 and override_reserves_token1 == 0) or (
@@ -149,14 +148,14 @@ class LiquidityPool:
         ), "Must provide override values for both token reserves"
 
         if token_in.address == self.token0.address:
-            if override_reserves_token0:
+            if override_reserves_token0 or override_reserves_token1:
                 reserves_in = override_reserves_token0
                 reserves_out = override_reserves_token1
             else:
                 reserves_in = self.reserves_token0
                 reserves_out = self.reserves_token1
         elif token_in.address == self.token1.address:
-            if override_reserves_token1:
+            if override_reserves_token0 or override_reserves_token1:
                 reserves_in = override_reserves_token1
                 reserves_out = override_reserves_token0
             else:
@@ -166,11 +165,11 @@ class LiquidityPool:
             print("WTF?  Could not identify token_in")
             raise Exception
 
-        return int(
-            (reserves_in * token_out_quantity)
-            // ((1 - self.fee) * (reserves_out - token_out_quantity))
-            + 1
+        numerator = reserves_in * token_out_quantity * self.fee.denominator
+        denominator = (reserves_out - token_out_quantity) * (
+            self.fee.denominator - self.fee.numerator
         )
+        return numerator // denominator + 1
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -182,7 +181,6 @@ class LiquidityPool:
         """
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
-        and uses the appropriate formula
         """
 
         assert (override_reserves_token0 == 0 and override_reserves_token1 == 0) or (
@@ -190,14 +188,14 @@ class LiquidityPool:
         ), "Must provide override values for both token reserves"
 
         if token_in.address == self.token0.address:
-            if override_reserves_token0:
+            if override_reserves_token0 or override_reserves_token1:
                 reserves_in = override_reserves_token0
                 reserves_out = override_reserves_token1
             else:
                 reserves_in = self.reserves_token0
                 reserves_out = self.reserves_token1
         elif token_in.address == self.token1.address:
-            if override_reserves_token1:
+            if override_reserves_token0 or override_reserves_token1:
                 reserves_in = override_reserves_token1
                 reserves_out = override_reserves_token0
             else:
@@ -301,6 +299,7 @@ class LiquidityPool:
                 external_token0_reserves == self.reserves_token0
                 and external_token1_reserves == self.reserves_token1
             ):
+                self.new_reserves = False
                 return False
             else:
                 self.reserves_token0 = external_token0_reserves
