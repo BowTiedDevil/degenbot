@@ -57,15 +57,8 @@ class LiquidityPool:
             for token in tokens:
                 if token.address == self._contract.token0():
                     self.token0 = token
-                if token.address == self._contract.token1():
+                elif token.address == self._contract.token1():
                     self.token1 = token
-            assert (
-                tokens[0].address == self._contract.token0()
-                and tokens[1].address == self._contract.token1()
-            ) or (
-                tokens[0].address == self._contract.token1()
-                and tokens[1].address == self._contract.token0()
-            ), "token addresses do not match the on-chain contract!"
         else:
             self.token0 = Erc20Token(address=self._contract.token0())
             self.token1 = Erc20Token(address=self._contract.token1())
@@ -162,8 +155,22 @@ class LiquidityPool:
                 reserves_in = self.reserves_token1
                 reserves_out = self.reserves_token0
         else:
-            print("WTF?  Could not identify token_in")
-            raise Exception
+            print(f"WTF? Could not identify token_in: {token_in}")
+            print(f"This pool holds: {self.token0} {self.token1}")
+            print("******************************************")
+            print("******************************************")
+            print("******************************************")
+            print("******************************************")
+            print("******************************************")
+            print("******************************************")
+            print("******************************************")
+            print("******************************************")
+            print("******************************************")
+            print("******************************************")
+            import sys
+
+            sys.exit()
+            # raise Exception
 
         numerator = reserves_in * token_out_quantity * self.fee.denominator
         denominator = (reserves_out - token_out_quantity) * (
