@@ -2,7 +2,7 @@ import brownie
 import time
 from decimal import Decimal
 from fractions import Fraction
-from typing import List
+from typing import List, Union
 from ..token import Erc20Token
 from ..router import Router
 
@@ -206,9 +206,9 @@ class LiquidityPool:
     def set_swap_target(
         self,
         token_in: Erc20Token,
-        token_in_qty,
+        token_in_qty: Union[brownie.Wei, int],
         token_out: Erc20Token,
-        token_out_qty,
+        token_out_qty: Union[brownie.Wei, int],
         silent: bool = False,
     ):
         # check to ensure that token_in is one of the two tokens held by the LP

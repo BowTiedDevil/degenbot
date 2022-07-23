@@ -132,7 +132,7 @@ class FlashBorrowToLpSwapWithFuture:
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_overrides: list = [],
+        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
     ) -> List[List[int]]:
 
         number_of_pools = len(self.swap_pools)
@@ -183,7 +183,7 @@ class FlashBorrowToLpSwapWithFuture:
     def _calculate_arbitrage(
         self,
         override_future: bool = False,
-        pool_overrides: list = None,
+        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
     ):
 
         borrow_pool_reserves_token0 = self.borrow_pool.reserves_token0
@@ -321,7 +321,7 @@ class FlashBorrowToLpSwapWithFuture:
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_overrides: list = None,
+        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
     ) -> int:
         """
         Calculates the expected token OUTPUT from the last pool for a given token INPUT to the first pool
