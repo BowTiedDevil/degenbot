@@ -202,8 +202,8 @@ class FlashBorrowToLpSwapWithFuture:
         # is being borrowed
         if self.borrow_token.address == self.borrow_pool.token0.address:
             bounds = (
-                1,
-                borrow_pool_reserves_token0 - 1,
+                0,
+                borrow_pool_reserves_token0,
             )
             bracket = (
                 0.001 * borrow_pool_reserves_token0,
@@ -211,8 +211,8 @@ class FlashBorrowToLpSwapWithFuture:
             )
         elif self.borrow_token.address == self.borrow_pool.token1.address:
             bounds = (
-                1,
-                borrow_pool_reserves_token1 - 1,
+                0,
+                borrow_pool_reserves_token1,
             )
             bracket = (
                 0.001 * borrow_pool_reserves_token1,
@@ -222,30 +222,36 @@ class FlashBorrowToLpSwapWithFuture:
             print("_calculate_arbitrage: WTF? Could not identify borrow token")
             raise Exception
 
-        opt = optimize.minimize_scalar(
-            lambda x: -float(
-                self.calculate_multipool_tokens_out_from_tokens_in(
-                    token_in=self.borrow_token,
-                    token_in_quantity=x,
-                    pool_overrides=pool_overrides,
-                )
-                - self.borrow_pool.calculate_tokens_in_from_tokens_out(
-                    token_in=self.repay_token,
-                    token_out_quantity=x,
-                    override_reserves_token0=borrow_pool_reserves_token0,
-                    override_reserves_token1=borrow_pool_reserves_token1,
-                )
-            ),
-            method="bounded",
-            bounds=bounds,
-            bracket=bracket,
-            options={
-                "xatol": 1.0,
-                # "disp": 3,
-            },
-        )
-
-        best_borrow = int(opt.x)
+        try:
+            opt = optimize.minimize_scalar(
+                lambda x: -float(
+                    self.calculate_multipool_tokens_out_from_tokens_in(
+                        token_in=self.borrow_token,
+                        token_in_quantity=x,
+                        pool_overrides=pool_overrides,
+                    )
+                    - self.borrow_pool.calculate_tokens_in_from_tokens_out(
+                        token_in=self.repay_token,
+                        token_out_quantity=x,
+                        override_reserves_token0=borrow_pool_reserves_token0,
+                        override_reserves_token1=borrow_pool_reserves_token1,
+                    )
+                ),
+                method="bounded",
+                bounds=bounds,
+                bracket=bracket,
+                options={
+                    "xatol": 1.0,
+                    # "disp": 3,
+                },
+            )
+        except Exception as e:
+            print(e)
+            print(f"bounds: {bounds}")
+            print(f"bracket: {bracket}")
+            raise
+        else:
+            best_borrow = int(opt.x)
 
         if self.borrow_token.address == self.borrow_pool.token0.address:
             borrow_amounts = [best_borrow, 0]
