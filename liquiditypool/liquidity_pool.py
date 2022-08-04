@@ -195,6 +195,10 @@ class LiquidityPool:
             else:
                 reserves_in = self.reserves_token1
                 reserves_out = self.reserves_token0
+        else:
+            print(f"Could not identify token_in: {token_in}!")
+            print(f"This pool holds: {self.token0} {self.token1}")
+            raise Exception
 
         amount_in_with_fee = token_in_quantity * (
             self.fee.denominator - self.fee.numerator
