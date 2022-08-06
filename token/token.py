@@ -17,6 +17,7 @@ class Erc20Token:
         user: brownie.network.account.LocalAccount = None,
         abi: list = None,
         oracle_address: str = None,
+        silent: bool = False,
     ) -> None:
 
         self.address = address
@@ -43,18 +44,52 @@ class Erc20Token:
                         name="", address=self.address, abi=ERC20
                     )
 
-        self.name = self._contract.name()
-        self.symbol = self._contract.symbol()
-        self.decimals = self._contract.decimals()
+        if "name" in dir(self._contract):
+            self.name = self._contract.name()
+        elif "NAME" in dir(self._contract):
+            self.name = self._contract.NAME()
+        else:
+            print(
+                f"token contract does not have a 'decimals' value. Setting to zero, please confirm on Etherscan: address {address}"
+            )
+            self.name = "UNKNOWN"
+        if type(self.name) == brownie.convert.datatypes.HexString:
+            self.name = self.name.decode("utf-8")
+
+        if "symbol" in dir(self._contract):
+            self.symbol = self._contract.symbol()
+        elif "SYMBOL" in dir(self._contract):
+            self.symbol = self._contract.SYMBOL()
+        else:
+            print(
+                f"token contract does not have a 'symbol' value. Setting to zero, please confirm on Etherscan: address {address}"
+            )
+            self.symbol = "UNKNOWN"
+        if type(self.symbol) == brownie.convert.datatypes.HexString:
+            self.symbol = self.symbol.decode("utf-8")
+
+        if "decimals" in dir(self._contract):
+            self.decimals = self._contract.decimals()
+        elif "DECIMALS" in dir(self._contract):
+            self.decimals = self._contract.DECIMALS()
+        else:
+            print(
+                f"token contract does not have a 'decimals' value. Setting to zero, please confirm on Etherscan: address {address}"
+            )
+            self.decimals = 0
+
         if user:
             self.balance = self._contract.balanceOf(self._user)
-            self.normalized_balance = self.balance / (10 ** self.decimals)
+            self.normalized_balance = self.balance / (10**self.decimals)
+
         if oracle_address:
             self._price_oracle = ChainlinkPriceContract(address=oracle_address)
             self.price = self._price_oracle.price
         else:
             self.price = None
-        print(f"• {self.symbol} ({self.name})")
+
+        if not silent:
+            print(f"• {self.symbol} ({self.name})")
 
     def __eq__(self, other) -> bool:
         return self.address == other.address
@@ -71,12 +106,12 @@ class Erc20Token:
         For unlimited approval, set value to -1
         """
         assert type(value) is int and (
-            -1 <= value <= 2 ** 256 - 1
+            -1 <= value <= 2**256 - 1
         ), "Approval value MUST be an integer between 0 and 2**256-1, or -1"
 
         if value == -1:
             print("Setting unlimited approval!")
-            value = 2 ** 256 - 1
+            value = 2**256 - 1
 
         try:
             self._contract.approve(
@@ -90,7 +125,7 @@ class Erc20Token:
 
     def update_balance(self):
         self.balance = self._contract.balanceOf(self._user)
-        self.normalized_balance = self.balance / (10 ** self.decimals)
+        self.normalized_balance = self.balance / (10**self.decimals)
 
     def update_price(self):
         self._price_oracle.update_price()
