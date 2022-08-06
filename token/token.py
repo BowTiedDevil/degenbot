@@ -50,7 +50,7 @@ class Erc20Token:
             self.name = self._contract.NAME()
         else:
             print(
-                f"token contract does not have a 'decimals' value. Setting to zero, please confirm on Etherscan: address {address}"
+                f"token contract does not have a 'name' value. Setting to 'UNKNOWN', please confirm on Etherscan: address {address}"
             )
             self.name = "UNKNOWN"
         if type(self.name) == brownie.convert.datatypes.HexString:
@@ -62,7 +62,7 @@ class Erc20Token:
             self.symbol = self._contract.SYMBOL()
         else:
             print(
-                f"token contract does not have a 'symbol' value. Setting to zero, please confirm on Etherscan: address {address}"
+                f"token contract does not have a 'symbol' value. Setting to 'UNKNOWN', please confirm on Etherscan: address {address}"
             )
             self.symbol = "UNKNOWN"
         if type(self.symbol) == brownie.convert.datatypes.HexString:
