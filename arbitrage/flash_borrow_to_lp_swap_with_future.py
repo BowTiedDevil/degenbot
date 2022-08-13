@@ -417,7 +417,6 @@ class FlashBorrowToLpSwapWithFuture:
         if override_future:
             recalculate = True
             assert pool_overrides, "Overrides must be provided!"
-            assert len(pool_overrides) <= len(self.swap_pools) + 1
             for override_pool, override_reserves in pool_overrides:
                 assert (
                     type(override_pool) is LiquidityPool
