@@ -37,9 +37,7 @@ class LiquidityPool:
 
         try:
             self._contract = brownie.Contract(self.address)
-            self.abi = self._contract.abi
-        except Exception as e:
-            print(e)
+        except:
             if abi:
                 self._contract = brownie.Contract.from_abi(
                     name="", abi=abi, address=self.address
@@ -47,7 +45,8 @@ class LiquidityPool:
                 self.abi = abi
             else:
                 self._contract = brownie.Contract.from_explorer(address=self.address)
-                self.abi = self._contract.abi
+        else:
+            self.abi = self._contract.abi
 
         self.factory = brownie.convert.to_address(self._contract.factory())
 

@@ -6,8 +6,7 @@ from ..abi import *
 class Erc20Token:
     """
     Represents an ERC-20 token. Must be initialized with an address.
-    Brownie will load the Contract object from the supplied ABI if given,
-    then attempt to load the verified ABI from the block explorer.
+    Brownie will load the Contract object from storage, then attempt to load the verified ABI from the block explorer.
     If both methods fail, it will attempt to use a supplied ERC-20 ABI
     """
 
@@ -26,9 +25,10 @@ class Erc20Token:
             self._user = user
 
         try:
+            # attempt to load stored contract
             self._contract = brownie.Contract(address)
-        except Exception as e:
-            print(e)
+        except:
+            # use the provided ABI if given
             if abi:
                 try:
                     self._contract = brownie.Contract.from_abi(
@@ -36,13 +36,12 @@ class Erc20Token:
                     )
                 except:
                     raise
+            # otherwise attempt to fetch from the block explorer
             else:
                 try:
-                    self._contract = brownie.Contract.from_explorer(self.address)
+                    self._contract = brownie.Contract.from_explorer(address)
                 except:
-                    self._contract = brownie.Contract.from_abi(
-                        name="", address=self.address, abi=ERC20
-                    )
+                    raise
 
         if "name" in dir(self._contract):
             self.name = self._contract.name()
@@ -54,7 +53,7 @@ class Erc20Token:
             )
             self.name = "UNKNOWN"
         if type(self.name) == brownie.convert.datatypes.HexString:
-            self.name = self.name.decode("utf-8")
+            self.name = self.name.decode()
 
         if "symbol" in dir(self._contract):
             self.symbol = self._contract.symbol()
@@ -65,8 +64,9 @@ class Erc20Token:
                 f"Contract does not have a 'symbol' function. Setting to 'UNKNOWN', confirm on Etherscan: address {address}"
             )
             self.symbol = "UNKNOWN"
+
         if type(self.symbol) == brownie.convert.datatypes.HexString:
-            self.symbol = self.symbol.decode("utf-8")
+            self.symbol = self.symbol.decode()
 
         if "decimals" in dir(self._contract):
             self.decimals = self._contract.decimals()
