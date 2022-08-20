@@ -82,6 +82,11 @@ class LiquidityPool:
             print("***")
             raise Exception
 
+        if self._update_method == "external":
+            # WIP: huge memory savings if LP contract object is not used after initialization
+            # testing in progress
+            self._contract = None
+
         if not silent:
             print(self.name)
             print(f"• Token 0: {self.token0.symbol} - Reserves: {self.reserves_token0}")

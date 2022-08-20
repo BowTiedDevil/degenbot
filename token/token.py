@@ -91,6 +91,10 @@ class Erc20Token:
         if not silent:
             print(f"• {self.symbol} ({self.name})")
 
+        # WIP: huge memory savings if token contract object is not used after initialization
+        # testing in progress
+        self._contract = None
+
     def __eq__(self, other) -> bool:
         return self.address == other.address
 
