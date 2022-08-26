@@ -17,7 +17,7 @@ class Erc20Token:
         abi: list = None,
         oracle_address: str = None,
         silent: bool = False,
-        unload_brownie_contract_after_init=False,
+        unload_brownie_contract_after_init: bool = False,
     ) -> None:
 
         self.address = address
