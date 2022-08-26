@@ -17,6 +17,7 @@ class Erc20Token:
         abi: list = None,
         oracle_address: str = None,
         silent: bool = False,
+        unload_brownie_contract_after_init=False,
     ) -> None:
 
         self.address = address
@@ -93,7 +94,8 @@ class Erc20Token:
 
         # WIP: huge memory savings if token contract object is not used after initialization
         # testing in progress
-        self._contract = None
+        if unload_brownie_contract_after_init:
+            self._contract = None
 
     def __eq__(self, other) -> bool:
         return self.address == other.address
