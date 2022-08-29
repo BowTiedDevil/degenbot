@@ -20,7 +20,7 @@ class LiquidityPool:
         fee: Fraction = Fraction(3, 1000),
         silent: bool = False,
         update_reserves_on_start: bool = True,
-        unload_brownie_contract_after_init=False,
+        unload_brownie_contract_after_init: bool = False,
     ) -> None:
 
         # transforms to checksummed address
