@@ -20,6 +20,7 @@ class LiquidityPool:
         fee: Fraction = Fraction(3, 1000),
         silent: bool = False,
         update_reserves_on_start: bool = True,
+        unload_brownie_contract_after_init=False,
     ) -> None:
 
         # transforms to checksummed address
@@ -82,7 +83,7 @@ class LiquidityPool:
             print("***")
             raise Exception
 
-        if self._update_method == "external":
+        if self._update_method == "external" and unload_brownie_contract_after_init:
             # WIP: huge memory savings if LP contract object is not used after initialization
             # testing in progress
             self._contract = None
