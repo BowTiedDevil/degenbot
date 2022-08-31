@@ -48,9 +48,11 @@ class Erc20Token:
             self.name = self._contract.name()
         elif "NAME" in dir(self._contract):
             self.name = self._contract.NAME()
+        elif "_name" in dir(self._contract) and type(self._contract._name) != str:
+            self.name = self._contract._name()
         else:
             print(
-                f"Contract does not have a 'name' function. Setting to 'UNKNOWN', confirm on Etherscan: address {address}"
+                f"Contract does not have a 'name' or similar function. Setting to 'UNKNOWN', confirm on Etherscan: address {address}"
             )
             self.name = "UNKNOWN"
         if type(self.name) == brownie.convert.datatypes.HexString:
@@ -60,9 +62,11 @@ class Erc20Token:
             self.symbol = self._contract.symbol()
         elif "SYMBOL" in dir(self._contract):
             self.symbol = self._contract.SYMBOL()
+        elif "_symbol" in dir(self._contract):
+            self.symbol = self._contract._symbol()
         else:
             print(
-                f"Contract does not have a 'symbol' function. Setting to 'UNKNOWN', confirm on Etherscan: address {address}"
+                f"Contract does not have a 'symbol' or similar function. Setting to 'UNKNOWN', confirm on Etherscan: address {address}"
             )
             self.symbol = "UNKNOWN"
 
@@ -73,9 +77,11 @@ class Erc20Token:
             self.decimals = self._contract.decimals()
         elif "DECIMALS" in dir(self._contract):
             self.decimals = self._contract.DECIMALS()
+        elif "_decimals" in dir(self._contract):
+            self.decimals = self._contract._decimals()
         else:
             print(
-                f"Contract does not have a 'decimals' functions. Setting to zero, confirm on Etherscan: address {address}"
+                f"Contract does not have a 'decimals' or similar functions. Setting to zero, confirm on Etherscan: address {address}"
             )
             self.decimals = 0
 
