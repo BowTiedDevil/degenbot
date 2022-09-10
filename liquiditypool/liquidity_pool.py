@@ -253,8 +253,8 @@ class LiquidityPool:
         silent: bool = False,
         print_reserves: bool = True,
         print_ratios: bool = True,
-        external_token0_reserves: bool = None,
-        external_token1_reserves: bool = None,
+        external_token0_reserves: int = None,  # bugfix: hint was set to bool
+        external_token1_reserves: int = None,  # bugfix: hint was set to bool
         override_update_method: str = None,
     ) -> bool:
         """
@@ -284,7 +284,7 @@ class LiquidityPool:
                             print(
                                 f"{self.token1.symbol}/{self.token0.symbol}: {self.reserves_token1 / self.reserves_token0}"
                             )
-                    # recalculate possible swaps using the new reserves, then return True
+                    # recalculate possible swaps using the new reserves
                     self.calculate_tokens_in_from_ratio_out()
                     return True
                 else:
@@ -294,10 +294,11 @@ class LiquidityPool:
 
         elif self._update_method == "external":
             assert (
-                external_token0_reserves and external_token1_reserves
-            ), "Reserve values must be provided for both tokens!"
+                external_token0_reserves is not None
+                and external_token1_reserves is not None
+            ), "Called update_reserves without providing reserve values for both tokens!"
 
-            # skip follow-up processing if the LP object already has the latest reserves
+            # skip follow-up processing if the LP object already has the latest reserves, or if no reserves were provided
             if (
                 external_token0_reserves == self.reserves_token0
                 and external_token1_reserves == self.reserves_token1

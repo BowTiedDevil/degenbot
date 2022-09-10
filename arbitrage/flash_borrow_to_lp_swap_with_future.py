@@ -126,7 +126,10 @@ class FlashBorrowToLpSwapWithFuture:
             "swap_pool_tokens": self.swap_pool_tokens,
         }
 
-        self.update_reserves()
+        # bugfix: maintain a record of the reserve state for associated LPs, used to avoid arb recalculation
+        self.reserves: dict = {}
+        if self._update_method != "external":
+            self.update_reserves()
 
     def _build_multipool_amounts_out(
         self,
@@ -385,7 +388,7 @@ class FlashBorrowToLpSwapWithFuture:
         pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
     ) -> bool:
         """
-        Checks each liquidity pool for updates by passing a call to .update_reserves(), which returns False if there are no updates.
+        Updates reserve values for one or more liquidity pools by calling update_reserves(), which returns False if the reserves have not changed.
         Will calculate arbitrage amounts only after checking all pools and finding a reason to update, or on startup (via the 'init' dictionary key)
         """
         recalculate = False
@@ -438,12 +441,12 @@ class FlashBorrowToLpSwapWithFuture:
                 not pool_overrides
             ), "Must not provide overrides without override_future = True"
 
-        if self.borrow_pool.new_reserves:
-            recalculate = True
-        for pool in self.swap_pools:
-            if pool.new_reserves:
+        # update the reserves tracked in self.reserves and flag the arb for recalculation if they did not match
+        for pool in [self.borrow_pool] + self.swap_pools:
+            current_lp_reserves = (pool.reserves_token0, pool.reserves_token1)
+            if self.reserves.get(pool.address) != current_lp_reserves:
+                self.reserves[pool.address] = current_lp_reserves
                 recalculate = True
-                break
 
         if recalculate:
             self._calculate_arbitrage(
