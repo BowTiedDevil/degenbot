@@ -1,4 +1,3 @@
-from brownie import Contract
 from brownie.convert.datatypes import Wei
 from scipy import optimize
 from fractions import Fraction
@@ -6,19 +5,16 @@ from typing import List, Tuple
 from ..liquiditypool import LiquidityPool
 from ..token import Erc20Token
 
-# TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
 
-
-class FlashBorrowToLpSwapWithFuture:
+class LpSwapWithFuture:
     def __init__(
         self,
-        borrow_pool: LiquidityPool,
-        borrow_token: Erc20Token,
-        repay_token: Erc20Token,
+        input_token: Erc20Token,
         swap_pool_addresses: List[str] = None,
         swap_pools: List[LiquidityPool] = None,
         name: str = "",
         update_method="polling",
+        max_input: int = None,
     ):
 
         assert (
@@ -37,9 +33,7 @@ class FlashBorrowToLpSwapWithFuture:
             update_method == "external" and swap_pool_addresses
         ), "swap pools by address must be updated with the 'polling' method"
 
-        self.borrow_pool = borrow_pool
-        self.borrow_token = borrow_token
-        self.repay_token = repay_token
+        self.input_token = input_token
         self._update_method = update_method
 
         # if the object was initialized with pool objects directly, use these directly
@@ -60,30 +54,22 @@ class FlashBorrowToLpSwapWithFuture:
         self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
         self.swap_pool_tokens = [[pool.token0, pool.token1] for pool in self.swap_pools]
 
-        self.all_pool_addresses = [
-            pool.address for pool in self.swap_pools + [self.borrow_pool]
-        ]
-
         if name:
             self.name = name
         else:
-            self.name = (
-                self.borrow_pool.name
-                + " -> "
-                + " -> ".join([pool.name for pool in self.swap_pools])
-            )
+            self.name = " -> ".join([pool.name for pool in self.swap_pools])
 
-        assert self.borrow_token.address in [
+        assert input_token.address in [
             self.swap_pools[0].token0.address,
             self.swap_pools[0].token1.address,
-        ], "Borrowed token not found in the first swap pool"
+        ], "Swap token not found in the first swap pool!"
 
-        assert self.repay_token.address in [
+        assert input_token.address in [
             self.swap_pools[-1].token0.address,
             self.swap_pools[-1].token1.address,
-        ], "Repay token not found in the last swap pool"
+        ], "Output token not found in the last swap pool!"
 
-        if self.swap_pools[0].token0.address == borrow_token.address:
+        if self.swap_pools[0].token0.address == input_token.address:
             forward_token_address = self.swap_pools[0].token1.address
         else:
             forward_token_address = self.swap_pools[0].token0.address
@@ -99,13 +85,11 @@ class FlashBorrowToLpSwapWithFuture:
 
         self.best = {
             "init": True,
-            "borrow_amount": 0,
-            "borrow_token": self.borrow_token,
-            "borrow_pool": self.borrow_pool,
-            "borrow_pool_amounts": [],
-            "repay_amount": 0,
+            "strategy": "cycle",
+            "swap_amount": 0,
+            "input_token": self.input_token,
             "profit_amount": 0,
-            "profit_token": self.repay_token,
+            "profit_token": self.input_token,
             "swap_pools": self.swap_pools,
             "swap_pool_addresses": self.swap_pool_addresses,
             "swap_pool_amounts": [],
@@ -113,13 +97,11 @@ class FlashBorrowToLpSwapWithFuture:
         }
 
         self.best_future = {
-            "borrow_amount": 0,
-            "borrow_token": self.borrow_token,
-            "borrow_pool": self.borrow_pool,
-            "borrow_pool_amounts": [],
-            "repay_amount": 0,
+            "swap_amount": 0,
+            "strategy": "cycle",
+            "input_token": self.input_token,
             "profit_amount": 0,
-            "profit_token": self.repay_token,
+            "profit_token": self.input_token,
             "swap_pools": self.swap_pools,
             "swap_pool_addresses": self.swap_pool_addresses,
             "swap_pool_amounts": [],
@@ -133,6 +115,8 @@ class FlashBorrowToLpSwapWithFuture:
 
         # track the gas estimate to execute this arb
         self.gas_estimate = 0
+
+        self.max_input = max_input
 
     def _build_multipool_amounts_out(
         self,
@@ -192,56 +176,46 @@ class FlashBorrowToLpSwapWithFuture:
         pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
     ):
 
-        borrow_pool_reserves_token0 = self.borrow_pool.reserves_token0
-        borrow_pool_reserves_token1 = self.borrow_pool.reserves_token1
-
-        # override the borrowing pool reserves if any of the pools in pool_overrides
-        # reference this pool
-        if override_future:
-            for override in pool_overrides:
-                if override[0] == self.borrow_pool:
-                    borrow_pool_reserves_token0 = override[1][0]
-                    borrow_pool_reserves_token1 = override[1][1]
-                    break
+        # # override the reserves for any matching pool
+        # if override_future:
+        #     for pool_address, (
+        #         override_reserves_token0,
+        #         override_reserves_token1,
+        #     ) in pool_overrides:
+        #         if pool_address == self.borrow_pool:
+        #             borrow_pool_reserves_token0 = override_reserves_token0
+        #             borrow_pool_reserves_token1 = override_reserves_token1
+        #             break
 
         # set up the boundaries for the Brent optimizer based on which token
         # is being borrowed
-        if self.borrow_token.address == self.borrow_pool.token0.address:
-            bounds = (
-                0,
-                borrow_pool_reserves_token0,
-            )
+
+        bounds = (0, self.max_input)
+
+        if self.input_token.address == self.swap_pools[0].token0.address:
+            # bounds = (0, self.swap_pools[0].reserves_token0)
             bracket = (
-                0.001 * borrow_pool_reserves_token0,
-                0.01 * borrow_pool_reserves_token0,
+                0.001 * self.swap_pools[0].reserves_token0,
+                0.01 * self.swap_pools[0].reserves_token0,
             )
-        elif self.borrow_token.address == self.borrow_pool.token1.address:
-            bounds = (
-                0,
-                borrow_pool_reserves_token1,
-            )
+        elif self.input_token.address == self.swap_pools[0].token1.address:
             bracket = (
-                0.001 * borrow_pool_reserves_token1,
-                0.01 * borrow_pool_reserves_token1,
+                0.001 * self.swap_pools[0].reserves_token1,
+                0.01 * self.swap_pools[0].reserves_token1,
             )
         else:
-            print("_calculate_arbitrage: WTF? Could not identify borrow token")
+            print("_calculate_arbitrage: WTF? Could not identify input token")
             raise Exception
 
         try:
             opt = optimize.minimize_scalar(
                 lambda x: -float(
                     self.calculate_multipool_tokens_out_from_tokens_in(
-                        token_in=self.borrow_token,
+                        token_in=self.input_token,
                         token_in_quantity=x,
                         pool_overrides=pool_overrides,
                     )
-                    - self.borrow_pool.calculate_tokens_in_from_tokens_out(
-                        token_in=self.repay_token,
-                        token_out_quantity=x,
-                        override_reserves_token0=borrow_pool_reserves_token0,
-                        override_reserves_token1=borrow_pool_reserves_token1,
-                    )
+                    - x
                 ),
                 method="bounded",
                 bounds=bounds,
@@ -257,35 +231,19 @@ class FlashBorrowToLpSwapWithFuture:
             print(f"bracket: {bracket}")
             raise
         else:
-            best_borrow = int(opt.x)
+            swap_amount = int(opt.x)
 
-        if self.borrow_token.address == self.borrow_pool.token0.address:
-            borrow_amounts = [best_borrow, 0]
-        elif self.borrow_token.address == self.borrow_pool.token1.address:
-            borrow_amounts = [0, best_borrow]
-        else:
-            print("_calculate_arbitrage: WTF? Could not identify borrow token")
-            raise Exception
-
-        best_repay = self.borrow_pool.calculate_tokens_in_from_tokens_out(
-            token_in=self.repay_token,
-            token_out_quantity=best_borrow,
-            override_reserves_token0=borrow_pool_reserves_token0,
-            override_reserves_token1=borrow_pool_reserves_token1,
-        )
         best_profit = -int(opt.fun)
 
         if override_future:
-            if best_borrow > 0 and best_profit > 0:
+            if swap_amount > 0 and best_profit > 0:
                 self.best_future.update(
                     {
-                        "borrow_amount": best_borrow,
-                        "borrow_pool_amounts": borrow_amounts,
-                        "repay_amount": best_repay,
+                        "swap_amount": swap_amount,
                         "profit_amount": best_profit,
                         "swap_pool_amounts": self._build_multipool_amounts_out(
-                            token_in=self.borrow_token,
-                            token_in_quantity=best_borrow,
+                            token_in=self.input_token,
+                            token_in_quantity=swap_amount,
                             pool_overrides=pool_overrides,
                         ),
                     }
@@ -293,34 +251,28 @@ class FlashBorrowToLpSwapWithFuture:
             else:
                 self.best_future.update(
                     {
-                        "borrow_amount": 0,
-                        "borrow_pool_amounts": [],
-                        "repay_amount": 0,
+                        "swap_amount": 0,
                         "profit_amount": 0,
                         "swap_pool_amounts": [],
                     }
                 )
         else:
             # only save opportunities with rational, positive values
-            if best_borrow > 0 and best_profit > 0:
+            if swap_amount > 0 and best_profit > 0:
                 self.best.update(
                     {
-                        "borrow_amount": best_borrow,
-                        "borrow_pool_amounts": borrow_amounts,
-                        "repay_amount": best_repay,
+                        "swap_amount": swap_amount,
                         "profit_amount": best_profit,
                         "swap_pool_amounts": self._build_multipool_amounts_out(
-                            token_in=self.borrow_token,
-                            token_in_quantity=best_borrow,
+                            token_in=self.input_token,
+                            token_in_quantity=swap_amount,
                         ),
                     }
                 )
             else:
                 self.best.update(
                     {
-                        "borrow_amount": 0,
-                        "borrow_pool_amounts": [],
-                        "repay_amount": 0,
+                        "swap_amount": 0,
                         "profit_amount": 0,
                         "swap_pool_amounts": [],
                     }
@@ -382,6 +334,24 @@ class FlashBorrowToLpSwapWithFuture:
                 token_in = token_out
                 token_in_quantity = token_out_quantity
 
+    def clear_best(self):
+        self.best.update(
+            {
+                "swap_amount": 0,
+                "profit_amount": 0,
+                "swap_pool_amounts": [],
+            }
+        )
+
+    def clear_best_future(self):
+        self.best_future.update(
+            {
+                "swap_amount": 0,
+                "profit_amount": 0,
+                "swap_pool_amounts": [],
+            }
+        )
+
     def update_reserves(
         self,
         silent: bool = False,
@@ -401,14 +371,6 @@ class FlashBorrowToLpSwapWithFuture:
             # calculate initial arbitrage after the object is instantiated, otherwise proceed with normal checks
             if self.best["init"] == True:
                 self.best["init"] = False
-                recalculate = True
-
-            # flag for recalculation if the borrowing pool has been updated
-            if self.borrow_pool.update_reserves(
-                silent=silent,
-                print_reserves=print_reserves,
-                print_ratios=print_ratios,
-            ):
                 recalculate = True
 
             # flag for recalculation if any of the pools along the swap path have been updated
@@ -445,7 +407,7 @@ class FlashBorrowToLpSwapWithFuture:
             ), "Must not provide overrides without override_future = True"
 
         # update the reserves tracked in self.reserves and flag the arb for recalculation if they did not match
-        for pool in [self.borrow_pool] + self.swap_pools:
+        for pool in self.swap_pools:
             current_lp_reserves = (pool.reserves_token0, pool.reserves_token1)
             if self.reserves.get(pool.address) != current_lp_reserves:
                 self.reserves[pool.address] = current_lp_reserves
