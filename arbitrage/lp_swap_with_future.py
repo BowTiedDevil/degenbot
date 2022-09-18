@@ -176,17 +176,6 @@ class LpSwapWithFuture:
         pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
     ):
 
-        # # override the reserves for any matching pool
-        # if override_future:
-        #     for pool_address, (
-        #         override_reserves_token0,
-        #         override_reserves_token1,
-        #     ) in pool_overrides:
-        #         if pool_address == self.borrow_pool:
-        #             borrow_pool_reserves_token0 = override_reserves_token0
-        #             borrow_pool_reserves_token1 = override_reserves_token1
-        #             break
-
         # set up the boundaries for the Brent optimizer based on which token
         # is being borrowed
 
