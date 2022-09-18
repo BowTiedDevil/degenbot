@@ -382,6 +382,28 @@ class FlashBorrowToLpSwapWithFuture:
                 token_in = token_out
                 token_in_quantity = token_out_quantity
 
+    def clear_best(self):
+        self.best.update(
+            {
+                "borrow_amount": 0,
+                "borrow_pool_amounts": [],
+                "repay_amount": 0,
+                "profit_amount": 0,
+                "swap_pool_amounts": [],
+            }
+        )
+
+    def clear_best_future(self):
+        self.best_future.update(
+            {
+                "borrow_amount": 0,
+                "borrow_pool_amounts": [],
+                "repay_amount": 0,
+                "profit_amount": 0,
+                "swap_pool_amounts": [],
+            }
+        )
+
     def update_reserves(
         self,
         silent: bool = False,
