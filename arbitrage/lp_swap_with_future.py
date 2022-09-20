@@ -97,8 +97,8 @@ class LpSwapWithFuture:
         }
 
         self.best_future = {
-            "swap_amount": 0,
             "strategy": "cycle",
+            "swap_amount": 0,
             "input_token": self.input_token,
             "profit_amount": 0,
             "profit_token": self.input_token,
