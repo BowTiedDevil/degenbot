@@ -220,7 +220,7 @@ class LiquidityPool:
         token_out_qty: Union[brownie.Wei, int],
         silent: bool = False,
     ):
-        # check to ensure that token_in is one of the two tokens held by the LP
+        # check to ensure that token_in and token_out are exactly the two tokens held by the LP
         assert (
             token_in.address == self.token0.address
             and token_out.address == self.token1.address
@@ -236,15 +236,15 @@ class LiquidityPool:
 
         if token_in.address == self.token0.address:
             # calculate the ratio of token0/token1 for swap of token0 -> token1
-            self._ratio_token0_in = Decimal(str(token_in_qty)) / Decimal(
-                str(token_out_qty)
-            )
+            self._ratio_token0_in = Decimal(
+                str(token_in_qty * 10**token_in.decimals)
+            ) / Decimal(str(token_out_qty * 10**token_out.decimals))
 
         if token_in.address == self.token1.address:
             # calculate the ratio of token1/token0 for swap of token1 -> token0
-            self._ratio_token1_in = Decimal(str(token_in_qty)) / Decimal(
-                str(token_out_qty)
-            )
+            self._ratio_token1_in = Decimal(
+                str(token_in_qty * 10**token_in.decimals)
+            ) / Decimal(str(token_out_qty * 10**token_out.decimals))
 
         self.calculate_tokens_in_from_ratio_out()
 
@@ -279,10 +279,10 @@ class LiquidityPool:
                             print(f"{self.token1.symbol}: {self.reserves_token1}")
                         if print_ratios:
                             print(
-                                f"{self.token0.symbol}/{self.token1.symbol}: {self.reserves_token0 / self.reserves_token1}"
+                                f"{self.token0.symbol}/{self.token1.symbol}: {(self.reserves_token0/10**self.token0.decimals) / (self.reserves_token1/10**self.token1.decimals)}"
                             )
                             print(
-                                f"{self.token1.symbol}/{self.token0.symbol}: {self.reserves_token1 / self.reserves_token0}"
+                                f"{self.token1.symbol}/{self.token0.symbol}: {(self.reserves_token1/10**self.token1.decimals) / (self.reserves_token0/10**self.token0.decimals)}"
                             )
                     # recalculate possible swaps using the new reserves
                     self.calculate_tokens_in_from_ratio_out()
