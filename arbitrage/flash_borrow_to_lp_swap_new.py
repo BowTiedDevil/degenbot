@@ -98,6 +98,7 @@ class FlashBorrowToLpSwapNew:
 
         self.best = {
             "init": True,
+            "strategy": "flash borrow swap",
             "borrow_amount": 0,
             "borrow_token": self.borrow_token,
             "borrow_pool": self.borrow_pool,
@@ -112,6 +113,7 @@ class FlashBorrowToLpSwapNew:
         }
 
         self.best_future = {
+            "strategy": "flash borrow swap",
             "borrow_amount": 0,
             "borrow_token": self.borrow_token,
             "borrow_pool": self.borrow_pool,
@@ -348,7 +350,7 @@ class FlashBorrowToLpSwapNew:
         override_future: bool = False,
         override_future_borrow_pool_reserves_token0: int = 0,
         override_future_borrow_pool_reserves_token1: int = 0,
-        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int,int]]]] = [],
+        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int, int]]]] = [],
     ) -> bool:
         """
         Checks each liquidity pool for updates by passing a call to .update_reserves(), which returns False if there are no updates.

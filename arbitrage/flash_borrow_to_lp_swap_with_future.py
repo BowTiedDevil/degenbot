@@ -99,6 +99,7 @@ class FlashBorrowToLpSwapWithFuture:
 
         self.best = {
             "init": True,
+            "strategy": "flash borrow swap",
             "borrow_amount": 0,
             "borrow_token": self.borrow_token,
             "borrow_pool": self.borrow_pool,
@@ -113,6 +114,7 @@ class FlashBorrowToLpSwapWithFuture:
         }
 
         self.best_future = {
+            "strategy": "flash borrow swap",
             "borrow_amount": 0,
             "borrow_token": self.borrow_token,
             "borrow_pool": self.borrow_pool,

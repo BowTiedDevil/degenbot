@@ -108,15 +108,14 @@ class LpSwapWithFuture:
             "swap_pool_tokens": self.swap_pool_tokens,
         }
 
+        self.max_input = max_input
+        # track the gas estimate to execute this arb
+        self.gas_estimate = 0
+
         # bugfix: maintain a record of the reserve state for associated LPs, used to avoid arb recalculation
         self.reserves: dict = {}
         if self._update_method != "external":
             self.update_reserves()
-
-        # track the gas estimate to execute this arb
-        self.gas_estimate = 0
-
-        self.max_input = max_input
 
     def _build_multipool_amounts_out(
         self,

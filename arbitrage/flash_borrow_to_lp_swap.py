@@ -79,6 +79,7 @@ class FlashBorrowToLpSwap:
 
         self.best = {
             "init": True,
+            "strategy": "flash borrow swap",
             "borrow_amount": 0,
             "borrow_token": self.borrow_token,
             "borrow_pool_amounts": [],
