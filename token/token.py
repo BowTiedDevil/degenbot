@@ -1,6 +1,7 @@
 import brownie
-from ..chainlink import *
+
 from ..abi import *
+from ..chainlink import *
 
 
 class Erc20Token:
@@ -48,7 +49,10 @@ class Erc20Token:
             self.name = self._contract.name()
         elif "NAME" in dir(self._contract):
             self.name = self._contract.NAME()
-        elif "_name" in dir(self._contract) and type(self._contract._name) != str:
+        elif (
+            "_name" in dir(self._contract)
+            and type(self._contract._name) != str
+        ):
             self.name = self._contract._name()
         else:
             print(

@@ -1,7 +1,9 @@
-from brownie.convert.datatypes import Wei
-from scipy import optimize
 from fractions import Fraction
 from typing import List, Tuple
+
+from brownie.convert.datatypes import Wei
+from scipy import optimize
+
 from ..liquiditypool import LiquidityPool
 from ..token import Erc20Token
 
@@ -52,7 +54,9 @@ class LpSwapWithFuture:
                 )
 
         self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
-        self.swap_pool_tokens = [[pool.token0, pool.token1] for pool in self.swap_pools]
+        self.swap_pool_tokens = [
+            [pool.token0, pool.token1] for pool in self.swap_pools
+        ]
 
         if name:
             self.name = name
@@ -81,7 +85,9 @@ class LpSwapWithFuture:
             elif pool.token1.address == token_in_address:
                 forward_token_address = pool.token0.address
             else:
-                raise Exception("Swap pools are invalid, no swap route possible!")
+                raise Exception(
+                    "Swap pools are invalid, no swap route possible!"
+                )
 
         self.best = {
             "init": True,
@@ -146,10 +152,15 @@ class LpSwapWithFuture:
             # override the reserves if found in pool_overrides
             for override in pool_overrides:
                 if override[0] == self.swap_pools[i]:
-                    override_reserves_token0, override_reserves_token1 = override[1]
+                    (
+                        override_reserves_token0,
+                        override_reserves_token1,
+                    ) = override[1]
 
             # calculate the swap output through pool[i]
-            token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self.swap_pools[
+                i
+            ].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
                 override_reserves_token0=override_reserves_token0,
@@ -307,7 +318,9 @@ class LpSwapWithFuture:
                     break
 
             # calculate the swap output through pool[i]
-            token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self.swap_pools[
+                i
+            ].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
                 override_reserves_token0=override_reserves_token0,

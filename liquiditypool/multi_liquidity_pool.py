@@ -1,6 +1,7 @@
-from .liquidity_pool import LiquidityPool
-from ..token import Erc20Token
 from typing import List
+
+from ..token import Erc20Token
+from .liquidity_pool import LiquidityPool
 
 
 class MultiLiquidityPool:
@@ -122,7 +123,9 @@ class MultiLiquidityPool:
                 raise Exception
 
             # calculate the swap output from this pool
-            token_out_quantity = self._pools[i].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self._pools[
+                i
+            ].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
             )
@@ -182,7 +185,9 @@ class MultiLiquidityPool:
                 raise Exception
 
             # calculate the swap output through pool[i]
-            token_out_quantity = self._pools[i].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self._pools[
+                i
+            ].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
             )
