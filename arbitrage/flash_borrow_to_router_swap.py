@@ -1,9 +1,11 @@
+from fractions import Fraction
+from typing import List
+
 from brownie import Contract
 from scipy import optimize
-from fractions import Fraction
+
 from ..liquiditypool import LiquidityPool
 from ..token import Erc20Token
-from typing import List
 
 
 class FlashBorrowToRouterSwap:
@@ -63,13 +65,17 @@ class FlashBorrowToRouterSwap:
                     address=_factory.getPair(
                         self.token_path[i], self.token_path[i + 1]
                     ),
-                    name=" - ".join([self.tokens[i].symbol, self.tokens[i + 1].symbol]),
+                    name=" - ".join(
+                        [self.tokens[i].symbol, self.tokens[i + 1].symbol]
+                    ),
                     tokens=[self.tokens[i], self.tokens[i + 1]],
                     update_method=update_method,
                     fee=swap_router_fee,
                 )
             )
-            print(f"Loaded LP: {self.tokens[i].symbol} - {self.tokens[i+1].symbol}")
+            print(
+                f"Loaded LP: {self.tokens[i].symbol} - {self.tokens[i+1].symbol}"
+            )
             # build a list of pool addresses in the swap path
             self.swap_pool_addresses.append(self.swap_pools[i].address)
 
@@ -220,7 +226,9 @@ class FlashBorrowToRouterSwap:
                 raise Exception
 
             # calculate the swap output through pool[i]
-            token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self.swap_pools[
+                i
+            ].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
             )

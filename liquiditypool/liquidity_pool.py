@@ -1,10 +1,12 @@
-import brownie
 import time
 from decimal import Decimal
 from fractions import Fraction
 from typing import List, Union
-from ..token import Erc20Token
+
+import brownie
+
 from ..router import Router
+from ..token import Erc20Token
 
 
 class LiquidityPool:
@@ -45,7 +47,9 @@ class LiquidityPool:
                 )
                 self.abi = abi
             else:
-                self._contract = brownie.Contract.from_explorer(address=self.address)
+                self._contract = brownie.Contract.from_explorer(
+                    address=self.address
+                )
         else:
             self.abi = self._contract.abi
 
@@ -69,9 +73,10 @@ class LiquidityPool:
             self.name = f"{self.token0.symbol}-{self.token1.symbol}"
 
         if update_reserves_on_start:
-            self.reserves_token0, self.reserves_token1 = self._contract.getReserves()[
-                0:2
-            ]
+            (
+                self.reserves_token0,
+                self.reserves_token1,
+            ) = self._contract.getReserves()[0:2]
         else:
             self.reserves_token0 = self.reserves_token1 = 0
 
@@ -83,15 +88,22 @@ class LiquidityPool:
             print("***")
             raise Exception
 
-        if self._update_method == "external" and unload_brownie_contract_after_init:
+        if (
+            self._update_method == "external"
+            and unload_brownie_contract_after_init
+        ):
             # WIP: huge memory savings if LP contract object is not used after initialization
             # testing in progress
             self._contract = None
 
         if not silent:
             print(self.name)
-            print(f"• Token 0: {self.token0.symbol} - Reserves: {self.reserves_token0}")
-            print(f"• Token 1: {self.token1.symbol} - Reserves: {self.reserves_token1}")
+            print(
+                f"• Token 0: {self.token0.symbol} - Reserves: {self.reserves_token0}"
+            )
+            print(
+                f"• Token 1: {self.token1.symbol} - Reserves: {self.reserves_token1}"
+            )
 
     def __eq__(self, other) -> bool:
         return self.address == other.address
@@ -141,7 +153,9 @@ class LiquidityPool:
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         """
 
-        assert (override_reserves_token0 == 0 and override_reserves_token1 == 0) or (
+        assert (
+            override_reserves_token0 == 0 and override_reserves_token1 == 0
+        ) or (
             override_reserves_token0 != 0 and override_reserves_token1 != 0
         ), "Must provide override values for both token reserves"
 
@@ -182,7 +196,9 @@ class LiquidityPool:
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         """
 
-        assert (override_reserves_token0 == 0 and override_reserves_token1 == 0) or (
+        assert (
+            override_reserves_token0 == 0 and override_reserves_token1 == 0
+        ) or (
             override_reserves_token0 != 0 and override_reserves_token1 != 0
         ), "Must provide override values for both token reserves"
 
@@ -265,7 +281,10 @@ class LiquidityPool:
         # record the last time this LP was updated
         self.update_timestamp = time.monotonic()
 
-        if self._update_method == "polling" or override_update_method == "polling":
+        if (
+            self._update_method == "polling"
+            or override_update_method == "polling"
+        ):
             try:
                 result = self._contract.getReserves()[0:2]
                 # Compare reserves to last-known values,
@@ -275,8 +294,12 @@ class LiquidityPool:
                     if not silent:
                         print(f"[{self.name}]")
                         if print_reserves:
-                            print(f"{self.token0.symbol}: {self.reserves_token0}")
-                            print(f"{self.token1.symbol}: {self.reserves_token1}")
+                            print(
+                                f"{self.token0.symbol}: {self.reserves_token0}"
+                            )
+                            print(
+                                f"{self.token1.symbol}: {self.reserves_token1}"
+                            )
                         if print_ratios:
                             print(
                                 f"{self.token0.symbol}/{self.token1.symbol}: {(self.reserves_token0/10**self.token0.decimals) / (self.reserves_token1/10**self.token1.decimals)}"
@@ -290,7 +313,9 @@ class LiquidityPool:
                 else:
                     return False
             except Exception as e:
-                print(f"LiquidityPool: Exception in update_reserves (polling): {e}")
+                print(
+                    f"LiquidityPool: Exception in update_reserves (polling): {e}"
+                )
 
         elif self._update_method == "external":
             assert (
