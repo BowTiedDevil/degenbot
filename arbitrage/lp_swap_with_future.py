@@ -19,6 +19,7 @@ class LpSwapWithFuture:
         name: str = "",
         update_method="polling",
         max_input: int = None,
+        id: str = None,
     ):
 
         assert (
@@ -48,6 +49,9 @@ class LpSwapWithFuture:
         # if the object was initialized with pool objects, use these directly
         if swap_pools:
             self.swap_pools = swap_pools
+
+        if id:
+            self.id = id
 
         # otherwise, create internal objects
         else:
@@ -145,7 +149,7 @@ class LpSwapWithFuture:
                 token_out = self.swap_pools[i].token0
             else:
                 print("wtf?")
-                raise Exception
+                raise InvalidSwapPathError
 
             # value of 0 will result in the default behavior (no reserve overrides)
             override_reserves_token0 = 0
@@ -205,7 +209,7 @@ class LpSwapWithFuture:
             )
         else:
             print("_calculate_arbitrage: WTF? Could not identify input token")
-            raise Exception
+            raise ArbCalculationError
 
         try:
             opt = optimize.minimize_scalar(
@@ -248,13 +252,14 @@ class LpSwapWithFuture:
                     }
                 )
             else:
-                self.best_future.update(
-                    {
-                        "swap_amount": 0,
-                        "profit_amount": 0,
-                        "swap_pool_amounts": [],
-                    }
-                )
+                self.clear_best_future()
+                # self.best_future.update(
+                #     {
+                #         "swap_amount": 0,
+                #         "profit_amount": 0,
+                #         "swap_pool_amounts": [],
+                #     }
+                # )
         else:
             # only save opportunities with rational, positive values
             if swap_amount > 0 and best_profit > 0:
@@ -269,13 +274,14 @@ class LpSwapWithFuture:
                     }
                 )
             else:
-                self.best.update(
-                    {
-                        "swap_amount": 0,
-                        "profit_amount": 0,
-                        "swap_pool_amounts": [],
-                    }
-                )
+                self.clear_best()
+                # self.best.update(
+                #     {
+                #         "swap_amount": 0,
+                #         "profit_amount": 0,
+                #         "swap_pool_amounts": [],
+                #     }
+                # )
 
     def __str__(self) -> str:
         return self.name
@@ -305,7 +311,7 @@ class LpSwapWithFuture:
                 token_out = self.swap_pools[i].token0
             else:
                 print("wtf?")
-                raise Exception
+                raise ArbCalculationError
 
             override_reserves_token0 = 0
             override_reserves_token1 = 0
