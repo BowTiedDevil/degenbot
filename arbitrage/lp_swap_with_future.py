@@ -1,5 +1,4 @@
 from fractions import Fraction
-from turtle import forward
 from typing import List, Tuple
 
 from brownie.convert.datatypes import Wei
