@@ -108,7 +108,10 @@ class Erc20Token:
             self._contract = None
 
     def __eq__(self, other) -> bool:
-        return self.address == other.address
+        assert isinstance(
+            other, Erc20Token
+        ), "Equality can only be evaluated against another Erc20Token"
+        return self.address.lower() == other.address.lower()
 
     def __str__(self):
         return self.symbol

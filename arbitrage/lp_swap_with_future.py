@@ -1,9 +1,11 @@
 from fractions import Fraction
+from turtle import forward
 from typing import List, Tuple
 
 from brownie.convert.datatypes import Wei
 from scipy import optimize
 
+from ..exceptions import ArbCalculationError, InvalidSwapPathError
 from ..liquiditypool import LiquidityPool
 from ..token import Erc20Token
 
@@ -22,6 +24,11 @@ class LpSwapWithFuture:
         assert (
             swap_pools or swap_pool_addresses
         ), "At least one pool address or LiquidityPool object must be provided"
+
+        assert not (
+            swap_pool_addresses and swap_pools
+        ), "Choose pool addresses or LiquidityPool objects, not both"
+
         assert not (
             swap_pool_addresses and swap_pools
         ), "Choose pool addresses or LiquidityPool objects, not both"
@@ -38,7 +45,7 @@ class LpSwapWithFuture:
         self.input_token = input_token
         self._update_method = update_method
 
-        # if the object was initialized with pool objects directly, use these directly
+        # if the object was initialized with pool objects, use these directly
         if swap_pools:
             self.swap_pools = swap_pools
 
@@ -73,21 +80,16 @@ class LpSwapWithFuture:
             self.swap_pools[-1].token1.address,
         ], "Output token not found in the last swap pool!"
 
-        if self.swap_pools[0].token0.address == input_token.address:
-            forward_token_address = self.swap_pools[0].token1.address
-        else:
-            forward_token_address = self.swap_pools[0].token0.address
-
-        token_in_address = forward_token_address
         for pool in self.swap_pools:
-            if pool.token0.address == token_in_address:
-                forward_token_address = pool.token1.address
-            elif pool.token1.address == token_in_address:
-                forward_token_address = pool.token0.address
+            if input_token == pool.token0:
+                forward_token = pool.token1
+            elif input_token == pool.token1:
+                forward_token = pool.token0
             else:
-                raise Exception(
-                    "Swap pools are invalid, no swap route possible!"
+                raise InvalidSwapPathError(
+                    f"Swap pools are invalid, no swap route possible!\n{input_token=}{pool.token0=}\n{pool.token1=}"
                 )
+            input_token = forward_token
 
         self.best = {
             "init": True,
@@ -188,8 +190,7 @@ class LpSwapWithFuture:
 
         # set up the boundaries for the Brent optimizer based on which token
         # is being borrowed
-
-        bounds = (0, self.max_input)
+        bounds = (1, self.max_input)
 
         if self.input_token.address == self.swap_pools[0].token0.address:
             # bounds = (0, self.swap_pools[0].reserves_token0)
@@ -228,11 +229,10 @@ class LpSwapWithFuture:
             print(e)
             print(f"bounds: {bounds}")
             print(f"bracket: {bracket}")
-            raise
+            raise ArbCalculationError
         else:
             swap_amount = int(opt.x)
-
-        best_profit = -int(opt.fun)
+            best_profit = -int(opt.fun)
 
         if override_future:
             if swap_amount > 0 and best_profit > 0:
