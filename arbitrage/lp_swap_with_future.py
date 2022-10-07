@@ -238,6 +238,7 @@ class LpSwapWithFuture:
             best_profit = -int(opt.fun)
 
         if override_future:
+            self.clear_best_future()
             if swap_amount > 0 and best_profit > 0:
                 self.best_future.update(
                     {
@@ -250,16 +251,9 @@ class LpSwapWithFuture:
                         ),
                     }
                 )
-            else:
-                self.clear_best_future()
-                # self.best_future.update(
-                #     {
-                #         "swap_amount": 0,
-                #         "profit_amount": 0,
-                #         "swap_pool_amounts": [],
-                #     }
-                # )
+
         else:
+            self.clear_best()
             # only save opportunities with rational, positive values
             if swap_amount > 0 and best_profit > 0:
                 self.best.update(
@@ -272,15 +266,6 @@ class LpSwapWithFuture:
                         ),
                     }
                 )
-            else:
-                self.clear_best()
-                # self.best.update(
-                #     {
-                #         "swap_amount": 0,
-                #         "profit_amount": 0,
-                #         "swap_pool_amounts": [],
-                #     }
-                # )
 
     def __str__(self) -> str:
         return self.name
