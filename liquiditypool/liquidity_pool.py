@@ -37,6 +37,7 @@ class LiquidityPool:
         self._ratio_token1_in = None
         self.new_reserves = None
         self.update_timestamp = None
+        self.update_block = None
 
         try:
             self._contract = brownie.Contract(self.address)
