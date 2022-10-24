@@ -85,9 +85,9 @@ class Erc20Token:
             self.decimals = self._contract._decimals()
         else:
             print(
-                f"Contract does not have a 'decimals' or similar functions. Setting to zero, confirm on Etherscan: address {address}"
+                f"Contract does not have a 'decimals' or similar functions. Setting to 18, confirm on Etherscan: address {address}"
             )
-            self.decimals = 0
+            self.decimals = 18
 
         if user:
             self.balance = self._contract.balanceOf(self._user)
