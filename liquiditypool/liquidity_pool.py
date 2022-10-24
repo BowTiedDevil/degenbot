@@ -93,8 +93,7 @@ class LiquidityPool:
             self._update_method == "external"
             and unload_brownie_contract_after_init
         ):
-            # WIP: huge memory savings if LP contract object is not used after initialization
-            # testing in progress
+            # huge memory savings if LP contract object is not used after initialization
             self._contract = None
 
         if not silent:
