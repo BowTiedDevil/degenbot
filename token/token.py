@@ -21,7 +21,7 @@ class Erc20Token:
         unload_brownie_contract_after_init: bool = False,
     ) -> None:
 
-        self.address = address
+        self.address = brownie.web3.toChecksumAddress(address)
 
         if user:
             self._user = user
