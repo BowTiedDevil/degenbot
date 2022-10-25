@@ -21,7 +21,13 @@ class Erc20Token:
         unload_brownie_contract_after_init: bool = False,
     ) -> None:
 
-        self.address = brownie.web3.toChecksumAddress(address)
+        try:
+            self.address = brownie.convert.to_address(address)
+        except ValueError:
+            print(
+                "Could not checksum address, storing non-checksummed version"
+            )
+            self.address = address
 
         if user:
             self._user = user

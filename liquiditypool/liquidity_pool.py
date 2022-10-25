@@ -26,7 +26,13 @@ class LiquidityPool:
     ) -> None:
 
         # transforms to checksummed address
-        self.address = brownie.convert.to_address(address)
+        try:
+            self.address = brownie.convert.to_address(address)
+        except ValueError:
+            print(
+                "Could not checksum address, storing non-checksummed version"
+            )
+            self.address = address
 
         if router:
             self.router = router
