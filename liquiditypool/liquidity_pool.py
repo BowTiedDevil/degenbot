@@ -37,6 +37,18 @@ class LiquidityPool:
         if router:
             self.router = router
 
+        if type(fee) == Decimal:
+            print("***")
+            print(
+                f"WARNING: fee set as a Decimal value instead of Fraction. The fee has been converted inside the LP helper from {repr(fee)} to {repr(Fraction(fee))}, please adjust your code to specify a Fraction to remove this warning. e.g. Fraction(3,1000) is equivalent to Decimal('0.003')."
+            )
+            print("***")
+            fee = Fraction(fee)
+
+        assert (
+            type(fee) == Fraction
+        ), f"LP fee was not correctly passed! Expected '{Fraction().__class__.__name__}', was '{fee.__class__.__name__}'"
+
         self.fee = fee
         self._update_method = update_method
         self._ratio_token0_in = None
