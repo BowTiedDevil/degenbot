@@ -13,7 +13,7 @@ jobs:
       matrix:
         # currently macos-latest is macos-11, in the future it will be updated to macos-12
         # currently ubuntu-latest is ubuntu-20.04, in the future it will be update to ubuntu-22.04
-        os: ['ubuntu-latest', 'ubuntu-22.04', 'macos-11', 'macos-12', 'windows-latest', 'windows-2019']
+        os: ['ubuntu-latest', 'ubuntu-22.04', 'macos-latest', 'macos-12', 'windows-latest', 'windows-2019']
         python-version: ['3.7', '3.8', '3.9', '3.10', '3.11']
     runs-on: ${{ matrix.os }}
 
@@ -55,7 +55,7 @@ jobs:
       matrix:
         # currently macos-latest is macos-11, in the future it will be updated to macos-12
         # currently ubuntu-latest is ubuntu-20.04, in the future it will be update to ubuntu-22.04
-        os: ['ubuntu-latest', 'ubuntu-22.04', 'macos-11', 'macos-12', 'windows-latest', 'windows-2019']
+        os: ['ubuntu-latest', 'ubuntu-22.04', 'macos-latest', 'macos-12', 'windows-latest', 'windows-2019']
         python-version: ['3.7', '3.8', '3.9', '3.10', '3.11']
     runs-on: ${{ matrix.os }}
     steps:
@@ -67,6 +67,7 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
+        cache: 'pip'
     - name: Install dependencies
       run: |
         pip install -r requirements.txt
