@@ -1,0 +1,41 @@
+name: Python CI/CD
+
+on: [push, pull_request]
+
+jobs:
+
+  flake8:
+    strategy:
+      matrix:
+        os: ['ubuntu-latest', 'ubuntu-22.04', 'macos-latest', 'macos-12', 'windows-latest', 'windows-2019']
+        python-version: [3.7, 3.8, 3.9, '3.10', 3.11]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      #----------------------------------------------
+      #       check-out repo and set-up python
+      #----------------------------------------------
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 flake8-html
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Lint with flake8
+        run: |
+          pip install flake8 flake8-html
+          # stop the build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+          mkdir -p reports/flake8
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=79 --statistics --format=html --htmldir=reports/flake8
+      - name: Archive flake8 coverage results
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.os }}-${{ matrix.python-version }}-flake8-coverage-report
+          path: reports/flake8/

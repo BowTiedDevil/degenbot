@@ -1,0 +1,4 @@
+eth-brownie
+matplotlib
+networkx
+scipy
