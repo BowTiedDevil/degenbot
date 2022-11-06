@@ -13,7 +13,7 @@ jobs:
         #os: ['ubuntu-latest', 'ubuntu-22.04', 'macos-latest', 'macos-12', 'windows-latest', 'windows-2019']
         #python-version: [3.7, 3.8, 3.9, '3.10', 3.11]
         os: ['ubuntu-latest']
-        python-version: ['3.7', '3.8', '3.9', '3.10']
+        python-version: ['3.7', '3.8', '3.9']
     runs-on: ${{ matrix.os }}
 
     steps:
