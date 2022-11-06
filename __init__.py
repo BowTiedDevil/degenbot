@@ -1,4 +1,4 @@
-from .abi import *
+from .abi import abi
 from .arbitrage import *
 from .chainlink import *
 from .exceptions import *
