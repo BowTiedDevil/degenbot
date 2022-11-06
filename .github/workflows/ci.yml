@@ -80,12 +80,12 @@ jobs:
           # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
           mkdir -p reports/flake8
           # flake8-html has a bug for flake8 >= 5.0.0, till fix this will save the report to a txt file 
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=79 --statistics > reports/flake8/${{ matrix.os }}-${{ python-version }}-flake8.txt
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=79 --statistics > reports/flake8/${{ matrix.os }}-3.10-flake8.txt
       #----------------------------------------------
       #       Upload flake8 report
       #----------------------------------------------
       - name: Upload flake8 results
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ matrix.os }}-${{ python-version }}-flake8-coverage-report
+          name: ${{ matrix.os }}-3.10-flake8-coverage-report
           path: reports/flake8/
