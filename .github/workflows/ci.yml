@@ -2,9 +2,6 @@ name: DegenBot CI
 
 on: [push, pull_request]
 
-permissions:
-  contents: read
-
 jobs:
 
   flake8:
@@ -13,7 +10,7 @@ jobs:
         #os: ['ubuntu-latest', 'ubuntu-22.04', 'macos-latest', 'macos-12', 'windows-latest', 'windows-2019']
         #python-version: [3.7, 3.8, 3.9, '3.10', 3.11]
         os: ['ubuntu-latest', 'ubuntu-22.04', 'macos-11', 'macos-12', 'windows-latest', 'windows-2019']
-        python-version: ['3.7', '3.8', '3.9']
+        python-version: ['3.7', '3.8', '3.9', '3.11']
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -50,11 +47,10 @@ jobs:
           name: ${{ matrix.os }}-${{ matrix.python-version }}-flake8-coverage-report
           path: reports/flake8/
 
-  flake8_3_1x:
+  flake8_py_3_10:
     strategy:
       matrix:
         os: ['ubuntu-latest', 'ubuntu-22.04', 'macos-11', 'macos-12', 'windows-latest', 'windows-2019']
-        python-version: [3.11]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -62,10 +58,10 @@ jobs:
       #       check-out repo and set-up python
       #----------------------------------------------
       - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.10
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.10'
           cache: 'pip'
       - name: Install dependencies
         run: |
@@ -81,12 +77,12 @@ jobs:
           # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
           mkdir -p reports/flake8
           # flake8-html has a bug for flake8 >= 5.0.0, till fix this will save the report to a txt file 
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=79 --statistics > reports/flake8/${{ matrix.os }}-${{ matrix.python-version }}-flake8.txt
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=79 --statistics > reports/flake8/${{ matrix.os }}-${{ python-version }}-flake8.txt
       #----------------------------------------------
       #       Upload flake8 report
       #----------------------------------------------
       - name: Upload flake8 results
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ matrix.os }}-${{ matrix.python-version }}-flake8-coverage-report
+          name: ${{ matrix.os }}-${{ python-version }}-flake8-coverage-report
           path: reports/flake8/
