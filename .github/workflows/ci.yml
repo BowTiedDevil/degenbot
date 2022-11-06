@@ -50,16 +50,23 @@ jobs:
 
   pytest:
     name: Unit Testing
-    runs-on: ubuntu-latest
+    needs: flake8
+    strategy:
+      matrix:
+        # currently macos-latest is macos-11, in the future it will be updated to macos-12
+        # currently ubuntu-latest is ubuntu-20.04, in the future it will be update to ubuntu-22.04
+        os: ['ubuntu-latest', 'ubuntu-22.04', 'macos-11', 'macos-12', 'windows-latest', 'windows-2019']
+        python-version: ['3.7', '3.8', '3.9', '3.10', '3.11']
+    runs-on: ${{ matrix.os }}
     steps:
       #----------------------------------------------
       #       check-out repo and set-up python
       #----------------------------------------------
     - uses: actions/checkout@v3
-    - name: Set up Python 3.10
+    - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
-        python-version: "3.10"
+        python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
         pip install -r requirements.txt
@@ -69,12 +76,12 @@ jobs:
     - name: Pytest Unit Testing
       run: |
         pip install pytest pytest-cov pytest-html pytest-sugar pytest-json-report
-        py.test -v --cov --html=reports/pytest/report.html
+        py.test -v --cov --html=reports/pytest/${{ matrix.os }}-${{ matrix.python-version }}-report.html
       #----------------------------------------------
       #       Upload pytest report
       #----------------------------------------------
     - name: Upload pytest coverage results
       uses: actions/upload-artifact@v3
       with:
-        name: pytest-coverage-report
+        name: ${{ matrix.os }}-${{ matrix.python-version }}-pytest-coverage-report
         path: reports/pytest/
