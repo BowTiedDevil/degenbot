@@ -54,7 +54,6 @@ class LiquidityPool:
         self._ratio_token0_in = None
         self._ratio_token1_in = None
         self.new_reserves = None
-        self.update_timestamp = 0
         self.update_block = 0
 
         try:
@@ -290,14 +289,18 @@ class LiquidityPool:
         external_token0_reserves: int = None,  # bugfix: hint was set to bool
         external_token1_reserves: int = None,  # bugfix: hint was set to bool
         override_update_method: str = None,
+        update_block: int = None,
     ) -> bool:
         """
         Checks for updated reserve values when set to "polling", otherwise
         if set to "external" assumes that internal LP reserves are valid and recalculates token ratios
         """
 
-        # record the last time this LP was updated
-        self.update_timestamp = time.monotonic()
+        # discard stale updates
+        if update_block and update_block <= self.update_block:
+            return False
+        elif update_block and update_block > self.update_block:
+            self.update_block = update_block
 
         if (
             self._update_method == "polling"
