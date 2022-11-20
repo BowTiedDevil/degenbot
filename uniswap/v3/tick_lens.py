@@ -16,8 +16,3 @@ class TickLens(ABC):
                 )
             except:
                 raise
-
-        try:
-            pass
-        except:
-            raise
