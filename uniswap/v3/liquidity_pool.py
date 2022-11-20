@@ -8,6 +8,18 @@ from .abi import V3_LP_ABI
 
 
 class BaseV3LiquidityPool(ABC):
+    @abstractmethod
+    def _derived():
+        """
+        An abstract method designed to ensure that all consumers of this API
+        use a derived class instead of this base class. Calling BaseV3LiquidityPool()
+        will raise a NotImplementedError exception.
+
+        Consumers should use V3LiquidityPool() instead, or create their own derived
+        class and define a `_derived` method within that class.
+        """
+        raise NotImplementedError
+
     def __init__(self, address: str, lens: Contract = None):
 
         self.address = to_address(address)
@@ -43,10 +55,19 @@ class BaseV3LiquidityPool(ABC):
             self.tick = self.slot0[1]
             self.tick_data = {}
             self.tick_word, _ = self.get_tick_bitmap_position(self.tick)
+            self.get_tick_data_at_word(self.tick_word)
         except:
             raise
 
     def update(self):
+        """
+        Retrieves the current slot0 and liquidity values from the LP,
+        stores any that have changed, and returns a tuple with an update status
+        boolean and a dictionary holding the current mutable values:
+            - liquidity
+            - sqrt_price_x96
+            - tick
+        """
         updated = False
         try:
             if (slot0 := self._brownie_contract.slot0()) != self.slot0:
@@ -63,7 +84,6 @@ class BaseV3LiquidityPool(ABC):
             raise
         else:
             return updated, {
-                "slot0": self.slot0,
                 "liquidity": self.liquidity,
                 "sqrt_price_x96": self.sqrt_price_x96,
                 "tick": self.tick,
@@ -100,4 +120,5 @@ class BaseV3LiquidityPool(ABC):
 
 
 class V3LiquidityPool(BaseV3LiquidityPool):
-    pass
+    def _derived():
+        pass
