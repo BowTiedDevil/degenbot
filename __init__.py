@@ -5,4 +5,3 @@ from .exceptions import *
 from .liquiditypool import *
 from .router import *
 from .token import *
-from .uniswap.v3 import *

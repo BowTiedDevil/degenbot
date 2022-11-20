@@ -23,7 +23,6 @@ class BaseV3LiquidityPool(ABC):
         raise NotImplementedError
 
     def __init__(self, address: str, lens: Contract = None):
-
         self.address = to_address(address)
 
         try:
@@ -61,6 +60,35 @@ class BaseV3LiquidityPool(ABC):
         except:
             raise
 
+    def get_tick_bitmap_position(self, tick) -> Tuple[int, int]:
+        """
+        Retrieves the wordPosition and bitPosition for the input tick
+
+        This function corrects internally for tick spacing! e.g. tick=600 is the
+        11th initialized tick for an LP with tickSpacing of 60, starting at 0.
+        Each "word" in the tickBitmap holds 256 initialized positions, so the 11th
+        position of the 1st word will represent tick=600.
+
+        Calling `get_tick_bitmap_position(600)` returns (0,10), where:
+            0 = wordPosition (zero-indexed)
+            10 = bitPosition (zero-indexed)
+        """
+        return TickBitmap.position(tick // self.tick_spacing)
+
+    def get_tick_data_at_word(self, word_position: int):
+        try:
+            # get the initialized tick values at a specific word
+            # (a 32 byte number representing 256 ticks at the tickSpacing interval)
+            tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
+                self.address, word_position
+            )
+        except:
+            raise
+        else:
+            for (tick, liquidityNet, liquidityGross) in tick_data:
+                self.tick_data[tick] = liquidityNet, liquidityGross
+            return tick_data
+
     def update(self):
         """
         Retrieves the current slot0 and liquidity values from the LP,
@@ -90,35 +118,6 @@ class BaseV3LiquidityPool(ABC):
                 "sqrt_price_x96": self.sqrt_price_x96,
                 "tick": self.tick,
             }
-
-    def get_tick_bitmap_position(self, tick) -> Tuple[int, int]:
-        """
-        Retrieves the wordPosition and bitPosition for the input tick
-
-        This function corrects internally for tick spacing! e.g. tick=600 is the
-        11th initialized tick for an LP with tickSpacing of 60, starting at 0.
-        Each "word" in the tickBitmap holds 256 initialized positions, so the 11th
-        position of the 1st word will represent tick=600.
-
-        Calling `get_tick_bitmap_position(600)` returns (0,10), where:
-            0 = wordPosition (zero-indexed)
-            10 = bitPosition (zero-indexed)
-        """
-        return TickBitmap.position(tick // self.tick_spacing)
-
-    def get_tick_data_at_word(self, word_position: int):
-        try:
-            # get the initialized tick values at a specific word
-            # (a 32 byte number representing 256 ticks at the tickSpacing interval)
-            tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
-                self.address, word_position
-            )
-        except:
-            raise
-        else:
-            for (tick, liquidityNet, liquidityGross) in tick_data:
-                self.tick_data[tick] = liquidityNet, liquidityGross
-            return tick_data
 
 
 class V3LiquidityPool(BaseV3LiquidityPool):
