@@ -5,3 +5,4 @@ from .exceptions import *
 from .liquiditypool import *
 from .router import *
 from .token import *
+import degenbot.uniswap.v3
