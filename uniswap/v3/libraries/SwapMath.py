@@ -1,5 +1,6 @@
 from typing import Tuple
-from . import SqrtPriceMath, FullMath
+
+from . import FullMath, SqrtPriceMath
 from .Helpers import uint256
 
 

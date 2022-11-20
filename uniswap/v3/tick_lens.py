@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+
 from brownie import Contract
 from brownie.convert import to_address
 

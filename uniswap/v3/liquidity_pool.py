@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
+from typing import Tuple
+
 from brownie import Contract
 from brownie.convert import to_address
-from typing import Tuple
+
+from .abi import V3_LP_ABI
 from .libraries import TickBitmap
 from .tick_lens import TickLens
-from .abi import V3_LP_ABI
 
 
 class BaseV3LiquidityPool(ABC):

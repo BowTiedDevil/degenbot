@@ -1,4 +1,4 @@
-from . import FullMath, FixedPoint96, UnsafeMath
+from . import FixedPoint96, FullMath, UnsafeMath
 from .Helpers import uint128, uint256
 
 
