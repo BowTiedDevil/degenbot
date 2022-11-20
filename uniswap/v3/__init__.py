@@ -1,2 +1,2 @@
-from .v3_liquidity_pool import V3LiquidityPool
-from .ticklens import TickLens
+from .liquidity_pool import V3LiquidityPool
+from .tick_lens import TickLens
