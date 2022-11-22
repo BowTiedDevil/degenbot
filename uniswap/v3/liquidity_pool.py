@@ -43,7 +43,10 @@ class BaseV3LiquidityPool(ABC):
         if lens:
             self.lens = lens
         else:
-            self.lens = TickLens()
+            try:
+                self.lens = TickLens()
+            except:
+                raise
 
         try:
             self.token0 = self._brownie_contract.token0()
@@ -54,6 +57,7 @@ class BaseV3LiquidityPool(ABC):
             self.tick_spacing = self._brownie_contract.tickSpacing()
             self.sqrt_price_x96 = self.slot0[0]
             self.tick = self.slot0[1]
+            self.factory = self._brownie_contract.factory()
             self.tick_data = {}
             self.tick_word, _ = self.get_tick_bitmap_position(self.tick)
             self.get_tick_data_at_word(self.tick_word)
@@ -76,9 +80,13 @@ class BaseV3LiquidityPool(ABC):
         return TickBitmap.position(tick // self.tick_spacing)
 
     def get_tick_data_at_word(self, word_position: int):
+        """
+        Gets the initialized tick values at a specific word (a 32 byte number
+        representing 256 ticks at the tickSpacing interval), then stores
+        the liquidity values in the `self.tick_data` dictionary using the tick
+        as the key.
+        """
         try:
-            # get the initialized tick values at a specific word
-            # (a 32 byte number representing 256 ticks at the tickSpacing interval)
             tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
                 self.address, word_position
             )
@@ -89,7 +97,7 @@ class BaseV3LiquidityPool(ABC):
                 self.tick_data[tick] = liquidityNet, liquidityGross
             return tick_data
 
-    def update(self):
+    def auto_update(self):
         """
         Retrieves the current slot0 and liquidity values from the LP,
         stores any that have changed, and returns a tuple with an update status
