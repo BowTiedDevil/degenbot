@@ -3,6 +3,8 @@ from typing import Tuple
 from . import BitMath
 from .Helpers import *
 
+MAXUINT8 = 2**8 - 1
+
 
 def position(tick: int) -> Tuple[int, int]:
     wordPos: int = int16(tick >> 8)
@@ -11,7 +13,7 @@ def position(tick: int) -> Tuple[int, int]:
 
 
 def nextInitializedTickWithinOneWord(
-    tick_mapping: dict,
+    tickBitmap: int,
     tick: int,
     tickSpacing: int,
     lte: bool,
@@ -22,12 +24,10 @@ def nextInitializedTickWithinOneWord(
         compressed -= 1  # round towards negative infinity
 
     if lte:
-        wordPos: int
-        bitPos: int
         wordPos, bitPos = position(compressed)
         # all the 1s at or to the right of the current bitPos
         mask: int = (1 << bitPos) - 1 + (1 << bitPos)
-        masked: int = tick_mapping[wordPos] & mask
+        masked: int = tickBitmap[wordPos] & mask
 
         # if there are no initialized ticks to the right of or at the current tick, return rightmost in the word
         initialized_status = masked != 0
@@ -43,7 +43,7 @@ def nextInitializedTickWithinOneWord(
         wordPos, bitPos = position(compressed + 1)
         # all the 1s at or to the left of the bitPos
         mask: int = ~((1 << bitPos) - 1)
-        masked: int = tick_mapping[wordPos] & mask
+        masked: int = tickBitmap[wordPos] & mask
 
         # if there are no initialized ticks to the left of the current tick, return leftmost in the word
         initialized_status = masked != 0
@@ -56,8 +56,7 @@ def nextInitializedTickWithinOneWord(
             )
             * tickSpacing
             if initialized_status
-            else (compressed + 1 + int24(type(uint8).max - bitPos))
-            * tickSpacing
+            else (compressed + 1 + int24(MAXUINT8 - bitPos)) * tickSpacing
         )
 
     return next_tick, initialized_status
