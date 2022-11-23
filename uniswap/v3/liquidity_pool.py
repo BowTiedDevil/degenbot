@@ -144,7 +144,6 @@ class BaseV3LiquidityPool(ABC):
         self,
         token_in: Erc20Token,
         token_in_quantity: int = None,
-        sqrt_price_x96_limit: int = None,
     ):
         """
         This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
@@ -184,16 +183,6 @@ class BaseV3LiquidityPool(ABC):
             ):
                 step = {}
                 step["sqrtPriceStartX96"] = state["sqrtPriceX96"]
-
-                # (
-                #     step["tickNext"],
-                #     step["initialized"],
-                # ) = TickBitmap.nextInitializedTickWithinOneWord(
-                #     self.tick_data,
-                #     state["tick"],
-                #     self.tick_spacing,
-                #     zeroForOne,
-                # )
 
                 (
                     step["tickNext"],
@@ -255,20 +244,9 @@ class BaseV3LiquidityPool(ABC):
                 if state["sqrtPriceX96"] == step["sqrtPriceNextX96"]:
                     # if the tick is initialized, run the tick transition
                     if step["initialized"]:
-                        # check for the placeholder value, which we replace with the actual value the first time the swap
-                        # crosses an initialized tick
 
                         liquidityNet = self.tick_data[step["tickNext"]]
-                        # liquidityNet = Ticks.cross(
-                        #     step.tickNext,
-                        #     (zeroForOne ? state.feeGrowthGlobalX128 : feeGrowthGlobal0X128),
-                        #     (zeroForOne ? feeGrowthGlobal1X128 : state.feeGrowthGlobalX128),
-                        #     cache.secondsPerLiquidityCumulativeX128,
-                        #     cache.tickCumulative,
-                        #     cache.blockTimestamp
-                        # );
-                        # if we're moving leftward, we interpret liquidityNet as the opposite sign
-                        # safe because liquidityNet cannot be type(int128).min
+
                         if zeroForOne:
                             liquidityNet = -liquidityNet
 
@@ -308,11 +286,6 @@ class BaseV3LiquidityPool(ABC):
         # determine whether the swap is token0 -> token1
         zeroForOne = True if token_in == self.token0 else False
 
-        if sqrt_price_x96_limit is None:
-            sqrtPriceLimitX96 = 0
-        else:
-            sqrtPriceLimitX96 = sqrt_price_x96_limit
-
         # delegate calculations to the re-implemented `swap` function
         amount0, amount1 = swap(
             zeroForOne=zeroForOne,
@@ -322,9 +295,7 @@ class BaseV3LiquidityPool(ABC):
                 TickMath.MIN_SQRT_RATIO + 1
                 if zeroForOne
                 else TickMath.MAX_SQRT_RATIO - 1
-            )
-            if sqrtPriceLimitX96 == 0
-            else sqrtPriceLimitX96,
+            ),
         )
         return -amount1 if zeroForOne else -amount0
 
