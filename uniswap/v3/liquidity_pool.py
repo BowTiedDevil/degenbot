@@ -68,11 +68,7 @@ class BaseV3LiquidityPool(ABC):
             self.factory = self._brownie_contract.factory()
             self.tick_data = {}
             self.tick_word, _ = self.get_tick_bitmap_position(self.tick)
-            # self.tick_bitmap = {
-            #     self.tick_word: self._brownie_contract.tickBitmap(
-            #         self.tick_word
-            #     )
-            # }
+            self.tick_bitmap = {}
             self.get_tick_data_at_word(self.tick_word)
         except:
             raise
