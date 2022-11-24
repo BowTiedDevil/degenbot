@@ -68,11 +68,11 @@ class BaseV3LiquidityPool(ABC):
             self.factory = self._brownie_contract.factory()
             self.tick_data = {}
             self.tick_word, _ = self.get_tick_bitmap_position(self.tick)
-            self.tick_bitmap = {
-                self.tick_word: self._brownie_contract.tickBitmap(
-                    self.tick_word
-                )
-            }
+            # self.tick_bitmap = {
+            #     self.tick_word: self._brownie_contract.tickBitmap(
+            #         self.tick_word
+            #     )
+            # }
             self.get_tick_data_at_word(self.tick_word)
         except:
             raise
@@ -125,14 +125,18 @@ class BaseV3LiquidityPool(ABC):
     def get_tick_data_at_word(self, word_position: int):
         """
         Gets the initialized tick values at a specific word (a 32 byte number
-        representing 256 ticks at the tickSpacing interval), then stores
+        representing 256 ticks at the tickSpacing interval), stores
         the liquidity values in the `self.tick_data` dictionary using the tick
-        as the key.
+        as the key, and updates the tick_bitmap dict.
         """
         try:
             tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
                 self.address, word_position
             )
+            self.tick_bitmap.update(
+                {word_position: self._brownie_contract.tickBitmap(word_position)}
+            )
+
         except:
             raise
         else:
@@ -244,8 +248,11 @@ class BaseV3LiquidityPool(ABC):
                 if state["sqrtPriceX96"] == step["sqrtPriceNextX96"]:
                     # if the tick is initialized, run the tick transition
                     if step["initialized"]:
-
-                        liquidityNet = self.tick_data[step["tickNext"]]
+                        
+                        print(step['tickNext'])
+                        
+                        liquidityNet, _ = self.tick_data[step["tickNext"]]
+                        print(liquidityNet)
 
                         if zeroForOne:
                             liquidityNet = -liquidityNet
@@ -290,7 +297,6 @@ class BaseV3LiquidityPool(ABC):
         amount0, amount1 = swap(
             zeroForOne=zeroForOne,
             amountSpecified=token_in_quantity,
-            # sqrtPriceLimitX96=0,
             sqrtPriceLimitX96=(
                 TickMath.MIN_SQRT_RATIO + 1
                 if zeroForOne
