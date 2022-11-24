@@ -130,7 +130,11 @@ class BaseV3LiquidityPool(ABC):
                 self.address, word_position
             )
             self.tick_bitmap.update(
-                {word_position: self._brownie_contract.tickBitmap(word_position)}
+                {
+                    word_position: self._brownie_contract.tickBitmap(
+                        word_position
+                    )
+                }
             )
 
         except:
@@ -244,11 +248,8 @@ class BaseV3LiquidityPool(ABC):
                 if state["sqrtPriceX96"] == step["sqrtPriceNextX96"]:
                     # if the tick is initialized, run the tick transition
                     if step["initialized"]:
-                        
-                        print(step['tickNext'])
-                        
+
                         liquidityNet, _ = self.tick_data[step["tickNext"]]
-                        print(liquidityNet)
 
                         if zeroForOne:
                             liquidityNet = -liquidityNet
