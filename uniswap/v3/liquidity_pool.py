@@ -15,6 +15,7 @@ from .libraries import (
     SwapMath,
 )
 from .tick_lens import TickLens
+from .libraries.Helpers import uint256
 
 
 class BaseV3LiquidityPool(ABC):
@@ -73,6 +74,140 @@ class BaseV3LiquidityPool(ABC):
         except:
             raise
 
+    def __UniswapV3Pool_func_swap(
+        self,
+        zeroForOne: bool,
+        amountSpecified: int,
+        sqrtPriceLimitX96: int,
+    ) -> Tuple[int, int]:
+
+        slot0Start = deepcopy(self.slot0)
+
+        cache = {
+            "liquidityStart": self.liquidity,
+            "tickCumulative": 0,
+        }
+
+        exactInput: bool = amountSpecified > 0
+
+        state = {
+            "amountSpecifiedRemaining": amountSpecified,
+            "amountCalculated": 0,
+            "sqrtPriceX96": slot0Start["sqrtPriceX96"],
+            "tick": slot0Start["tick"],
+            "liquidity": cache["liquidityStart"],
+        }
+
+        while (
+            state["amountSpecifiedRemaining"] != 0
+            and state["sqrtPriceX96"] != sqrtPriceLimitX96
+        ):
+            step = {}
+            step["sqrtPriceStartX96"] = state["sqrtPriceX96"]
+            
+            while True:
+                try:
+                    (
+                        step["tickNext"],
+                        step["initialized"],
+                    ) = TickBitmap.nextInitializedTickWithinOneWord(
+                        self.tick_bitmap,
+                        state["tick"],
+                        self.tick_spacing,
+                        zeroForOne,
+                    )
+                except TickBitmap.BitmapWordUnavailable as e:
+                    wordPos = e.args[-1]
+                    print(f'TickBitmap word missing! Fetching word {wordPos}')
+                    self.get_tick_data_at_word(wordPos)
+                else:
+                    break
+
+
+            # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
+            if step["tickNext"] < TickMath.MIN_TICK:
+                step["tickNext"] = TickMath.MIN_TICK
+            elif step["tickNext"] > TickMath.MAX_TICK:
+                step["tickNext"] = TickMath.MAX_TICK
+
+            # get the price for the next tick
+            step["sqrtPriceNextX96"] = TickMath.getSqrtRatioAtTick(
+                step["tickNext"]
+            )
+
+            # compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
+            (
+                state["sqrtPriceX96"],
+                step["amountIn"],
+                step["amountOut"],
+                step["feeAmount"],
+            ) = SwapMath.computeSwapStep(
+                state["sqrtPriceX96"],
+                sqrtPriceLimitX96
+                if (
+                    step["sqrtPriceNextX96"] < sqrtPriceLimitX96
+                    if zeroForOne
+                    else step["sqrtPriceNextX96"] > sqrtPriceLimitX96
+                )
+                else step["sqrtPriceNextX96"],
+                state["liquidity"],
+                state["amountSpecifiedRemaining"],
+                self.fee,
+            )
+
+            if exactInput:
+                state["amountSpecifiedRemaining"] -= (
+                    step["amountIn"] + step["feeAmount"]
+                )
+                state["amountCalculated"] = (
+                    state["amountCalculated"] - step["amountOut"]
+                )
+
+            else:
+                state["amountSpecifiedRemaining"] += step["amountOut"]
+                state["amountCalculated"] = (
+                    state["amountCalculated"]
+                    + step["amountIn"]
+                    + step["feeAmount"]
+                )
+
+            if state["sqrtPriceX96"] == step["sqrtPriceNextX96"]:
+                # if the tick is initialized, run the tick transition
+                if step["initialized"]:
+
+                    liquidityNet, _ = self.tick_data[step["tickNext"]]
+
+                    if zeroForOne:
+                        liquidityNet = -liquidityNet
+
+                    state["liquidity"] = LiquidityMath.addDelta(
+                        state["liquidity"], liquidityNet
+                    )
+
+                state["tick"] = (
+                    step["tickNext"] - 1 if zeroForOne else step["tickNext"]
+                )
+
+            elif state["sqrtPriceX96"] != step["sqrtPriceStartX96"]:
+                # recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
+                state["tick"] = TickMath.getTickAtSqrtRatio(
+                    state["sqrtPriceX96"]
+                )
+
+        amount0, amount1 = (
+            (
+                amountSpecified - state["amountSpecifiedRemaining"],
+                state["amountCalculated"],
+            )
+            if zeroForOne == exactInput
+            else (
+                state["amountCalculated"],
+                amountSpecified - state["amountSpecifiedRemaining"],
+            )
+        )
+
+        return amount0, amount1
+
     def auto_update(self):
         """
         Retrieves the current slot0 and liquidity values from the LP,
@@ -102,6 +237,99 @@ class BaseV3LiquidityPool(ABC):
                 "sqrt_price_x96": self.sqrt_price_x96,
                 "tick": self.tick,
             }
+
+    def calculate_tokens_out_from_tokens_in(
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int = None,
+    ):
+        """
+        This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
+        to calculate the number of tokens withdrawn (out) for a given number of tokens deposited (in).
+
+        It is similar to calling quoteExactInputSingle using the quoter contract with arguments:
+        `quoteExactInputSingle(
+            tokenIn=token_in,
+            tokenOut=[automatically determined by helper],
+            fee=[automatically determined by helper],
+            amountIn=token_in_quantity,
+            sqrt_price_limitX96 = 0
+        )` which returns the value `amountOut`
+
+        Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset, thus the 
+        swap calculation will continue until the target amount is satisfied, regardless of price impact
+
+        The UniswapV3 liquidity pool function `__UniswapV3Pool_func_swap` is adapted from
+        https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol
+        and used to calculate swap amounts, ticks crossed, liquidity changes at various ticks, etc.
+        """
+
+        if token_in not in (self.token0, self.token1):
+            raise DegenbotError("token_in not found!")
+
+        # determine whether the swap is token0 -> token1
+        zeroForOne = True if token_in == self.token0 else False
+
+        # delegate calculations to the re-implemented `swap` function
+        amount0, amount1 = self.__UniswapV3Pool_func_swap(
+            zeroForOne=zeroForOne,
+            amountSpecified=token_in_quantity,
+            sqrtPriceLimitX96=(
+                TickMath.MIN_SQRT_RATIO + 1
+                if zeroForOne
+                else TickMath.MAX_SQRT_RATIO - 1
+            ),
+        )
+        return -amount1 if zeroForOne else -amount0
+
+    def calculate_tokens_in_from_tokens_out(
+        self,
+        token_out: Erc20Token,
+        token_out_quantity: int = None,
+    ):
+        """
+        This function implements the common degenbot interface `calculate_tokens_in_from_tokens_out`
+        to calculate the number of tokens deposited (in) for a given number of tokens withdrawn (out).
+
+        It is similar to calling quoteExactOutputSingle using the quoter contract with arguments:
+        `quoteExactOutputSingle(
+            tokenIn=[automatically determined by helper],
+            tokenOut=token_out,
+            fee=[automatically determined by helper],
+            amountOut=token_out_quantity,
+            sqrt_price_limitX96 = 0
+        )` which returns the value `amountIn`
+
+        Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset, thus the 
+        swap calculation will continue until the target amount is satisfied, regardless of price impact
+
+        The UniswapV3 liquidity pool function `__UniswapV3Pool_func_swap` is adapted from
+        https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol
+        and used to calculate swap amounts, ticks crossed, liquidity changes at various ticks, etc.
+        """
+
+        if token_out not in (self.token0, self.token1):
+            raise DegenbotError("token_in not found!")
+
+        # determine whether the swap is token0 -> token1
+        zeroForOne = True if token_out == self.token1 else False
+
+        # delegate calculations to the re-implemented `swap` function
+        amount0Delta, amount1Delta = self.__UniswapV3Pool_func_swap(
+            zeroForOne=zeroForOne,
+            amountSpecified=-token_out_quantity,
+            sqrtPriceLimitX96=(
+                TickMath.MIN_SQRT_RATIO + 1
+                if zeroForOne
+                else TickMath.MAX_SQRT_RATIO - 1
+            ),
+        )
+        amountIn, amountOutReceived = (
+            (uint256(amount0Delta), uint256(-amount1Delta))
+            if zeroForOne
+            else (uint256(amount1Delta), uint256(-amount0Delta))
+        )
+        return amountIn
 
     def get_tick_bitmap_position(self, tick) -> Tuple[int, int]:
         """
@@ -143,164 +371,6 @@ class BaseV3LiquidityPool(ABC):
             for (tick, liquidityNet, liquidityGross) in tick_data:
                 self.tick_data[tick] = liquidityNet, liquidityGross
             return tick_data
-
-    def calculate_tokens_out_from_tokens_in(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int = None,
-    ):
-        """
-        This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
-        to calculate the number of tokens received (out) from a given number of tokens deposited (in).
-
-        The UniswapV3 liquidity pool function `swap` is adapted from
-        https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol
-        and used to calculate swap amounts, ticks crossed, liquidity changes at various ticks, etc.
-        """
-
-        def swap(
-            zeroForOne: bool,
-            amountSpecified: int,
-            sqrtPriceLimitX96: int,
-        ) -> Tuple[int, int]:
-
-            slot0Start = deepcopy(self.slot0)
-
-            cache = {
-                "liquidityStart": self.liquidity,
-                "tickCumulative": 0,
-            }
-
-            exactInput: bool = amountSpecified > 0
-
-            state = {
-                "amountSpecifiedRemaining": amountSpecified,
-                "amountCalculated": 0,
-                "sqrtPriceX96": slot0Start["sqrtPriceX96"],
-                "tick": slot0Start["tick"],
-                "liquidity": cache["liquidityStart"],
-            }
-
-            while (
-                state["amountSpecifiedRemaining"] != 0
-                and state["sqrtPriceX96"] != sqrtPriceLimitX96
-            ):
-                step = {}
-                step["sqrtPriceStartX96"] = state["sqrtPriceX96"]
-
-                (
-                    step["tickNext"],
-                    step["initialized"],
-                ) = TickBitmap.nextInitializedTickWithinOneWord(
-                    self.tick_bitmap,
-                    state["tick"],
-                    self.tick_spacing,
-                    zeroForOne,
-                )
-
-                # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
-                if step["tickNext"] < TickMath.MIN_TICK:
-                    step["tickNext"] = TickMath.MIN_TICK
-                elif step["tickNext"] > TickMath.MAX_TICK:
-                    step["tickNext"] = TickMath.MAX_TICK
-
-                # get the price for the next tick
-                step["sqrtPriceNextX96"] = TickMath.getSqrtRatioAtTick(
-                    step["tickNext"]
-                )
-
-                # compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
-                (
-                    state["sqrtPriceX96"],
-                    step["amountIn"],
-                    step["amountOut"],
-                    step["feeAmount"],
-                ) = SwapMath.computeSwapStep(
-                    state["sqrtPriceX96"],
-                    sqrtPriceLimitX96
-                    if (
-                        step["sqrtPriceNextX96"] < sqrtPriceLimitX96
-                        if zeroForOne
-                        else step["sqrtPriceNextX96"] > sqrtPriceLimitX96
-                    )
-                    else step["sqrtPriceNextX96"],
-                    state["liquidity"],
-                    state["amountSpecifiedRemaining"],
-                    self.fee,
-                )
-
-                if exactInput:
-                    state["amountSpecifiedRemaining"] -= (
-                        step["amountIn"] + step["feeAmount"]
-                    )
-                    state["amountCalculated"] = (
-                        state["amountCalculated"] - step["amountOut"]
-                    )
-
-                else:
-                    state["amountSpecifiedRemaining"] += step["amountOut"]
-                    state["amountCalculated"] = (
-                        state["amountCalculated"]
-                        + step["amountIn"]
-                        + step["feeAmount"]
-                    )
-
-                if state["sqrtPriceX96"] == step["sqrtPriceNextX96"]:
-                    # if the tick is initialized, run the tick transition
-                    if step["initialized"]:
-
-                        liquidityNet, _ = self.tick_data[step["tickNext"]]
-
-                        if zeroForOne:
-                            liquidityNet = -liquidityNet
-
-                        state["liquidity"] = LiquidityMath.addDelta(
-                            state["liquidity"], liquidityNet
-                        )
-
-                    state["tick"] = (
-                        step["tickNext"] - 1
-                        if zeroForOne
-                        else step["tickNext"]
-                    )
-
-                elif state["sqrtPriceX96"] != step["sqrtPriceStartX96"]:
-                    # recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
-                    state["tick"] = TickMath.getTickAtSqrtRatio(
-                        state["sqrtPriceX96"]
-                    )
-
-            amount0, amount1 = (
-                (
-                    amountSpecified - state["amountSpecifiedRemaining"],
-                    state["amountCalculated"],
-                )
-                if zeroForOne == exactInput
-                else (
-                    state["amountCalculated"],
-                    amountSpecified - state["amountSpecifiedRemaining"],
-                )
-            )
-
-            return amount0, amount1
-
-        if token_in not in (self.token0, self.token1):
-            raise DegenbotError("token_in not found!")
-
-        # determine whether the swap is token0 -> token1
-        zeroForOne = True if token_in == self.token0 else False
-
-        # delegate calculations to the re-implemented `swap` function
-        amount0, amount1 = swap(
-            zeroForOne=zeroForOne,
-            amountSpecified=token_in_quantity,
-            sqrtPriceLimitX96=(
-                TickMath.MIN_SQRT_RATIO + 1
-                if zeroForOne
-                else TickMath.MAX_SQRT_RATIO - 1
-            ),
-        )
-        return -amount1 if zeroForOne else -amount0
 
 
 class V3LiquidityPool(BaseV3LiquidityPool):
