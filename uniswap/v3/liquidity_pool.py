@@ -4,18 +4,14 @@ from typing import Tuple
 
 from brownie import Contract
 from brownie.convert import to_address
+
 from degenbot import Erc20Token
 from degenbot.exceptions import DegenbotError
 
 from .abi import V3_LP_ABI
-from .libraries import (
-    LiquidityMath,
-    TickBitmap,
-    TickMath,
-    SwapMath,
-)
-from .tick_lens import TickLens
+from .libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
 from .libraries.Helpers import uint256
+from .tick_lens import TickLens
 
 
 class BaseV3LiquidityPool(ABC):
@@ -104,7 +100,7 @@ class BaseV3LiquidityPool(ABC):
         ):
             step = {}
             step["sqrtPriceStartX96"] = state["sqrtPriceX96"]
-            
+
             while True:
                 try:
                     (
@@ -118,11 +114,10 @@ class BaseV3LiquidityPool(ABC):
                     )
                 except TickBitmap.BitmapWordUnavailable as e:
                     wordPos = e.args[-1]
-                    print(f'TickBitmap word missing! Fetching word {wordPos}')
+                    print(f"TickBitmap word missing! Fetching word {wordPos}")
                     self.get_tick_data_at_word(wordPos)
                 else:
                     break
-
 
             # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
             if step["tickNext"] < TickMath.MIN_TICK:
@@ -256,7 +251,7 @@ class BaseV3LiquidityPool(ABC):
             sqrt_price_limitX96 = 0
         )` which returns the value `amountOut`
 
-        Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset, thus the 
+        Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset, thus the
         swap calculation will continue until the target amount is satisfied, regardless of price impact
 
         The UniswapV3 liquidity pool function `__UniswapV3Pool_func_swap` is adapted from
@@ -300,7 +295,7 @@ class BaseV3LiquidityPool(ABC):
             sqrt_price_limitX96 = 0
         )` which returns the value `amountIn`
 
-        Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset, thus the 
+        Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset, thus the
         swap calculation will continue until the target amount is satisfied, regardless of price impact
 
         The UniswapV3 liquidity pool function `__UniswapV3Pool_func_swap` is adapted from

@@ -1,10 +1,12 @@
 from typing import Tuple
 
 from degenbot.exceptions import DegenbotError
+
 from . import BitMath
 from .Helpers import *
 
 MAXUINT8 = 2**8 - 1
+
 
 class BitmapWordUnavailable(DegenbotError):
     pass

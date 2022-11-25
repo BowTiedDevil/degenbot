@@ -1,3 +1,5 @@
+import degenbot.uniswap.v3
+
 from .abi import abi
 from .arbitrage import *
 from .chainlink import *
@@ -5,4 +7,3 @@ from .exceptions import *
 from .liquiditypool import *
 from .router import *
 from .token import *
-import degenbot.uniswap.v3
