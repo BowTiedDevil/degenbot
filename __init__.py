@@ -1,9 +1,9 @@
-import degenbot.uniswap.v3
+from degenbot.abi import abi
+from degenbot.arbitrage import *
+from degenbot.chainlink import *
+from degenbot.exceptions import *
+from degenbot.liquiditypool import *
+from degenbot.router import *
+from degenbot.token import *
 
-from .abi import abi
-from .arbitrage import *
-from .chainlink import *
-from .exceptions import *
-from .liquiditypool import *
-from .router import *
-from .token import *
+import degenbot.uniswap.v3
