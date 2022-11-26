@@ -237,7 +237,7 @@ class BaseV3LiquidityPool(ABC):
         self,
         token_in: Erc20Token,
         token_in_quantity: int = None,
-    ):
+    ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
         to calculate the number of tokens withdrawn (out) for a given number of tokens deposited (in).
@@ -281,7 +281,7 @@ class BaseV3LiquidityPool(ABC):
         self,
         token_out: Erc20Token,
         token_out_quantity: int = None,
-    ):
+    ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_in_from_tokens_out`
         to calculate the number of tokens deposited (in) for a given number of tokens withdrawn (out).
@@ -341,7 +341,7 @@ class BaseV3LiquidityPool(ABC):
         """
         return TickBitmap.position(tick // self.tick_spacing)
 
-    def get_tick_data_at_word(self, word_position: int):
+    def get_tick_data_at_word(self, word_position: int) -> dict:
         """
         Gets the initialized tick values at a specific word (a 32 byte number
         representing 256 ticks at the tickSpacing interval), stores
@@ -359,7 +359,6 @@ class BaseV3LiquidityPool(ABC):
                     )
                 }
             )
-
         except:
             raise
         else:
