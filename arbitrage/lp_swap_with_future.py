@@ -45,13 +45,12 @@ class LpSwapWithFuture:
         self.input_token = input_token
         self._update_method = update_method
 
-        # if the object was initialized with pool objects, use these directly
-        if swap_pools:
-            self.swap_pools = swap_pools
-
         if id:
             self.id = id
 
+        # if the object was initialized with pool objects, use these directly
+        if swap_pools:
+            self.swap_pools = swap_pools
         # otherwise, create internal objects
         else:
             self.swap_pools = []
