@@ -119,6 +119,12 @@ class Erc20Token:
         ), "Equality can only be evaluated against another Erc20Token"
         return self.address.lower() == other.address.lower()
 
+    def __lt__(self, other) -> bool:
+        return self.address.lower() < other.address.lower()
+
+    def __gt__(self,other) -> bool:
+        return self.address.lower() > other.address.lower()
+
     def __str__(self):
         return self.symbol
 

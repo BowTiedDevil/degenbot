@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from copy import deepcopy
-from typing import Tuple
+from typing import Tuple, List
 
 from brownie import Contract
 from brownie.convert import to_address
@@ -27,23 +27,37 @@ class BaseV3LiquidityPool(ABC):
         """
         raise NotImplementedError
 
-    def __init__(self, address: str, lens: Contract = None):
+    def __init__(
+        self,
+        address: str,
+        lens: Contract = None,
+        tokens: List[Erc20Token] = [],
+    ):
+
+        if tokens:
+            assert len(tokens) == 2, "Expected exactly two tokens"
+
         self.address = to_address(address)
 
-        try:
-            self._brownie_contract = Contract(address=address)
-        except:
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
             try:
-                self._brownie_contract = Contract.from_explorer(
-                    address=address, silent=True
-                )
+                self._brownie_contract = Contract(address=address)
             except:
                 try:
-                    self._brownie_contract = Contract.from_abi(
-                        name="", address=address, abi=V3_LP_ABI
+                    self._brownie_contract = Contract.from_explorer(
+                        address=address, silent=True
                     )
                 except:
-                    raise
+                    try:
+                        self._brownie_contract = Contract.from_abi(
+                            name="", address=address, abi=V3_LP_ABI
+                        )
+                    except:
+                        raise
+        del warnings
 
         if lens:
             self.lens = lens
@@ -54,8 +68,15 @@ class BaseV3LiquidityPool(ABC):
                 raise
 
         try:
-            self.token0 = self._brownie_contract.token0()
-            self.token1 = self._brownie_contract.token1()
+            if tokens:
+                self.token0 = min(tokens)
+                self.token1 = max(tokens)
+                assert self.token0.address == self._brownie_contract.token0()
+                assert self.token1.address == self._brownie_contract.token1()
+            else:
+                self.token0 = Erc20Token(self._brownie_contract.token0())
+                self.token1 = Erc20Token(self._brownie_contract.token1())
+
             self.fee = self._brownie_contract.fee()
             self.slot0 = self._brownie_contract.slot0()
             self.liquidity = self._brownie_contract.liquidity()
