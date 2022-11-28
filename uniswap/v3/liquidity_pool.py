@@ -135,7 +135,7 @@ class BaseV3LiquidityPool(ABC):
                     )
                 except TickBitmap.BitmapWordUnavailable as e:
                     wordPos = e.args[-1]
-                    print(f"TickBitmap word missing! Fetching word {wordPos}")
+                    # print(f"TickBitmap word missing! Fetching word {wordPos}")
                     self.get_tick_data_at_word(wordPos)
                 else:
                     break
