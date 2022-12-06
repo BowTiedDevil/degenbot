@@ -2,10 +2,10 @@ from fractions import Fraction
 from typing import List, Tuple
 
 from brownie import Contract
-from scipy import optimize
+from scipy.optimize import minimize_scalar
 
-from ..liquiditypool import LiquidityPool
-from ..token import Erc20Token
+from degenbot.uniswap.v2 import LiquidityPool
+from degenbot.token import Erc20Token
 
 # TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
 
@@ -224,7 +224,7 @@ class FlashBorrowToLpSwapNew:
 
         # TODO: extend calculate_multipool_tokens_out_from_tokens_in() to support overriding token reserves for an arbitrary pool,
         # currently only supports overriding the borrow pool reserves
-        opt = optimize.minimize_scalar(
+        opt = minimize_scalar(
             lambda x: -float(
                 self.calculate_multipool_tokens_out_from_tokens_in(
                     token_in=self.borrow_token,

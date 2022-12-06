@@ -5,8 +5,8 @@ from brownie import Contract
 from brownie.convert.datatypes import Wei
 from scipy import optimize
 
-from ..liquiditypool import LiquidityPool
-from ..token import Erc20Token
+from degenbot.uniswap.v2 import LiquidityPool
+from degenbot.token import Erc20Token
 
 # TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
 

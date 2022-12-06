@@ -4,9 +4,9 @@ from typing import List, Tuple
 from brownie.convert.datatypes import Wei
 from scipy import optimize
 
-from ..exceptions import ArbCalculationError, InvalidSwapPathError
-from ..liquiditypool import LiquidityPool
-from ..token import Erc20Token
+from degenbot.exceptions import ArbCalculationError, InvalidSwapPathError
+from degenbot.token import Erc20Token
+from degenbot.uniswap.v2 import LiquidityPool
 
 
 class LpSwapWithFuture:

@@ -3,11 +3,11 @@ from decimal import Decimal
 from fractions import Fraction
 from typing import List, Union
 
-import brownie
+from brownie import Contract, Wei
+from brownie.convert import to_address
 
-from ..router import Router
-from ..token import Erc20Token
-
+from .router import Router
+from degenbot.token import Erc20Token
 
 class LiquidityPool:
     def __init__(
@@ -25,9 +25,11 @@ class LiquidityPool:
         unload_brownie_contract_after_init: bool = False,
     ) -> None:
 
+        self.uniswap_version = 2
+
         # transforms to checksummed address
         try:
-            self.address = brownie.convert.to_address(address)
+            self.address = to_address(address)
         except ValueError:
             print(
                 "Could not checksum address, storing non-checksummed version"
@@ -57,21 +59,21 @@ class LiquidityPool:
         self.update_block = 0
 
         try:
-            self._contract = brownie.Contract(self.address)
+            self._contract = Contract(self.address)
         except:
             if abi:
-                self._contract = brownie.Contract.from_abi(
+                self._contract = Contract.from_abi(
                     name="", abi=abi, address=self.address
                 )
                 self.abi = abi
             else:
-                self._contract = brownie.Contract.from_explorer(
+                self._contract = Contract.from_explorer(
                     address=self.address
                 )
         else:
             self.abi = self._contract.abi
 
-        self.factory = brownie.convert.to_address(self._contract.factory())
+        self.factory = to_address(self._contract.factory())
 
         # if a token pair was provided, check and set pointers for token0 and token1
         if tokens:
@@ -88,7 +90,7 @@ class LiquidityPool:
         if name:
             self.name = name
         else:
-            self.name = f"{self.token0.symbol}-{self.token1.symbol}"
+            self.name = f"{self.token0.symbol}-{self.token1.symbol} (V2, {100*self.fee.numerator/self.fee.denominator:.2f}%)"
 
         if update_reserves_on_start:
             (
@@ -248,9 +250,9 @@ class LiquidityPool:
     def set_swap_target(
         self,
         token_in: Erc20Token,
-        token_in_qty: Union[brownie.Wei, int],
+        token_in_qty: Union[Wei, int],
         token_out: Erc20Token,
-        token_out_qty: Union[brownie.Wei, int],
+        token_out_qty: Union[Wei, int],
         silent: bool = False,
     ):
         # check to ensure that token_in and token_out are exactly the two tokens held by the LP

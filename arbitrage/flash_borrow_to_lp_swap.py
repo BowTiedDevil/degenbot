@@ -4,8 +4,8 @@ from typing import List
 from brownie import Contract
 from scipy import optimize
 
-from ..liquiditypool import LiquidityPool
-from ..token import Erc20Token
+from degenbot.uniswap.v2 import LiquidityPool
+from degenbot.token import Erc20Token
 
 
 class FlashBorrowToLpSwap:

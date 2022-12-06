@@ -1,7 +1,17 @@
-import brownie
+from brownie import Contract
+from brownie.network.account import LocalAccount
+from brownie.convert import to_address
+from brownie.convert.datatypes import HexString
 
-from ..abi import *
-from ..chainlink import *
+from degenbot.chainlink import ChainlinkPriceContract
+
+import json
+
+ERC20 = json.loads(
+    """
+    [{"constant": true, "inputs": [], "name": "name", "outputs": [ { "name": "", "type": "string" } ], "payable": false, "stateMutability": "view", "type": "function" }, { "constant": false, "inputs": [ { "name": "_spender", "type": "address" }, { "name": "_value", "type": "uint256" } ], "name": "approve", "outputs": [ { "name": "", "type": "bool" } ], "payable": false, "stateMutability": "nonpayable", "type": "function" }, { "constant": true, "inputs": [], "name": "totalSupply", "outputs": [ { "name": "", "type": "uint256" } ], "payable": false, "stateMutability": "view", "type": "function" }, { "constant": false, "inputs": [ { "name": "_from", "type": "address" }, { "name": "_to", "type": "address" }, { "name": "_value", "type": "uint256" } ], "name": "transferFrom", "outputs": [ { "name": "", "type": "bool" } ], "payable": false, "stateMutability": "nonpayable", "type": "function" }, { "constant": true, "inputs": [], "name": "decimals", "outputs": [ { "name": "", "type": "uint8" } ], "payable": false, "stateMutability": "view", "type": "function" }, { "constant": true, "inputs": [ { "name": "_owner", "type": "address" } ], "name": "balanceOf", "outputs": [ { "name": "balance", "type": "uint256" } ], "payable": false, "stateMutability": "view", "type": "function" }, { "constant": true, "inputs": [], "name": "symbol", "outputs": [ { "name": "", "type": "string" } ], "payable": false, "stateMutability": "view", "type": "function" }, { "constant": false, "inputs": [ { "name": "_to", "type": "address" }, { "name": "_value", "type": "uint256" } ], "name": "transfer", "outputs": [ { "name": "", "type": "bool" } ], "payable": false, "stateMutability": "nonpayable", "type": "function" }, { "constant": true, "inputs": [ { "name": "_owner", "type": "address" }, { "name": "_spender", "type": "address" } ], "name": "allowance", "outputs": [ { "name": "", "type": "uint256" } ], "payable": false, "stateMutability": "view", "type": "function" }, { "payable": true, "stateMutability": "payable", "type": "fallback" }, { "anonymous": false, "inputs": [ { "indexed": true, "name": "owner", "type": "address" }, { "indexed": true, "name": "spender", "type": "address" }, { "indexed": false, "name": "value", "type": "uint256" } ], "name": "Approval", "type": "event" }, { "anonymous": false, "inputs": [ { "indexed": true, "name": "from", "type": "address" }, { "indexed": true, "name": "to", "type": "address" }, { "indexed": false, "name": "value", "type": "uint256" } ], "name": "Transfer", "type": "event"}]
+    """
+)
 
 
 class Erc20Token:
@@ -14,7 +24,7 @@ class Erc20Token:
     def __init__(
         self,
         address: str,
-        user: brownie.network.account.LocalAccount = None,
+        user: LocalAccount = None,
         abi: list = None,
         oracle_address: str = None,
         silent: bool = False,
@@ -22,7 +32,7 @@ class Erc20Token:
     ) -> None:
 
         try:
-            self.address = brownie.convert.to_address(address)
+            self.address = to_address(address)
         except ValueError:
             print(
                 "Could not checksum address, storing non-checksummed version"
@@ -34,12 +44,12 @@ class Erc20Token:
 
         try:
             # attempt to load stored contract
-            self._contract = brownie.Contract(address)
+            self._contract = Contract(address)
         except:
             # use the provided ABI if given
             if abi:
                 try:
-                    self._contract = brownie.Contract.from_abi(
+                    self._contract = Contract.from_abi(
                         name="", address=self.address, abi=abi
                     )
                 except:
@@ -47,7 +57,7 @@ class Erc20Token:
             # otherwise attempt to fetch from the block explorer
             else:
                 try:
-                    self._contract = brownie.Contract.from_explorer(address)
+                    self._contract = Contract.from_explorer(address)
                 except:
                     raise
 
@@ -65,7 +75,7 @@ class Erc20Token:
                 f"Contract does not have a 'name' or similar function. Setting to 'UNKNOWN', confirm on Etherscan: address {address}"
             )
             self.name = "UNKNOWN"
-        if type(self.name) == brownie.convert.datatypes.HexString:
+        if type(self.name) == HexString:
             self.name = self.name.decode()
 
         if "symbol" in dir(self._contract):
@@ -80,7 +90,7 @@ class Erc20Token:
             )
             self.symbol = "UNKNOWN"
 
-        if type(self.symbol) == brownie.convert.datatypes.HexString:
+        if type(self.symbol) == HexString:
             self.symbol = self.symbol.decode()
 
         if "decimals" in dir(self._contract):
@@ -122,7 +132,7 @@ class Erc20Token:
     def __lt__(self, other) -> bool:
         return self.address.lower() < other.address.lower()
 
-    def __gt__(self,other) -> bool:
+    def __gt__(self, other) -> bool:
         return self.address.lower() > other.address.lower()
 
     def __str__(self):

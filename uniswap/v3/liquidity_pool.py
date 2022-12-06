@@ -5,8 +5,10 @@ from typing import Tuple, List
 from brownie import Contract
 from brownie.convert import to_address
 
-from degenbot import Erc20Token
+from degenbot.token import Erc20Token
 from degenbot.exceptions import DegenbotError
+
+from warnings import catch_warnings, simplefilter
 
 from .abi import V3_LP_ABI
 from .libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
@@ -32,17 +34,19 @@ class BaseV3LiquidityPool(ABC):
         address: str,
         lens: Contract = None,
         tokens: List[Erc20Token] = [],
+        name: str = "",
     ):
+
+        self.update_block = 0
+        self.uniswap_version = 3
 
         if tokens:
             assert len(tokens) == 2, "Expected exactly two tokens"
 
         self.address = to_address(address)
 
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
+        with catch_warnings():
+            simplefilter("ignore")
             try:
                 self._brownie_contract = Contract(address=address)
             except:
@@ -57,7 +61,6 @@ class BaseV3LiquidityPool(ABC):
                         )
                     except:
                         raise
-        del warnings
 
         if lens:
             self.lens = lens
@@ -90,6 +93,12 @@ class BaseV3LiquidityPool(ABC):
             self.get_tick_data_at_word(self.tick_word)
         except:
             raise
+
+        if name:
+            self.name = name
+        else:
+            self.name = f"{self.token0.symbol}-{self.token1.symbol} (V3, {self.fee/100000:.2f}%)"
+
 
     def __UniswapV3Pool_func_swap(
         self,
