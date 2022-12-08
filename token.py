@@ -3,6 +3,8 @@ from brownie.network.account import LocalAccount
 from brownie.convert import to_address
 from brownie.convert.datatypes import HexString
 
+from warnings import catch_warnings, simplefilter
+
 from degenbot.chainlink import ChainlinkPriceContract
 
 import json
@@ -42,24 +44,26 @@ class Erc20Token:
         if user:
             self._user = user
 
-        try:
-            # attempt to load stored contract
-            self._contract = Contract(address)
-        except:
-            # use the provided ABI if given
-            if abi:
-                try:
-                    self._contract = Contract.from_abi(
-                        name="", address=self.address, abi=abi
-                    )
-                except:
-                    raise
-            # otherwise attempt to fetch from the block explorer
-            else:
-                try:
-                    self._contract = Contract.from_explorer(address)
-                except:
-                    raise
+        with catch_warnings():
+            simplefilter("ignore")
+            try:
+                # attempt to load stored contract
+                self._contract = Contract(address)
+            except:
+                # use the provided ABI if given
+                if abi:
+                    try:
+                        self._contract = Contract.from_abi(
+                            name="", address=self.address, abi=abi
+                        )
+                    except:
+                        raise
+                # otherwise attempt to fetch from the block explorer
+                else:
+                    try:
+                        self._contract = Contract.from_explorer(address)
+                    except:
+                        raise
 
         if "name" in dir(self._contract):
             self.name = self._contract.name()
