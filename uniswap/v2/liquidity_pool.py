@@ -9,6 +9,7 @@ from brownie.convert import to_address
 from .router import Router
 from degenbot.token import Erc20Token
 
+
 class LiquidityPool:
     def __init__(
         self,
@@ -67,9 +68,7 @@ class LiquidityPool:
                 )
                 self.abi = abi
             else:
-                self._contract = Contract.from_explorer(
-                    address=self.address
-                )
+                self._contract = Contract.from_explorer(address=self.address)
         else:
             self.abi = self._contract.abi
 
@@ -114,6 +113,11 @@ class LiquidityPool:
         ):
             # huge memory savings if LP contract object is not used after initialization
             self._contract = None
+
+        self.state = {
+            "reserves_token0": self.reserves_token0,
+            "reserves_token1": self.reserves_token1,
+        }
 
         if not silent:
             print(self.name)
@@ -332,6 +336,10 @@ class LiquidityPool:
                             )
                     # recalculate possible swaps using the new reserves
                     self.calculate_tokens_in_from_ratio_out()
+                    self.state = {
+                        "reserves_token0": self.reserves_token0,
+                        "reserves_token1": self.reserves_token1,
+                    }
                     return True
                 else:
                     return False
@@ -357,6 +365,11 @@ class LiquidityPool:
                 self.reserves_token0 = external_token0_reserves
                 self.reserves_token1 = external_token1_reserves
                 self.new_reserves = True
+
+                self.state = {
+                    "reserves_token0": self.reserves_token0,
+                    "reserves_token1": self.reserves_token1,
+                }
 
             if not silent:
                 print(f"[{self.name}]")

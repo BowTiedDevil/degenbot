@@ -1,13 +1,12 @@
-from brownie import Contract
-from brownie.network.account import LocalAccount
-from brownie.convert import to_address
-from brownie.convert.datatypes import HexString
-
+import json
 from warnings import catch_warnings, simplefilter
 
-from degenbot.chainlink import ChainlinkPriceContract
+from brownie import Contract
+from brownie.convert import to_address
+from brownie.convert.datatypes import HexString
+from brownie.network.account import LocalAccount
 
-import json
+from degenbot.chainlink import ChainlinkPriceContract
 
 ERC20 = json.loads(
     """

@@ -140,14 +140,15 @@ class LpSwapWithFuture:
 
         for i in range(number_of_pools):
 
-            # determine the output token for pool0
-            if token_in.address == self.swap_pools[i].token0.address:
+            # determine the output token for the pool
+            if token_in == self.swap_pools[i].token0:
                 token_out = self.swap_pools[i].token1
-            elif token_in.address == self.swap_pools[i].token1.address:
+            elif token_in == self.swap_pools[i].token1:
                 token_out = self.swap_pools[i].token0
             else:
-                print("wtf?")
-                raise InvalidSwapPathError
+                raise InvalidSwapPathError(
+                    f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
+                )
 
             # value of 0 will result in the default behavior (no reserve overrides)
             override_reserves_token0 = 0

@@ -35,6 +35,8 @@ class BaseV3LiquidityPool(ABC):
         lens: Contract = None,
         tokens: List[Erc20Token] = [],
         name: str = "",
+        update_method: str = "polling",
+        unload_brownie_contract_after_init: bool = False,
     ):
 
         self.update_block = 0
@@ -94,11 +96,25 @@ class BaseV3LiquidityPool(ABC):
         except:
             raise
 
+        self._update_method = update_method
+
+        if (
+            self._update_method == "external"
+            and unload_brownie_contract_after_init
+        ):
+            # huge memory savings if LP contract object is not used after initialization
+            self._contract = None
+
         if name:
             self.name = name
         else:
             self.name = f"{self.token0.symbol}-{self.token1.symbol} (V3, {self.fee/100000:.2f}%)"
 
+        self.state = {
+            "liquidity": self.liquidity,
+            "sqrt_price_x96": self.sqrt_price_x96,
+            "tick": self.tick,
+        }
 
     def __UniswapV3Pool_func_swap(
         self,
@@ -233,11 +249,14 @@ class BaseV3LiquidityPool(ABC):
 
         return amount0, amount1
 
-    def auto_update(self):
+    def auto_update(
+        self,
+        silent: bool = True,
+    ):
         """
         Retrieves the current slot0 and liquidity values from the LP,
         stores any that have changed, and returns a tuple with an update status
-        boolean and a dictionary holding the current mutable values:
+        boolean and a dictionary holding the current state values:
             - liquidity
             - sqrt_price_x96
             - tick
@@ -257,11 +276,17 @@ class BaseV3LiquidityPool(ABC):
         except:
             raise
         else:
-            return updated, {
-                "liquidity": self.liquidity,
-                "sqrt_price_x96": self.sqrt_price_x96,
-                "tick": self.tick,
-            }
+            if not silent:
+                print(f"Liquidity: {self.liquidity}")
+                print(f"SqrtPriceX96: {self.sqrt_price_x96}")
+                print(f"Tick: {self.tick}")
+            if updated:
+                self.state = {
+                    "liquidity": self.liquidity,
+                    "sqrt_price_x96": self.sqrt_price_x96,
+                    "tick": self.tick,
+                }
+            return updated, self.state
 
     def calculate_tokens_out_from_tokens_in(
         self,

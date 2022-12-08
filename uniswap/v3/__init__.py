@@ -1,3 +1,3 @@
 from . import abi
-from .liquidity_pool import V3LiquidityPool
+from .v3_liquidity_pool import V3LiquidityPool
 from .tick_lens import TickLens

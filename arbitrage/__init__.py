@@ -4,4 +4,4 @@ from .flash_borrow_to_lp_swap_new import FlashBorrowToLpSwapNew
 from .flash_borrow_to_lp_swap_with_future import FlashBorrowToLpSwapWithFuture
 from .flash_borrow_to_router_swap import FlashBorrowToRouterSwap
 from .lp_swap_with_future import LpSwapWithFuture
-from .v3_lp_swap import V3LpSwap
+from .v3_lp_swap import UniswapLpCycle
