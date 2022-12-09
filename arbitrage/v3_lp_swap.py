@@ -68,7 +68,7 @@ class UniswapLpCycle(Arbitrage):
         name: str = "",
         max_input: int = None,
         id: str = None,
-    ) -> "V3LpSwap":
+    ) -> "UniswapLpCycle":
         """
         Create a new `V3LpSwap` object from token and pool addresses.
 
