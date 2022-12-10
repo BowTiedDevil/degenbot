@@ -10,10 +10,18 @@ from degenbot.exceptions import DegenbotError
 
 from warnings import catch_warnings, simplefilter
 
-from .abi import V3_LP_ABI
+from .abi import UNISWAP_V3_POOL_ABI
 from .libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
 from .libraries.Helpers import uint256
 from .tick_lens import TickLens
+
+
+class ExternalUpdateError(DegenbotError):
+    """
+    Thrown when an external update does not pass sanity checks
+    """
+
+    pass
 
 
 class BaseV3LiquidityPool(ABC):
@@ -36,7 +44,9 @@ class BaseV3LiquidityPool(ABC):
         tokens: List[Erc20Token] = [],
         name: str = "",
         update_method: str = "polling",
-        unload_brownie_contract_after_init: bool = False,
+        abi: list = None,
+        # unload_brownie_contract_after_init: bool = False,
+        populate_ticks: bool = True,
     ):
 
         self.update_block = 0
@@ -49,20 +59,31 @@ class BaseV3LiquidityPool(ABC):
 
         with catch_warnings():
             simplefilter("ignore")
-            try:
-                self._brownie_contract = Contract(address=address)
-            except:
+
+            if abi:
                 try:
-                    self._brownie_contract = Contract.from_explorer(
-                        address=address, silent=True
+                    self._brownie_contract = Contract.from_abi(
+                        name="", address=address, abi=abi
                     )
                 except:
+                    raise
+            else:
+                try:
+                    self._brownie_contract = Contract(address)
+                except:
                     try:
-                        self._brownie_contract = Contract.from_abi(
-                            name="", address=address, abi=V3_LP_ABI
+                        self._brownie_contract = Contract.from_explorer(
+                            address=address, silent=True
                         )
                     except:
-                        raise
+                        try:
+                            self._brownie_contract = Contract.from_abi(
+                                name="",
+                                address=address,
+                                abi=UNISWAP_V3_POOL_ABI,
+                            )
+                        except:
+                            raise
 
         if lens:
             self.lens = lens
@@ -88,22 +109,24 @@ class BaseV3LiquidityPool(ABC):
             self.tick_spacing = self._brownie_contract.tickSpacing()
             self.sqrt_price_x96 = self.slot0[0]
             self.tick = self.slot0[1]
-            self.factory = self._brownie_contract.factory()
+            # self.factory = self._brownie_contract.factory()
             self.tick_data = {}
             self.tick_word, _ = self.get_tick_bitmap_position(self.tick)
             self.tick_bitmap = {}
-            self.get_tick_data_at_word(self.tick_word)
+            if populate_ticks:
+                self.get_tick_data_at_word(self.tick_word)
         except:
             raise
 
+        # does nothing for now, will implement "external" update method at a later date
         self._update_method = update_method
 
-        if (
-            self._update_method == "external"
-            and unload_brownie_contract_after_init
-        ):
-            # huge memory savings if LP contract object is not used after initialization
-            self._contract = None
+        # if (
+        #     self._update_method == "external"
+        #     and unload_brownie_contract_after_init
+        # ):
+        #     # huge memory savings if LP contract object is not used after initialization
+        #     self._brownie_contract = None
 
         if name:
             self.name = name
@@ -116,12 +139,28 @@ class BaseV3LiquidityPool(ABC):
             "tick": self.tick,
         }
 
+    def __str__(self):
+        """
+        Return the pool name when the object is included in a print statement, or cast as a string
+        """
+        return self.name
+
     def __UniswapV3Pool_func_swap(
         self,
         zeroForOne: bool,
         amountSpecified: int,
         sqrtPriceLimitX96: int,
     ) -> Tuple[int, int]:
+
+        """
+        This function is ported and adapted from the UniswapV3Pool.sol contract
+        at https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol
+
+        It is called by the `calculate_tokens_in_from_tokens_out` and `calculate_tokens_out_from_tokens_in` methods to calculate
+        swap amounts, ticks crossed, liquidity changes at various ticks, etc.
+
+        It is a double-underscore method and is thus obscured from external access (but still accessible if you know how).
+        """
 
         slot0Start = deepcopy(self.slot0)
 
@@ -249,10 +288,52 @@ class BaseV3LiquidityPool(ABC):
 
         return amount0, amount1
 
+    def external_update(
+        self,
+        updates: dict,
+    ) -> bool:
+        """
+        Accepts and processes a dict with any of these updated state values:
+            - `tick`
+            - `liquidity`
+            - `sqrt_price_x96`
+        and optional tags:
+            - `block_number`
+
+        If any have changed, update the `self.state` dict and `self.update_block`
+
+        Dict entries with keys other than the three above will be ignored
+
+        Returns a bool indicating whether any updated state value was found and processed
+        """
+
+        if updates.get("block_number") < self.update_block:
+            raise ExternalUpdateError(
+                f"Current state recorded at block {self.update_block}, received update for stale block {updates.get('block_number')}"
+            )
+
+        updated = False
+
+        for key, value in updates.items():
+            if key == "tick":
+                self.state["tick"] = value
+                print(f"updated tick: {value}")
+                updated = True
+            elif key == "liquidity":
+                self.state["liquidity"] = value
+                print(f"updated liquidity: {value}")
+                updated = True
+            elif key == "sqrt_price_x96":
+                self.state["sqrt_price_x96"] = value
+                print(f"updated sqrt_price_x96: {value}")
+                updated = True
+
+        return updated
+
     def auto_update(
         self,
         silent: bool = True,
-    ):
+    ) -> Tuple[bool, dict]:
         """
         Retrieves the current slot0 and liquidity values from the LP,
         stores any that have changed, and returns a tuple with an update status
