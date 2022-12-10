@@ -346,10 +346,6 @@ class BaseV3LiquidityPool(ABC):
 
         Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset, thus the
         swap calculation will continue until the target amount is satisfied, regardless of price impact
-
-        The UniswapV3 liquidity pool function `__UniswapV3Pool_func_swap` is adapted from
-        https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol
-        and used to calculate swap amounts, ticks crossed, liquidity changes at various ticks, etc.
         """
 
         if token_in not in (self.token0, self.token1):
@@ -390,10 +386,6 @@ class BaseV3LiquidityPool(ABC):
 
         Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset, thus the
         swap calculation will continue until the target amount is satisfied, regardless of price impact
-
-        The UniswapV3 liquidity pool function `__UniswapV3Pool_func_swap` is adapted from
-        https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol
-        and used to calculate swap amounts, ticks crossed, liquidity changes at various ticks, etc.
         """
 
         if token_out not in (self.token0, self.token1):
@@ -458,6 +450,9 @@ class BaseV3LiquidityPool(ABC):
             elif key == "sqrt_price_x96":
                 self.state["sqrt_price_x96"] = value
                 updated = True
+
+        if updated and block_number:
+            self.update_block = block_number
 
         return updated
 
