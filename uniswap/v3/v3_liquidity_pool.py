@@ -109,12 +109,11 @@ class BaseV3LiquidityPool(ABC):
             self.tick_spacing = self._brownie_contract.tickSpacing()
             self.sqrt_price_x96 = self.slot0[0]
             self.tick = self.slot0[1]
-            # self.factory = self._brownie_contract.factory()
             self.tick_data = {}
-            self.tick_word, _ = self.get_tick_bitmap_position(self.tick)
+            self.tick_word, _ = self._get_tick_bitmap_position(self.tick)
             self.tick_bitmap = {}
             if populate_ticks:
-                self.get_tick_data_at_word(self.tick_word)
+                self._get_tick_data_at_word(self.tick_word)
         except:
             raise
 
@@ -200,7 +199,7 @@ class BaseV3LiquidityPool(ABC):
                 except TickBitmap.BitmapWordUnavailable as e:
                     wordPos = e.args[-1]
                     # print(f"TickBitmap word missing! Fetching word {wordPos}")
-                    self.get_tick_data_at_word(wordPos)
+                    self._get_tick_data_at_word(wordPos)
                 else:
                     break
 
@@ -287,51 +286,6 @@ class BaseV3LiquidityPool(ABC):
         )
 
         return amount0, amount1
-
-    def external_update(
-        self,
-        updates: dict,
-        block_number: int = None,
-    ) -> bool:
-        """
-        Accepts and processes a dict with any of these updated state values:
-            - `tick`
-            - `liquidity`
-            - `sqrt_price_x96`
-        and optional tags:
-            - `block_number`
-
-        If any have changed, update the `self.state` dict and `self.update_block`
-
-        Dict entries with keys other than the three above will be ignored.
-
-        If block_number is provided, it will be checked.  If not provided, the values are assumed valid and will be processed.
-
-        Returns a bool indicating whether any updated state value was found and processed
-        """
-
-        if block_number and block_number < self.update_block:
-            raise ExternalUpdateError(
-                f"Current state recorded at block {self.update_block}, received update for stale block {updates.get('block_number')}"
-            )
-
-        updated = False
-
-        for key, value in updates.items():
-            if key == "tick":
-                self.state["tick"] = value
-                print(f"updated tick: {value}")
-                updated = True
-            elif key == "liquidity":
-                self.state["liquidity"] = value
-                print(f"updated liquidity: {value}")
-                updated = True
-            elif key == "sqrt_price_x96":
-                self.state["sqrt_price_x96"] = value
-                print(f"updated sqrt_price_x96: {value}")
-                updated = True
-
-        return updated
 
     def auto_update(
         self,
@@ -465,7 +419,52 @@ class BaseV3LiquidityPool(ABC):
         )
         return amountIn
 
-    def get_tick_bitmap_position(self, tick) -> Tuple[int, int]:
+    def external_update(
+        self,
+        updates: dict,
+        block_number: int = None,
+    ) -> bool:
+        """
+        Accepts and processes a dict with any of these updated state values:
+            - `tick`
+            - `liquidity`
+            - `sqrt_price_x96`
+        and optional tags:
+            - `block_number`
+
+        If any have changed, update the `self.state` dict and `self.update_block`
+
+        Dict entries with keys other than the three above will be ignored.
+
+        If block_number is provided, it will be checked.  If not provided, the values are assumed valid and will be processed.
+
+        Returns a bool indicating whether any updated state value was found and processed
+        """
+
+        if block_number and block_number < self.update_block:
+            raise ExternalUpdateError(
+                f"Current state recorded at block {self.update_block}, received update for stale block {updates.get('block_number')}"
+            )
+
+        updated = False
+
+        for key, value in updates.items():
+            if key == "tick":
+                self.state["tick"] = value
+                print(f"updated tick: {value}")
+                updated = True
+            elif key == "liquidity":
+                self.state["liquidity"] = value
+                print(f"updated liquidity: {value}")
+                updated = True
+            elif key == "sqrt_price_x96":
+                self.state["sqrt_price_x96"] = value
+                print(f"updated sqrt_price_x96: {value}")
+                updated = True
+
+        return updated
+
+    def _get_tick_bitmap_position(self, tick) -> Tuple[int, int]:
         """
         Retrieves the wordPosition and bitPosition for the input tick
 
@@ -480,7 +479,7 @@ class BaseV3LiquidityPool(ABC):
         """
         return TickBitmap.position(tick // self.tick_spacing)
 
-    def get_tick_data_at_word(self, word_position: int) -> dict:
+    def _get_tick_data_at_word(self, word_position: int) -> dict:
         """
         Gets the initialized tick values at a specific word (a 32 byte number
         representing 256 ticks at the tickSpacing interval), stores
