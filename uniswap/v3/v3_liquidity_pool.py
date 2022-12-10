@@ -131,7 +131,7 @@ class BaseV3LiquidityPool(ABC):
         if name:
             self.name = name
         else:
-            self.name = f"{self.token0.symbol}-{self.token1.symbol} (V3, {self.fee/100000:.2f}%)"
+            self.name = f"{self.token0.symbol}-{self.token1.symbol} (V3, {self.fee/100000:.3f}%)"
 
         self.state = {
             "liquidity": self.liquidity,
@@ -291,6 +291,7 @@ class BaseV3LiquidityPool(ABC):
     def external_update(
         self,
         updates: dict,
+        block_number: int = None,
     ) -> bool:
         """
         Accepts and processes a dict with any of these updated state values:
@@ -302,12 +303,14 @@ class BaseV3LiquidityPool(ABC):
 
         If any have changed, update the `self.state` dict and `self.update_block`
 
-        Dict entries with keys other than the three above will be ignored
+        Dict entries with keys other than the three above will be ignored.
+
+        If block_number is provided, it will be checked.  If not provided, the values are assumed valid and will be processed.
 
         Returns a bool indicating whether any updated state value was found and processed
         """
 
-        if updates.get("block_number") < self.update_block:
+        if block_number and block_number < self.update_block:
             raise ExternalUpdateError(
                 f"Current state recorded at block {self.update_block}, received update for stale block {updates.get('block_number')}"
             )
