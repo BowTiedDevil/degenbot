@@ -451,15 +451,12 @@ class BaseV3LiquidityPool(ABC):
         for key, value in updates.items():
             if key == "tick":
                 self.state["tick"] = value
-                print(f"updated tick: {value}")
                 updated = True
             elif key == "liquidity":
                 self.state["liquidity"] = value
-                print(f"updated liquidity: {value}")
                 updated = True
             elif key == "sqrt_price_x96":
                 self.state["sqrt_price_x96"] = value
-                print(f"updated sqrt_price_x96: {value}")
                 updated = True
 
         return updated
