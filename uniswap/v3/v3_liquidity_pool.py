@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from copy import deepcopy
 from typing import Tuple, List
 
-from brownie import Contract
+from brownie import Contract, chain
 from brownie.convert import to_address
 
 from degenbot.token import Erc20Token
@@ -49,7 +49,6 @@ class BaseV3LiquidityPool(ABC):
         populate_ticks: bool = True,
     ):
 
-        self.update_block = 0
         self.uniswap_version = 3
 
         if tokens:
@@ -137,6 +136,8 @@ class BaseV3LiquidityPool(ABC):
             "sqrt_price_x96": self.sqrt_price_x96,
             "tick": self.tick,
         }
+
+        self.update_block = chain.height
 
     def __str__(self):
         """
@@ -314,6 +315,7 @@ class BaseV3LiquidityPool(ABC):
         except:
             raise
         else:
+            self.update_block = chain.height
             if not silent:
                 print(f"Liquidity: {self.liquidity}")
                 print(f"SqrtPriceX96: {self.sqrt_price_x96}")
@@ -428,12 +430,12 @@ class BaseV3LiquidityPool(ABC):
 
         Dict entries with keys other than the three above will be ignored.
 
-        If block_number is provided, it will be checked.  If not provided, the values are assumed valid and will be processed.
+        If block_number is provided, it will be checked. If omitted, the values are assumed valid and processed.
 
         Returns a bool indicating whether any updated state value was found and processed
         """
 
-        if block_number and block_number < self.update_block:
+        if block_number is not None and block_number < self.update_block:
             raise ExternalUpdateError(
                 f"Current state recorded at block {self.update_block}, received update for stale block {updates.get('block_number')}"
             )

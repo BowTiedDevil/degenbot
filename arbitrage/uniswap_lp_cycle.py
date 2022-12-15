@@ -1,6 +1,8 @@
 from typing import List, Tuple, Union
 
+from eth_abi import encode as abi_encode
 from scipy import optimize
+from web3 import Web3
 
 from degenbot.arbitrage.base import Arbitrage
 from degenbot.exceptions import (
@@ -24,8 +26,8 @@ class UniswapLpCycle(Arbitrage):
         id: str = None,
     ):
 
-        if id:
-            self.id = id
+        self.id = id if id else None
+
         if name:
             self.name = name
 
@@ -35,14 +37,12 @@ class UniswapLpCycle(Arbitrage):
 
         for pool in swap_pools:
             assert pool.uniswap_version in [2, 3], DegenbotError(
-                f"WTF? Could not identify version for pool {pool}"
+                f"Could not identify Uniswap version for pool {pool}!"
             )
         self.swap_pools = swap_pools
 
         self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
-        self.swap_pool_tokens = [
-            [pool.token0, pool.token1] for pool in self.swap_pools
-        ]
+        self.swap_pool_tokens = [[pool.token0, pool.token1] for pool in self.swap_pools]
 
         # WIP: add state tracking for all pools. Populated from relevant state data from each pool, retrieved directly from pool.state attribute
         self.pool_states = {}
@@ -126,32 +126,21 @@ class UniswapLpCycle(Arbitrage):
         """
         Internal method to update the `self.pool_states` state tracking dict
         """
-        self.pool_states = {
-            pool.address: pool.state for pool in self.swap_pools
-        }
+        self.pool_states = {pool.address: pool.state for pool in self.swap_pools}
 
-    def auto_update(
-        self,
-        silent=True,
-    ):
+    def auto_update(self, silent=True, block_number=None):
         for pool in self.swap_pools:
             if pool.uniswap_version == 2 and pool._update_method != "external":
                 # TODO: V2 pools can updated via polling, or via external updates. Need to implement a
                 # more robust check that gracefully handles externally-updated pools
                 pool.update_reserves(silent=silent)
-            elif (
-                pool.uniswap_version == 3 and pool._update_method != "external"
-            ):
+            elif pool.uniswap_version == 3 and pool._update_method != "external":
                 pool.auto_update(silent=silent)
 
-    def calculate_arbitrage(
-        self, verbose=False
-    ) -> Tuple[bool, Tuple[int, int]]:
+    def calculate_arbitrage(self, verbose=False) -> Tuple[bool, Tuple[int, int]]:
 
         # short-circuit to avoid arb recalc if pool states have not changed:
-        if self.pool_states == {
-            pool.address: pool.state for pool in self.swap_pools
-        }:
+        if self.pool_states == {pool.address: pool.state for pool in self.swap_pools}:
             return False, ()
         else:
             self._update_pool_states()
@@ -198,35 +187,18 @@ class UniswapLpCycle(Arbitrage):
             swap_amount = int(opt.x)
             best_profit = -int(opt.fun)
 
-        # forward_amount = self.swap_pools[
-        #     0
-        # ].calculate_tokens_out_from_tokens_in(
-        #     token_in=self.input_token, token_in_quantity=swap_amount
-        # )
-        # ending_amount = self.swap_pools[1].calculate_tokens_out_from_tokens_in(
-        #     token_in=forward_token, token_in_quantity=forward_amount
-        # )
-
-        # print()
-        # print(
-        #     f"pool 0: swap {swap_amount} {self.input_token.symbol} for {forward_amount} {forward_token}"
-        # )
-        # print(
-        #     f"pool 1: swap {forward_amount} {forward_token} for {ending_amount} {self.input_token.symbol}"
-        # )
-        # print(f"profit: {best_profit/10**self.input_token.decimals}")
-
-        if best_profit > 0:
-            self.best.update(
-                {
-                    "swap_amount": swap_amount,
-                    "profit_amount": best_profit,
-                    "swap_pool_amounts": [],
-                }
-            )
-            return True, (swap_amount, best_profit)
-        else:
-            return False, (swap_amount, best_profit)
+        profitable = True if best_profit > 0 else False
+        self.best.update(
+            {
+                "swap_amount": swap_amount,
+                "profit_amount": best_profit,
+                "swap_pool_amounts": self._build_multipool_amounts_out(
+                    token_in=self.input_token,
+                    token_in_quantity=swap_amount,
+                ),
+            }
+        )
+        return profitable, (swap_amount, best_profit)
 
     def calculate_multipool_tokens_out_from_tokens_in(
         self,
@@ -254,9 +226,7 @@ class UniswapLpCycle(Arbitrage):
                 )
 
             # calculate the swap output through pool[i]
-            token_out_quantity = self.swap_pools[
-                i
-            ].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
                 token_in=token_in, token_in_quantity=token_in_quantity
             )
 
@@ -267,6 +237,143 @@ class UniswapLpCycle(Arbitrage):
                 # otherwise, use the output as input on the next loop
                 token_in = token_out
                 token_in_quantity = token_out_quantity
+
+    def generate_payloads(
+        self,
+        from_address: str,
+    ) -> List[Tuple[str, bytes, int]]:
+        """
+        Generates a list of calldata payloads for each step in the swap path, with calldata built using the eth_abi.encode method
+        and the `swap` function of either the V2 or V3 pool
+
+        Arguments
+        ---------
+        from_address: str
+            The address that will receive all token swap transfers and implement the necessary V3 callbacks
+
+        Returns
+        ---------
+        payloads: List[Tuple[str, bytes, int]]
+            A list of payloads, formatted as a tuple: (address, calldata, msg.value)
+        """
+
+        # web3py object without a provider, useful for offline transaction signing
+        w3 = Web3()
+
+        payloads = []
+
+        # generate the payload for the initial transfer if the first pool is type V2
+        if self.swap_pools[0].uniswap_version == 2:
+            try:
+                # transfer the input token to the first swap pool
+                transfer_payload = (
+                    # address
+                    self.input_token.address,
+                    # bytes calldata
+                    w3.keccak(text="transfer(address,uint256)")[0:4]
+                    + abi_encode(
+                        [
+                            "address",
+                            "uint256",
+                        ],
+                        [
+                            self.swap_pool_addresses[0],
+                            self.best.get("swap_amount"),
+                        ],
+                    ),
+                    0,  # msg.value
+                )
+            except Exception as e:
+                print(f"generate_payloads (transfer_payload): {e}")
+                print(self.best)
+                print(f"id: {self.id}")
+            else:
+                payloads.append(transfer_payload)
+
+        # generate the swap payloads for each pool in the path
+        try:
+            last_pool = self.swap_pools[-1]
+            for i, swap_pool_object in enumerate(self.swap_pools):
+
+                if swap_pool_object is last_pool:
+                    next_pool = None
+                else:
+                    next_pool = self.swap_pools[i + 1]
+
+                if next_pool is not None:
+                    # if it is a V2 pool, set swap destination to its address
+                    if next_pool.uniswap_version == 2:
+                        swap_destination_address = next_pool.address
+                    # if it is a V3 pool, set swap destination to `from_address`
+                    elif next_pool.uniswap_version == 3:
+                        swap_destination_address = from_address
+                else:
+                    # we have reached the last pool, so set the destination to `from_address` regardless of type
+                    swap_destination_address = from_address
+
+                if swap_pool_object.uniswap_version == 2:
+                    payloads.append(
+                        (
+                            # address
+                            swap_pool_object.address,
+                            # bytes calldata
+                            w3.keccak(text="swap(uint256,uint256,address,bytes)")[0:4]
+                            + abi_encode(
+                                [
+                                    "uint256",
+                                    "uint256",
+                                    "address",
+                                    "bytes",
+                                ],
+                                [
+                                    *self.best["swap_pool_amounts"][i]["amounts"],
+                                    swap_destination_address,
+                                    b"",
+                                ],
+                            ),
+                            0,  # msg.value
+                        )
+                    )
+                elif swap_pool_object.uniswap_version == 3:
+                    payloads.append(
+                        (
+                            # address
+                            swap_pool_object.address,
+                            # bytes calldata
+                            w3.keccak(text="swap(address,bool,int256,uint160,bytes)")
+                            + abi_encode(
+                                [
+                                    "address",
+                                    "bool",
+                                    "int256",
+                                    "uint160",
+                                    "bytes",
+                                ],
+                                [
+                                    swap_destination_address,
+                                    self.best.get("swap_pool_amounts")[i]["zeroForOne"],
+                                    self.best.get("swap_pool_amounts")[i][
+                                        "amountSpecified"
+                                    ],
+                                    self.best.get("swap_pool_amounts")[i][
+                                        "sqrtPriceLimitX96"
+                                    ],
+                                    b"",
+                                ],
+                            ),
+                            0,  # msg.value
+                        )
+                    )
+                else:
+                    raise DegenbotError(
+                        f"Could not determine Uniswap version for pool: {swap_pool_object}"
+                    )
+        except Exception as e:
+            print(f"generate_payloads (swap_payload): {e}")
+            print(self.best)
+            print(f"id: {self.id}")
+
+        return payloads
 
     def _build_multipool_amounts_out(
         self,
