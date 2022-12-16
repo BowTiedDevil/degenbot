@@ -109,10 +109,11 @@ class BaseV3LiquidityPool(ABC):
             self.sqrt_price_x96 = self.slot0[0]
             self.tick = self.slot0[1]
             self.tick_data = {}
-            self.tick_word, _ = self._get_tick_bitmap_position(self.tick)
             self.tick_bitmap = {}
+            self.tick_words = {}
             if populate_ticks:
-                self._get_tick_data_at_word(self.tick_word)
+                _tick_word, _ = self._get_tick_bitmap_position(self.tick)
+                self._get_tick_data_at_word(_tick_word)
         except:
             raise
 
@@ -129,7 +130,7 @@ class BaseV3LiquidityPool(ABC):
         if name:
             self.name = name
         else:
-            self.name = f"{self.token0.symbol}-{self.token1.symbol} (V3, {self.fee/100000:.3f}%)"
+            self.name = f"{self.token0.symbol}-{self.token1.symbol} (V3, {self.fee/10000:.2f}%)"
 
         self.state = {
             "liquidity": self.liquidity,
@@ -478,7 +479,7 @@ class BaseV3LiquidityPool(ABC):
         Gets the initialized tick values at a specific word (a 32 byte number
         representing 256 ticks at the tickSpacing interval), stores
         the liquidity values in the `self.tick_data` dictionary using the tick
-        as the key, and updates the tick_bitmap dict.
+        as the key, and updates the tick_bitmap and tick_words dict.
         """
         try:
             tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
@@ -496,6 +497,9 @@ class BaseV3LiquidityPool(ABC):
         else:
             for (tick, liquidityNet, liquidityGross) in tick_data:
                 self.tick_data[tick] = liquidityNet, liquidityGross
+
+            self.tick_words.update({word_position: True})
+
             return tick_data
 
 
