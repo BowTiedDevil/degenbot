@@ -5,7 +5,7 @@ from degenbot.exceptions import DegenbotError
 from . import BitMath
 from .Helpers import *
 
-MAXUINT8 = 2**8 - 1
+from decimal import Decimal
 
 
 class BitmapWordUnavailable(DegenbotError):
@@ -25,7 +25,9 @@ def nextInitializedTickWithinOneWord(
     lte: bool,
 ) -> Tuple[int, bool]:
 
-    compressed: int = tick // tickSpacing
+    compressed: int = int(
+        Decimal(tick) // tickSpacing
+    )  # tick can be negative, use Decimal so floor division rounds to zero instead of negative infinity
     if tick < 0 and tick % tickSpacing != 0:
         compressed -= 1  # round towards negative infinity
 
@@ -69,7 +71,7 @@ def nextInitializedTickWithinOneWord(
             )
             * tickSpacing
             if initialized_status
-            else (compressed + 1 + int24(MAXUINT8 - bitPos)) * tickSpacing
+            else (compressed + 1 + int24(MAX_UINT8 - bitPos)) * tickSpacing
         )
 
     return next_tick, initialized_status

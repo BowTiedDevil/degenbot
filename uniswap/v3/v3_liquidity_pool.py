@@ -113,7 +113,10 @@ class BaseV3LiquidityPool(ABC):
             self.tick_words = {}
             if populate_ticks:
                 _tick_word, _ = self._get_tick_bitmap_position(self.tick)
-                self._get_tick_data_at_word(_tick_word)
+                print("populating ticks:")
+                print(f"found tick word = {_tick_word}")
+                _ = self._get_tick_data_at_word(_tick_word)
+                print(f"fetched word: {_}")
         except:
             raise
 
@@ -210,9 +213,6 @@ class BaseV3LiquidityPool(ABC):
             and state["sqrtPriceX96"] != sqrtPriceLimitX96
         ):
 
-            print()
-            print("running step calc")
-
             step = {}
 
             step["sqrtPriceStartX96"] = state["sqrtPriceX96"]
@@ -234,9 +234,6 @@ class BaseV3LiquidityPool(ABC):
                     self._get_tick_data_at_word(wordPos)
                 else:
                     break
-
-            print("step:")
-            pprint(step)
 
             # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
             if step["tickNext"] < TickMath.MIN_TICK:
@@ -269,13 +266,6 @@ class BaseV3LiquidityPool(ABC):
                 self.fee,
             )
 
-            print()
-            print("after swap - 1")
-            print("step:")
-            pprint(step)
-            print("state:")
-            pprint(state)
-
             if exactInput:
                 state["amountSpecifiedRemaining"] -= to_int256(
                     step["amountIn"] + step["feeAmount"]
@@ -292,13 +282,6 @@ class BaseV3LiquidityPool(ABC):
                     + step["amountIn"]
                     + step["feeAmount"]
                 )
-
-            print()
-            print("after swap - 2")
-            print("step:")
-            pprint(step)
-            print("state:")
-            pprint(state)
 
             # shift tick if we reached the next price
             if state["sqrtPriceX96"] == step["sqrtPriceNextX96"]:
@@ -324,14 +307,6 @@ class BaseV3LiquidityPool(ABC):
                     state["sqrtPriceX96"]
                 )
 
-        print()
-        print("after tick shift")
-        print("step:")
-        pprint(step)
-        print()
-        print("state:")
-        pprint(state)
-
         amount0, amount1 = (
             (
                 amountSpecified - state["amountSpecifiedRemaining"],
@@ -343,11 +318,6 @@ class BaseV3LiquidityPool(ABC):
                 amountSpecified - state["amountSpecifiedRemaining"],
             )
         )
-
-        print(f"{amount0=}")
-        print(f"{amount1=}")
-        print(f"{zeroForOne=}")
-        print(f"{exactInput=}")
 
         return amount0, amount1
 
