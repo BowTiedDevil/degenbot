@@ -39,7 +39,7 @@ def nextInitializedTickWithinOneWord(
             raise BitmapWordUnavailable(wordPos)
 
         # if there are no initialized ticks to the right of or at the current tick, return rightmost in the word
-        initialized_status = masked != 0
+        initialized_status: bool = masked != 0
         # overflow/underflow is possible, but prevented externally by limiting both tickSpacing and tick
         next_tick = (
             (compressed - int24(bitPos - BitMath.mostSignificantBit(masked)))
@@ -59,7 +59,7 @@ def nextInitializedTickWithinOneWord(
             raise BitmapWordUnavailable(wordPos)
 
         # if there are no initialized ticks to the left of the current tick, return leftmost in the word
-        initialized_status = masked != 0
+        initialized_status: bool = masked != 0
         # overflow/underflow is possible, but prevented externally by limiting both tickSpacing and tick
         next_tick = (
             (

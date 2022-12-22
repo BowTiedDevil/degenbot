@@ -1,4 +1,43 @@
-# generic integer conversion to mimic Solidity's inline typecasting for int/uint types
+# adapted from OpenZeppelin's overflow checks, which throw
+# an exception if the input value exceeds the maximum value
+# for this type
+
+MIN_INT128 = -(2**127)
+MAX_INT128 = 2**127 - 1
+
+MIN_UINT128 = 0
+MAX_UINT128 = 2**128 - 1
+
+MIN_UINT160 = 0
+MAX_UINT160 = 2**160 - 1
+
+MIN_UINT256 = 0
+MAX_UINT256 = 2**256 - 1
+
+
+def mulmod(x, y, k):
+    assert k != 0
+    return (x * y) % k
+
+
+def to_int128(x):
+    assert x <= 2 ** (128 - 1)
+    return x
+
+
+def to_int256(x):
+    assert x <= 2 ** (256 - 1)
+    return x
+
+
+def to_uint160(x):
+    assert x <= 2 ** (160) - 1
+    return x
+
+
+# Generic integer "conversion" that performs no value checking to mimic Solidity's
+# inline typecasting for int/uint types. Makes copy-pasting the Solidity functions
+# easier since in-line casts can remain
 def _int(x):
     return x
 

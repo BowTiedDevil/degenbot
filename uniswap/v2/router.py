@@ -3,6 +3,7 @@ from decimal import Decimal
 from brownie import Contract
 from brownie.network.account import LocalAccount
 
+
 class Router:
     """
     Represents a Uniswap V2 router contract
@@ -26,9 +27,7 @@ class Router:
                     name=name, address=address, abi=abi
                 )
             else:
-                self._contract = Contract.from_explorer(
-                    address=address
-                )
+                self._contract = Contract.from_explorer(address=address)
 
         self.name = name
         self._user = user

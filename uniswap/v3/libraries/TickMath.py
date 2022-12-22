@@ -10,7 +10,7 @@ MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342
 def getSqrtRatioAtTick(tick: int) -> int:
 
     absTick = uint256(-int256(tick)) if tick < 0 else uint256(int256(tick))
-    assert absTick <= uint256(MAX_TICK), "T"
+    assert 0 <= absTick <= uint256(MAX_TICK), "T"
 
     ratio = (
         0xFFFCB933BD6FAD37AA2D162D1A594001
@@ -67,6 +67,8 @@ def getSqrtRatioAtTick(tick: int) -> int:
 
 
 def getTickAtSqrtRatio(sqrtPriceX96: int) -> int:
+
+    assert 0 <= sqrtPriceX96 <= 2**160 - 1, "not a valid uint160"
 
     # second inequality must be < because the price can never reach the price at the max tick
     assert (

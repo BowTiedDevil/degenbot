@@ -2,6 +2,7 @@ from typing import List
 from degenbot.token import Erc20Token
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 
+
 class MultiLiquidityPool:
     def __init__(
         self,

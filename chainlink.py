@@ -1,6 +1,7 @@
 from brownie import Contract
 
-__all__ = ['ChainlinkPriceContract']
+__all__ = ["ChainlinkPriceContract"]
+
 
 class ChainlinkPriceContract:
     """
@@ -18,9 +19,7 @@ class ChainlinkPriceContract:
         except Exception as e:
             print(e)
             try:
-                self._contract: Contract = (
-                    Contract.from_explorer(address)
-                )
+                self._contract: Contract = Contract.from_explorer(address)
             except Exception as e:
                 print(e)
 

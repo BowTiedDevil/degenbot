@@ -12,7 +12,7 @@ from warnings import catch_warnings, simplefilter
 
 from .abi import UNISWAP_V3_POOL_ABI
 from .libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
-from .libraries.Helpers import uint256
+from .libraries.Helpers import uint256, to_int256
 from .tick_lens import TickLens
 
 
@@ -163,11 +163,24 @@ class BaseV3LiquidityPool(ABC):
         It is a double-underscore method and is thus obscured from external access (but still accessible if you know how).
         """
 
-        slot0Start = deepcopy(self.slot0)
+        assert amountSpecified != 0, "AS"
+
+        assert (
+            sqrtPriceLimitX96 < self.slot0["sqrtPriceX96"]
+            and sqrtPriceLimitX96 > TickMath.MIN_SQRT_RATIO
+            if zeroForOne
+            else sqrtPriceLimitX96 > self.slot0["sqrtPriceX96"]
+            and sqrtPriceLimitX96 < TickMath.MAX_SQRT_RATIO
+        ), "SPL"
 
         cache = {
             "liquidityStart": self.liquidity,
             "tickCumulative": 0,
+            # ignored attributes:
+            #   - blockTimestamp
+            #   - feeProtocol
+            #   - secondsPerLiquidityCumulativeX128
+            #   - computedLatestObservation
         }
 
         exactInput: bool = amountSpecified > 0
@@ -175,16 +188,33 @@ class BaseV3LiquidityPool(ABC):
         state = {
             "amountSpecifiedRemaining": amountSpecified,
             "amountCalculated": 0,
-            "sqrtPriceX96": slot0Start["sqrtPriceX96"],
-            "tick": slot0Start["tick"],
+            "sqrtPriceX96": self.slot0["sqrtPriceX96"],
+            "tick": self.slot0["tick"],
             "liquidity": cache["liquidityStart"],
+            # ignored attributes:
+            #   - feeGrowthGlobalX128
+            #   - protocolFee
         }
+
+        from pprint import pprint
+
+        print("before swap")
+        print("state:")
+        pprint(state)
+        print(f"ticks:")
+        pprint(self.tick_data)
+        print(f"tick word: {self._get_tick_bitmap_position(self.tick)[0]}")
 
         while (
             state["amountSpecifiedRemaining"] != 0
             and state["sqrtPriceX96"] != sqrtPriceLimitX96
         ):
+
+            print()
+            print("running step calc")
+
             step = {}
+
             step["sqrtPriceStartX96"] = state["sqrtPriceX96"]
 
             while True:
@@ -204,6 +234,9 @@ class BaseV3LiquidityPool(ABC):
                     self._get_tick_data_at_word(wordPos)
                 else:
                     break
+
+            print("step:")
+            pprint(step)
 
             # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
             if step["tickNext"] < TickMath.MIN_TICK:
@@ -236,22 +269,38 @@ class BaseV3LiquidityPool(ABC):
                 self.fee,
             )
 
+            print()
+            print("after swap - 1")
+            print("step:")
+            pprint(step)
+            print("state:")
+            pprint(state)
+
             if exactInput:
-                state["amountSpecifiedRemaining"] -= (
+                state["amountSpecifiedRemaining"] -= to_int256(
                     step["amountIn"] + step["feeAmount"]
                 )
-                state["amountCalculated"] = (
+                state["amountCalculated"] = to_int256(
                     state["amountCalculated"] - step["amountOut"]
                 )
-
             else:
-                state["amountSpecifiedRemaining"] += step["amountOut"]
-                state["amountCalculated"] = (
+                state["amountSpecifiedRemaining"] += to_int256(
+                    step["amountOut"]
+                )
+                state["amountCalculated"] = to_int256(
                     state["amountCalculated"]
                     + step["amountIn"]
                     + step["feeAmount"]
                 )
 
+            print()
+            print("after swap - 2")
+            print("step:")
+            pprint(step)
+            print("state:")
+            pprint(state)
+
+            # shift tick if we reached the next price
             if state["sqrtPriceX96"] == step["sqrtPriceNextX96"]:
                 # if the tick is initialized, run the tick transition
                 if step["initialized"]:
@@ -275,6 +324,14 @@ class BaseV3LiquidityPool(ABC):
                     state["sqrtPriceX96"]
                 )
 
+        print()
+        print("after tick shift")
+        print("step:")
+        pprint(step)
+        print()
+        print("state:")
+        pprint(state)
+
         amount0, amount1 = (
             (
                 amountSpecified - state["amountSpecifiedRemaining"],
@@ -286,6 +343,11 @@ class BaseV3LiquidityPool(ABC):
                 amountSpecified - state["amountSpecifiedRemaining"],
             )
         )
+
+        print(f"{amount0=}")
+        print(f"{amount1=}")
+        print(f"{zeroForOne=}")
+        print(f"{exactInput=}")
 
         return amount0, amount1
 
@@ -415,9 +477,7 @@ class BaseV3LiquidityPool(ABC):
         return amountIn
 
     def external_update(
-        self,
-        updates: dict,
-        block_number: int = None,
+        self, updates: dict, block_number: int = None, silent: bool = True
     ) -> bool:
         """
         Accepts and processes a dict with any of these updated state values:
@@ -435,6 +495,10 @@ class BaseV3LiquidityPool(ABC):
 
         Returns a bool indicating whether any updated state value was found and processed
         """
+
+        assert set(["liquidity", "sqrt_price_x96", "tick"]) & set(
+            updates.keys()
+        ), "At least one of (liquidity, sqrt_price_x96, tick) must be provided"
 
         if block_number is not None and block_number < self.update_block:
             raise ExternalUpdateError(
@@ -454,8 +518,13 @@ class BaseV3LiquidityPool(ABC):
                 self.state["sqrt_price_x96"] = value
                 updated = True
 
-        if updated and block_number:
-            self.update_block = block_number
+        if updated:
+            self.update_block = block_number if block_number else chain.height
+
+        if not silent:
+            print(f"Liquidity: {self.liquidity}")
+            print(f"SqrtPriceX96: {self.sqrt_price_x96}")
+            print(f"Tick: {self.tick}")
 
         return updated
 
