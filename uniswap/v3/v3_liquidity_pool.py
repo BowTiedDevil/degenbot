@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from copy import deepcopy
 from typing import Tuple, List
 
+from decimal import Decimal
+
 from brownie import Contract, chain
 from brownie.convert import to_address
 
@@ -113,10 +115,8 @@ class BaseV3LiquidityPool(ABC):
             self.tick_words = {}
             if populate_ticks:
                 _tick_word, _ = self._get_tick_bitmap_position(self.tick)
-                print("populating ticks:")
-                print(f"found tick word = {_tick_word}")
-                _ = self._get_tick_data_at_word(_tick_word)
-                print(f"fetched word: {_}")
+                self._get_tick_data_at_word(_tick_word)
+
         except:
             raise
 
@@ -198,15 +198,6 @@ class BaseV3LiquidityPool(ABC):
             #   - feeGrowthGlobalX128
             #   - protocolFee
         }
-
-        from pprint import pprint
-
-        print("before swap")
-        print("state:")
-        pprint(state)
-        print(f"ticks:")
-        pprint(self.tick_data)
-        print(f"tick word: {self._get_tick_bitmap_position(self.tick)[0]}")
 
         while (
             state["amountSpecifiedRemaining"] != 0
@@ -511,7 +502,7 @@ class BaseV3LiquidityPool(ABC):
             0 = wordPosition (zero-indexed)
             10 = bitPosition (zero-indexed)
         """
-        return TickBitmap.position(tick // self.tick_spacing)
+        return TickBitmap.position(int(Decimal(tick) // self.tick_spacing))
 
     def _get_tick_data_at_word(self, word_position: int) -> dict:
         """

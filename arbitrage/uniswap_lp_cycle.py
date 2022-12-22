@@ -3,6 +3,7 @@ from typing import List, Tuple, Union
 from eth_abi import encode as abi_encode
 from scipy import optimize
 from web3 import Web3
+from math import ceil, floor
 
 from degenbot.arbitrage.base import Arbitrage
 from degenbot.exceptions import (
@@ -193,18 +194,20 @@ class UniswapLpCycle(Arbitrage):
             raise ArbCalculationError
 
         def arb_profit(x):
-            x = int(x)
+            x = ceil(x)  # round up on the input
             return -float(
-                self.swap_pools[1].calculate_tokens_out_from_tokens_in(
-                    token_in=forward_token,
-                    token_in_quantity=self.swap_pools[
-                        0
-                    ].calculate_tokens_out_from_tokens_in(
-                        token_in=self.input_token,
-                        token_in_quantity=x,
-                    ),
+                floor(  # round down on the output
+                    self.swap_pools[1].calculate_tokens_out_from_tokens_in(
+                        token_in=forward_token,
+                        token_in_quantity=self.swap_pools[
+                            0
+                        ].calculate_tokens_out_from_tokens_in(
+                            token_in=self.input_token,
+                            token_in_quantity=x,
+                        ),
+                    )
+                    - x
                 )
-                - x
             )
 
         try:

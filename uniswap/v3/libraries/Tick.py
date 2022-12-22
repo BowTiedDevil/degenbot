@@ -11,8 +11,8 @@ def tickSpacingToMaxLiquidityPerTick(tickSpacing: Int24):
 
     assert -(2**23) <= tickSpacing <= 2**23 - 1, "input not a valid int24"
 
-    minTick = Decimal(TickMath.MIN_TICK) // Decimal(tickSpacing) * tickSpacing
-    maxTick = Decimal(TickMath.MAX_TICK) // Decimal(tickSpacing) * tickSpacing
+    minTick = Decimal(TickMath.MIN_TICK) // tickSpacing * tickSpacing
+    maxTick = Decimal(TickMath.MAX_TICK) // tickSpacing * tickSpacing
     numTicks = uint24((maxTick - minTick) // tickSpacing) + 1
 
     result = MAX_UINT128 // numTicks
