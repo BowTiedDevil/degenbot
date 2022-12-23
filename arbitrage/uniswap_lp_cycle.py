@@ -1,20 +1,22 @@
+from math import ceil
 from typing import List, Tuple, Union
 
 from eth_abi import encode as abi_encode
 from scipy import optimize
 from web3 import Web3
-from math import ceil, floor
 
 from degenbot.arbitrage.base import Arbitrage
 from degenbot.exceptions import (
+    ArbitrageError,
     ArbCalculationError,
-    DegenbotError,
     InvalidSwapPathError,
+    ZeroLiquidityError,
 )
 from degenbot.token import Erc20Token
 from degenbot.uniswap.v2 import LiquidityPool
 from degenbot.uniswap.v3 import V3LiquidityPool
 from degenbot.uniswap.v3.libraries import TickMath
+from degenbot.uniswap.v3.libraries.Helpers import MAX_UINT256
 
 
 class UniswapLpCycle(Arbitrage):
@@ -37,7 +39,7 @@ class UniswapLpCycle(Arbitrage):
         self.gas_estimate = 0
 
         for pool in swap_pools:
-            assert pool.uniswap_version in [2, 3], DegenbotError(
+            assert pool.uniswap_version in [2, 3], ArbitrageError(
                 f"Could not identify Uniswap version for pool {pool}!"
             )
         self.swap_pools = swap_pools
@@ -45,6 +47,44 @@ class UniswapLpCycle(Arbitrage):
         self.swap_pool_tokens = [
             [pool.token0, pool.token1] for pool in self.swap_pools
         ]
+        self.swap_vectors = []
+        for i, pool in enumerate(self.swap_pools):
+            if i == 0:
+                if self.input_token == pool.token0:
+                    zeroForOne = True
+                    token_in = pool.token0
+                    token_out = pool.token1
+                elif self.input_token == pool.token1:
+                    zeroForOne = False
+                    token_in = pool.token1
+                    token_out = pool.token0
+                else:
+                    raise Exception("Token could not be identified!")
+            else:
+                # token_out references the output from the previous pool
+                if token_out == pool.token0:
+                    zeroForOne = True
+                    token_in = pool.token0
+                    token_out = pool.token1
+                elif token_out == pool.token1:
+                    zeroForOne = False
+                    token_in = pool.token1
+                    token_out = pool.token0
+                else:
+                    raise Exception("Token could not be identified!")
+            self.swap_vectors.append(
+                {
+                    "token_in": token_in,
+                    "token_out": token_out,
+                    "zeroForOne": zeroForOne,
+                }
+            )
+
+        # print(f"swap_token array built:")
+        # for i, swap_pair in enumerate(self.swap_tokens):
+        #     print(
+        #         f"Pool {i} swap {swap_pair.get('token_in')} -> {swap_pair.get('token_out')}"
+        #     )
 
         self.name = " -> ".join([pool.name for pool in self.swap_pools])
 
@@ -79,7 +119,7 @@ class UniswapLpCycle(Arbitrage):
         id: str = None,
     ) -> "UniswapLpCycle":
         """
-        Create a new `V3LpSwap` object from token and pool addresses.
+        Create a new `UniswapLpCycle` object from token and pool addresses.
 
         Arguments
         ---------
@@ -119,7 +159,7 @@ class UniswapLpCycle(Arbitrage):
             elif pool_type == "V3":
                 pool_objects.append(V3LiquidityPool(address=pool_address))
             else:
-                raise DegenbotError(
+                raise ArbitrageError(
                     f"Pool type not understood! Expected 'V2' or 'V3', got {pool_type}"
                 )
 
@@ -145,11 +185,12 @@ class UniswapLpCycle(Arbitrage):
         # TODO: check `self.pool_states`` to short-circuit updates if nothing has changed
 
         found_updates = False
+
         for pool in self.swap_pools:
             if pool._update_method == "polling":
                 if pool.uniswap_version == 2:
-                    # TODO: V2 pools can updated via polling, or via external updates. Need to implement a
-                    # more robust check that gracefully handles externally-updated pools
+                    # TODO: implement a more robust check that gracefully
+                    # handles externally-updated pools
                     if pool.update_reserves(silent=silent):
                         found_updates = True
                 elif pool.uniswap_version == 3:
@@ -160,21 +201,23 @@ class UniswapLpCycle(Arbitrage):
                 if pool.state != self.pool_states[pool.address]:
                     found_updates = True
             else:
-                raise DegenbotError(
+                raise ArbitrageError(
                     "auto_update: could not determine update method!"
                 )
 
         if found_updates:
             self._update_pool_states
+
         return found_updates
 
     def calculate_arbitrage(self) -> Tuple[bool, Tuple[int, int]]:
 
         if self.best["init"] == True:
-            # if the 'Init' flag is True, the calc has never been done and should be,
-            # regardless of state
-            pass
-        elif self.pool_states == {
+            # if the 'init' flag is True, the `best` dict is empty so the calc should be done for the
+            # first time, regardless of state
+            self.auto_update()
+            self.best["init"] == False
+        elif self.best["init"] == False and self.pool_states == {
             pool.address: pool.state for pool in self.swap_pools
         }:
             # short-circuit to avoid arb recalc if pool states have not changed:
@@ -182,33 +225,61 @@ class UniswapLpCycle(Arbitrage):
         else:
             self._update_pool_states()
 
-        # cap the amount to be swapped
+        # check the pools for zero liquidity in the direction of the trade
+        for i, pool in enumerate(self.swap_pools):
+
+            if pool.uniswap_version == 2 and (
+                pool.reserves_token0 == 0 or pool.reserves_token1 == 0
+            ):
+                raise ZeroLiquidityError("V2 pool has no liquidity")
+
+            if pool.uniswap_version == 3 and pool.state["liquidity"] == 0:
+
+                # check if the swap direction is zeroForOne and the tick is maxed
+                # out at the bottom end (cannot swap any more token0 for token1)
+                if (
+                    self.swap_vectors[i]["zeroForOne"]
+                    and pool.state["tick"] == TickMath.MIN_TICK
+                ):
+                    raise ZeroLiquidityError(
+                        "V3 pool has no liquidity for a 0 -> 1 swap"
+                    )
+                # check if the swap direction is oneForZero (zeroForOne=False) and the tick is maxed
+                # out at the top end (cannot swap any more token1 for token0)
+                elif (
+                    not self.swap_vectors[i]["zeroForOne"]
+                    and pool.state["tick"] == TickMath.MAX_TICK
+                ):
+                    raise ZeroLiquidityError(
+                        "V3 pool has no liquidity for a 1 -> 0 swap"
+                    )
+
+        # limit the amount to be swapped
         bounds = (1, self.max_input)
 
-        if self.input_token == self.swap_pools[0].token0:
-            forward_token = self.swap_pools[0].token1
-        elif self.input_token == self.swap_pools[0].token1:
-            forward_token = self.swap_pools[0].token0
-        else:
-            print("calculate_arbitrage: WTF? Could not identify input token")
-            raise ArbCalculationError
-
         def arb_profit(x):
-            x = ceil(x)  # round up on the input
-            return -float(
-                floor(  # round down on the output
-                    self.swap_pools[1].calculate_tokens_out_from_tokens_in(
-                        token_in=forward_token,
-                        token_in_quantity=self.swap_pools[
-                            0
-                        ].calculate_tokens_out_from_tokens_in(
-                            token_in=self.input_token,
-                            token_in_quantity=x,
-                        ),
+            x = ceil(x)  # round up the input (overpay for the swap)
+
+            try:
+                for i, pool in enumerate(self.swap_pools):
+                    token_in = self.swap_vectors[i]["token_in"]
+                    token_out_quantity = (
+                        pool.calculate_tokens_out_from_tokens_in(
+                            token_in=token_in,
+                            token_in_quantity=x
+                            if i == 0
+                            else token_out_quantity,
+                        )
                     )
-                    - x
+            except:
+                # calculation failed for some reason, so return an arbitrarily large number to encourage
+                # the optimizer to move away from this input
+                print(
+                    f"caught exception from LP helper, returning MAX_UINT256"
                 )
-            )
+                return float(MAX_UINT256)
+            else:
+                return -float(token_out_quantity - x)
 
         try:
             opt = optimize.minimize_scalar(
@@ -217,15 +288,21 @@ class UniswapLpCycle(Arbitrage):
                 bounds=bounds,
                 options={"xatol": 1.0},
             )
-        except Exception as e:
-            print(e)
-            print(f"bounds: {bounds}")
-            raise ArbCalculationError
+        except:
+            raise
+            pool_dump = []
+            for pool in self.swap_pools:
+                pool_dump.append(pool.state)
+            # print(type(e))
+            # raise ArbCalculationError(
+            #     f"minimize_scalar failed with exception: {e}"
+            #     f"arb info: {pool_dump}"
+            # )
         else:
             swap_amount = int(opt.x)
             best_profit = -int(opt.fun)
-
         profitable = True if best_profit > 0 else False
+
         self.best.update(
             {
                 "swap_amount": swap_amount,
@@ -305,7 +382,7 @@ class UniswapLpCycle(Arbitrage):
 
         # generate the payload for the initial transfer if the first pool is type V2
         if self.swap_pools[0].uniswap_version == 2:
-            print("\tPAYLOAD: building initial V2 transfer")
+            # print("\tPAYLOAD: building initial V2 transfer")
             try:
                 # transfer the input token to the first swap pool
                 transfer_payload = (
@@ -335,7 +412,7 @@ class UniswapLpCycle(Arbitrage):
         # generate the swap payloads for each pool in the path
         try:
             last_pool = self.swap_pools[-1]
-            print("\tPAYLOAD: identified last pool")
+            # print("\tPAYLOAD: identified last pool")
             for i, swap_pool_object in enumerate(self.swap_pools):
 
                 if swap_pool_object is last_pool:
@@ -355,16 +432,16 @@ class UniswapLpCycle(Arbitrage):
                     swap_destination_address = from_address
 
                 if swap_pool_object.uniswap_version == 2:
-                    print(f"\tPAYLOAD: building V2 swap at pool {i}")
-                    print(
-                        f"\tPAYLOAD: pool address {swap_pool_object.address}"
-                    )
-                    print(
-                        f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]["amounts"]}'
-                    )
-                    print(
-                        f"\tPAYLOAD: destination address {swap_destination_address}"
-                    )
+                    # print(f"\tPAYLOAD: building V2 swap at pool {i}")
+                    # print(
+                    #     f"\tPAYLOAD: pool address {swap_pool_object.address}"
+                    # )
+                    # print(
+                    #     f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]["amounts"]}'
+                    # )
+                    # print(
+                    #     f"\tPAYLOAD: destination address {swap_destination_address}"
+                    # )
                     payloads.append(
                         (
                             # address
@@ -392,16 +469,16 @@ class UniswapLpCycle(Arbitrage):
                         )
                     )
                 elif swap_pool_object.uniswap_version == 3:
-                    print(f"\tPAYLOAD: building V3 swap at pool {i}")
-                    print(
-                        f"\tPAYLOAD: pool address {swap_pool_object.address}"
-                    )
-                    print(
-                        f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]}'
-                    )
-                    print(
-                        f"\tPAYLOAD: destination address {swap_destination_address}"
-                    )
+                    # print(f"\tPAYLOAD: building V3 swap at pool {i}")
+                    # print(
+                    #     f"\tPAYLOAD: pool address {swap_pool_object.address}"
+                    # )
+                    # print(
+                    #     f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]}'
+                    # )
+                    # print(
+                    #     f"\tPAYLOAD: destination address {swap_destination_address}"
+                    # )
                     payloads.append(
                         (
                             # address
@@ -436,7 +513,7 @@ class UniswapLpCycle(Arbitrage):
                         )
                     )
                 else:
-                    raise DegenbotError(
+                    raise ArbitrageError(
                         f"Could not determine Uniswap version for pool: {swap_pool_object}"
                     )
         except Exception as e:
@@ -537,7 +614,7 @@ class UniswapLpCycle(Arbitrage):
                     )
 
             else:
-                raise DegenbotError(
+                raise ArbitrageError(
                     f"Could not identify Uniswap version for pool: {self.swap_pools[i]}"
                 )
 

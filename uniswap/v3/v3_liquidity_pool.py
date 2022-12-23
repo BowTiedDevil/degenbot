@@ -8,7 +8,7 @@ from brownie import Contract, chain
 from brownie.convert import to_address
 
 from degenbot.token import Erc20Token
-from degenbot.exceptions import DegenbotError
+from degenbot.exceptions import DegenbotError, SimulatedRevertError
 
 from warnings import catch_warnings, simplefilter
 
@@ -149,7 +149,7 @@ class BaseV3LiquidityPool(ABC):
         """
         return self.name
 
-    def __UniswapV3Pool_func_swap(
+    def __UniswapV3Pool_swap(
         self,
         zeroForOne: bool,
         amountSpecified: int,
@@ -166,7 +166,7 @@ class BaseV3LiquidityPool(ABC):
         It is a double-underscore method and is thus obscured from external access (but still accessible if you know how).
         """
 
-        assert amountSpecified != 0, "AS"
+        assert amountSpecified != 0, SimulatedRevertError("AS")
 
         assert (
             sqrtPriceLimitX96 < self.slot0["sqrtPriceX96"]
@@ -174,7 +174,7 @@ class BaseV3LiquidityPool(ABC):
             if zeroForOne
             else sqrtPriceLimitX96 > self.slot0["sqrtPriceX96"]
             and sqrtPriceLimitX96 < TickMath.MAX_SQRT_RATIO
-        ), "SPL"
+        ), SimulatedRevertError("SPL")
 
         cache = {
             "liquidityStart": self.liquidity,
@@ -324,7 +324,9 @@ class BaseV3LiquidityPool(ABC):
             - sqrt_price_x96
             - tick
         """
+
         updated = False
+
         try:
             if (slot0 := self._brownie_contract.slot0()) != self.slot0:
                 updated = True
@@ -372,7 +374,12 @@ class BaseV3LiquidityPool(ABC):
 
         Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset, thus the
         swap calculation will continue until the target amount is satisfied, regardless of price impact
+
+        Some swaps cannot consume the entire input amount.
         """
+
+        # TODO: adjust return so a delta is returned as the second parameter. e.g. attempting to swap 1000 tokens
+        # but only 999 are consumed by the swap, a delta of 1 is returned as the second value.
 
         if token_in not in (self.token0, self.token1):
             raise DegenbotError("token_in not found!")
@@ -381,15 +388,49 @@ class BaseV3LiquidityPool(ABC):
         zeroForOne = True if token_in == self.token0 else False
 
         # delegate calculations to the re-implemented `swap` function
-        amount0, amount1 = self.__UniswapV3Pool_func_swap(
-            zeroForOne=zeroForOne,
-            amountSpecified=token_in_quantity,
-            sqrtPriceLimitX96=(
-                TickMath.MIN_SQRT_RATIO + 1
-                if zeroForOne
-                else TickMath.MAX_SQRT_RATIO - 1
-            ),
-        )
+        try:
+            amount0, amount1 = self.__UniswapV3Pool_swap(
+                zeroForOne=zeroForOne,
+                amountSpecified=token_in_quantity,
+                sqrtPriceLimitX96=(
+                    TickMath.MIN_SQRT_RATIO + 1
+                    if zeroForOne
+                    else TickMath.MAX_SQRT_RATIO - 1
+                ),
+            )
+        except Exception as e:
+            print(f"")
+            raise SimulatedRevertError(
+                f"(V3LiquidityPool) caught exception inside LP helper {self.name}: {e}"
+                f"\ntoken_in={token_in}"
+                f"\ntoken_in_quantity={token_in_quantity}"
+            )
+
+        # if zeroForOne:
+        #     if token_in_quantity != amount0:
+        #         print(f"input not completely consumed!")
+        #         print(f"{token_in_quantity=}")
+        #         print(f"{amount0=}")
+        #         print(f"{amount1=}")
+        # else:
+        #     if token_in_quantity != amount1:
+        #         print(f"input not completely consumed!")
+        #         print(f"{token_in_quantity=}")
+        #         print(f"{amount0=}")
+        #         print(f"{amount1=}")
+
+        # return (
+        #     (
+        #         -amount1,
+        #         amount0 - token_in_quantity,
+        #     )
+        #     if zeroForOne
+        #     else (
+        #         -amount0,
+        #         amount1 - token_in_quantity,
+        #     )
+        # )
+
         return -amount1 if zeroForOne else -amount0
 
     def calculate_tokens_in_from_tokens_out(
@@ -421,7 +462,7 @@ class BaseV3LiquidityPool(ABC):
         zeroForOne = True if token_out == self.token1 else False
 
         # delegate calculations to the re-implemented `swap` function
-        amount0Delta, amount1Delta = self.__UniswapV3Pool_func_swap(
+        amount0Delta, amount1Delta = self.__UniswapV3Pool_swap(
             zeroForOne=zeroForOne,
             amountSpecified=-token_out_quantity,
             sqrtPriceLimitX96=(
