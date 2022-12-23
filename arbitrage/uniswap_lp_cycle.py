@@ -25,14 +25,10 @@ class UniswapLpCycle(Arbitrage):
         input_token: Erc20Token,
         swap_pools: List[Union[LiquidityPool, V3LiquidityPool]],
         max_input: int,
-        name: str = "",
         id: str = None,
     ):
 
         self.id = id if id else None
-
-        if name:
-            self.name = name
 
         self.input_token = input_token
         self.max_input = max_input
