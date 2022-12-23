@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from copy import deepcopy
 from typing import Tuple, List
 
 from decimal import Decimal
@@ -18,7 +17,7 @@ from warnings import catch_warnings, simplefilter
 
 from .abi import UNISWAP_V3_POOL_ABI
 from .libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
-from .libraries.Helpers import uint256, to_int256
+from .libraries.Helpers import *
 from .tick_lens import TickLens
 
 
@@ -118,15 +117,7 @@ class BaseV3LiquidityPool(ABC):
         except:
             raise
 
-        # does nothing for now, will implement "external" update method at a later date
         self._update_method = update_method
-
-        # if (
-        #     self._update_method == "external"
-        #     and unload_brownie_contract_after_init
-        # ):
-        #     # huge memory savings if LP contract object is not used after initialization
-        #     self._brownie_contract = None
 
         if name:
             self.name = name
