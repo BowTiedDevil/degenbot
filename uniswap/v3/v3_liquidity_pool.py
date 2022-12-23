@@ -8,7 +8,11 @@ from brownie import Contract, chain
 from brownie.convert import to_address
 
 from degenbot.token import Erc20Token
-from degenbot.exceptions import DegenbotError, SimulatedRevertError
+from degenbot.exceptions import (
+    EVMRevertError,
+    ExternalUpdateError,
+    LiquidityPoolError,
+)
 
 from warnings import catch_warnings, simplefilter
 
@@ -16,14 +20,6 @@ from .abi import UNISWAP_V3_POOL_ABI
 from .libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
 from .libraries.Helpers import uint256, to_int256
 from .tick_lens import TickLens
-
-
-class ExternalUpdateError(DegenbotError):
-    """
-    Thrown when an external update does not pass sanity checks
-    """
-
-    pass
 
 
 class BaseV3LiquidityPool(ABC):
@@ -54,7 +50,9 @@ class BaseV3LiquidityPool(ABC):
         self.uniswap_version = 3
 
         if tokens:
-            assert len(tokens) == 2, "Expected exactly two tokens"
+            assert len(tokens) == 2, LiquidityPoolError(
+                "Expected exactly two tokens"
+            )
 
         self.address = to_address(address)
 
@@ -166,7 +164,7 @@ class BaseV3LiquidityPool(ABC):
         It is a double-underscore method and is thus obscured from external access (but still accessible if you know how).
         """
 
-        assert amountSpecified != 0, SimulatedRevertError("AS")
+        assert amountSpecified != 0, EVMRevertError("AS")
 
         assert (
             sqrtPriceLimitX96 < self.slot0["sqrtPriceX96"]
@@ -174,7 +172,7 @@ class BaseV3LiquidityPool(ABC):
             if zeroForOne
             else sqrtPriceLimitX96 > self.slot0["sqrtPriceX96"]
             and sqrtPriceLimitX96 < TickMath.MAX_SQRT_RATIO
-        ), SimulatedRevertError("SPL")
+        ), EVMRevertError("SPL")
 
         cache = {
             "liquidityStart": self.liquidity,
@@ -382,7 +380,7 @@ class BaseV3LiquidityPool(ABC):
         # but only 999 are consumed by the swap, a delta of 1 is returned as the second value.
 
         if token_in not in (self.token0, self.token1):
-            raise DegenbotError("token_in not found!")
+            raise LiquidityPoolError("token_in not found!")
 
         # determine whether the swap is token0 -> token1
         zeroForOne = True if token_in == self.token0 else False
@@ -400,7 +398,7 @@ class BaseV3LiquidityPool(ABC):
             )
         except Exception as e:
             print(f"")
-            raise SimulatedRevertError(
+            raise EVMRevertError(
                 f"(V3LiquidityPool) caught exception inside LP helper {self.name}: {e}"
                 f"\ntoken_in={token_in}"
                 f"\ntoken_in_quantity={token_in_quantity}"
@@ -456,7 +454,7 @@ class BaseV3LiquidityPool(ABC):
         """
 
         if token_out not in (self.token0, self.token1):
-            raise DegenbotError("token_in not found!")
+            raise LiquidityPoolError("token_in not found!")
 
         # determine whether the swap is token0 -> token1
         zeroForOne = True if token_out == self.token1 else False

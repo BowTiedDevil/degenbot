@@ -1,6 +1,6 @@
 from typing import Tuple
 
-from degenbot.exceptions import DegenbotError
+from degenbot.exceptions import LiquidityPoolError
 
 from . import BitMath
 from .Helpers import *
@@ -8,7 +8,7 @@ from .Helpers import *
 from decimal import Decimal
 
 
-class BitmapWordUnavailable(DegenbotError):
+class BitmapWordUnavailable(LiquidityPoolError):
     pass
 
 
