@@ -40,9 +40,7 @@ class UniswapLpCycle(Arbitrage):
             )
         self.swap_pools = swap_pools
         self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
-        self.swap_pool_tokens = [
-            [pool.token0, pool.token1] for pool in self.swap_pools
-        ]
+        self.swap_pool_tokens = [[pool.token0, pool.token1] for pool in self.swap_pools]
         self.swap_vectors = []
         for i, pool in enumerate(self.swap_pools):
             if i == 0:
@@ -55,7 +53,7 @@ class UniswapLpCycle(Arbitrage):
                     token_in = pool.token1
                     token_out = pool.token0
                 else:
-                    raise Exception("Token could not be identified!")
+                    raise ArbitrageError("Token could not be identified!")
             else:
                 # token_out references the output from the previous pool
                 if token_out == pool.token0:
@@ -67,7 +65,7 @@ class UniswapLpCycle(Arbitrage):
                     token_in = pool.token1
                     token_out = pool.token0
                 else:
-                    raise Exception("Token could not be identified!")
+                    raise ArbitrageError("Token could not be identified!")
             self.swap_vectors.append(
                 {
                     "token_in": token_in,
@@ -110,7 +108,6 @@ class UniswapLpCycle(Arbitrage):
         cls,
         input_token_address: str,
         swap_pool_addresses: List[Tuple[str, str]],
-        name: str = "",
         max_input: int = None,
         id: str = None,
     ) -> "UniswapLpCycle":
@@ -130,8 +127,6 @@ class UniswapLpCycle(Arbitrage):
                 ("0xbb2b8038a1640196fbe3e38816f3e67cba72d940","V2")
             ]
 
-        name : str, optional
-            The display name for the helper
         max_input: int, optional
             The maximum input for the cycle token in question
             (typically limited by the balance of the deployed contract or operating EOA)
@@ -162,7 +157,6 @@ class UniswapLpCycle(Arbitrage):
         return cls(
             input_token=token,
             swap_pools=pool_objects,
-            name=name,
             max_input=max_input,
             id=id,
         )
@@ -171,9 +165,7 @@ class UniswapLpCycle(Arbitrage):
         """
         Internal method to update the `self.pool_states` state tracking dict
         """
-        self.pool_states = {
-            pool.address: pool.state for pool in self.swap_pools
-        }
+        self.pool_states = {pool.address: pool.state for pool in self.swap_pools}
 
     def auto_update(self, silent=True, block_number=None) -> bool:
 
@@ -197,9 +189,7 @@ class UniswapLpCycle(Arbitrage):
                 if pool.state != self.pool_states[pool.address]:
                     found_updates = True
             else:
-                raise ArbitrageError(
-                    "auto_update: could not determine update method!"
-                )
+                raise ArbitrageError("auto_update: could not determine update method!")
 
         if found_updates:
             self._update_pool_states
@@ -235,7 +225,7 @@ class UniswapLpCycle(Arbitrage):
                 # out at the bottom end (cannot swap any more token0 for token1)
                 if (
                     self.swap_vectors[i]["zeroForOne"]
-                    and pool.state["tick"] == TickMath.MIN_TICK
+                    # and pool.state["tick"] == TickMath.MIN_TICK
                 ):
                     raise ZeroLiquidityError(
                         "V3 pool has no liquidity for a 0 -> 1 swap"
@@ -244,14 +234,23 @@ class UniswapLpCycle(Arbitrage):
                 # out at the top end (cannot swap any more token1 for token0)
                 elif (
                     not self.swap_vectors[i]["zeroForOne"]
-                    and pool.state["tick"] == TickMath.MAX_TICK
+                    # and pool.state["tick"] == TickMath.MAX_TICK
                 ):
                     raise ZeroLiquidityError(
                         "V3 pool has no liquidity for a 1 -> 0 swap"
                     )
 
         # limit the amount to be swapped
-        bounds = (1, self.max_input)
+        bounds = (
+            1,
+            self.max_input,
+        )
+
+        # bracket the initial range for swapping amount
+        bracket = (
+            int(0.001 * self.max_input),
+            int(0.005 * self.max_input),
+        )
 
         def arb_profit(x):
             x = ceil(x)  # round up the input (overpay for the swap)
@@ -259,20 +258,16 @@ class UniswapLpCycle(Arbitrage):
             try:
                 for i, pool in enumerate(self.swap_pools):
                     token_in = self.swap_vectors[i]["token_in"]
-                    token_out_quantity = (
-                        pool.calculate_tokens_out_from_tokens_in(
-                            token_in=token_in,
-                            token_in_quantity=x
-                            if i == 0
-                            else token_out_quantity,
-                        )
+                    token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
+                        token_in=token_in,
+                        token_in_quantity=x if i == 0 else token_out_quantity,
                     )
-            except:
+            except Exception as e:
+                print(e)
+                print(type(e))
                 # calculation failed for some reason, so return an arbitrarily large number to encourage
                 # the optimizer to move away from this input
-                print(
-                    f"caught exception from LP helper, returning MAX_UINT256"
-                )
+                print(f"caught exception from LP helper, returning MAX_UINT256")
                 return float(MAX_UINT256)
             else:
                 return -float(token_out_quantity - x)
@@ -282,21 +277,26 @@ class UniswapLpCycle(Arbitrage):
                 arb_profit,
                 method="bounded",
                 bounds=bounds,
-                options={"xatol": 1.0},
+                bracket=bracket,
+                options={
+                    "xatol": 1,
+                    # "disp": 3,
+                },
             )
         except:
             raise
-            pool_dump = []
-            for pool in self.swap_pools:
-                pool_dump.append(pool.state)
-            # print(type(e))
-            # raise ArbCalculationError(
-            #     f"minimize_scalar failed with exception: {e}"
-            #     f"arb info: {pool_dump}"
-            # )
+        #     pool_dump = []
+        #     for pool in self.swap_pools:
+        #         pool_dump.append(pool.state)
+        #     # print(type(e))
+        #     # raise ArbCalculationError(
+        #     #     f"minimize_scalar failed with exception: {e}"
+        #     #     f"arb info: {pool_dump}"
+        #     # )
         else:
             swap_amount = int(opt.x)
             best_profit = -int(opt.fun)
+
         profitable = True if best_profit > 0 else False
 
         self.best.update(
@@ -338,9 +338,7 @@ class UniswapLpCycle(Arbitrage):
                 )
 
             # calculate the swap output through pool[i]
-            token_out_quantity = self.swap_pools[
-                i
-            ].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
                 token_in=token_in, token_in_quantity=token_in_quantity
             )
 
@@ -378,7 +376,7 @@ class UniswapLpCycle(Arbitrage):
 
         # generate the payload for the initial transfer if the first pool is type V2
         if self.swap_pools[0].uniswap_version == 2:
-            # print("\tPAYLOAD: building initial V2 transfer")
+            print("\tPAYLOAD: building initial V2 transfer")
             try:
                 # transfer the input token to the first swap pool
                 transfer_payload = (
@@ -408,7 +406,7 @@ class UniswapLpCycle(Arbitrage):
         # generate the swap payloads for each pool in the path
         try:
             last_pool = self.swap_pools[-1]
-            # print("\tPAYLOAD: identified last pool")
+            print("\tPAYLOAD: identified last pool")
             for i, swap_pool_object in enumerate(self.swap_pools):
 
                 if swap_pool_object is last_pool:
@@ -428,24 +426,18 @@ class UniswapLpCycle(Arbitrage):
                     swap_destination_address = from_address
 
                 if swap_pool_object.uniswap_version == 2:
-                    # print(f"\tPAYLOAD: building V2 swap at pool {i}")
-                    # print(
-                    #     f"\tPAYLOAD: pool address {swap_pool_object.address}"
-                    # )
-                    # print(
-                    #     f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]["amounts"]}'
-                    # )
-                    # print(
-                    #     f"\tPAYLOAD: destination address {swap_destination_address}"
-                    # )
+                    print(f"\tPAYLOAD: building V2 swap at pool {i}")
+                    print(f"\tPAYLOAD: pool address {swap_pool_object.address}")
+                    print(
+                        f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]["amounts"]}'
+                    )
+                    print(f"\tPAYLOAD: destination address {swap_destination_address}")
                     payloads.append(
                         (
                             # address
                             swap_pool_object.address,
                             # bytes calldata
-                            w3.keccak(
-                                text="swap(uint256,uint256,address,bytes)"
-                            )[0:4]
+                            w3.keccak(text="swap(uint256,uint256,address,bytes)")[0:4]
                             + abi_encode(
                                 [
                                     "uint256",
@@ -454,9 +446,7 @@ class UniswapLpCycle(Arbitrage):
                                     "bytes",
                                 ],
                                 [
-                                    *self.best["swap_pool_amounts"][i][
-                                        "amounts"
-                                    ],
+                                    *self.best["swap_pool_amounts"][i]["amounts"],
                                     swap_destination_address,
                                     b"",
                                 ],
@@ -465,24 +455,20 @@ class UniswapLpCycle(Arbitrage):
                         )
                     )
                 elif swap_pool_object.uniswap_version == 3:
-                    # print(f"\tPAYLOAD: building V3 swap at pool {i}")
-                    # print(
-                    #     f"\tPAYLOAD: pool address {swap_pool_object.address}"
-                    # )
-                    # print(
-                    #     f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]}'
-                    # )
-                    # print(
-                    #     f"\tPAYLOAD: destination address {swap_destination_address}"
-                    # )
+                    print(f"\tPAYLOAD: building V3 swap at pool {i}")
+                    print(f"\tPAYLOAD: pool address {swap_pool_object.address}")
+                    print(
+                        f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]}'
+                    )
+                    print(f"\tPAYLOAD: destination address {swap_destination_address}")
                     payloads.append(
                         (
                             # address
                             swap_pool_object.address,
                             # bytes calldata
-                            w3.keccak(
-                                text="swap(address,bool,int256,uint160,bytes)"
-                            )[0:4]
+                            w3.keccak(text="swap(address,bool,int256,uint160,bytes)")[
+                                0:4
+                            ]
                             + abi_encode(
                                 [
                                     "address",
@@ -493,9 +479,7 @@ class UniswapLpCycle(Arbitrage):
                                 ],
                                 [
                                     swap_destination_address,
-                                    self.best.get("swap_pool_amounts")[i][
-                                        "zeroForOne"
-                                    ],
+                                    self.best.get("swap_pool_amounts")[i]["zeroForOne"],
                                     self.best.get("swap_pool_amounts")[i][
                                         "amountSpecified"
                                     ],

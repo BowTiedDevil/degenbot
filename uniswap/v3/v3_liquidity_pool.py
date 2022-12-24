@@ -376,8 +376,8 @@ class BaseV3LiquidityPool(ABC):
         # determine whether the swap is token0 -> token1
         zeroForOne = True if token_in == self.token0 else False
 
-        # delegate calculations to the re-implemented `swap` function
         try:
+            # delegate calculations to the ported `swap` function
             amount0, amount1 = self.__UniswapV3Pool_swap(
                 zeroForOne=zeroForOne,
                 amountSpecified=token_in_quantity,
@@ -388,7 +388,7 @@ class BaseV3LiquidityPool(ABC):
                 ),
             )
         except Exception as e:
-            print(f"")
+            print(f"type={type(e)}")
             raise EVMRevertError(
                 f"(V3LiquidityPool) caught exception inside LP helper {self.name}: {e}"
                 f"\ntoken_in={token_in}"
@@ -542,22 +542,21 @@ class BaseV3LiquidityPool(ABC):
         as the key, and updates the tick_bitmap and tick_words dict.
         """
         try:
-            tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
-                self.address, word_position
-            )
-            self.tick_bitmap.update(
-                {
-                    word_position: self._brownie_contract.tickBitmap(
-                        word_position
+            if tick_bitmap := self._brownie_contract.tickBitmap(word_position):
+                tick_data = (
+                    self.lens._brownie_contract.getPopulatedTicksInWord(
+                        self.address, word_position
                     )
-                }
-            )
+                )
+            else:
+                tick_data = ()
         except:
             raise
         else:
-            for (tick, liquidityNet, liquidityGross) in tick_data:
-                self.tick_data[tick] = liquidityNet, liquidityGross
-
+            if tick_bitmap:
+                for (tick, liquidityNet, liquidityGross) in tick_data:
+                    self.tick_data[tick] = liquidityNet, liquidityGross
+            self.tick_bitmap.update({word_position: tick_bitmap})
             self.tick_words.update({word_position: True})
 
             return tick_data
