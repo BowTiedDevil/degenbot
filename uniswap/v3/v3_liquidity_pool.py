@@ -3,7 +3,7 @@ from typing import Tuple, List
 
 from decimal import Decimal
 
-from brownie import Contract, chain
+from brownie import Contract, chain, network, multicall
 from brownie.convert import to_address
 
 from degenbot.token import Erc20Token
@@ -210,7 +210,7 @@ class BaseV3LiquidityPool(ABC):
                     )
                 except TickBitmap.BitmapWordUnavailable as e:
                     wordPos = e.args[-1]
-                    # print(f"TickBitmap word missing! Fetching word {wordPos}")
+                    print(f"TickBitmap word missing! Fetching word {wordPos}")
                     self._get_tick_data_at_word(wordPos)
                 else:
                     break
@@ -541,25 +541,90 @@ class BaseV3LiquidityPool(ABC):
         the liquidity values in the `self.tick_data` dictionary using the tick
         as the key, and updates the tick_bitmap and tick_words dict.
         """
-        try:
-            if tick_bitmap := self._brownie_contract.tickBitmap(word_position):
-                tick_data = (
-                    self.lens._brownie_contract.getPopulatedTicksInWord(
-                        self.address, word_position
-                    )
-                )
-            else:
-                tick_data = ()
-        except:
-            raise
-        else:
-            if tick_bitmap:
-                for (tick, liquidityNet, liquidityGross) in tick_data:
-                    self.tick_data[tick] = liquidityNet, liquidityGross
-            self.tick_bitmap.update({word_position: tick_bitmap})
-            self.tick_words.update({word_position: True})
 
-            return tick_data
+        print()
+        print()
+        print(f"(_get_tick_data_at_word) fetching word {word_position}")
+        print()
+        print()
+
+        # check if multicall is available for the connected network
+        if network.main.CONFIG.active_network.get("multicall2"):
+            extra_words = 500
+            if not self.tick_words:
+
+                # empty tick_words, so just fetch the requested word
+                lower_word = word_position
+                upper_word = word_position + 1
+            else:
+                # determine the direction of the requested word
+                if word_position > (max_word := max(self.tick_words.keys())):
+                    # going up
+                    lower_word = max_word + 1
+                    upper_word = lower_word + extra_words
+                elif word_position < (min_word := min(self.tick_words.keys())):
+                    # going down
+                    lower_word = min_word - extra_words
+                    upper_word = min_word
+            try:
+                with multicall:
+                    multicall_tick_bitmaps = {
+                        _word: self._brownie_contract.tickBitmap(_word)
+                        for _word in range(
+                            lower_word,
+                            upper_word,
+                        )
+                    }
+            except Exception as e:
+                print(e)
+                print(type(e))
+            else:
+                # print(f"multicall tick_bitmap = {multicall_tick_bitmaps}")
+                self.tick_bitmap.update(multicall_tick_bitmaps)
+                for _word, _ in multicall_tick_bitmaps.items():
+                    # TODO: remove tick_words (redundant)
+                    self.tick_words.update({_word: True})
+
+            try:
+                with multicall:
+                    multicall_tick_data = {
+                        tick: (liquidityNet, liquidityGross)
+                        for word_position, bitmap in multicall_tick_bitmaps.items()
+                        for tick, liquidityNet, liquidityGross in self.lens._brownie_contract.getPopulatedTicksInWord(
+                            self.address, word_position
+                        )
+                        if bitmap
+                    }
+            except Exception as e:
+                print(e)
+                print(type(e))
+            else:
+                # print(f"multicall tick_data = {multicall_tick_data}")
+                self.tick_data.update(multicall_tick_data)
+
+        else:
+            # fetch ticks one by one
+            try:
+                if tick_bitmap := self._brownie_contract.tickBitmap(
+                    word_position
+                ):
+                    tick_data = (
+                        self.lens._brownie_contract.getPopulatedTicksInWord(
+                            self.address, word_position
+                        )
+                    )
+                else:
+                    tick_data = ()
+            except:
+                raise
+            else:
+                if tick_bitmap:
+                    for (tick, liquidityNet, liquidityGross) in tick_data:
+                        self.tick_data[tick] = liquidityNet, liquidityGross
+                self.tick_bitmap.update({word_position: tick_bitmap})
+                self.tick_words.update({word_position: True})
+
+        return self.tick_data
 
 
 class V3LiquidityPool(BaseV3LiquidityPool):
