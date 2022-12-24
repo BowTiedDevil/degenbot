@@ -210,7 +210,7 @@ class BaseV3LiquidityPool(ABC):
                     )
                 except TickBitmap.BitmapWordUnavailable as e:
                     wordPos = e.args[-1]
-                    print(f"TickBitmap word missing! Fetching word {wordPos}")
+                    # print(f"TickBitmap word missing! Fetching word {wordPos}")
                     self._get_tick_data_at_word(wordPos)
                 else:
                     break
@@ -541,12 +541,6 @@ class BaseV3LiquidityPool(ABC):
         the liquidity values in the `self.tick_data` dictionary using the tick
         as the key, and updates the tick_bitmap and tick_words dict.
         """
-
-        print()
-        print()
-        print(f"(_get_tick_data_at_word) fetching word {word_position}")
-        print()
-        print()
 
         # check if multicall is available for the connected network
         if network.main.CONFIG.active_network.get("multicall2"):
