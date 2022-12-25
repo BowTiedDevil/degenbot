@@ -9,6 +9,7 @@ from degenbot.arbitrage.base import Arbitrage
 from degenbot.exceptions import (
     ArbitrageError,
     ArbCalculationError,
+    EVMRevertError,
     InvalidSwapPathError,
     ZeroLiquidityError,
 )
@@ -248,8 +249,8 @@ class UniswapLpCycle(Arbitrage):
 
         # bracket the initial range for swapping amount
         bracket = (
-            int(0.001 * self.max_input),
-            int(0.005 * self.max_input),
+            int(0.01 * self.max_input),
+            int(0.05 * self.max_input),
         )
 
         def arb_profit(x):
@@ -262,13 +263,13 @@ class UniswapLpCycle(Arbitrage):
                         token_in=token_in,
                         token_in_quantity=x if i == 0 else token_out_quantity,
                     )
+            except (EVMRevertError,AssertionError) as e:
+                # the optimizer might send invalid data into the swap calculation, but we don't
+                # want it to stop, so ignore the exception and return zero for the amount out
+                # print(f"caught EVMRevertError exception: {e}, returning 0")
+                return -float(x)
             except Exception as e:
-                print(e)
-                print(type(e))
-                # calculation failed for some reason, so return an arbitrarily large number to encourage
-                # the optimizer to move away from this input
-                print(f"caught exception from LP helper, returning MAX_UINT256")
-                return float(MAX_UINT256)
+                raise(e)
             else:
                 return -float(token_out_quantity - x)
 
@@ -299,18 +300,27 @@ class UniswapLpCycle(Arbitrage):
 
         profitable = True if best_profit > 0 else False
 
-        self.best.update(
-            {
-                "swap_amount": swap_amount,
-                "profit_amount": best_profit,
-                "swap_pool_amounts": self._build_multipool_amounts_out(
+        try:
+            # the optimizer might end up finding a "zero-swap" solution, 
+            # which we ignored before but want to deal with now
+            best_amounts = self._build_multipool_amounts_out(
                     token_in=self.input_token,
                     token_in_quantity=swap_amount,
-                ),
-            }
-        )
+                )
+        except AssertionError:
+            # ignored the asserts inside the ported `swap` function to execute the optimizer to completion,
+            # but now we want to raise a real error to avoid generating bad payloads that will revert
+            raise ArbitrageError("No possible arbitrage")
+        else:
+            self.best.update(
+                {
+                    "swap_amount": swap_amount,
+                    "profit_amount": best_profit,
+                    "swap_pool_amounts": best_amounts
+                }
+            )
 
-        return profitable, (swap_amount, best_profit)
+            return profitable, (swap_amount, best_profit)
 
     def calculate_multipool_tokens_out_from_tokens_in(
         self,
@@ -368,6 +378,15 @@ class UniswapLpCycle(Arbitrage):
         payloads: List[Tuple[str, bytes, int]]
             A list of payloads, formatted as a tuple: (address, calldata, msg.value)
         """
+
+        # check all amounts for zero-amount swaps, which will execute but are undesirable
+        print('checking pool amounts')
+        print(self.best['swap_pool_amounts'])
+        if not self.best['swap_pool_amounts']:
+            raise ArbitrageError('Aborting zero-swap')
+        else:
+            for swap_pool_amounts in self.best["swap_pool_amounts"]:
+                print(swap_pool_amounts)
 
         # web3py object without a provider, useful for offline transaction creation and signing
         w3 = Web3()

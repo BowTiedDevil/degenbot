@@ -155,7 +155,8 @@ class BaseV3LiquidityPool(ABC):
         It is a double-underscore method and is thus obscured from external access (but still accessible if you know how).
         """
 
-        assert amountSpecified != 0, EVMRevertError("AS")
+        # TODO: redefine all asserts as if checks that raise an `EVMRevertError`
+        assert amountSpecified != 0, "AS"
 
         assert (
             sqrtPriceLimitX96 < self.slot0["sqrtPriceX96"]
@@ -387,40 +388,44 @@ class BaseV3LiquidityPool(ABC):
                     else TickMath.MAX_SQRT_RATIO - 1
                 ),
             )
-        except Exception as e:
+        except EVMRevertError:
+            #TODO: better define actions for this exception
+            raise
             print(f"type={type(e)}")
             raise EVMRevertError(
                 f"(V3LiquidityPool) caught exception inside LP helper {self.name}: {e}"
-                f"\ntoken_in={token_in}"
-                f"\ntoken_in_quantity={token_in_quantity}"
+                # f"\ntoken_in={token_in}"
+                # f"\ntoken_in_quantity={token_in_quantity}"
             )
+        except:
+            raise
+        else:
+            # if zeroForOne:
+            #     if token_in_quantity != amount0:
+            #         print(f"input not completely consumed!")
+            #         print(f"{token_in_quantity=}")
+            #         print(f"{amount0=}")
+            #         print(f"{amount1=}")
+            # else:
+            #     if token_in_quantity != amount1:
+            #         print(f"input not completely consumed!")
+            #         print(f"{token_in_quantity=}")
+            #         print(f"{amount0=}")
+            #         print(f"{amount1=}")
 
-        # if zeroForOne:
-        #     if token_in_quantity != amount0:
-        #         print(f"input not completely consumed!")
-        #         print(f"{token_in_quantity=}")
-        #         print(f"{amount0=}")
-        #         print(f"{amount1=}")
-        # else:
-        #     if token_in_quantity != amount1:
-        #         print(f"input not completely consumed!")
-        #         print(f"{token_in_quantity=}")
-        #         print(f"{amount0=}")
-        #         print(f"{amount1=}")
+            # return (
+            #     (
+            #         -amount1,
+            #         amount0 - token_in_quantity,
+            #     )
+            #     if zeroForOne
+            #     else (
+            #         -amount0,
+            #         amount1 - token_in_quantity,
+            #     )
+            # )
 
-        # return (
-        #     (
-        #         -amount1,
-        #         amount0 - token_in_quantity,
-        #     )
-        #     if zeroForOne
-        #     else (
-        #         -amount0,
-        #         amount1 - token_in_quantity,
-        #     )
-        # )
-
-        return -amount1 if zeroForOne else -amount0
+            return -amount1 if zeroForOne else -amount0
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -544,7 +549,7 @@ class BaseV3LiquidityPool(ABC):
 
         # check if multicall is available for the connected network
         if network.main.CONFIG.active_network.get("multicall2"):
-            extra_words = 500
+            extra_words = 50
             if not self.tick_words:
 
                 # empty tick_words, so just fetch the requested word
