@@ -395,7 +395,7 @@ class UniswapLpCycle(Arbitrage):
 
         # generate the payload for the initial transfer if the first pool is type V2
         if self.swap_pools[0].uniswap_version == 2:
-            print("\tPAYLOAD: building initial V2 transfer")
+            #print("\tPAYLOAD: building initial V2 transfer")
             try:
                 # transfer the input token to the first swap pool
                 transfer_payload = (
@@ -425,7 +425,7 @@ class UniswapLpCycle(Arbitrage):
         # generate the swap payloads for each pool in the path
         try:
             last_pool = self.swap_pools[-1]
-            print("\tPAYLOAD: identified last pool")
+            # print("\tPAYLOAD: identified last pool")
             for i, swap_pool_object in enumerate(self.swap_pools):
 
                 if swap_pool_object is last_pool:
@@ -445,12 +445,12 @@ class UniswapLpCycle(Arbitrage):
                     swap_destination_address = from_address
 
                 if swap_pool_object.uniswap_version == 2:
-                    print(f"\tPAYLOAD: building V2 swap at pool {i}")
-                    print(f"\tPAYLOAD: pool address {swap_pool_object.address}")
-                    print(
-                        f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]["amounts"]}'
-                    )
-                    print(f"\tPAYLOAD: destination address {swap_destination_address}")
+                    # print(f"\tPAYLOAD: building V2 swap at pool {i}")
+                    # print(f"\tPAYLOAD: pool address {swap_pool_object.address}")
+                    # print(
+                    #     f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]["amounts"]}'
+                    # )
+                    # print(f"\tPAYLOAD: destination address {swap_destination_address}")
                     payloads.append(
                         (
                             # address
@@ -474,12 +474,12 @@ class UniswapLpCycle(Arbitrage):
                         )
                     )
                 elif swap_pool_object.uniswap_version == 3:
-                    print(f"\tPAYLOAD: building V3 swap at pool {i}")
-                    print(f"\tPAYLOAD: pool address {swap_pool_object.address}")
-                    print(
-                        f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]}'
-                    )
-                    print(f"\tPAYLOAD: destination address {swap_destination_address}")
+                    # print(f"\tPAYLOAD: building V3 swap at pool {i}")
+                    # print(f"\tPAYLOAD: pool address {swap_pool_object.address}")
+                    # print(
+                    #     f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]}'
+                    # )
+                    # print(f"\tPAYLOAD: destination address {swap_destination_address}")
                     payloads.append(
                         (
                             # address
