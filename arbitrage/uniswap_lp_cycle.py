@@ -380,13 +380,10 @@ class UniswapLpCycle(Arbitrage):
         """
 
         # check all amounts for zero-amount swaps, which will execute but are undesirable
-        print('checking pool amounts')
-        print(self.best['swap_pool_amounts'])
+        # print('checking pool amounts')
+        # print(self.best['swap_pool_amounts'])
         if not self.best['swap_pool_amounts']:
-            raise ArbitrageError('Aborting zero-swap')
-        else:
-            for swap_pool_amounts in self.best["swap_pool_amounts"]:
-                print(swap_pool_amounts)
+            raise ArbitrageError('calculate_arbitrage must be executed before calling generate_payloads')
 
         # web3py object without a provider, useful for offline transaction creation and signing
         w3 = Web3()
