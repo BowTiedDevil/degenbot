@@ -46,12 +46,12 @@ class BaseV3LiquidityPool(ABC):
         populate_ticks: bool = True,
     ):
 
+        block_number = chain.height
+
         self.uniswap_version = 3
 
         if tokens:
-            assert len(tokens) == 2, LiquidityPoolError(
-                "Expected exactly two tokens"
-            )
+            assert len(tokens) == 2, LiquidityPoolError("Expected exactly two tokens")
 
         self.address = to_address(address)
 
@@ -101,10 +101,10 @@ class BaseV3LiquidityPool(ABC):
                 self.token0 = Erc20Token(self._brownie_contract.token0())
                 self.token1 = Erc20Token(self._brownie_contract.token1())
 
-            self.fee = self._brownie_contract.fee()
-            self.slot0 = self._brownie_contract.slot0()
-            self.liquidity = self._brownie_contract.liquidity()
-            self.tick_spacing = self._brownie_contract.tickSpacing()
+            self.fee = self._brownie_contract.fee() # immutable
+            self.slot0 = self._brownie_contract.slot0(block_identifier=block_number)
+            self.liquidity = self._brownie_contract.liquidity(block_identifier=block_number)
+            self.tick_spacing = self._brownie_contract.tickSpacing() #immutable
             self.sqrt_price_x96 = self.slot0[0]
             self.tick = self.slot0[1]
             self.tick_data = {}
@@ -122,7 +122,9 @@ class BaseV3LiquidityPool(ABC):
         if name:
             self.name = name
         else:
-            self.name = f"{self.token0.symbol}-{self.token1.symbol} (V3, {self.fee/10000:.2f}%)"
+            self.name = (
+                f"{self.token0.symbol}-{self.token1.symbol} (V3, {self.fee/10000:.2f}%)"
+            )
 
         self.state = {
             "liquidity": self.liquidity,
@@ -130,7 +132,7 @@ class BaseV3LiquidityPool(ABC):
             "tick": self.tick,
         }
 
-        self.update_block = chain.height
+        self.update_block = block_number
 
     def __str__(self):
         """
@@ -223,9 +225,7 @@ class BaseV3LiquidityPool(ABC):
                 step["tickNext"] = TickMath.MAX_TICK
 
             # get the price for the next tick
-            step["sqrtPriceNextX96"] = TickMath.getSqrtRatioAtTick(
-                step["tickNext"]
-            )
+            step["sqrtPriceNextX96"] = TickMath.getSqrtRatioAtTick(step["tickNext"])
 
             # compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
             (
@@ -255,13 +255,9 @@ class BaseV3LiquidityPool(ABC):
                     state["amountCalculated"] - step["amountOut"]
                 )
             else:
-                state["amountSpecifiedRemaining"] += to_int256(
-                    step["amountOut"]
-                )
+                state["amountSpecifiedRemaining"] += to_int256(step["amountOut"])
                 state["amountCalculated"] = to_int256(
-                    state["amountCalculated"]
-                    + step["amountIn"]
-                    + step["feeAmount"]
+                    state["amountCalculated"] + step["amountIn"] + step["feeAmount"]
                 )
 
             # shift tick if we reached the next price
@@ -278,15 +274,11 @@ class BaseV3LiquidityPool(ABC):
                         state["liquidity"], liquidityNet
                     )
 
-                state["tick"] = (
-                    step["tickNext"] - 1 if zeroForOne else step["tickNext"]
-                )
+                state["tick"] = step["tickNext"] - 1 if zeroForOne else step["tickNext"]
 
             elif state["sqrtPriceX96"] != step["sqrtPriceStartX96"]:
                 # recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
-                state["tick"] = TickMath.getTickAtSqrtRatio(
-                    state["sqrtPriceX96"]
-                )
+                state["tick"] = TickMath.getTickAtSqrtRatio(state["sqrtPriceX96"])
 
         amount0, amount1 = (
             (
@@ -305,11 +297,12 @@ class BaseV3LiquidityPool(ABC):
     def auto_update(
         self,
         silent: bool = True,
+        block_number: int = None,
     ) -> Tuple[bool, dict]:
         """
-        Retrieves the current slot0 and liquidity values from the LP,
-        stores any that have changed, and returns a tuple with an update status
-        boolean and a dictionary holding the current state values:
+        Retrieves the current slot0 and liquidity values from the LP, stores any that have changed, 
+        and returns a tuple with a status boolean indicating whether any update was found, 
+        and a dictionary holding current state values:
             - liquidity
             - sqrt_price_x96
             - tick
@@ -317,32 +310,39 @@ class BaseV3LiquidityPool(ABC):
 
         updated = False
 
-        try:
-            if (slot0 := self._brownie_contract.slot0()) != self.slot0:
-                updated = True
-                self.slot0 = slot0
-                self.sqrt_price_x96 = self.slot0[0]
-                self.tick = self.slot0[1]
-            if (
-                liquidity := self._brownie_contract.liquidity()
-            ) != self.liquidity:
-                updated = True
-                self.liquidity = liquidity
-        except:
-            raise
-        else:
-            self.update_block = chain.height
-            if not silent:
-                print(f"Liquidity: {self.liquidity}")
-                print(f"SqrtPriceX96: {self.sqrt_price_x96}")
-                print(f"Tick: {self.tick}")
-            if updated:
-                self.state = {
-                    "liquidity": self.liquidity,
-                    "sqrt_price_x96": self.sqrt_price_x96,
-                    "tick": self.tick,
-                }
-            return updated, self.state
+        # use the block_number if provided, otherwise pull from Brownie
+        if not block_number:
+            block_number = chain.height
+
+        # only process calls if the submitted block number (or retrieved block number) 
+        # is equal to or exceeds the block number of the last update
+
+        if block_number >= self.update_block:            
+            try:
+                if (slot0 := self._brownie_contract.slot0(block_identifier=block_number)) != self.slot0:
+                    updated = True
+                    self.slot0 = slot0
+                    self.sqrt_price_x96 = self.slot0[0]
+                    self.tick = self.slot0[1]
+                if (liquidity := self._brownie_contract.liquidity(block_identifier=block_number)) != self.liquidity:
+                    updated = True
+                    self.liquidity = liquidity
+            except:
+                raise
+            else:
+                self.update_block = chain.height
+                if not silent:
+                    print(f"Liquidity: {self.liquidity}")
+                    print(f"SqrtPriceX96: {self.sqrt_price_x96}")
+                    print(f"Tick: {self.tick}")
+                if updated:
+                    self.state = {
+                        "liquidity": self.liquidity,
+                        "sqrt_price_x96": self.sqrt_price_x96,
+                        "tick": self.tick,
+                    }
+
+        return updated, self.state
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -389,7 +389,7 @@ class BaseV3LiquidityPool(ABC):
                 ),
             )
         except EVMRevertError:
-            #TODO: better define actions for this exception
+            # TODO: better define actions for this exception
             raise
             print(f"type={type(e)}")
             raise EVMRevertError(
@@ -476,25 +476,24 @@ class BaseV3LiquidityPool(ABC):
         self, updates: dict, block_number: int = None, silent: bool = True
     ) -> bool:
         """
-        Accepts and processes a dict with any of these updated state values:
+        Accepts and processes a dict with at least one key from:
             - `tick`
             - `liquidity`
             - `sqrt_price_x96`
-        and optional tags:
-            - `block_number`
+            - `liquidity_change`: tuple with (liquidity_delta, lower_tick, upper_tick)
 
         If any have changed, update the `self.state` dict and `self.update_block`
 
-        Dict entries with keys other than the three above will be ignored.
+        Dict entries with keys other than the above will be ignored.
 
         If block_number is provided, it will be checked. If omitted, the values are assumed valid and processed.
 
         Returns a bool indicating whether any updated state value was found and processed
         """
 
-        assert set(["liquidity", "sqrt_price_x96", "tick"]) & set(
+        assert set(["liquidity", "sqrt_price_x96", "tick", "liquidity_change"]) & set(
             updates.keys()
-        ), "At least one of (liquidity, sqrt_price_x96, tick) must be provided"
+        ), "At least one of (liquidity, sqrt_price_x96, tick, liquidity_change) must be provided"
 
         if block_number is not None and block_number < self.update_block:
             raise ExternalUpdateError(
@@ -513,14 +512,90 @@ class BaseV3LiquidityPool(ABC):
             elif key == "sqrt_price_x96":
                 self.state["sqrt_price_x96"] = value
                 updated = True
+            elif key == "liquidity_change":
+                # TODO: flag for liquidity changes in `self.state` that are not in-range
+                # (might result in profitable arbs that cross ticks)
+                liquidity_delta, lower_tick, upper_tick = value
+                if lower_tick <= self.tick <= upper_tick:
+                    prev_liq = self.liquidity
+                    self.liquidity += liquidity_delta
+                    new_liq = self.liquidity
+                    print(f"In-range liquidity: was {prev_liq}, now {new_liq}")
+                    self.state["liquidity"] = self.liquidity
+                    updated = True
+
+                words_fetched = []  # track any word fetched during the loop
+                for i, tick in enumerate([lower_tick, upper_tick]):
+
+                    tick_word, _ = self._get_tick_bitmap_position(tick)
+
+                    # check if the word containing this tick has not been fetched, and fetch if not
+                    # NOTE: the word is added to `words_fetched` so it can be skipped later if the other tick is
+                    # in the same word (since the fetched values include the liquidity changes from this event)
+                    if not (self.tick_words.get(tick_word)):
+                        print(f"word {tick_word} missing, fetching...")
+                        self._get_tick_data_at_word(tick_word, single_tick=True, block_number=block_number)
+                        words_fetched.append(tick_word)
+                    else:
+                        if tick_word in words_fetched:
+                            print(
+                                f"skipping tick ({tick}), already fetched word ({tick_word})"
+                            )
+                            continue
+
+                        # get the liquidity info for this tick, or set to zero if previously uninitialized
+                        if tick_liquidity := self.tick_data.get(tick):
+                            (
+                                tick_liquidity_net,
+                                tick_liquidity_gross,
+                            ) = tick_liquidity
+                        else:
+                            print(f"found uninitialized tick: {tick}")
+                            tick_liquidity_net = 0
+                            tick_liquidity_gross = 0
+
+                        # print("tick data before")
+                        # print(
+                        #     f"({tick_liquidity_net}, {tick_liquidity_gross})"
+                        # )
+
+                        # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
+                        # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
+                        # NOTE: for burn events (removing liquidity), event_liquidity is negated,
+                        # but the logic holds (liquidityNet is reduced at the start of the range,
+                        # and increased at the end of the range)
+
+                        new_liquidity_net = (
+                            tick_liquidity_net + liquidity_delta
+                            if i == 0
+                            else tick_liquidity_net - liquidity_delta
+                        )
+                        new_liquidity_gross = tick_liquidity_gross + liquidity_delta
+
+                        if new_liquidity_gross == 0:
+                            del self.tick_data[tick]
+                            print(f"Tick {tick} cleared")
+                            continue
+                        else:
+                            self.tick_data[tick] = (
+                                new_liquidity_net,
+                                new_liquidity_gross,
+                            )
+                        # print("tick data after")
+                        # print(pool_helper.tick_data.get(tick))
+
+                updated = True
 
         if updated:
-            self.update_block = block_number if block_number else chain.height
+            self.update_block = block_number if block_number and block_number > self.update_block else chain.height
 
         if not silent:
             print(f"Liquidity: {self.liquidity}")
             print(f"SqrtPriceX96: {self.sqrt_price_x96}")
             print(f"Tick: {self.tick}")
+            print(
+                f"liquidity event: {liquidity_delta} in tick range [{lower_tick},{upper_tick}], pool: {self.name}"
+            )
 
         return updated
 
@@ -539,7 +614,9 @@ class BaseV3LiquidityPool(ABC):
         """
         return TickBitmap.position(int(Decimal(tick) // self.tick_spacing))
 
-    def _get_tick_data_at_word(self, word_position: int) -> dict:
+    def _get_tick_data_at_word(
+        self, word_position: int, single_tick: bool = False, block_number: int = None,
+    ) -> dict:
         """
         Gets the initialized tick values at a specific word (a 32 byte number
         representing 256 ticks at the tickSpacing interval), stores
@@ -547,8 +624,12 @@ class BaseV3LiquidityPool(ABC):
         as the key, and updates the tick_bitmap and tick_words dict.
         """
 
+        if not block_number:
+            block_number = chain.height
+
         # check if multicall is available for the connected network
-        if network.main.CONFIG.active_network.get("multicall2"):
+        if network.main.CONFIG.active_network.get("multicall2") and not single_tick:
+            # TODO: make extra_words value configurable (constructor argument?)
             extra_words = 50
             if not self.tick_words:
 
@@ -568,7 +649,7 @@ class BaseV3LiquidityPool(ABC):
             try:
                 with multicall:
                     multicall_tick_bitmaps = {
-                        _word: self._brownie_contract.tickBitmap(_word)
+                        _word: self._brownie_contract.tickBitmap(_word, block_identifier=block_number)
                         for _word in range(
                             lower_word,
                             upper_word,
@@ -590,7 +671,7 @@ class BaseV3LiquidityPool(ABC):
                         tick: (liquidityNet, liquidityGross)
                         for word_position, bitmap in multicall_tick_bitmaps.items()
                         for tick, liquidityNet, liquidityGross in self.lens._brownie_contract.getPopulatedTicksInWord(
-                            self.address, word_position
+                            self.address, word_position, block_identifier=block_number
                         )
                         if bitmap
                     }
@@ -604,13 +685,9 @@ class BaseV3LiquidityPool(ABC):
         else:
             # fetch ticks one by one
             try:
-                if tick_bitmap := self._brownie_contract.tickBitmap(
-                    word_position
-                ):
-                    tick_data = (
-                        self.lens._brownie_contract.getPopulatedTicksInWord(
-                            self.address, word_position
-                        )
+                if tick_bitmap := self._brownie_contract.tickBitmap(word_position):
+                    tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
+                        self.address, word_position, block_identifier=block_number
                     )
                 else:
                     tick_data = ()

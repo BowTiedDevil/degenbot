@@ -170,8 +170,7 @@ class UniswapLpCycle(Arbitrage):
 
     def auto_update(self, silent=True, block_number=None) -> bool:
 
-        # TODO: implement block_number check
-        # TODO: check `self.pool_states`` to short-circuit updates if nothing has changed
+        # TODO: implement block_number check for V2 pools (V3 done)
 
         found_updates = False
 
@@ -183,7 +182,7 @@ class UniswapLpCycle(Arbitrage):
                     if pool.update_reserves(silent=silent):
                         found_updates = True
                 elif pool.uniswap_version == 3:
-                    pool_updated, _ = pool.auto_update(silent=silent)
+                    pool_updated, _ = pool.auto_update(silent=silent, block_number=block_number)
                     if pool_updated:
                         found_updates = True
             elif pool._update_method == "external":
@@ -222,8 +221,7 @@ class UniswapLpCycle(Arbitrage):
 
             if pool.uniswap_version == 3 and pool.state["liquidity"] == 0:
 
-                # check if the swap direction is zeroForOne and the tick is maxed
-                # out at the bottom end (cannot swap any more token0 for token1)
+                # check if the swap is zeroForOne and cannot swap any more token0 for token1
                 if (
                     self.swap_vectors[i]["zeroForOne"]
                     # and pool.state["tick"] == TickMath.MIN_TICK
@@ -231,8 +229,7 @@ class UniswapLpCycle(Arbitrage):
                     raise ZeroLiquidityError(
                         "V3 pool has no liquidity for a 0 -> 1 swap"
                     )
-                # check if the swap direction is oneForZero (zeroForOne=False) and the tick is maxed
-                # out at the top end (cannot swap any more token1 for token0)
+                # check if the swap is oneForZero (zeroForOne=False) and cannot swap any more token1 for token0
                 elif (
                     not self.swap_vectors[i]["zeroForOne"]
                     # and pool.state["tick"] == TickMath.MAX_TICK
@@ -247,7 +244,7 @@ class UniswapLpCycle(Arbitrage):
             self.max_input,
         )
 
-        # bracket the initial range for swapping amount
+        # bracket the initial range for the algo
         bracket = (
             int(0.01 * self.max_input),
             int(0.05 * self.max_input),
@@ -286,14 +283,6 @@ class UniswapLpCycle(Arbitrage):
             )
         except:
             raise
-        #     pool_dump = []
-        #     for pool in self.swap_pools:
-        #         pool_dump.append(pool.state)
-        #     # print(type(e))
-        #     # raise ArbCalculationError(
-        #     #     f"minimize_scalar failed with exception: {e}"
-        #     #     f"arb info: {pool_dump}"
-        #     # )
         else:
             swap_amount = int(opt.x)
             best_profit = -int(opt.fun)
@@ -301,15 +290,14 @@ class UniswapLpCycle(Arbitrage):
         profitable = True if best_profit > 0 else False
 
         try:
-            # the optimizer might end up finding a "zero-swap" solution, 
-            # which we ignored before but want to deal with now
             best_amounts = self._build_multipool_amounts_out(
                     token_in=self.input_token,
                     token_in_quantity=swap_amount,
                 )
         except AssertionError:
-            # ignored the asserts inside the ported `swap` function to execute the optimizer to completion,
-            # but now we want to raise a real error to avoid generating bad payloads that will revert
+            # ignored the simulated EVM reverts inside the ported `swap` function to execute the optimizer 
+            # through to completion, but now we want to raise a real error to avoid generating bad payloads 
+            # that will revert
             raise ArbitrageError("No possible arbitrage")
         else:
             self.best.update(
@@ -359,6 +347,15 @@ class UniswapLpCycle(Arbitrage):
                 # otherwise, use the output as input on the next loop
                 token_in = token_out
                 token_in_quantity = token_out_quantity
+
+    def clear_best(self):
+        self.best.update(
+            {
+                "swap_amount": 0,
+                "profit_amount": 0,
+                "swap_pool_amounts": [],
+            }
+        )
 
     def generate_payloads(
         self,
