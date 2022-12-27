@@ -520,7 +520,14 @@ class BaseV3LiquidityPool(ABC):
             updates.keys()
         ), "At least one of (liquidity, sqrt_price_x96, tick, liquidity_change) must be provided"
 
-        if block_number is not None and block_number < self.update_block:
+        # if block_number was not provided, pull from the Brownie chain object
+        if block_number is None:
+            block_number = chain.height
+            print(
+                f"(V3LiquidityPool.external_update) block_number was provided, using {block_number} from chain"
+            )
+
+        if block_number < self.update_block:
             raise ExternalUpdateError(
                 f"Current state recorded at block {self.update_block}, received update for stale block {updates.get('block_number')}"
             )
@@ -532,11 +539,9 @@ class BaseV3LiquidityPool(ABC):
                 self.tick = value
                 updated = True
             elif key == "liquidity":
-
                 self.liquidity = value
                 updated = True
             elif key == "sqrt_price_x96":
-
                 self.sqrt_price_x96 = value
                 updated = True
             elif key == "liquidity_change":
@@ -616,13 +621,11 @@ class BaseV3LiquidityPool(ABC):
                             )
 
                 updated = True
+            else:
+                print(f"Unknown key-value pair ({key}:{value})")
 
         if updated:
-            self.update_block = (
-                block_number
-                if block_number and block_number > self.update_block
-                else chain.height
-            )
+            self.update_block = block_number
             self.state.update(
                 {
                     "tick": self.tick,
@@ -669,7 +672,7 @@ class BaseV3LiquidityPool(ABC):
         as the key, and updates the tick_bitmap and tick_words dict.
         """
 
-        if not block_number:
+        if block_number is None:
             block_number = chain.height
 
         # check if multicall is available for the connected network
