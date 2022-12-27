@@ -332,7 +332,6 @@ class BaseV3LiquidityPool(ABC):
 
         # only process calls if the submitted block number (or retrieved block number)
         # is equal to or exceeds the block number of the last update
-
         if block_number >= self.update_block:
             try:
                 if (
@@ -530,13 +529,15 @@ class BaseV3LiquidityPool(ABC):
 
         for key, value in updates.items():
             if key == "tick":
-                self.state["tick"] = value
+                self.tick = value
                 updated = True
             elif key == "liquidity":
-                self.state["liquidity"] = value
+
+                self.liquidity = value
                 updated = True
             elif key == "sqrt_price_x96":
-                self.state["sqrt_price_x96"] = value
+
+                self.sqrt_price_x96 = value
                 updated = True
             elif key == "liquidity_change":
                 # TODO: flag for liquidity changes in `self.state` that are not in-range
@@ -623,6 +624,13 @@ class BaseV3LiquidityPool(ABC):
                 block_number
                 if block_number and block_number > self.update_block
                 else chain.height
+            )
+            self.state.update(
+                {
+                    "tick": self.tick,
+                    "liquidity": self.liquidity,
+                    "sqrt_price_x96": self.sqrt_price_x96,
+                }
             )
 
         if not silent:
