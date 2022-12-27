@@ -549,10 +549,10 @@ class BaseV3LiquidityPool(ABC):
                 # (might result in profitable arbs that cross ticks)
                 liquidity_delta, lower_tick, upper_tick = value
                 if lower_tick <= self.tick <= upper_tick:
-                    prev_liq = self.liquidity
+                    # prev_liq = self.liquidity
                     self.liquidity += liquidity_delta
-                    new_liq = self.liquidity
-                    print(f"In-range liquidity: was {prev_liq}, now {new_liq}")
+                    # new_liq = self.liquidity
+                    # print(f"In-range liquidity: was {prev_liq}, now {new_liq}")
                     self.state["liquidity"] = self.liquidity
                     updated = True
 
@@ -565,7 +565,7 @@ class BaseV3LiquidityPool(ABC):
                     # NOTE: the word is added to `words_fetched` so it can be skipped later if the other tick is
                     # in the same word (since the fetched values include the liquidity changes from this event)
                     if not (self.tick_words.get(tick_word)):
-                        print(f"word {tick_word} missing, fetching...")
+                        # print(f"word {tick_word} missing, fetching...")
                         self._get_tick_data_at_word(
                             tick_word,
                             single_tick=True,
@@ -574,9 +574,9 @@ class BaseV3LiquidityPool(ABC):
                         words_fetched.append(tick_word)
                     else:
                         if tick_word in words_fetched:
-                            print(
-                                f"skipping tick ({tick}), already fetched word ({tick_word})"
-                            )
+                            # print(
+                            #     f"skipping tick ({tick}), already fetched word ({tick_word})"
+                            # )
                             continue
 
                         # get the liquidity info for this tick, or set to zero if previously uninitialized
@@ -586,7 +586,7 @@ class BaseV3LiquidityPool(ABC):
                                 tick_liquidity_gross,
                             ) = tick_liquidity
                         else:
-                            print(f"found uninitialized tick: {tick}")
+                            # print(f"found uninitialized tick: {tick}")
                             tick_liquidity_net = 0
                             tick_liquidity_gross = 0
 
