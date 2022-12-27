@@ -614,8 +614,6 @@ class BaseV3LiquidityPool(ABC):
                                 new_liquidity_net,
                                 new_liquidity_gross,
                             )
-                        # print("tick data after")
-                        # print(pool_helper.tick_data.get(tick))
 
                 updated = True
 
