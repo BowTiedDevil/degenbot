@@ -9,7 +9,7 @@ class TickLens(ABC):
         self.address = to_address(address)
 
         try:
-            self._brownie_contract = Contract(address=address)
+            self._brownie_contract = Contract(address)
         except:
             try:
                 self._brownie_contract = Contract.from_explorer(
