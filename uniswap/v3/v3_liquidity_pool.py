@@ -51,7 +51,9 @@ class BaseV3LiquidityPool(ABC):
         self.uniswap_version = 3
 
         if tokens:
-            assert len(tokens) == 2, LiquidityPoolError("Expected exactly two tokens")
+            assert len(tokens) == 2, LiquidityPoolError(
+                "Expected exactly two tokens"
+            )
 
         self.address = to_address(address)
 
@@ -101,10 +103,16 @@ class BaseV3LiquidityPool(ABC):
                 self.token0 = Erc20Token(self._brownie_contract.token0())
                 self.token1 = Erc20Token(self._brownie_contract.token1())
 
-            self.fee = self._brownie_contract.fee() # immutable
-            self.slot0 = self._brownie_contract.slot0(block_identifier=block_number)
-            self.liquidity = self._brownie_contract.liquidity(block_identifier=block_number)
-            self.tick_spacing = self._brownie_contract.tickSpacing() #immutable
+            self.fee = self._brownie_contract.fee()  # immutable
+            self.slot0 = self._brownie_contract.slot0(
+                block_identifier=block_number
+            )
+            self.liquidity = self._brownie_contract.liquidity(
+                block_identifier=block_number
+            )
+            self.tick_spacing = (
+                self._brownie_contract.tickSpacing()
+            )  # immutable
             self.sqrt_price_x96 = self.slot0[0]
             self.tick = self.slot0[1]
             self.tick_data = {}
@@ -122,9 +130,7 @@ class BaseV3LiquidityPool(ABC):
         if name:
             self.name = name
         else:
-            self.name = (
-                f"{self.token0.symbol}-{self.token1.symbol} (V3, {self.fee/10000:.2f}%)"
-            )
+            self.name = f"{self.token0.symbol}-{self.token1.symbol} (V3, {self.fee/10000:.2f}%)"
 
         self.state = {
             "liquidity": self.liquidity,
@@ -225,7 +231,9 @@ class BaseV3LiquidityPool(ABC):
                 step["tickNext"] = TickMath.MAX_TICK
 
             # get the price for the next tick
-            step["sqrtPriceNextX96"] = TickMath.getSqrtRatioAtTick(step["tickNext"])
+            step["sqrtPriceNextX96"] = TickMath.getSqrtRatioAtTick(
+                step["tickNext"]
+            )
 
             # compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
             (
@@ -255,9 +263,13 @@ class BaseV3LiquidityPool(ABC):
                     state["amountCalculated"] - step["amountOut"]
                 )
             else:
-                state["amountSpecifiedRemaining"] += to_int256(step["amountOut"])
+                state["amountSpecifiedRemaining"] += to_int256(
+                    step["amountOut"]
+                )
                 state["amountCalculated"] = to_int256(
-                    state["amountCalculated"] + step["amountIn"] + step["feeAmount"]
+                    state["amountCalculated"]
+                    + step["amountIn"]
+                    + step["feeAmount"]
                 )
 
             # shift tick if we reached the next price
@@ -274,11 +286,15 @@ class BaseV3LiquidityPool(ABC):
                         state["liquidity"], liquidityNet
                     )
 
-                state["tick"] = step["tickNext"] - 1 if zeroForOne else step["tickNext"]
+                state["tick"] = (
+                    step["tickNext"] - 1 if zeroForOne else step["tickNext"]
+                )
 
             elif state["sqrtPriceX96"] != step["sqrtPriceStartX96"]:
                 # recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
-                state["tick"] = TickMath.getTickAtSqrtRatio(state["sqrtPriceX96"])
+                state["tick"] = TickMath.getTickAtSqrtRatio(
+                    state["sqrtPriceX96"]
+                )
 
         amount0, amount1 = (
             (
@@ -300,8 +316,8 @@ class BaseV3LiquidityPool(ABC):
         block_number: int = None,
     ) -> Tuple[bool, dict]:
         """
-        Retrieves the current slot0 and liquidity values from the LP, stores any that have changed, 
-        and returns a tuple with a status boolean indicating whether any update was found, 
+        Retrieves the current slot0 and liquidity values from the LP, stores any that have changed,
+        and returns a tuple with a status boolean indicating whether any update was found,
         and a dictionary holding current state values:
             - liquidity
             - sqrt_price_x96
@@ -314,23 +330,31 @@ class BaseV3LiquidityPool(ABC):
         if not block_number:
             block_number = chain.height
 
-        # only process calls if the submitted block number (or retrieved block number) 
+        # only process calls if the submitted block number (or retrieved block number)
         # is equal to or exceeds the block number of the last update
 
-        if block_number >= self.update_block:            
+        if block_number >= self.update_block:
             try:
-                if (slot0 := self._brownie_contract.slot0(block_identifier=block_number)) != self.slot0:
+                if (
+                    slot0 := self._brownie_contract.slot0(
+                        block_identifier=block_number,
+                    )
+                ) != self.slot0:
                     updated = True
                     self.slot0 = slot0
-                    self.sqrt_price_x96 = self.slot0[0]
-                    self.tick = self.slot0[1]
-                if (liquidity := self._brownie_contract.liquidity(block_identifier=block_number)) != self.liquidity:
+                    self.sqrt_price_x96 = slot0[0]
+                    self.tick = slot0[1]
+                if (
+                    liquidity := self._brownie_contract.liquidity(
+                        block_identifier=block_number
+                    )
+                ) != self.liquidity:
                     updated = True
                     self.liquidity = liquidity
             except:
                 raise
             else:
-                self.update_block = chain.height
+                self.update_block = block_number
                 if not silent:
                     print(f"Liquidity: {self.liquidity}")
                     print(f"SqrtPriceX96: {self.sqrt_price_x96}")
@@ -491,7 +515,9 @@ class BaseV3LiquidityPool(ABC):
         Returns a bool indicating whether any updated state value was found and processed
         """
 
-        assert set(["liquidity", "sqrt_price_x96", "tick", "liquidity_change"]) & set(
+        assert set(
+            ["liquidity", "sqrt_price_x96", "tick", "liquidity_change"]
+        ) & set(
             updates.keys()
         ), "At least one of (liquidity, sqrt_price_x96, tick, liquidity_change) must be provided"
 
@@ -534,7 +560,11 @@ class BaseV3LiquidityPool(ABC):
                     # in the same word (since the fetched values include the liquidity changes from this event)
                     if not (self.tick_words.get(tick_word)):
                         print(f"word {tick_word} missing, fetching...")
-                        self._get_tick_data_at_word(tick_word, single_tick=True, block_number=block_number)
+                        self._get_tick_data_at_word(
+                            tick_word,
+                            single_tick=True,
+                            block_number=block_number,
+                        )
                         words_fetched.append(tick_word)
                     else:
                         if tick_word in words_fetched:
@@ -570,7 +600,9 @@ class BaseV3LiquidityPool(ABC):
                             if i == 0
                             else tick_liquidity_net - liquidity_delta
                         )
-                        new_liquidity_gross = tick_liquidity_gross + liquidity_delta
+                        new_liquidity_gross = (
+                            tick_liquidity_gross + liquidity_delta
+                        )
 
                         if new_liquidity_gross == 0:
                             del self.tick_data[tick]
@@ -587,7 +619,11 @@ class BaseV3LiquidityPool(ABC):
                 updated = True
 
         if updated:
-            self.update_block = block_number if block_number and block_number > self.update_block else chain.height
+            self.update_block = (
+                block_number
+                if block_number and block_number > self.update_block
+                else chain.height
+            )
 
         if not silent:
             print(f"Liquidity: {self.liquidity}")
@@ -615,7 +651,10 @@ class BaseV3LiquidityPool(ABC):
         return TickBitmap.position(int(Decimal(tick) // self.tick_spacing))
 
     def _get_tick_data_at_word(
-        self, word_position: int, single_tick: bool = False, block_number: int = None,
+        self,
+        word_position: int,
+        single_tick: bool = False,
+        block_number: int = None,
     ) -> dict:
         """
         Gets the initialized tick values at a specific word (a 32 byte number
@@ -628,7 +667,10 @@ class BaseV3LiquidityPool(ABC):
             block_number = chain.height
 
         # check if multicall is available for the connected network
-        if network.main.CONFIG.active_network.get("multicall2") and not single_tick:
+        if (
+            network.main.CONFIG.active_network.get("multicall2")
+            and not single_tick
+        ):
             # TODO: make extra_words value configurable (constructor argument?)
             extra_words = 50
             if not self.tick_words:
@@ -647,9 +689,9 @@ class BaseV3LiquidityPool(ABC):
                     lower_word = min_word - extra_words
                     upper_word = min_word
             try:
-                with multicall:
+                with multicall(block_identifier=block_number):
                     multicall_tick_bitmaps = {
-                        _word: self._brownie_contract.tickBitmap(_word, block_identifier=block_number)
+                        _word: self._brownie_contract.tickBitmap(_word)
                         for _word in range(
                             lower_word,
                             upper_word,
@@ -666,12 +708,13 @@ class BaseV3LiquidityPool(ABC):
                     self.tick_words.update({_word: True})
 
             try:
-                with multicall:
+                with multicall(block_identifier=block_number):
                     multicall_tick_data = {
                         tick: (liquidityNet, liquidityGross)
                         for word_position, bitmap in multicall_tick_bitmaps.items()
                         for tick, liquidityNet, liquidityGross in self.lens._brownie_contract.getPopulatedTicksInWord(
-                            self.address, word_position, block_identifier=block_number
+                            self.address,
+                            word_position,
                         )
                         if bitmap
                     }
@@ -685,9 +728,15 @@ class BaseV3LiquidityPool(ABC):
         else:
             # fetch ticks one by one
             try:
-                if tick_bitmap := self._brownie_contract.tickBitmap(word_position):
-                    tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
-                        self.address, word_position, block_identifier=block_number
+                if tick_bitmap := self._brownie_contract.tickBitmap(
+                    word_position
+                ):
+                    tick_data = (
+                        self.lens._brownie_contract.getPopulatedTicksInWord(
+                            self.address,
+                            word_position,
+                            block_identifier=block_number,
+                        )
                     )
                 else:
                     tick_data = ()
