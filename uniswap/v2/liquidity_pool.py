@@ -3,7 +3,7 @@ from decimal import Decimal
 from fractions import Fraction
 from typing import List, Union
 
-from brownie import Contract, Wei
+from brownie import Contract, Wei, chain
 from brownie.convert import to_address
 
 from .router import Router
@@ -302,10 +302,14 @@ class LiquidityPool:
         if set to "external" assumes that internal LP reserves are valid and recalculates token ratios
         """
 
-        # discard stale updates
-        if update_block and update_block <= self.update_block:
+        # get the chain height from Brownie if a specific update_block is not provided
+        if update_block is None:
+            update_block = chain.height
+
+        # discard stale updates, but allow updating the same pool multiple times per block (necessary if sending sync events individually)
+        if update_block < self.update_block:
             return False
-        elif update_block and update_block > self.update_block:
+        else:
             self.update_block = update_block
 
         if (
