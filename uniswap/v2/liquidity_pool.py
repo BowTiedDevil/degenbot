@@ -347,7 +347,6 @@ class LiquidityPool:
                 print(
                     f"LiquidityPool: Exception in update_reserves (polling): {e}"
                 )
-
         elif self._update_method == "external":
             assert (
                 external_token0_reserves is not None

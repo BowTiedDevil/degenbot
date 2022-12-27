@@ -41,7 +41,9 @@ class UniswapLpCycle(Arbitrage):
             )
         self.swap_pools = swap_pools
         self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
-        self.swap_pool_tokens = [[pool.token0, pool.token1] for pool in self.swap_pools]
+        self.swap_pool_tokens = [
+            [pool.token0, pool.token1] for pool in self.swap_pools
+        ]
         self.swap_vectors = []
         for i, pool in enumerate(self.swap_pools):
             if i == 0:
@@ -166,30 +168,46 @@ class UniswapLpCycle(Arbitrage):
         """
         Internal method to update the `self.pool_states` state tracking dict
         """
-        self.pool_states = {pool.address: pool.state for pool in self.swap_pools}
+        self.pool_states = {
+            pool.address: pool.state for pool in self.swap_pools
+        }
 
-    def auto_update(self, silent=True, block_number=None) -> bool:
+    def auto_update(
+        self,
+        silent=True,
+        block_number=None,
+        override_update_method: str = None,
+    ) -> bool:
 
         # TODO: implement block_number check for V2 pools (V3 done)
-
         found_updates = False
 
         for pool in self.swap_pools:
-            if pool._update_method == "polling":
+            if (
+                pool._update_method == "polling"
+                or override_update_method == "polling"
+            ):
                 if pool.uniswap_version == 2:
                     # TODO: implement a more robust check that gracefully
-                    # handles externally-updated pools
-                    if pool.update_reserves(silent=silent):
+                    # handles externally-updated V2 pools
+                    if pool.update_reserves(
+                        silent=silent,
+                        override_update_method=override_update_method,
+                    ):
                         found_updates = True
                 elif pool.uniswap_version == 3:
-                    pool_updated, _ = pool.auto_update(silent=silent, block_number=block_number)
+                    pool_updated, _ = pool.auto_update(
+                        silent=silent, block_number=block_number
+                    )
                     if pool_updated:
                         found_updates = True
             elif pool._update_method == "external":
                 if pool.state != self.pool_states[pool.address]:
                     found_updates = True
             else:
-                raise ArbitrageError("auto_update: could not determine update method!")
+                raise ArbitrageError(
+                    "auto_update: could not determine update method!"
+                )
 
         if found_updates:
             self._update_pool_states
@@ -256,17 +274,21 @@ class UniswapLpCycle(Arbitrage):
             try:
                 for i, pool in enumerate(self.swap_pools):
                     token_in = self.swap_vectors[i]["token_in"]
-                    token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
-                        token_in=token_in,
-                        token_in_quantity=x if i == 0 else token_out_quantity,
+                    token_out_quantity = (
+                        pool.calculate_tokens_out_from_tokens_in(
+                            token_in=token_in,
+                            token_in_quantity=x
+                            if i == 0
+                            else token_out_quantity,
+                        )
                     )
-            except (EVMRevertError,AssertionError) as e:
+            except (EVMRevertError, AssertionError) as e:
                 # the optimizer might send invalid data into the swap calculation, but we don't
                 # want it to stop, so ignore the exception and return zero for the amount out
                 # print(f"caught EVMRevertError exception: {e}, returning 0")
                 return -float(x)
             except Exception as e:
-                raise(e)
+                raise (e)
             else:
                 return -float(token_out_quantity - x)
 
@@ -291,12 +313,12 @@ class UniswapLpCycle(Arbitrage):
 
         try:
             best_amounts = self._build_multipool_amounts_out(
-                    token_in=self.input_token,
-                    token_in_quantity=swap_amount,
-                )
+                token_in=self.input_token,
+                token_in_quantity=swap_amount,
+            )
         except AssertionError:
-            # ignored the simulated EVM reverts inside the ported `swap` function to execute the optimizer 
-            # through to completion, but now we want to raise a real error to avoid generating bad payloads 
+            # ignored the simulated EVM reverts inside the ported `swap` function to execute the optimizer
+            # through to completion, but now we want to raise a real error to avoid generating bad payloads
             # that will revert
             raise ArbitrageError("No possible arbitrage")
         else:
@@ -304,7 +326,7 @@ class UniswapLpCycle(Arbitrage):
                 {
                     "swap_amount": swap_amount,
                     "profit_amount": best_profit,
-                    "swap_pool_amounts": best_amounts
+                    "swap_pool_amounts": best_amounts,
                 }
             )
 
@@ -336,7 +358,9 @@ class UniswapLpCycle(Arbitrage):
                 )
 
             # calculate the swap output through pool[i]
-            token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self.swap_pools[
+                i
+            ].calculate_tokens_out_from_tokens_in(
                 token_in=token_in, token_in_quantity=token_in_quantity
             )
 
@@ -379,8 +403,10 @@ class UniswapLpCycle(Arbitrage):
         # check all amounts for zero-amount swaps, which will execute but are undesirable
         # print('checking pool amounts')
         # print(self.best['swap_pool_amounts'])
-        if not self.best['swap_pool_amounts']:
-            raise ArbitrageError('calculate_arbitrage must be executed before calling generate_payloads')
+        if not self.best["swap_pool_amounts"]:
+            raise ArbitrageError(
+                "calculate_arbitrage must be executed before calling generate_payloads"
+            )
 
         # web3py object without a provider, useful for offline transaction creation and signing
         w3 = Web3()
@@ -389,7 +415,7 @@ class UniswapLpCycle(Arbitrage):
 
         # generate the payload for the initial transfer if the first pool is type V2
         if self.swap_pools[0].uniswap_version == 2:
-            #print("\tPAYLOAD: building initial V2 transfer")
+            # print("\tPAYLOAD: building initial V2 transfer")
             try:
                 # transfer the input token to the first swap pool
                 transfer_payload = (
@@ -450,7 +476,9 @@ class UniswapLpCycle(Arbitrage):
                             # address
                             swap_pool_object.address,
                             # bytes calldata
-                            w3.keccak(text="swap(uint256,uint256,address,bytes)")[0:4]
+                            w3.keccak(
+                                text="swap(uint256,uint256,address,bytes)"
+                            )[0:4]
                             + abi_encode(
                                 [
                                     "uint256",
@@ -459,7 +487,9 @@ class UniswapLpCycle(Arbitrage):
                                     "bytes",
                                 ],
                                 [
-                                    *self.best["swap_pool_amounts"][i]["amounts"],
+                                    *self.best["swap_pool_amounts"][i][
+                                        "amounts"
+                                    ],
                                     swap_destination_address,
                                     b"",
                                 ],
@@ -479,9 +509,9 @@ class UniswapLpCycle(Arbitrage):
                             # address
                             swap_pool_object.address,
                             # bytes calldata
-                            w3.keccak(text="swap(address,bool,int256,uint160,bytes)")[
-                                0:4
-                            ]
+                            w3.keccak(
+                                text="swap(address,bool,int256,uint160,bytes)"
+                            )[0:4]
                             + abi_encode(
                                 [
                                     "address",
@@ -492,7 +522,9 @@ class UniswapLpCycle(Arbitrage):
                                 ],
                                 [
                                     swap_destination_address,
-                                    self.best.get("swap_pool_amounts")[i]["zeroForOne"],
+                                    self.best.get("swap_pool_amounts")[i][
+                                        "zeroForOne"
+                                    ],
                                     self.best.get("swap_pool_amounts")[i][
                                         "amountSpecified"
                                     ],
