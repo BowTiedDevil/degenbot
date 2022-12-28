@@ -288,8 +288,8 @@ class UniswapLpCycle(Arbitrage):
                 # want it to stop, so ignore the exception and return zero for the amount out
                 # print(f"caught EVMRevertError exception: {e}, returning 0")
                 return -float(x)
-            except Exception as e:
-                raise (e)
+            except:
+                raise
             else:
                 return -float(token_out_quantity - x)
 
