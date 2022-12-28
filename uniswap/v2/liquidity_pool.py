@@ -225,6 +225,9 @@ class LiquidityPool:
             override_reserves_token0 != 0 and override_reserves_token1 != 0
         ), "Must provide override values for both token reserves"
 
+        # WIP: add assertion to ensure no zero-input swap steps can be generated
+        assert token_in_quantity > 0, "zero-input swap!"
+
         if token_in.address == self.token0.address:
             if override_reserves_token0 or override_reserves_token1:
                 reserves_in = override_reserves_token0

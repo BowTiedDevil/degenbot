@@ -180,7 +180,6 @@ class UniswapLpCycle(Arbitrage):
     ) -> bool:
 
         # TODO: implement block_number check for V2 pools (V3 done)
-
         # BUG: the override_update_method might be inconsistent if the V2 and V3 pools have a mixture of polling and external types
         found_updates = False
 
