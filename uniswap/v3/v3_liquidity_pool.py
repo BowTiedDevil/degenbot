@@ -369,7 +369,6 @@ class BaseV3LiquidityPool(ABC):
             if updated:
                 self._update_pool_state()
 
-        print(f"V3 pool: update_reserves returning {updated}")
         return updated, self.state
 
     def calculate_tokens_out_from_tokens_in(

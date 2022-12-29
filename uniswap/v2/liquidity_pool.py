@@ -335,12 +335,6 @@ class LiquidityPool:
                     reserves0,
                     reserves1,
                 ):
-
-                    print("found V2 updated by polling:")
-                    print(
-                        f"old: ({self.reserves_token0},{self.reserves_token1})"
-                    )
-                    print(f"new: ({reserves0},{reserves1})")
                     self.reserves_token0, self.reserves_token1 = (
                         reserves0,
                         reserves1,
@@ -367,10 +361,8 @@ class LiquidityPool:
 
                     self._update_pool_state()
 
-                    print("V2 pool: update_reserves returning True")
                     return True
                 else:
-                    print("V2 pool: update_reserves returning False")
                     return False
             except Exception as e:
                 print(
