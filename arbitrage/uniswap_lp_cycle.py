@@ -199,9 +199,6 @@ class UniswapLpCycle(Arbitrage):
                         update_block=block_number,
                     )
                     if pool_updated:
-                        print(
-                            f"UniswapLpCycle (auto_update) polling found new updates for V2 pool {pool}"
-                        )
                         found_updates = True
                 elif pool.uniswap_version == 3:
                     pool_updated, _ = pool.auto_update(
@@ -209,37 +206,11 @@ class UniswapLpCycle(Arbitrage):
                         block_number=block_number,
                     )
                     if pool_updated:
-                        print(
-                            f"UniswapLpCycle (auto_update) polling found new updates for V3 pool {pool}"
-                        )
                         found_updates = True
                 else:
                     print("could not determine Uniswap pool version!")
             elif pool._update_method == "external":
                 if pool.state != self.pool_states[pool.address]:
-                    # print("verbose comparison of states:")
-                    # print("pool")
-                    # for k, v in pool.state.items():
-                    #     print(f"{k} = {v}")
-                    # print("arb pool_states")
-                    # for k, v in self.pool_states[pool.address].items():
-                    #     print(f"{k} = {v}")
-                    # if pool.uniswap_version == 2:
-                    #     print(
-                    #         f"UniswapLpCycle (auto_update) found new external state updates for V2 pool {pool}"
-                    #     )
-                    #     print(f"pool.state   = {pool.state}")
-                    #     print(
-                    #         f"helper state = {self.pool_states[pool.address]}"
-                    #     )
-                    # elif pool.uniswap_version == 3:
-                    #     print(
-                    #         f"UniswapLpCycle (auto_update) found new external state updates for V3 pool {pool}"
-                    #     )
-                    #     print(f"pool.state   = {pool.state}")
-                    #     print(
-                    #         f"helper state = {self.pool_states[pool.address]}"
-                    #     )
                     found_updates = True
             else:
                 raise ArbitrageError(
