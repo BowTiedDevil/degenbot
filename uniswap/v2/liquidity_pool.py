@@ -95,7 +95,9 @@ class LiquidityPool:
             (
                 self.reserves_token0,
                 self.reserves_token1,
-            ) = self._contract.getReserves()[0:2]
+            ) = self._contract.getReserves(block_identifier=self.update_block)[
+                0:2
+            ]
         else:
             self.reserves_token0 = self.reserves_token1 = 0
 
@@ -302,7 +304,7 @@ class LiquidityPool:
     ) -> bool:
         """
         Checks for updated reserve values when set to "polling", otherwise
-        if set to "external" assumes that internal LP reserves are valid and recalculates token ratios
+        if set to "external" assumes that provided reserves are valid
         """
 
         # get the chain height from Brownie if a specific update_block is not provided
@@ -320,11 +322,25 @@ class LiquidityPool:
             or override_update_method == "polling"
         ):
             try:
-                result = self._contract.getReserves()[0:2]
+                reserves0, reserves1, _ = self._contract.getReserves(
+                    block_identifier=self.update_block
+                )
                 # Compare reserves to last-known values,
-                # store and print the reserves if they have changed
-                if (self.reserves_token0, self.reserves_token1) != result[0:2]:
-                    self.reserves_token0, self.reserves_token1 = result[0:2]
+                # store and (optionally) print the reserves if they have changed
+                if (self.reserves_token0, self.reserves_token1) != (
+                    reserves0,
+                    reserves1,
+                ):
+
+                    print("found V2 updated by polling:")
+                    print(
+                        f"old: ({self.reserves_token0},{self.reserves_token1})"
+                    )
+                    print(f"new: ({reserves0},{reserves1})")
+                    self.reserves_token0, self.reserves_token1 = (
+                        reserves0,
+                        reserves1,
+                    )
                     if not silent:
                         print(f"[{self.name}]")
                         if print_reserves:
@@ -347,8 +363,10 @@ class LiquidityPool:
                         "reserves_token0": self.reserves_token0,
                         "reserves_token1": self.reserves_token1,
                     }
+                    print("V2 pool: update_reserves returning True")
                     return True
                 else:
+                    print("V2 pool: update_reserves returning False")
                     return False
             except Exception as e:
                 print(

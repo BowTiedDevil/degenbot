@@ -180,8 +180,10 @@ class UniswapLpCycle(Arbitrage):
     ) -> bool:
 
         # TODO: implement block_number check for V2 pools (V3 done)
-        # BUG: the override_update_method might be inconsistent if the V2 and V3 pools have a mixture of polling and external types
         found_updates = False
+
+        if override_update_method:
+            print(f"OVERRIDDEN UPDATE METHOD: {override_update_method}")
 
         for pool in self.swap_pools:
             if (
@@ -191,19 +193,53 @@ class UniswapLpCycle(Arbitrage):
                 if pool.uniswap_version == 2:
                     # TODO: implement a more robust check that gracefully
                     # handles externally-updated V2 pools
-                    if pool.update_reserves(
+                    pool_updated = pool.update_reserves(
                         silent=silent,
                         override_update_method=override_update_method,
-                    ):
+                        update_block=block_number,
+                    )
+                    if pool_updated:
+                        print(
+                            f"UniswapLpCycle (auto_update) polling found new updates for V2 pool {pool}"
+                        )
                         found_updates = True
                 elif pool.uniswap_version == 3:
                     pool_updated, _ = pool.auto_update(
-                        silent=silent, block_number=block_number
+                        silent=silent,
+                        block_number=block_number,
                     )
                     if pool_updated:
+                        print(
+                            f"UniswapLpCycle (auto_update) polling found new updates for V3 pool {pool}"
+                        )
                         found_updates = True
+                else:
+                    print("could not determine Uniswap pool version!")
             elif pool._update_method == "external":
                 if pool.state != self.pool_states[pool.address]:
+                    # print("verbose comparison of states:")
+                    # print("pool")
+                    # for k, v in pool.state.items():
+                    #     print(f"{k} = {v}")
+                    # print("arb pool_states")
+                    # for k, v in self.pool_states[pool.address].items():
+                    #     print(f"{k} = {v}")
+                    # if pool.uniswap_version == 2:
+                    #     print(
+                    #         f"UniswapLpCycle (auto_update) found new external state updates for V2 pool {pool}"
+                    #     )
+                    #     print(f"pool.state   = {pool.state}")
+                    #     print(
+                    #         f"helper state = {self.pool_states[pool.address]}"
+                    #     )
+                    # elif pool.uniswap_version == 3:
+                    #     print(
+                    #         f"UniswapLpCycle (auto_update) found new external state updates for V3 pool {pool}"
+                    #     )
+                    #     print(f"pool.state   = {pool.state}")
+                    #     print(
+                    #         f"helper state = {self.pool_states[pool.address]}"
+                    #     )
                     found_updates = True
             else:
                 raise ArbitrageError(
@@ -222,11 +258,15 @@ class UniswapLpCycle(Arbitrage):
             # first time, regardless of state
             self.auto_update()
             self.best["init"] == False
-        elif self.best["init"] == False and self.pool_states == {
+        elif self.pool_states == {
             pool.address: pool.state for pool in self.swap_pools
         }:
-            # short-circuit to avoid arb recalc if pool states have not changed:
-            return False, (0, 0)
+            # short-circuit if pool state has not changed,
+            # return previously-calculated swap and profit values
+            return False, (
+                self.best["swap_amount"],
+                self.best["profit_amount"],
+            )
         else:
             self._update_pool_states()
 

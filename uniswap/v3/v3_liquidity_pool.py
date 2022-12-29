@@ -167,10 +167,10 @@ class BaseV3LiquidityPool(ABC):
         assert amountSpecified != 0, "AS"
 
         assert (
-            sqrtPriceLimitX96 < self.slot0["sqrtPriceX96"]
+            sqrtPriceLimitX96 < self.sqrt_price_x96
             and sqrtPriceLimitX96 > TickMath.MIN_SQRT_RATIO
             if zeroForOne
-            else sqrtPriceLimitX96 > self.slot0["sqrtPriceX96"]
+            else sqrtPriceLimitX96 > self.sqrt_price_x96
             and sqrtPriceLimitX96 < TickMath.MAX_SQRT_RATIO
         ), EVMRevertError("SPL")
 
@@ -189,8 +189,8 @@ class BaseV3LiquidityPool(ABC):
         state = {
             "amountSpecifiedRemaining": amountSpecified,
             "amountCalculated": 0,
-            "sqrtPriceX96": self.slot0["sqrtPriceX96"],
-            "tick": self.slot0["tick"],
+            "sqrtPriceX96": self.sqrt_price_x96,
+            "tick": self.tick,
             "liquidity": cache["liquidityStart"],
             # ignored attributes:
             #   - feeGrowthGlobalX128
@@ -332,39 +332,45 @@ class BaseV3LiquidityPool(ABC):
 
         # only process calls if the submitted block number (or retrieved block number)
         # is equal to or exceeds the block number of the last update
-        if block_number >= self.update_block:
-            try:
-                if (
-                    slot0 := self._brownie_contract.slot0(
-                        block_identifier=block_number,
-                    )
-                ) != self.slot0:
-                    updated = True
-                    self.slot0 = slot0
-                    self.sqrt_price_x96 = slot0[0]
-                    self.tick = slot0[1]
-                if (
-                    liquidity := self._brownie_contract.liquidity(
-                        block_identifier=block_number
-                    )
-                ) != self.liquidity:
-                    updated = True
-                    self.liquidity = liquidity
-            except:
-                raise
-            else:
-                self.update_block = block_number
-                if not silent:
-                    print(f"Liquidity: {self.liquidity}")
-                    print(f"SqrtPriceX96: {self.sqrt_price_x96}")
-                    print(f"Tick: {self.tick}")
-                if updated:
-                    self.state = {
-                        "liquidity": self.liquidity,
-                        "sqrt_price_x96": self.sqrt_price_x96,
-                        "tick": self.tick,
-                    }
 
+        if block_number < self.update_block:
+            raise ExternalUpdateError(
+                f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
+            )
+
+        try:
+            if (
+                slot0 := self._brownie_contract.slot0(
+                    block_identifier=block_number,
+                )
+            ) != self.slot0:
+                updated = True
+                self.slot0 = slot0
+                self.sqrt_price_x96 = slot0[0]
+                self.tick = slot0[1]
+            if (
+                liquidity := self._brownie_contract.liquidity(
+                    block_identifier=block_number
+                )
+            ) != self.liquidity:
+                updated = True
+                self.liquidity = liquidity
+        except:
+            raise
+        else:
+            self.update_block = block_number
+            if not silent:
+                print(f"Liquidity: {self.liquidity}")
+                print(f"SqrtPriceX96: {self.sqrt_price_x96}")
+                print(f"Tick: {self.tick}")
+            if updated:
+                self.state = {
+                    "liquidity": self.liquidity,
+                    "sqrt_price_x96": self.sqrt_price_x96,
+                    "tick": self.tick,
+                }
+
+        print(f"V3 pool: update_reserves returning {updated}")
         return updated, self.state
 
     def calculate_tokens_out_from_tokens_in(
