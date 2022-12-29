@@ -132,7 +132,8 @@ class BaseV3LiquidityPool(ABC):
         else:
             self.name = f"{self.token0.symbol}-{self.token1.symbol} (V3, {self.fee/10000:.2f}%)"
 
-        self._update_pool_state
+        self.state = {}
+        self._update_pool_state()
         self.update_block = block_number
 
     def __str__(self):
@@ -366,7 +367,7 @@ class BaseV3LiquidityPool(ABC):
                 print(f"SqrtPriceX96: {self.sqrt_price_x96}")
                 print(f"Tick: {self.tick}")
             if updated:
-                self._update_pool_state
+                self._update_pool_state()
 
         print(f"V3 pool: update_reserves returning {updated}")
         return updated, self.state

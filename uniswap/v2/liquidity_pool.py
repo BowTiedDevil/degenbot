@@ -116,7 +116,8 @@ class LiquidityPool:
             # huge memory savings if LP contract object is not used after initialization
             self._contract = None
 
-        self._update_pool_state
+        self.state = {}
+        self._update_pool_state()
 
         if not silent:
             print(self.name)
@@ -360,12 +361,12 @@ class LiquidityPool:
                             print(
                                 f"{self.token1.symbol}/{self.token0.symbol}: {(self.reserves_token1/10**self.token1.decimals) / (self.reserves_token0/10**self.token0.decimals)}"
                             )
+
                     # recalculate possible swaps using the new reserves
                     self.calculate_tokens_in_from_ratio_out()
-                    self.state = {
-                        "reserves_token0": self.reserves_token0,
-                        "reserves_token1": self.reserves_token1,
-                    }
+
+                    self._update_pool_state()
+
                     print("V2 pool: update_reserves returning True")
                     return True
                 else:
@@ -392,11 +393,7 @@ class LiquidityPool:
                 self.reserves_token0 = external_token0_reserves
                 self.reserves_token1 = external_token1_reserves
                 self.new_reserves = True
-
-                self.state = {
-                    "reserves_token0": self.reserves_token0,
-                    "reserves_token1": self.reserves_token1,
-                }
+                self._update_pool_state()
 
             if not silent:
                 print(f"[{self.name}]")
