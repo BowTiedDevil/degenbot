@@ -116,10 +116,7 @@ class LiquidityPool:
             # huge memory savings if LP contract object is not used after initialization
             self._contract = None
 
-        self.state = {
-            "reserves_token0": self.reserves_token0,
-            "reserves_token1": self.reserves_token1,
-        }
+        self._update_pool_state
 
         if not silent:
             print(self.name)
@@ -138,6 +135,12 @@ class LiquidityPool:
         Return the pool name when the object is included in a print statement, or cast as a string
         """
         return self.name
+
+    def _update_pool_state(self):
+        self.state = {
+            "reserves_token0": self.reserves_token0,
+            "reserves_token1": self.reserves_token1,
+        }
 
     def calculate_tokens_in_from_ratio_out(self) -> int:
         """
