@@ -218,7 +218,8 @@ class UniswapLpCycle(Arbitrage):
                 )
 
         if found_updates:
-            self._update_pool_states
+            self._update_pool_states()
+            self.clear_best()
 
         return found_updates
 
