@@ -172,7 +172,7 @@ class BaseV3LiquidityPool(ABC):
             if zeroForOne
             else sqrtPriceLimitX96 > self.sqrt_price_x96
             and sqrtPriceLimitX96 < TickMath.MAX_SQRT_RATIO
-        ), EVMRevertError("SPL")
+        ), "SPL"
 
         cache = {
             "liquidityStart": self.liquidity,
