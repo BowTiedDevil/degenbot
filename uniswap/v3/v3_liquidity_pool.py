@@ -616,7 +616,7 @@ class BaseV3LiquidityPool(ABC):
 
                         if new_liquidity_gross == 0:
                             del self.tick_data[tick]
-                            print(f"Tick {tick} cleared")
+                            # print(f"Tick {tick} cleared")
                             continue
                         else:
                             self.tick_data[tick] = (
