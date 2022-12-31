@@ -7,8 +7,8 @@ from web3 import Web3
 
 from degenbot.arbitrage.base import Arbitrage
 from degenbot.exceptions import (
-    ArbitrageError,
     ArbCalculationError,
+    ArbitrageError,
     EVMRevertError,
     InvalidSwapPathError,
     ZeroLiquidityError,
@@ -17,7 +17,6 @@ from degenbot.token import Erc20Token
 from degenbot.uniswap.v2 import LiquidityPool
 from degenbot.uniswap.v3 import V3LiquidityPool
 from degenbot.uniswap.v3.libraries import TickMath
-from degenbot.uniswap.v3.libraries.Helpers import MAX_UINT256
 
 
 class UniswapLpCycle(Arbitrage):
@@ -296,9 +295,9 @@ class UniswapLpCycle(Arbitrage):
                         )
                     )
             except (EVMRevertError, AssertionError) as e:
-                # the optimizer might send invalid data into the swap calculation, but we don't
-                # want it to stop, so ignore the exception and return zero for the amount out
-                # print(f"caught EVMRevertError exception: {e}, returning 0")
+                # the optimizer might send invalid data into the swap calculation.
+                #  We don't want it to stop, so ignore the exception and pretend
+                # the swap is a "zero output" so the profit is just the input negated
                 return -float(x)
             except:
                 raise

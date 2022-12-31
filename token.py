@@ -47,7 +47,7 @@ class Erc20Token:
             simplefilter("ignore")
             try:
                 # attempt to load stored contract
-                self._contract = Contract(address)
+                self._contract = Contract(self.address)
             except:
                 # use the provided ABI if given
                 if abi:

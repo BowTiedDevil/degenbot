@@ -1,3 +1,6 @@
+# TODO: implement a way to track when amountSpecified for a swap
+# exceeds the amount actually swapped
+
 from abc import ABC, abstractmethod
 from typing import Tuple, List
 
@@ -330,7 +333,7 @@ class BaseV3LiquidityPool(ABC):
         updated = False
 
         # use the block_number if provided, otherwise pull from Brownie
-        if not block_number:
+        if block_number is None:
             block_number = chain.height
 
         # only process calls if the submitted block number (or retrieved block number)
@@ -533,7 +536,7 @@ class BaseV3LiquidityPool(ABC):
 
         if block_number < self.update_block:
             raise ExternalUpdateError(
-                f"Current state recorded at block {self.update_block}, received update for stale block {updates.get('block_number')}"
+                f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
             )
 
         updated = False
@@ -616,7 +619,7 @@ class BaseV3LiquidityPool(ABC):
 
                         if new_liquidity_gross == 0:
                             del self.tick_data[tick]
-                            # print(f"Tick {tick} cleared")
+                            print(f"Tick {tick} cleared")
                             continue
                         else:
                             self.tick_data[tick] = (
@@ -674,6 +677,14 @@ class BaseV3LiquidityPool(ABC):
         representing 256 ticks at the tickSpacing interval), stores
         the liquidity values in the `self.tick_data` dictionary using the tick
         as the key, and updates the tick_bitmap and tick_words dict.
+
+        This function attempts to use Brownie's built-in multicall for any network
+        with the 'multicall2' key set. If available, it will request extra words
+        in the direction of the requested position to fill in gaps in `self.tick_data`
+
+        If multicall is set but `self.tick_data` is empty, it will fall back to fetching
+        a single word only. This is a time-saving technique since this should only occur
+        inside the constructor when the pool helper is being created.
         """
 
         if block_number is None:
@@ -687,20 +698,30 @@ class BaseV3LiquidityPool(ABC):
             # TODO: make extra_words value configurable (constructor argument?)
             extra_words = 50
             if not self.tick_words:
-
-                # empty tick_words, so just fetch the requested word
+                # empty tick_words, so just fetch the requested word (likely this is being called by the constructor)
                 lower_word = word_position
                 upper_word = word_position + 1
             else:
-                # determine the direction of the requested word
-                if word_position > (max_word := max(self.tick_words.keys())):
+                min_word = min(self.tick_words.keys())
+                max_word = max(self.tick_words.keys())
+
+                # determine the direction of the requested word relative to the known word range
+                if word_position > max_word:
                     # going up
                     lower_word = max_word + 1
                     upper_word = lower_word + extra_words
-                elif word_position < (min_word := min(self.tick_words.keys())):
+                elif word_position < min_word:
                     # going down
                     lower_word = min_word - extra_words
                     upper_word = min_word
+                elif min_word <= word_position <= max_word:
+                    print(
+                        "(UniswapLpCycle) _get_tick_data_at_word: requested word_position inside known range!"
+                    )
+                    print(
+                        "(UniswapLpCycle) _get_tick_data_at_word: doing nothing..."
+                    )
+                    return self.tick_data
             try:
                 with multicall(block_identifier=block_number):
                     multicall_tick_bitmaps = {
@@ -717,7 +738,6 @@ class BaseV3LiquidityPool(ABC):
                 # print(f"multicall tick_bitmap = {multicall_tick_bitmaps}")
                 self.tick_bitmap.update(multicall_tick_bitmaps)
                 for _word, _ in multicall_tick_bitmaps.items():
-                    # TODO: remove tick_words (redundant)
                     self.tick_words.update({_word: True})
 
             try:
