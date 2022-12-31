@@ -46,7 +46,7 @@ class BaseV3LiquidityPool(ABC):
         update_method: str = "polling",
         abi: list = None,
         # unload_brownie_contract_after_init: bool = False,
-        populate_ticks: bool = True,
+        extra_words: int = 50,
     ):
 
         block_number = chain.height
@@ -121,14 +121,15 @@ class BaseV3LiquidityPool(ABC):
             self.tick_data = {}
             self.tick_bitmap = {}
             self.tick_words = {}
-            if populate_ticks:
-                _tick_word, _ = self._get_tick_bitmap_position(self.tick)
-                self._get_tick_data_at_word(_tick_word)
+
+            _tick_word, _ = self._get_tick_bitmap_position(self.tick)
+            self._get_tick_data_at_word(_tick_word)
 
         except:
             raise
 
         self._update_method = update_method
+        self.extra_words = extra_words
 
         if name:
             self.name = name
@@ -138,6 +139,138 @@ class BaseV3LiquidityPool(ABC):
         self.state = {}
         self._update_pool_state()
         self.update_block = block_number
+
+    def _get_tick_bitmap_position(self, tick) -> Tuple[int, int]:
+        """
+        Retrieves the wordPosition and bitPosition for the input tick
+
+        This function corrects internally for tick spacing! e.g. tick=600 is the
+        11th initialized tick for an LP with tickSpacing of 60, starting at 0.
+        Each "word" in the tickBitmap holds 256 initialized positions, so the 11th
+        position of the 1st word will represent tick=600.
+
+        Calling `get_tick_bitmap_position(600)` returns (0,10), where:
+            0 = wordPosition (zero-indexed)
+            10 = bitPosition (zero-indexed)
+        """
+        return TickBitmap.position(int(Decimal(tick) // self.tick_spacing))
+
+    def _get_tick_data_at_word(
+        self,
+        word_position: int,
+        single_tick: bool = False,
+        block_number: int = None,
+    ) -> dict:
+        """
+        Gets the initialized tick values at a specific word (a 32 byte number
+        representing 256 ticks at the tickSpacing interval), stores
+        the liquidity values in the `self.tick_data` dictionary using the tick
+        as the key, and updates the tick_bitmap and tick_words dict.
+
+        This function attempts to use Brownie's built-in multicall for any network
+        with the 'multicall2' key set. If available, it will request extra words
+        in the direction of the requested position to fill in gaps in `self.tick_data`
+
+        If multicall is set but `self.tick_data` is empty, it will fall back to fetching
+        a single word only. This is a time-saving technique since this should only occur
+        inside the constructor when the pool helper is being created.
+        """
+
+        if block_number is None:
+            block_number = chain.height
+
+        if not self.tick_words:
+            single_tick = True
+
+        # check if multicall is available for the connected network
+        if (
+            network.main.CONFIG.active_network.get("multicall2")
+            and not single_tick
+        ):
+
+            min_word = min(self.tick_words.keys())
+            max_word = max(self.tick_words.keys())
+
+            # requested word is above the range we have data for
+            if word_position > max_word:
+                lower_word = max_word + 1
+                upper_word = max_word + self.extra_words + 1
+
+            # requested word is below the range we have data for
+            elif word_position < min_word:
+                upper_word = min_word
+                lower_word = min_word - self.extra_words
+
+            # requested word is inside the known range. This should not occur!
+            elif min_word <= word_position <= max_word:
+                raise ValueError(
+                    "(UniswapLpCycle) _get_tick_data_at_word: requested word_position inside known range!"
+                )
+
+            try:
+                print(
+                    f"V3LiquidityPool: multicall fetch range [{lower_word},{upper_word}] = {upper_word - lower_word} ticks"
+                )
+                with multicall(block_identifier=block_number):
+                    multicall_tick_bitmaps = {
+                        _word: self._brownie_contract.tickBitmap(_word)
+                        for _word in range(
+                            lower_word,
+                            upper_word,
+                        )
+                    }
+            except Exception as e:
+                print(e)
+                print(type(e))
+            else:
+                # print(f"multicall tick_bitmap = {multicall_tick_bitmaps}")
+                self.tick_bitmap.update(multicall_tick_bitmaps)
+                for _word, _ in multicall_tick_bitmaps.items():
+                    self.tick_words.update({_word: True})
+
+            try:
+                with multicall(block_identifier=block_number):
+                    multicall_tick_data = {
+                        tick: (liquidityNet, liquidityGross)
+                        for word_position, bitmap in multicall_tick_bitmaps.items()
+                        for tick, liquidityNet, liquidityGross in self.lens._brownie_contract.getPopulatedTicksInWord(
+                            self.address,
+                            word_position,
+                        )
+                        if bitmap
+                    }
+            except Exception as e:
+                print(e)
+                print(type(e))
+            else:
+                # print(f"multicall tick_data = {multicall_tick_data}")
+                self.tick_data.update(multicall_tick_data)
+
+        else:
+            # fetch ticks one by one
+            try:
+                if tick_bitmap := self._brownie_contract.tickBitmap(
+                    word_position
+                ):
+                    tick_data = (
+                        self.lens._brownie_contract.getPopulatedTicksInWord(
+                            self.address,
+                            word_position,
+                            block_identifier=block_number,
+                        )
+                    )
+                else:
+                    tick_data = ()
+            except:
+                raise
+            else:
+                if tick_bitmap:
+                    for (tick, liquidityNet, liquidityGross) in tick_data:
+                        self.tick_data[tick] = liquidityNet, liquidityGross
+                self.tick_bitmap.update({word_position: tick_bitmap})
+                self.tick_words.update({word_position: True})
+
+        return self.tick_data
 
     def __str__(self):
         """
@@ -531,7 +664,7 @@ class BaseV3LiquidityPool(ABC):
         if block_number is None:
             block_number = chain.height
             print(
-                f"(V3LiquidityPool.external_update) block_number was provided, using {block_number} from chain"
+                f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
             )
 
         if block_number < self.update_block:
@@ -552,8 +685,9 @@ class BaseV3LiquidityPool(ABC):
                 self.sqrt_price_x96 = value
                 updated = True
             elif key == "liquidity_change":
-                # TODO: flag for liquidity changes in `self.state` that are not in-range
+                # TODO: flag liquidity changes in `self.state` that are not in-range
                 # (might result in profitable arbs that cross ticks)
+
                 liquidity_delta, lower_tick, upper_tick = value
                 if lower_tick <= self.tick <= upper_tick:
                     # prev_liq = self.liquidity
@@ -563,69 +697,70 @@ class BaseV3LiquidityPool(ABC):
                     self.state["liquidity"] = self.liquidity
                     updated = True
 
-                words_fetched = []  # track any word fetched during the loop
                 for i, tick in enumerate([lower_tick, upper_tick]):
 
                     tick_word, _ = self._get_tick_bitmap_position(tick)
 
-                    # check if the word containing this tick has not been fetched, and fetch if not
-                    # NOTE: the word is added to `words_fetched` so it can be skipped later if the other tick is
-                    # in the same word (since the fetched values include the liquidity changes from this event)
-                    if not (self.tick_words.get(tick_word)):
-                        # print(f"word {tick_word} missing, fetching...")
+                    # check if the word containing this tick is known, fetch if not
+                    if not self.tick_words.get(tick_word):
+                        print(f"word {tick_word} missing, fetching...")
                         self._get_tick_data_at_word(
                             tick_word,
                             single_tick=True,
-                            block_number=block_number,
+                            # fetch the tick data for the previous block, then apply the deltas to it
+                            # NOTE: we fetch the previous block because if multiple liquidity events
+                            # are emitted this block, delta values will be incorrectly applied unless
+                            # we start from the previous block state
+                            block_number=block_number - 1,
                         )
-                        words_fetched.append(tick_word)
+
+                    # else:
+                    #     if tick_word in words_fetched:
+                    #         # print(
+                    #         #     f"skipping tick ({tick}), already fetched word ({tick_word})"
+                    #         # )
+                    #         continue
+
+                    # get the liquidity info for this tick, or set to zero if previously uninitialized
+                    if tick_liquidity := self.tick_data.get(tick):
+                        (
+                            tick_liquidity_net,
+                            tick_liquidity_gross,
+                        ) = tick_liquidity
                     else:
-                        if tick_word in words_fetched:
-                            # print(
-                            #     f"skipping tick ({tick}), already fetched word ({tick_word})"
-                            # )
-                            continue
+                        # print(f"found uninitialized tick: {tick}")
+                        tick_liquidity_net = 0
+                        tick_liquidity_gross = 0
 
-                        # get the liquidity info for this tick, or set to zero if previously uninitialized
-                        if tick_liquidity := self.tick_data.get(tick):
-                            (
-                                tick_liquidity_net,
-                                tick_liquidity_gross,
-                            ) = tick_liquidity
-                        else:
-                            # print(f"found uninitialized tick: {tick}")
-                            tick_liquidity_net = 0
-                            tick_liquidity_gross = 0
+                    # print("tick data before")
+                    # print(
+                    #     f"({tick_liquidity_net}, {tick_liquidity_gross})"
+                    # )
 
-                        # print("tick data before")
-                        # print(
-                        #     f"({tick_liquidity_net}, {tick_liquidity_gross})"
-                        # )
+                    # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
+                    # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
+                    # NOTE: for burn events (removing liquidity), event_liquidity is negated,
+                    # but the logic holds (liquidityNet is reduced at the start of the range,
+                    # and increased at the end of the range)
 
-                        # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
-                        # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
-                        # NOTE: for burn events (removing liquidity), event_liquidity is negated,
-                        # but the logic holds (liquidityNet is reduced at the start of the range,
-                        # and increased at the end of the range)
+                    new_liquidity_net = (
+                        tick_liquidity_net + liquidity_delta
+                        if i == 0
+                        else tick_liquidity_net - liquidity_delta
+                    )
+                    new_liquidity_gross = (
+                        tick_liquidity_gross + liquidity_delta
+                    )
 
-                        new_liquidity_net = (
-                            tick_liquidity_net + liquidity_delta
-                            if i == 0
-                            else tick_liquidity_net - liquidity_delta
+                    if new_liquidity_gross == 0:
+                        del self.tick_data[tick]
+                        print(f"Tick {tick} cleared")
+                        continue
+                    else:
+                        self.tick_data[tick] = (
+                            new_liquidity_net,
+                            new_liquidity_gross,
                         )
-                        new_liquidity_gross = (
-                            tick_liquidity_gross + liquidity_delta
-                        )
-
-                        if new_liquidity_gross == 0:
-                            del self.tick_data[tick]
-                            print(f"Tick {tick} cleared")
-                            continue
-                        else:
-                            self.tick_data[tick] = (
-                                new_liquidity_net,
-                                new_liquidity_gross,
-                            )
 
                 updated = True
             else:
@@ -650,139 +785,6 @@ class BaseV3LiquidityPool(ABC):
             )
 
         return updated
-
-    def _get_tick_bitmap_position(self, tick) -> Tuple[int, int]:
-        """
-        Retrieves the wordPosition and bitPosition for the input tick
-
-        This function corrects internally for tick spacing! e.g. tick=600 is the
-        11th initialized tick for an LP with tickSpacing of 60, starting at 0.
-        Each "word" in the tickBitmap holds 256 initialized positions, so the 11th
-        position of the 1st word will represent tick=600.
-
-        Calling `get_tick_bitmap_position(600)` returns (0,10), where:
-            0 = wordPosition (zero-indexed)
-            10 = bitPosition (zero-indexed)
-        """
-        return TickBitmap.position(int(Decimal(tick) // self.tick_spacing))
-
-    def _get_tick_data_at_word(
-        self,
-        word_position: int,
-        single_tick: bool = False,
-        block_number: int = None,
-    ) -> dict:
-        """
-        Gets the initialized tick values at a specific word (a 32 byte number
-        representing 256 ticks at the tickSpacing interval), stores
-        the liquidity values in the `self.tick_data` dictionary using the tick
-        as the key, and updates the tick_bitmap and tick_words dict.
-
-        This function attempts to use Brownie's built-in multicall for any network
-        with the 'multicall2' key set. If available, it will request extra words
-        in the direction of the requested position to fill in gaps in `self.tick_data`
-
-        If multicall is set but `self.tick_data` is empty, it will fall back to fetching
-        a single word only. This is a time-saving technique since this should only occur
-        inside the constructor when the pool helper is being created.
-        """
-
-        if block_number is None:
-            block_number = chain.height
-
-        # check if multicall is available for the connected network
-        if (
-            network.main.CONFIG.active_network.get("multicall2")
-            and not single_tick
-        ):
-            # TODO: make extra_words value configurable (constructor argument?)
-            extra_words = 50
-            if not self.tick_words:
-                # empty tick_words, so just fetch the requested word (likely this is being called by the constructor)
-                lower_word = word_position
-                upper_word = word_position + 1
-            else:
-                min_word = min(self.tick_words.keys())
-                max_word = max(self.tick_words.keys())
-
-                # determine the direction of the requested word relative to the known word range
-                if word_position > max_word:
-                    # going up
-                    lower_word = max_word + 1
-                    upper_word = lower_word + extra_words
-                elif word_position < min_word:
-                    # going down
-                    lower_word = min_word - extra_words
-                    upper_word = min_word
-                elif min_word <= word_position <= max_word:
-                    print(
-                        "(UniswapLpCycle) _get_tick_data_at_word: requested word_position inside known range!"
-                    )
-                    print(
-                        "(UniswapLpCycle) _get_tick_data_at_word: doing nothing..."
-                    )
-                    return self.tick_data
-            try:
-                with multicall(block_identifier=block_number):
-                    multicall_tick_bitmaps = {
-                        _word: self._brownie_contract.tickBitmap(_word)
-                        for _word in range(
-                            lower_word,
-                            upper_word,
-                        )
-                    }
-            except Exception as e:
-                print(e)
-                print(type(e))
-            else:
-                # print(f"multicall tick_bitmap = {multicall_tick_bitmaps}")
-                self.tick_bitmap.update(multicall_tick_bitmaps)
-                for _word, _ in multicall_tick_bitmaps.items():
-                    self.tick_words.update({_word: True})
-
-            try:
-                with multicall(block_identifier=block_number):
-                    multicall_tick_data = {
-                        tick: (liquidityNet, liquidityGross)
-                        for word_position, bitmap in multicall_tick_bitmaps.items()
-                        for tick, liquidityNet, liquidityGross in self.lens._brownie_contract.getPopulatedTicksInWord(
-                            self.address,
-                            word_position,
-                        )
-                        if bitmap
-                    }
-            except Exception as e:
-                print(e)
-                print(type(e))
-            else:
-                # print(f"multicall tick_data = {multicall_tick_data}")
-                self.tick_data.update(multicall_tick_data)
-
-        else:
-            # fetch ticks one by one
-            try:
-                if tick_bitmap := self._brownie_contract.tickBitmap(
-                    word_position
-                ):
-                    tick_data = (
-                        self.lens._brownie_contract.getPopulatedTicksInWord(
-                            self.address,
-                            word_position,
-                            block_identifier=block_number,
-                        )
-                    )
-                else:
-                    tick_data = ()
-            except:
-                raise
-            else:
-                if tick_bitmap:
-                    for (tick, liquidityNet, liquidityGross) in tick_data:
-                        self.tick_data[tick] = liquidityNet, liquidityGross
-                self.tick_bitmap.update({word_position: tick_bitmap})
-                self.tick_words.update({word_position: True})
-
-        return self.tick_data
 
 
 class V3LiquidityPool(BaseV3LiquidityPool):
