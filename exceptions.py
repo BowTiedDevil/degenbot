@@ -1,5 +1,5 @@
 # Base exception
-class LiquidityPoolError(Exception):
+class DegenbotError(Exception):
     """
     Base exception, intended as a generic exception and a base class for
     for all more-specific exceptions raised by various degenbot modules
@@ -9,9 +9,7 @@ class LiquidityPoolError(Exception):
 
 
 # 1st level exceptions (derived from `DegenbotError`)
-
-
-class ArbitrageError(LiquidityPoolError):
+class ArbitrageError(DegenbotError):
     """
     Exception raised inside arbitrage helpers
     """
@@ -19,7 +17,7 @@ class ArbitrageError(LiquidityPoolError):
     pass
 
 
-class Erc20TokenError(LiquidityPoolError):
+class Erc20TokenError(DegenbotError):
     """
     Exception raised inside ERC-20 token helpers
     """
@@ -27,7 +25,7 @@ class Erc20TokenError(LiquidityPoolError):
     pass
 
 
-class EVMRevertError(LiquidityPoolError):
+class EVMRevertError(DegenbotError):
     """
     Thrown when a simulated EVM contract operation would revert
     """
@@ -35,7 +33,7 @@ class EVMRevertError(LiquidityPoolError):
     pass
 
 
-class LiquidityPoolError(LiquidityPoolError):
+class LiquidityPoolError(DegenbotError):
     """
     Exception raised inside liquidity pool helpers
     """
@@ -69,8 +67,6 @@ class ZeroLiquidityError(ArbitrageError):
 
 
 # 2nd level exceptions for Uniswap Liquidity Pool classes
-
-
 class ExternalUpdateError(LiquidityPoolError):
     """
     Thrown when an external update does not pass sanity checks
