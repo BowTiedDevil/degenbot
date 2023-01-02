@@ -208,9 +208,6 @@ class BaseV3LiquidityPool(ABC):
                 )
 
             try:
-                print(
-                    f"V3LiquidityPool: multicall fetch range [{lower_word},{upper_word}] = {upper_word - lower_word} ticks"
-                )
                 with multicall(block_identifier=block_number):
                     multicall_tick_bitmaps = {
                         _word: self._brownie_contract.tickBitmap(_word)
