@@ -1,6 +1,6 @@
 from math import ceil
 from typing import List, Tuple, Union
-
+from decimal import Decimal
 from eth_abi import encode as abi_encode
 from scipy import optimize
 from web3 import Web3
@@ -627,28 +627,23 @@ class UniswapLpCycle(Arbitrage):
 
                 if token_in == self.swap_pools[i].token0:
                     _zeroForOne = True
-                    pools_amounts_out.append(
-                        {
-                            "uniswap_version": 3,
-                            "amountSpecified": token_in_quantity,  # for an exactInput swap, always a positive number representing the input amount
-                            "zeroForOne": _zeroForOne,
-                            "sqrtPriceLimitX96": TickMath.MIN_SQRT_RATIO + 1
-                            if _zeroForOne
-                            else TickMath.MAX_SQRT_RATIO - 1,
-                        }
-                    )
                 elif token_in == self.swap_pools[i].token1:
                     _zeroForOne = False
-                    pools_amounts_out.append(
-                        {
-                            "uniswap_version": 3,
-                            "amountSpecified": token_in_quantity,  # for an exactInput swap, always a positive number representing the input amount
-                            "zeroForOne": _zeroForOne,
-                            "sqrtPriceLimitX96": TickMath.MIN_SQRT_RATIO + 1
-                            if _zeroForOne
-                            else TickMath.MAX_SQRT_RATIO - 1,
-                        }
-                    )
+
+                pools_amounts_out.append(
+                    {
+                        "uniswap_version": 3,
+                        # for an exactInput swap, amountSpecified is a positive number representing the INPUT amount
+                        # for an exactOutput swap, amountSpecified is a negative number representing the OUTPUT amount
+                        "amountSpecified": -token_out_quantity
+                        if i == 0
+                        else token_in_quantity,
+                        "zeroForOne": _zeroForOne,
+                        "sqrtPriceLimitX96": TickMath.MIN_SQRT_RATIO + 1
+                        if _zeroForOne
+                        else TickMath.MAX_SQRT_RATIO - 1,
+                    }
+                )
 
             else:
                 raise ArbitrageError(
