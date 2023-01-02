@@ -634,9 +634,10 @@ class UniswapLpCycle(Arbitrage):
                         "uniswap_version": 3,
                         # for an exactInput swap, amountSpecified is a positive number representing the INPUT amount
                         # for an exactOutput swap, amountSpecified is a negative number representing the OUTPUT amount
-                        "amountSpecified": -token_out_quantity
-                        if i == 0
-                        else token_in_quantity,
+                        "amountSpecified": token_in_quantity
+                        # exactInput for first leg
+                        # exactOutput for last leg
+                        if i == 0 else -token_out_quantity,
                         "zeroForOne": _zeroForOne,
                         "sqrtPriceLimitX96": TickMath.MIN_SQRT_RATIO + 1
                         if _zeroForOne
