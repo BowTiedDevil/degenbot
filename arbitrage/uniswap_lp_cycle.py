@@ -1,6 +1,5 @@
 from math import ceil
 from typing import List, Tuple, Union
-from decimal import Decimal
 from eth_abi import encode as abi_encode
 from scipy import optimize
 from web3 import Web3
