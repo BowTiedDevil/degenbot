@@ -3,6 +3,7 @@ from typing import List, Tuple, Union
 from eth_abi import encode as abi_encode
 from scipy import optimize
 from web3 import Web3
+from warnings import warn
 
 from degenbot.arbitrage.base import Arbitrage
 from degenbot.exceptions import (
@@ -23,14 +24,18 @@ class UniswapLpCycle(Arbitrage):
         self,
         input_token: Erc20Token,
         swap_pools: List[Union[LiquidityPool, V3LiquidityPool]],
-        max_input: int,
+        max_input: int = None,
         id: str = None,
     ):
 
-        self.id = id if id else None
-
+        self.id = id
         self.input_token = input_token
+
+        if max_input is None:
+            warn("No maximum input provided, setting to 100 WETH")
+            max_input = 100 * 10**18
         self.max_input = max_input
+
         self.gas_estimate = 0
 
         for pool in swap_pools:
@@ -104,63 +109,104 @@ class UniswapLpCycle(Arbitrage):
     def __str__(self) -> str:
         return self.name
 
-    @classmethod
-    def from_addresses(
-        cls,
-        input_token_address: str,
-        swap_pool_addresses: List[Tuple[str, str]],
-        max_input: int = None,
-        id: str = None,
-    ) -> "UniswapLpCycle":
-        """
-        Create a new `UniswapLpCycle` object from token and pool addresses.
+    def _build_multipool_amounts_out(
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+    ) -> List[dict]:
 
-        Arguments
-        ---------
-        input_token_address : str
-            A address for the input_token
-        swap_pool_addresses : List[str]
-            An ordered list of tuples, representing the address for each pool in the swap path,
-            and a string specifying the Uniswap version for that pool (either "V2" or "V3")
+        number_of_pools = len(self.swap_pools)
 
-            e.g. swap_pool_addresses = [
-                ("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD","V3"),
-                ("0xbb2b8038a1640196fbe3e38816f3e67cba72d940","V2")
-            ]
+        pools_amounts_out = []
 
-        max_input: int, optional
-            The maximum input for the cycle token in question
-            (typically limited by the balance of the deployed contract or operating EOA)
-        id: str, optional
-            A unique identifier for bookkeeping purposes
-            (not used internally, the attribute is provided for operator convenience)
-        """
+        for i in range(number_of_pools):
 
-        # create the token object
-        try:
-            token = Erc20Token(input_token_address)
-        except:
-            raise
+            # determine the uniswap version for the pool and format the output appropriately
+            if self.swap_pools[i].uniswap_version == 2:
+                # determine the output token for the pool
+                if token_in == self.swap_pools[i].token0:
+                    token_out = self.swap_pools[i].token1
+                elif token_in == self.swap_pools[i].token1:
+                    token_out = self.swap_pools[i].token0
+                else:
+                    raise InvalidSwapPathError(
+                        f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
+                    )
 
-        # create the pool objects
-        pool_objects = []
-        for pool_address, pool_type in swap_pool_addresses:
-            # determine if the pool is a V2 or V3 type
-            if pool_type == "V2":
-                pool_objects.append(LiquidityPool(address=pool_address))
-            elif pool_type == "V3":
-                pool_objects.append(V3LiquidityPool(address=pool_address))
-            else:
-                raise ArbitrageError(
-                    f"Pool type not understood! Expected 'V2' or 'V3', got {pool_type}"
+                # calculate the swap output through pool[i]
+                token_out_quantity = self.swap_pools[
+                    i
+                ].calculate_tokens_out_from_tokens_in(
+                    token_in=token_in,
+                    token_in_quantity=token_in_quantity,
                 )
 
-        return cls(
-            input_token=token,
-            swap_pools=pool_objects,
-            max_input=max_input,
-            id=id,
-        )
+                if token_in == self.swap_pools[i].token0:
+                    pools_amounts_out.append(
+                        {
+                            "uniswap_version": 2,
+                            "amounts": [0, token_out_quantity],
+                        }
+                    )
+                elif token_in == self.swap_pools[i].token1:
+                    pools_amounts_out.append(
+                        {
+                            "uniswap_version": 2,
+                            "amounts": [token_out_quantity, 0],
+                        }
+                    )
+            elif self.swap_pools[i].uniswap_version == 3:
+                # determine the output token for the pool
+                if token_in == self.swap_pools[i].token0:
+                    token_out = self.swap_pools[i].token1
+                elif token_in == self.swap_pools[i].token1:
+                    token_out = self.swap_pools[i].token0
+                else:
+                    raise InvalidSwapPathError(
+                        f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
+                    )
+
+                # calculate the swap output through pool[i]
+                token_out_quantity = self.swap_pools[
+                    i
+                ].calculate_tokens_out_from_tokens_in(
+                    token_in=token_in,
+                    token_in_quantity=token_in_quantity,
+                )
+
+                if token_in == self.swap_pools[i].token0:
+                    _zeroForOne = True
+                elif token_in == self.swap_pools[i].token1:
+                    _zeroForOne = False
+
+                pools_amounts_out.append(
+                    {
+                        "uniswap_version": 3,
+                        # for an exactInput swap, amountSpecified is a positive number representing the INPUT amount
+                        # for an exactOutput swap, amountSpecified is a negative number representing the OUTPUT amount
+                        "amountSpecified": token_in_quantity
+                        # exactInput for first leg (i==0)
+                        # exactOutput for others
+                        if i == 0 else -token_out_quantity,
+                        "zeroForOne": _zeroForOne,
+                        "sqrtPriceLimitX96": TickMath.MIN_SQRT_RATIO + 1
+                        if _zeroForOne
+                        else TickMath.MAX_SQRT_RATIO - 1,
+                    }
+                )
+
+            else:
+                raise ArbitrageError(
+                    f"Could not identify Uniswap version for pool: {self.swap_pools[i]}"
+                )
+
+            if i == number_of_pools - 1:
+                # if we've reached the last pool, return the pool_amounts_out list
+                return pools_amounts_out
+            else:
+                # otherwise, feed the results back into the loop
+                token_in = token_out
+                token_in_quantity = token_out_quantity
 
     def _update_pool_states(self):
         """
@@ -275,12 +321,12 @@ class UniswapLpCycle(Arbitrage):
 
         # bracket the initial range for the algo
         bracket = (
+            int(0.001 * self.max_input),
             int(0.01 * self.max_input),
-            int(0.05 * self.max_input),
         )
 
         def arb_profit(x):
-            x = ceil(x)  # round up the input (overpay for the swap)
+            x = ceil(x)  # round up the input to the nearest wei
 
             try:
                 for i, pool in enumerate(self.swap_pools):
@@ -293,9 +339,9 @@ class UniswapLpCycle(Arbitrage):
                             else token_out_quantity,
                         )
                     )
-            except (EVMRevertError, AssertionError) as e:
-                # the optimizer might send invalid data into the swap calculation.
-                #  We don't want it to stop, so ignore the exception and pretend
+            except (EVMRevertError, AssertionError):
+                # The optimizer might send invalid data into the swap calculation.
+                # We don't want it to stop, so ignore the exception and pretend
                 # the swap is a "zero output" so the profit is just the input negated
                 return -float(x)
             except:
@@ -390,6 +436,64 @@ class UniswapLpCycle(Arbitrage):
                 "profit_amount": 0,
                 "swap_pool_amounts": [],
             }
+        )
+
+    @classmethod
+    def from_addresses(
+        cls,
+        input_token_address: str,
+        swap_pool_addresses: List[Tuple[str, str]],
+        max_input: int = None,
+        id: str = None,
+    ) -> "UniswapLpCycle":
+        """
+        Create a new `UniswapLpCycle` object from token and pool addresses.
+
+        Arguments
+        ---------
+        input_token_address : str
+            A address for the input_token
+        swap_pool_addresses : List[str]
+            An ordered list of tuples, representing the address for each pool in the swap path,
+            and a string specifying the Uniswap version for that pool (either "V2" or "V3")
+
+            e.g. swap_pool_addresses = [
+                ("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD","V3"),
+                ("0xbb2b8038a1640196fbe3e38816f3e67cba72d940","V2")
+            ]
+
+        max_input: int, optional
+            The maximum input for the cycle token in question
+            (typically limited by the balance of the deployed contract or operating EOA)
+        id: str, optional
+            A unique identifier for bookkeeping purposes
+            (not used internally, the attribute is provided for operator convenience)
+        """
+
+        # create the token object
+        try:
+            token = Erc20Token(input_token_address)
+        except:
+            raise
+
+        # create the pool objects
+        pool_objects = []
+        for pool_address, pool_type in swap_pool_addresses:
+            # determine if the pool is a V2 or V3 type
+            if pool_type == "V2":
+                pool_objects.append(LiquidityPool(address=pool_address))
+            elif pool_type == "V3":
+                pool_objects.append(V3LiquidityPool(address=pool_address))
+            else:
+                raise ArbitrageError(
+                    f"Pool type not understood! Expected 'V2' or 'V3', got {pool_type}"
+                )
+
+        return cls(
+            input_token=token,
+            swap_pools=pool_objects,
+            max_input=max_input,
+            id=id,
         )
 
     def generate_payloads(
@@ -558,102 +662,3 @@ class UniswapLpCycle(Arbitrage):
             print(f"id: {self.id}")
 
         return payloads
-
-    def _build_multipool_amounts_out(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-    ) -> List[dict]:
-
-        number_of_pools = len(self.swap_pools)
-
-        pools_amounts_out = []
-
-        for i in range(number_of_pools):
-
-            # determine the uniswap version for the pool and format the output appropriately
-            if self.swap_pools[i].uniswap_version == 2:
-                # determine the output token for the pool
-                if token_in == self.swap_pools[i].token0:
-                    token_out = self.swap_pools[i].token1
-                elif token_in == self.swap_pools[i].token1:
-                    token_out = self.swap_pools[i].token0
-                else:
-                    raise InvalidSwapPathError(
-                        f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
-                    )
-
-                # calculate the swap output through pool[i]
-                token_out_quantity = self.swap_pools[
-                    i
-                ].calculate_tokens_out_from_tokens_in(
-                    token_in=token_in,
-                    token_in_quantity=token_in_quantity,
-                )
-
-                if token_in == self.swap_pools[i].token0:
-                    pools_amounts_out.append(
-                        {
-                            "uniswap_version": 2,
-                            "amounts": [0, token_out_quantity],
-                        }
-                    )
-                elif token_in == self.swap_pools[i].token1:
-                    pools_amounts_out.append(
-                        {
-                            "uniswap_version": 2,
-                            "amounts": [token_out_quantity, 0],
-                        }
-                    )
-            elif self.swap_pools[i].uniswap_version == 3:
-                # determine the output token for the pool
-                if token_in == self.swap_pools[i].token0:
-                    token_out = self.swap_pools[i].token1
-                elif token_in == self.swap_pools[i].token1:
-                    token_out = self.swap_pools[i].token0
-                else:
-                    raise InvalidSwapPathError(
-                        f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
-                    )
-
-                # calculate the swap output through pool[i]
-                token_out_quantity = self.swap_pools[
-                    i
-                ].calculate_tokens_out_from_tokens_in(
-                    token_in=token_in,
-                    token_in_quantity=token_in_quantity,
-                )
-
-                if token_in == self.swap_pools[i].token0:
-                    _zeroForOne = True
-                elif token_in == self.swap_pools[i].token1:
-                    _zeroForOne = False
-
-                pools_amounts_out.append(
-                    {
-                        "uniswap_version": 3,
-                        # for an exactInput swap, amountSpecified is a positive number representing the INPUT amount
-                        # for an exactOutput swap, amountSpecified is a negative number representing the OUTPUT amount
-                        "amountSpecified": token_in_quantity
-                        # exactInput for first leg (i==0)
-                        # exactOutput for others
-                        if i == 0 else -token_out_quantity,
-                        "zeroForOne": _zeroForOne,
-                        "sqrtPriceLimitX96": TickMath.MIN_SQRT_RATIO + 1
-                        if _zeroForOne
-                        else TickMath.MAX_SQRT_RATIO - 1,
-                    }
-                )
-
-            else:
-                raise ArbitrageError(
-                    f"Could not identify Uniswap version for pool: {self.swap_pools[i]}"
-                )
-
-            if i == number_of_pools - 1:
-                # if we've reached the last pool, return the pool_amounts_out list
-                return pools_amounts_out
-            else:
-                # otherwise, feed the results back into the loop
-                token_in = token_out
-                token_in_quantity = token_out_quantity
