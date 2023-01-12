@@ -700,7 +700,7 @@ class BaseV3LiquidityPool(ABC):
 
                     # check if the word containing this tick is known, fetch if not
                     if not self.tick_words.get(tick_word):
-                        print(f"word {tick_word} missing, fetching...")
+                        # print(f"word {tick_word} missing, fetching...")
                         self._get_tick_data_at_word(
                             tick_word,
                             single_tick=True,
