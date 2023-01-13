@@ -107,17 +107,15 @@ class BaseV3LiquidityPool(ABC):
                 self.token1 = Erc20Token(self._brownie_contract.token1())
 
             self.fee = self._brownie_contract.fee()  # immutable
-            self.slot0 = self._brownie_contract.slot0(
-                block_identifier=block_number
-            )
             self.liquidity = self._brownie_contract.liquidity(
                 block_identifier=block_number
             )
             self.tick_spacing = (
                 self._brownie_contract.tickSpacing()
             )  # immutable
-            self.sqrt_price_x96 = self.slot0[0]
-            self.tick = self.slot0[1]
+            slot0 = self._brownie_contract.slot0(block_identifier=block_number)
+            self.sqrt_price_x96 = slot0[0]
+            self.tick = slot0[1]
             self.tick_data = {}
             self.tick_bitmap = {}
             self.tick_words = {}
@@ -139,6 +137,12 @@ class BaseV3LiquidityPool(ABC):
         self.state = {}
         self._update_pool_state()
         self.update_block = block_number
+
+    def __str__(self):
+        """
+        Return the pool name when the object is included in a print statement, or cast as a string
+        """
+        return self.name
 
     def _get_tick_bitmap_position(self, tick) -> Tuple[int, int]:
         """
@@ -242,6 +246,8 @@ class BaseV3LiquidityPool(ABC):
             else:
                 # print(f"multicall tick_data = {multicall_tick_data}")
                 self.tick_data.update(multicall_tick_data)
+                # update self.tick_bitmap
+                # update self.tick_words
 
         else:
             # fetch ticks one by one
@@ -268,12 +274,6 @@ class BaseV3LiquidityPool(ABC):
                 self.tick_words.update({word_position: True})
 
         return self.tick_data
-
-    def __str__(self):
-        """
-        Return the pool name when the object is included in a print statement, or cast as a string
-        """
-        return self.name
 
     def _update_pool_state(self):
         self.state = {
@@ -475,32 +475,33 @@ class BaseV3LiquidityPool(ABC):
             )
 
         try:
-            if (
-                slot0 := self._brownie_contract.slot0(
-                    block_identifier=block_number,
-                )
-            ) != self.slot0:
-                updated = True
-                self.slot0 = slot0
-                self.sqrt_price_x96 = slot0[0]
-                self.tick = slot0[1]
-            if (
-                liquidity := self._brownie_contract.liquidity(
-                    block_identifier=block_number
-                )
-            ) != self.liquidity:
-                updated = True
-                self.liquidity = liquidity
+            _sqrt_price_x96, _tick, *_ = self._brownie_contract.slot0(
+                block_identifier=block_number,
+            )
+            _liquidity = self._brownie_contract.liquidity(
+                block_identifier=block_number
+            )
         except:
             raise
         else:
             self.update_block = block_number
+
+            if _sqrt_price_x96 != self.sqrt_price_x96 or _tick != self.tick:
+                updated = True
+                self.sqrt_price_x96 = _sqrt_price_x96
+                self.tick = _tick
+
+            if _liquidity != self.liquidity:
+                updated = True
+                self.liquidity = _liquidity
+
+            if updated:
+                self._update_pool_state()
+
             if not silent:
                 print(f"Liquidity: {self.liquidity}")
                 print(f"SqrtPriceX96: {self.sqrt_price_x96}")
                 print(f"Tick: {self.tick}")
-            if updated:
-                self._update_pool_state()
 
         return updated, self.state
 
@@ -725,7 +726,13 @@ class BaseV3LiquidityPool(ABC):
                             tick_liquidity_gross,
                         ) = tick_liquidity
                     else:
-                        # print(f"found uninitialized tick: {tick}")
+                        print(f"found uninitialized tick: {tick}")
+                        TickBitmap.flipTick(
+                            self.tick_bitmap,
+                            tick,
+                            self.tick_spacing,
+                        )
+
                         tick_liquidity_net = 0
                         tick_liquidity_gross = 0
 
@@ -752,6 +759,11 @@ class BaseV3LiquidityPool(ABC):
                     if new_liquidity_gross == 0:
                         del self.tick_data[tick]
                         print(f"Tick {tick} cleared")
+                        TickBitmap.flipTick(
+                            self.tick_bitmap,
+                            tick,
+                            self.tick_spacing,
+                        )
                         continue
                     else:
                         self.tick_data[tick] = (
