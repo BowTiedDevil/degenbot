@@ -243,6 +243,7 @@ class UniswapLpCycle(Arbitrage):
                         update_block=block_number,
                     )
                     if pool_updated:
+                        print(f"(UniswapLpCycle) found update for pool {pool}")
                         found_updates = True
                 elif pool.uniswap_version == 3:
                     pool_updated, _ = pool.auto_update(
@@ -250,6 +251,7 @@ class UniswapLpCycle(Arbitrage):
                         block_number=block_number,
                     )
                     if pool_updated:
+                        print(f"(UniswapLpCycle) found update for pool {pool}")
                         found_updates = True
                 else:
                     print("could not determine Uniswap pool version!")
@@ -316,13 +318,13 @@ class UniswapLpCycle(Arbitrage):
         # limit the amount to be swapped
         bounds = (
             1,
-            self.max_input,
+            float(self.max_input),
         )
 
         # bracket the initial range for the algo
         bracket = (
-            int(0.001 * self.max_input),
-            int(0.01 * self.max_input),
+            0.001 * self.max_input,
+            0.01 * self.max_input,
         )
 
         def arb_profit(x):
