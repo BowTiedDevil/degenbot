@@ -321,10 +321,10 @@ class UniswapLpCycle(Arbitrage):
             float(self.max_input),
         )
 
-        # bracket the initial range for the algo
+        # bracket the initial guess range for the algo
         bracket = (
-            0.001 * self.max_input,
             0.01 * self.max_input,
+            0.05 * self.max_input,
         )
 
         def arb_profit(x):
@@ -376,7 +376,7 @@ class UniswapLpCycle(Arbitrage):
                 token_in_quantity=swap_amount,
             )
         except AssertionError:
-            # ignored the simulated EVM reverts inside the ported `swap` function to execute the optimizer
+            # Simulated EVM reverts inside the ported `swap` function were ignored to execute the optimizer
             # through to completion, but now we want to raise a real error to avoid generating bad payloads
             # that will revert
             raise ArbitrageError("No possible arbitrage")
