@@ -493,9 +493,7 @@ class BaseV3LiquidityPool(ABC):
         when used with threads.
         """
 
-        print("acquiring lock...")
         with self.lock:
-            print("acquired lock...")
 
             updated = False
 
