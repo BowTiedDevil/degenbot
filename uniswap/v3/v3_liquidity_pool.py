@@ -214,6 +214,9 @@ class BaseV3LiquidityPool(ABC):
                 min_word = min(self.tick_bitmap.keys())
                 max_word = max(self.tick_bitmap.keys())
 
+                # for both code sections below, `lower_word`` and `upper_word` are used to feed the Python
+                # built-in `range()` generator, which will include the lower word but exclude the upper word
+
                 # requested word is above the known range
                 if word_position > max_word:
                     lower_word = max_word + 1
@@ -227,8 +230,6 @@ class BaseV3LiquidityPool(ABC):
                         word_position, min_word - self.extra_words
                     )
                     upper_word = min_word
-
-                    return self.tick_data
 
                 # fetch the bitmaps for the range
                 try:
@@ -291,6 +292,7 @@ class BaseV3LiquidityPool(ABC):
                                 liquidityGross,
                             )
                     self.tick_bitmap.update({word_position: tick_bitmap})
+
         return self.tick_data
 
     def _update_pool_state(self):
@@ -491,7 +493,9 @@ class BaseV3LiquidityPool(ABC):
         when used with threads.
         """
 
+        print("acquiring lock...")
         with self.lock:
+            print("acquired lock...")
 
             updated = False
 
@@ -539,6 +543,7 @@ class BaseV3LiquidityPool(ABC):
                     print(f"SqrtPriceX96: {self.sqrt_price_x96}")
                     print(f"Tick: {self.tick}")
 
+        print("releasing lock...")
         return updated, self.state
 
     def calculate_tokens_out_from_tokens_in(
