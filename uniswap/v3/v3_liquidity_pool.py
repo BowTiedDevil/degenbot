@@ -11,11 +11,13 @@ from brownie.convert import to_address
 
 from degenbot.token import Erc20Token
 from degenbot.exceptions import (
+    ArbitrageError,
     EVMRevertError,
     ExternalUpdateError,
     LiquidityPoolError,
 )
 
+from threading import Lock
 from warnings import catch_warnings, simplefilter
 
 from .abi import UNISWAP_V3_POOL_ABI
@@ -46,8 +48,10 @@ class BaseV3LiquidityPool(ABC):
         update_method: str = "polling",
         abi: list = None,
         # unload_brownie_contract_after_init: bool = False,
-        extra_words: int = 50,
+        extra_words: int = 5,
     ):
+
+        self.lock = Lock()
 
         block_number = chain.height
 
@@ -118,10 +122,9 @@ class BaseV3LiquidityPool(ABC):
             self.tick = slot0[1]
             self.tick_data = {}
             self.tick_bitmap = {}
-            self.tick_words = {}
 
             _tick_word, _ = self._get_tick_bitmap_position(self.tick)
-            self._get_tick_data_at_word(_tick_word)
+            self._get_tick_data_at_word(_tick_word, block_number=block_number)
 
         except:
             raise
@@ -162,14 +165,14 @@ class BaseV3LiquidityPool(ABC):
     def _get_tick_data_at_word(
         self,
         word_position: int,
-        single_tick: bool = False,
+        single_word: bool = False,
         block_number: int = None,
     ) -> dict:
         """
         Gets the initialized tick values at a specific word (a 32 byte number
         representing 256 ticks at the tickSpacing interval), stores
         the liquidity values in the `self.tick_data` dictionary using the tick
-        as the key, and updates the tick_bitmap and tick_words dict.
+        as the key, and updates the tick_bitmap dict.
 
         This function attempts to use Brownie's built-in multicall for any network
         with the 'multicall2' key set. If available, it will request extra words
@@ -178,101 +181,116 @@ class BaseV3LiquidityPool(ABC):
         If multicall is set but `self.tick_data` is empty, it will fall back to fetching
         a single word only. This is a time-saving technique since this should only occur
         inside the constructor when the pool helper is being created.
+
+        Uses a lock to guard state-modifying methods that might cause race conditions
+        when used with threads.
         """
 
-        if block_number is None:
-            block_number = chain.height
+        with self.lock:
 
-        if not self.tick_words:
-            single_tick = True
+            if block_number is None:
+                block_number = chain.height
 
-        # check if multicall is available for the connected network
-        if (
-            network.main.CONFIG.active_network.get("multicall2")
-            and not single_tick
-        ):
+            if not self.tick_bitmap:
+                single_word = True
 
-            min_word = min(self.tick_words.keys())
-            max_word = max(self.tick_words.keys())
+            # check if multicall is available for the connected network
+            if (
+                network.main.CONFIG.active_network.get("multicall2")
+                and not single_word
+            ):
 
-            # requested word is above the range we have data for
-            if word_position > max_word:
-                lower_word = max_word + 1
-                upper_word = max_word + self.extra_words + 1
+                # requested word is inside the known range. This should not occur!
+                if word_position in self.tick_bitmap.keys():
+                    print(
+                        f"(V3LiquidityPool) {word_position=} inside known range"
+                    )
+                    print(f"known words: {self.tick_bitmap.keys()}")
+                    # exit early (debugging)
+                    import sys
 
-            # requested word is below the range we have data for
-            elif word_position < min_word:
-                upper_word = min_word
-                lower_word = min_word - self.extra_words
+                    sys.exit()
 
-            # requested word is inside the known range. This should not occur!
-            elif min_word <= word_position <= max_word:
-                raise ValueError(
-                    "(UniswapLpCycle) _get_tick_data_at_word: requested word_position inside known range!"
-                )
+                min_word = min(self.tick_bitmap.keys())
+                max_word = max(self.tick_bitmap.keys())
 
-            try:
-                with multicall(block_identifier=block_number):
-                    multicall_tick_bitmaps = {
-                        _word: self._brownie_contract.tickBitmap(_word)
-                        for _word in range(
-                            lower_word,
-                            upper_word,
-                        )
-                    }
-            except Exception as e:
-                print(e)
-                print(type(e))
+                # requested word is above the known range
+                if word_position > max_word:
+                    lower_word = max_word + 1
+                    upper_word = max(
+                        word_position + 1, lower_word + self.extra_words
+                    )
+
+                # requested word is below the known range
+                elif word_position < min_word:
+                    lower_word = min(
+                        word_position, min_word - self.extra_words
+                    )
+                    upper_word = min_word
+
+                    return self.tick_data
+
+                # fetch the bitmaps for the range
+                try:
+                    with multicall(block_identifier=block_number):
+                        multicall_tick_bitmaps = {
+                            _word: self._brownie_contract.tickBitmap(_word)
+                            for _word in range(
+                                lower_word,
+                                upper_word,
+                            )
+                        }
+                except Exception as e:
+                    print(e)
+                    print(type(e))
+                else:
+                    # update the internal reference with the fetched results
+                    self.tick_bitmap.update(multicall_tick_bitmaps)
+
+                try:
+                    with multicall(block_identifier=block_number):
+                        multicall_tick_data = {
+                            tick: (liquidityNet, liquidityGross)
+                            for word_position, bitmap in multicall_tick_bitmaps.items()
+                            for tick, liquidityNet, liquidityGross in self.lens._brownie_contract.getPopulatedTicksInWord(
+                                self.address,
+                                word_position,
+                            )
+                            if bitmap
+                        }
+                except Exception as e:
+                    print(e)
+                    print(type(e))
+                else:
+                    self.tick_data.update(multicall_tick_data)
+
             else:
-                # print(f"multicall tick_bitmap = {multicall_tick_bitmaps}")
-                self.tick_bitmap.update(multicall_tick_bitmaps)
-                for _word, _ in multicall_tick_bitmaps.items():
-                    self.tick_words.update({_word: True})
-
-            try:
-                with multicall(block_identifier=block_number):
-                    multicall_tick_data = {
-                        tick: (liquidityNet, liquidityGross)
-                        for word_position, bitmap in multicall_tick_bitmaps.items()
-                        for tick, liquidityNet, liquidityGross in self.lens._brownie_contract.getPopulatedTicksInWord(
-                            self.address,
-                            word_position,
-                        )
-                        if bitmap
-                    }
-            except Exception as e:
-                print(e)
-                print(type(e))
-            else:
-                # print(f"multicall tick_data = {multicall_tick_data}")
-                self.tick_data.update(multicall_tick_data)
-                # update self.tick_bitmap
-                # update self.tick_words
-
-        else:
-            # fetch ticks one by one
-            try:
-                if tick_bitmap := self._brownie_contract.tickBitmap(
-                    word_position
-                ):
-                    tick_data = (
-                        self.lens._brownie_contract.getPopulatedTicksInWord(
+                # fetch words one by one
+                try:
+                    if tick_bitmap := self._brownie_contract.tickBitmap(
+                        word_position
+                    ):
+                        tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
                             self.address,
                             word_position,
                             block_identifier=block_number,
                         )
-                    )
+                    else:
+                        tick_data = ()
+                except:
+                    raise
                 else:
-                    tick_data = ()
-            except:
-                raise
-            else:
-                if tick_bitmap:
-                    for (tick, liquidityNet, liquidityGross) in tick_data:
-                        self.tick_data[tick] = liquidityNet, liquidityGross
-                self.tick_bitmap.update({word_position: tick_bitmap})
-                self.tick_words.update({word_position: True})
-
+                    if tick_bitmap:
+                        for (
+                            tick,
+                            liquidityNet,
+                            liquidityGross,
+                        ) in tick_data:
+                            self.tick_data[tick] = (
+                                liquidityNet,
+                                liquidityGross,
+                            )
+                    self.tick_bitmap.update({word_position: tick_bitmap})
         return self.tick_data
 
     def _update_pool_state(self):
@@ -355,7 +373,7 @@ class BaseV3LiquidityPool(ABC):
                     )
                 except TickBitmap.BitmapWordUnavailable as e:
                     wordPos = e.args[-1]
-                    # print(f"TickBitmap word missing! Fetching word {wordPos}")
+                    # BUG: 'word_position=336 inside known range' exception is being thrown here
                     self._get_tick_data_at_word(wordPos)
                 else:
                     break
@@ -413,7 +431,17 @@ class BaseV3LiquidityPool(ABC):
                 # if the tick is initialized, run the tick transition
                 if step["initialized"]:
 
-                    liquidityNet, _ = self.tick_data[step["tickNext"]]
+                    liquidityNet, liquidityGross = self.tick_data.get(
+                        step["tickNext"],
+                        (0, 0),
+                    )
+
+                    if (liquidityNet, liquidityGross) == (0, 0):
+                        raise ArbitrageError(
+                            f"(UniswapLpCycle) (swap) tick_data for tick={step['tickNext']} was empty!"
+                            f"{self.tick_bitmap=}"
+                            f"{self.tick_data=}"
+                        )
 
                     if zeroForOne:
                         liquidityNet = -liquidityNet
@@ -458,50 +486,58 @@ class BaseV3LiquidityPool(ABC):
             - liquidity
             - sqrt_price_x96
             - tick
+
+        Uses a lock to guard state-modifying methods that might cause race conditions
+        when used with threads.
         """
 
-        updated = False
+        with self.lock:
 
-        # use the block_number if provided, otherwise pull from Brownie
-        if block_number is None:
-            block_number = chain.height
+            updated = False
 
-        # only process calls if the submitted block number (or retrieved block number)
-        # is equal to or exceeds the block number of the last update
+            # use the block_number if provided, otherwise pull from Brownie
+            if block_number is None:
+                block_number = chain.height
 
-        if block_number < self.update_block:
-            raise ExternalUpdateError(
-                f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
-            )
+            # only process calls if the submitted block number (or retrieved block number)
+            # is equal to or exceeds the block number of the last update
 
-        try:
-            _sqrt_price_x96, _tick, *_ = self._brownie_contract.slot0(
-                block_identifier=block_number,
-            )
-            _liquidity = self._brownie_contract.liquidity(
-                block_identifier=block_number
-            )
-        except:
-            raise
-        else:
-            self.update_block = block_number
+            if block_number < self.update_block:
+                raise ExternalUpdateError(
+                    f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
+                )
 
-            if _sqrt_price_x96 != self.sqrt_price_x96 or _tick != self.tick:
-                updated = True
-                self.sqrt_price_x96 = _sqrt_price_x96
-                self.tick = _tick
+            try:
+                _sqrt_price_x96, _tick, *_ = self._brownie_contract.slot0(
+                    block_identifier=block_number,
+                )
+                _liquidity = self._brownie_contract.liquidity(
+                    block_identifier=block_number
+                )
+            except:
+                raise
+            else:
+                self.update_block = block_number
 
-            if _liquidity != self.liquidity:
-                updated = True
-                self.liquidity = _liquidity
+                if (
+                    _sqrt_price_x96 != self.sqrt_price_x96
+                    or _tick != self.tick
+                ):
+                    updated = True
+                    self.sqrt_price_x96 = _sqrt_price_x96
+                    self.tick = _tick
 
-            if updated:
-                self._update_pool_state()
+                if _liquidity != self.liquidity:
+                    updated = True
+                    self.liquidity = _liquidity
 
-            if not silent:
-                print(f"Liquidity: {self.liquidity}")
-                print(f"SqrtPriceX96: {self.sqrt_price_x96}")
-                print(f"Tick: {self.tick}")
+                if updated:
+                    self._update_pool_state()
+
+                if not silent:
+                    print(f"Liquidity: {self.liquidity}")
+                    print(f"SqrtPriceX96: {self.sqrt_price_x96}")
+                    print(f"Tick: {self.tick}")
 
         return updated, self.state
 
@@ -650,6 +686,9 @@ class BaseV3LiquidityPool(ABC):
         If block_number is provided, it will be checked. If omitted, the values are assumed valid and processed.
 
         Returns a bool indicating whether any updated state value was found and processed
+
+        Uses a lock to guard state-modifying methods that might cause race conditions
+        when used with threads.
         """
 
         assert set(
@@ -683,10 +722,8 @@ class BaseV3LiquidityPool(ABC):
                 self.sqrt_price_x96 = value
                 updated = True
             elif key == "liquidity_change":
-                # TODO: flag liquidity changes in `self.state` that are not in-range
-                # (might result in profitable arbs that cross ticks)
-
                 liquidity_delta, lower_tick, upper_tick = value
+
                 if lower_tick <= self.tick <= upper_tick:
                     # prev_liq = self.liquidity
                     self.liquidity += liquidity_delta
@@ -700,24 +737,18 @@ class BaseV3LiquidityPool(ABC):
                     tick_word, _ = self._get_tick_bitmap_position(tick)
 
                     # check if the word containing this tick is known, fetch if not
-                    if not self.tick_words.get(tick_word):
-                        # print(f"word {tick_word} missing, fetching...")
+                    if tick_word not in self.tick_bitmap.keys():
+                        print(
+                            f"(external_update) word {tick_word} missing, fetching single tick..."
+                        )
                         self._get_tick_data_at_word(
-                            tick_word,
-                            single_tick=True,
-                            # fetch the tick data for the previous block, then apply the deltas to it
+                            word_position=tick_word,
+                            single_word=True,
                             # NOTE: we fetch the previous block because if multiple liquidity events
                             # are emitted this block, delta values will be incorrectly applied unless
-                            # we start from the previous block state
+                            # we start from a previous block state
                             block_number=block_number - 1,
                         )
-
-                    # else:
-                    #     if tick_word in words_fetched:
-                    #         # print(
-                    #         #     f"skipping tick ({tick}), already fetched word ({tick_word})"
-                    #         # )
-                    #         continue
 
                     # get the liquidity info for this tick, or set to zero if previously uninitialized
                     if tick_liquidity := self.tick_data.get(tick):
@@ -757,8 +788,8 @@ class BaseV3LiquidityPool(ABC):
                     )
 
                     if new_liquidity_gross == 0:
-                        del self.tick_data[tick]
                         print(f"Tick {tick} cleared")
+                        del self.tick_data[tick]
                         TickBitmap.flipTick(
                             self.tick_bitmap,
                             tick,
@@ -772,6 +803,7 @@ class BaseV3LiquidityPool(ABC):
                         )
 
                 updated = True
+
             else:
                 print(f"Unknown key-value pair ({key}:{value})")
 
