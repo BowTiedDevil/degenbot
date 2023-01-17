@@ -203,7 +203,7 @@ class FlashBorrowToLpSwapNew:
         if self.borrow_token.address == self.borrow_pool.token0.address:
             bounds = (
                 1,
-                reserves_token0,
+                float(reserves_token0),
             )
             bracket = (
                 0.001 * reserves_token0,
@@ -212,7 +212,7 @@ class FlashBorrowToLpSwapNew:
         elif self.borrow_token.address == self.borrow_pool.token1.address:
             bounds = (
                 1,
-                reserves_token1,
+                float(reserves_token1),
             )
             bracket = (
                 0.001 * reserves_token1,

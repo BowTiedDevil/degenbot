@@ -193,10 +193,12 @@ class LpSwapWithFuture:
 
         # set up the boundaries for the Brent optimizer based on which token
         # is being borrowed
-        bounds = (1, self.max_input)
+        bounds = (
+            1,
+            float(self.max_input),
+        )
 
         if self.input_token.address == self.swap_pools[0].token0.address:
-            # bounds = (0, self.swap_pools[0].reserves_token0)
             bracket = (
                 0.001 * self.swap_pools[0].reserves_token0,
                 0.01 * self.swap_pools[0].reserves_token0,
