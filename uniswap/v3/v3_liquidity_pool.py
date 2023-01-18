@@ -206,6 +206,8 @@ class BaseV3LiquidityPool(ABC):
                         f"(V3LiquidityPool) {word_position=} inside known range"
                     )
                     print(f"known words: {self.tick_bitmap.keys()}")
+                    print(f'{self.name}')
+                    print(f'{single_word=}')
                     # exit early (debugging)
                     import sys
 
@@ -214,7 +216,7 @@ class BaseV3LiquidityPool(ABC):
                 min_word = min(self.tick_bitmap.keys())
                 max_word = max(self.tick_bitmap.keys())
 
-                # for both code sections below, `lower_word`` and `upper_word` are used to feed the Python
+                # for both code sections below, `lower_word` and `upper_word` are used to feed the Python
                 # built-in `range()` generator, which will include the lower word but exclude the upper word
 
                 # requested word is above the known range
@@ -244,6 +246,7 @@ class BaseV3LiquidityPool(ABC):
                 except Exception as e:
                     print(e)
                     print(type(e))
+                    raise
                 else:
                     # update the internal reference with the fetched results
                     self.tick_bitmap.update(multicall_tick_bitmaps)
@@ -262,6 +265,7 @@ class BaseV3LiquidityPool(ABC):
                 except Exception as e:
                     print(e)
                     print(type(e))
+                    raise
                 else:
                     self.tick_data.update(multicall_tick_data)
 
@@ -376,6 +380,7 @@ class BaseV3LiquidityPool(ABC):
                 except TickBitmap.BitmapWordUnavailable as e:
                     wordPos = e.args[-1]
                     # BUG: 'word_position=336 inside known range' exception is being thrown here
+                    print(f'(swap) missing: {wordPos}, fetching...')
                     self._get_tick_data_at_word(wordPos)
                 else:
                     break
