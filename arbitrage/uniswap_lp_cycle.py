@@ -323,12 +323,12 @@ class UniswapLpCycle(Arbitrage):
 
         # bracket the initial guess range for the algo
         bracket = (
-            0.01 * self.max_input,
-            0.05 * self.max_input,
+            0.001 * self.max_input,
+            0.005 * self.max_input,
         )
 
         def arb_profit(x):
-            x = ceil(x)  # round up the input to the nearest wei
+            x = int(x)  # round the input down
 
             try:
                 for i, pool in enumerate(self.swap_pools):
