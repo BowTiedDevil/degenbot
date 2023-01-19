@@ -1,6 +1,10 @@
 from typing import Tuple
 
-from degenbot.exceptions import LiquidityPoolError
+from degenbot.exceptions import (
+    LiquidityPoolError,
+    MissingTickWordError,
+    BitmapWordUnavailableError,
+)
 
 from . import BitMath
 from .Helpers import *
@@ -8,20 +12,21 @@ from .Helpers import *
 from decimal import Decimal
 
 
-class BitmapWordUnavailable(LiquidityPoolError):
-    pass
-
-
 def flipTick(
     tickBitmap: int,
     tick: int,
     tickSpacing: int,
 ):
-    assert tick % tickSpacing == 0, "tick not correctly spaced!"
+    assert tick % tickSpacing == 0, "Tick not correctly spaced!"
     wordPos, bitPos = position(int(Decimal(tick) // tickSpacing))
-    mask = 1 << bitPos
-    tickBitmap[wordPos] ^= mask
-    print(f'flipped {tick=} {wordPos=}, {bitPos=}')
+    # print(f"flipping {tick=} @ {wordPos=}, {bitPos=}")
+    if tickBitmap.get(wordPos) is None:
+        raise MissingTickWordError(
+            f"Called flipTick on missing word: {wordPos=}"
+        )
+    else:
+        mask = 1 << bitPos
+        tickBitmap[wordPos] ^= mask
 
 
 def position(tick: int) -> Tuple[int, int]:
@@ -50,7 +55,7 @@ def nextInitializedTickWithinOneWord(
         if (bitmap_word := tickBitmap.get(wordPos)) is not None:
             masked: int = bitmap_word & mask
         else:
-            raise BitmapWordUnavailable(wordPos)
+            raise BitmapWordUnavailableError(wordPos)
 
         # if there are no initialized ticks to the right of or at the current tick, return rightmost in the word
         initialized_status: bool = masked != 0
@@ -70,13 +75,17 @@ def nextInitializedTickWithinOneWord(
         if (bitmap_word := tickBitmap.get(wordPos)) is not None:
             masked: int = bitmap_word & mask
         else:
-            raise BitmapWordUnavailable(wordPos)
+            raise BitmapWordUnavailableError(wordPos)
 
         # if there are no initialized ticks to the left of the current tick, return leftmost in the word
         initialized_status: bool = masked != 0
         # overflow/underflow is possible, but prevented externally by limiting both tickSpacing and tick
         next_tick = (
-            (compressed + 1 + int24(BitMath.leastSignificantBit(masked) - bitPos))
+            (
+                compressed
+                + 1
+                + int24(BitMath.leastSignificantBit(masked) - bitPos)
+            )
             * tickSpacing
             if initialized_status
             else (compressed + 1 + int24(MAX_UINT8 - bitPos)) * tickSpacing

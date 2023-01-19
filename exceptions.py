@@ -67,9 +67,27 @@ class ZeroLiquidityError(ArbitrageError):
 
 
 # 2nd level exceptions for Uniswap Liquidity Pool classes
+
+
+class BitmapWordUnavailableError(LiquidityPoolError):
+    """
+    Thrown by the ported V3 swap function when the bitmap word is not available. This should be caught by the helper to perform automatic fetching, and should not be raised to the calling function
+    """
+
+    pass
+
+
 class ExternalUpdateError(LiquidityPoolError):
     """
     Thrown when an external update does not pass sanity checks
+    """
+
+    pass
+
+
+class MissingTickWordError(LiquidityPoolError):
+    """
+    Thrown by the TickBitmap library when calling for an operation on a word that should be available, but is not
     """
 
     pass

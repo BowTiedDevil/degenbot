@@ -12,6 +12,7 @@ from brownie.convert import to_address
 from degenbot.token import Erc20Token
 from degenbot.exceptions import (
     ArbitrageError,
+    BitmapWordUnavailableError,
     EVMRevertError,
     ExternalUpdateError,
     LiquidityPoolError,
@@ -377,7 +378,7 @@ class BaseV3LiquidityPool(ABC):
                         self.tick_spacing,
                         zeroForOne,
                     )
-                except TickBitmap.BitmapWordUnavailable as e:
+                except BitmapWordUnavailableError as e:
                     wordPos = e.args[-1]
                     # BUG: 'word_position=336 inside known range' exception is being thrown here
                     print(f"(swap) {self.name} fetching word {wordPos}")
@@ -764,7 +765,7 @@ class BaseV3LiquidityPool(ABC):
                             tick_liquidity_gross,
                         ) = tick_liquidity
                     else:
-                        print(f"found uninitialized tick: {tick}")
+                        print(f"Tick {tick} initialized")
                         TickBitmap.flipTick(
                             self.tick_bitmap,
                             tick,
