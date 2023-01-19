@@ -48,7 +48,7 @@ class BaseV3LiquidityPool(ABC):
         update_method: str = "polling",
         abi: list = None,
         # unload_brownie_contract_after_init: bool = False,
-        extra_words: int = 5,
+        extra_words: int = 250,
     ):
 
         self.lock = Lock()
@@ -206,8 +206,8 @@ class BaseV3LiquidityPool(ABC):
                         f"(V3LiquidityPool) {word_position=} inside known range"
                     )
                     print(f"known words: {self.tick_bitmap.keys()}")
-                    print(f'{self.name}')
-                    print(f'{single_word=}')
+                    print(f"{self.name}")
+                    print(f"{single_word=}")
                     # exit early (debugging)
                     import sys
 
@@ -380,7 +380,7 @@ class BaseV3LiquidityPool(ABC):
                 except TickBitmap.BitmapWordUnavailable as e:
                     wordPos = e.args[-1]
                     # BUG: 'word_position=336 inside known range' exception is being thrown here
-                    print(f'(swap) missing: {wordPos}, fetching...')
+                    print(f"(swap) {self.name} fetching word {wordPos}")
                     self._get_tick_data_at_word(wordPos)
                 else:
                     break
@@ -546,7 +546,6 @@ class BaseV3LiquidityPool(ABC):
                     print(f"SqrtPriceX96: {self.sqrt_price_x96}")
                     print(f"Tick: {self.tick}")
 
-        print("releasing lock...")
         return updated, self.state
 
     def calculate_tokens_out_from_tokens_in(
