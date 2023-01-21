@@ -201,7 +201,7 @@ class BaseV3LiquidityPool(ABC):
                 and not single_word
             ):
 
-                # requested word is inside the known range. This should not occur!
+                # requested word is already known. This should not occur!
                 if word_position in self.tick_bitmap.keys():
                     print(
                         f"(V3LiquidityPool) {word_position=} inside known range"
@@ -213,6 +213,14 @@ class BaseV3LiquidityPool(ABC):
                     import sys
 
                     sys.exit()
+
+                # requested word is inside the known range, so call this function in single-tick mode
+                if min_word < word_position < max_word:
+                    self._get_tick_data_at_word(
+                        word_position=word_position,
+                        single_word=True,
+                        block_number=block_number,
+                    )
 
                 min_word = min(self.tick_bitmap.keys())
                 max_word = max(self.tick_bitmap.keys())
@@ -380,7 +388,8 @@ class BaseV3LiquidityPool(ABC):
                     )
                 except BitmapWordUnavailableError as e:
                     wordPos = e.args[-1]
-                    # BUG: 'word_position=336 inside known range' exception is being thrown here
+                    # BUG: 'word_position=XXX inside known range' exception is being thrown here
+                    # when the helper is being updated by multiple threads
                     print(f"(swap) {self.name} fetching word {wordPos}")
                     self._get_tick_data_at_word(wordPos)
                 else:
