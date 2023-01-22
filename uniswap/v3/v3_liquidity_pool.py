@@ -214,16 +214,17 @@ class BaseV3LiquidityPool(ABC):
 
                     sys.exit()
 
+                min_word = min(self.tick_bitmap.keys())
+                max_word = max(self.tick_bitmap.keys())
+
                 # requested word is inside the known range, so call this function in single-tick mode
+                # and pass the return value through
                 if min_word < word_position < max_word:
-                    self._get_tick_data_at_word(
+                    return self._get_tick_data_at_word(
                         word_position=word_position,
                         single_word=True,
                         block_number=block_number,
                     )
-
-                min_word = min(self.tick_bitmap.keys())
-                max_word = max(self.tick_bitmap.keys())
 
                 # for both code sections below, `lower_word` and `upper_word` are used to feed the Python
                 # built-in `range()` generator, which will include the lower word but exclude the upper word
