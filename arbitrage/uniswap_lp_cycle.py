@@ -357,9 +357,15 @@ class UniswapLpCycle(Arbitrage):
                 method="bounded",
                 bounds=bounds,
                 bracket=bracket,
+                # Optimizer will run until the consecutive values near the optimum
+                # are within `xatol`. ERC-20 tokens can have different decimal precision,
+                # so set the tolerance dynamically
+                #
+                # Examples:
+                #   WETH (18 decimal places) calculated within 1*10**15 Wei,
+                #   USDC (6 decimal places) calculated within 1*10**3 Wei
                 options={
-                    "xatol": 1,
-                    # "disp": 3,
+                    "xatol": (1 * 10**self.input_token.decimals) / 1000
                 },
             )
         except:
