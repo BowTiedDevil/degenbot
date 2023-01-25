@@ -8,6 +8,14 @@ class DegenbotError(Exception):
     pass
 
 
+class DeprecationError(DegenbotError):
+    """
+    Thrown when a feature, class, method, etc. is deprecated.
+    """
+
+    pass
+
+
 # 1st level exceptions (derived from `DegenbotError`)
 class ArbitrageError(DegenbotError):
     """
