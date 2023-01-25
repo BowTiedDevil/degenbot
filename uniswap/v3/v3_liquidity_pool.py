@@ -391,7 +391,7 @@ class BaseV3LiquidityPool(ABC):
                     wordPos = e.args[-1]
                     # BUG: 'word_position=XXX inside known range' exception is being thrown here
                     # when the helper is being updated by multiple threads
-                    print(f"(swap) {self.name} fetching word {wordPos}")
+                    # print(f"(swap) {self.name} fetching word {wordPos}")
                     self._get_tick_data_at_word(wordPos)
                 else:
                     break
@@ -756,9 +756,9 @@ class BaseV3LiquidityPool(ABC):
 
                     # check if the word containing this tick is known, fetch if not
                     if tick_word not in self.tick_bitmap.keys():
-                        print(
-                            f"(external_update) word {tick_word} missing, fetching single tick..."
-                        )
+                        #                        print(
+                        #                            f"(external_update) word {tick_word} missing, fetching single tick..."
+                        #                        )
                         self._get_tick_data_at_word(
                             word_position=tick_word,
                             single_word=True,
@@ -775,7 +775,7 @@ class BaseV3LiquidityPool(ABC):
                             tick_liquidity_gross,
                         ) = tick_liquidity
                     else:
-                        print(f"Tick {tick} initialized")
+                        # print(f"Tick {tick} initialized")
                         TickBitmap.flipTick(
                             self.tick_bitmap,
                             tick,
@@ -806,7 +806,7 @@ class BaseV3LiquidityPool(ABC):
                     )
 
                     if new_liquidity_gross == 0:
-                        print(f"Tick {tick} cleared")
+                        # print(f"Tick {tick} cleared")
                         del self.tick_data[tick]
                         TickBitmap.flipTick(
                             self.tick_bitmap,
