@@ -8,6 +8,7 @@ from brownie.convert import to_address
 
 from .router import Router
 from degenbot.token import Erc20Token
+from degenbot.exceptions import ExternalUpdateError, DeprecationError
 
 
 class LiquidityPool:
@@ -317,7 +318,9 @@ class LiquidityPool:
 
         # discard stale updates, but allow updating the same pool multiple times per block (necessary if sending sync events individually)
         if update_block < self.update_block:
-            return False
+            raise ExternalUpdateError(
+                f"Current state recorded at block {self.update_block}, received update for stale block {update_block}"
+            )
         else:
             self.update_block = update_block
 
@@ -401,10 +404,9 @@ class LiquidityPool:
                     )
             self.calculate_tokens_in_from_ratio_out()
             return True
-
         elif self._update_method == "event":
-            print("***")
-            print(
-                "DEPRECATION WARNING: the 'event' update method is deprecated. Please update your bot to use the default 'polling' method going forward"
+            raise DeprecationError(
+                "***"
+                "DEPRECATION WARNING: the 'event' update method is deprecated. Please update your bot to use the default 'polling' method"
+                "***"
             )
-            print("***")
