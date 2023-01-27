@@ -18,7 +18,7 @@ from degenbot.exceptions import (
     LiquidityPoolError,
 )
 
-from threading import Lock
+from threading import Lock, RLock
 from warnings import catch_warnings, simplefilter
 
 from .abi import UNISWAP_V3_POOL_ABI
@@ -53,6 +53,7 @@ class BaseV3LiquidityPool(ABC):
     ):
 
         self.lock = Lock()
+        self.rlock = RLock()
 
         block_number = chain.height
 
@@ -187,15 +188,21 @@ class BaseV3LiquidityPool(ABC):
         when used with threads.
         """
 
-        with self.lock:
+        # bugfix: this method calls itself recursively, so the single-use Lock was causing
+        # a deadlock. Changed to RLock which still prevents cross-thread interference but
+        # allows the recursive call to execute correctly
+        with self.rlock:
 
             if block_number is None:
                 block_number = chain.height
 
+            # if the bitmap is empty, assume that the object has just been instantiated
+            # and force single_word mode to reduce startup time
             if not self.tick_bitmap:
                 single_word = True
 
-            # check if multicall is available for the connected network
+            # fetch multiple words if multicall is available for the connected network
+            # and single_word mode is not active
             if (
                 network.main.CONFIG.active_network.get("multicall2")
                 and not single_word
@@ -756,9 +763,9 @@ class BaseV3LiquidityPool(ABC):
 
                     # check if the word containing this tick is known, fetch if not
                     if tick_word not in self.tick_bitmap.keys():
-                        #                        print(
-                        #                            f"(external_update) word {tick_word} missing, fetching single tick..."
-                        #                        )
+                        # print(
+                        #     f"(external_update) word {tick_word} missing, fetching single tick..."
+                        # )
                         self._get_tick_data_at_word(
                             word_position=tick_word,
                             single_word=True,
