@@ -113,7 +113,7 @@ class UniswapLpCycle(Arbitrage):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        optimize_swap_outputs: bool = False,
+        optimize_swap_amounts: bool = False,
     ) -> List[dict]:
 
         number_of_pools = len(self.swap_pools)
@@ -142,7 +142,7 @@ class UniswapLpCycle(Arbitrage):
                     token_in_quantity=token_in_quantity,
                 )
                 
-                if optimize_swap_outputs:
+                if optimize_swap_amounts:
                     # if we're optimizing integers, do so
                     token_out_quantity = self._optimize_integer(token_out_quantity)
 
@@ -179,7 +179,7 @@ class UniswapLpCycle(Arbitrage):
                     token_in_quantity=token_in_quantity,
                 )
                 
-                if optimize_swap_outputs:
+                if optimize_swap_amounts:
                     # if we're optimizing integers, do so
                     token_out_quantity = self._optimize_integer(token_out_quantity)
 
@@ -280,7 +280,7 @@ class UniswapLpCycle(Arbitrage):
 
     def calculate_arbitrage(
         self,
-        optimize_swap_outputs: bool = False, 
+        optimize_swap_amounts: bool = False, 
     ) -> Tuple[bool, Tuple[int, int]]:
 
         if self.best["init"] == True:
@@ -353,7 +353,7 @@ class UniswapLpCycle(Arbitrage):
                             else token_out_quantity,
                         )
                     )
-                    if optimize_swap_outputs:
+                    if optimize_swap_amounts:
                         # if we're optimizing integers, do so
                         token_out_quantity = self._optimize_integer(token_out_quantity)
             except (EVMRevertError, AssertionError):
@@ -391,7 +391,7 @@ class UniswapLpCycle(Arbitrage):
 
         profitable = True if best_profit > 0 else False
         
-        if optimize_swap_outputs:
+        if optimize_swap_amounts:
             # if we're optimizing integers, do so
             swap_amount = self._optimize_integer(swap_amount)
 
@@ -399,7 +399,7 @@ class UniswapLpCycle(Arbitrage):
             best_amounts = self._build_multipool_amounts_out(
                 token_in=self.input_token,
                 token_in_quantity=swap_amount,
-                optimize_swap_outputs=optimize_swap_outputs,
+                optimize_swap_amounts=optimize_swap_amounts,
             )
         except AssertionError:
             # Simulated EVM reverts inside the ported `swap` function were ignored to execute the optimizer
@@ -421,7 +421,7 @@ class UniswapLpCycle(Arbitrage):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        optimize_swap_outputs: bool = False
+        optimize_swap_amounts: bool = False
     ) -> int:
         """
         Calculates the expected token OUTPUT from the last pool for a given token INPUT to the first pool
@@ -450,7 +450,7 @@ class UniswapLpCycle(Arbitrage):
                 token_in=token_in, token_in_quantity=token_in_quantity
             )
             
-            if optimize_swap_outputs:
+            if optimize_swap_amounts:
                 # if we're optimizing integers, do so
                 token_out_quantity = self._optimize_integer(token_out_quantity)
 
