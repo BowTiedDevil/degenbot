@@ -113,6 +113,7 @@ class UniswapLpCycle(Arbitrage):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
+        optimize_swap_outputs: bool = False,
     ) -> List[dict]:
 
         number_of_pools = len(self.swap_pools)
@@ -140,6 +141,10 @@ class UniswapLpCycle(Arbitrage):
                     token_in=token_in,
                     token_in_quantity=token_in_quantity,
                 )
+                
+                if optimize_swap_outputs:
+                    # if we're optimizing integers, do so
+                    token_out_quantity = self._optimize_integer(token_out_quantity)
 
                 if token_in == self.swap_pools[i].token0:
                     pools_amounts_out.append(
@@ -173,6 +178,10 @@ class UniswapLpCycle(Arbitrage):
                     token_in=token_in,
                     token_in_quantity=token_in_quantity,
                 )
+                
+                if optimize_swap_outputs:
+                    # if we're optimizing integers, do so
+                    token_out_quantity = self._optimize_integer(token_out_quantity)
 
                 if token_in == self.swap_pools[i].token0:
                     _zeroForOne = True
@@ -269,7 +278,10 @@ class UniswapLpCycle(Arbitrage):
 
         return found_updates
 
-    def calculate_arbitrage(self) -> Tuple[bool, Tuple[int, int]]:
+    def calculate_arbitrage(
+        self,
+        optimize_swap_outputs: bool = False, 
+    ) -> Tuple[bool, Tuple[int, int]]:
 
         if self.best["init"] == True:
             # if the 'init' flag is True, the `best` dict is empty so the calc should be done for the
@@ -341,6 +353,9 @@ class UniswapLpCycle(Arbitrage):
                             else token_out_quantity,
                         )
                     )
+                    if optimize_swap_outputs:
+                        # if we're optimizing integers, do so
+                        token_out_quantity = self._optimize_integer(token_out_quantity)
             except (EVMRevertError, AssertionError):
                 # The optimizer might send invalid data into the swap calculation.
                 # We don't want it to stop, so ignore the exception and pretend
@@ -375,11 +390,16 @@ class UniswapLpCycle(Arbitrage):
             best_profit = -int(opt.fun)
 
         profitable = True if best_profit > 0 else False
+        
+        if optimize_swap_outputs:
+            # if we're optimizing integers, do so
+            swap_amount = self._optimize_integer(swap_amount)
 
         try:
             best_amounts = self._build_multipool_amounts_out(
                 token_in=self.input_token,
                 token_in_quantity=swap_amount,
+                optimize_swap_outputs=optimize_swap_outputs,
             )
         except AssertionError:
             # Simulated EVM reverts inside the ported `swap` function were ignored to execute the optimizer
@@ -401,6 +421,7 @@ class UniswapLpCycle(Arbitrage):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
+        optimize_swap_outputs: bool = False
     ) -> int:
         """
         Calculates the expected token OUTPUT from the last pool for a given token INPUT to the first pool
@@ -428,6 +449,10 @@ class UniswapLpCycle(Arbitrage):
             ].calculate_tokens_out_from_tokens_in(
                 token_in=token_in, token_in_quantity=token_in_quantity
             )
+            
+            if optimize_swap_outputs:
+                # if we're optimizing integers, do so
+                token_out_quantity = self._optimize_integer(token_out_quantity)
 
             if i == number_of_pools - 1:
                 # if we've reached the last pool, return the output amount
@@ -670,3 +695,31 @@ class UniswapLpCycle(Arbitrage):
             print(f"id: {self.id}")
 
         return payloads
+    
+    
+    def _optimize_integer(
+        self,
+        input_amount: int,
+    ) -> int:
+        """
+        Generates a number that produces an equivalent optimized Hexadecimal number. Used for gas savings.
+        
+        Arguments
+        ---------
+        input_amount: int
+            The original number to optimize
+        
+        Returns
+        ---------
+        int_number: int
+            The optimized integer
+        """
+        
+        # Create an optimized Hexadecimal number with 10 trailing zeros. 
+        hex_number = (hex(input_amount)[2:-10] + '0'*10)
+        
+        # Convert that optimized Hexadecimal number to an optimized Integer.
+        int_number = int(hex_number, 16)
+        
+        # Return the integer for use.
+        return int_number
