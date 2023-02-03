@@ -1,5 +1,5 @@
 from typing import Tuple, Union
-
+from web3 import Web3
 
 from degenbot.base import Manager
 from degenbot.token import Erc20Token
@@ -49,19 +49,15 @@ class UniswapLiquidityPoolManager(Manager):
                     f"Conflicting arguments provided. Pass address OR tokens+fee"
                 )
 
+            address = Web3.toChecksumAddress(address)
+
             if pool_helper := self.v3_pools_by_address.get(address):
                 return pool_helper
             else:
                 pool_helper = V3LiquidityPool(address=address, lens=self.lens)
                 self.v3_pools_by_address[address] = pool_helper
                 self.v3_pools_by_tokens_and_fee[
-                    tuple(
-                        set(
-                            pool_helper.token0.address,
-                            pool_helper.token1.address,
-                        ),
-                        fee,
-                    )
+                    (pool_helper.token0.address, pool_helper.token1.address, fee)
                 ] = pool_helper
                 return pool_helper
 
@@ -82,7 +78,9 @@ class UniswapLiquidityPoolManager(Manager):
             # sort the token addresses
             token_addresses = (min(token_addresses), max(token_addresses))
 
-            if pool_helper := self.v3_pools_by_tokens_and_fee.get((*token_addresses,fee)):
+            if pool_helper := self.v3_pools_by_tokens_and_fee.get(
+                (*token_addresses, fee)
+            ):
                 return pool_helper
             else:
                 pool_address = generate_v3_pool_address(
@@ -93,7 +91,7 @@ class UniswapLiquidityPoolManager(Manager):
                 else:
                     pool_helper = V3LiquidityPool(address=pool_address, lens=self.lens)
                     self.v3_pools_by_address[pool_address] = pool_helper
-                    self.v3_pools_by_tokens_and_fee[token_addresses,fee] = pool_helper
+                    self.v3_pools_by_tokens_and_fee[token_addresses, fee] = pool_helper
                     return pool_helper
         else:
             raise ValueError(
