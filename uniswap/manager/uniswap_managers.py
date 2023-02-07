@@ -34,13 +34,13 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
     objects reference the same state data
     """
 
-    # _token_manager = Erc20TokenHelperManager()
+    # _token_manager = super()._token_manager
     _state = {}
 
     def __init__(
         self,
         factory_address,
-        erc20token_manager: Erc20TokenHelperManager = None,
+        # erc20token_manager: Erc20TokenHelperManager = None,
     ):
 
         if self._state.get(factory_address):
@@ -49,10 +49,10 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             self._state[factory_address] = {}
             self.__dict__ = self._state[factory_address]
 
-        if erc20token_manager is not None:
-            self.erc20token_manager = erc20token_manager
-        else:
-            self.erc20token_manager = Erc20TokenHelperManager()
+        # if erc20token_manager is not None:
+        #     self.erc20token_manager = erc20token_manager
+        # else:
+        #     self.erc20token_manager = Erc20TokenHelperManager()
 
         self.factory_contract = Contract.from_abi(
             name="Uniswap V2: Factory",
@@ -60,8 +60,11 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             abi=UNISWAPV2_FACTORY_ABI,
         )
 
-        self.pools_by_address = {}
-        self.pools_by_tokens = {}
+        # initialize the pool helper dicts if not found
+        if not hasattr(self, "pools_by_address"):
+            self.pools_by_address = {}
+        if not hasattr(self, "pools_by_tokens"):
+            self.pools_by_tokens = {}
 
     def get_pool(
         self,
@@ -147,13 +150,12 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
     objects reference the same state data
     """
 
-    # _token_manager = Erc20TokenHelperManager()
+    # _token_manager = super()._token_manager
     _state = {}
 
     def __init__(
         self,
         factory_address,
-        erc20token_manager: Erc20TokenHelperManager = None,
     ):
 
         if self._state.get(factory_address):
@@ -162,20 +164,19 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             self._state[factory_address] = {}
             self.__dict__ = self._state[factory_address]
 
-        if erc20token_manager is not None:
-            self.erc20token_manager = erc20token_manager
-        else:
-            self.erc20token_manager = Erc20TokenHelperManager()
-
         self.factory_contract = Contract.from_abi(
             name="Uniswap V3: Factory",
             address=factory_address,
             abi=UNISWAP_V3_FACTORY_ABI,
         )
 
-        self.lens = TickLens()
-        self.pools_by_address = {}
-        self.pools_by_tokens_and_fee = {}
+        # initialize the pool helper dicts if not found
+        if not hasattr(self, "pools_by_address"):
+            self.pools_by_address = {}
+        if not hasattr(self, "pools_by_tokens_and_fee"):
+            self.pools_by_tokens_and_fee = {}
+        if not hasattr(self, "lens"):
+            self.lens = TickLens()
 
     def get_pool(
         self,
