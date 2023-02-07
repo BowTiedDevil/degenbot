@@ -181,7 +181,10 @@ class UniswapTransaction(Transaction):
             try:
                 token_objects = [
                     Erc20TokenHelperManager().get_erc20token(
-                        address=token_address, silent=True
+                        address=token_address,
+                        silent=True,
+                        min_abi=True,
+                        unload_brownie_contract_after_init=True,
                     )
                     for token_address in transaction_params["path"]
                 ]
@@ -466,7 +469,12 @@ class UniswapTransaction(Transaction):
 
             starting_state = v3_pool.state
             final_state = v3_pool.simulate_swap(
-                token_in=Erc20TokenHelperManager().get_erc20token(tokenIn),
+                token_in=Erc20TokenHelperManager().get_erc20token(
+                    address=tokenIn,
+                    silent=True,
+                    min_abi=True,
+                    unload_brownie_contract_after_init=True,
+                ),
                 token_in_quantity=amountIn,
             )
             print(f"{starting_state=}")

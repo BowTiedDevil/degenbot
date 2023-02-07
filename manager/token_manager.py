@@ -17,7 +17,9 @@ class Erc20TokenHelperManager(Manager):
     def get_erc20token(
         self,
         address: str,
-        silent: bool = False,
+        # accept any number of keyword arguments, which are
+        # passed directly to Erc20Token without validation
+        **kwargs,
     ) -> Erc20Token:
         """
         Get the token object from its address
@@ -29,7 +31,7 @@ class Erc20TokenHelperManager(Manager):
             return token_helper
         else:
             try:
-                token_helper = Erc20Token(address=address, silent=silent)
+                token_helper = Erc20Token(address=address, **kwargs)
             except:
                 raise ManagerError("Could not create Erc20Token helper")
             else:

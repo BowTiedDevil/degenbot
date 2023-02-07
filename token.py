@@ -20,6 +20,9 @@ class Erc20Token:
     Represents an ERC-20 token. Must be initialized with an address.
     Brownie will load the Contract object from storage, then attempt to load the verified ABI from the block explorer.
     If both methods fail, it will attempt to use a supplied ERC-20 ABI
+
+    If built with `min_abi=True`, a minimal ERC-20 ABI will be used instead of
+    fetching the verified contract ABI from Etherscan (or similar).
     """
 
     def __init__(
@@ -46,7 +49,9 @@ class Erc20Token:
 
         if min_abi:
             self._contract = Contract.from_abi(
-                name="", address=self.address, abi=MIN_ERC20_ABI
+                name=f"ERC-20 @ {address}",
+                address=self.address,
+                abi=MIN_ERC20_ABI,
             )
         else:
             with catch_warnings():
