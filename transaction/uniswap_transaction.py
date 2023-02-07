@@ -15,7 +15,7 @@ from degenbot.uniswap.v3.abi import (
     UNISWAP_V3_ROUTER_ABI,
     UNISWAP_V3_ROUTER2_ABI,
 )
-
+from degenbot.manager import Erc20TokenHelperManager
 
 ROUTERS = {
     "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F": {
@@ -432,6 +432,14 @@ class UniswapTransaction(Transaction):
 
             print(f"pool located: {v3_pool}")
             print(f"Predicting output of swap through pool: {v3_pool}")
+
+            starting_state = v3_pool.state
+            final_state = v3_pool.simulate_swap(
+                token_in=Erc20TokenHelperManager().get_erc20token(tokenIn),
+                token_in_quantity=amountIn,
+            )
+            print(f"{starting_state=}")
+            print(f"{final_state=}")
 
         elif transaction_func == "exactInput":
             # print(transaction_func)
