@@ -7,6 +7,8 @@ from brownie import Contract, Wei, chain
 from brownie.convert import to_address
 
 from .router import Router
+from .abi import UNISWAPV2_LP_ABI
+
 from degenbot.token import Erc20Token
 from degenbot.exceptions import ExternalUpdateError, DeprecationError
 
@@ -15,8 +17,8 @@ class LiquidityPool:
     def __init__(
         self,
         address: str,
-        tokens: List[Erc20Token] = [],
-        name: str = "",
+        tokens: List[Erc20Token] = None,
+        name: str = None,
         update_method: str = "polling",
         router: Router = None,
         abi: list = None,
@@ -60,23 +62,28 @@ class LiquidityPool:
         self.new_reserves = None
         self.update_block = chain.height
 
-        try:
-            self._contract = Contract(self.address)
-        except:
-            if abi:
-                self._contract = Contract.from_abi(
-                    name="", abi=abi, address=self.address
-                )
-                self.abi = abi
-            else:
-                self._contract = Contract.from_explorer(address=self.address)
-        else:
-            self.abi = self._contract.abi
+        if abi is None:
+            abi = UNISWAPV2_LP_ABI
+
+        # try:
+        #     self._contract = Contract(self.address)
+        # except:
+        # try:
+        self._contract = Contract.from_abi(
+            name=f"{self.address}",
+            abi=abi,
+            address=self.address,
+        )
+        self.abi = abi
+        # else:
+        #     self._contract = Contract.from_explorer(address=self.address)
+        # else:
+        #     self.abi = self._contract.abi
 
         self.factory = to_address(self._contract.factory())
 
         # if a token pair was provided, check and set pointers for token0 and token1
-        if tokens:
+        if tokens is not None:
             assert len(tokens) == 2, f"Expected 2 tokens, found {len(tokens)}"
             for token in tokens:
                 if token.address == self._contract.token0():
@@ -87,7 +94,7 @@ class LiquidityPool:
             self.token0 = Erc20Token(address=self._contract.token0())
             self.token1 = Erc20Token(address=self._contract.token1())
 
-        if name:
+        if name is not None:
             self.name = name
         else:
             self.name = f"{self.token0.symbol}-{self.token1.symbol} (V2, {100*self.fee.numerator/self.fee.denominator:.2f}%)"
