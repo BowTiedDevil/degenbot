@@ -1,7 +1,12 @@
 import web3
 import itertools
 
-from degenbot.exceptions import LiquidityPoolError, TransactionError
+from degenbot.exceptions import (
+    LiquidityPoolError,
+    TransactionError,
+    Erc20TokenError,
+    TransactionError,
+)
 from degenbot.transaction.base import Transaction
 from degenbot.uniswap.manager import (
     UniswapV2LiquidityPoolManager,
@@ -111,9 +116,7 @@ class UniswapTransaction(Transaction):
                     # mempool_tx_token_objects = []
                     # mempool_tx_token_in = mempool_tx_token_objects[0]
                     # mempool_tx_token_out = mempool_tx_token_objects[-1]
-                    mempool_tx_token_in_quantity = transaction_params.get(
-                        "amountIn"
-                    )
+                    token_in_quantity = transaction_params.get("amountIn")
 
                     pool_string = " -> ".join(
                         [pool.name for pool in mempool_tx_pool_objects]
@@ -167,18 +170,50 @@ class UniswapTransaction(Transaction):
             "swapExactTokensForTokens",
             "swapExactTokensForTokensSupportingFeeOnTransferTokens",
         ]:
-            # print(transaction_func)
-            # TODO: remove once this function is fully implemented
-            return
+            print(transaction_func)
 
-            # mempool_tx_token_in_quantity = transaction_params.get("amountIn")
-            # print(
-            #     f"In: {mempool_tx_token_in_quantity/(10**mempool_tx_token_in.decimals):.4f} {mempool_tx_token_in}"
-            # )
-            # print(
-            #     f"Out: {func_args.get('amountOutMin')/(10**mempool_tx_token_out.decimals):.4f} {mempool_tx_token_out}"
-            # )
-            # print(f"DEX: {ROUTERS[pending_tx.get('to')]['name']}")
+            # TODO: remove once this function is fully implemented
+
+            token_in_quantity = transaction_params["amountIn"]
+            token_out_min_quantity = transaction_params["amountOutMin"]
+
+            # get the V2 pool helpers
+            try:
+                token_objects = [
+                    Erc20TokenHelperManager().get_erc20token(
+                        address=token_address, silent=True
+                    )
+                    for token_address in transaction_params["path"]
+                ]
+            except Erc20TokenError:
+                raise TransactionError(
+                    "Could not load Erc20Token objects for complete swap path"
+                )
+
+            token_in = token_objects[0]
+            token_out = token_objects[-1]
+
+            print(
+                f"In: {token_in_quantity/(10**token_in.decimals):.4f} {token_in}"
+            )
+            print(
+                f"Min. out: {token_out_min_quantity/(10**token_out.decimals):.4f} {token_out}"
+            )
+
+            v2_pools = []
+            for token_pair in itertools.pairwise(token_objects):
+                try:
+                    v2_pools.append(
+                        self.v2_pool_manager.get_pool(
+                            token_addresses=[
+                                token.address for token in token_pair
+                            ]
+                        )
+                    )
+                except LiquidityPoolError:
+                    raise TransactionError
+
+            print(f"{' -> '.join([pool.name for pool in v2_pools])}")
 
         elif transaction_func in ("swapTokensForExactETH"):
             # print(transaction_func)

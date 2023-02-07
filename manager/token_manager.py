@@ -1,3 +1,4 @@
+from degenbot.exceptions import ManagerError
 from degenbot.manager import Manager
 from degenbot.token import Erc20Token
 from web3 import Web3
@@ -27,6 +28,10 @@ class Erc20TokenHelperManager(Manager):
         if token_helper := self.erc20tokens.get(address):
             return token_helper
         else:
-            token_helper = Erc20Token(address=address, silent=silent)
-            self.erc20tokens[address] = token_helper
-            return token_helper
+            try:
+                token_helper = Erc20Token(address=address, silent=silent)
+            except:
+                raise ManagerError("Could not create Erc20Token helper")
+            else:
+                self.erc20tokens[address] = token_helper
+                return token_helper
