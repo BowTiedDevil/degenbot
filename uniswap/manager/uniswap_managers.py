@@ -2,7 +2,7 @@ from brownie import Contract
 from typing import Tuple, Union
 from web3 import Web3
 
-from degenbot.base import HelperManager
+from degenbot.manager import Manager
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.manager import Erc20TokenHelperManager
 from degenbot.exceptions import (
@@ -18,7 +18,7 @@ from degenbot.uniswap.v3 import TickLens, V3LiquidityPool
 from degenbot.uniswap.v3.abi import UNISWAP_V3_FACTORY_ABI
 
 
-class UniswapLiquidityPoolManager(HelperManager):
+class UniswapLiquidityPoolManager(Manager):
     """
     Single-concern class to allow V2 and V3 managers to share a token manager
     """

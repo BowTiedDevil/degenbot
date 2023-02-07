@@ -1,5 +1,5 @@
 from degenbot.arbitrage import *
-from degenbot.base import *
+from degenbot.manager import *
 from degenbot.constants import *
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.manager import Erc20TokenHelperManager

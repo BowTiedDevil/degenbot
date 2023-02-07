@@ -1,9 +1,9 @@
-from degenbot.base import HelperManager
+from degenbot.manager import Manager
 from degenbot.token import Erc20Token
 from web3 import Web3
 
 
-class Erc20TokenHelperManager(HelperManager):
+class Erc20TokenHelperManager(Manager):
     """
     A class that generates and tracks Erc20Token helpers
 
