@@ -869,9 +869,6 @@ class BaseV3LiquidityPool(ABC):
         [TBD]
         """
 
-        # TODO: adjust return so a delta is returned as the second parameter. e.g. attempting to swap 1000 tokens
-        # but only 999 are consumed by the swap, a delta of 1 is returned as the second value.
-
         assert (token_in and token_in_quantity) or (
             token_out and token_out_quantity
         )
