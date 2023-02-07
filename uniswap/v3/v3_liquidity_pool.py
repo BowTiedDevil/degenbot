@@ -497,7 +497,13 @@ class BaseV3LiquidityPool(ABC):
             )
         )
 
-        return amount0, amount1
+        return (
+            amount0,
+            amount1,
+            state["sqrtPriceX96"],
+            state["liquidity"],
+            state["tick"],
+        )
 
     def auto_update(
         self,
@@ -601,7 +607,7 @@ class BaseV3LiquidityPool(ABC):
 
         try:
             # delegate calculations to the ported `swap` function
-            amount0, amount1 = self.__UniswapV3Pool_swap(
+            (amount0_delta, amount1_delta, *_,) = self.__UniswapV3Pool_swap(
                 zeroForOne=zeroForOne,
                 amountSpecified=token_in_quantity,
                 sqrtPriceLimitX96=(
@@ -647,7 +653,7 @@ class BaseV3LiquidityPool(ABC):
             #     )
             # )
 
-            return -amount1 if zeroForOne else -amount0
+            return -amount1_delta if zeroForOne else -amount0_delta
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -678,7 +684,7 @@ class BaseV3LiquidityPool(ABC):
         zeroForOne = True if token_out == self.token1 else False
 
         # delegate calculations to the re-implemented `swap` function
-        amount0Delta, amount1Delta = self.__UniswapV3Pool_swap(
+        (amount0_delta, amount1_delta, *_,) = self.__UniswapV3Pool_swap(
             zeroForOne=zeroForOne,
             amountSpecified=-token_out_quantity,
             sqrtPriceLimitX96=(
@@ -688,9 +694,9 @@ class BaseV3LiquidityPool(ABC):
             ),
         )
         amountIn, amountOutReceived = (
-            (uint256(amount0Delta), uint256(-amount1Delta))
+            (uint256(amount0_delta), uint256(-amount1_delta))
             if zeroForOne
-            else (uint256(amount1Delta), uint256(-amount0Delta))
+            else (uint256(amount1_delta), uint256(-amount0_delta))
         )
         return amountIn
 
@@ -851,6 +857,72 @@ class BaseV3LiquidityPool(ABC):
             )
 
         return updated
+
+    def simulate_swap(
+        self,
+        token_in: Erc20Token = None,
+        token_in_quantity: int = None,
+        token_out: Erc20Token = None,
+        token_out_quantity: int = None,
+    ) -> Tuple[int, int, int, int, int]:
+        """
+        [TBD]
+        """
+
+        # TODO: adjust return so a delta is returned as the second parameter. e.g. attempting to swap 1000 tokens
+        # but only 999 are consumed by the swap, a delta of 1 is returned as the second value.
+
+        assert (token_in and token_in_quantity) or (
+            token_out and token_out_quantity
+        )
+        assert not (
+            token_in and token_out
+        ), "Incompatible options! Provide a token in/out and associated quantity, but not both"
+
+        if token_in and token_in not in (self.token0, self.token1):
+            raise LiquidityPoolError("token_in not found!")
+        if token_out and token_out not in (self.token0, self.token1):
+            raise LiquidityPoolError("token_out not found!")
+
+        # determine whether the swap is token0 -> token1
+        if token_in is not None and token_in_quantity:
+            zeroForOne = True if token_in == self.token0 else False
+        elif token_out is not None and token_out_quantity:
+            zeroForOne = True if token_out == self.token1 else False
+
+        try:
+            # delegate calculations to the ported `swap` function
+            (
+                *_,
+                end_sqrtprice,
+                end_liquidity,
+                end_tick,
+            ) = self.__UniswapV3Pool_swap(
+                zeroForOne=zeroForOne,
+                amountSpecified=token_in_quantity
+                if token_in_quantity
+                else -token_out_quantity,
+                sqrtPriceLimitX96=(
+                    TickMath.MIN_SQRT_RATIO + 1
+                    if zeroForOne
+                    else TickMath.MAX_SQRT_RATIO - 1
+                ),
+            )
+        except EVMRevertError:
+            # TODO: better define actions for this exception
+            raise
+            print(f"type={type(e)}")
+            raise EVMRevertError(
+                f"(V3LiquidityPool) caught exception inside LP helper {self.name}: {e}"
+                # f"\ntoken_in={token_in}"
+                # f"\ntoken_in_quantity={token_in_quantity}"
+            )
+        else:
+            return {
+                "liquidity": end_liquidity,
+                "sqrt_price_x96": end_sqrtprice,
+                "tick": end_tick,
+            }
 
 
 class V3LiquidityPool(BaseV3LiquidityPool):
