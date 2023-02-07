@@ -49,6 +49,22 @@ class LiquidityPoolError(DegenbotError):
     pass
 
 
+class ManagerError(DegenbotError):
+    """
+    Exception raised inside manager helpers
+    """
+
+    pass
+
+
+class TransactionError(DegenbotError):
+    """
+    Exception raised inside transaction simulation helpers
+    """
+
+    pass
+
+
 # 2nd level exceptions for Arbitrage classes
 class ArbCalculationError(ArbitrageError):
     """
