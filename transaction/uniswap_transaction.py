@@ -1,5 +1,3 @@
-from typing import List, Union
-
 import web3
 import itertools
 
@@ -9,8 +7,6 @@ from degenbot.uniswap.manager import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )
-from degenbot.uniswap.v2 import LiquidityPool
-from degenbot.uniswap.v3 import V3LiquidityPool
 from degenbot.uniswap.v3.abi import (
     UNISWAP_V3_ROUTER_ABI,
     UNISWAP_V3_ROUTER2_ABI,
