@@ -1,1 +1,4 @@
-from .uniswap_managers import UniswapLiquidityPoolManager
+from .uniswap_managers import (
+    UniswapV2LiquidityPoolManager,
+    UniswapV3LiquidityPoolManager,
+)
