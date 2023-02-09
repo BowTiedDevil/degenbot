@@ -41,8 +41,8 @@ class UniswapLpCycle(Arbitrage):
         for pool in swap_pools:
             if pool.uniswap_version not in [2, 3]:
                 raise ArbitrageError(
-                f"Could not identify Uniswap version for pool {pool}!"
-            )
+                    f"Could not identify Uniswap version for pool {pool}!"
+                )
             # assert pool.uniswap_version in [2, 3], ArbitrageError(
             #     f"Could not identify Uniswap version for pool {pool}!"
             # )
@@ -345,7 +345,7 @@ class UniswapLpCycle(Arbitrage):
                             else token_out_quantity,
                         )
                     )
-            except (EVMRevertError, AssertionError):
+            except EVMRevertError:
                 # The optimizer might send invalid data into the swap calculation.
                 # We don't want it to stop, so ignore the exception and pretend
                 # the swap is a "zero output" so the profit is just the input negated
@@ -385,7 +385,7 @@ class UniswapLpCycle(Arbitrage):
                 token_in=self.input_token,
                 token_in_quantity=swap_amount,
             )
-        except AssertionError:
+        except EVMRevertError:
             # Simulated EVM reverts inside the ported `swap` function were ignored to execute the optimizer
             # through to completion, but now we want to raise a real error to avoid generating bad payloads
             # that will revert
