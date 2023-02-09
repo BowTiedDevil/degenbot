@@ -1,3 +1,5 @@
+from degenbot.exceptions import EVMRevertError
+
 # adapted from OpenZeppelin's overflow checks, which throw
 # an exception if the input value exceeds the maximum value
 # for this type
@@ -19,22 +21,30 @@ MAX_UINT256 = 2**256 - 1
 
 
 def mulmod(x, y, k):
-    assert k != 0
+    if k == 0:
+        raise EVMRevertError
+    # assert k != 0
     return (x * y) % k
 
 
 def to_int128(x):
-    assert x <= 2 ** (128 - 1)
+    if not (x <= 2 ** (128 - 1)):
+        raise EVMRevertError
+    # assert x <= 2 ** (128 - 1)
     return x
 
 
 def to_int256(x):
-    assert x <= 2 ** (256 - 1)
+    if not (x <= 2 ** (256 - 1)):
+        raise EVMRevertError
+    # assert x <= 2 ** (256 - 1)
     return x
 
 
 def to_uint160(x):
-    assert x <= 2 ** (160) - 1
+    if not (x <= 2 ** (160) - 1):
+        raise EVMRevertError
+    # assert x <= 2 ** (160) - 1
     return x
 
 

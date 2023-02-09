@@ -2,7 +2,7 @@ from degenbot.exceptions import ManagerError
 from degenbot.manager import Manager
 from degenbot.token import Erc20Token
 from web3 import Web3
-
+from threading import Lock
 
 class Erc20TokenHelperManager(Manager):
     """
@@ -13,6 +13,7 @@ class Erc20TokenHelperManager(Manager):
     """
 
     erc20tokens = {}
+    lock = Lock()
 
     def get_erc20token(
         self,
@@ -29,11 +30,14 @@ class Erc20TokenHelperManager(Manager):
 
         if token_helper := self.erc20tokens.get(address):
             return token_helper
-        else:
-            try:
-                token_helper = Erc20Token(address=address, **kwargs)
-            except:
-                raise ManagerError("Could not create Erc20Token helper")
-            else:
-                self.erc20tokens[address] = token_helper
-                return token_helper
+    
+        try:
+            token_helper = Erc20Token(address=address, **kwargs)
+        except:
+            raise ManagerError(
+                f"Could not create Erc20Token helper: {address=}"
+            )
+        
+        with self.lock:
+            self.erc20tokens[address] = token_helper
+            return token_helper

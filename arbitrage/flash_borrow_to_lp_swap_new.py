@@ -22,21 +22,42 @@ class FlashBorrowToLpSwapNew:
         update_method="polling",
     ):
 
-        assert (
-            swap_pools or swap_pool_addresses
-        ), "At least one pool address or LiquidityPool object must be provided"
-        assert not (
-            swap_pool_addresses and swap_pools
-        ), "Choose pool addresses or LiquidityPool objects, not both"
+        if swap_pools is None and swap_pool_addresses is None:
+            raise TypeError(
+                "Provide a list of LiquidityPool objects or a list of pool addresses."
+            )
+        # assert (
+        #     swap_pools or swap_pool_addresses
+        # ), "At least one pool address or LiquidityPool object must be provided"
 
-        assert update_method in [
+        if not (swap_pools is not None) ^ (swap_pool_addresses is not None):
+            # NOTE: ^ is the exclusive-or operator, which allows us to check that only one condition is True, but not both and not neither
+            raise TypeError(
+                "Provide a list of LiquidityPool objects or a list of pool addresses, but not both."
+            )
+        # assert not (
+        #     swap_pool_addresses and swap_pools
+        # ), "Choose pool addresses or LiquidityPool objects, not both"
+
+        if update_method not in [
             "polling",
             "external",
-        ], "update_method must be 'polling' or 'external'"
+        ]:
+            raise ValueError("update_method must be 'polling' or 'external'")
 
-        assert not (
-            update_method == "external" and swap_pool_addresses
-        ), "swap pools by address must be updated with the 'polling' method"
+        # assert update_method in [
+        #     "polling",
+        #     "external",
+        # ], "update_method must be 'polling' or 'external'"
+
+        if update_method == "external" and swap_pool_addresses:
+            raise ValueError(
+                "swap pools passed by address must be updated with the 'polling' method"
+            )
+
+        # assert not (
+        #     update_method == "external" and swap_pool_addresses
+        # ), "swap pools by address must be updated with the 'polling' method"
 
         self.borrow_pool = borrow_pool
         self.borrow_token = borrow_token
@@ -76,15 +97,27 @@ class FlashBorrowToLpSwapNew:
                 + " -> ".join([pool.name for pool in self.swap_pools])
             )
 
-        assert self.borrow_token.address in [
+        if not self.borrow_token.address in [
             self.swap_pools[0].token0.address,
             self.swap_pools[0].token1.address,
-        ], "Borrowed token not found in the first swap pool"
+        ]:
+            raise ValueError("Borrowed token not found in the first swap pool")
 
-        assert self.repay_token.address in [
+        # assert self.borrow_token.address in [
+        #     self.swap_pools[0].token0.address,
+        #     self.swap_pools[0].token1.address,
+        # ], "Borrowed token not found in the first swap pool"
+
+        if not self.repay_token.address in [
             self.swap_pools[-1].token0.address,
             self.swap_pools[-1].token1.address,
-        ], "Repay token not found in the last swap pool"
+        ]:
+            raise ValueError("Repay token not found in the last swap pool")
+
+        # assert self.repay_token.address in [
+        #     self.swap_pools[-1].token0.address,
+        #     self.swap_pools[-1].token1.address,
+        # ], "Repay token not found in the last swap pool"
 
         if self.swap_pools[0].token0.address == borrow_token.address:
             forward_token_address = self.swap_pools[0].token1.address
@@ -185,17 +218,27 @@ class FlashBorrowToLpSwapNew:
     ):
 
         if override_future:
-            assert (
+            if not (
                 override_future_borrow_pool_reserves_token0 != 0
                 and override_future_borrow_pool_reserves_token1 != 0
-            ), "Must override reserves for token0 and token1"
+            ):
+                raise ValueError( "Must override reserves for token0 and token1")
+            # assert (
+            #     override_future_borrow_pool_reserves_token0 != 0
+            #     and override_future_borrow_pool_reserves_token1 != 0
+            # ), "Must override reserves for token0 and token1"
             reserves_token0 = override_future_borrow_pool_reserves_token0
             reserves_token1 = override_future_borrow_pool_reserves_token1
         else:
-            assert (
+            if not (
                 override_future_borrow_pool_reserves_token0 == 0
                 and override_future_borrow_pool_reserves_token1 == 0
-            ), "Do not provide override reserves without setting override_future = True"
+            ):
+                raise ValueError("Do not provide override reserves without setting override_future = True")
+            # assert (
+            #     override_future_borrow_pool_reserves_token0 == 0
+            #     and override_future_borrow_pool_reserves_token1 == 0
+            # ), "Do not provide override reserves without setting override_future = True"
             reserves_token0 = self.borrow_pool.reserves_token0
             reserves_token1 = self.borrow_pool.reserves_token1
 
@@ -395,15 +438,26 @@ class FlashBorrowToLpSwapNew:
         if override_future:
 
             recalculate = True
-            assert (
+            if not (
                 override_future_borrow_pool_reserves_token0 != 0
                 and override_future_borrow_pool_reserves_token1 != 0
-            ), "Must override reserves for token0 and token1"
+            ):
+                raise ValueError( "Must override reserves for token0 and token1")
+            # assert (
+            #     override_future_borrow_pool_reserves_token0 != 0
+            #     and override_future_borrow_pool_reserves_token1 != 0
+            # ), "Must override reserves for token0 and token1"
         else:
-            assert (
+            if not (
                 override_future_borrow_pool_reserves_token0 == 0
                 and override_future_borrow_pool_reserves_token1 == 0
-            ), "Do not provide override reserves without setting override_future = True"
+            ):
+                raise ValueError("Do not provide override reserves without setting override_future = True")
+
+            # assert (
+            #     override_future_borrow_pool_reserves_token0 == 0
+            #     and override_future_borrow_pool_reserves_token1 == 0
+            # ), "Do not provide override reserves without setting override_future = True"
 
         if self.borrow_pool.new_reserves:
             recalculate = True

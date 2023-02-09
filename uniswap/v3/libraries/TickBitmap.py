@@ -17,7 +17,11 @@ def flipTick(
     tick: int,
     tickSpacing: int,
 ):
-    assert tick % tickSpacing == 0, "Tick not correctly spaced!"
+
+    if not (tick % tickSpacing == 0):
+        raise EVMRevertError("Tick not correctly spaced!")
+    # assert tick % tickSpacing == 0, "Tick not correctly spaced!"
+
     wordPos, bitPos = position(int(Decimal(tick) // tickSpacing))
     # print(f"flipping {tick=} @ {wordPos=}, {bitPos=}")
     if tickBitmap.get(wordPos) is None:

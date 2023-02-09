@@ -21,26 +21,42 @@ class LpSwapWithFuture:
         id: str = None,
     ):
 
-        assert (
-            swap_pools or swap_pool_addresses
-        ), "At least one pool address or LiquidityPool object must be provided"
+        if not (swap_pools or swap_pool_addresses):
+            raise ValueError(
+                "At least one pool address or LiquidityPool object must be provided"
+            )
+        # assert (
+        #     swap_pools or swap_pool_addresses
+        # ), "At least one pool address or LiquidityPool object must be provided"
 
-        assert not (
-            swap_pool_addresses and swap_pools
-        ), "Choose pool addresses or LiquidityPool objects, not both"
+        if swap_pool_addresses and swap_pools:
+            raise ValueError(
+                "Choose pool addresses or LiquidityPool objects, not both"
+            )
+        # assert not (
+        #     swap_pool_addresses and swap_pools
+        # ), "Choose pool addresses or LiquidityPool objects, not both"
 
-        assert not (
-            swap_pool_addresses and swap_pools
-        ), "Choose pool addresses or LiquidityPool objects, not both"
-
-        assert update_method in [
+        if update_method not in [
             "polling",
             "external",
-        ], "update_method must be 'polling' or 'external'"
+        ]:
+            raise ValueError(
+                f"update_method must be 'polling' or 'external', was '{update_method}'"
+            )
 
-        assert not (
-            update_method == "external" and swap_pool_addresses
-        ), "swap pools by address must be updated with the 'polling' method"
+        # assert update_method in [
+        #     "polling",
+        #     "external",
+        # ], "update_method must be 'polling' or 'external'"
+
+        if update_method == "external" and swap_pool_addresses:
+            raise ValueError(
+                "swap pools by address must be updated with the 'polling' method"
+            )
+        # assert not (
+        #     update_method == "external" and swap_pool_addresses
+        # ), "swap pools by address must be updated with the 'polling' method"
 
         self.input_token = input_token
         self._update_method = update_method
@@ -72,15 +88,26 @@ class LpSwapWithFuture:
         else:
             self.name = " -> ".join([pool.name for pool in self.swap_pools])
 
-        assert input_token.address in [
+        if input_token.address not in [
             self.swap_pools[0].token0.address,
             self.swap_pools[0].token1.address,
-        ], "Swap token not found in the first swap pool!"
+        ]:
+            raise ValueError("Swap token not found in the first swap pool!")
+        # assert input_token.address in [
+        #     self.swap_pools[0].token0.address,
+        #     self.swap_pools[0].token1.address,
+        # ], "Swap token not found in the first swap pool!"
 
-        assert input_token.address in [
+        if input_token.address not in [
             self.swap_pools[-1].token0.address,
             self.swap_pools[-1].token1.address,
-        ], "Output token not found in the last swap pool!"
+        ]:
+            raise ValueError("Output token not found in the last swap pool!")
+
+        # assert input_token.address in [
+        #     self.swap_pools[-1].token0.address,
+        #     self.swap_pools[-1].token1.address,
+        # ], "Output token not found in the last swap pool!"
 
         for pool in self.swap_pools:
             if input_token == pool.token0:
@@ -376,28 +403,51 @@ class LpSwapWithFuture:
                     recalculate = True
 
         if override_future:
+
+            if not pool_overrides:
+                raise ValueError("Overrides must be provided!")
+            # assert pool_overrides, "Overrides must be provided!"
+
             recalculate = True
-            assert pool_overrides, "Overrides must be provided!"
+
             for override_pool, override_reserves in pool_overrides:
-                assert (
-                    type(override_pool) is LiquidityPool
-                ), "override does not include a LiquidityPool object!"
-                assert (
-                    type(override_reserves) is tuple
-                ), "overrides not formatted as a tuple"
-                assert len(override_reserves) == 2, "override length must be 2"
-                assert type(override_reserves[0]) in (
+                if type(override_pool) is not LiquidityPool:
+                    raise TypeError(
+                        "override does not include a LiquidityPool object!"
+                    )
+                # assert (
+                #     type(override_pool) is LiquidityPool
+                # ), "override does not include a LiquidityPool object!"
+                if type(override_reserves) is not tuple:
+                    raise TypeError("overrides not formatted as a tuple")
+                # assert (
+                #     type(override_reserves) is tuple
+                # ), "overrides not formatted as a tuple"
+                if len(override_reserves) != 2:
+                    raise ValueError("override length must be 2")
+                # assert len(override_reserves) == 2, "override length must be 2"
+                if type(override_reserves[0]) not in (
                     int,
                     Wei,
-                ), f"override for token0 must be int/Wei, is {type(override_reserves[0])}"
-                assert type(override_reserves[1]) in (
+                ):
+                    raise TypeError(
+                        f"override for token0 must be int/Wei, is {type(override_reserves[0])}"
+                    )
+                # assert type(override_reserves[0]) in (
+                #     int,
+                #     Wei,
+                # ), f"override for token0 must be int/Wei, is {type(override_reserves[0])}"
+                if type(override_reserves[1]) not in (
                     int,
                     Wei,
-                ), f"override for token1 must be int/Wei, is {type(override_reserves[1])}"
-        else:
-            assert (
-                not pool_overrides
-            ), "Must not provide overrides without override_future = True"
+                ):
+                    raise TypeError(
+                        f"override for token1 must be int/Wei, is {type(override_reserves[1])}"
+                    )
+                # assert type(override_reserves[1]) in (
+                #     int,
+                #     Wei,
+                # ), f"override for token1 must be int/Wei, is {type(override_reserves[1])}"
 
         # update the reserves tracked in self.reserves and flag the arb for recalculation if they did not match
         for pool in self.swap_pools:

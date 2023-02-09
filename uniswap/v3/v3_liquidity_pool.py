@@ -44,11 +44,10 @@ class BaseV3LiquidityPool(ABC):
         self,
         address: str,
         lens: Contract = None,
-        tokens: List[Erc20Token] = [],
+        tokens: List[Erc20Token] = None,
         name: str = "",
         update_method: str = "polling",
         abi: list = None,
-        # unload_brownie_contract_after_init: bool = False,
         extra_words: int = 250,
     ):
 
@@ -59,10 +58,14 @@ class BaseV3LiquidityPool(ABC):
 
         self.uniswap_version = 3
 
-        if tokens:
-            assert len(tokens) == 2, LiquidityPoolError(
-                "Expected exactly two tokens"
-            )
+        if tokens is not None:
+            if len(tokens) != 2:
+                raise ValueError(
+                    f"Expected exactly two tokens, found {len(tokens)}"
+                )
+            # assert len(tokens) == 2, LiquidityPoolError(
+            #     "Expected exactly two tokens"
+            # )
 
         self.address = to_address(address)
 
@@ -106,8 +109,15 @@ class BaseV3LiquidityPool(ABC):
             if tokens:
                 self.token0 = min(tokens)
                 self.token1 = max(tokens)
-                assert self.token0.address == self._brownie_contract.token0()
-                assert self.token1.address == self._brownie_contract.token1()
+                if not (
+                    self.token0.address == self._brownie_contract.token0()
+                    and self.token1.address == self._brownie_contract.token1()
+                ):
+                    raise ValueError(
+                        "Token addresses do not match tokens recorded at contract"
+                    )
+                # assert self.token0.address == self._brownie_contract.token0()
+                # assert self.token1.address == self._brownie_contract.token1()
             else:
                 self.token0 = Erc20Token(self._brownie_contract.token0())
                 self.token1 = Erc20Token(self._brownie_contract.token1())
@@ -341,15 +351,17 @@ class BaseV3LiquidityPool(ABC):
         """
 
         # TODO: redefine all asserts as if checks that raise an `EVMRevertError`
-        assert amountSpecified != 0, "AS"
+        if not amountSpecified != 0:
+            raise EVMRevertError("AS")
 
-        assert (
+        if not (
             sqrtPriceLimitX96 < self.sqrt_price_x96
             and sqrtPriceLimitX96 > TickMath.MIN_SQRT_RATIO
             if zeroForOne
             else sqrtPriceLimitX96 > self.sqrt_price_x96
             and sqrtPriceLimitX96 < TickMath.MAX_SQRT_RATIO
-        ), "SPL"
+        ):
+            raise EVMRevertError("SPL")
 
         cache = {
             "liquidityStart": self.liquidity,
@@ -722,11 +734,19 @@ class BaseV3LiquidityPool(ABC):
         when used with threads.
         """
 
-        assert set(
-            ["liquidity", "sqrt_price_x96", "tick", "liquidity_change"]
-        ) & set(
-            updates.keys()
-        ), "At least one of (liquidity, sqrt_price_x96, tick, liquidity_change) must be provided"
+        if not (
+            set(["liquidity", "sqrt_price_x96", "tick", "liquidity_change"])
+            & set(updates.keys())
+        ):
+            raise ValueError(
+                "At least one of (liquidity, sqrt_price_x96, tick, liquidity_change) must be provided"
+            )
+
+        # assert set(
+        #     ["liquidity", "sqrt_price_x96", "tick", "liquidity_change"]
+        # ) & set(
+        #     updates.keys()
+        # ), "At least one of (liquidity, sqrt_price_x96, tick, liquidity_change) must be provided"
 
         # if block_number was not provided, pull from the Brownie chain object
         if block_number is None:
@@ -869,12 +889,24 @@ class BaseV3LiquidityPool(ABC):
         [TBD]
         """
 
-        assert (token_in and token_in_quantity) or (
-            token_out and token_out_quantity
-        )
-        assert not (
-            token_in and token_out
-        ), "Incompatible options! Provide a token in/out and associated quantity, but not both"
+        if not (
+            (token_in and token_in_quantity)
+            or (token_out and token_out_quantity)
+        ):
+            raise ValueError
+
+        # assert (token_in and token_in_quantity) or (
+        #     token_out and token_out_quantity
+        # )
+
+        if token_in and token_out:
+            raise ValueError(
+                "Incompatible options! Provide token_in or token_out, but not both"
+            )
+
+        # assert not (
+        #     token_in and token_out
+        # ), "Incompatible options! Provide a token in/out and associated quantity, but not both"
 
         if token_in and token_in not in (self.token0, self.token1):
             raise LiquidityPoolError("token_in not found!")

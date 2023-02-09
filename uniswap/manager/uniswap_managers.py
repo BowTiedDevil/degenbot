@@ -1,6 +1,7 @@
 from brownie import Contract
 from typing import Tuple, Union
 from web3 import Web3
+from threading import Lock
 
 from degenbot.manager import Manager
 from degenbot.constants import ZERO_ADDRESS
@@ -34,8 +35,8 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
     objects reference the same state data
     """
 
-    # _token_manager = super()._token_manager
     _state = {}
+    lock = Lock()
 
     def __init__(
         self,
@@ -76,6 +77,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         """
 
         if pool_address is not None:
+
             pool_address = Web3.toChecksumAddress(pool_address)
 
             if pool_helper := self.pools_by_address.get(pool_address):
@@ -84,8 +86,9 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             try:
                 pool_helper = LiquidityPool(address=pool_address)
             except:
-                raise
-            else:
+                raise ManagerError(f"Could not build V2 pool: {pool_address=}")
+            
+            with self.lock:
                 self.pools_by_address[pool_address] = pool_helper
                 self.pools_by_tokens[
                     (
@@ -106,7 +109,8 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 erc20token_helpers = tuple(
                     [
                         self._token_manager.get_erc20token(
-                            address=token_address
+                            address=token_address,
+                            min_abi=True,
                         )
                         for token_address in token_addresses
                     ]
@@ -127,7 +131,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             if (
                 pool_address := self.factory_contract.getPair(*tokens_key)
             ) == ZERO_ADDRESS:
-                raise LiquidityPoolError("No V2 LP deployed")
+                raise ManagerError("No V2 LP available")
 
             try:
                 pool_helper = LiquidityPool(
@@ -135,8 +139,9 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                     tokens=erc20token_helpers,
                 )
             except:
-                raise
-            else:
+                raise ManagerError(f"Could not build V2 pool: {pool_address=}")
+            
+            with self.lock:
                 self.pools_by_address[pool_address] = pool_helper
                 self.pools_by_tokens[tokens_key] = pool_helper
                 return pool_helper
@@ -150,8 +155,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
     objects reference the same state data
     """
 
-    # _token_manager = super()._token_manager
     _state = {}
+    lock = Lock()
 
     def __init__(
         self,
@@ -188,6 +193,11 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         Get the pool object from its address, or a tuple of token addresses and fee
         """
 
+        if not (pool_address is None) ^ (token_addresses is None and pool_fee is None):
+            raise ValueError(
+                f"Insufficient arguments provided. Pass address OR tokens+fee"
+            )
+
         if pool_address is not None:
             if token_addresses is not None or pool_fee is not None:
                 raise ValueError(
@@ -198,13 +208,17 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
             if pool_helper := self.pools_by_address.get(pool_address):
                 return pool_helper
-            else:
 
+            try:
                 pool_helper = V3LiquidityPool(
                     address=pool_address, lens=self.lens
                 )
-                self.pools_by_address[pool_address] = pool_helper
+            except:
+                raise ManagerError(f"Could not build V3 pool: {pool_address=}")
+            
+            with self.lock:
                 dict_key = *token_addresses, pool_fee
+                self.pools_by_address[pool_address] = pool_helper
                 self.pools_by_tokens_and_fee[dict_key] = pool_helper
                 return pool_helper
 
@@ -237,22 +251,25 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
             if pool_helper := self.pools_by_tokens_and_fee.get(dict_key):
                 return pool_helper
-            else:
-                pool_address = generate_v3_pool_address(
-                    token_addresses=tokens_key, fee=pool_fee
-                )
-                if pool_helper := self.pools_by_address.get(pool_address):
-                    return pool_helper
-                else:
-                    pool_helper = V3LiquidityPool(
-                        address=pool_address,
-                        lens=self.lens,
-                        tokens=erc20token_helpers,
-                    )
-                    self.pools_by_address[pool_address] = pool_helper
-                    self.pools_by_tokens_and_fee[dict_key] = pool_helper
-                    return pool_helper
-        else:
-            raise ValueError(
-                f"Insufficient arguments provided. Pass address OR tokens+fee"
+        
+            pool_address = generate_v3_pool_address(
+                token_addresses=tokens_key, fee=pool_fee
             )
+        
+            if pool_helper := self.pools_by_address.get(pool_address):
+                return pool_helper
+        
+            try:
+                pool_helper = V3LiquidityPool(
+                    address=pool_address,
+                    lens=self.lens,
+                    tokens=erc20token_helpers,
+                )
+            except:
+                raise ManagerError(f"Could not build V3 pool: {pool_address=}")
+
+            with self.lock:
+                self.pools_by_address[pool_address] = pool_helper
+                self.pools_by_tokens_and_fee[dict_key] = pool_helper
+                return pool_helper
+                

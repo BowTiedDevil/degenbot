@@ -21,18 +21,30 @@ class FlashBorrowToRouterSwap:
         update_method="polling",
     ):
 
-        assert (
-            borrow_token.address == swap_token_addresses[0]
-        ), "Token addresses must begin with the borrowed token"
+        if borrow_token.address != swap_token_addresses[0]:
+            raise ValueError(
+                "Token addresses must begin with the borrowed token"
+            )
+        # assert (
+        #     borrow_token.address == swap_token_addresses[0]
+        # ), "Token addresses must begin with the borrowed token"
 
         if borrow_pool.token0 == borrow_token:
-            assert (
-                borrow_pool.token1.address == swap_token_addresses[-1]
-            ), "Token addresses must end with the repaid token"
+            if borrow_pool.token1.address != swap_token_addresses[-1]:
+                raise ValueError(
+                    "Token addresses must end with the repaid token"
+                )
+            # assert (
+            #     borrow_pool.token1.address == swap_token_addresses[-1]
+            # ), "Token addresses must end with the repaid token"
         else:
-            assert (
-                borrow_pool.token0.address == swap_token_addresses[-1]
-            ), "Token addresses must end with the repaid token"
+            if borrow_pool.token0.address != swap_token_addresses[-1]:
+                raise ValueError(
+                    "Token addresses must end with the repaid token"
+                )
+            # assert (
+            #     borrow_pool.token0.address == swap_token_addresses[-1]
+            # ), "Token addresses must end with the repaid token"
 
         self.swap_router_address = swap_router_address
 

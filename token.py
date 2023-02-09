@@ -138,9 +138,10 @@ class Erc20Token:
             self._contract = None
 
     def __eq__(self, other) -> bool:
-        assert isinstance(
-            other, Erc20Token
-        ), "Equality can only be evaluated against another Erc20Token"
+        if not isinstance(other, Erc20Token):
+            raise TypeError(
+                "Equality can only be evaluated against another Erc20Token"
+            )
         return self.address.lower() == other.address.lower()
 
     def __lt__(self, other) -> bool:
@@ -160,9 +161,13 @@ class Erc20Token:
         Sets the approval value for an external contract to transfer tokens quantites up to the specified amount from this address.
         For unlimited approval, set value to -1
         """
-        assert type(value) is int and (
-            -1 <= value <= 2**256 - 1
-        ), "Approval value MUST be an integer between 0 and 2**256-1, or -1"
+        if type(value) is not int:
+            raise TypeError("Value must be an integer!")
+
+        if not (-1 <= value <= 2**256 - 1):
+            raise ValueError(
+                "Approval value MUST be an integer between 0 and 2**256-1, or -1"
+            )
 
         if value == -1:
             print("Setting unlimited approval!")

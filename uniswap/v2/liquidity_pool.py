@@ -51,9 +51,16 @@ class LiquidityPool:
             print("***")
             fee = Fraction(fee)
 
-        assert (
-            type(fee) == Fraction
-        ), f"LP fee was not correctly passed! Expected '{Fraction().__class__.__name__}', was '{fee.__class__.__name__}'"
+        if type(fee) != Fraction:
+            raise TypeError(
+                f"LP fee was not correctly passed! "
+                f"Expected '{Fraction().__class__.__name__}', "
+                f"was '{fee.__class__.__name__}'"
+            )
+
+        # assert (
+        #     type(fee) == Fraction
+        # ), f"LP fee was not correctly passed! Expected '{Fraction().__class__.__name__}', was '{fee.__class__.__name__}'"
 
         self.fee = fee
         self._update_method = update_method
@@ -84,7 +91,9 @@ class LiquidityPool:
 
         # if a token pair was provided, check and set pointers for token0 and token1
         if tokens is not None:
-            assert len(tokens) == 2, f"Expected 2 tokens, found {len(tokens)}"
+            if len(tokens) != 2:
+                raise ValueError(f"Expected 2 tokens, found {len(tokens)}")
+            # assert len(tokens) == 2, f"Expected 2 tokens, found {len(tokens)}"
             for token in tokens:
                 if token.address == self._contract.token0():
                     self.token0 = token
@@ -190,11 +199,21 @@ class LiquidityPool:
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         """
 
-        assert (
-            override_reserves_token0 == 0 and override_reserves_token1 == 0
-        ) or (
-            override_reserves_token0 != 0 and override_reserves_token1 != 0
-        ), "Must provide override values for both token reserves"
+        if not (
+            (override_reserves_token0 == 0 and override_reserves_token1 == 0)
+            or (
+                override_reserves_token0 != 0 and override_reserves_token1 != 0
+            )
+        ):
+            raise ValueError(
+                "Must provide override values for both token reserves"
+            )
+
+        # assert (
+        #     override_reserves_token0 == 0 and override_reserves_token1 == 0
+        # ) or (
+        #     override_reserves_token0 != 0 and override_reserves_token1 != 0
+        # ), "Must provide override values for both token reserves"
 
         if token_in.address == self.token0.address:
             if override_reserves_token0 or override_reserves_token1:
@@ -233,14 +252,25 @@ class LiquidityPool:
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         """
 
-        assert (
-            override_reserves_token0 == 0 and override_reserves_token1 == 0
-        ) or (
-            override_reserves_token0 != 0 and override_reserves_token1 != 0
-        ), "Must provide override values for both token reserves"
+        if not (
+            (override_reserves_token0 == 0 and override_reserves_token1 == 0)
+            or (
+                override_reserves_token0 != 0 and override_reserves_token1 != 0
+            )
+        ):
+            raise ValueError(
+                "Must provide override values for both token reserves"
+            )
+        # assert (
+        #     override_reserves_token0 == 0 and override_reserves_token1 == 0
+        # ) or (
+        #     override_reserves_token0 != 0 and override_reserves_token1 != 0
+        # ), "Must provide override values for both token reserves"
 
         # WIP: add assertion to ensure no zero-input swap steps can be generated
-        assert token_in_quantity > 0, "zero-input swap!"
+        if not token_in_quantity > 0:
+            raise ValueError("token_in_quantity must be > 0")
+        # assert token_in_quantity > 0, "zero-input swap!"
 
         if token_in.address == self.token0.address:
             if override_reserves_token0 or override_reserves_token1:
@@ -277,13 +307,26 @@ class LiquidityPool:
         silent: bool = False,
     ):
         # check to ensure that token_in and token_out are exactly the two tokens held by the LP
-        assert (
-            token_in.address == self.token0.address
-            and token_out.address == self.token1.address
-        ) or (
-            token_in.address == self.token1.address
-            and token_out.address == self.token0.address
-        ), "Tokens must match the two tokens held by this pool!"
+        if not (
+            (
+                token_in.address == self.token0.address
+                and token_out.address == self.token1.address
+            )
+            or (
+                token_in.address == self.token1.address
+                and token_out.address == self.token0.address
+            )
+        ):
+            raise ValueError(
+                "Tokens must match the two tokens held by this pool!"
+            )
+        # assert (
+        #     token_in.address == self.token0.address
+        #     and token_out.address == self.token1.address
+        # ) or (
+        #     token_in.address == self.token1.address
+        #     and token_out.address == self.token0.address
+        # ), "Tokens must match the two tokens held by this pool!"
 
         if not silent:
             print(
@@ -379,10 +422,19 @@ class LiquidityPool:
                     f"LiquidityPool: Exception in update_reserves (polling): {e}"
                 )
         elif self._update_method == "external":
-            assert (
-                external_token0_reserves is not None
-                and external_token1_reserves is not None
-            ), "Called update_reserves without providing reserve values for both tokens!"
+            if not (
+                (
+                    external_token0_reserves is not None
+                    and external_token1_reserves is not None
+                )
+            ):
+                raise ValueError(
+                    "Called update_reserves without providing reserve values for both tokens!"
+                )
+            # assert (
+            #     external_token0_reserves is not None
+            #     and external_token1_reserves is not None
+            # ), "Called update_reserves without providing reserve values for both tokens!"
 
             # skip follow-up processing if the LP object already has the latest reserves, or if no reserves were provided
             if (

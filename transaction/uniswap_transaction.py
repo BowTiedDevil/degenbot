@@ -3,8 +3,9 @@ import itertools
 
 from degenbot.exceptions import (
     LiquidityPoolError,
-    TransactionError,
     Erc20TokenError,
+    EVMRevertError,
+    ManagerError,
     TransactionError,
 )
 from degenbot.transaction.base import Transaction
@@ -170,9 +171,8 @@ class UniswapTransaction(Transaction):
             "swapExactTokensForTokens",
             "swapExactTokensForTokensSupportingFeeOnTransferTokens",
         ]:
-            print(transaction_func)
 
-            # TODO: remove once this function is fully implemented
+            print(transaction_func)
 
             token_in_quantity = transaction_params["amountIn"]
             token_out_min_quantity = transaction_params["amountOutMin"]
@@ -214,7 +214,9 @@ class UniswapTransaction(Transaction):
                         )
                     )
                 except LiquidityPoolError:
-                    raise TransactionError
+                    raise TransactionError(
+                        "Could not load LiquidityPool objects for complete swap path"
+                    )
 
             print(f"{' -> '.join([pool.name for pool in v2_pools])}")
 
@@ -458,25 +460,42 @@ class UniswapTransaction(Transaction):
             except:
                 pass
 
-            # get the V3 pool involved in the swap
-            v3_pool = self.v3_pool_manager.get_pool(
-                token_addresses=(tokenIn, tokenOut),
-                pool_fee=fee,
-            )
+            try:
+                # get the V3 pool involved in the swap
+                v3_pool = self.v3_pool_manager.get_pool(
+                    token_addresses=(tokenIn, tokenOut),
+                    pool_fee=fee,
+                )
+            except (ManagerError, LiquidityPoolError):
+                raise TransactionError('Could not get pool (via tokens)')
+            except:
+                raise
 
             print(f"pool located: {v3_pool}")
             print(f"Predicting output of swap through pool: {v3_pool}")
 
-            starting_state = v3_pool.state
-            final_state = v3_pool.simulate_swap(
-                token_in=Erc20TokenHelperManager().get_erc20token(
+            try:
+                token_in_object = Erc20TokenHelperManager().get_erc20token(
                     address=tokenIn,
                     silent=True,
                     min_abi=True,
                     unload_brownie_contract_after_init=True,
-                ),
-                token_in_quantity=amountIn,
-            )
+                )
+            except Exception as e:
+                print(e)
+                print(type(e))
+                raise
+
+            starting_state = v3_pool.state
+            try:
+                final_state = v3_pool.simulate_swap(
+                    token_in=token_in_object,
+                    token_in_quantity=amountIn,
+                )
+            except EVMRevertError:
+                print("TRANSACTION CANNOT BE SIMULATED!")
+                return
+
             print(f"{starting_state=}")
             print(f"{final_state=}")
 

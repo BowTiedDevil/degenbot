@@ -1,5 +1,6 @@
+from degenbot.exceptions import EVMRevertError
 from . import YulOperations as yul
-from .Helpers import int24, int256, uint160, uint256
+from .Helpers import *
 
 MIN_TICK = -887272
 MAX_TICK = -MIN_TICK
@@ -10,7 +11,9 @@ MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342
 def getSqrtRatioAtTick(tick: int) -> int:
 
     absTick = uint256(-int256(tick)) if tick < 0 else uint256(int256(tick))
-    assert 0 <= absTick <= uint256(MAX_TICK), "T"
+    if not (0 <= absTick <= uint256(MAX_TICK)):
+        raise EVMRevertError("T")
+    # assert 0 <= absTick <= uint256(MAX_TICK), "T"
 
     ratio = (
         0xFFFCB933BD6FAD37AA2D162D1A594001
@@ -68,12 +71,16 @@ def getSqrtRatioAtTick(tick: int) -> int:
 
 def getTickAtSqrtRatio(sqrtPriceX96: int) -> int:
 
-    assert 0 <= sqrtPriceX96 <= 2**160 - 1, "not a valid uint160"
+    if not (0 <= sqrtPriceX96 <= 2**160 - 1):
+        raise EVMRevertError("not a valid uint160")
+    # assert 0 <= sqrtPriceX96 <= 2**160 - 1, "not a valid uint160"
 
     # second inequality must be < because the price can never reach the price at the max tick
-    assert (
-        sqrtPriceX96 >= MIN_SQRT_RATIO and sqrtPriceX96 < MAX_SQRT_RATIO
-    ), "R"
+    if not (sqrtPriceX96 >= MIN_SQRT_RATIO and sqrtPriceX96 < MAX_SQRT_RATIO):
+        raise EVMRevertError("R")
+    # assert (
+    #     sqrtPriceX96 >= MIN_SQRT_RATIO and sqrtPriceX96 < MAX_SQRT_RATIO
+    # ), "R"
     ratio = uint256(sqrtPriceX96) << 32
 
     r: int = ratio

@@ -39,9 +39,13 @@ class UniswapLpCycle(Arbitrage):
         self.gas_estimate = 0
 
         for pool in swap_pools:
-            assert pool.uniswap_version in [2, 3], ArbitrageError(
+            if pool.uniswap_version not in [2, 3]:
+                raise ArbitrageError(
                 f"Could not identify Uniswap version for pool {pool}!"
             )
+            # assert pool.uniswap_version in [2, 3], ArbitrageError(
+            #     f"Could not identify Uniswap version for pool {pool}!"
+            # )
         self.swap_pools = swap_pools
         self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
         self.swap_pool_tokens = [
