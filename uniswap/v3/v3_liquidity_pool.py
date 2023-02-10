@@ -338,7 +338,12 @@ class BaseV3LiquidityPool(ABC):
         zeroForOne: bool,
         amountSpecified: int,
         sqrtPriceLimitX96: int,
-    ) -> Tuple[int, int]:
+        override_start_liquidity: int = None,
+        override_start_sqrt_price_x96: int = None,
+        override_start_tick: int = None,
+        override_tick_data: dict = None,  # TODO: support tick data overrides
+        override_tick_bitmap: dict = None,  # TODO: support tick bitmap overrides
+    ) -> Tuple[int, int, int, int, int]:
 
         """
         This function is ported and adapted from the UniswapV3Pool.sol contract
@@ -350,7 +355,6 @@ class BaseV3LiquidityPool(ABC):
         It is a double-underscore method and is thus obscured from external access (but still accessible if you know how).
         """
 
-        # TODO: redefine all asserts as if checks that raise an `EVMRevertError`
         if not amountSpecified != 0:
             raise EVMRevertError("AS")
 
@@ -363,8 +367,23 @@ class BaseV3LiquidityPool(ABC):
         ):
             raise EVMRevertError("SPL")
 
+        if override_start_liquidity is not None:
+            liquidity = override_start_liquidity
+        else:
+            liquidity = self.liquidity
+
+        if override_start_sqrt_price_x96 is not None:
+            sqrt_price_x96 = override_start_sqrt_price_x96
+        else:
+            sqrt_price_x96 = self.sqrt_price_x96
+
+        if override_start_tick is not None:
+            tick = override_start_tick
+        else:
+            tick = self.tick
+
         cache = {
-            "liquidityStart": self.liquidity,
+            "liquidityStart": liquidity,
             "tickCumulative": 0,
             # ignored attributes:
             #   - blockTimestamp
@@ -378,8 +397,8 @@ class BaseV3LiquidityPool(ABC):
         state = {
             "amountSpecifiedRemaining": amountSpecified,
             "amountCalculated": 0,
-            "sqrtPriceX96": self.sqrt_price_x96,
-            "tick": self.tick,
+            "sqrtPriceX96": sqrt_price_x96,
+            "tick": tick,
             "liquidity": cache["liquidityStart"],
             # ignored attributes:
             #   - feeGrowthGlobalX128
@@ -468,6 +487,8 @@ class BaseV3LiquidityPool(ABC):
                 # if the tick is initialized, run the tick transition
                 if step["initialized"]:
 
+                    # use the default of (0,0) so the tuple assignment works. Throws exception
+                    # if the default value (None) is assigned to both
                     liquidityNet, liquidityGross = self.tick_data.get(
                         step["tickNext"],
                         (0, 0),
@@ -588,6 +609,7 @@ class BaseV3LiquidityPool(ABC):
         self,
         token_in: Erc20Token,
         token_in_quantity: int = None,
+        override_state: dict = None,
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
@@ -602,10 +624,19 @@ class BaseV3LiquidityPool(ABC):
             sqrt_price_limitX96 = 0
         )` which returns the value `amountOut`
 
-        Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset, thus the
-        swap calculation will continue until the target amount is satisfied, regardless of price impact
+        Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset,
+        thus the swap calculation will continue until the target amount is satisfied, regardless of
+        price impact
 
         Some swaps cannot consume the entire input amount.
+
+        Accepts a dictionary of state values (`override_state`) to allow calculations beginning from an
+        arbitrary starting point. This dictionary must have one or more of the following keys:
+            - 'liquidity'
+            - 'sqrt_price_x96'
+            - 'tick'
+            - 'tick_data'  (not yet implemented)
+            - 'tick_bitmap'  (not yet implemented)
         """
 
         # TODO: adjust return so a delta is returned as the second parameter. e.g. attempting to swap 1000 tokens
@@ -618,6 +649,26 @@ class BaseV3LiquidityPool(ABC):
         zeroForOne = True if token_in == self.token0 else False
 
         try:
+            # set the inputs for the swap (applying overrides as needed)
+            _liquidity = None
+            _sqrt_price_x96 = None
+            _tick = None
+            if override_state is not None:
+                for key, value in override_state.items():
+                    if key == "liquidity":
+                        _liquidity = value
+                    elif key == "sqrt_price_x96":
+                        _sqrt_price_x96 = value
+                    elif key == "tick":
+                        _tick = value
+                    #
+                    # TODO:
+                    # elif key == "tick_data":
+                    #     _tick_data = value
+                    # elif key == "tick_bitmap":
+                    #     _tick_bitmap = value
+                    #
+
             # delegate calculations to the ported `swap` function
             (amount0_delta, amount1_delta, *_,) = self.__UniswapV3Pool_swap(
                 zeroForOne=zeroForOne,
@@ -627,18 +678,12 @@ class BaseV3LiquidityPool(ABC):
                     if zeroForOne
                     else TickMath.MAX_SQRT_RATIO - 1
                 ),
+                override_start_liquidity=_liquidity,
+                override_start_sqrt_price_x96=_sqrt_price_x96,
+                override_start_tick=_tick,
             )
-        except EVMRevertError:
-            # TODO: better define actions for this exception
-            raise
-            print(f"type={type(e)}")
-            raise EVMRevertError(
-                f"(V3LiquidityPool) caught exception inside LP helper {self.name}: {e}"
-                # f"\ntoken_in={token_in}"
-                # f"\ntoken_in_quantity={token_in_quantity}"
-            )
-        except:
-            raise
+        except EVMRevertError as e:
+            raise LiquidityPoolError(f"Simulated execution reverted: {e}")
         else:
             # if zeroForOne:
             #     if token_in_quantity != amount0:
@@ -671,6 +716,7 @@ class BaseV3LiquidityPool(ABC):
         self,
         token_out: Erc20Token,
         token_out_quantity: int = None,
+        override_state: dict = None,
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_in_from_tokens_out`
@@ -687,6 +733,14 @@ class BaseV3LiquidityPool(ABC):
 
         Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset, thus the
         swap calculation will continue until the target amount is satisfied, regardless of price impact
+
+        Accepts a dictionary of state values (`override_state`) to allow calculations beginning from an
+        arbitrary starting point. This dictionary must have one or more of the following keys:
+            - 'liquidity'
+            - 'sqrt_price_x96'
+            - 'tick'
+            - 'tick_data'  (not yet implemented)
+            - 'tick_bitmap'  (not yet implemented)
         """
 
         if token_out not in (self.token0, self.token1):
@@ -695,22 +749,49 @@ class BaseV3LiquidityPool(ABC):
         # determine whether the swap is token0 -> token1
         zeroForOne = True if token_out == self.token1 else False
 
-        # delegate calculations to the re-implemented `swap` function
-        (amount0_delta, amount1_delta, *_,) = self.__UniswapV3Pool_swap(
-            zeroForOne=zeroForOne,
-            amountSpecified=-token_out_quantity,
-            sqrtPriceLimitX96=(
-                TickMath.MIN_SQRT_RATIO + 1
+        try:
+            _liquidity = None
+            _sqrt_price_x96 = None
+            _tick = None
+            # set the inputs for the swap (applying overrides as needed)
+            if override_state is not None:
+                for key, value in override_state.items():
+                    if key == "liquidity":
+                        _liquidity = value
+                    elif key == "sqrt_price_x96":
+                        _sqrt_price_x96 = value
+                    elif key == "tick":
+                        _tick = value
+                    #
+                    # TODO:
+                    # elif key == "tick_data":
+                    #     _tick_data = value
+                    # elif key == "tick_bitmap":
+                    #     _tick_bitmap = value
+                    #
+
+            # delegate calculations to the ported `swap` function
+            (amount0_delta, amount1_delta, *_,) = self.__UniswapV3Pool_swap(
+                zeroForOne=zeroForOne,
+                amountSpecified=-token_out_quantity,
+                sqrtPriceLimitX96=(
+                    TickMath.MIN_SQRT_RATIO + 1
+                    if zeroForOne
+                    else TickMath.MAX_SQRT_RATIO - 1
+                ),
+                override_start_liquidity=_liquidity,
+                override_start_sqrt_price_x96=_sqrt_price_x96,
+                override_start_tick=_tick,
+            )
+        except EVMRevertError as e:
+            raise LiquidityPoolError(f"Simulated execution reverted: {e}")
+        else:
+            amountIn, amountOutReceived = (
+                (uint256(amount0_delta), uint256(-amount1_delta))
                 if zeroForOne
-                else TickMath.MAX_SQRT_RATIO - 1
-            ),
-        )
-        amountIn, amountOutReceived = (
-            (uint256(amount0_delta), uint256(-amount1_delta))
-            if zeroForOne
-            else (uint256(amount1_delta), uint256(-amount0_delta))
-        )
-        return amountIn
+                else (uint256(amount1_delta), uint256(-amount0_delta))
+            )
+            return amountIn
 
     def external_update(
         self, updates: dict, block_number: int = None, silent: bool = True
