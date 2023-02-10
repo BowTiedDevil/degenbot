@@ -1,27 +1,27 @@
 import time
 from decimal import Decimal
 from fractions import Fraction
-from typing import List, Union
+from typing import List, Optional, Union
 
 from brownie import Contract, Wei, chain
 from brownie.convert import to_address
 
-from .router import Router
-from .abi import UNISWAPV2_LP_ABI
-
+from degenbot.exceptions import DeprecationError, ExternalUpdateError
 from degenbot.token import Erc20Token
-from degenbot.exceptions import ExternalUpdateError, DeprecationError
+
+from .abi import UNISWAPV2_LP_ABI
+from .router import Router
 
 
 class LiquidityPool:
     def __init__(
         self,
         address: str,
-        tokens: List[Erc20Token] = None,
-        name: str = None,
+        tokens: Optional[List[Erc20Token]] = None,
+        name: Optional[str] = None,
         update_method: str = "polling",
-        router: Router = None,
-        abi: list = None,
+        router: Optional[Router] = None,
+        abi: Optional[list] = None,
         # default fee for most UniswapV2 AMMs is 0.3%
         fee: Fraction = Fraction(3, 1000),
         silent: bool = False,
@@ -352,10 +352,10 @@ class LiquidityPool:
         silent: bool = False,
         print_reserves: bool = True,
         print_ratios: bool = True,
-        external_token0_reserves: int = None,  # bugfix: hint was set to bool
-        external_token1_reserves: int = None,  # bugfix: hint was set to bool
-        override_update_method: str = None,
-        update_block: int = None,
+        external_token0_reserves: Optional[int] = None,
+        external_token1_reserves: Optional[int] = None,
+        override_update_method: Optional[str] = None,
+        update_block: Optional[int] = None,
     ) -> bool:
         """
         Checks for updated reserve values when set to "polling", otherwise

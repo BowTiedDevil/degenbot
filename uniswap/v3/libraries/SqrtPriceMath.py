@@ -1,7 +1,9 @@
+from typing import Optional, Union
+
 from degenbot.exceptions import EVMRevertError
+
 from . import FixedPoint96, FullMath, UnsafeMath
 from .Helpers import *
-from typing import Union
 
 # type hinting aliases
 Int128 = int
@@ -15,7 +17,7 @@ def getAmount0Delta(
     sqrtRatioAX96: Uint160,
     sqrtRatioBX96: Uint160,
     liquidity: Union[Int128, Uint128],
-    roundUp: bool = None,
+    roundUp: Optional[bool] = None,
 ) -> Uint256:
 
     if roundUp is not None or MIN_UINT128 <= liquidity <= MAX_UINT128:
@@ -58,7 +60,7 @@ def getAmount1Delta(
     sqrtRatioAX96: Uint160,
     sqrtRatioBX96: Uint160,
     liquidity: Union[Int128, Uint128],
-    roundUp: bool = None,
+    roundUp: Optional[bool] = None,
 ) -> Uint256:
 
     if roundUp is not None or MIN_UINT128 <= liquidity <= MAX_UINT128:

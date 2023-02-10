@@ -1,9 +1,9 @@
-from math import ceil
-from typing import List, Tuple, Union
+from typing import List, Optional, Tuple, Union
+from warnings import warn
+
 from eth_abi import encode as abi_encode
 from scipy import optimize
 from web3 import Web3
-from warnings import warn
 
 from degenbot.arbitrage.base import Arbitrage
 from degenbot.exceptions import (
@@ -24,8 +24,8 @@ class UniswapLpCycle(Arbitrage):
         self,
         input_token: Erc20Token,
         swap_pools: List[Union[LiquidityPool, V3LiquidityPool]],
-        max_input: int = None,
-        id: str = None,
+        max_input: Optional[int] = None,
+        id: Optional[str] = None,
     ):
 
         self.id = id
@@ -224,7 +224,7 @@ class UniswapLpCycle(Arbitrage):
         self,
         silent=True,
         block_number=None,
-        override_update_method: str = None,
+        override_update_method: Optional[str] = None,
     ) -> bool:
 
         # TODO: implement block_number check for V2 pools (V3 done)
@@ -455,8 +455,8 @@ class UniswapLpCycle(Arbitrage):
         cls,
         input_token_address: str,
         swap_pool_addresses: List[Tuple[str, str]],
-        max_input: int = None,
-        id: str = None,
+        max_input: Optional[int] = None,
+        id: Optional[str] = None,
     ) -> "UniswapLpCycle":
         """
         Create a new `UniswapLpCycle` object from token and pool addresses.

@@ -2,14 +2,14 @@
 # exceeds the amount actually swapped
 
 from abc import ABC, abstractmethod
-from typing import Tuple, List
-
 from decimal import Decimal
+from threading import Lock, RLock
+from typing import List, Optional, Tuple
+from warnings import catch_warnings, simplefilter
 
-from brownie import Contract, chain, network, multicall
+from brownie import Contract, chain, multicall, network
 from brownie.convert import to_address
 
-from degenbot.token import Erc20Token
 from degenbot.exceptions import (
     ArbitrageError,
     BitmapWordUnavailableError,
@@ -17,9 +17,7 @@ from degenbot.exceptions import (
     ExternalUpdateError,
     LiquidityPoolError,
 )
-
-from threading import Lock, RLock
-from warnings import catch_warnings, simplefilter
+from degenbot.token import Erc20Token
 
 from .abi import UNISWAP_V3_POOL_ABI
 from .libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
@@ -43,11 +41,11 @@ class BaseV3LiquidityPool(ABC):
     def __init__(
         self,
         address: str,
-        lens: Contract = None,
-        tokens: List[Erc20Token] = None,
+        lens: Optional[Contract] = None,
+        tokens: Optional[List[Erc20Token]] = None,
         name: str = "",
         update_method: str = "polling",
-        abi: list = None,
+        abi: Optional[list] = None,
         extra_words: int = 250,
     ):
 
@@ -178,7 +176,7 @@ class BaseV3LiquidityPool(ABC):
         self,
         word_position: int,
         single_word: bool = False,
-        block_number: int = None,
+        block_number: Optional[int] = None,
     ) -> dict:
         """
         Gets the initialized tick values at a specific word (a 32 byte number
@@ -338,11 +336,15 @@ class BaseV3LiquidityPool(ABC):
         zeroForOne: bool,
         amountSpecified: int,
         sqrtPriceLimitX96: int,
-        override_start_liquidity: int = None,
-        override_start_sqrt_price_x96: int = None,
-        override_start_tick: int = None,
-        override_tick_data: dict = None,  # TODO: support tick data overrides
-        override_tick_bitmap: dict = None,  # TODO: support tick bitmap overrides
+        override_start_liquidity: Optional[int] = None,
+        override_start_sqrt_price_x96: Optional[int] = None,
+        override_start_tick: Optional[int] = None,
+        override_tick_data: Optional[
+            dict
+        ] = None,  # TODO: support tick data overrides
+        override_tick_bitmap: Optional[
+            dict
+        ] = None,  # TODO: support tick bitmap overrides
     ) -> Tuple[int, int, int, int, int]:
 
         """
@@ -541,7 +543,7 @@ class BaseV3LiquidityPool(ABC):
     def auto_update(
         self,
         silent: bool = True,
-        block_number: int = None,
+        block_number: Optional[int] = None,
     ) -> Tuple[bool, dict]:
         """
         Retrieves the current slot0 and liquidity values from the LP, stores any that have changed,
@@ -608,8 +610,8 @@ class BaseV3LiquidityPool(ABC):
     def calculate_tokens_out_from_tokens_in(
         self,
         token_in: Erc20Token,
-        token_in_quantity: int = None,
-        override_state: dict = None,
+        token_in_quantity: Optional[int] = None,
+        override_state: Optional[dict] = None,
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
@@ -715,8 +717,8 @@ class BaseV3LiquidityPool(ABC):
     def calculate_tokens_in_from_tokens_out(
         self,
         token_out: Erc20Token,
-        token_out_quantity: int = None,
-        override_state: dict = None,
+        token_out_quantity: Optional[int] = None,
+        override_state: Optional[dict] = None,
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_in_from_tokens_out`
@@ -794,7 +796,10 @@ class BaseV3LiquidityPool(ABC):
             return amountIn
 
     def external_update(
-        self, updates: dict, block_number: int = None, silent: bool = True
+        self,
+        updates: dict,
+        block_number: Optional[int] = None,
+        silent: bool = True,
     ) -> bool:
         """
         Accepts and processes a dict with at least one key from:
@@ -961,10 +966,10 @@ class BaseV3LiquidityPool(ABC):
 
     def simulate_swap(
         self,
-        token_in: Erc20Token = None,
-        token_in_quantity: int = None,
-        token_out: Erc20Token = None,
-        token_out_quantity: int = None,
+        token_in: Optional[Erc20Token] = None,
+        token_in_quantity: Optional[int] = None,
+        token_out: Optional[Erc20Token] = None,
+        token_out_quantity: Optional[int] = None,
     ) -> Tuple[int, int, int, int, int]:
         """
         [TBD]

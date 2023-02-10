@@ -1,4 +1,6 @@
 import json
+
+from typing import Optional
 from warnings import catch_warnings, simplefilter
 
 from brownie import Contract
@@ -28,9 +30,9 @@ class Erc20Token:
     def __init__(
         self,
         address: str,
-        user: LocalAccount = None,
-        abi: list = None,
-        oracle_address: str = None,
+        user: Optional[LocalAccount] = None,
+        abi: Optional[list] = None,
+        oracle_address: Optional[str] = None,
         silent: bool = False,
         unload_brownie_contract_after_init: bool = False,
         min_abi: bool = False,

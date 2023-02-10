@@ -412,17 +412,8 @@ class UniswapTransaction(Transaction):
         elif transaction_func == "exactInputSingle":
             print(transaction_func)
 
-            # decode with Router ABI - https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
-            # struct ExactInputSingleParams {
-            #   address tokenIn;
-            #   address tokenOut;
-            #   uint24 fee;
-            #   address recipient;
-            #   uint256 deadline;
-            #   uint256 amountIn;
-            #   uint256 amountOutMinimum;
-            #   uint160 sqrtPriceLimitX96;
-            # }
+            # decode with Router ABI
+            # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
             try:
                 (
                     tokenIn,
@@ -437,16 +428,8 @@ class UniswapTransaction(Transaction):
             except:
                 pass
 
-            # decode with Router2 ABI - https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
-            # struct ExactInputSingleParams {
-            #   address tokenIn;
-            #   address tokenOut;
-            #   uint24 fee;
-            #   address recipient;
-            #   uint256 amountIn;
-            #   uint256 amountOutMinimum;
-            #   uint160 sqrtPriceLimitX96;
-            # }
+            # decode with Router2 ABI
+            # https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
             try:
                 (
                     tokenIn,
@@ -466,12 +449,11 @@ class UniswapTransaction(Transaction):
                     token_addresses=(tokenIn, tokenOut),
                     pool_fee=fee,
                 )
-            except (ManagerError, LiquidityPoolError):
-                raise TransactionError('Could not get pool (via tokens)')
+            except (ManagerError, LiquidityPoolError) as e:
+                raise TransactionError(f"Could not get pool (via tokens): {e}")
             except:
                 raise
 
-            print(f"pool located: {v3_pool}")
             print(f"Predicting output of swap through pool: {v3_pool}")
 
             try:
@@ -492,8 +474,8 @@ class UniswapTransaction(Transaction):
                     token_in=token_in_object,
                     token_in_quantity=amountIn,
                 )
-            except EVMRevertError:
-                print("TRANSACTION CANNOT BE SIMULATED!")
+            except EVMRevertError as e:
+                print(f"TRANSACTION CANNOT BE SIMULATED!: {e}")
                 return
 
             print(f"{starting_state=}")

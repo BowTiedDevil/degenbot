@@ -1,5 +1,7 @@
 import time
 from decimal import Decimal
+from typing import Optional
+
 from brownie import Contract
 from brownie.network.account import LocalAccount
 
@@ -13,8 +15,8 @@ class Router:
         self,
         address: str,
         name: str,
-        user: LocalAccount,
-        abi: list = None,
+        user: Optional[LocalAccount] = None,
+        abi: Optional[list] = None,
     ) -> None:
         self.address = address
 

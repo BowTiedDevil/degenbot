@@ -1,20 +1,19 @@
-from brownie import Contract
-from typing import Tuple, Union, Optional
-from web3 import Web3
 from threading import Lock
+from typing import Optional, Tuple, Union
 
-from degenbot.manager import Manager
+from brownie import Contract
+from web3 import Web3
+
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.manager import Erc20TokenHelperManager
 from degenbot.exceptions import (
-    LiquidityPoolError,
     Erc20TokenError,
+    LiquidityPoolError,
     ManagerError,
 )
-from degenbot.token import Erc20Token
+from degenbot.manager import Erc20TokenHelperManager, Manager
 from degenbot.uniswap.functions import generate_v3_pool_address
-from degenbot.uniswap.v2.abi import UNISWAPV2_FACTORY_ABI
 from degenbot.uniswap.v2 import LiquidityPool
+from degenbot.uniswap.v2.abi import UNISWAPV2_FACTORY_ABI
 from degenbot.uniswap.v3 import TickLens, V3LiquidityPool
 from degenbot.uniswap.v3.abi import UNISWAP_V3_FACTORY_ABI
 
