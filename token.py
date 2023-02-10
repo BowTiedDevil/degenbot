@@ -52,6 +52,7 @@ class Erc20Token:
                 name=f"ERC-20 @ {address}",
                 address=self.address,
                 abi=MIN_ERC20_ABI,
+                persist=False,
             )
         else:
             with catch_warnings():
