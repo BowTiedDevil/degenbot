@@ -1,3 +1,5 @@
+# TODO: investigate if ZeroLiquidityError is offering any protection
+
 from typing import List, Optional, Tuple, Union
 from warnings import warn
 
@@ -11,6 +13,7 @@ from degenbot.exceptions import (
     ArbitrageError,
     EVMRevertError,
     InvalidSwapPathError,
+    LiquidityPoolError,
     ZeroLiquidityError,
 )
 from degenbot.token import Erc20Token
@@ -137,13 +140,18 @@ class UniswapLpCycle(Arbitrage):
                         f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
                     )
 
-                # calculate the swap output through pool[i]
-                token_out_quantity = self.swap_pools[
-                    i
-                ].calculate_tokens_out_from_tokens_in(
-                    token_in=token_in,
-                    token_in_quantity=token_in_quantity,
-                )
+                try:
+                    # calculate the swap output through pool[i]
+                    token_out_quantity = self.swap_pools[
+                        i
+                    ].calculate_tokens_out_from_tokens_in(
+                        token_in=token_in,
+                        token_in_quantity=token_in_quantity,
+                    )
+                except LiquidityPoolError as e:
+                    raise ArbitrageError(
+                        f"(calculate_tokens_out_from_tokens_in): {e}"
+                    )
 
                 if token_in == self.swap_pools[i].token0:
                     pools_amounts_out.append(
@@ -170,13 +178,18 @@ class UniswapLpCycle(Arbitrage):
                         f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
                     )
 
-                # calculate the swap output through pool[i]
-                token_out_quantity = self.swap_pools[
-                    i
-                ].calculate_tokens_out_from_tokens_in(
-                    token_in=token_in,
-                    token_in_quantity=token_in_quantity,
-                )
+                try:
+                    # calculate the swap output through pool[i]
+                    token_out_quantity = self.swap_pools[
+                        i
+                    ].calculate_tokens_out_from_tokens_in(
+                        token_in=token_in,
+                        token_in_quantity=token_in_quantity,
+                    )
+                except LiquidityPoolError as e:
+                    raise ArbitrageError(
+                        f"(calculate_tokens_out_from_tokens_in): {e}"
+                    )
 
                 if token_in == self.swap_pools[i].token0:
                     _zeroForOne = True
@@ -345,10 +358,11 @@ class UniswapLpCycle(Arbitrage):
                             else token_out_quantity,
                         )
                     )
-            except EVMRevertError:
-                # The optimizer might send invalid data into the swap calculation.
-                # We don't want it to stop, so ignore the exception and pretend
-                # the swap is a "zero output" so the profit is just the input negated
+            except (EVMRevertError, LiquidityPoolError):
+                # The optimizer might send invalid data into the swap calculation during
+                # iteration. We don't want it to stop, so catch the exception and pretend
+                # the swap results in token_out_quantity = 0.
+                # Return the negated profit so the solver has a rational value to process
                 return -float(x)
             except:
                 raise
@@ -426,12 +440,17 @@ class UniswapLpCycle(Arbitrage):
                     f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
                 )
 
-            # calculate the swap output through pool[i]
-            token_out_quantity = self.swap_pools[
-                i
-            ].calculate_tokens_out_from_tokens_in(
-                token_in=token_in, token_in_quantity=token_in_quantity
-            )
+            try:
+                # calculate the swap output through pool[i]
+                token_out_quantity = self.swap_pools[
+                    i
+                ].calculate_tokens_out_from_tokens_in(
+                    token_in=token_in, token_in_quantity=token_in_quantity
+                )
+            except LiquidityPoolError as e:
+                raise ArbitrageError(
+                    f"(calculate_multipool_tokens_out_from_tokens_in): {e}"
+                )
 
             if i == number_of_pools - 1:
                 # if we've reached the last pool, return the output amount
