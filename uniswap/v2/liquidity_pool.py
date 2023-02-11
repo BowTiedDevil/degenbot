@@ -321,10 +321,8 @@ class LiquidityPool:
         #     override_reserves_token0 != 0 and override_reserves_token1 != 0
         # ), "Must provide override values for both token reserves"
 
-        # WIP: add assertion to ensure no zero-input swap steps can be generated
-        if not token_in_quantity > 0:
-            raise ValueError("token_in_quantity must be > 0")
-        # assert token_in_quantity > 0, "zero-input swap!"
+        if token_in_quantity < 0:
+            raise ValueError("token_in_quantity cannot be negative")
 
         if token_in == self.token0:
             reserves_in = (
@@ -398,14 +396,14 @@ class LiquidityPool:
         if token_in.address == self.token0.address:
             # calculate the ratio of token0/token1 for swap of token0 -> token1
             self._ratio_token0_in = Decimal(
-                str(token_in_qty * 10**token_in.decimals)
-            ) / Decimal(str(token_out_qty * 10**token_out.decimals))
+                (token_in_qty * 10**token_in.decimals)
+            ) / Decimal(token_out_qty * 10**token_out.decimals)
 
         if token_in.address == self.token1.address:
             # calculate the ratio of token1/token0 for swap of token1 -> token0
             self._ratio_token1_in = Decimal(
-                str(token_in_qty * 10**token_in.decimals)
-            ) / Decimal(str(token_out_qty * 10**token_out.decimals))
+                (token_in_qty * 10**token_in.decimals)
+            ) / Decimal(token_out_qty * 10**token_out.decimals)
 
         self.calculate_tokens_in_from_ratio_out()
 
