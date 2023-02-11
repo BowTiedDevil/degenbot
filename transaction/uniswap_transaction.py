@@ -21,7 +21,9 @@ from degenbot.uniswap.v3.abi import (
 )
 from degenbot.manager import Erc20TokenHelperManager
 
-ROUTERS = {
+
+# maintain an internal dict of known mainnet routers
+_routers = {
     "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F": {
         "name": "Sushiswap: Router",
         "uniswap_version": 2,
@@ -64,19 +66,28 @@ class UniswapTransaction(Transaction):
         router_address: str,
     ):
 
-        if v2_factory_address := ROUTERS[router_address][
-            "factory_address"
-        ].get(2):
-            self.v2_pool_manager = UniswapV2LiquidityPoolManager(
-                factory_address=v2_factory_address
-            )
+        self.routers = _routers
 
-        if v3_factory_address := ROUTERS[router_address][
-            "factory_address"
-        ].get(3):
-            self.v3_pool_manager = UniswapV3LiquidityPoolManager(
-                factory_address=v3_factory_address
+        if router_address not in self.routers.keys():
+            raise ValueError(f"Router address {router_address} unknown!")
+
+        try:
+            self.v2_pool_manager = UniswapV2LiquidityPoolManager(
+                factory_address=self.routers[router_address][
+                    "factory_address"
+                ][2]
             )
+        except:
+            pass
+
+        try:
+            self.v3_pool_manager = UniswapV3LiquidityPoolManager(
+                factory_address=self.routers[router_address][
+                    "factory_address"
+                ][3]
+            )
+        except:
+            pass
 
         self.hash = tx_hash
         self.nonce = tx_nonce
@@ -89,6 +100,17 @@ class UniswapTransaction(Transaction):
             if (hash := self.func_params.get("previousBlockhash"))
             else None
         )
+
+    @classmethod
+    def add_router(cls, router_address: str, router_dict: dict):
+
+        print(f"adding router {router_address}")
+
+        router_address = web3.Web3.toChecksumAddress(router_address)
+        if router_address in _routers.keys():
+            raise ValueError("Router address already known!")
+
+        _routers[router_address] = router_dict
 
     def simulate(
         self,
