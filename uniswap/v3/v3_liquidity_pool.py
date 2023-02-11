@@ -650,27 +650,10 @@ class BaseV3LiquidityPool(ABC):
         # determine whether the swap is token0 -> token1
         zeroForOne = True if token_in == self.token0 else False
 
-        try:
-            # set the inputs for the swap (applying overrides as needed)
-            _liquidity = None
-            _sqrt_price_x96 = None
-            _tick = None
-            if override_state is not None:
-                for key, value in override_state.items():
-                    if key == "liquidity":
-                        _liquidity = value
-                    elif key == "sqrt_price_x96":
-                        _sqrt_price_x96 = value
-                    elif key == "tick":
-                        _tick = value
-                    #
-                    # TODO:
-                    # elif key == "tick_data":
-                    #     _tick_data = value
-                    # elif key == "tick_bitmap":
-                    #     _tick_bitmap = value
-                    #
+        if override_state is None:
+            override_state = {}
 
+        try:
             # delegate calculations to the ported `swap` function
             (amount0_delta, amount1_delta, *_,) = self.__UniswapV3Pool_swap(
                 zeroForOne=zeroForOne,
@@ -680,9 +663,13 @@ class BaseV3LiquidityPool(ABC):
                     if zeroForOne
                     else TickMath.MAX_SQRT_RATIO - 1
                 ),
-                override_start_liquidity=_liquidity,
-                override_start_sqrt_price_x96=_sqrt_price_x96,
-                override_start_tick=_tick,
+                override_start_liquidity=override_state.get("liquidity"),
+                override_start_sqrt_price_x96=override_state.get(
+                    "sqrt_price_x96"
+                ),
+                override_tick=override_state.get("tick"),
+                override_tick_bitmap=override_state.get("tick_bitmap"),
+                override_tick_data=override_state.get("tick_data"),
             )
         except EVMRevertError as e:
             raise LiquidityPoolError(f"Simulated execution reverted: {e}")
@@ -751,27 +738,10 @@ class BaseV3LiquidityPool(ABC):
         # determine whether the swap is token0 -> token1
         zeroForOne = True if token_out == self.token1 else False
 
-        try:
-            _liquidity = None
-            _sqrt_price_x96 = None
-            _tick = None
-            # set the inputs for the swap (applying overrides as needed)
-            if override_state is not None:
-                for key, value in override_state.items():
-                    if key == "liquidity":
-                        _liquidity = value
-                    elif key == "sqrt_price_x96":
-                        _sqrt_price_x96 = value
-                    elif key == "tick":
-                        _tick = value
-                    #
-                    # TODO:
-                    # elif key == "tick_data":
-                    #     _tick_data = value
-                    # elif key == "tick_bitmap":
-                    #     _tick_bitmap = value
-                    #
+        if override_state is None:
+            override_state = {}
 
+        try:
             # delegate calculations to the ported `swap` function
             (amount0_delta, amount1_delta, *_,) = self.__UniswapV3Pool_swap(
                 zeroForOne=zeroForOne,
@@ -781,9 +751,13 @@ class BaseV3LiquidityPool(ABC):
                     if zeroForOne
                     else TickMath.MAX_SQRT_RATIO - 1
                 ),
-                override_start_liquidity=_liquidity,
-                override_start_sqrt_price_x96=_sqrt_price_x96,
-                override_start_tick=_tick,
+                override_start_liquidity=override_state.get("liquidity"),
+                override_start_sqrt_price_x96=override_state.get(
+                    "sqrt_price_x96"
+                ),
+                override_tick=override_state.get("tick"),
+                override_tick_bitmap=override_state.get("tick_bitmap"),
+                override_tick_data=override_state.get("tick_data"),
             )
         except EVMRevertError as e:
             raise LiquidityPoolError(f"Simulated execution reverted: {e}")
@@ -970,7 +944,8 @@ class BaseV3LiquidityPool(ABC):
         token_in_quantity: Optional[int] = None,
         token_out: Optional[Erc20Token] = None,
         token_out_quantity: Optional[int] = None,
-    ) -> Tuple[int, int, int, int, int]:
+        override_state: Optional[dict] = None,
+    ) -> dict:
         """
         [TBD]
         """
@@ -981,18 +956,10 @@ class BaseV3LiquidityPool(ABC):
         ):
             raise ValueError
 
-        # assert (token_in and token_in_quantity) or (
-        #     token_out and token_out_quantity
-        # )
-
         if token_in and token_out:
             raise ValueError(
                 "Incompatible options! Provide token_in or token_out, but not both"
             )
-
-        # assert not (
-        #     token_in and token_out
-        # ), "Incompatible options! Provide a token in/out and associated quantity, but not both"
 
         if token_in and token_in not in (self.token0, self.token1):
             raise LiquidityPoolError("token_in not found!")
@@ -1004,6 +971,9 @@ class BaseV3LiquidityPool(ABC):
             zeroForOne = True if token_in == self.token0 else False
         elif token_out is not None and token_out_quantity:
             zeroForOne = True if token_out == self.token1 else False
+
+        if override_state is None:
+            override_state = {}
 
         try:
             # delegate calculations to the ported `swap` function
@@ -1022,6 +992,13 @@ class BaseV3LiquidityPool(ABC):
                     if zeroForOne
                     else TickMath.MAX_SQRT_RATIO - 1
                 ),
+                override_start_liquidity=override_state.get("liquidity"),
+                override_start_sqrt_price_x96=override_state.get(
+                    "sqrt_price_x96"
+                ),
+                override_tick=override_state.get("tick"),
+                override_tick_bitmap=override_state.get("tick_bitmap"),
+                override_tick_data=override_state.get("tick_data"),
             )
         except EVMRevertError:
             # TODO: better define actions for this exception
