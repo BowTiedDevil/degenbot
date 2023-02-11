@@ -1,12 +1,16 @@
 import time
 from decimal import Decimal
 from fractions import Fraction
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 
 from brownie import Contract, Wei, chain
 from brownie.convert import to_address
 
-from degenbot.exceptions import DeprecationError, ExternalUpdateError
+from degenbot.exceptions import (
+    DeprecationError,
+    ExternalUpdateError,
+    LiquidityPoolError,
+)
 from degenbot.token import Erc20Token
 
 from .abi import UNISWAPV2_LP_ABI
@@ -191,8 +195,8 @@ class LiquidityPool:
         self,
         token_in: Erc20Token,
         token_out_quantity: int,
-        override_reserves_token0: int = 0,
-        override_reserves_token1: int = 0,
+        override_reserves_token0: Optional[int] = None,
+        override_reserves_token1: Optional[int] = None,
     ) -> int:
         """
         Calculates the required token INPUT of token_in for a target OUTPUT at current pool reserves.
@@ -200,9 +204,13 @@ class LiquidityPool:
         """
 
         if not (
-            (override_reserves_token0 == 0 and override_reserves_token1 == 0)
+            (
+                override_reserves_token0 is not None
+                and override_reserves_token1 is not None
+            )
             or (
-                override_reserves_token0 != 0 and override_reserves_token1 != 0
+                override_reserves_token0 is None
+                and override_reserves_token1 is None
             )
         ):
             raise ValueError(
@@ -216,23 +224,31 @@ class LiquidityPool:
         # ), "Must provide override values for both token reserves"
 
         if token_in.address == self.token0.address:
-            if override_reserves_token0 or override_reserves_token1:
-                reserves_in = override_reserves_token0
-                reserves_out = override_reserves_token1
-            else:
-                reserves_in = self.reserves_token0
-                reserves_out = self.reserves_token1
+            reserves_in = (
+                override_reserves_token0
+                if override_reserves_token0 is not None
+                else self.reserves_token0
+            )
+            reserves_out = (
+                override_reserves_token1
+                if override_reserves_token1 is not None
+                else self.reserves_token1
+            )
         elif token_in.address == self.token1.address:
-            if override_reserves_token0 or override_reserves_token1:
-                reserves_in = override_reserves_token1
-                reserves_out = override_reserves_token0
-            else:
-                reserves_in = self.reserves_token1
-                reserves_out = self.reserves_token0
+            reserves_in = (
+                override_reserves_token1
+                if override_reserves_token1 is not None
+                else self.reserves_token1
+            )
+            reserves_out = (
+                override_reserves_token0
+                if override_reserves_token0 is not None
+                else self.reserves_token0
+            )
         else:
-            print(f"Could not identify token_in: {token_in}!")
-            print(f"This pool holds: {self.token0} {self.token1}")
-            raise Exception
+            raise ValueError(
+                f"Could not identify token_in: {token_in}! This pool holds: {self.token0} {self.token1}"
+            )
 
         numerator = reserves_in * token_out_quantity * self.fee.denominator
         denominator = (reserves_out - token_out_quantity) * (
@@ -244,8 +260,8 @@ class LiquidityPool:
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        override_reserves_token0: int = 0,
-        override_reserves_token1: int = 0,
+        override_reserves_token0: Optional[int] = None,
+        override_reserves_token1: Optional[int] = None,
     ) -> int:
         """
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
@@ -253,14 +269,19 @@ class LiquidityPool:
         """
 
         if not (
-            (override_reserves_token0 == 0 and override_reserves_token1 == 0)
+            (
+                override_reserves_token0 is not None
+                and override_reserves_token1 is not None
+            )
             or (
-                override_reserves_token0 != 0 and override_reserves_token1 != 0
+                override_reserves_token0 is None
+                and override_reserves_token1 is None
             )
         ):
             raise ValueError(
                 "Must provide override values for both token reserves"
             )
+
         # assert (
         #     override_reserves_token0 == 0 and override_reserves_token1 == 0
         # ) or (
@@ -272,24 +293,33 @@ class LiquidityPool:
             raise ValueError("token_in_quantity must be > 0")
         # assert token_in_quantity > 0, "zero-input swap!"
 
-        if token_in.address == self.token0.address:
-            if override_reserves_token0 or override_reserves_token1:
-                reserves_in = override_reserves_token0
-                reserves_out = override_reserves_token1
-            else:
-                reserves_in = self.reserves_token0
-                reserves_out = self.reserves_token1
+        if token_in == self.token0:
+            reserves_in = (
+                override_reserves_token0
+                if override_reserves_token0 is not None
+                else self.reserves_token0
+            )
+            reserves_out = (
+                override_reserves_token1
+                if override_reserves_token1 is not None
+                else self.reserves_token1
+            )
+
         elif token_in.address == self.token1.address:
-            if override_reserves_token0 or override_reserves_token1:
-                reserves_in = override_reserves_token1
-                reserves_out = override_reserves_token0
-            else:
-                reserves_in = self.reserves_token1
-                reserves_out = self.reserves_token0
+            reserves_in = (
+                override_reserves_token1
+                if override_reserves_token1 is not None
+                else self.reserves_token1
+            )
+            reserves_out = (
+                override_reserves_token0
+                if override_reserves_token0 is not None
+                else self.reserves_token0
+            )
         else:
-            print(f"Could not identify token_in: {token_in}!")
-            print(f"This pool holds: {self.token0} {self.token1}")
-            raise Exception
+            raise ValueError(
+                f"Could not identify token_in: {token_in}! Pool holds: {self.token0} {self.token1}"
+            )
 
         amount_in_with_fee = token_in_quantity * (
             self.fee.denominator - self.fee.numerator
@@ -346,6 +376,68 @@ class LiquidityPool:
             ) / Decimal(str(token_out_qty * 10**token_out.decimals))
 
         self.calculate_tokens_in_from_ratio_out()
+
+    def simulate_swap(
+        self,
+        token_in: Optional[Erc20Token] = None,
+        token_in_quantity: Optional[int] = None,
+        token_out: Optional[Erc20Token] = None,
+        token_out_quantity: Optional[int] = None,
+        override_state: dict = None,
+    ) -> dict:
+        """
+        [TBD]
+        """
+
+        if not (
+            (token_in and token_in_quantity)
+            or (token_out and token_out_quantity)
+        ):
+            raise ValueError
+
+        if token_in and token_out:
+            raise ValueError(
+                "Incompatible options! Provide token_in or token_out, but not both"
+            )
+
+        if override_state is None:
+            override_state = {}
+        else:
+            print(f"Overridden reserves: {override_state}")
+
+        if token_in and token_in not in (self.token0, self.token1):
+            raise ValueError(
+                f"token_in not found! token_in = {repr(token_in)}, pool holds {self.token0},{self.token1}"
+            )
+        if token_out and token_out not in (self.token0, self.token1):
+            raise ValueError("token_out not found!")
+
+        try:
+            # delegate calculations to the `calculate_tokens_out_from_tokens_in` method
+            token_out_quantity = self.calculate_tokens_out_from_tokens_in(
+                token_in=token_in,
+                token_in_quantity=token_in_quantity,
+                override_reserves_token0=override_state.get("reserves_token0"),
+                override_reserves_token1=override_state.get("reserves_token1"),
+            )
+        except:
+            raise LiquidityPoolError("Could not calculate swap")
+
+        token0_delta = (
+            -token_out_quantity
+            if token_in is self.token1
+            else token_in_quantity
+        )
+        token1_delta = (
+            -token_out_quantity
+            if token_in is self.token0
+            else token_in_quantity
+        )
+
+        return {
+            "reserves_token0": self.reserves_token0 + token0_delta,
+            "reserves_token1": self.reserves_token1 + token1_delta,
+        }
 
     def update_reserves(
         self,
