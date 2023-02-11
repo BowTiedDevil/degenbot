@@ -113,7 +113,9 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                     ]
                 )
             except Erc20TokenError:
-                raise ManagerError("Could not build Erc20Token helpers")
+                raise ManagerError(
+                    f"Could not build Erc20Token helpers for pool {pool_address}"
+                )
 
             # dictionary key pair is sorted by address
             erc20token_helpers = (
