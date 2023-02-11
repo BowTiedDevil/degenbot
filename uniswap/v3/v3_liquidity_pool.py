@@ -667,7 +667,7 @@ class BaseV3LiquidityPool(ABC):
                 override_start_sqrt_price_x96=override_state.get(
                     "sqrt_price_x96"
                 ),
-                override_tick=override_state.get("tick"),
+                override_start_tick=override_state.get("tick"),
                 override_tick_bitmap=override_state.get("tick_bitmap"),
                 override_tick_data=override_state.get("tick_data"),
             )
@@ -755,7 +755,7 @@ class BaseV3LiquidityPool(ABC):
                 override_start_sqrt_price_x96=override_state.get(
                     "sqrt_price_x96"
                 ),
-                override_tick=override_state.get("tick"),
+                override_start_tick=override_state.get("tick"),
                 override_tick_bitmap=override_state.get("tick_bitmap"),
                 override_tick_data=override_state.get("tick_data"),
             )
@@ -996,7 +996,7 @@ class BaseV3LiquidityPool(ABC):
                 override_start_sqrt_price_x96=override_state.get(
                     "sqrt_price_x96"
                 ),
-                override_tick=override_state.get("tick"),
+                override_start_tick=override_state.get("tick"),
                 override_tick_bitmap=override_state.get("tick_bitmap"),
                 override_tick_data=override_state.get("tick_data"),
             )
