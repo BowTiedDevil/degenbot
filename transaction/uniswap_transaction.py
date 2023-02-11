@@ -114,9 +114,10 @@ class UniswapTransaction(Transaction):
         self,
         func_name: Optional[str] = None,
         func_params: Optional[dict] = None,
-    ) -> dict:
+    ) -> List[dict]:
         """
-        Take a Uniswap V2 / V3 transaction (specified by name and a dictionary of parameters to that function and return the state dictionary associated with a
+        Take a Uniswap V2 / V3 transaction (specified by name and a dictionary of parameters to that function)
+        and return a list of state dictionaries for of all pools associated with the transaction
         """
 
         def v2_swap_exact_in(
