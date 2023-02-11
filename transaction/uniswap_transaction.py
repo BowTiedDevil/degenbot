@@ -123,13 +123,13 @@ class UniswapTransaction(Transaction):
             params: dict,
             unwrapped_input: Optional[bool] = False,
         ) -> list:
+
             pool_objects: List[LiquidityPool] = []
             for token_addresses in itertools.pairwise(params.get("path")):
                 try:
                     pool_helper: LiquidityPool = self.v2_pool_manager.get_pool(
                         token_addresses=token_addresses
                     )
-
                 except LiquidityPoolError:
                     raise TransactionError(
                         f"Liquidity pool could not be build for token pair {token_addresses[0]} - {token_addresses[1]}"
@@ -222,15 +222,12 @@ class UniswapTransaction(Transaction):
             unwrapped_input: Optional[bool] = False,
         ) -> list:
 
-            print(params)
-
             pool_objects: List[LiquidityPool] = []
             for token_addresses in itertools.pairwise(params.get("path")):
                 try:
                     pool_helper: LiquidityPool = self.v2_pool_manager.get_pool(
                         token_addresses=token_addresses
                     )
-
                 except LiquidityPoolError:
                     raise TransactionError(
                         f"Liquidity pool could not be build for token pair {token_addresses[0]} - {token_addresses[1]}"
@@ -280,9 +277,9 @@ class UniswapTransaction(Transaction):
                     token_out_quantity=token_out_quantity,
                 )
 
-                print(f"{i}: {token_in} -> {token_out}")
-                print(f"{current_state=}")
-                print(f"{future_state=}")
+                # print(f"{i}: {token_in} -> {token_out}")
+                # print(f"{current_state=}")
+                # print(f"{future_state=}")
 
                 if (
                     future_state["reserves_token0"]
