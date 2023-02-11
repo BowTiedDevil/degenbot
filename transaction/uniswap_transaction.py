@@ -4,7 +4,6 @@ import itertools
 from typing import List, Optional
 from degenbot.exceptions import (
     LiquidityPoolError,
-    Erc20TokenError,
     EVMRevertError,
     ManagerError,
     TransactionError,
@@ -22,7 +21,8 @@ from degenbot.uniswap.v3.abi import (
 from degenbot.manager import Erc20TokenHelperManager
 
 
-# maintain an internal dict of known mainnet routers
+# Internal dict of known router contracts, pre-populated with mainnet addresses
+# Stored at the class level so routers can be added via class method `add_router`
 _routers = {
     "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F": {
         "name": "Sushiswap: Router",
@@ -103,8 +103,6 @@ class UniswapTransaction(Transaction):
 
     @classmethod
     def add_router(cls, router_address: str, router_dict: dict):
-
-        print(f"adding router {router_address}")
 
         router_address = web3.Web3.toChecksumAddress(router_address)
         if router_address in _routers.keys():
@@ -219,6 +217,115 @@ class UniswapTransaction(Transaction):
 
             return future_pool_states
 
+        def v2_swap_exact_out(
+            params: dict,
+            unwrapped_input: Optional[bool] = False,
+        ) -> list:
+
+            print(params)
+
+            pool_objects: List[LiquidityPool] = []
+            for token_addresses in itertools.pairwise(params.get("path")):
+                try:
+                    pool_helper: LiquidityPool = self.v2_pool_manager.get_pool(
+                        token_addresses=token_addresses
+                    )
+
+                except LiquidityPoolError:
+                    raise TransactionError(
+                        f"Liquidity pool could not be build for token pair {token_addresses[0]} - {token_addresses[1]}"
+                    )
+                else:
+                    pool_objects.append(pool_helper)
+
+            # the pool manager creates Erc20Token objects as it works,
+            # so calls to `get_erc20token` will return the previously-created helper
+            token_in = Erc20TokenHelperManager().get_erc20token(
+                address=params["path"][0],
+                silent=True,
+                min_abi=True,
+                unload_brownie_contract_after_init=True,
+            )
+            token_out = Erc20TokenHelperManager().get_erc20token(
+                address=params["path"][-1],
+                silent=True,
+                min_abi=True,
+                unload_brownie_contract_after_init=True,
+            )
+
+            swap_out_quantity = params.get("amountOut")
+
+            if unwrapped_input:
+                swap_in_quantity = self.value
+
+            # predict future pool states assuming the swap executes in isolation
+            # work through the pools backwards, since the swap will execute at a defined output, with input floating
+            future_pool_states = []
+            for i, pool in enumerate(pool_objects[::-1]):
+                token_out_quantity = (
+                    swap_out_quantity if i == 0 else token_out_quantity
+                )
+
+                # i == 0 for last pool in path, take from 'path' in func_params
+                # otherwise, set token_out equal to token_in from previous iteration
+                # and token_in equal to the other token held by the pool
+                token_out = token_out if i == 0 else token_in
+                token_in = (
+                    pool.token0 if token_out is pool.token1 else pool.token1
+                )
+
+                current_state = pool.state
+                future_state = pool.simulate_swap(
+                    token_out=token_out,
+                    token_out_quantity=token_out_quantity,
+                )
+
+                print(f"{i}: {token_in} -> {token_out}")
+                print(f"{current_state=}")
+                print(f"{future_state=}")
+
+                if (
+                    future_state["reserves_token0"]
+                    > current_state["reserves_token0"]
+                ):
+                    token_in_quantity = (
+                        future_state["reserves_token0"]
+                        - current_state["reserves_token0"]
+                    )
+                elif (
+                    future_state["reserves_token1"]
+                    > current_state["reserves_token1"]
+                ):
+                    token_in_quantity = (
+                        future_state["reserves_token1"]
+                        - current_state["reserves_token1"]
+                    )
+                else:
+                    raise ValueError("Swap direction could not be identified")
+
+                future_pool_states.append(
+                    [
+                        pool,
+                        future_state,
+                    ]
+                )
+
+                print(f"Simulating swap through pool: {pool}")
+                print(
+                    f"\t{token_in_quantity} {token_in} -> {token_out_quantity} {token_out}"
+                )
+                print("\t(CURRENT)")
+                print(f"\t{pool.token0}: {current_state['reserves_token0']}")
+                print(f"\t{pool.token1}: {current_state['reserves_token1']}")
+                print(f"\t(FUTURE)")
+                print(f"\t{pool.token0}: {future_state['reserves_token0']}")
+                print(f"\t{pool.token1}: {future_state['reserves_token1']}")
+
+            # if swap_in_quantity < token_in_quantity:
+            #     raise TransactionError("msg.value too low for swap")
+
+            return future_pool_states
+
         if func_name is None:
             func_name = self.func_name
 
@@ -227,379 +334,305 @@ class UniswapTransaction(Transaction):
 
         future_state = []
 
-        if False:
-            pass
+        try:
 
-        # Start of UniswapV2 functions
+            # -----------------------------------------------------
+            # UniswapV2 functions
+            # -----------------------------------------------------
 
-        # if func_name in (
-        #     "swapExactTokensForETH",
-        #     "swapExactTokensForETHSupportingFeeOnTransferTokens",
-        # ):
-        #     print()
-        #     print(func_name)
-        #     future_state.extend(v2_swap_exact_in(func_params))
+            # TODO: ensure all V2/V3 tokens are defined
 
-        elif func_name in (
-            "swapExactETHForTokens",
-            "swapExactETHForTokensSupportingFeeOnTransferTokens",
-        ):
-            print()
-            print(func_name)
-            future_state.extend(
-                v2_swap_exact_in(func_params, unwrapped_input=True)
-            )
+            if func_name in (
+                "swapExactTokensForETH",
+                "swapExactTokensForETHSupportingFeeOnTransferTokens",
+            ):
+                print()
+                print(func_name)
+                future_state.extend(v2_swap_exact_in(func_params))
 
-        # short-circuit until all functions have been defined
-        elif True:
-            pass
+            elif func_name in (
+                "swapExactETHForTokens",
+                "swapExactETHForTokensSupportingFeeOnTransferTokens",
+            ):
+                print()
+                print(func_name)
+                future_state.extend(
+                    v2_swap_exact_in(func_params, unwrapped_input=True)
+                )
 
-        elif func_name in [
-            "swapExactTokensForTokens",
-            "swapExactTokensForTokensSupportingFeeOnTransferTokens",
-        ]:
+            elif func_name in [
+                "swapExactTokensForTokens",
+                "swapExactTokensForTokensSupportingFeeOnTransferTokens",
+            ]:
+                print()
+                print(func_name)
+                future_state.extend(v2_swap_exact_in(func_params))
 
-            print(func_name)
+            elif func_name in ("swapTokensForExactETH"):
+                print()
+                print(func_name)
+                future_state.extend(v2_swap_exact_out(params=func_params))
 
-            token_in_quantity = func_params["amountIn"]
-            token_out_min_quantity = func_params["amountOutMin"]
+            elif func_name in ("swapTokensForExactTokens"):
+                print()
+                print(func_name)
+                future_state.extend(v2_swap_exact_out(params=func_params))
 
-            # get the V2 pool helpers
-            try:
-                token_objects = [
-                    Erc20TokenHelperManager().get_erc20token(
-                        address=token_address,
+            elif func_name in ("swapETHForExactTokens"):
+                print()
+                print(func_name)
+                future_state.extend(
+                    v2_swap_exact_out(params=func_params, unwrapped_input=True)
+                )
+
+            # -----------------------------------------------------
+            # UniswapV3 functions
+            # -----------------------------------------------------
+            elif func_name == "multicall":
+                # print(transaction_func)
+                future_state = self.simulate_multicall()
+            elif func_name == "exactInputSingle":
+                print()
+                print(func_name)
+                return
+
+                # decode with Router ABI
+                # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
+                try:
+                    (
+                        tokenIn,
+                        tokenOut,
+                        fee,
+                        recipient,
+                        deadline,
+                        amountIn,
+                        amountOutMinimum,
+                        sqrtPriceLimitX96,
+                    ) = func_params.get("params")
+                except:
+                    pass
+
+                # decode with Router2 ABI
+                # https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
+                try:
+                    (
+                        tokenIn,
+                        tokenOut,
+                        fee,
+                        recipient,
+                        amountIn,
+                        amountOutMinimum,
+                        sqrtPriceLimitX96,
+                    ) = func_params.get("params")
+                except:
+                    pass
+
+                try:
+                    # get the V3 pool involved in the swap
+                    v3_pool = self.v3_pool_manager.get_pool(
+                        token_addresses=(tokenIn, tokenOut),
+                        pool_fee=fee,
+                    )
+                except (ManagerError, LiquidityPoolError) as e:
+                    raise TransactionError(
+                        f"Could not get pool (via tokens): {e}"
+                    )
+                except:
+                    raise
+
+                print(f"Predicting output of swap through pool: {v3_pool}")
+
+                try:
+                    token_in_object = Erc20TokenHelperManager().get_erc20token(
+                        address=tokenIn,
                         silent=True,
                         min_abi=True,
                         unload_brownie_contract_after_init=True,
                     )
-                    for token_address in func_params["path"]
-                ]
-            except Erc20TokenError:
-                raise TransactionError(
-                    "Could not load Erc20Token objects for complete swap path"
-                )
+                except Exception as e:
+                    print(e)
+                    print(type(e))
+                    raise
 
-            token_in = token_objects[0]
-            token_out = token_objects[-1]
-
-            print(
-                f"In: {token_in_quantity/(10**token_in.decimals):.4f} {token_in}"
-            )
-            print(
-                f"Min. out: {token_out_min_quantity/(10**token_out.decimals):.4f} {token_out}"
-            )
-
-            v2_pools = []
-            for token_pair in itertools.pairwise(token_objects):
+                starting_state = v3_pool.state
                 try:
-                    v2_pools.append(
-                        self.v2_pool_manager.get_pool(
-                            token_addresses=[
-                                token.address for token in token_pair
-                            ]
-                        )
+                    final_state = v3_pool.simulate_swap(
+                        token_in=token_in_object,
+                        token_in_quantity=amountIn,
                     )
-                except LiquidityPoolError:
-                    raise TransactionError(
-                        "Could not load LiquidityPool objects for complete swap path"
-                    )
+                except EVMRevertError as e:
+                    print(f"TRANSACTION CANNOT BE SIMULATED!: {e}")
+                    return
 
-            print(f"{' -> '.join([pool.name for pool in v2_pools])}")
+                print(f"{starting_state=}")
+                print(f"{final_state=}")
 
-        elif func_name in ("swapTokensForExactETH"):
-            pass
-
-        elif func_name in ("swapETHForExactTokens"):
-
-            pass
-
-        elif func_name == "swapExactTokensForTokens":
-
-            print()
-            print(transaction_func)
-
-            swap_input_amount = func_params["amountIn"]
-            swap_input_token = func_params["path"][0]
-
-            # iterate through the pools and simulate the output of the transaction using the pool's
-            # `calculate_tokens_out_from_tokens_in` method
-
-            for i, pool in enumerate(self.pools):
-                if i == 0:
-                    pool_amount_in = swap_input_amount
-                    pool_token_in = (
-                        pool.token0
-                        if swap_input_token == pool.token0.address
-                        else pool.token1
-                    )
-                else:
-                    pool_amount_in = pool_amount_out
-                    # output of the last swap becomes input to this swap
-                    pool_token_in = pool_token_out
-
-                pool_amount_out = pool.calculate_tokens_out_from_tokens_in(
-                    token_in=pool_token_in,
-                    token_in_quantity=pool_amount_in,
-                )
-                pool_token_out = (
-                    pool.token1
-                    if pool_token_in == pool.token0
-                    else pool.token0
-                )
-
-                # predict the change in reserves for this pool
-                # add to token0 reserves if the input is in token0 position
-                if pool_token_in == pool.token0:
-                    token0_delta = pool_amount_in
-                    token1_delta = -pool_amount_out
-                elif pool_token_in == pool.token1:
-                    token0_delta = -pool_amount_out
-                    token1_delta = pool_amount_in
-                pool_state = {
-                    "pool": pool.name,
-                    "reserves0": pool.reserves_token0 + token0_delta,
-                    "reserves1": pool.reserves_token1 + token1_delta,
-                }
-                future_state.append(pool_state)
-
-        # Start of UniswapV3 functions
-        elif func_name == "multicall":
-            # print(transaction_func)
-            future_state = self.simulate_multicall()
-        elif func_name == "exactInputSingle":
-            print(func_name)
-
-            # decode with Router ABI
-            # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
-            try:
-                (
-                    tokenIn,
-                    tokenOut,
-                    fee,
-                    recipient,
-                    deadline,
-                    amountIn,
-                    amountOutMinimum,
-                    sqrtPriceLimitX96,
-                ) = func_params.get("params")
-            except:
-                pass
-
-            # decode with Router2 ABI
-            # https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
-            try:
-                (
-                    tokenIn,
-                    tokenOut,
-                    fee,
-                    recipient,
-                    amountIn,
-                    amountOutMinimum,
-                    sqrtPriceLimitX96,
-                ) = func_params.get("params")
-            except:
-                pass
-
-            try:
-                # get the V3 pool involved in the swap
-                v3_pool = self.v3_pool_manager.get_pool(
-                    token_addresses=(tokenIn, tokenOut),
-                    pool_fee=fee,
-                )
-            except (ManagerError, LiquidityPoolError) as e:
-                raise TransactionError(f"Could not get pool (via tokens): {e}")
-            except:
-                raise
-
-            print(f"Predicting output of swap through pool: {v3_pool}")
-
-            try:
-                token_in_object = Erc20TokenHelperManager().get_erc20token(
-                    address=tokenIn,
-                    silent=True,
-                    min_abi=True,
-                    unload_brownie_contract_after_init=True,
-                )
-            except Exception as e:
-                print(e)
-                print(type(e))
-                raise
-
-            starting_state = v3_pool.state
-            try:
-                final_state = v3_pool.simulate_swap(
-                    token_in=token_in_object,
-                    token_in_quantity=amountIn,
-                )
-            except EVMRevertError as e:
-                print(f"TRANSACTION CANNOT BE SIMULATED!: {e}")
+            elif func_name == "exactInput":
+                print()
+                print(func_name)
                 return
 
-            print(f"{starting_state=}")
-            print(f"{final_state=}")
+                try:
+                    (
+                        exactInputParams_path,
+                        exactInputParams_recipient,
+                        exactInputParams_deadline,
+                        exactInputParams_amountIn,
+                        exactInputParams_amountOutMinimum,
+                    ) = func_params.get("params")
+                except:
+                    pass
 
-        elif func_name == "exactInput":
-            # print(transaction_func)
-            # TODO: remove once this function is fully implemented
-            return
-            try:
-                (
-                    exactInputParams_path,
-                    exactInputParams_recipient,
-                    exactInputParams_deadline,
-                    exactInputParams_amountIn,
-                    exactInputParams_amountOutMinimum,
-                ) = func_params.get("params")
-            except:
-                pass
+                try:
+                    (
+                        exactInputParams_path,
+                        exactInputParams_recipient,
+                        exactInputParams_amountIn,
+                        exactInputParams_amountOutMinimum,
+                    ) = func_params.get("params")
+                except:
+                    pass
 
-            try:
-                (
-                    exactInputParams_path,
-                    exactInputParams_recipient,
-                    exactInputParams_amountIn,
-                    exactInputParams_amountOutMinimum,
-                ) = func_params.get("params")
-            except:
-                pass
-
-            # decode the path
-            path_pos = 0
-            exactInputParams_path_decoded = []
-            # read alternating 20 and 3 byte chunks from the encoded path,
-            # store each address (hex) and fee (int)
-            for byte_length in itertools.cycle((20, 3)):
-                # stop at the end
-                if path_pos == len(exactInputParams_path):
-                    break
-                elif (
-                    byte_length == 20
-                    and len(exactInputParams_path) >= path_pos + byte_length
-                ):
-                    address = exactInputParams_path[
-                        path_pos : path_pos + byte_length
-                    ].hex()
-                    exactInputParams_path_decoded.append(address)
-                elif (
-                    byte_length == 3
-                    and len(exactInputParams_path) >= path_pos + byte_length
-                ):
-                    fee = int(
-                        exactInputParams_path[
+                # decode the path
+                path_pos = 0
+                exactInputParams_path_decoded = []
+                # read alternating 20 and 3 byte chunks from the encoded path,
+                # store each address (hex) and fee (int)
+                for byte_length in itertools.cycle((20, 3)):
+                    # stop at the end
+                    if path_pos == len(exactInputParams_path):
+                        break
+                    elif (
+                        byte_length == 20
+                        and len(exactInputParams_path)
+                        >= path_pos + byte_length
+                    ):
+                        address = exactInputParams_path[
                             path_pos : path_pos + byte_length
-                        ].hex(),
-                        16,
-                    )
-                    exactInputParams_path_decoded.append(fee)
-                path_pos += byte_length
+                        ].hex()
+                        exactInputParams_path_decoded.append(address)
+                    elif (
+                        byte_length == 3
+                        and len(exactInputParams_path)
+                        >= path_pos + byte_length
+                    ):
+                        fee = int(
+                            exactInputParams_path[
+                                path_pos : path_pos + byte_length
+                            ].hex(),
+                            16,
+                        )
+                        exactInputParams_path_decoded.append(fee)
+                    path_pos += byte_length
 
-            # print(f"\tpath = {exactInputParams_path_decoded}")
-            # print(f"\trecipient = {exactInputParams_recipient}")
-            # if exactInputParams_deadline:
-            #     print(f"\tdeadline = {exactInputParams_deadline}")
-            # print(f"\tamountIn = {exactInputParams_amountIn}")
-            # print(f"\tamountOutMinimum = {exactInputParams_amountOutMinimum}")
-        elif func_name == "exactOutputSingle":
-            pass
+                # print(f"\tpath = {exactInputParams_path_decoded}")
+                # print(f"\trecipient = {exactInputParams_recipient}")
+                # if exactInputParams_deadline:
+                #     print(f"\tdeadline = {exactInputParams_deadline}")
+                # print(f"\tamountIn = {exactInputParams_amountIn}")
+                # print(f"\tamountOutMinimum = {exactInputParams_amountOutMinimum}")
+            elif func_name == "exactOutputSingle":
+                print()
+                print(func_name)
+                return
 
-        elif func_name == "exactOutput":
-            # Router ABI
-            try:
-                (
-                    exactOutputParams_path,
-                    exactOutputParams_recipient,
-                    exactOutputParams_deadline,
-                    exactOutputParams_amountOut,
-                    exactOutputParams_amountInMaximum,
-                ) = func_params.get("params")
-            except Exception as e:
-                pass
+            elif func_name == "exactOutput":
+                print()
+                print(func_name)
+                return
+                # Router ABI
+                try:
+                    (
+                        exactOutputParams_path,
+                        exactOutputParams_recipient,
+                        exactOutputParams_deadline,
+                        exactOutputParams_amountOut,
+                        exactOutputParams_amountInMaximum,
+                    ) = func_params.get("params")
+                except Exception as e:
+                    pass
 
-            # Router2 ABI
-            try:
-                (
-                    exactOutputParams_path,
-                    exactOutputParams_recipient,
-                    exactOutputParams_amountOut,
-                    exactOutputParams_amountInMaximum,
-                ) = func_params.get("params")
-            except Exception as e:
-                pass
+                # Router2 ABI
+                try:
+                    (
+                        exactOutputParams_path,
+                        exactOutputParams_recipient,
+                        exactOutputParams_amountOut,
+                        exactOutputParams_amountInMaximum,
+                    ) = func_params.get("params")
+                except Exception as e:
+                    pass
 
-            # decode the path
-            path_pos = 0
-            exactOutputParams_path_decoded = []
-            # read alternating 20 and 3 byte chunks from the encoded path,
-            # store each address (hex) and fee (int)
-            for byte_length in itertools.cycle((20, 3)):
-                # stop at the end
-                if path_pos == len(exactOutputParams_path):
-                    break
-                elif (
-                    byte_length == 20
-                    and len(exactOutputParams_path) >= path_pos + byte_length
-                ):
-                    address = exactOutputParams_path[
-                        path_pos : path_pos + byte_length
-                    ].hex()
-                    exactOutputParams_path_decoded.append(address)
-                elif (
-                    byte_length == 3
-                    and len(exactOutputParams_path) >= path_pos + byte_length
-                ):
-                    fee = int(
-                        exactOutputParams_path[
+                # decode the path
+                path_pos = 0
+                exactOutputParams_path_decoded = []
+                # read alternating 20 and 3 byte chunks from the encoded path,
+                # store each address (hex) and fee (int)
+                for byte_length in itertools.cycle((20, 3)):
+                    # stop at the end
+                    if path_pos == len(exactOutputParams_path):
+                        break
+                    elif (
+                        byte_length == 20
+                        and len(exactOutputParams_path)
+                        >= path_pos + byte_length
+                    ):
+                        address = exactOutputParams_path[
                             path_pos : path_pos + byte_length
-                        ].hex(),
-                        16,
-                    )
-                    exactOutputParams_path_decoded.append(fee)
-                path_pos += byte_length
+                        ].hex()
+                        exactOutputParams_path_decoded.append(address)
+                    elif (
+                        byte_length == 3
+                        and len(exactOutputParams_path)
+                        >= path_pos + byte_length
+                    ):
+                        fee = int(
+                            exactOutputParams_path[
+                                path_pos : path_pos + byte_length
+                            ].hex(),
+                            16,
+                        )
+                        exactOutputParams_path_decoded.append(fee)
+                    path_pos += byte_length
 
-            # print(f" • path = {exactOutputParams_path_decoded}")
-            # print(f" • recipient = {exactOutputParams_recipient}")
-            # if exactOutputParams_deadline:
-            #     print(f" • deadline = {exactOutputParams_deadline}")
-            # print(f" • amountOut = {exactOutputParams_amountOut}")
-            # print(
-            #     f" • amountamountInMaximum = {exactOutputParams_amountInMaximum}"
-            # )
-        elif func_name == "swapExactTokensForTokens":
-            # print(transaction_func)
-            # TODO: remove once this function is fully implemented
-            return
-        elif func_name == "swapTokensForExactTokens":
-            # print(transaction_func)
-            # TODO: remove once this function is fully implemented
-            return
-        elif func_name in (
-            "addLiquidity",
-            "addLiquidityETH",
-            "removeLiquidity",
-            "removeLiquidityETH",
-            "removeLiquidityETHWithPermit",
-            "removeLiquidityETHSupportingFeeOnTransferTokens",
-            "removeLiquidityETHWithPermitSupportingFeeOnTransferTokens",
-            "removeLiquidityWithPermit",
-            "swapExactTokensForTokensSupportingFeeOnTransferTokens",
-            "swapExactETHForTokensSupportingFeeOnTransferTokens",
-            "swapExactTokensForETHSupportingFeeOnTransferTokens",
-        ):
-            # TODO: add prediction for these functions
-            print(f"TODO: {func_name}")
-        elif func_name in (
-            "refundETH",
-            "selfPermit",
-            "selfPermitAllowed",
-            "unwrapWETH9",
-        ):
-            # ignore, these functions do not affect future pool states
-            pass
+                # print(f" • path = {exactOutputParams_path_decoded}")
+                # print(f" • recipient = {exactOutputParams_recipient}")
+                # if exactOutputParams_deadline:
+                #     print(f" • deadline = {exactOutputParams_deadline}")
+                # print(f" • amountOut = {exactOutputParams_amountOut}")
+                # print(
+                #     f" • amountamountInMaximum = {exactOutputParams_amountInMaximum}"
+                # )
+            elif func_name in (
+                "addLiquidity",
+                "addLiquidityETH",
+                "removeLiquidity",
+                "removeLiquidityETH",
+                "removeLiquidityETHWithPermit",
+                "removeLiquidityETHSupportingFeeOnTransferTokens",
+                "removeLiquidityETHWithPermitSupportingFeeOnTransferTokens",
+                "removeLiquidityWithPermit",
+                "swapExactTokensForTokensSupportingFeeOnTransferTokens",
+                "swapExactETHForTokensSupportingFeeOnTransferTokens",
+                "swapExactTokensForETHSupportingFeeOnTransferTokens",
+            ):
+                # TODO: add prediction for these functions
+                print(f"TODO: {func_name}")
+            elif func_name in (
+                "refundETH",
+                "selfPermit",
+                "selfPermitAllowed",
+                "unwrapWETH9",
+            ):
+                # ignore, these functions do not affect future pool states
+                pass
+            else:
+                print(f"\tUNHANDLED function: {func_name}")
+
+        except LiquidityPoolError:
+            raise TransactionError("Transaction could not be calculated")
         else:
-            print(f"\tUNHANDLED function: {func_name}")
-
-        return future_state
+            return future_state
 
     def simulate_multicall(self):
 
