@@ -143,7 +143,7 @@ class Erc20Token:
     def __eq__(self, other) -> bool:
         if not isinstance(other, Erc20Token):
             raise TypeError(
-                "Equality can only be evaluated against another Erc20Token"
+                f"Equality can only be evaluated against another Erc20Token. Found {type(other)}"
             )
         return self.address.lower() == other.address.lower()
 
