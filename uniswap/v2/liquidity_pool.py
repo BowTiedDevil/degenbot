@@ -193,8 +193,9 @@ class LiquidityPool:
 
     def calculate_tokens_in_from_tokens_out(
         self,
-        token_in: Erc20Token,
         token_out_quantity: int,
+        token_in: Optional[Erc20Token] = None,
+        token_out: Optional[Erc20Token] = None,
         override_reserves_token0: Optional[int] = None,
         override_reserves_token1: Optional[int] = None,
     ) -> int:
@@ -217,37 +218,69 @@ class LiquidityPool:
                 "Must provide override values for both token reserves"
             )
 
-        # assert (
-        #     override_reserves_token0 == 0 and override_reserves_token1 == 0
-        # ) or (
-        #     override_reserves_token0 != 0 and override_reserves_token1 != 0
-        # ), "Must provide override values for both token reserves"
+        if token_in is not None:
+            if token_in not in [self.token0, self.token1]:
+                raise ValueError(
+                    f"Could not identify token_in: {token_in}! This pool holds: {self.token0} {self.token1}"
+                )
+            if token_in == self.token0:
+                reserves_in = (
+                    override_reserves_token0
+                    if override_reserves_token0 is not None
+                    else self.reserves_token0
+                )
+                reserves_out = (
+                    override_reserves_token1
+                    if override_reserves_token1 is not None
+                    else self.reserves_token1
+                )
+            elif token_in is not None and token_in == self.token1:
+                reserves_in = (
+                    override_reserves_token1
+                    if override_reserves_token1 is not None
+                    else self.reserves_token1
+                )
+                reserves_out = (
+                    override_reserves_token0
+                    if override_reserves_token0 is not None
+                    else self.reserves_token0
+                )
+            else:
+                raise ValueError("wtf happened here? (token_in)")
+        elif token_out is not None:
+            if token_out not in [self.token0, self.token1]:
+                raise ValueError(
+                    f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"
+                )
+            if token_out == self.token1:
+                reserves_in = (
+                    override_reserves_token0
+                    if override_reserves_token0 is not None
+                    else self.reserves_token0
+                )
+                reserves_out = (
+                    override_reserves_token1
+                    if override_reserves_token1 is not None
+                    else self.reserves_token1
+                )
+            elif token_out is not None and token_out == self.token0:
+                reserves_in = (
+                    override_reserves_token1
+                    if override_reserves_token1 is not None
+                    else self.reserves_token1
+                )
+                reserves_out = (
+                    override_reserves_token0
+                    if override_reserves_token0 is not None
+                    else self.reserves_token0
+                )
+            else:
+                raise ValueError("wtf happened here? (token_in)")
 
-        if token_in.address == self.token0.address:
-            reserves_in = (
-                override_reserves_token0
-                if override_reserves_token0 is not None
-                else self.reserves_token0
-            )
-            reserves_out = (
-                override_reserves_token1
-                if override_reserves_token1 is not None
-                else self.reserves_token1
-            )
-        elif token_in.address == self.token1.address:
-            reserves_in = (
-                override_reserves_token1
-                if override_reserves_token1 is not None
-                else self.reserves_token1
-            )
-            reserves_out = (
-                override_reserves_token0
-                if override_reserves_token0 is not None
-                else self.reserves_token0
-            )
-        else:
-            raise ValueError(
-                f"Could not identify token_in: {token_in}! This pool holds: {self.token0} {self.token1}"
+        # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
+        if token_out_quantity >= reserves_out - 1:
+            raise LiquidityPoolError(
+                f"Requested amount out exceeds pool reserves"
             )
 
         numerator = reserves_in * token_out_quantity * self.fee.denominator
@@ -304,8 +337,7 @@ class LiquidityPool:
                 if override_reserves_token1 is not None
                 else self.reserves_token1
             )
-
-        elif token_in.address == self.token1.address:
+        elif token_in == self.token1:
             reserves_in = (
                 override_reserves_token1
                 if override_reserves_token1 is not None
@@ -389,16 +421,11 @@ class LiquidityPool:
         [TBD]
         """
 
-        if not (
-            (token_in and token_in_quantity)
-            or (token_out and token_out_quantity)
-        ):
-            raise ValueError
+        if not token_in_quantity and not token_out_quantity:
+            raise ValueError("Quantity not provided")
 
-        if token_in and token_out:
-            raise ValueError(
-                "Incompatible options! Provide token_in or token_out, but not both"
-            )
+        if token_in and token_out and token_in == token_out:
+            raise ValueError("Both tokens are the same!")
 
         if override_state is None:
             override_state = {}
@@ -407,12 +434,25 @@ class LiquidityPool:
 
         if token_in and token_in not in (self.token0, self.token1):
             raise ValueError(
-                f"token_in not found! token_in = {repr(token_in)}, pool holds {self.token0},{self.token1}"
+                f"Token not found! token_in = {repr(token_in)}, pool holds {self.token0},{self.token1}"
             )
         if token_out and token_out not in (self.token0, self.token1):
-            raise ValueError("token_out not found!")
+            raise ValueError(
+                f"Token not found! token_out = {repr(token_out)}, pool holds {self.token0},{self.token1}"
+            )
 
-        try:
+        if token_in is not None and token_in == self.token0:
+            token_out = self.token1
+        elif token_in is not None and token_in == self.token1:
+            token_out = self.token0
+
+        if token_out is not None and token_out == self.token0:
+            token_in = self.token1
+        elif token_out is not None and token_out == self.token1:
+            token_in = self.token0
+
+        if token_in_quantity:
+
             # delegate calculations to the `calculate_tokens_out_from_tokens_in` method
             token_out_quantity = self.calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
@@ -420,24 +460,56 @@ class LiquidityPool:
                 override_reserves_token0=override_state.get("reserves_token0"),
                 override_reserves_token1=override_state.get("reserves_token1"),
             )
-        except:
-            raise LiquidityPoolError("Could not calculate swap")
 
-        token0_delta = (
-            -token_out_quantity
-            if token_in is self.token1
-            else token_in_quantity
-        )
-        token1_delta = (
-            -token_out_quantity
-            if token_in is self.token0
-            else token_in_quantity
-        )
+            print(f"{token_out_quantity=}")
 
-        return {
-            "reserves_token0": self.reserves_token0 + token0_delta,
-            "reserves_token1": self.reserves_token1 + token1_delta,
-        }
+            token0_delta = (
+                -token_out_quantity
+                if token_in is self.token1
+                else token_in_quantity
+            )
+            token1_delta = (
+                -token_out_quantity
+                if token_in is self.token0
+                else token_in_quantity
+            )
+
+            return {
+                "reserves_token0": self.reserves_token0 + token0_delta,
+                "reserves_token1": self.reserves_token1 + token1_delta,
+            }
+        elif token_out_quantity:
+            # delegate calculations to the `calculate_tokens_in_from_tokens_out` method
+            token_in_quantity = self.calculate_tokens_in_from_tokens_out(
+                token_in=token_in,
+                token_out=token_out,
+                token_out_quantity=token_out_quantity,
+                override_reserves_token0=override_state.get("reserves_token0"),
+                override_reserves_token1=override_state.get("reserves_token1"),
+            )
+
+            print(f"{token_in_quantity=}")
+
+            token0_delta = (
+                token_in_quantity
+                if token_in == self.token0
+                else -token_out_quantity
+            )
+            token1_delta = (
+                token_in_quantity
+                if token_in == self.token1
+                else -token_out_quantity
+            )
+            # token1_delta = (
+            #     -token_out_quantity
+            #     if token_in is self.token0
+            #     else token_in_quantity
+            # )
+
+            return {
+                "reserves_token0": self.reserves_token0 + token0_delta,
+                "reserves_token1": self.reserves_token1 + token1_delta,
+            }
 
     def update_reserves(
         self,
