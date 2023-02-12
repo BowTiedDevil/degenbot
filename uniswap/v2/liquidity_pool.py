@@ -419,7 +419,7 @@ class LiquidityPool:
         [TBD]
         """
 
-        if not token_in_quantity and not token_out_quantity:
+        if token_in_quantity is None and token_out_quantity is None:
             raise ValueError("Quantity not provided")
 
         if token_in and token_out and token_in == token_out:
