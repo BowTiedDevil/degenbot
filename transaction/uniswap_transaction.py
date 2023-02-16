@@ -125,8 +125,6 @@ class UniswapTransaction(Transaction):
             unwrapped_input: Optional[bool] = False,
         ) -> list:
 
-            return []
-
             pool_objects: List[LiquidityPool] = []
             for token_addresses in itertools.pairwise(params.get("path")):
                 try:
@@ -224,8 +222,6 @@ class UniswapTransaction(Transaction):
             params: dict,
             unwrapped_input: Optional[bool] = False,
         ) -> list:
-
-            return []
 
             pool_objects: List[LiquidityPool] = []
             for token_addresses in itertools.pairwise(params.get("path")):
