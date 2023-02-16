@@ -397,7 +397,6 @@ class UniswapTransaction(Transaction):
                 print(type(e))
                 raise
 
-            starting_state = v3_pool.state
             try:
                 swap_info, final_state = v3_pool.simulate_swap(
                     token_in=token_in_object,
@@ -406,9 +405,6 @@ class UniswapTransaction(Transaction):
             except EVMRevertError as e:
                 print(f"TRANSACTION CANNOT BE SIMULATED!: {e}")
                 return
-
-            print(f"{starting_state=}")
-            print(f"{final_state=}")
 
             return v3_pool, swap_info, final_state
 
@@ -486,7 +482,6 @@ class UniswapTransaction(Transaction):
                 print(type(e))
                 raise
 
-            starting_state = v3_pool.state
             try:
                 swap_info, final_state = v3_pool.simulate_swap(
                     token_out=token_out_object,
@@ -496,8 +491,6 @@ class UniswapTransaction(Transaction):
             except EVMRevertError as e:
                 print(f"TRANSACTION CANNOT BE SIMULATED!: {e}")
                 return
-
-            print(swap_info)
 
             # swap input is positive from the POV of the pool
             amountIn = max(
@@ -509,9 +502,6 @@ class UniswapTransaction(Transaction):
                 raise TransactionError(
                     f"amountOut ({amountOut}) < amountOutMin ({amountInMaximum})"
                 )
-
-            print(f"{starting_state=}")
-            print(f"{final_state=}")
 
             return (v3_pool, swap_info, final_state)
 
