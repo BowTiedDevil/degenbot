@@ -125,6 +125,8 @@ class UniswapTransaction(Transaction):
             unwrapped_input: Optional[bool] = False,
         ) -> list:
 
+            return []
+
             pool_objects: List[LiquidityPool] = []
             for token_addresses in itertools.pairwise(params.get("path")):
                 try:
@@ -222,6 +224,8 @@ class UniswapTransaction(Transaction):
             params: dict,
             unwrapped_input: Optional[bool] = False,
         ) -> list:
+
+            return []
 
             pool_objects: List[LiquidityPool] = []
             for token_addresses in itertools.pairwise(params.get("path")):
@@ -324,6 +328,193 @@ class UniswapTransaction(Transaction):
 
             return future_pool_states
 
+        def v3_swap_exact_in(params: dict):
+
+            # decode with Router ABI
+            # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
+            try:
+                (
+                    tokenIn,
+                    tokenOut,
+                    fee,
+                    recipient,
+                    deadline,
+                    amountIn,
+                    amountOutMinimum,
+                    sqrtPriceLimitX96,
+                ) = params.get("params")
+            except:
+                pass
+
+            # decode with Router2 ABI
+            # https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
+            try:
+                (
+                    tokenIn,
+                    tokenOut,
+                    fee,
+                    recipient,
+                    amountIn,
+                    amountOutMinimum,
+                    sqrtPriceLimitX96,
+                ) = params.get("params")
+            except:
+                pass
+
+            # decode values from exactInput (hand-crafted)
+            try:
+                (
+                    tokenIn,
+                    tokenOut,
+                    fee,
+                    amountIn,
+                ) = params.get("params")
+            except:
+                pass
+
+            try:
+                # get the V3 pool involved in the swap
+                v3_pool = self.v3_pool_manager.get_pool(
+                    token_addresses=(tokenIn, tokenOut),
+                    pool_fee=fee,
+                )
+            except (ManagerError, LiquidityPoolError) as e:
+                raise TransactionError(f"Could not get pool (via tokens): {e}")
+            except:
+                raise
+
+            print(f"Predicting output of swap through pool: {v3_pool}")
+
+            try:
+                token_in_object = Erc20TokenHelperManager().get_erc20token(
+                    address=tokenIn,
+                    silent=True,
+                    min_abi=True,
+                    unload_brownie_contract_after_init=True,
+                )
+            except Exception as e:
+                print(e)
+                print(type(e))
+                raise
+
+            starting_state = v3_pool.state
+            try:
+                swap_info, final_state = v3_pool.simulate_swap(
+                    token_in=token_in_object,
+                    token_in_quantity=amountIn,
+                )
+            except EVMRevertError as e:
+                print(f"TRANSACTION CANNOT BE SIMULATED!: {e}")
+                return
+
+            print(f"{starting_state=}")
+            print(f"{final_state=}")
+
+            return v3_pool, swap_info, final_state
+
+        def v3_swap_exact_out(params: dict):
+
+            print(params.get("params"))
+
+            sqrtPriceLimitX96 = None
+            amountInMaximum = None
+
+            # decode with Router ABI
+            # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
+            try:
+                (
+                    tokenIn,
+                    tokenOut,
+                    fee,
+                    recipient,
+                    deadline,
+                    amountOut,
+                    amountInMaximum,
+                    sqrtPriceLimitX96,
+                ) = params.get("params")
+            except:
+                pass
+
+            # decode with Router2 ABI
+            # https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
+            try:
+                (
+                    tokenIn,
+                    tokenOut,
+                    fee,
+                    recipient,
+                    amountOut,
+                    amountInMaximum,
+                    sqrtPriceLimitX96,
+                ) = params.get("params")
+            except:
+                pass
+
+            # decode values from exactOutput (hand-crafted)
+            try:
+                (
+                    tokenIn,
+                    tokenOut,
+                    fee,
+                    amountOut,
+                ) = params.get("params")
+            except:
+                pass
+
+            try:
+                # get the V3 pool involved in the swap
+                v3_pool = self.v3_pool_manager.get_pool(
+                    token_addresses=(tokenIn, tokenOut),
+                    pool_fee=fee,
+                )
+            except (ManagerError, LiquidityPoolError) as e:
+                raise TransactionError(f"Could not get pool (via tokens): {e}")
+            except:
+                raise
+
+            print(f"Predicting output of swap through pool: {v3_pool}")
+
+            try:
+                token_out_object = Erc20TokenHelperManager().get_erc20token(
+                    address=tokenOut,
+                    silent=True,
+                    min_abi=True,
+                    unload_brownie_contract_after_init=True,
+                )
+            except Exception as e:
+                print(e)
+                print(type(e))
+                raise
+
+            starting_state = v3_pool.state
+            try:
+                swap_info, final_state = v3_pool.simulate_swap(
+                    token_out=token_out_object,
+                    token_out_quantity=amountOut,
+                    sqrt_price_limit=sqrtPriceLimitX96,
+                )
+            except EVMRevertError as e:
+                print(f"TRANSACTION CANNOT BE SIMULATED!: {e}")
+                return
+
+            print(swap_info)
+
+            # swap input is positive from the POV of the pool
+            amountIn = max(
+                swap_info["amount0_delta"],
+                swap_info["amount1_delta"],
+            )
+
+            if amountInMaximum and amountIn < amountInMaximum:
+                raise TransactionError(
+                    f"amountOut ({amountOut}) < amountOutMin ({amountInMaximum})"
+                )
+
+            print(f"{starting_state=}")
+            print(f"{final_state=}")
+
+            return (v3_pool, swap_info, final_state)
+
         if func_name is None:
             func_name = self.func_name
 
@@ -387,88 +578,15 @@ class UniswapTransaction(Transaction):
             # UniswapV3 functions
             # -----------------------------------------------------
             elif func_name == "multicall":
-                # print(transaction_func)
+                print(func_name)
                 future_state = self.simulate_multicall()
             elif func_name == "exactInputSingle":
                 print()
                 print(func_name)
-                return
-
-                # decode with Router ABI
-                # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
-                try:
-                    (
-                        tokenIn,
-                        tokenOut,
-                        fee,
-                        recipient,
-                        deadline,
-                        amountIn,
-                        amountOutMinimum,
-                        sqrtPriceLimitX96,
-                    ) = func_params.get("params")
-                except:
-                    pass
-
-                # decode with Router2 ABI
-                # https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
-                try:
-                    (
-                        tokenIn,
-                        tokenOut,
-                        fee,
-                        recipient,
-                        amountIn,
-                        amountOutMinimum,
-                        sqrtPriceLimitX96,
-                    ) = func_params.get("params")
-                except:
-                    pass
-
-                try:
-                    # get the V3 pool involved in the swap
-                    v3_pool = self.v3_pool_manager.get_pool(
-                        token_addresses=(tokenIn, tokenOut),
-                        pool_fee=fee,
-                    )
-                except (ManagerError, LiquidityPoolError) as e:
-                    raise TransactionError(
-                        f"Could not get pool (via tokens): {e}"
-                    )
-                except:
-                    raise
-
-                print(f"Predicting output of swap through pool: {v3_pool}")
-
-                try:
-                    token_in_object = Erc20TokenHelperManager().get_erc20token(
-                        address=tokenIn,
-                        silent=True,
-                        min_abi=True,
-                        unload_brownie_contract_after_init=True,
-                    )
-                except Exception as e:
-                    print(e)
-                    print(type(e))
-                    raise
-
-                starting_state = v3_pool.state
-                try:
-                    final_state = v3_pool.simulate_swap(
-                        token_in=token_in_object,
-                        token_in_quantity=amountIn,
-                    )
-                except EVMRevertError as e:
-                    print(f"TRANSACTION CANNOT BE SIMULATED!: {e}")
-                    return
-
-                print(f"{starting_state=}")
-                print(f"{final_state=}")
-
+                future_state.extend(v3_swap_exact_in(params=func_params))
             elif func_name == "exactInput":
                 print()
                 print(func_name)
-                return
 
                 try:
                     (
@@ -523,21 +641,51 @@ class UniswapTransaction(Transaction):
                         exactInputParams_path_decoded.append(fee)
                     path_pos += byte_length
 
-                # print(f"\tpath = {exactInputParams_path_decoded}")
-                # print(f"\trecipient = {exactInputParams_recipient}")
+                # print(f" • path = {exactInputParams_path_decoded}")
+                # print(f" • recipient = {exactInputParams_recipient}")
                 # if exactInputParams_deadline:
-                #     print(f"\tdeadline = {exactInputParams_deadline}")
-                # print(f"\tamountIn = {exactInputParams_amountIn}")
-                # print(f"\tamountOutMinimum = {exactInputParams_amountOutMinimum}")
+                #     print(f" • deadline = {exactInputParams_deadline}")
+                # print(f" • amountIn = {exactInputParams_amountIn}")
+                # print(
+                #     f" • amountOutMinimum = {exactInputParams_amountOutMinimum}"
+                # )
+
+                # decode the path - tokenIn is the first position, tokenOut is the second position
+                # e.g. tokenIn, fee, tokenOut
+                for token_pos in range(
+                    0,
+                    len(exactInputParams_path_decoded) - 2,
+                    2,
+                ):
+                    tokenIn = exactInputParams_path_decoded[token_pos]
+                    fee = exactInputParams_path_decoded[token_pos + 1]
+                    tokenOut = exactInputParams_path_decoded[token_pos + 2]
+
+                    v3_pool, swap_info, pool_state = v3_swap_exact_in(
+                        params={
+                            "params": (
+                                tokenIn,
+                                tokenOut,
+                                fee,
+                                # use amountIn for the first swap, otherwise take the output
+                                # amount of the last swap (always negative so we can check
+                                # for the min without knowing the token positions)
+                                exactInputParams_amountIn
+                                if token_pos == 0
+                                else min(swap_info.values()),
+                            )
+                        }
+                    )
+                    future_state.extend([v3_pool, pool_state])
+
             elif func_name == "exactOutputSingle":
                 print()
                 print(func_name)
-                return
-
+                future_state.append(v3_swap_exact_out(params=func_params))
             elif func_name == "exactOutput":
                 print()
                 print(func_name)
-                return
+
                 # Router ABI
                 try:
                     (
@@ -599,8 +747,40 @@ class UniswapTransaction(Transaction):
                 #     print(f" • deadline = {exactOutputParams_deadline}")
                 # print(f" • amountOut = {exactOutputParams_amountOut}")
                 # print(
-                #     f" • amountamountInMaximum = {exactOutputParams_amountInMaximum}"
+                #     f" • amountInMaximum = {exactOutputParams_amountInMaximum}"
                 # )
+
+                # the path is encoded in REVERSE order, so we decode from start to finish
+                # tokenOut is the first position, tokenIn is the second position
+                # e.g. tokenOut, fee, tokenIn
+                for token_pos in range(
+                    0,
+                    len(exactOutputParams_path_decoded) - 2,
+                    2,
+                ):
+                    tokenOut = exactOutputParams_path_decoded[token_pos]
+                    fee = exactOutputParams_path_decoded[token_pos + 1]
+                    tokenIn = exactOutputParams_path_decoded[token_pos + 2]
+
+                    v3_pool, swap_info, pool_state = v3_swap_exact_out(
+                        params={
+                            "params": (
+                                tokenIn,
+                                tokenOut,
+                                fee,
+                                # use amountOut for the last swap (token_pos == 0),
+                                # otherwise take the input amount of the previous swap
+                                # (always positive so we can check for the max without
+                                # knowing the token positions)
+                                exactOutputParams_amountOut
+                                if token_pos == 0
+                                else max(swap_info.values()),
+                            )
+                        }
+                    )
+
+                    future_state.extend([v3_pool, pool_state])
+
             elif func_name in (
                 "addLiquidity",
                 "addLiquidityETH",
@@ -627,8 +807,13 @@ class UniswapTransaction(Transaction):
             else:
                 print(f"\tUNHANDLED function: {func_name}")
 
-        except LiquidityPoolError:
-            raise TransactionError("Transaction could not be calculated")
+        # WIP: catch ValueError to avoid bad inputs to the swap bubbling out of the TX helper
+        except (LiquidityPoolError, ValueError) as e:
+
+            import traceback
+
+            traceback.print_exc()
+            raise TransactionError(f"Transaction could not be calculated: {e}")
         else:
             return future_state
 
@@ -645,16 +830,8 @@ class UniswapTransaction(Transaction):
                         .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
                         .decode_function_input(payload)
                     )
-                except Exception as e:
+                except:
                     pass
-                else:
-                    # simulate each payload individually and append the future_state dict of that payload
-                    if payload_state_delta := self.simulate(
-                        func_name=payload_func.fn_name,
-                        func_params=payload_args,
-                    ):
-                        future_state.extend(payload_state_delta)
-                    continue
 
                 try:
                     # decode with Router2 ABI
@@ -663,15 +840,15 @@ class UniswapTransaction(Transaction):
                         .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
                         .decode_function_input(payload)
                     )
-                except Exception as e:
+                except:
                     pass
-                else:
-                    # simulate each payload individually and append the future_state dict of that payload
-                    if payload_state_delta := self.simulate(
-                        func_name=payload_func.fn_name,
-                        func_params=payload_args,
-                    ):
-                        future_state.extend(payload_state_delta)
-                    continue
+
+                # simulate each payload individually and append the future_state dict of that payload
+                if payload_state_delta := self.simulate(
+                    func_name=payload_func.fn_name,
+                    func_params=payload_args,
+                ):
+                    future_state.extend(payload_state_delta)
+                continue
 
         return future_state
