@@ -300,13 +300,13 @@ class BaseV3LiquidityPool(ABC):
                     if tick_bitmap := self._brownie_contract.tickBitmap(
                         word_position
                     ):
-                        tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
+                        _tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
                             self.address,
                             word_position,
                             block_identifier=block_number,
                         )
                     else:
-                        tick_data = ()
+                        _tick_data = ()
                 except:
                     raise
                 else:
@@ -315,7 +315,7 @@ class BaseV3LiquidityPool(ABC):
                             tick,
                             liquidityNet,
                             liquidityGross,
-                        ) in tick_data:
+                        ) in _tick_data:
                             self.tick_data[tick] = (
                                 liquidityNet,
                                 liquidityGross,
@@ -357,7 +357,7 @@ class BaseV3LiquidityPool(ABC):
         It is a double-underscore method and is thus obscured from external access (but still accessible if you know how).
         """
 
-        if not amountSpecified != 0:
+        if amountSpecified == 0:
             raise EVMRevertError("AS")
 
         if not (
@@ -944,8 +944,9 @@ class BaseV3LiquidityPool(ABC):
         token_in_quantity: Optional[int] = None,
         token_out: Optional[Erc20Token] = None,
         token_out_quantity: Optional[int] = None,
+        sqrt_price_limit: Optional[int] = None,
         override_state: Optional[dict] = None,
-    ) -> dict:
+    ) -> Tuple[dict]:
         """
         [TBD]
         """
@@ -978,7 +979,8 @@ class BaseV3LiquidityPool(ABC):
         try:
             # delegate calculations to the ported `swap` function
             (
-                *_,
+                amount0_delta,
+                amount1_delta,
                 end_sqrtprice,
                 end_liquidity,
                 end_tick,
@@ -987,7 +989,9 @@ class BaseV3LiquidityPool(ABC):
                 amountSpecified=token_in_quantity
                 if token_in_quantity
                 else -token_out_quantity,
-                sqrtPriceLimitX96=(
+                sqrtPriceLimitX96=sqrt_price_limit
+                if sqrt_price_limit is not None
+                else (
                     TickMath.MIN_SQRT_RATIO + 1
                     if zeroForOne
                     else TickMath.MAX_SQRT_RATIO - 1
@@ -1000,21 +1004,20 @@ class BaseV3LiquidityPool(ABC):
                 override_tick_bitmap=override_state.get("tick_bitmap"),
                 override_tick_data=override_state.get("tick_data"),
             )
-        except EVMRevertError:
-            # TODO: better define actions for this exception
-            raise
-            print(f"type={type(e)}")
-            raise EVMRevertError(
-                f"(V3LiquidityPool) caught exception inside LP helper {self.name}: {e}"
-                # f"\ntoken_in={token_in}"
-                # f"\ntoken_in_quantity={token_in_quantity}"
-            )
+        except EVMRevertError as e:
+            raise LiquidityPoolError(f"Simulated execution reverted: {e}")
         else:
-            return {
-                "liquidity": end_liquidity,
-                "sqrt_price_x96": end_sqrtprice,
-                "tick": end_tick,
-            }
+            return (
+                {
+                    "amount0_delta": amount0_delta,
+                    "amount1_delta": amount1_delta,
+                },
+                {
+                    "liquidity": end_liquidity,
+                    "sqrt_price_x96": end_sqrtprice,
+                    "tick": end_tick,
+                },
+            )
 
 
 class V3LiquidityPool(BaseV3LiquidityPool):
