@@ -201,10 +201,10 @@ class UniswapLpCycle(Arbitrage):
                         "uniswap_version": 3,
                         # for an exactInput swap, amountSpecified is a positive number representing the INPUT amount
                         # for an exactOutput swap, amountSpecified is a negative number representing the OUTPUT amount
+                        # specify exactInput for first leg (i==0), exactOutput for others
                         "amountSpecified": token_in_quantity
-                        # exactInput for first leg (i==0)
-                        # exactOutput for others
-                        if i == 0 else -token_out_quantity,
+                        if i == 0
+                        else -token_out_quantity,
                         "zeroForOne": _zeroForOne,
                         "sqrtPriceLimitX96": TickMath.MIN_SQRT_RATIO + 1
                         if _zeroForOne
@@ -236,7 +236,7 @@ class UniswapLpCycle(Arbitrage):
     def auto_update(
         self,
         silent=True,
-        block_number=None,
+        block_number: Optional[int] = None,
         override_update_method: Optional[str] = None,
     ) -> bool:
 
@@ -321,7 +321,7 @@ class UniswapLpCycle(Arbitrage):
                     # and pool.state["tick"] == TickMath.MIN_TICK
                 ):
                     raise ZeroLiquidityError(
-                        "V3 pool has no liquidity for a 0 -> 1 swap"
+                        f"V3 pool {pool.address} has no liquidity for a 0 -> 1 swap"
                     )
                 # check if the swap is oneForZero (zeroForOne=False) and cannot swap any more token1 for token0
                 elif (
@@ -329,7 +329,7 @@ class UniswapLpCycle(Arbitrage):
                     # and pool.state["tick"] == TickMath.MAX_TICK
                 ):
                     raise ZeroLiquidityError(
-                        "V3 pool has no liquidity for a 1 -> 0 swap"
+                        f"V3 pool {pool.address} has no liquidity for a 1 -> 0 swap"
                     )
 
         # limit the amount to be swapped
