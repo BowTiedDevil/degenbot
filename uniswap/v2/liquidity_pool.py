@@ -414,13 +414,18 @@ class LiquidityPool:
         token_out: Optional[Erc20Token] = None,
         token_out_quantity: Optional[int] = None,
         override_state: dict = None,
-    ) -> dict:
+    ) -> Tuple[dict]:
         """
         [TBD]
         """
 
         if token_in_quantity is None and token_out_quantity is None:
-            raise ValueError("Quantity not provided")
+            raise ValueError("No quantity was provided")
+
+        if token_in_quantity is not None and token_out_quantity is not None:
+            raise ValueError(
+                "Provide token_in_quantity or token_out_quantity, not both"
+            )
 
         if token_in and token_out and token_in == token_out:
             raise ValueError("Both tokens are the same!")
@@ -450,7 +455,6 @@ class LiquidityPool:
             token_in = self.token0
 
         if token_in_quantity:
-
             # delegate calculations to the `calculate_tokens_out_from_tokens_in` method
             token_out_quantity = self.calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
@@ -458,8 +462,6 @@ class LiquidityPool:
                 override_reserves_token0=override_state.get("reserves_token0"),
                 override_reserves_token1=override_state.get("reserves_token1"),
             )
-
-            print(f"{token_out_quantity=}")
 
             token0_delta = (
                 -token_out_quantity
@@ -486,8 +488,6 @@ class LiquidityPool:
                 override_reserves_token1=override_state.get("reserves_token1"),
             )
 
-            print(f"{token_in_quantity=}")
-
             token0_delta = (
                 token_in_quantity
                 if token_in == self.token0
@@ -498,13 +498,13 @@ class LiquidityPool:
                 if token_in == self.token1
                 else -token_out_quantity
             )
-            # token1_delta = (
-            #     -token_out_quantity
-            #     if token_in is self.token0
-            #     else token_in_quantity
-            # )
+
+            print(f"{token_in_quantity=}")
 
             return {
+                "amount0_delta": token0_delta,
+                "amount1_delta": token1_delta,
+            }, {
                 "reserves_token0": self.reserves_token0 + token0_delta,
                 "reserves_token1": self.reserves_token1 + token1_delta,
             }
