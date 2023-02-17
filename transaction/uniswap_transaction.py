@@ -398,7 +398,7 @@ class UniswapTransaction(Transaction):
             try:
                 token_in_object = Erc20TokenHelperManager().get_erc20token(
                     address=tokenIn,
-                    silent=True,
+                    silent=silent,
                     min_abi=True,
                     unload_brownie_contract_after_init=True,
                 )
@@ -494,7 +494,7 @@ class UniswapTransaction(Transaction):
             try:
                 token_out_object = Erc20TokenHelperManager().get_erc20token(
                     address=tokenOut,
-                    silent=True,
+                    silent=silent,
                     min_abi=True,
                     unload_brownie_contract_after_init=True,
                 )
