@@ -475,6 +475,9 @@ class LiquidityPool:
             )
 
             return {
+                "amount0_delta": token0_delta,
+                "amount1_delta": token1_delta,
+            }, {
                 "reserves_token0": self.reserves_token0 + token0_delta,
                 "reserves_token1": self.reserves_token1 + token1_delta,
             }
@@ -498,8 +501,6 @@ class LiquidityPool:
                 if token_in == self.token1
                 else -token_out_quantity
             )
-
-            print(f"{token_in_quantity=}")
 
             return {
                 "amount0_delta": token0_delta,
