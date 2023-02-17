@@ -47,6 +47,7 @@ class BaseV3LiquidityPool(ABC):
         update_method: str = "polling",
         abi: Optional[list] = None,
         extra_words: int = 250,
+        silent: bool = False,  # TODO: add status print in constructor
     ):
 
         self.lock = Lock()

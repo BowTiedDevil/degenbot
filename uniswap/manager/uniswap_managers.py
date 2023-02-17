@@ -66,6 +66,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         self,
         pool_address: Optional[str] = None,
         token_addresses: Optional[Tuple[str]] = None,
+        silent: bool = False,
     ) -> LiquidityPool:
         """
         Get the pool object from its address, or a tuple of token addresses
@@ -79,7 +80,10 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 return pool_helper
 
             try:
-                pool_helper = LiquidityPool(address=pool_address)
+                pool_helper = LiquidityPool(
+                    address=pool_address,
+                    silent=silent,
+                )
             except:
                 raise ManagerError(f"Could not build V2 pool: {pool_address=}")
 
@@ -106,7 +110,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                         self._token_manager.get_erc20token(
                             address=token_address,
                             min_abi=True,
-                            silent=True,
+                            silent=silent,
                             unload_brownie_contract_after_init=True,
                         )
                         for token_address in token_addresses
@@ -187,6 +191,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         pool_address: Optional[str] = None,
         token_addresses: Optional[Tuple[str]] = None,
         pool_fee: Optional[int] = None,
+        silent: bool = False,
     ) -> V3LiquidityPool:
         """
         Get the pool object from its address, or a tuple of token addresses and fee
@@ -212,7 +217,9 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
             try:
                 pool_helper = V3LiquidityPool(
-                    address=pool_address, lens=self.lens
+                    address=pool_address,
+                    lens=self.lens,
+                    silent=silent,
                 )
             except:
                 raise ManagerError(f"Could not build V3 pool: {pool_address=}")
@@ -241,7 +248,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                         self._token_manager.get_erc20token(
                             address=token_address,
                             min_abi=True,
-                            silent=True,
+                            silent=silent,
                             unload_brownie_contract_after_init=True,
                         )
                         for token_address in token_addresses

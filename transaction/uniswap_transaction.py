@@ -145,13 +145,13 @@ class UniswapTransaction(Transaction):
             # so calls to `get_erc20token` will return the previously-created helper
             token_in = Erc20TokenHelperManager().get_erc20token(
                 address=params["path"][0],
-                silent=True,
+                silent=silent,
                 min_abi=True,
                 unload_brownie_contract_after_init=True,
             )
             token_out = Erc20TokenHelperManager().get_erc20token(
                 address=params["path"][-1],
-                silent=True,
+                silent=silent,
                 min_abi=True,
                 unload_brownie_contract_after_init=True,
             )
@@ -245,13 +245,13 @@ class UniswapTransaction(Transaction):
             # so calls to `get_erc20token` will return the previously-created helper
             token_in = Erc20TokenHelperManager().get_erc20token(
                 address=params["path"][0],
-                silent=True,
+                silent=silent,
                 min_abi=True,
                 unload_brownie_contract_after_init=True,
             )
             token_out = Erc20TokenHelperManager().get_erc20token(
                 address=params["path"][-1],
-                silent=True,
+                silent=silent,
                 min_abi=True,
                 unload_brownie_contract_after_init=True,
             )
@@ -380,6 +380,7 @@ class UniswapTransaction(Transaction):
                 v3_pool = self.v3_pool_manager.get_pool(
                     token_addresses=(tokenIn, tokenOut),
                     pool_fee=fee,
+                    silent=silent,
                 )
             except (ManagerError, LiquidityPoolError) as e:
                 raise TransactionError(f"Could not get pool (via tokens): {e}")
@@ -474,6 +475,7 @@ class UniswapTransaction(Transaction):
                 v3_pool = self.v3_pool_manager.get_pool(
                     token_addresses=(tokenIn, tokenOut),
                     pool_fee=fee,
+                    silent=silent,
                 )
             except (ManagerError, LiquidityPoolError) as e:
                 raise TransactionError(f"Could not get pool (via tokens): {e}")
