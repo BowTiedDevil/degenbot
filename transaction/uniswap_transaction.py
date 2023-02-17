@@ -822,7 +822,6 @@ class UniswapTransaction(Transaction):
         except (LiquidityPoolError, ValueError) as e:
             raise TransactionError(f"Transaction could not be calculated: {e}")
         else:
-            print(future_state)
             return future_state
 
     def simulate_multicall(self):
