@@ -140,6 +140,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 pool_helper = LiquidityPool(
                     address=pool_address,
                     tokens=erc20token_helpers,
+                    silent=silent,
                 )
             except:
                 raise ManagerError(f"Could not build V2 pool: {pool_address=}")
@@ -280,6 +281,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                     address=pool_address,
                     lens=self.lens,
                     tokens=erc20token_helpers,
+                    silent=silent,
                 )
             except:
                 raise ManagerError(f"Could not build V3 pool: {pool_address=}")
