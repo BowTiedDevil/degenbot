@@ -835,10 +835,7 @@ class UniswapTransaction(Transaction):
                     func_params=payload_args,
                 )
                 future_state.extend(payload_state_delta)
-            except:
-                import traceback, sys
-
-                traceback.print_exc()
-                sys.exit()
+            except Exception as e:
+                raise TransactionError(f"Could not decode multicall: {e}")
 
         return future_state
