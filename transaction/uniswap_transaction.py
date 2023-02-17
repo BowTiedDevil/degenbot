@@ -706,7 +706,8 @@ class UniswapTransaction(Transaction):
                                 if token_pos == 0
                                 else min(swap_info.values()),
                             )
-                        }
+                        },
+                        silent=silent,
                     )
                     future_state.append([v3_pool, pool_state])
             elif func_name == "exactOutputSingle":
@@ -812,7 +813,8 @@ class UniswapTransaction(Transaction):
                                 if token_pos == 0
                                 else max(swap_info.values()),
                             )
-                        }
+                        },
+                        silent=silent,
                     )
 
                     future_state.append([v3_pool, pool_state])
