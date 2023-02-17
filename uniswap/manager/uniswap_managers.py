@@ -217,6 +217,11 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             except:
                 raise ManagerError(f"Could not build V3 pool: {pool_address=}")
 
+            token_addresses = (
+                pool_helper.token0.address,
+                pool_helper.token1.address,
+            )
+
             with self.lock:
                 dict_key = *token_addresses, pool_fee
                 self.pools_by_address[pool_address] = pool_helper
