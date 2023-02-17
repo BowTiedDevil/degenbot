@@ -212,16 +212,25 @@ class UniswapTransaction(Transaction):
                     )
                 )
 
-                # print(f"Simulating swap through pool: {pool}")
-                # print(
-                #     f"\t{token_in_quantity} {token_in} -> {token_out_quantity} {token_out}"
-                # )
-                # print("\t(CURRENT)")
-                # print(f"\t{pool.token0}: {current_state['reserves_token0']}")
-                # print(f"\t{pool.token1}: {current_state['reserves_token1']}")
-                # print(f"\t(FUTURE)")
-                # print(f"\t{pool.token0}: {future_state['reserves_token0']}")
-                # print(f"\t{pool.token1}: {future_state['reserves_token1']}")
+                if not silent:
+                    print(f"Simulating swap through pool: {v2_pool}")
+                    print(
+                        f"\t{token_in_quantity} {token_in} -> {token_out_quantity} {token_out}"
+                    )
+                    print("\t(CURRENT)")
+                    print(
+                        f"\t{v2_pool.token0}: {current_state['reserves_token0']}"
+                    )
+                    print(
+                        f"\t{v2_pool.token1}: {current_state['reserves_token1']}"
+                    )
+                    print(f"\t(FUTURE)")
+                    print(
+                        f"\t{v2_pool.token0}: {future_state['reserves_token0']}"
+                    )
+                    print(
+                        f"\t{v2_pool.token1}: {future_state['reserves_token1']}"
+                    )
 
             return future_pool_states
 
@@ -317,16 +326,25 @@ class UniswapTransaction(Transaction):
                     )
                 )
 
-                # print(f"Simulating swap through pool: {pool}")
-                # print(
-                #     f"\t{token_in_quantity} {token_in} -> {token_out_quantity} {token_out}"
-                # )
-                # print("\t(CURRENT)")
-                # print(f"\t{pool.token0}: {current_state['reserves_token0']}")
-                # print(f"\t{pool.token1}: {current_state['reserves_token1']}")
-                # print(f"\t(FUTURE)")
-                # print(f"\t{pool.token0}: {future_state['reserves_token0']}")
-                # print(f"\t{pool.token1}: {future_state['reserves_token1']}")
+                if not silent:
+                    print(f"Simulating swap through pool: {pool}")
+                    print(
+                        f"\t{token_in_quantity} {token_in} -> {token_out_quantity} {token_out}"
+                    )
+                    print("\t(CURRENT)")
+                    print(
+                        f"\t{pool.token0}: {current_state['reserves_token0']}"
+                    )
+                    print(
+                        f"\t{pool.token1}: {current_state['reserves_token1']}"
+                    )
+                    print(f"\t(FUTURE)")
+                    print(
+                        f"\t{pool.token0}: {future_state['reserves_token0']}"
+                    )
+                    print(
+                        f"\t{pool.token1}: {future_state['reserves_token1']}"
+                    )
 
             # if swap_in_quantity < token_in_quantity:
             #     raise TransactionError("msg.value too low for swap")
@@ -673,14 +691,15 @@ class UniswapTransaction(Transaction):
                         exactInputParams_path_decoded.append(fee)
                     path_pos += byte_length
 
-                # print(f" • path = {exactInputParams_path_decoded}")
-                # print(f" • recipient = {exactInputParams_recipient}")
-                # if exactInputParams_deadline:
-                #     print(f" • deadline = {exactInputParams_deadline}")
-                # print(f" • amountIn = {exactInputParams_amountIn}")
-                # print(
-                #     f" • amountOutMinimum = {exactInputParams_amountOutMinimum}"
-                # )
+                if not silent:
+                    print(f" • path = {exactInputParams_path_decoded}")
+                    print(f" • recipient = {exactInputParams_recipient}")
+                    if exactInputParams_deadline:
+                        print(f" • deadline = {exactInputParams_deadline}")
+                    print(f" • amountIn = {exactInputParams_amountIn}")
+                    print(
+                        f" • amountOutMinimum = {exactInputParams_amountOutMinimum}"
+                    )
 
                 # decode the path - tokenIn is the first position, tokenOut is the second position
                 # e.g. tokenIn, fee, tokenOut
@@ -778,14 +797,15 @@ class UniswapTransaction(Transaction):
                         exactOutputParams_path_decoded.append(fee)
                     path_pos += byte_length
 
-                # print(f" • path = {exactOutputParams_path_decoded}")
-                # print(f" • recipient = {exactOutputParams_recipient}")
-                # if exactOutputParams_deadline:
-                #     print(f" • deadline = {exactOutputParams_deadline}")
-                # print(f" • amountOut = {exactOutputParams_amountOut}")
-                # print(
-                #     f" • amountInMaximum = {exactOutputParams_amountInMaximum}"
-                # )
+                if not silent:
+                    print(f" • path = {exactOutputParams_path_decoded}")
+                    print(f" • recipient = {exactOutputParams_recipient}")
+                    if exactOutputParams_deadline:
+                        print(f" • deadline = {exactOutputParams_deadline}")
+                    print(f" • amountOut = {exactOutputParams_amountOut}")
+                    print(
+                        f" • amountInMaximum = {exactOutputParams_amountInMaximum}"
+                    )
 
                 # the path is encoded in REVERSE order, so we decode from start to finish
                 # tokenOut is the first position, tokenIn is the second position
