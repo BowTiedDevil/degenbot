@@ -18,6 +18,7 @@ from degenbot.exceptions import (
     LiquidityPoolError,
 )
 from degenbot.token import Erc20Token
+from degenbot.manager import Erc20TokenHelperManager
 
 from .abi import UNISWAP_V3_POOL_ABI
 from .libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
@@ -26,6 +27,9 @@ from .tick_lens import TickLens
 
 
 class BaseV3LiquidityPool(ABC):
+
+    _token_manager = Erc20TokenHelperManager()
+
     @abstractmethod
     def _derived():
         """
@@ -62,9 +66,6 @@ class BaseV3LiquidityPool(ABC):
                 raise ValueError(
                     f"Expected exactly two tokens, found {len(tokens)}"
                 )
-            # assert len(tokens) == 2, LiquidityPoolError(
-            #     "Expected exactly two tokens"
-            # )
 
         self.address = to_address(address)
 
@@ -118,8 +119,20 @@ class BaseV3LiquidityPool(ABC):
                 # assert self.token0.address == self._brownie_contract.token0()
                 # assert self.token1.address == self._brownie_contract.token1()
             else:
-                self.token0 = Erc20Token(self._brownie_contract.token0())
-                self.token1 = Erc20Token(self._brownie_contract.token1())
+                self.token0 = self._token_manager.get_erc20token(
+                    address=self._brownie_contract.token0(),
+                    min_abi=True,
+                    silent=silent,
+                    unload_brownie_contract_after_init=True,
+                )
+                self.token1 = self._token_manager.get_erc20token(
+                    address=self._brownie_contract.token1(),
+                    min_abi=True,
+                    silent=silent,
+                    unload_brownie_contract_after_init=True,
+                )
+                # self.token0 = Erc20Token(self._brownie_contract.token0())
+                # self.token1 = Erc20Token(self._brownie_contract.token1())
 
             self.fee = self._brownie_contract.fee()  # immutable
             self.liquidity = self._brownie_contract.liquidity(
