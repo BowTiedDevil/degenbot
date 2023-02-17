@@ -126,13 +126,15 @@ class UniswapTransaction(Transaction):
         def v2_swap_exact_in(
             params: dict,
             unwrapped_input: Optional[bool] = False,
+            silent: bool = False,
         ) -> List[Tuple[LiquidityPool, dict]]:
 
             v2_pool_objects = []
             for token_addresses in itertools.pairwise(params.get("path")):
                 try:
                     pool_helper: LiquidityPool = self.v2_pool_manager.get_pool(
-                        token_addresses=token_addresses
+                        token_addresses=token_addresses,
+                        silent=silent,
                     )
                 except LiquidityPoolError:
                     raise TransactionError(
@@ -226,13 +228,15 @@ class UniswapTransaction(Transaction):
         def v2_swap_exact_out(
             params: dict,
             unwrapped_input: Optional[bool] = False,
+            silent: bool = False,
         ) -> List[Tuple[LiquidityPool, dict]]:
 
             pool_objects: List[LiquidityPool] = []
             for token_addresses in itertools.pairwise(params.get("path")):
                 try:
                     pool_helper: LiquidityPool = self.v2_pool_manager.get_pool(
-                        token_addresses=token_addresses
+                        token_addresses=token_addresses,
+                        silent=silent,
                     )
                 except LiquidityPoolError:
                     raise TransactionError(
@@ -331,6 +335,7 @@ class UniswapTransaction(Transaction):
 
         def v3_swap_exact_in(
             params: dict,
+            silent: bool = False,
         ) -> List[Tuple[V3LiquidityPool, dict]]:
 
             # decode with Router ABI
@@ -423,6 +428,7 @@ class UniswapTransaction(Transaction):
 
         def v3_swap_exact_out(
             params: dict,
+            silent: bool = False,
         ) -> List[Tuple[V3LiquidityPool, dict]]:
 
             sqrtPriceLimitX96 = None
@@ -548,7 +554,9 @@ class UniswapTransaction(Transaction):
             ):
                 if not silent:
                     print(func_name)
-                future_state.extend(v2_swap_exact_in(func_params))
+                future_state.extend(
+                    v2_swap_exact_in(func_params, silent=silent)
+                )
 
             elif func_name in (
                 "swapExactETHForTokens",
@@ -557,7 +565,9 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(func_name)
                 future_state.extend(
-                    v2_swap_exact_in(func_params, unwrapped_input=True)
+                    v2_swap_exact_in(
+                        func_params, unwrapped_input=True, silent=silent
+                    )
                 )
 
             elif func_name in [
@@ -566,23 +576,31 @@ class UniswapTransaction(Transaction):
             ]:
                 if not silent:
                     print(func_name)
-                future_state.extend(v2_swap_exact_in(func_params))
+                future_state.extend(
+                    v2_swap_exact_in(func_params, silent=silent)
+                )
 
             elif func_name in ("swapTokensForExactETH"):
                 if not silent:
                     print(func_name)
-                future_state.extend(v2_swap_exact_out(params=func_params))
+                future_state.extend(
+                    v2_swap_exact_out(params=func_params, silent=silent)
+                )
 
             elif func_name in ("swapTokensForExactTokens"):
                 if not silent:
                     print(func_name)
-                future_state.extend(v2_swap_exact_out(params=func_params))
+                future_state.extend(
+                    v2_swap_exact_out(params=func_params, silent=silent)
+                )
 
             elif func_name in ("swapETHForExactTokens"):
                 if not silent:
                     print(func_name)
                 future_state.extend(
-                    v2_swap_exact_out(params=func_params, unwrapped_input=True)
+                    v2_swap_exact_out(
+                        params=func_params, unwrapped_input=True, silent=silent
+                    )
                 )
 
             # -----------------------------------------------------
@@ -591,7 +609,7 @@ class UniswapTransaction(Transaction):
             elif func_name == "multicall":
                 if not silent:
                     print(func_name)
-                future_state = self.simulate_multicall()
+                future_state = self.simulate_multicall(silent=silent)
             elif func_name == "exactInputSingle":
                 if not silent:
                     print(func_name)
@@ -599,7 +617,9 @@ class UniswapTransaction(Transaction):
                 #     params=func_params
                 # )
                 # future_state.append([v3_pool, pool_state])
-                future_state.extend(v3_swap_exact_in(params=func_params))
+                future_state.extend(
+                    v3_swap_exact_in(params=func_params, silent=silent)
+                )
             elif func_name == "exactInput":
                 if not silent:
                     print(func_name)
@@ -699,7 +719,9 @@ class UniswapTransaction(Transaction):
                 # v3_pool, swap_info, pool_state = v3_swap_exact_out(
                 #     params=func_params
                 # )
-                future_state.extend(v3_swap_exact_out(params=func_params))
+                future_state.extend(
+                    v3_swap_exact_out(params=func_params, silent=silent)
+                )
             elif func_name == "exactOutput":
                 if not silent:
                     print(func_name)
@@ -831,7 +853,7 @@ class UniswapTransaction(Transaction):
         else:
             return future_state
 
-    def simulate_multicall(self):
+    def simulate_multicall(self, silent: bool = False):
 
         future_state = []
 
@@ -858,11 +880,17 @@ class UniswapTransaction(Transaction):
 
             try:
                 # simulate each payload individually and append the future_state dict of that payload
-                payload_state_delta = self.simulate(
-                    func_name=payload_func.fn_name,
-                    func_params=payload_args,
+                # payload_pool, payload_state = self.simulate(
+                #     func_name=payload_func.fn_name,
+                #     func_params=payload_args,
+                # )
+                future_state.extend(
+                    self.simulate(
+                        func_name=payload_func.fn_name,
+                        func_params=payload_args,
+                        silent=silent,
+                    )
                 )
-                future_state.extend(payload_state_delta)
             except Exception as e:
                 raise TransactionError(f"Could not decode multicall: {e}")
 
