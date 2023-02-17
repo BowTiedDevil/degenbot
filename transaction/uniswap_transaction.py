@@ -795,10 +795,6 @@ class UniswapTransaction(Transaction):
 
         # WIP: catch ValueError to avoid bad inputs to the swap bubbling out of the TX helper
         except (LiquidityPoolError, ValueError) as e:
-
-            import traceback
-
-            traceback.print_exc()
             raise TransactionError(f"Transaction could not be calculated: {e}")
         else:
             return future_state
