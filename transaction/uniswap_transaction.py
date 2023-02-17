@@ -115,6 +115,7 @@ class UniswapTransaction(Transaction):
         self,
         func_name: Optional[str] = None,
         func_params: Optional[dict] = None,
+        silent: bool = False,
     ) -> List[Tuple[Union[LiquidityPool, V3LiquidityPool], dict]]:
         """
         Take a Uniswap V2 / V3 transaction (specified by name and a dictionary of arguments
@@ -385,7 +386,8 @@ class UniswapTransaction(Transaction):
             except:
                 raise
 
-            print(f"Predicting output of swap through pool: {v3_pool}")
+            if not silent:
+                print(f"Predicting output of swap through pool: {v3_pool}")
 
             try:
                 token_in_object = Erc20TokenHelperManager().get_erc20token(
@@ -478,7 +480,8 @@ class UniswapTransaction(Transaction):
             except:
                 raise
 
-            print(f"Predicting output of swap through pool: {v3_pool}")
+            if not silent:
+                print(f"Predicting output of swap through pool: {v3_pool}")
 
             try:
                 token_out_object = Erc20TokenHelperManager().get_erc20token(
@@ -541,16 +544,16 @@ class UniswapTransaction(Transaction):
                 "swapExactTokensForETH",
                 "swapExactTokensForETHSupportingFeeOnTransferTokens",
             ):
-                print()
-                print(func_name)
+                if not silent:
+                    print(func_name)
                 future_state.extend(v2_swap_exact_in(func_params))
 
             elif func_name in (
                 "swapExactETHForTokens",
                 "swapExactETHForTokensSupportingFeeOnTransferTokens",
             ):
-                print()
-                print(func_name)
+                if not silent:
+                    print(func_name)
                 future_state.extend(
                     v2_swap_exact_in(func_params, unwrapped_input=True)
                 )
@@ -559,23 +562,23 @@ class UniswapTransaction(Transaction):
                 "swapExactTokensForTokens",
                 "swapExactTokensForTokensSupportingFeeOnTransferTokens",
             ]:
-                print()
-                print(func_name)
+                if not silent:
+                    print(func_name)
                 future_state.extend(v2_swap_exact_in(func_params))
 
             elif func_name in ("swapTokensForExactETH"):
-                print()
-                print(func_name)
+                if not silent:
+                    print(func_name)
                 future_state.extend(v2_swap_exact_out(params=func_params))
 
             elif func_name in ("swapTokensForExactTokens"):
-                print()
-                print(func_name)
+                if not silent:
+                    print(func_name)
                 future_state.extend(v2_swap_exact_out(params=func_params))
 
             elif func_name in ("swapETHForExactTokens"):
-                print()
-                print(func_name)
+                if not silent:
+                    print(func_name)
                 future_state.extend(
                     v2_swap_exact_out(params=func_params, unwrapped_input=True)
                 )
@@ -584,19 +587,20 @@ class UniswapTransaction(Transaction):
             # UniswapV3 functions
             # -----------------------------------------------------
             elif func_name == "multicall":
-                print(func_name)
+                if not silent:
+                    print(func_name)
                 future_state = self.simulate_multicall()
             elif func_name == "exactInputSingle":
-                print()
-                print(func_name)
+                if not silent:
+                    print(func_name)
                 # v3_pool, swap_info, pool_state = v3_swap_exact_in(
                 #     params=func_params
                 # )
                 # future_state.append([v3_pool, pool_state])
                 future_state.extend(v3_swap_exact_in(params=func_params))
             elif func_name == "exactInput":
-                print()
-                print(func_name)
+                if not silent:
+                    print(func_name)
 
                 try:
                     (
@@ -688,15 +692,15 @@ class UniswapTransaction(Transaction):
                     )
                     future_state.append([v3_pool, pool_state])
             elif func_name == "exactOutputSingle":
-                print()
-                print(func_name)
+                if not silent:
+                    print(func_name)
                 # v3_pool, swap_info, pool_state = v3_swap_exact_out(
                 #     params=func_params
                 # )
                 future_state.extend(v3_swap_exact_out(params=func_params))
             elif func_name == "exactOutput":
-                print()
-                print(func_name)
+                if not silent:
+                    print(func_name)
 
                 # Router ABI
                 try:
@@ -806,7 +810,8 @@ class UniswapTransaction(Transaction):
                 "swapExactTokensForETHSupportingFeeOnTransferTokens",
             ):
                 # TODO: add prediction for these functions
-                print(f"TODO: {func_name}")
+                if not silent:
+                    print(f"TODO: {func_name}")
             elif func_name in (
                 "refundETH",
                 "selfPermit",
