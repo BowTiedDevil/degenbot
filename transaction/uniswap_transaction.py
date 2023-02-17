@@ -417,8 +417,6 @@ class UniswapTransaction(Transaction):
                     f"V3 operation could not be simulated: {e}"
                 )
 
-            # return v3_pool, swap_info, final_state
-
             return [
                 (
                     v3_pool,
@@ -524,8 +522,6 @@ class UniswapTransaction(Transaction):
                 raise TransactionError(
                     f"amountIn ({amountIn}) < amountOutMin ({amountInMaximum})"
                 )
-
-            # return v3_pool, swap_info, final_state
 
             return [
                 (
