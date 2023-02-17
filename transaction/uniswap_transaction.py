@@ -1,7 +1,7 @@
 import web3
 import itertools
 
-from typing import List, Optional
+from typing import List, Optional, Tuple, Union
 from degenbot.exceptions import (
     LiquidityPoolError,
     EVMRevertError,
@@ -18,6 +18,7 @@ from degenbot.uniswap.v3.abi import (
     UNISWAP_V3_ROUTER_ABI,
     UNISWAP_V3_ROUTER2_ABI,
 )
+from degenbot.uniswap.v3 import V3LiquidityPool
 from degenbot.manager import Erc20TokenHelperManager
 
 
@@ -114,18 +115,19 @@ class UniswapTransaction(Transaction):
         self,
         func_name: Optional[str] = None,
         func_params: Optional[dict] = None,
-    ) -> List[dict]:
+    ) -> List[Tuple[Union[LiquidityPool, V3LiquidityPool], dict]]:
         """
-        Take a Uniswap V2 / V3 transaction (specified by name and a dictionary of parameters to that function)
-        and return a list of state dictionaries for of all pools associated with the transaction
+        Take a Uniswap V2 / V3 transaction (specified by name and a dictionary of arguments
+        to that function) and return a list of pools and state dictionaries for all hops
+        associated with the transaction
         """
 
         def v2_swap_exact_in(
             params: dict,
             unwrapped_input: Optional[bool] = False,
-        ) -> list:
+        ) -> List[Tuple[LiquidityPool, dict]]:
 
-            pool_objects = []
+            v2_pool_objects = []
             for token_addresses in itertools.pairwise(params.get("path")):
                 try:
                     pool_helper: LiquidityPool = self.v2_pool_manager.get_pool(
@@ -133,10 +135,10 @@ class UniswapTransaction(Transaction):
                     )
                 except LiquidityPoolError:
                     raise TransactionError(
-                        f"Liquidity pool could not be build for token pair {token_addresses[0]} - {token_addresses[1]}"
+                        f"LiquidityPool could not be build for token pair {token_addresses[0]} - {token_addresses[1]}"
                     )
                 else:
-                    pool_objects.append(pool_helper)
+                    v2_pool_objects.append(pool_helper)
 
             # the pool manager created Erc20Token objects in the code block above,
             # so calls to `get_erc20token` will return the previously-created helper
@@ -160,7 +162,7 @@ class UniswapTransaction(Transaction):
 
             # predict future pool states assuming the swap executes in isolation
             future_pool_states = []
-            for i, pool in enumerate(pool_objects):
+            for i, v2_pool in enumerate(v2_pool_objects):
                 token_in_quantity = (
                     swap_in_quantity if i == 0 else token_out_quantity
                 )
@@ -170,11 +172,13 @@ class UniswapTransaction(Transaction):
                 # and token_out equal to the other token held by the pool
                 token_in = token_in if i == 0 else token_out
                 token_out = (
-                    pool.token0 if token_in is pool.token1 else pool.token1
+                    v2_pool.token0
+                    if token_in is v2_pool.token1
+                    else v2_pool.token1
                 )
 
-                current_state = pool.state
-                swap_info, future_state = pool.simulate_swap(
+                current_state = v2_pool.state
+                swap_info, future_state = v2_pool.simulate_swap(
                     token_in=token_in,
                     token_in_quantity=token_in_quantity,
                 )
@@ -199,10 +203,10 @@ class UniswapTransaction(Transaction):
                     raise ValueError("Swap direction could not be identified")
 
                 future_pool_states.append(
-                    [
-                        pool,
+                    (
+                        v2_pool,
                         future_state,
-                    ]
+                    )
                 )
 
                 # print(f"Simulating swap through pool: {pool}")
@@ -221,7 +225,7 @@ class UniswapTransaction(Transaction):
         def v2_swap_exact_out(
             params: dict,
             unwrapped_input: Optional[bool] = False,
-        ) -> list:
+        ) -> List[Tuple[LiquidityPool, dict]]:
 
             pool_objects: List[LiquidityPool] = []
             for token_addresses in itertools.pairwise(params.get("path")):
@@ -302,10 +306,10 @@ class UniswapTransaction(Transaction):
                     raise ValueError("Swap direction could not be identified")
 
                 future_pool_states.append(
-                    [
+                    (
                         pool,
                         future_state,
-                    ]
+                    )
                 )
 
                 # print(f"Simulating swap through pool: {pool}")
@@ -324,7 +328,9 @@ class UniswapTransaction(Transaction):
 
             return future_pool_states
 
-        def v3_swap_exact_in(params: dict):
+        def v3_swap_exact_in(
+            params: dict,
+        ) -> List[Tuple[V3LiquidityPool, dict]]:
 
             # decode with Router ABI
             # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
@@ -403,9 +409,18 @@ class UniswapTransaction(Transaction):
                     f"V3 operation could not be simulated: {e}"
                 )
 
-            return v3_pool, swap_info, final_state
+            # return v3_pool, swap_info, final_state
 
-        def v3_swap_exact_out(params: dict):
+            return [
+                (
+                    v3_pool,
+                    final_state,
+                )
+            ]
+
+        def v3_swap_exact_out(
+            params: dict,
+        ) -> List[Tuple[V3LiquidityPool, dict]]:
 
             sqrtPriceLimitX96 = None
             amountInMaximum = None
@@ -499,7 +514,14 @@ class UniswapTransaction(Transaction):
                     f"amountIn ({amountIn}) < amountOutMin ({amountInMaximum})"
                 )
 
-            return (v3_pool, swap_info, final_state)
+            # return v3_pool, swap_info, final_state
+
+            return [
+                (
+                    v3_pool,
+                    final_state,
+                )
+            ]
 
         if func_name is None:
             func_name = self.func_name
@@ -514,8 +536,6 @@ class UniswapTransaction(Transaction):
             # -----------------------------------------------------
             # UniswapV2 functions
             # -----------------------------------------------------
-
-            # TODO: ensure all V2/V3 tokens are defined
 
             if func_name in (
                 "swapExactTokensForETH",
@@ -569,6 +589,10 @@ class UniswapTransaction(Transaction):
             elif func_name == "exactInputSingle":
                 print()
                 print(func_name)
+                # v3_pool, swap_info, pool_state = v3_swap_exact_in(
+                #     params=func_params
+                # )
+                # future_state.append([v3_pool, pool_state])
                 future_state.extend(v3_swap_exact_in(params=func_params))
             elif func_name == "exactInput":
                 print()
@@ -662,12 +686,14 @@ class UniswapTransaction(Transaction):
                             )
                         }
                     )
-                    future_state.extend([v3_pool, pool_state])
-
+                    future_state.append([v3_pool, pool_state])
             elif func_name == "exactOutputSingle":
                 print()
                 print(func_name)
-                future_state.append(v3_swap_exact_out(params=func_params))
+                # v3_pool, swap_info, pool_state = v3_swap_exact_out(
+                #     params=func_params
+                # )
+                future_state.extend(v3_swap_exact_out(params=func_params))
             elif func_name == "exactOutput":
                 print()
                 print(func_name)
@@ -765,8 +791,7 @@ class UniswapTransaction(Transaction):
                         }
                     )
 
-                    future_state.extend([v3_pool, pool_state])
-
+                    future_state.append([v3_pool, pool_state])
             elif func_name in (
                 "addLiquidity",
                 "addLiquidityETH",
@@ -797,6 +822,7 @@ class UniswapTransaction(Transaction):
         except (LiquidityPoolError, ValueError) as e:
             raise TransactionError(f"Transaction could not be calculated: {e}")
         else:
+            print(future_state)
             return future_state
 
     def simulate_multicall(self):
