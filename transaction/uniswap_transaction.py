@@ -125,7 +125,7 @@ class UniswapTransaction(Transaction):
             unwrapped_input: Optional[bool] = False,
         ) -> list:
 
-            pool_objects: List[LiquidityPool] = []
+            pool_objects = []
             for token_addresses in itertools.pairwise(params.get("path")):
                 try:
                     pool_helper: LiquidityPool = self.v2_pool_manager.get_pool(
@@ -138,7 +138,7 @@ class UniswapTransaction(Transaction):
                 else:
                     pool_objects.append(pool_helper)
 
-            # the pool manager creates Erc20Token objects as it works,
+            # the pool manager created Erc20Token objects in the code block above,
             # so calls to `get_erc20token` will return the previously-created helper
             token_in = Erc20TokenHelperManager().get_erc20token(
                 address=params["path"][0],
@@ -174,7 +174,7 @@ class UniswapTransaction(Transaction):
                 )
 
                 current_state = pool.state
-                future_state = pool.simulate_swap(
+                swap_info, future_state = pool.simulate_swap(
                     token_in=token_in,
                     token_in_quantity=token_in_quantity,
                 )
@@ -205,16 +205,16 @@ class UniswapTransaction(Transaction):
                     ]
                 )
 
-                print(f"Simulating swap through pool: {pool}")
-                print(
-                    f"\t{token_in_quantity} {token_in} -> {token_out_quantity} {token_out}"
-                )
-                print("\t(CURRENT)")
-                print(f"\t{pool.token0}: {current_state['reserves_token0']}")
-                print(f"\t{pool.token1}: {current_state['reserves_token1']}")
-                print(f"\t(FUTURE)")
-                print(f"\t{pool.token0}: {future_state['reserves_token0']}")
-                print(f"\t{pool.token1}: {future_state['reserves_token1']}")
+                # print(f"Simulating swap through pool: {pool}")
+                # print(
+                #     f"\t{token_in_quantity} {token_in} -> {token_out_quantity} {token_out}"
+                # )
+                # print("\t(CURRENT)")
+                # print(f"\t{pool.token0}: {current_state['reserves_token0']}")
+                # print(f"\t{pool.token1}: {current_state['reserves_token1']}")
+                # print(f"\t(FUTURE)")
+                # print(f"\t{pool.token0}: {future_state['reserves_token0']}")
+                # print(f"\t{pool.token1}: {future_state['reserves_token1']}")
 
             return future_pool_states
 
@@ -273,7 +273,7 @@ class UniswapTransaction(Transaction):
                 )
 
                 current_state = pool.state
-                future_state = pool.simulate_swap(
+                swap_info, future_state = pool.simulate_swap(
                     token_out=token_out,
                     token_out_quantity=token_out_quantity,
                 )
@@ -308,16 +308,16 @@ class UniswapTransaction(Transaction):
                     ]
                 )
 
-                print(f"Simulating swap through pool: {pool}")
-                print(
-                    f"\t{token_in_quantity} {token_in} -> {token_out_quantity} {token_out}"
-                )
-                print("\t(CURRENT)")
-                print(f"\t{pool.token0}: {current_state['reserves_token0']}")
-                print(f"\t{pool.token1}: {current_state['reserves_token1']}")
-                print(f"\t(FUTURE)")
-                print(f"\t{pool.token0}: {future_state['reserves_token0']}")
-                print(f"\t{pool.token1}: {future_state['reserves_token1']}")
+                # print(f"Simulating swap through pool: {pool}")
+                # print(
+                #     f"\t{token_in_quantity} {token_in} -> {token_out_quantity} {token_out}"
+                # )
+                # print("\t(CURRENT)")
+                # print(f"\t{pool.token0}: {current_state['reserves_token0']}")
+                # print(f"\t{pool.token1}: {current_state['reserves_token1']}")
+                # print(f"\t(FUTURE)")
+                # print(f"\t{pool.token0}: {future_state['reserves_token0']}")
+                # print(f"\t{pool.token1}: {future_state['reserves_token1']}")
 
             # if swap_in_quantity < token_in_quantity:
             #     raise TransactionError("msg.value too low for swap")
@@ -399,14 +399,13 @@ class UniswapTransaction(Transaction):
                     token_in_quantity=amountIn,
                 )
             except EVMRevertError as e:
-                print(f"TRANSACTION CANNOT BE SIMULATED!: {e}")
-                return
+                raise TransactionError(
+                    f"V3 operation could not be simulated: {e}"
+                )
 
             return v3_pool, swap_info, final_state
 
         def v3_swap_exact_out(params: dict):
-
-            print(params.get("params"))
 
             sqrtPriceLimitX96 = None
             amountInMaximum = None
@@ -485,8 +484,9 @@ class UniswapTransaction(Transaction):
                     sqrt_price_limit=sqrtPriceLimitX96,
                 )
             except EVMRevertError as e:
-                print(f"TRANSACTION CANNOT BE SIMULATED!: {e}")
-                return
+                raise TransactionError(
+                    f"V3 operation could not be simulated: {e}"
+                )
 
             # swap input is positive from the POV of the pool
             amountIn = max(
@@ -496,7 +496,7 @@ class UniswapTransaction(Transaction):
 
             if amountInMaximum and amountIn < amountInMaximum:
                 raise TransactionError(
-                    f"amountOut ({amountOut}) < amountOutMin ({amountInMaximum})"
+                    f"amountIn ({amountIn}) < amountOutMin ({amountInMaximum})"
                 )
 
             return (v3_pool, swap_info, final_state)
@@ -807,34 +807,38 @@ class UniswapTransaction(Transaction):
 
         future_state = []
 
-        if multicall_data := self.func_params.get("data"):
-            for payload in multicall_data:
-                try:
-                    # decode with Router ABI
-                    payload_func, payload_args = (
-                        web3.Web3()
-                        .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
-                        .decode_function_input(payload)
-                    )
-                except:
-                    pass
+        for payload in self.func_params.get("data"):
+            try:
+                # decode with Router ABI
+                payload_func, payload_args = (
+                    web3.Web3()
+                    .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
+                    .decode_function_input(payload)
+                )
+            except:
+                pass
 
-                try:
-                    # decode with Router2 ABI
-                    payload_func, payload_args = (
-                        web3.Web3()
-                        .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
-                        .decode_function_input(payload)
-                    )
-                except:
-                    pass
+            try:
+                # decode with Router2 ABI
+                payload_func, payload_args = (
+                    web3.Web3()
+                    .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
+                    .decode_function_input(payload)
+                )
+            except:
+                pass
 
+            try:
                 # simulate each payload individually and append the future_state dict of that payload
-                if payload_state_delta := self.simulate(
+                payload_state_delta = self.simulate(
                     func_name=payload_func.fn_name,
                     func_params=payload_args,
-                ):
-                    future_state.extend(payload_state_delta)
-                continue
+                )
+                future_state.extend(payload_state_delta)
+            except:
+                import traceback, sys
+
+                traceback.print_exc()
+                sys.exit()
 
         return future_state
