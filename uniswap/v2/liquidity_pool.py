@@ -12,12 +12,15 @@ from degenbot.exceptions import (
     LiquidityPoolError,
 )
 from degenbot.token import Erc20Token
-
+from degenbot.manager import Erc20TokenHelperManager
 from .abi import UNISWAPV2_LP_ABI
 from .router import Router
 
 
 class LiquidityPool:
+
+    _token_manager = Erc20TokenHelperManager()
+
     def __init__(
         self,
         address: str,
@@ -104,8 +107,20 @@ class LiquidityPool:
                 elif token.address == self._contract.token1():
                     self.token1 = token
         else:
-            self.token0 = Erc20Token(address=self._contract.token0())
-            self.token1 = Erc20Token(address=self._contract.token1())
+            self.token0 = self._token_manager.get_erc20token(
+                address=self._contract.token0(),
+                min_abi=True,
+                silent=silent,
+                unload_brownie_contract_after_init=True,
+            )
+            self.token1 = self._token_manager.get_erc20token(
+                address=self._contract.token1(),
+                min_abi=True,
+                silent=silent,
+                unload_brownie_contract_after_init=True,
+            )
+            # self.token0 = Erc20Token(address=self._contract.token0())
+            # self.token1 = Erc20Token(address=self._contract.token1())
 
         if name is not None:
             self.name = name
