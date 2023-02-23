@@ -235,7 +235,7 @@ class UniswapLpCycle(Arbitrage):
 
     def auto_update(
         self,
-        silent=True,
+        silent: bool = True,
         block_number: Optional[int] = None,
         override_update_method: Optional[str] = None,
     ) -> bool:
