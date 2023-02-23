@@ -469,7 +469,10 @@ class LiquidityPool:
         elif token_out is not None and token_out == self.token1:
             token_in = self.token0
 
-        if token_in_quantity:
+        # bugfix: (changed check `token_in_quantity is not None`)
+        # swaps with zero amounts (a stupid value, but valid) were falling through
+        # both blocks and function was returning None
+        if token_in_quantity is not None:
             # delegate calculations to the `calculate_tokens_out_from_tokens_in` method
             token_out_quantity = self.calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
@@ -496,7 +499,11 @@ class LiquidityPool:
                 "reserves_token0": self.reserves_token0 + token0_delta,
                 "reserves_token1": self.reserves_token1 + token1_delta,
             }
-        elif token_out_quantity:
+
+        # bugfix: (changed check `token_out_quantity is not None`)
+        # swaps with zero amounts (a stupid value, but valid) were falling through
+        # both blocks and function was returning None
+        elif token_out_quantity is not None:
             # delegate calculations to the `calculate_tokens_in_from_tokens_out` method
             token_in_quantity = self.calculate_tokens_in_from_tokens_out(
                 token_in=token_in,
