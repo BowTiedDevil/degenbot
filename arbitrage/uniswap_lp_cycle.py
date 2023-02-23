@@ -260,7 +260,10 @@ class UniswapLpCycle(Arbitrage):
                         update_block=block_number,
                     )
                     if pool_updated:
-                        print(f"(UniswapLpCycle) found update for pool {pool}")
+                        if not silent:
+                            print(
+                                f"(UniswapLpCycle) found update for pool {pool}"
+                            )
                         found_updates = True
                 elif pool.uniswap_version == 3:
                     pool_updated, _ = pool.auto_update(
@@ -268,7 +271,10 @@ class UniswapLpCycle(Arbitrage):
                         block_number=block_number,
                     )
                     if pool_updated:
-                        print(f"(UniswapLpCycle) found update for pool {pool}")
+                        if not silent:
+                            print(
+                                f"(UniswapLpCycle) found update for pool {pool}"
+                            )
                         found_updates = True
                 else:
                     print("could not determine Uniswap pool version!")
