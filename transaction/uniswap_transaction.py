@@ -3,6 +3,7 @@ import itertools
 
 from typing import List, Optional, Tuple, Union
 from degenbot.exceptions import (
+    DegenbotError,
     LiquidityPoolError,
     EVMRevertError,
     ManagerError,
@@ -865,8 +866,9 @@ class UniswapTransaction(Transaction):
             else:
                 print(f"\tUNHANDLED function: {func_name}")
 
-        # WIP: catch ValueError to avoid bad inputs to the swap bubbling out of the TX helper
-        except (LiquidityPoolError, ValueError) as e:
+        # WIP: catch generic DegenbotError (non-fatal) and ValueError (bad inputs),
+        # allow the rest to escape
+        except (DegenbotError, ValueError) as e:
             raise TransactionError(f"Transaction could not be calculated: {e}")
         else:
             return future_state
