@@ -315,24 +315,28 @@ class UniswapLpCycle(Arbitrage):
         for i, pool in enumerate(self.swap_pools):
 
             if pool.uniswap_version == 2 and (
-                pool.reserves_token0 == 0 or pool.reserves_token1 == 0
+                pool.reserves_token0 <= 1 or pool.reserves_token1 <= 1
             ):
-                raise ZeroLiquidityError("V2 pool has no liquidity")
+                raise ZeroLiquidityError(
+                    f"V2 pool {pool.address} has no liquidity"
+                )
 
             if pool.uniswap_version == 3 and pool.state["liquidity"] == 0:
 
-                # check if the swap is zeroForOne and cannot swap any more token0 for token1
+                # check if the swap is 0 -> 1 and cannot swap any more token0 for token1
                 if (
                     self.swap_vectors[i]["zeroForOne"]
-                    # and pool.state["tick"] == TickMath.MIN_TICK
+                    and pool.state["sqrt_price_x96"]
+                    == TickMath.MIN_SQRT_RATIO + 1
                 ):
                     raise ZeroLiquidityError(
                         f"V3 pool {pool.address} has no liquidity for a 0 -> 1 swap"
                     )
-                # check if the swap is oneForZero (zeroForOne=False) and cannot swap any more token1 for token0
+                # check if the swap is 1 -> 0 (zeroForOne=False) and cannot swap any more token1 for token0
                 elif (
                     not self.swap_vectors[i]["zeroForOne"]
-                    # and pool.state["tick"] == TickMath.MAX_TICK
+                    and pool.state["sqrt_price_x96"]
+                    == TickMath.MAX_SQRT_RATIO - 1
                 ):
                     raise ZeroLiquidityError(
                         f"V3 pool {pool.address} has no liquidity for a 1 -> 0 swap"
@@ -369,7 +373,7 @@ class UniswapLpCycle(Arbitrage):
                 # iteration. We don't want it to stop, so catch the exception and pretend
                 # the swap results in token_out_quantity = 0.
                 # Return the negated profit so the solver has a rational value to process
-                return -float(x)
+                return -float(-x)
             except:
                 raise
             else:
