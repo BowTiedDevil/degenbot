@@ -278,7 +278,7 @@ class UniswapTransaction(Transaction):
             # predict future pool states assuming the swap executes in isolation
             # work through the pools backwards, since the swap will execute at a defined output, with input floating
             future_pool_states = []
-            for i, pool in enumerate(pool_objects[::-1]):
+            for i, v2_pool in enumerate(pool_objects[::-1]):
                 token_out_quantity = (
                     swap_out_quantity if i == 0 else token_out_quantity
                 )
@@ -288,11 +288,13 @@ class UniswapTransaction(Transaction):
                 # and token_in equal to the other token held by the pool
                 token_out = token_out if i == 0 else token_in
                 token_in = (
-                    pool.token0 if token_out is pool.token1 else pool.token1
+                    v2_pool.token0
+                    if token_out is v2_pool.token1
+                    else v2_pool.token1
                 )
 
-                current_state = pool.state
-                future_state = pool.simulate_swap(
+                current_state = v2_pool.state
+                future_state = v2_pool.simulate_swap(
                     token_out=token_out,
                     token_out_quantity=token_out_quantity,
                 )
@@ -322,29 +324,29 @@ class UniswapTransaction(Transaction):
 
                 future_pool_states.append(
                     (
-                        pool,
+                        v2_pool,
                         future_state,
                     )
                 )
 
                 if not silent:
-                    print(f"Simulating swap through pool: {pool}")
+                    print(f"Simulating swap through pool: {v2_pool}")
                     print(
                         f"\t{token_in_quantity} {token_in} -> {token_out_quantity} {token_out}"
                     )
                     print("\t(CURRENT)")
                     print(
-                        f"\t{pool.token0}: {current_state['reserves_token0']}"
+                        f"\t{v2_pool.token0}: {current_state['reserves_token0']}"
                     )
                     print(
-                        f"\t{pool.token1}: {current_state['reserves_token1']}"
+                        f"\t{v2_pool.token1}: {current_state['reserves_token1']}"
                     )
                     print(f"\t(FUTURE)")
                     print(
-                        f"\t{pool.token0}: {future_state['reserves_token0']}"
+                        f"\t{v2_pool.token0}: {future_state['reserves_token0']}"
                     )
                     print(
-                        f"\t{pool.token1}: {future_state['reserves_token1']}"
+                        f"\t{v2_pool.token1}: {future_state['reserves_token1']}"
                     )
 
             # if swap_in_quantity < token_in_quantity:
@@ -736,7 +738,7 @@ class UniswapTransaction(Transaction):
                                 )
                             },
                             silent=silent,
-                        )
+                        )[0]
                     except Exception as e:
                         print(e)
                         print(type(e))
@@ -856,9 +858,10 @@ class UniswapTransaction(Transaction):
                             )
                         },
                         silent=silent,
-                    )
+                    )[0]
 
                     future_state.append([v3_pool, pool_state])
+
             elif func_name in (
                 "addLiquidity",
                 "addLiquidityETH",
