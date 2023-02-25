@@ -719,35 +719,26 @@ class UniswapTransaction(Transaction):
                     fee = exactInputParams_path_decoded[token_pos + 1]
                     tokenOut = exactInputParams_path_decoded[token_pos + 2]
 
-                    try:
-                        v3_pool, pool_state = v3_swap_exact_in(
-                            params={
-                                "params": (
-                                    tokenIn,
-                                    tokenOut,
-                                    fee,
-                                    # use amountIn for the first swap, otherwise take the output
-                                    # amount of the last swap (always negative so we can check
-                                    # for the min without knowing the token positions)
-                                    exactInputParams_amountIn
-                                    if token_pos == 0
-                                    else min(
-                                        pool_state["amount0_delta"],
-                                        pool_state["amount1_delta"],
-                                    ),
-                                )
-                            },
-                            silent=silent,
-                        )[0]
-                    except Exception as e:
-                        print(e)
-                        print(type(e))
-                        import sys
-
-                        sys.exit()
-                        raise
-                    else:
-                        future_state.append([v3_pool, pool_state])
+                    v3_pool, pool_state = v3_swap_exact_in(
+                        params={
+                            "params": (
+                                tokenIn,
+                                tokenOut,
+                                fee,
+                                # use amountIn for the first swap, otherwise take the output
+                                # amount of the last swap (always negative so we can check
+                                # for the min without knowing the token positions)
+                                exactInputParams_amountIn
+                                if token_pos == 0
+                                else min(
+                                    pool_state["amount0_delta"],
+                                    pool_state["amount1_delta"],
+                                ),
+                            )
+                        },
+                        silent=silent,
+                    )[0]
+                    future_state.append([v3_pool, pool_state])
             elif func_name == "exactOutputSingle":
                 if not silent:
                     print(func_name)
