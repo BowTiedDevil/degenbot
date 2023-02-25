@@ -187,24 +187,39 @@ class UniswapTransaction(Transaction):
                     token_in_quantity=token_in_quantity,
                 )
 
-                if (
-                    future_state["reserves_token0"]
-                    < current_state["reserves_token0"]
-                ):
-                    token_out_quantity = (
-                        current_state["reserves_token0"]
-                        - future_state["reserves_token0"]
-                    )
-                elif (
-                    future_state["reserves_token1"]
-                    < current_state["reserves_token1"]
-                ):
-                    token_out_quantity = (
-                        current_state["reserves_token1"]
-                        - future_state["reserves_token1"]
-                    )
-                else:
-                    raise ValueError("Swap direction could not be identified")
+                token_out_quantity = -min(
+                    future_state["amount0_delta"],
+                    future_state["amount1_delta"],
+                )
+
+                # if (
+                #     future_state["reserves_token0"]
+                #     < current_state["reserves_token0"]
+                # ):
+                #     token_out_quantity = (
+                #         current_state["reserves_token0"]
+                #         - future_state["reserves_token0"]
+                #     )
+                # elif (
+                #     future_state["reserves_token1"]
+                #     < current_state["reserves_token1"]
+                # ):
+                #     token_out_quantity = (
+                #         current_state["reserves_token1"]
+                #         - future_state["reserves_token1"]
+                #     )
+                # else:
+                #     raise ValueError(
+                #         "Swap direction could not be identified"
+                #         "\n"
+                #         f'{current_state["reserves_token0"]=}'
+                #         "\n"
+                #         f'{current_state["reserves_token1"]=}'
+                #         "\n"
+                #         f'{future_state["reserves_token0"]=}'
+                #         "\n"
+                #         f'{future_state["reserves_token1"]=}'
+                #     )
 
                 future_pool_states.append(
                     (
@@ -303,24 +318,10 @@ class UniswapTransaction(Transaction):
                 # print(f"{current_state=}")
                 # print(f"{future_state=}")
 
-                if (
-                    future_state["reserves_token0"]
-                    > current_state["reserves_token0"]
-                ):
-                    token_in_quantity = (
-                        future_state["reserves_token0"]
-                        - current_state["reserves_token0"]
-                    )
-                elif (
-                    future_state["reserves_token1"]
-                    > current_state["reserves_token1"]
-                ):
-                    token_in_quantity = (
-                        future_state["reserves_token1"]
-                        - current_state["reserves_token1"]
-                    )
-                else:
-                    raise ValueError("Swap direction could not be identified")
+                token_in_quantity = max(
+                    future_state["amount0_delta"],
+                    future_state["amount1_delta"],
+                )
 
                 future_pool_states.append(
                     (
@@ -570,7 +571,7 @@ class UniswapTransaction(Transaction):
                 "swapExactTokensForETHSupportingFeeOnTransferTokens",
             ):
                 if not silent:
-                    print(func_name)
+                    print(f"{func_name}: {self.hash}")
                 future_state.extend(
                     v2_swap_exact_in(func_params, silent=silent)
                 )
@@ -580,7 +581,7 @@ class UniswapTransaction(Transaction):
                 "swapExactETHForTokensSupportingFeeOnTransferTokens",
             ):
                 if not silent:
-                    print(func_name)
+                    print(f"{func_name}: {self.hash}")
                 future_state.extend(
                     v2_swap_exact_in(
                         func_params, unwrapped_input=True, silent=silent
@@ -592,28 +593,28 @@ class UniswapTransaction(Transaction):
                 "swapExactTokensForTokensSupportingFeeOnTransferTokens",
             ]:
                 if not silent:
-                    print(func_name)
+                    print(f"{func_name}: {self.hash}")
                 future_state.extend(
                     v2_swap_exact_in(func_params, silent=silent)
                 )
 
             elif func_name in ("swapTokensForExactETH"):
                 if not silent:
-                    print(func_name)
+                    print(f"{func_name}: {self.hash}")
                 future_state.extend(
                     v2_swap_exact_out(params=func_params, silent=silent)
                 )
 
             elif func_name in ("swapTokensForExactTokens"):
                 if not silent:
-                    print(func_name)
+                    print(f"{func_name}: {self.hash}")
                 future_state.extend(
                     v2_swap_exact_out(params=func_params, silent=silent)
                 )
 
             elif func_name in ("swapETHForExactTokens"):
                 if not silent:
-                    print(func_name)
+                    print(f"{func_name}: {self.hash}")
                 future_state.extend(
                     v2_swap_exact_out(
                         params=func_params, unwrapped_input=True, silent=silent
@@ -625,11 +626,11 @@ class UniswapTransaction(Transaction):
             # -----------------------------------------------------
             elif func_name == "multicall":
                 if not silent:
-                    print(func_name)
+                    print(f"{func_name}: {self.hash}")
                 future_state = self.simulate_multicall(silent=silent)
             elif func_name == "exactInputSingle":
                 if not silent:
-                    print(func_name)
+                    print(f"{func_name}: {self.hash}")
                 # v3_pool, swap_info, pool_state = v3_swap_exact_in(
                 #     params=func_params
                 # )
@@ -639,7 +640,7 @@ class UniswapTransaction(Transaction):
                 )
             elif func_name == "exactInput":
                 if not silent:
-                    print(func_name)
+                    print(f"{func_name}: {self.hash}")
 
                 try:
                     (
@@ -741,7 +742,7 @@ class UniswapTransaction(Transaction):
                     future_state.append([v3_pool, pool_state])
             elif func_name == "exactOutputSingle":
                 if not silent:
-                    print(func_name)
+                    print(f"{func_name}: {self.hash}")
                 # v3_pool, swap_info, pool_state = v3_swap_exact_out(
                 #     params=func_params
                 # )
@@ -750,7 +751,7 @@ class UniswapTransaction(Transaction):
                 )
             elif func_name == "exactOutput":
                 if not silent:
-                    print(func_name)
+                    print(f"{func_name}: {self.hash}")
 
                 # Router ABI
                 try:
