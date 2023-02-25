@@ -913,21 +913,57 @@ class UniswapTransaction(Transaction):
             except:
                 pass
 
-            try:
-                # simulate each payload individually and append the future_state dict of that payload
-                # payload_pool, payload_state = self.simulate(
-                #     func_name=payload_func.fn_name,
-                #     func_params=payload_args,
-                # )
-                future_state.extend(
-                    self.simulate(
-                        func_name=payload_func.fn_name,
-                        func_params=payload_args,
-                        silent=silent,
+            if payload_func.fn_name == "multicall":
+
+                if not silent:
+                    print("Unwrapping nested multicall")
+
+                for payload in payload_args["data"]:
+                    try:
+                        _func, _params = (
+                            web3.Web3()
+                            .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
+                            .decode_function_input(payload)
+                        )
+                    except:
+                        pass
+
+                    try:
+                        _func, _params = (
+                            web3.Web3()
+                            .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
+                            .decode_function_input(payload)
+                        )
+                    except:
+                        pass
+
+                    try:
+                        # simulate each payload individually and append its result to
+                        # the future_state tuple
+                        future_state.extend(
+                            self.simulate(
+                                func_name=_func.fn_name,
+                                func_params=_params,
+                                silent=silent,
+                            )
+                        )
+                    except Exception as e:
+                        raise TransactionError(
+                            f"Could not decode nested multicall: {e}"
+                        )
+
+            else:
+                try:
+                    # simulate each payload individually and append its result to
+                    # the future_state tuple
+                    future_state.extend(
+                        self.simulate(
+                            func_name=payload_func.fn_name,
+                            func_params=payload_args,
+                            silent=silent,
+                        )
                     )
-                )
-            except Exception as e:
-                print(type(e))
-                raise TransactionError(f"Could not decode multicall: {e}")
+                except Exception as e:
+                    raise TransactionError(f"Could not decode multicall: {e}")
 
         return future_state
