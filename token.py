@@ -3,10 +3,11 @@ import json
 from typing import Optional
 from warnings import catch_warnings, simplefilter
 
-from brownie import Contract
+from brownie import Contract, web3 as brownie_w3
 from brownie.convert import to_address
 from brownie.convert.datatypes import HexString
 from brownie.network.account import LocalAccount
+from hexbytes import HexBytes
 
 from degenbot.chainlink import ChainlinkPriceContract
 
@@ -78,36 +79,57 @@ class Erc20Token:
                         except:
                             raise
 
-        if "name" in dir(self._contract):
+        try:
             self.name = self._contract.name()
-        elif "NAME" in dir(self._contract):
-            self.name = self._contract.NAME()
-        elif (
-            "_name" in dir(self._contract)
-            and type(self._contract._name) != str
-        ):
-            self.name = self._contract._name()
-        else:
-            print(
-                f"Contract does not have a 'name' or similar function. Setting to 'UNKNOWN', confirm on Etherscan: address {address}"
+        except OverflowError:
+            self.name = brownie_w3.eth.call(
+                {
+                    "to": self.address,
+                    "data": brownie_w3.keccak(text="name()"),
+                }
             )
-            self.name = "UNKNOWN"
-        if type(self.name) == HexString:
+
+        # if "name" in dir(self._contract):
+        #     self.name = self._contract.name()
+        # elif "NAME" in dir(self._contract):
+        #     self.name = self._contract.NAME()
+        # elif (
+        #     "_name" in dir(self._contract)
+        #     and type(self._contract._name) != str
+        # ):
+        #     self.name = self._contract._name()
+        # else:
+        #     print(
+        #         f"Contract does not have a 'name' or similar function. Setting to 'UNKNOWN', confirm on Etherscan: address {address}"
+        #     )
+        #     self.name = "UNKNOWN"
+
+        if type(self.name) in [HexString, HexBytes]:
             self.name = self.name.decode()
 
-        if "symbol" in dir(self._contract):
+        try:
             self.symbol = self._contract.symbol()
-        elif "SYMBOL" in dir(self._contract):
-            self.symbol = self._contract.SYMBOL()
-        elif "_symbol" in dir(self._contract):
-            self.symbol = self._contract._symbol()
-        else:
-            print(
-                f"Contract does not have a 'symbol' or similar function. Setting to 'UNKNOWN', confirm on Etherscan: address {address}"
+        except OverflowError:
+            self.symbol = brownie_w3.eth.call(
+                {
+                    "to": self.address,
+                    "data": brownie_w3.keccak(text="symbol()"),
+                }
             )
-            self.symbol = "UNKNOWN"
 
-        if type(self.symbol) == HexString:
+        # if "symbol" in dir(self._contract):
+        #     self.symbol = self._contract.symbol()
+        # elif "SYMBOL" in dir(self._contract):
+        #     self.symbol = self._contract.SYMBOL()
+        # elif "_symbol" in dir(self._contract):
+        #     self.symbol = self._contract._symbol()
+        # else:
+        #     print(
+        #         f"Contract does not have a 'symbol' or similar function. Setting to 'UNKNOWN', confirm on Etherscan: address {address}"
+        #     )
+        #     self.symbol = "UNKNOWN"
+
+        if type(self.symbol) in [HexString, HexBytes]:
             self.symbol = self.symbol.decode()
 
         if "decimals" in dir(self._contract):
