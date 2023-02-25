@@ -374,15 +374,6 @@ class BaseV3LiquidityPool(ABC):
         if amountSpecified == 0:
             raise EVMRevertError("AS")
 
-        if not (
-            sqrtPriceLimitX96 < self.sqrt_price_x96
-            and sqrtPriceLimitX96 > TickMath.MIN_SQRT_RATIO
-            if zeroForOne
-            else sqrtPriceLimitX96 > self.sqrt_price_x96
-            and sqrtPriceLimitX96 < TickMath.MAX_SQRT_RATIO
-        ):
-            raise EVMRevertError("SPL")
-
         if override_start_liquidity is not None:
             liquidity = override_start_liquidity
         else:
@@ -397,6 +388,19 @@ class BaseV3LiquidityPool(ABC):
             tick = override_start_tick
         else:
             tick = self.tick
+
+        if not (
+            # WIP: support override
+            # sqrtPriceLimitX96 < self.sqrt_price_x96
+            sqrtPriceLimitX96 < sqrt_price_x96
+            and sqrtPriceLimitX96 > TickMath.MIN_SQRT_RATIO
+            if zeroForOne
+            # WIP: support override
+            # else sqrtPriceLimitX96 > self.sqrt_price_x96
+            else sqrtPriceLimitX96 > sqrt_price_x96
+            and sqrtPriceLimitX96 < TickMath.MAX_SQRT_RATIO
+        ):
+            raise EVMRevertError(f"SPL")
 
         cache = {
             "liquidityStart": liquidity,
@@ -504,7 +508,7 @@ class BaseV3LiquidityPool(ABC):
                 if step["initialized"]:
 
                     # use the default of (0,0) so the tuple assignment works. Throws exception
-                    # if the default value (None) is assigned to both
+                    # if the default value (None) is returned from get()
                     liquidityNet, liquidityGross = self.tick_data.get(
                         step["tickNext"],
                         (0, 0),
@@ -512,9 +516,7 @@ class BaseV3LiquidityPool(ABC):
 
                     if (liquidityNet, liquidityGross) == (0, 0):
                         raise ArbitrageError(
-                            f"(UniswapLpCycle) (swap) tick_data for tick={step['tickNext']} was empty!"
-                            f"{self.tick_bitmap=}"
-                            f"{self.tick_data=}"
+                            f"(UniswapLpCycle) swap function indicated tick={step['tickNext']} was initialized, but tick_data has no record at this tick!"
                         )
 
                     if zeroForOne:
@@ -624,7 +626,7 @@ class BaseV3LiquidityPool(ABC):
     def calculate_tokens_out_from_tokens_in(
         self,
         token_in: Erc20Token,
-        token_in_quantity: Optional[int] = None,
+        token_in_quantity: int,
         override_state: Optional[dict] = None,
     ) -> int:
         """
@@ -718,7 +720,7 @@ class BaseV3LiquidityPool(ABC):
     def calculate_tokens_in_from_tokens_out(
         self,
         token_out: Erc20Token,
-        token_out_quantity: Optional[int] = None,
+        token_out_quantity: int,
         override_state: Optional[dict] = None,
     ) -> int:
         """
