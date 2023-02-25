@@ -1,5 +1,3 @@
-# TODO: investigate if ZeroLiquidityError is offering any protection
-
 from typing import List, Optional, Tuple, Union
 from warnings import warn
 
