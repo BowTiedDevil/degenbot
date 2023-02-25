@@ -962,7 +962,7 @@ class BaseV3LiquidityPool(ABC):
         token_out_quantity: Optional[int] = None,
         sqrt_price_limit: Optional[int] = None,
         override_state: Optional[dict] = None,
-    ) -> Tuple[dict]:
+    ) -> dict:
         """
         [TBD]
         """
@@ -1023,17 +1023,13 @@ class BaseV3LiquidityPool(ABC):
         except EVMRevertError as e:
             raise LiquidityPoolError(f"Simulated execution reverted: {e}")
         else:
-            return (
-                {
-                    "amount0_delta": amount0_delta,
-                    "amount1_delta": amount1_delta,
-                },
-                {
-                    "liquidity": end_liquidity,
-                    "sqrt_price_x96": end_sqrtprice,
-                    "tick": end_tick,
-                },
-            )
+            return {
+                "amount0_delta": amount0_delta,
+                "amount1_delta": amount1_delta,
+                "liquidity": end_liquidity,
+                "sqrt_price_x96": end_sqrtprice,
+                "tick": end_tick,
+            }
 
 
 class V3LiquidityPool(BaseV3LiquidityPool):

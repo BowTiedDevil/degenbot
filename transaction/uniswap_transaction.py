@@ -182,7 +182,7 @@ class UniswapTransaction(Transaction):
                 )
 
                 current_state = v2_pool.state
-                swap_info, future_state = v2_pool.simulate_swap(
+                future_state = v2_pool.simulate_swap(
                     token_in=token_in,
                     token_in_quantity=token_in_quantity,
                 )
@@ -292,7 +292,7 @@ class UniswapTransaction(Transaction):
                 )
 
                 current_state = pool.state
-                swap_info, future_state = pool.simulate_swap(
+                future_state = pool.simulate_swap(
                     token_out=token_out,
                     token_out_quantity=token_out_quantity,
                 )
@@ -427,7 +427,7 @@ class UniswapTransaction(Transaction):
                 raise
 
             try:
-                swap_info, final_state = v3_pool.simulate_swap(
+                final_state = v3_pool.simulate_swap(
                     token_in=token_in_object,
                     token_in_quantity=amountIn,
                 )
@@ -521,7 +521,7 @@ class UniswapTransaction(Transaction):
                 raise
 
             try:
-                swap_info, final_state = v3_pool.simulate_swap(
+                final_state = v3_pool.simulate_swap(
                     token_out=token_out_object,
                     token_out_quantity=amountOut,
                     sqrt_price_limit=sqrtPriceLimitX96,
@@ -533,8 +533,8 @@ class UniswapTransaction(Transaction):
 
             # swap input is positive from the POV of the pool
             amountIn = max(
-                swap_info["amount0_delta"],
-                swap_info["amount1_delta"],
+                final_state["amount0_delta"],
+                final_state["amount1_delta"],
             )
 
             if amountInMaximum and amountIn < amountInMaximum:
@@ -695,7 +695,11 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f" • path = {exactInputParams_path_decoded}")
                     print(f" • recipient = {exactInputParams_recipient}")
-                    if exactInputParams_deadline:
+                    try:
+                        exactInputParams_deadline
+                    except:
+                        pass
+                    else:
                         print(f" • deadline = {exactInputParams_deadline}")
                     print(f" • amountIn = {exactInputParams_amountIn}")
                     print(
@@ -713,23 +717,35 @@ class UniswapTransaction(Transaction):
                     fee = exactInputParams_path_decoded[token_pos + 1]
                     tokenOut = exactInputParams_path_decoded[token_pos + 2]
 
-                    v3_pool, swap_info, pool_state = v3_swap_exact_in(
-                        params={
-                            "params": (
-                                tokenIn,
-                                tokenOut,
-                                fee,
-                                # use amountIn for the first swap, otherwise take the output
-                                # amount of the last swap (always negative so we can check
-                                # for the min without knowing the token positions)
-                                exactInputParams_amountIn
-                                if token_pos == 0
-                                else min(swap_info.values()),
-                            )
-                        },
-                        silent=silent,
-                    )
-                    future_state.append([v3_pool, pool_state])
+                    try:
+                        v3_pool, pool_state = v3_swap_exact_in(
+                            params={
+                                "params": (
+                                    tokenIn,
+                                    tokenOut,
+                                    fee,
+                                    # use amountIn for the first swap, otherwise take the output
+                                    # amount of the last swap (always negative so we can check
+                                    # for the min without knowing the token positions)
+                                    exactInputParams_amountIn
+                                    if token_pos == 0
+                                    else min(
+                                        pool_state["amount0_delta"],
+                                        pool_state["amount1_delta"],
+                                    ),
+                                )
+                            },
+                            silent=silent,
+                        )
+                    except Exception as e:
+                        print(e)
+                        print(type(e))
+                        import sys
+
+                        sys.exit()
+                        raise
+                    else:
+                        future_state.append([v3_pool, pool_state])
             elif func_name == "exactOutputSingle":
                 if not silent:
                     print(func_name)
@@ -820,7 +836,7 @@ class UniswapTransaction(Transaction):
                     fee = exactOutputParams_path_decoded[token_pos + 1]
                     tokenIn = exactOutputParams_path_decoded[token_pos + 2]
 
-                    v3_pool, swap_info, pool_state = v3_swap_exact_out(
+                    v3_pool, pool_state = v3_swap_exact_out(
                         params={
                             "params": (
                                 tokenIn,
@@ -832,7 +848,11 @@ class UniswapTransaction(Transaction):
                                 # knowing the token positions)
                                 exactOutputParams_amountOut
                                 if token_pos == 0
-                                else max(swap_info.values()),
+                                else max(
+                                    pool_state["amount0_delta"],
+                                    pool_state["amount1_delta"],
+                                )
+                                # else max(swap_info.values()),
                             )
                         },
                         silent=silent,
@@ -912,6 +932,7 @@ class UniswapTransaction(Transaction):
                     )
                 )
             except Exception as e:
+                print(type(e))
                 raise TransactionError(f"Could not decode multicall: {e}")
 
         return future_state

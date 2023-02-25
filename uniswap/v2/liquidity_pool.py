@@ -429,7 +429,7 @@ class LiquidityPool:
         token_out: Optional[Erc20Token] = None,
         token_out_quantity: Optional[int] = None,
         override_state: dict = None,
-    ) -> Tuple[dict]:
+    ) -> dict:
         """
         [TBD]
         """
@@ -495,7 +495,6 @@ class LiquidityPool:
             return {
                 "amount0_delta": token0_delta,
                 "amount1_delta": token1_delta,
-            }, {
                 "reserves_token0": self.reserves_token0 + token0_delta,
                 "reserves_token1": self.reserves_token1 + token1_delta,
             }
@@ -527,7 +526,6 @@ class LiquidityPool:
             return {
                 "amount0_delta": token0_delta,
                 "amount1_delta": token1_delta,
-            }, {
                 "reserves_token0": self.reserves_token0 + token0_delta,
                 "reserves_token1": self.reserves_token1 + token1_delta,
             }
