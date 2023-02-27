@@ -118,11 +118,20 @@ class UniswapLpCycle(Arbitrage):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
+        override_state: Optional[
+            List[Tuple[Union[LiquidityPool, V3LiquidityPool], dict]]
+        ] = None,
     ) -> List[dict]:
 
         number_of_pools = len(self.swap_pools)
 
         pools_amounts_out = []
+
+        # sort the override_state values into a dictionary for fast lookup inside the calculation loop
+        _overrides = {}
+        if override_state is not None:
+            for pool, state in override_state:
+                _overrides[pool.address] = state
 
         for i in range(number_of_pools):
 
@@ -145,6 +154,9 @@ class UniswapLpCycle(Arbitrage):
                     ].calculate_tokens_out_from_tokens_in(
                         token_in=token_in,
                         token_in_quantity=token_in_quantity,
+                        override_state=_overrides.get(
+                            self.swap_pools[i].address
+                        ),
                     )
                 except LiquidityPoolError as e:
                     raise ArbitrageError(
@@ -183,6 +195,9 @@ class UniswapLpCycle(Arbitrage):
                     ].calculate_tokens_out_from_tokens_in(
                         token_in=token_in,
                         token_in_quantity=token_in_quantity,
+                        override_state=_overrides.get(
+                            self.swap_pools[i].address
+                        ),
                     )
                 except LiquidityPoolError as e:
                     raise ArbitrageError(
@@ -290,7 +305,12 @@ class UniswapLpCycle(Arbitrage):
 
         return found_updates
 
-    def calculate_arbitrage(self) -> Tuple[bool, Tuple[int, int]]:
+    def calculate_arbitrage(
+        self,
+        override_state: List[
+            Tuple[Union[LiquidityPool, V3LiquidityPool], dict]
+        ] = None,
+    ) -> Tuple[bool, Tuple[int, int]]:
 
         if self.best["init"] == True:
             # if the 'init' flag is True, the `best` dict is empty so the calc should be done for the
@@ -308,6 +328,13 @@ class UniswapLpCycle(Arbitrage):
             )
         else:
             self._update_pool_states()
+
+        # sort the override_state values into a dictionary for fast lookup
+        # inside the calculation loop
+        _overrides = {}
+        if override_state is not None:
+            for pool, state in override_state:
+                _overrides[pool.address] = state
 
         # check the pools for zero liquidity in the direction of the trade
         for i, pool in enumerate(self.swap_pools):
@@ -364,6 +391,7 @@ class UniswapLpCycle(Arbitrage):
                             token_in_quantity=x
                             if i == 0
                             else token_out_quantity,
+                            override_state=_overrides.get(pool.address),
                         )
                     )
             except (EVMRevertError, LiquidityPoolError):
@@ -406,6 +434,7 @@ class UniswapLpCycle(Arbitrage):
             best_amounts = self._build_multipool_amounts_out(
                 token_in=self.input_token,
                 token_in_quantity=swap_amount,
+                override_state=override_state,
             )
         except EVMRevertError:
             # Simulated EVM reverts inside the ported `swap` function were ignored to execute the optimizer
@@ -427,6 +456,9 @@ class UniswapLpCycle(Arbitrage):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
+        override_state: List[
+            Tuple[Union[LiquidityPool, V3LiquidityPool], dict]
+        ] = None,
     ) -> int:
         """
         Calculates the expected token OUTPUT from the last pool for a given token INPUT to the first pool
@@ -435,6 +467,13 @@ class UniswapLpCycle(Arbitrage):
         """
 
         number_of_pools = len(self.swap_pools)
+
+        # sort the override_state values into a dictionary for fast lookup
+        # inside the calculation loop
+        _overrides = {}
+        if override_state is not None:
+            for pool, state in override_state:
+                _overrides[pool.address] = state
 
         for i in range(number_of_pools):
 
@@ -453,7 +492,9 @@ class UniswapLpCycle(Arbitrage):
                 token_out_quantity = self.swap_pools[
                     i
                 ].calculate_tokens_out_from_tokens_in(
-                    token_in=token_in, token_in_quantity=token_in_quantity
+                    token_in=token_in,
+                    token_in_quantity=token_in_quantity,
+                    override_state=_overrides.get(self.swap_pools[i].address),
                 )
             except LiquidityPoolError as e:
                 raise ArbitrageError(
