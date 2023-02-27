@@ -213,11 +213,20 @@ class LiquidityPool:
         token_out: Optional[Erc20Token] = None,
         override_reserves_token0: Optional[int] = None,
         override_reserves_token1: Optional[int] = None,
+        override_state: Optional[dict] = None,
     ) -> int:
         """
         Calculates the required token INPUT of token_in for a target OUTPUT at current pool reserves.
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         """
+
+        # TODO: check for conflicting overrides
+        if override_state and (
+            override_reserves_token0 is None
+            and override_reserves_token1 is None
+        ):
+            override_reserves_token0 = override_state["reserves_token0"]
+            override_reserves_token1 = override_state["reserves_token1"]
 
         if not (
             (
@@ -295,7 +304,7 @@ class LiquidityPool:
         # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
         if token_out_quantity >= reserves_out - 1:
             raise LiquidityPoolError(
-                f"Requested amount out exceeds pool reserves"
+                f"Requested amount out ({token_out_quantity}) exceeds pool reserves ({reserves_out})"
             )
 
         numerator = reserves_in * token_out_quantity * self.fee.denominator
@@ -310,11 +319,24 @@ class LiquidityPool:
         token_in_quantity: int,
         override_reserves_token0: Optional[int] = None,
         override_reserves_token1: Optional[int] = None,
+        override_state: Optional[dict] = None,
     ) -> int:
         """
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         """
+
+        # TODO: check for conflicting overrides
+        if override_state and (
+            override_reserves_token0 is None
+            and override_reserves_token1 is None
+        ):
+            override_reserves_token0 = override_state["reserves_token0"]
+            override_reserves_token1 = override_state["reserves_token1"]
+
+            print("Overrides applied:")
+            print(f"{override_reserves_token0=}")
+            print(f"{override_reserves_token1=}")
 
         if not (
             (
