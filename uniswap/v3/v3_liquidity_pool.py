@@ -50,12 +50,11 @@ class BaseV3LiquidityPool(ABC):
         name: str = "",
         update_method: str = "polling",
         abi: Optional[list] = None,
-        extra_words: int = 250,
+        extra_words: int = 10,
         silent: bool = False,  # TODO: add status print in constructor
     ):
 
-        self.lock = Lock()
-        self.rlock = RLock()
+        self.lock = RLock()
 
         block_number = chain.height
 
@@ -213,7 +212,7 @@ class BaseV3LiquidityPool(ABC):
         # bugfix: this method calls itself recursively, so the single-use Lock was causing
         # a deadlock. Changed to RLock which still prevents cross-thread interference but
         # allows the recursive call to execute correctly
-        with self.rlock:
+        with self.lock:
 
             if block_number is None:
                 block_number = chain.height
@@ -246,8 +245,8 @@ class BaseV3LiquidityPool(ABC):
                 min_word = min(self.tick_bitmap.keys())
                 max_word = max(self.tick_bitmap.keys())
 
-                # requested word is inside the known range, so call this function in single-tick mode
-                # and pass the return value through
+                # requested word is inside the known range, so call this function again
+                # in single-tick mode and pass the return value through
                 if min_word < word_position < max_word:
                     return self._get_tick_data_at_word(
                         word_position=word_position,
@@ -450,7 +449,10 @@ class BaseV3LiquidityPool(ABC):
                     # BUG: 'word_position=XXX inside known range' exception is being thrown here
                     # when the helper is being updated by multiple threads
                     # print(f"(swap) {self.name} fetching word {wordPos}")
-                    self._get_tick_data_at_word(missing_word)
+                    self._get_tick_data_at_word(
+                        missing_word,
+                        single_word=True,
+                    )
                 else:
                     # nextInitializedTickWithinOneWord will search up to 256 ticks away, which may
                     # return a tick in an adjacent word if there are no initialized ticks in the current word.
@@ -462,7 +464,10 @@ class BaseV3LiquidityPool(ABC):
                         #     f'tickNext={step["tickNext"]} out of range! Fetching word={tick_next_word}'
                         #     f"\n{self.name}"
                         # )
-                        self._get_tick_data_at_word(tick_next_word)
+                        self._get_tick_data_at_word(
+                            tick_next_word,
+                            single_word=True,
+                        )
                     break
 
             # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
@@ -832,7 +837,7 @@ class BaseV3LiquidityPool(ABC):
         Uses a lock to guard state-modifying methods that might cause race conditions when used with threads.
         """
 
-        with self.rlock:
+        with self.lock:
 
             if not (
                 set(
@@ -899,7 +904,7 @@ class BaseV3LiquidityPool(ABC):
                                 tick_liquidity_gross,
                             ) = tick_liquidity
                         else:
-                            print(f"Tick {tick} initialized")
+                            # print(f"Tick {tick} initialized")
                             TickBitmap.flipTick(
                                 self.tick_bitmap,
                                 tick,
@@ -930,7 +935,7 @@ class BaseV3LiquidityPool(ABC):
                         )
 
                         if new_liquidity_gross == 0:
-                            print(f"Tick {tick} cleared")
+                            # print(f"Tick {tick} cleared")
                             del self.tick_data[tick]
                             TickBitmap.flipTick(
                                 self.tick_bitmap,
