@@ -446,12 +446,23 @@ class BaseV3LiquidityPool(ABC):
                         zeroForOne,
                     )
                 except BitmapWordUnavailableError as e:
-                    wordPos = e.args[-1]
+                    missing_word = e.args[-1]
                     # BUG: 'word_position=XXX inside known range' exception is being thrown here
                     # when the helper is being updated by multiple threads
                     # print(f"(swap) {self.name} fetching word {wordPos}")
-                    self._get_tick_data_at_word(wordPos)
+                    self._get_tick_data_at_word(missing_word)
                 else:
+                    # nextInitializedTickWithinOneWord will search up to 256 ticks away, which may
+                    # return a tick in an adjacent word if there are no initialized ticks in the current word.
+                    # This word may not be known to the helper, so check and fetch the containing word for this tick
+                    tick_next_word, _ = TickBitmap.position(step["tickNext"])
+
+                    if tick_next_word not in self.tick_bitmap.keys():
+                        # print(
+                        #     f'tickNext={step["tickNext"]} out of range! Fetching word={tick_next_word}'
+                        #     f"\n{self.name}"
+                        # )
+                        self._get_tick_data_at_word(tick_next_word)
                     break
 
             # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
@@ -507,16 +518,28 @@ class BaseV3LiquidityPool(ABC):
                 # if the tick is initialized, run the tick transition
                 if step["initialized"]:
 
-                    # use the default of (0,0) so the tuple assignment works. Throws exception
-                    # if the default value (None) is returned from get()
+                    # use the default value (0, 0) so the tuple assignment works. Throws exception
+                    # if the default value None is returned from get()
                     liquidityNet, liquidityGross = self.tick_data.get(
                         step["tickNext"],
                         (0, 0),
                     )
 
                     if (liquidityNet, liquidityGross) == (0, 0):
+
+                        current_tick_word, _ = self._get_tick_bitmap_position(
+                            state["tick"]
+                        )
+                        next_tick_word, _ = self._get_tick_bitmap_position(
+                            step["tickNext"]
+                        )
+                        # WIP: investigate if this error is thrown when the next tick is on a word boundary
                         raise ArbitrageError(
-                            f"(UniswapLpCycle) swap function indicated tick={step['tickNext']} was initialized, but tick_data has no record at this tick!"
+                            f"(UniswapLpCycle) swap function indicated tick={step['tickNext']} was initialized, but tick_data has no data for this tick!"
+                            f"\nPool address = {self.address}"
+                            f"\nCurrent: Tick={state['tick']}, Word={current_tick_word}"
+                            f"\nNext   : Tick={step['tickNext']}, Word={next_tick_word}"
+                            f"\nBlock  : {chain.height}"
                         )
 
                     if zeroForOne:
@@ -806,153 +829,145 @@ class BaseV3LiquidityPool(ABC):
 
         Returns a bool indicating whether any updated state value was found and processed
 
-        Uses a lock to guard state-modifying methods that might cause race conditions
-        when used with threads.
+        Uses a lock to guard state-modifying methods that might cause race conditions when used with threads.
         """
 
-        if not (
-            set(["liquidity", "sqrt_price_x96", "tick", "liquidity_change"])
-            & set(updates.keys())
-        ):
-            raise ValueError(
-                "At least one of (liquidity, sqrt_price_x96, tick, liquidity_change) must be provided"
-            )
+        with self.rlock:
 
-        # assert set(
-        #     ["liquidity", "sqrt_price_x96", "tick", "liquidity_change"]
-        # ) & set(
-        #     updates.keys()
-        # ), "At least one of (liquidity, sqrt_price_x96, tick, liquidity_change) must be provided"
+            if not (
+                set(
+                    ["liquidity", "sqrt_price_x96", "tick", "liquidity_change"]
+                )
+                & set(updates.keys())
+            ):
+                raise ValueError(
+                    "At least one of (liquidity, sqrt_price_x96, tick, liquidity_change) must be provided"
+                )
 
-        # if block_number was not provided, pull from the Brownie chain object
-        if block_number is None:
-            block_number = chain.height
-            print(
-                f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
-            )
+            # if block_number was not provided, pull from Brownie
+            if block_number is None:
+                block_number = chain.height
+                print(
+                    f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
+                )
 
-        if block_number < self.update_block:
-            raise ExternalUpdateError(
-                f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
-            )
+            if block_number < self.update_block:
+                raise ExternalUpdateError(
+                    f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
+                )
 
-        updated = False
+            updated = False
 
-        for key, value in updates.items():
-            if key == "tick":
-                self.tick = value
-                updated = True
-            elif key == "liquidity":
-                self.liquidity = value
-                updated = True
-            elif key == "sqrt_price_x96":
-                self.sqrt_price_x96 = value
-                updated = True
-            elif key == "liquidity_change":
-                liquidity_delta, lower_tick, upper_tick = value
+            for key, value in updates.items():
+                if key == "tick":
+                    self.tick = value
+                    updated = True
+                elif key == "liquidity":
+                    self.liquidity = value
+                    updated = True
+                elif key == "sqrt_price_x96":
+                    self.sqrt_price_x96 = value
+                    updated = True
+                elif key == "liquidity_change":
+                    liquidity_delta, lower_tick, upper_tick = value
 
-                if lower_tick <= self.tick <= upper_tick:
-                    # prev_liq = self.liquidity
-                    self.liquidity += liquidity_delta
-                    # new_liq = self.liquidity
-                    # print(f"In-range liquidity: was {prev_liq}, now {new_liq}")
-                    self.state["liquidity"] = self.liquidity
+                    if lower_tick <= self.tick <= upper_tick:
+                        # prev_liq = self.liquidity
+                        self.liquidity += liquidity_delta
+                        # new_liq = self.liquidity
+                        # print(f"In-range liquidity: was {prev_liq}, now {new_liq}")
+                        self.state["liquidity"] = self.liquidity
+                        updated = True
+
+                    for i, tick in enumerate([lower_tick, upper_tick]):
+
+                        tick_word, _ = self._get_tick_bitmap_position(tick)
+
+                        # fetch the tick word if unavailable
+                        if tick_word not in self.tick_bitmap.keys():
+                            self._get_tick_data_at_word(
+                                word_position=tick_word,
+                                single_word=True,
+                                # Fetch the word using the previous block as a known "good" state snapshot
+                                block_number=block_number - 1,
+                            )
+
+                        # get the liquidity info for this tick, or zero if the tick was previously uninitialized
+                        if tick_liquidity := self.tick_data.get(tick):
+                            (
+                                tick_liquidity_net,
+                                tick_liquidity_gross,
+                            ) = tick_liquidity
+                        else:
+                            print(f"Tick {tick} initialized")
+                            TickBitmap.flipTick(
+                                self.tick_bitmap,
+                                tick,
+                                self.tick_spacing,
+                            )
+
+                            tick_liquidity_net = 0
+                            tick_liquidity_gross = 0
+
+                        # print("tick data before")
+                        # print(
+                        #     f"({tick_liquidity_net}, {tick_liquidity_gross})"
+                        # )
+
+                        # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
+                        # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
+                        # NOTE: for burn events (removing liquidity), event_liquidity is negated,
+                        # but the logic holds (liquidityNet is reduced at the start of the range,
+                        # and increased at the end of the range)
+
+                        new_liquidity_net = (
+                            tick_liquidity_net + liquidity_delta
+                            if i == 0
+                            else tick_liquidity_net - liquidity_delta
+                        )
+                        new_liquidity_gross = (
+                            tick_liquidity_gross + liquidity_delta
+                        )
+
+                        if new_liquidity_gross == 0:
+                            print(f"Tick {tick} cleared")
+                            del self.tick_data[tick]
+                            TickBitmap.flipTick(
+                                self.tick_bitmap,
+                                tick,
+                                self.tick_spacing,
+                            )
+                            continue
+                        else:
+                            self.tick_data[tick] = (
+                                new_liquidity_net,
+                                new_liquidity_gross,
+                            )
+
                     updated = True
 
-                for i, tick in enumerate([lower_tick, upper_tick]):
+                else:
+                    print(f"Unknown key-value pair ({key}:{value})")
 
-                    tick_word, _ = self._get_tick_bitmap_position(tick)
+            if updated:
+                self.update_block = block_number
+                self.state.update(
+                    {
+                        "tick": self.tick,
+                        "liquidity": self.liquidity,
+                        "sqrt_price_x96": self.sqrt_price_x96,
+                    }
+                )
 
-                    # check if the word containing this tick is known, fetch if not
-                    if tick_word not in self.tick_bitmap.keys():
-                        # print(
-                        #     f"(external_update) word {tick_word} missing, fetching single tick..."
-                        # )
-                        self._get_tick_data_at_word(
-                            word_position=tick_word,
-                            single_word=True,
-                            # NOTE: we fetch the previous block because if multiple liquidity events
-                            # are emitted this block, delta values will be incorrectly applied unless
-                            # we start from a previous block state
-                            block_number=block_number - 1,
-                        )
+            if not silent:
+                print(f"Liquidity: {self.liquidity}")
+                print(f"SqrtPriceX96: {self.sqrt_price_x96}")
+                print(f"Tick: {self.tick}")
+                print(
+                    f"liquidity event: {liquidity_delta} in tick range [{lower_tick},{upper_tick}], pool: {self.name}"
+                )
 
-                    # get the liquidity info for this tick, or set to zero if previously uninitialized
-                    if tick_liquidity := self.tick_data.get(tick):
-                        (
-                            tick_liquidity_net,
-                            tick_liquidity_gross,
-                        ) = tick_liquidity
-                    else:
-                        # print(f"Tick {tick} initialized")
-                        TickBitmap.flipTick(
-                            self.tick_bitmap,
-                            tick,
-                            self.tick_spacing,
-                        )
-
-                        tick_liquidity_net = 0
-                        tick_liquidity_gross = 0
-
-                    # print("tick data before")
-                    # print(
-                    #     f"({tick_liquidity_net}, {tick_liquidity_gross})"
-                    # )
-
-                    # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
-                    # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
-                    # NOTE: for burn events (removing liquidity), event_liquidity is negated,
-                    # but the logic holds (liquidityNet is reduced at the start of the range,
-                    # and increased at the end of the range)
-
-                    new_liquidity_net = (
-                        tick_liquidity_net + liquidity_delta
-                        if i == 0
-                        else tick_liquidity_net - liquidity_delta
-                    )
-                    new_liquidity_gross = (
-                        tick_liquidity_gross + liquidity_delta
-                    )
-
-                    if new_liquidity_gross == 0:
-                        # print(f"Tick {tick} cleared")
-                        del self.tick_data[tick]
-                        TickBitmap.flipTick(
-                            self.tick_bitmap,
-                            tick,
-                            self.tick_spacing,
-                        )
-                        continue
-                    else:
-                        self.tick_data[tick] = (
-                            new_liquidity_net,
-                            new_liquidity_gross,
-                        )
-
-                updated = True
-
-            else:
-                print(f"Unknown key-value pair ({key}:{value})")
-
-        if updated:
-            self.update_block = block_number
-            self.state.update(
-                {
-                    "tick": self.tick,
-                    "liquidity": self.liquidity,
-                    "sqrt_price_x96": self.sqrt_price_x96,
-                }
-            )
-
-        if not silent:
-            print(f"Liquidity: {self.liquidity}")
-            print(f"SqrtPriceX96: {self.sqrt_price_x96}")
-            print(f"Tick: {self.tick}")
-            print(
-                f"liquidity event: {liquidity_delta} in tick range [{lower_tick},{upper_tick}], pool: {self.name}"
-            )
-
-        return updated
+            return updated
 
     def simulate_swap(
         self,
