@@ -7,10 +7,8 @@ from web3 import Web3
 
 from degenbot.arbitrage.base import Arbitrage
 from degenbot.exceptions import (
-    ArbCalculationError,
     ArbitrageError,
     EVMRevertError,
-    InvalidSwapPathError,
     LiquidityPoolError,
     ZeroLiquidityError,
 )
@@ -143,7 +141,7 @@ class UniswapLpCycle(Arbitrage):
                 elif token_in == self.swap_pools[i].token1:
                     token_out = self.swap_pools[i].token0
                 else:
-                    raise InvalidSwapPathError(
+                    raise ValueError(
                         f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
                     )
 
@@ -184,7 +182,7 @@ class UniswapLpCycle(Arbitrage):
                 elif token_in == self.swap_pools[i].token1:
                     token_out = self.swap_pools[i].token0
                 else:
-                    raise InvalidSwapPathError(
+                    raise ValueError(
                         f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
                     )
 
@@ -226,7 +224,7 @@ class UniswapLpCycle(Arbitrage):
                 )
 
             else:
-                raise ArbitrageError(
+                raise ValueError(
                     f"Could not identify Uniswap version for pool: {self.swap_pools[i]}"
                 )
 
@@ -295,7 +293,7 @@ class UniswapLpCycle(Arbitrage):
                 if pool.state != self.pool_states[pool.address]:
                     found_updates = True
             else:
-                raise ArbitrageError(
+                raise ValueError(
                     "auto_update: could not determine update method!"
                 )
 
@@ -308,7 +306,10 @@ class UniswapLpCycle(Arbitrage):
     def calculate_arbitrage(
         self,
         override_state: List[
-            Tuple[Union[LiquidityPool, V3LiquidityPool], dict]
+            Tuple[
+                Union[LiquidityPool, V3LiquidityPool],
+                dict,
+            ]
         ] = None,
     ) -> Tuple[bool, Tuple[int, int]]:
 
@@ -380,53 +381,65 @@ class UniswapLpCycle(Arbitrage):
         )
 
         def arb_profit(x):
-            x = int(x)  # round the input down
 
-            try:
-                for i, pool in enumerate(self.swap_pools):
+            token_in_quantity = int(x)  # round the input down
+
+            for i, pool in enumerate(self.swap_pools):
+                try:
                     token_in = self.swap_vectors[i]["token_in"]
                     token_out_quantity = (
                         pool.calculate_tokens_out_from_tokens_in(
                             token_in=token_in,
-                            token_in_quantity=x
+                            token_in_quantity=token_in_quantity
                             if i == 0
                             else token_out_quantity,
                             override_state=_overrides.get(pool.address),
                         )
                     )
-            except (EVMRevertError, LiquidityPoolError):
-                # The optimizer might send invalid data into the swap calculation during
-                # iteration. We don't want it to stop, so catch the exception and pretend
-                # the swap results in token_out_quantity = 0.
-                # Return the negated profit so the solver has a rational value to process
-                return -float(-x)
-            except:
-                raise
-            else:
-                return -float(token_out_quantity - x)
+                except (EVMRevertError, LiquidityPoolError):
+                    # The optimizer might send invalid data into the swap calculation during
+                    # iteration. We don't want it to stop, so catch the exception and pretend
+                    # the swap results in token_out_quantity = 0.
+                    token_out_quantity = 0
 
-        try:
-            opt = optimize.minimize_scalar(
-                arb_profit,
-                method="bounded",
-                bounds=bounds,
-                bracket=bracket,
-                # Optimizer will run until the consecutive values near the optimum
-                # are within `xatol`. ERC-20 tokens can have different decimal precision,
-                # so set the tolerance dynamically
-                #
-                # Examples:
-                #   WETH (18 decimal places) calculated within 1*10**15 Wei,
-                #   USDC (6 decimal places) calculated within 1*10**3 Wei
-                options={
-                    "xatol": (1 * 10**self.input_token.decimals) / 1000
-                },
-            )
-        except:
-            raise
-        else:
-            swap_amount = int(opt.x)
-            best_profit = -int(opt.fun)
+            return -float(token_out_quantity - token_in_quantity)
+
+            # try:
+            #     for i, pool in enumerate(self.swap_pools):
+            #         token_in = self.swap_vectors[i]["token_in"]
+            #         token_out_quantity = (
+            #             pool.calculate_tokens_out_from_tokens_in(
+            #                 token_in=token_in,
+            #                 token_in_quantity=x
+            #                 if i == 0
+            #                 else token_out_quantity,
+            #                 override_state=_overrides.get(pool.address),
+            #             )
+            #         )
+            # except (EVMRevertError, LiquidityPoolError):
+            #     # The optimizer might send invalid data into the swap calculation during
+            #     # iteration. We don't want it to stop, so catch the exception and pretend
+            #     # the swap results in token_out_quantity = 0.
+            #     token_out_quantity = 0
+
+            # return -float(token_out_quantity - x)
+
+        opt = optimize.minimize_scalar(
+            fun=arb_profit,
+            method="bounded",
+            bounds=bounds,
+            bracket=bracket,
+            # Optimizer will run until the consecutive values near the optimum
+            # are within `xatol`. ERC-20 tokens can have different decimal precision,
+            # so set the tolerance to 0.01% of the 'nominal' digits
+            #
+            # Examples:
+            #   WETH (18 decimal places) calculated within 1*10**15 Wei,
+            #   USDC (6 decimal places) calculated within 1*10**2 Wei
+            options={"xatol": 10 ** (self.input_token.decimals - 4)},
+        )
+        swap_amount = int(opt.x)
+        best_profit = -int(opt.fun)
 
         profitable = True if best_profit > 0 else False
 
@@ -436,11 +449,11 @@ class UniswapLpCycle(Arbitrage):
                 token_in_quantity=swap_amount,
                 override_state=override_state,
             )
-        except EVMRevertError:
+        except (EVMRevertError, LiquidityPoolError) as e:
             # Simulated EVM reverts inside the ported `swap` function were ignored to execute the optimizer
             # through to completion, but now we want to raise a real error to avoid generating bad payloads
             # that will revert
-            raise ArbitrageError("No possible arbitrage")
+            raise ArbitrageError("No possible arbitrage") from e
         else:
             self.best.update(
                 {
@@ -457,7 +470,10 @@ class UniswapLpCycle(Arbitrage):
         token_in: Erc20Token,
         token_in_quantity: int,
         override_state: List[
-            Tuple[Union[LiquidityPool, V3LiquidityPool], dict]
+            Tuple[
+                Union[LiquidityPool, V3LiquidityPool],
+                dict,
+            ]
         ] = None,
     ) -> int:
         """
@@ -483,7 +499,7 @@ class UniswapLpCycle(Arbitrage):
             elif token_in == self.swap_pools[i].token1:
                 token_out = self.swap_pools[i].token0
             else:
-                raise ArbCalculationError(
+                raise ValueError(
                     f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
                 )
 
@@ -499,7 +515,7 @@ class UniswapLpCycle(Arbitrage):
             except LiquidityPoolError as e:
                 raise ArbitrageError(
                     f"(calculate_multipool_tokens_out_from_tokens_in): {e}"
-                )
+                ) from e
 
             if i == number_of_pools - 1:
                 # if we've reached the last pool, return the output amount
