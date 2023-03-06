@@ -888,57 +888,54 @@ class BaseV3LiquidityPool(ABC):
                                 block_number=block_number - 1,
                             )
 
-                        # get the liquidity info for this tick, or zero if the tick was previously uninitialized
-                        if tick_liquidity := self.tick_data.get(tick):
+                        with self.tick_lock:
+
+                            # get the liquidity info for this tick, or set both to zero if the tick was previously uninitialized
                             (
                                 tick_liquidity_net,
                                 tick_liquidity_gross,
-                            ) = tick_liquidity
-                        else:
-                            # print(f"Tick {tick} initialized")
-                            TickBitmap.flipTick(
-                                self.tick_bitmap,
-                                tick,
-                                self.tick_spacing,
+                            ) = self.tick_data.get(tick, (0, 0))
+
+                            if (
+                                tick_liquidity_net,
+                                tick_liquidity_gross,
+                            ) == (0, 0):
+                                # print(f"Tick {tick} initialized")
+                                TickBitmap.flipTick(
+                                    self.tick_bitmap,
+                                    tick,
+                                    self.tick_spacing,
+                                )
+
+                            # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
+                            # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
+                            #
+                            # NOTE: for burn events (removing liquidity), event_liquidity is negated,
+                            # but the logic holds (liquidityNet is reduced at the start of the range,
+                            # and increased at the end of the range)
+                            new_liquidity_net = (
+                                tick_liquidity_net + liquidity_delta
+                                if i == 0
+                                else tick_liquidity_net - liquidity_delta
+                            )
+                            new_liquidity_gross = (
+                                tick_liquidity_gross + liquidity_delta
                             )
 
-                            tick_liquidity_net = 0
-                            tick_liquidity_gross = 0
-
-                        # print("tick data before")
-                        # print(
-                        #     f"({tick_liquidity_net}, {tick_liquidity_gross})"
-                        # )
-
-                        # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
-                        # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
-                        # NOTE: for burn events (removing liquidity), event_liquidity is negated,
-                        # but the logic holds (liquidityNet is reduced at the start of the range,
-                        # and increased at the end of the range)
-
-                        new_liquidity_net = (
-                            tick_liquidity_net + liquidity_delta
-                            if i == 0
-                            else tick_liquidity_net - liquidity_delta
-                        )
-                        new_liquidity_gross = (
-                            tick_liquidity_gross + liquidity_delta
-                        )
-
-                        if new_liquidity_gross == 0:
-                            # print(f"Tick {tick} cleared")
-                            del self.tick_data[tick]
-                            TickBitmap.flipTick(
-                                self.tick_bitmap,
-                                tick,
-                                self.tick_spacing,
-                            )
-                            continue
-                        else:
-                            self.tick_data[tick] = (
-                                new_liquidity_net,
-                                new_liquidity_gross,
-                            )
+                            if new_liquidity_gross == 0:
+                                # print(f"Tick {tick} cleared")
+                                del self.tick_data[tick]
+                                TickBitmap.flipTick(
+                                    self.tick_bitmap,
+                                    tick,
+                                    self.tick_spacing,
+                                )
+                                continue
+                            else:
+                                self.tick_data[tick] = (
+                                    new_liquidity_net,
+                                    new_liquidity_gross,
+                                )
 
                     updated = True
 
