@@ -612,295 +612,293 @@ class UniswapTransaction(Transaction):
             # -----------------------------------------------------
             # UniswapV2 functions
             # -----------------------------------------------------
-            if False:
-                pass
-            # if func_name in (
-            #     "swapExactTokensForETH",
-            #     "swapExactTokensForETHSupportingFeeOnTransferTokens",
-            # ):
-            #     if not silent:
-            #         print(f"{func_name}: {self.hash}")
-            #     future_state.extend(
-            #         v2_swap_exact_in(func_params, silent=silent)
-            #     )
+            if func_name in (
+                "swapExactTokensForETH",
+                "swapExactTokensForETHSupportingFeeOnTransferTokens",
+            ):
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+                future_state.extend(
+                    v2_swap_exact_in(func_params, silent=silent)
+                )
 
-            # elif func_name in (
-            #     "swapExactETHForTokens",
-            #     "swapExactETHForTokensSupportingFeeOnTransferTokens",
-            # ):
-            #     if not silent:
-            #         print(f"{func_name}: {self.hash}")
-            #     future_state.extend(
-            #         v2_swap_exact_in(
-            #             func_params, unwrapped_input=True, silent=silent
-            #         )
-            #     )
+            elif func_name in (
+                "swapExactETHForTokens",
+                "swapExactETHForTokensSupportingFeeOnTransferTokens",
+            ):
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+                future_state.extend(
+                    v2_swap_exact_in(
+                        func_params, unwrapped_input=True, silent=silent
+                    )
+                )
 
-            # elif func_name in [
-            #     "swapExactTokensForTokens",
-            #     "swapExactTokensForTokensSupportingFeeOnTransferTokens",
-            # ]:
-            #     if not silent:
-            #         print(f"{func_name}: {self.hash}")
-            #     future_state.extend(
-            #         v2_swap_exact_in(func_params, silent=silent)
-            #     )
+            elif func_name in [
+                "swapExactTokensForTokens",
+                "swapExactTokensForTokensSupportingFeeOnTransferTokens",
+            ]:
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+                future_state.extend(
+                    v2_swap_exact_in(func_params, silent=silent)
+                )
 
-            # elif func_name in ("swapTokensForExactETH"):
-            #     if not silent:
-            #         print(f"{func_name}: {self.hash}")
-            #     future_state.extend(
-            #         v2_swap_exact_out(params=func_params, silent=silent)
-            #     )
+            elif func_name in ("swapTokensForExactETH"):
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+                future_state.extend(
+                    v2_swap_exact_out(params=func_params, silent=silent)
+                )
 
-            # elif func_name in ("swapTokensForExactTokens"):
-            #     if not silent:
-            #         print(f"{func_name}: {self.hash}")
-            #     future_state.extend(
-            #         v2_swap_exact_out(params=func_params, silent=silent)
-            #     )
+            elif func_name in ("swapTokensForExactTokens"):
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+                future_state.extend(
+                    v2_swap_exact_out(params=func_params, silent=silent)
+                )
 
-            # elif func_name in ("swapETHForExactTokens"):
-            #     if not silent:
-            #         print(f"{func_name}: {self.hash}")
-            #     future_state.extend(
-            #         v2_swap_exact_out(
-            #             params=func_params, unwrapped_input=True, silent=silent
-            #         )
-            #     )
+            elif func_name in ("swapETHForExactTokens"):
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+                future_state.extend(
+                    v2_swap_exact_out(
+                        params=func_params, unwrapped_input=True, silent=silent
+                    )
+                )
 
-            # # -----------------------------------------------------
-            # # UniswapV3 functions
-            # # -----------------------------------------------------
-            # elif func_name == "multicall":
-            #     if not silent:
-            #         print(f"{func_name}: {self.hash}")
-            #     future_state = self.simulate_multicall(silent=silent)
-            # elif func_name == "exactInputSingle":
-            #     if not silent:
-            #         print(f"{func_name}: {self.hash}")
-            #     # v3_pool, swap_info, pool_state = v3_swap_exact_in(
-            #     #     params=func_params
-            #     # )
-            #     # future_state.append([v3_pool, pool_state])
-            #     future_state.extend(
-            #         v3_swap_exact_in(params=func_params, silent=silent)
-            #     )
-            # elif func_name == "exactInput":
-            #     if not silent:
-            #         print(f"{func_name}: {self.hash}")
+            # -----------------------------------------------------
+            # UniswapV3 functions
+            # -----------------------------------------------------
+            elif func_name == "multicall":
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+                future_state = self.simulate_multicall(silent=silent)
+            elif func_name == "exactInputSingle":
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+                # v3_pool, swap_info, pool_state = v3_swap_exact_in(
+                #     params=func_params
+                # )
+                # future_state.append([v3_pool, pool_state])
+                future_state.extend(
+                    v3_swap_exact_in(params=func_params, silent=silent)
+                )
+            elif func_name == "exactInput":
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
 
-            #     try:
-            #         (
-            #             exactInputParams_path,
-            #             exactInputParams_recipient,
-            #             exactInputParams_deadline,
-            #             exactInputParams_amountIn,
-            #             exactInputParams_amountOutMinimum,
-            #         ) = func_params.get("params")
-            #     except:
-            #         pass
+                try:
+                    (
+                        exactInputParams_path,
+                        exactInputParams_recipient,
+                        exactInputParams_deadline,
+                        exactInputParams_amountIn,
+                        exactInputParams_amountOutMinimum,
+                    ) = func_params.get("params")
+                except:
+                    pass
 
-            #     try:
-            #         (
-            #             exactInputParams_path,
-            #             exactInputParams_recipient,
-            #             exactInputParams_amountIn,
-            #             exactInputParams_amountOutMinimum,
-            #         ) = func_params.get("params")
-            #     except:
-            #         pass
+                try:
+                    (
+                        exactInputParams_path,
+                        exactInputParams_recipient,
+                        exactInputParams_amountIn,
+                        exactInputParams_amountOutMinimum,
+                    ) = func_params.get("params")
+                except:
+                    pass
 
-            #     # decode the path
-            #     path_pos = 0
-            #     exactInputParams_path_decoded = []
-            #     # read alternating 20 and 3 byte chunks from the encoded path,
-            #     # store each address (hex) and fee (int)
-            #     for byte_length in itertools.cycle((20, 3)):
-            #         # stop at the end
-            #         if path_pos == len(exactInputParams_path):
-            #             break
-            #         elif (
-            #             byte_length == 20
-            #             and len(exactInputParams_path)
-            #             >= path_pos + byte_length
-            #         ):
-            #             address = exactInputParams_path[
-            #                 path_pos : path_pos + byte_length
-            #             ].hex()
-            #             exactInputParams_path_decoded.append(address)
-            #         elif (
-            #             byte_length == 3
-            #             and len(exactInputParams_path)
-            #             >= path_pos + byte_length
-            #         ):
-            #             fee = int(
-            #                 exactInputParams_path[
-            #                     path_pos : path_pos + byte_length
-            #                 ].hex(),
-            #                 16,
-            #             )
-            #             exactInputParams_path_decoded.append(fee)
-            #         path_pos += byte_length
+                # decode the path
+                path_pos = 0
+                exactInputParams_path_decoded = []
+                # read alternating 20 and 3 byte chunks from the encoded path,
+                # store each address (hex) and fee (int)
+                for byte_length in itertools.cycle((20, 3)):
+                    # stop at the end
+                    if path_pos == len(exactInputParams_path):
+                        break
+                    elif (
+                        byte_length == 20
+                        and len(exactInputParams_path)
+                        >= path_pos + byte_length
+                    ):
+                        address = exactInputParams_path[
+                            path_pos : path_pos + byte_length
+                        ].hex()
+                        exactInputParams_path_decoded.append(address)
+                    elif (
+                        byte_length == 3
+                        and len(exactInputParams_path)
+                        >= path_pos + byte_length
+                    ):
+                        fee = int(
+                            exactInputParams_path[
+                                path_pos : path_pos + byte_length
+                            ].hex(),
+                            16,
+                        )
+                        exactInputParams_path_decoded.append(fee)
+                    path_pos += byte_length
 
-            #     if not silent:
-            #         print(f" • path = {exactInputParams_path_decoded}")
-            #         print(f" • recipient = {exactInputParams_recipient}")
-            #         try:
-            #             exactInputParams_deadline
-            #         except:
-            #             pass
-            #         else:
-            #             print(f" • deadline = {exactInputParams_deadline}")
-            #         print(f" • amountIn = {exactInputParams_amountIn}")
-            #         print(
-            #             f" • amountOutMinimum = {exactInputParams_amountOutMinimum}"
-            #         )
+                if not silent:
+                    print(f" • path = {exactInputParams_path_decoded}")
+                    print(f" • recipient = {exactInputParams_recipient}")
+                    try:
+                        exactInputParams_deadline
+                    except:
+                        pass
+                    else:
+                        print(f" • deadline = {exactInputParams_deadline}")
+                    print(f" • amountIn = {exactInputParams_amountIn}")
+                    print(
+                        f" • amountOutMinimum = {exactInputParams_amountOutMinimum}"
+                    )
 
-            #     # decode the path - tokenIn is the first position, tokenOut is the second position
-            #     # e.g. tokenIn, fee, tokenOut
-            #     for token_pos in range(
-            #         0,
-            #         len(exactInputParams_path_decoded) - 2,
-            #         2,
-            #     ):
-            #         tokenIn = exactInputParams_path_decoded[token_pos]
-            #         fee = exactInputParams_path_decoded[token_pos + 1]
-            #         tokenOut = exactInputParams_path_decoded[token_pos + 2]
+                # decode the path - tokenIn is the first position, tokenOut is the second position
+                # e.g. tokenIn, fee, tokenOut
+                for token_pos in range(
+                    0,
+                    len(exactInputParams_path_decoded) - 2,
+                    2,
+                ):
+                    tokenIn = exactInputParams_path_decoded[token_pos]
+                    fee = exactInputParams_path_decoded[token_pos + 1]
+                    tokenOut = exactInputParams_path_decoded[token_pos + 2]
 
-            #         v3_pool, pool_state = v3_swap_exact_in(
-            #             params={
-            #                 "params": (
-            #                     tokenIn,
-            #                     tokenOut,
-            #                     fee,
-            #                     # use amountIn for the first swap, otherwise take the output
-            #                     # amount of the last swap (always negative so we can check
-            #                     # for the min without knowing the token positions)
-            #                     exactInputParams_amountIn
-            #                     if token_pos == 0
-            #                     else min(
-            #                         pool_state["amount0_delta"],
-            #                         pool_state["amount1_delta"],
-            #                     ),
-            #                 )
-            #             },
-            #             silent=silent,
-            #         )[0]
-            #         future_state.append([v3_pool, pool_state])
-            # elif func_name == "exactOutputSingle":
-            #     if not silent:
-            #         print(f"{func_name}: {self.hash}")
-            #     # v3_pool, swap_info, pool_state = v3_swap_exact_out(
-            #     #     params=func_params
-            #     # )
-            #     future_state.extend(
-            #         v3_swap_exact_out(params=func_params, silent=silent)
-            #     )
-            # elif func_name == "exactOutput":
-            #     if not silent:
-            #         print(f"{func_name}: {self.hash}")
+                    v3_pool, pool_state = v3_swap_exact_in(
+                        params={
+                            "params": (
+                                tokenIn,
+                                tokenOut,
+                                fee,
+                                # use amountIn for the first swap, otherwise take the output
+                                # amount of the last swap (always negative so we can check
+                                # for the min without knowing the token positions)
+                                exactInputParams_amountIn
+                                if token_pos == 0
+                                else min(
+                                    pool_state["amount0_delta"],
+                                    pool_state["amount1_delta"],
+                                ),
+                            )
+                        },
+                        silent=silent,
+                    )[0]
+                    future_state.append([v3_pool, pool_state])
+            elif func_name == "exactOutputSingle":
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+                # v3_pool, swap_info, pool_state = v3_swap_exact_out(
+                #     params=func_params
+                # )
+                future_state.extend(
+                    v3_swap_exact_out(params=func_params, silent=silent)
+                )
+            elif func_name == "exactOutput":
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
 
-            #     # Router ABI
-            #     try:
-            #         (
-            #             exactOutputParams_path,
-            #             exactOutputParams_recipient,
-            #             exactOutputParams_deadline,
-            #             exactOutputParams_amountOut,
-            #             exactOutputParams_amountInMaximum,
-            #         ) = func_params.get("params")
-            #     except Exception as e:
-            #         pass
+                # Router ABI
+                try:
+                    (
+                        exactOutputParams_path,
+                        exactOutputParams_recipient,
+                        exactOutputParams_deadline,
+                        exactOutputParams_amountOut,
+                        exactOutputParams_amountInMaximum,
+                    ) = func_params.get("params")
+                except Exception as e:
+                    pass
 
-            #     # Router2 ABI
-            #     try:
-            #         (
-            #             exactOutputParams_path,
-            #             exactOutputParams_recipient,
-            #             exactOutputParams_amountOut,
-            #             exactOutputParams_amountInMaximum,
-            #         ) = func_params.get("params")
-            #     except Exception as e:
-            #         pass
+                # Router2 ABI
+                try:
+                    (
+                        exactOutputParams_path,
+                        exactOutputParams_recipient,
+                        exactOutputParams_amountOut,
+                        exactOutputParams_amountInMaximum,
+                    ) = func_params.get("params")
+                except Exception as e:
+                    pass
 
-            #     # decode the path
-            #     path_pos = 0
-            #     exactOutputParams_path_decoded = []
-            #     # read alternating 20 and 3 byte chunks from the encoded path,
-            #     # store each address (hex) and fee (int)
-            #     for byte_length in itertools.cycle((20, 3)):
-            #         # stop at the end
-            #         if path_pos == len(exactOutputParams_path):
-            #             break
-            #         elif (
-            #             byte_length == 20
-            #             and len(exactOutputParams_path)
-            #             >= path_pos + byte_length
-            #         ):
-            #             address = exactOutputParams_path[
-            #                 path_pos : path_pos + byte_length
-            #             ].hex()
-            #             exactOutputParams_path_decoded.append(address)
-            #         elif (
-            #             byte_length == 3
-            #             and len(exactOutputParams_path)
-            #             >= path_pos + byte_length
-            #         ):
-            #             fee = int(
-            #                 exactOutputParams_path[
-            #                     path_pos : path_pos + byte_length
-            #                 ].hex(),
-            #                 16,
-            #             )
-            #             exactOutputParams_path_decoded.append(fee)
-            #         path_pos += byte_length
+                # decode the path
+                path_pos = 0
+                exactOutputParams_path_decoded = []
+                # read alternating 20 and 3 byte chunks from the encoded path,
+                # store each address (hex) and fee (int)
+                for byte_length in itertools.cycle((20, 3)):
+                    # stop at the end
+                    if path_pos == len(exactOutputParams_path):
+                        break
+                    elif (
+                        byte_length == 20
+                        and len(exactOutputParams_path)
+                        >= path_pos + byte_length
+                    ):
+                        address = exactOutputParams_path[
+                            path_pos : path_pos + byte_length
+                        ].hex()
+                        exactOutputParams_path_decoded.append(address)
+                    elif (
+                        byte_length == 3
+                        and len(exactOutputParams_path)
+                        >= path_pos + byte_length
+                    ):
+                        fee = int(
+                            exactOutputParams_path[
+                                path_pos : path_pos + byte_length
+                            ].hex(),
+                            16,
+                        )
+                        exactOutputParams_path_decoded.append(fee)
+                    path_pos += byte_length
 
-            #     if not silent:
-            #         print(f" • path = {exactOutputParams_path_decoded}")
-            #         print(f" • recipient = {exactOutputParams_recipient}")
-            #         if exactOutputParams_deadline:
-            #             print(f" • deadline = {exactOutputParams_deadline}")
-            #         print(f" • amountOut = {exactOutputParams_amountOut}")
-            #         print(
-            #             f" • amountInMaximum = {exactOutputParams_amountInMaximum}"
-            #         )
+                if not silent:
+                    print(f" • path = {exactOutputParams_path_decoded}")
+                    print(f" • recipient = {exactOutputParams_recipient}")
+                    if exactOutputParams_deadline:
+                        print(f" • deadline = {exactOutputParams_deadline}")
+                    print(f" • amountOut = {exactOutputParams_amountOut}")
+                    print(
+                        f" • amountInMaximum = {exactOutputParams_amountInMaximum}"
+                    )
 
-            #     # the path is encoded in REVERSE order, so we decode from start to finish
-            #     # tokenOut is the first position, tokenIn is the second position
-            #     # e.g. tokenOut, fee, tokenIn
-            #     for token_pos in range(
-            #         0,
-            #         len(exactOutputParams_path_decoded) - 2,
-            #         2,
-            #     ):
-            #         tokenOut = exactOutputParams_path_decoded[token_pos]
-            #         fee = exactOutputParams_path_decoded[token_pos + 1]
-            #         tokenIn = exactOutputParams_path_decoded[token_pos + 2]
+                # the path is encoded in REVERSE order, so we decode from start to finish
+                # tokenOut is the first position, tokenIn is the second position
+                # e.g. tokenOut, fee, tokenIn
+                for token_pos in range(
+                    0,
+                    len(exactOutputParams_path_decoded) - 2,
+                    2,
+                ):
+                    tokenOut = exactOutputParams_path_decoded[token_pos]
+                    fee = exactOutputParams_path_decoded[token_pos + 1]
+                    tokenIn = exactOutputParams_path_decoded[token_pos + 2]
 
-            #         v3_pool, pool_state = v3_swap_exact_out(
-            #             params={
-            #                 "params": (
-            #                     tokenIn,
-            #                     tokenOut,
-            #                     fee,
-            #                     # use amountOut for the last swap (token_pos == 0),
-            #                     # otherwise take the input amount of the previous swap
-            #                     # (always positive so we can check for the max without
-            #                     # knowing the token positions)
-            #                     exactOutputParams_amountOut
-            #                     if token_pos == 0
-            #                     else max(
-            #                         pool_state["amount0_delta"],
-            #                         pool_state["amount1_delta"],
-            #                     )
-            #                     # else max(swap_info.values()),
-            #                 )
-            #             },
-            #             silent=silent,
-            #         )[0]
+                    v3_pool, pool_state = v3_swap_exact_out(
+                        params={
+                            "params": (
+                                tokenIn,
+                                tokenOut,
+                                fee,
+                                # use amountOut for the last swap (token_pos == 0),
+                                # otherwise take the input amount of the previous swap
+                                # (always positive so we can check for the max without
+                                # knowing the token positions)
+                                exactOutputParams_amountOut
+                                if token_pos == 0
+                                else max(
+                                    pool_state["amount0_delta"],
+                                    pool_state["amount1_delta"],
+                                )
+                                # else max(swap_info.values()),
+                            )
+                        },
+                        silent=silent,
+                    )[0]
 
-            #         future_state.append([v3_pool, pool_state])
+                    future_state.append([v3_pool, pool_state])
 
             # -----------------------------------------------------
             # Universal Router functions
@@ -1070,49 +1068,15 @@ class UniswapTransaction(Transaction):
                         return result
 
                     elif command == "PERMIT2_TRANSFER_FROM":
-                        # equivalent: abi.decode(inputs, (address, address, uint160))
                         pass
                     elif command == "PERMIT2_PERMIT_BATCH":
                         pass
-                    # elif (command == SWEEP):
-                    #     # equivalent:  abi.decode(inputs, (address, address, uint256))
-                    #     address token;
-                    #     address recipient;
-                    #     uint160 amountMin;
-                    #     assembly {
-                    #         token := calldataload(inputs.offset)
-                    #         recipient := calldataload(add(inputs.offset, 0x20))
-                    #         amountMin := calldataload(add(inputs.offset, 0x40))
-                    #     }
-                    #     Payments.sweep(token, map(recipient), amountMin);
-                    # elif (command == TRANSFER):
-                    #     # equivalent:  abi.decode(inputs, (address, address, uint256))
-                    #     address token;
-                    #     address recipient;
-                    #     uint256 value;
-                    #     assembly {
-                    #         token := calldataload(inputs.offset)
-                    #         recipient := calldataload(add(inputs.offset, 0x20))
-                    #         value := calldataload(add(inputs.offset, 0x40))
-                    #     }
-                    #     Payments.pay(token, map(recipient), value);
-                    # elif (command == PAY_PORTION):
-                    #     # equivalent:  abi.decode(inputs, (address, address, uint256))
-                    #     address token;
-                    #     address recipient;
-                    #     uint256 bips;
-                    #     assembly {
-                    #         token := calldataload(inputs.offset)
-                    #         recipient := calldataload(add(inputs.offset, 0x20))
-                    #         bips := calldataload(add(inputs.offset, 0x40))
-                    #     }
-                    #     Payments.payPortion(token, map(recipient), bips);
-                    # else
-                    #     # placeholder area for command 0x07
-                    #     revert InvalidCommandType(command);
-                    # }
-                    # # 0x08 <= command < 0x10
-
+                    elif command == "SWEEP":
+                        pass
+                    elif command == "TRANSFER":
+                        pass
+                    elif command == "PAY_PORTION":
+                        pass
                     elif command == "V2_SWAP_EXACT_IN":
 
                         if not silent:
@@ -1184,196 +1148,52 @@ class UniswapTransaction(Transaction):
                         )
 
                         return result
-
-                    # elif (command == PERMIT2_PERMIT):
-                    #     # equivalent: abi.decode(inputs, (IAllowanceTransfer.PermitSingle, bytes))
-                    #     IAllowanceTransfer.PermitSingle calldata permitSingle;
-                    #     assembly {
-                    #         permitSingle := inputs.offset
-                    #     }
-                    #     bytes calldata data = inputs.toBytes(6); // PermitSingle takes first 6 slots (0..5)
-                    #     PERMIT2.permit(lockedBy, permitSingle, data);
-                    # elif (command == WRAP_ETH):
-                    #     # equivalent: abi.decode(inputs, (address, uint256))
-                    #     address recipient;
-                    #     uint256 amountMin;
-                    #     assembly {
-                    #         recipient := calldataload(inputs.offset)
-                    #         amountMin := calldataload(add(inputs.offset, 0x20))
-                    #     }
-                    #     Payments.wrapETH(map(recipient), amountMin);
-                    # elif (command == UNWRAP_WETH):
-                    #     # equivalent: abi.decode(inputs, (address, uint256))
-                    #     address recipient;
-                    #     uint256 amountMin;
-                    #     assembly {
-                    #         recipient := calldataload(inputs.offset)
-                    #         amountMin := calldataload(add(inputs.offset, 0x20))
-                    #     }
-                    #     Payments.unwrapWETH9(map(recipient), amountMin);
-                    # elif (command == PERMIT2_TRANSFER_FROM_BATCH):
-                    #     (IAllowanceTransfer.AllowanceTransferDetails[] memory batchDetails) =
-                    #         abi.decode(inputs, (IAllowanceTransfer.AllowanceTransferDetails[]));
-                    #     permit2TransferFrom(batchDetails, lockedBy);
-                    # elif (command == BALANCE_CHECK_ERC20):
-                    #     # equivalent: abi.decode(inputs, (address, address, uint256))
-                    #     address owner;
-                    #     address token;
-                    #     uint256 minBalance;
-                    #     assembly {
-                    #         owner := calldataload(inputs.offset)
-                    #         token := calldataload(add(inputs.offset, 0x20))
-                    #         minBalance := calldataload(add(inputs.offset, 0x40))
-                    #     }
-                    #     success = (ERC20(token).balanceOf(owner) >= minBalance);
-                    #     if (!success) output = abi.encodePacked(BalanceTooLow.selector);
-                    # else:
-                    #     # placeholder area for command 0x0f
-                    #     revert InvalidCommandType(command);
-
-                    # if (command == SEAPORT) {
-                    #     # equivalent: abi.decode(inputs, (uint256, bytes))
-                    #     uint256 value;
-                    #     assembly {
-                    #         value := calldataload(inputs.offset)
-                    #     }
-                    #     bytes calldata data = inputs.toBytes(1);
-                    #     (success, output) = SEAPORT.call{value: value}(data);
-                    # elif (command == LOOKS_RARE_721):
-                    #     (success, output) = callAndTransfer721(inputs, LOOKS_RARE);
-                    # elif (command == NFTX):
-                    #     // equivalent: abi.decode(inputs, (uint256, bytes))
-                    #     uint256 value;
-                    #     assembly {
-                    #         value := calldataload(inputs.offset)
-                    #     }
-                    #     bytes calldata data = inputs.toBytes(1);
-                    #     (success, output) = NFTX_ZAP.call{value: value}(data);
-                    # elif (command == CRYPTOPUNKS):
-                    #     # equivalent: abi.decode(inputs, (uint256, address, uint256))
-                    #     uint256 punkId;
-                    #     address recipient;
-                    #     uint256 value;
-                    #     assembly {
-                    #         punkId := calldataload(inputs.offset)
-                    #         recipient := calldataload(add(inputs.offset, 0x20))
-                    #         value := calldataload(add(inputs.offset, 0x40))
-                    #     }
-                    #     (success, output) = CRYPTOPUNKS.call{value: value}(
-                    #         abi.encodeWithSelector(ICryptoPunksMarket.buyPunk.selector, punkId)
-                    #     );
-                    #     if (success) ICryptoPunksMarket(CRYPTOPUNKS).transferPunk(map(recipient), punkId);
-                    #     else output = abi.encodePacked(BuyPunkFailed.selector);
-                    # elif (command == LOOKS_RARE_1155):
-                    #     (success, output) = callAndTransfer1155(inputs, LOOKS_RARE);
-                    # elif (command == OWNER_CHECK_721):
-                    #     # equivalent: abi.decode(inputs, (address, address, uint256))
-                    #     address owner;
-                    #     address token;
-                    #     uint256 id;
-                    #     assembly {
-                    #         owner := calldataload(inputs.offset)
-                    #         token := calldataload(add(inputs.offset, 0x20))
-                    #         id := calldataload(add(inputs.offset, 0x40))
-                    #     }
-                    #     success = (ERC721(token).ownerOf(id) == owner);
-                    #     if (!success) output = abi.encodePacked(InvalidOwnerERC721.selector);
-                    # elif (command == OWNER_CHECK_1155):
-                    #     # equivalent: abi.decode(inputs, (address, address, uint256, uint256))
-                    #     address owner;
-                    #     address token;
-                    #     uint256 id;
-                    #     uint256 minBalance;
-                    #     assembly {
-                    #         owner := calldataload(inputs.offset)
-                    #         token := calldataload(add(inputs.offset, 0x20))
-                    #         id := calldataload(add(inputs.offset, 0x40))
-                    #         minBalance := calldataload(add(inputs.offset, 0x60))
-                    #     }
-                    #     success = (ERC1155(token).balanceOf(owner, id) >= minBalance);
-                    #     if (!success) output = abi.encodePacked(InvalidOwnerERC1155.selector);
-                    # elif (command == SWEEP_ERC721):
-                    #     # equivalent: abi.decode(inputs, (address, address, uint256))
-                    #     address token;
-                    #     address recipient;
-                    #     uint256 id;
-                    #     assembly {
-                    #         token := calldataload(inputs.offset)
-                    #         recipient := calldataload(add(inputs.offset, 0x20))
-                    #         id := calldataload(add(inputs.offset, 0x40))
-                    #     }
-                    #     Payments.sweepERC721(token, map(recipient), id);
-                    # }
-
-                    # if (command == X2Y2_721):
-                    #     (success, output) = callAndTransfer721(inputs, X2Y2);
-                    # elif (command == SUDOSWAP):
-                    #     # equivalent: abi.decode(inputs, (uint256, bytes))
-                    #     uint256 value;
-                    #     assembly {
-                    #         value := calldataload(inputs.offset)
-                    #     }
-                    #     bytes calldata data = inputs.toBytes(1);
-                    #     (success, output) = SUDOSWAP.call{value: value}(data);
-                    # elif (command == NFT20):
-                    #     # equivalent: abi.decode(inputs, (uint256, bytes))
-                    #     uint256 value;
-                    #     assembly {
-                    #         value := calldataload(inputs.offset)
-                    #     }
-                    #     bytes calldata data = inputs.toBytes(1);
-                    #     (success, output) = NFT20_ZAP.call{value: value}(data);
-                    # elif (command == X2Y2_1155):
-                    #     (success, output) = callAndTransfer1155(inputs, X2Y2);
-                    # elif (command == FOUNDATION):
-                    #     (success, output) = callAndTransfer721(inputs, FOUNDATION);
-                    # elif (command == SWEEP_ERC1155):
-                    #     # equivalent: abi.decode(inputs, (address, address, uint256, uint256))
-                    #     address token;
-                    #     address recipient;
-                    #     uint256 id;
-                    #     uint256 amount;
-                    #     assembly {
-                    #         token := calldataload(inputs.offset)
-                    #         recipient := calldataload(add(inputs.offset, 0x20))
-                    #         id := calldataload(add(inputs.offset, 0x40))
-                    #         amount := calldataload(add(inputs.offset, 0x60))
-                    #     }
-                    #     Payments.sweepERC1155(token, map(recipient), id, amount);
-                    # elif (command == ELEMENT_MARKET):
-                    #     # equivalent: abi.decode(inputs, (uint256, bytes))
-                    #     uint256 value;
-                    #     assembly {
-                    #         value := calldataload(inputs.offset)
-                    #     }
-                    #     bytes calldata data = inputs.toBytes(1);
-                    #     (success, output) = ELEMENT_MARKET.call{value: value}(data);
-                    # else:
-                    #     # placeholder for command 0x1f
-                    #     revert InvalidCommandType(command);
-
-                    # elif (command == EXECUTE_SUB_PLAN):
-                    #     bytes calldata _commands = inputs.toBytes(0);
-                    #     bytes[] memory _inputs = inputs.toBytesArray(1);
-                    #     (success, output) =
-                    #         (address(this)).call(abi.encodeWithSelector(Dispatcher.execute.selector, _commands, _inputs));
-                    # elif (command == SEAPORT_V2):
-                    #     # /// @dev Seaport 1.2 allows for orders to be created by contracts.
-                    #     # ///     These orders pass control to the contract offerers during fufillment,
-                    #     # ///         allowing them to perform any number of destructive actions as a holder of the NFT.
-                    #     # ///     Integrators should be aware that in some scenarios: e.g. purchasing an NFT that allows the holder
-                    #     # ///         to claim another NFT, the contract offerer can "steal" the claim during order fufillment.
-                    #     # ///     For some such purchases, an OWNER_CHECK command can be prepended to ensure that all tokens have the desired owner at the end of the transaction.
-                    #     # ///     This is also outlined in the Seaport documentation: https://github.com/ProjectOpenSea/seaport/blob/main/docs/SeaportDocumentation.md
-                    #     uint256 value;
-                    #     assembly {
-                    #         value := calldataload(inputs.offset)
-                    #     }
-                    #     bytes calldata data = inputs.toBytes(1);
-                    #     (success, output) = SEAPORT_V2.call{value: value}(data);
-                    # else:
-                    #     # // placeholder area for commands 0x22-0x3f
-                    #     revert InvalidCommandType(command);
+                    elif command == "PERMIT2_PERMIT":
+                        pass
+                    elif command == "WRAP_ETH":
+                        pass
+                    elif command == "UNWRAP_WETH":
+                        pass
+                    elif command == "PERMIT2_TRANSFER_FROM_BATCH":
+                        pass
+                    elif command == "BALANCE_CHECK_ERC20":
+                        pass
+                    elif command == "SEAPORT":
+                        pass
+                    elif command == "LOOKS_RARE_721":
+                        pass
+                    elif command == "NFTX":
+                        pass
+                    elif command == "CRYPTOPUNKS":
+                        pass
+                    elif command == "LOOKS_RARE_1155":
+                        pass
+                    elif command == "OWNER_CHECK_721":
+                        pass
+                    elif command == "OWNER_CHECK_1155":
+                        pass
+                    elif command == "SWEEP_ERC721":
+                        pass
+                    elif command == "X2Y2_721":
+                        pass
+                    elif command == "SUDOSWAP":
+                        pass
+                    elif command == "NFT20":
+                        pass
+                    elif command == "X2Y2_1155":
+                        pass
+                    elif command == "FOUNDATION":
+                        pass
+                    elif command == "SWEEP_ERC1155":
+                        pass
+                    elif command == "ELEMENT_MARKET":
+                        pass
+                    elif command == "EXECUTE_SUB_PLAN":
+                        pass
+                    elif command == "SEAPORT_V2":
+                        pass
+                    else:
+                        raise TransactionError(f"Invalid command {command}")
 
                 if not silent:
                     print(f"{func_name}: {self.hash}")
