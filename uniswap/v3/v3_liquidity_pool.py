@@ -3,7 +3,7 @@
 
 from abc import ABC, abstractmethod
 from decimal import Decimal
-from threading import Lock, RLock
+from threading import Lock
 from typing import List, Optional, Tuple
 from warnings import catch_warnings, simplefilter
 
@@ -17,13 +17,17 @@ from degenbot.exceptions import (
     ExternalUpdateError,
     LiquidityPoolError,
 )
-from degenbot.token import Erc20Token
 from degenbot.manager import Erc20TokenHelperManager
-
-from .abi import UNISWAP_V3_POOL_ABI
-from .libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
-from .libraries.Helpers import *
-from .tick_lens import TickLens
+from degenbot.token import Erc20Token
+from degenbot.uniswap.v3.abi import UNISWAP_V3_POOL_ABI
+from degenbot.uniswap.v3.libraries import (
+    LiquidityMath,
+    SwapMath,
+    TickBitmap,
+    TickMath,
+)
+from degenbot.uniswap.v3.libraries.Helpers import *
+from degenbot.uniswap.v3.tick_lens import TickLens
 
 
 class BaseV3LiquidityPool(ABC):
@@ -50,11 +54,15 @@ class BaseV3LiquidityPool(ABC):
         name: str = "",
         update_method: str = "polling",
         abi: Optional[list] = None,
-        extra_words: int = 10,
-        silent: bool = False,  # TODO: add status print in constructor
+        extra_words: int = 50,
+        silent: bool = False,
     ):
 
-        self.lock = RLock()
+        # held by the _get_tick_data_at_word method, which will retrieve and store liquidity and bitmap data
+        self.tick_lock = Lock()
+
+        # held by the auto_update and external_update method, which will retrieve and store mutable state data (liquidity, tick, sqrtPrice, etc)
+        self.update_lock = Lock()
 
         block_number = chain.height
 
@@ -104,56 +112,45 @@ class BaseV3LiquidityPool(ABC):
             except:
                 raise
 
-        try:
-            if tokens:
-                self.token0 = min(tokens)
-                self.token1 = max(tokens)
-                if not (
-                    self.token0.address == self._brownie_contract.token0()
-                    and self.token1.address == self._brownie_contract.token1()
-                ):
-                    raise ValueError(
-                        "Token addresses do not match tokens recorded at contract"
-                    )
-                # assert self.token0.address == self._brownie_contract.token0()
-                # assert self.token1.address == self._brownie_contract.token1()
-            else:
-                self.token0 = self._token_manager.get_erc20token(
-                    address=self._brownie_contract.token0(),
-                    min_abi=True,
-                    silent=silent,
-                    unload_brownie_contract_after_init=True,
+        if tokens:
+            self.token0 = min(tokens)
+            self.token1 = max(tokens)
+            if not (
+                self.token0.address == self._brownie_contract.token0()
+                and self.token1.address == self._brownie_contract.token1()
+            ):
+                raise ValueError(
+                    "Token addresses do not match tokens recorded at contract"
                 )
-                self.token1 = self._token_manager.get_erc20token(
-                    address=self._brownie_contract.token1(),
-                    min_abi=True,
-                    silent=silent,
-                    unload_brownie_contract_after_init=True,
-                )
-                # self.token0 = Erc20Token(self._brownie_contract.token0())
-                # self.token1 = Erc20Token(self._brownie_contract.token1())
-
-            self.fee = self._brownie_contract.fee()  # immutable
-            self.liquidity = self._brownie_contract.liquidity(
-                block_identifier=block_number
+        else:
+            self.token0 = self._token_manager.get_erc20token(
+                address=self._brownie_contract.token0(),
+                min_abi=True,
+                silent=silent,
+                unload_brownie_contract_after_init=True,
             )
-            self.tick_spacing = (
-                self._brownie_contract.tickSpacing()
-            )  # immutable
-            slot0 = self._brownie_contract.slot0(block_identifier=block_number)
-            self.sqrt_price_x96 = slot0[0]
-            self.tick = slot0[1]
-            self.tick_data = {}
-            self.tick_bitmap = {}
+            self.token1 = self._token_manager.get_erc20token(
+                address=self._brownie_contract.token1(),
+                min_abi=True,
+                silent=silent,
+                unload_brownie_contract_after_init=True,
+            )
 
-            _tick_word, _ = self._get_tick_bitmap_position(self.tick)
-            self._get_tick_data_at_word(_tick_word, block_number=block_number)
-
-        except:
-            raise
-
+        self.fee = self._brownie_contract.fee()  # immutable
+        self.liquidity = self._brownie_contract.liquidity(
+            block_identifier=block_number
+        )
+        self.tick_spacing = self._brownie_contract.tickSpacing()  # immutable
+        slot0 = self._brownie_contract.slot0(block_identifier=block_number)
+        self.sqrt_price_x96 = slot0[0]
+        self.tick = slot0[1]
+        self.tick_data = {}
+        self.tick_bitmap = {}
         self._update_method = update_method
         self.extra_words = extra_words
+
+        _tick_word, _ = self._get_tick_bitmap_position(self.tick)
+        self._get_tick_data_at_word(_tick_word, block_number=block_number)
 
         if name:
             self.name = name
@@ -163,6 +160,10 @@ class BaseV3LiquidityPool(ABC):
         self.state = {}
         self._update_pool_state()
         self.update_block = block_number
+
+        if not silent:
+            pass
+            # TODO: add status print, similar to V2 helper
 
     def __str__(self):
         """
@@ -209,18 +210,30 @@ class BaseV3LiquidityPool(ABC):
         when used with threads.
         """
 
-        # bugfix: this method calls itself recursively, so the single-use Lock was causing
-        # a deadlock. Changed to RLock which still prevents cross-thread interference but
-        # allows the recursive call to execute correctly
-        with self.lock:
+        with self.tick_lock:
+
+            # requested word is already known. This should not occur!
+            if word_position in self.tick_bitmap.keys():
+                print(f"(V3LiquidityPool) {word_position=} inside known range")
+                print(f"{self.name}")
+                # force exit for debugging
+                import sys
+
+                sys.exit()
+
+            if self.tick_bitmap:
+                min_word = min(self.tick_bitmap.keys())
+                max_word = max(self.tick_bitmap.keys())
+                # if word_position is inside the known range, force single_word mode
+                if min_word < word_position < max_word:
+                    single_word = True
+            else:
+                # if the bitmap is empty, assume that the object has just been instantiated
+                # and force single_word mode to reduce startup time
+                single_word = True
 
             if block_number is None:
                 block_number = chain.height
-
-            # if the bitmap is empty, assume that the object has just been instantiated
-            # and force single_word mode to reduce startup time
-            if not self.tick_bitmap:
-                single_word = True
 
             # fetch multiple words if multicall is available for the connected network
             # and single_word mode is not active
@@ -228,31 +241,6 @@ class BaseV3LiquidityPool(ABC):
                 network.main.CONFIG.active_network.get("multicall2")
                 and not single_word
             ):
-
-                # requested word is already known. This should not occur!
-                if word_position in self.tick_bitmap.keys():
-                    print(
-                        f"(V3LiquidityPool) {word_position=} inside known range"
-                    )
-                    print(f"known words: {self.tick_bitmap.keys()}")
-                    print(f"{self.name}")
-                    print(f"{single_word=}")
-                    # exit early (debugging)
-                    import sys
-
-                    sys.exit()
-
-                min_word = min(self.tick_bitmap.keys())
-                max_word = max(self.tick_bitmap.keys())
-
-                # requested word is inside the known range, so call this function again
-                # in single-tick mode and pass the return value through
-                if min_word < word_position < max_word:
-                    return self._get_tick_data_at_word(
-                        word_position=word_position,
-                        single_word=True,
-                        block_number=block_number,
-                    )
 
                 # for both code sections below, `lower_word` and `upper_word` are used to feed the Python
                 # built-in `range()` generator, which will include the lower word but exclude the upper word
@@ -307,33 +295,32 @@ class BaseV3LiquidityPool(ABC):
                 else:
                     self.tick_data.update(multicall_tick_data)
 
+            # fetch words one by one
             else:
-                # fetch words one by one
-                try:
-                    if tick_bitmap := self._brownie_contract.tickBitmap(
-                        word_position
-                    ):
-                        _tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
+                if tick_bitmap := self._brownie_contract.tickBitmap(
+                    word_position
+                ):
+                    _tick_data = (
+                        self.lens._brownie_contract.getPopulatedTicksInWord(
                             self.address,
                             word_position,
                             block_identifier=block_number,
                         )
-                    else:
-                        _tick_data = ()
-                except:
-                    raise
+                    )
                 else:
-                    if tick_bitmap:
-                        for (
-                            tick,
+                    _tick_data = ()
+
+                if tick_bitmap:
+                    for (
+                        tick,
+                        liquidityNet,
+                        liquidityGross,
+                    ) in _tick_data:
+                        self.tick_data[tick] = (
                             liquidityNet,
                             liquidityGross,
-                        ) in _tick_data:
-                            self.tick_data[tick] = (
-                                liquidityNet,
-                                liquidityGross,
-                            )
-                    self.tick_bitmap.update({word_position: tick_bitmap})
+                        )
+                self.tick_bitmap.update({word_position: tick_bitmap})
 
         return self.tick_data
 
@@ -352,14 +339,11 @@ class BaseV3LiquidityPool(ABC):
         override_start_liquidity: Optional[int] = None,
         override_start_sqrt_price_x96: Optional[int] = None,
         override_start_tick: Optional[int] = None,
-        override_tick_data: Optional[
-            dict
-        ] = None,  # TODO: support tick data overrides
-        override_tick_bitmap: Optional[
-            dict
-        ] = None,  # TODO: support tick bitmap overrides
+        # TODO: support tick data overrides
+        override_tick_data: Optional[dict] = None,
+        # TODO: support tick bitmap overrides
+        override_tick_bitmap: Optional[dict] = None,
     ) -> Tuple[int, int, int, int, int]:
-
         """
         This function is ported and adapted from the UniswapV3Pool.sol contract
         at https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol
@@ -389,13 +373,9 @@ class BaseV3LiquidityPool(ABC):
             tick = self.tick
 
         if not (
-            # WIP: support override
-            # sqrtPriceLimitX96 < self.sqrt_price_x96
             sqrtPriceLimitX96 < sqrt_price_x96
             and sqrtPriceLimitX96 > TickMath.MIN_SQRT_RATIO
             if zeroForOne
-            # WIP: support override
-            # else sqrtPriceLimitX96 > self.sqrt_price_x96
             else sqrtPriceLimitX96 > sqrt_price_x96
             and sqrtPriceLimitX96 < TickMath.MAX_SQRT_RATIO
         ):
@@ -525,20 +505,22 @@ class BaseV3LiquidityPool(ABC):
 
                     # use the default value (0, 0) so the tuple assignment works. Throws exception
                     # if the default value None is returned from get()
-                    liquidityNet, liquidityGross = self.tick_data.get(
-                        step["tickNext"],
-                        (0, 0),
-                    )
+                    # liquidityNet, liquidityGross = self.tick_data.get(
+                    #     step["tickNext"],
+                    #     (0, 0),
+                    # )
 
-                    if (liquidityNet, liquidityGross) == (0, 0):
-
+                    try:
+                        liquidityNet, liquidityGross = self.tick_data[
+                            step["tickNext"]
+                        ]
+                    except KeyError:
                         current_tick_word, _ = self._get_tick_bitmap_position(
                             state["tick"]
                         )
                         next_tick_word, _ = self._get_tick_bitmap_position(
                             step["tickNext"]
                         )
-                        # WIP: investigate if this error is thrown when the next tick is on a word boundary
                         raise ArbitrageError(
                             f"(UniswapLpCycle) swap function indicated tick={step['tickNext']} was initialized, but tick_data has no data for this tick!"
                             f"\nPool address = {self.address}"
@@ -546,6 +528,22 @@ class BaseV3LiquidityPool(ABC):
                             f"\nNext   : Tick={step['tickNext']}, Word={next_tick_word}"
                             f"\nBlock  : {chain.height}"
                         )
+
+                    # if (liquidityNet, liquidityGross) == (0, 0):
+                    #     current_tick_word, _ = self._get_tick_bitmap_position(
+                    #         state["tick"]
+                    #     )
+                    #     next_tick_word, _ = self._get_tick_bitmap_position(
+                    #         step["tickNext"]
+                    #     )
+                    #     # WIP: investigate if this error is thrown when the next tick is on a word boundary
+                    #     raise ArbitrageError(
+                    #         f"(UniswapLpCycle) swap function indicated tick={step['tickNext']} was initialized, but tick_data has no data for this tick!"
+                    #         f"\nPool address = {self.address}"
+                    #         f"\nCurrent: Tick={state['tick']}, Word={current_tick_word}"
+                    #         f"\nNext   : Tick={step['tickNext']}, Word={next_tick_word}"
+                    #         f"\nBlock  : {chain.height}"
+                    #     )
 
                     if zeroForOne:
                         liquidityNet = -liquidityNet
@@ -601,7 +599,7 @@ class BaseV3LiquidityPool(ABC):
         when used with threads.
         """
 
-        with self.lock:
+        with self.update_lock:
 
             updated = False
 
@@ -627,8 +625,6 @@ class BaseV3LiquidityPool(ABC):
             except:
                 raise
             else:
-                self.update_block = block_number
-
                 if (
                     _sqrt_price_x96 != self.sqrt_price_x96
                     or _tick != self.tick
@@ -642,6 +638,7 @@ class BaseV3LiquidityPool(ABC):
                     self.liquidity = _liquidity
 
                 if updated:
+                    self.update_block = block_number
                     self._update_pool_state()
 
                 if not silent:
@@ -656,6 +653,7 @@ class BaseV3LiquidityPool(ABC):
         token_in: Erc20Token,
         token_in_quantity: int,
         override_state: Optional[dict] = None,
+        with_remainder: bool = False,
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
@@ -719,31 +717,24 @@ class BaseV3LiquidityPool(ABC):
             raise LiquidityPoolError(f"Simulated execution reverted: {e}")
         else:
             # if zeroForOne:
-            #     if token_in_quantity != amount0:
+            #     if token_in_quantity != amount0_delta:
             #         print(f"input not completely consumed!")
             #         print(f"{token_in_quantity=}")
-            #         print(f"{amount0=}")
-            #         print(f"{amount1=}")
+            #         print(f"{amount0_delta=}")
             # else:
-            #     if token_in_quantity != amount1:
+            #     if token_in_quantity != amount1_delta:
             #         print(f"input not completely consumed!")
             #         print(f"{token_in_quantity=}")
-            #         print(f"{amount0=}")
-            #         print(f"{amount1=}")
+            #         print(f"{amount1_delta=}")
 
-            # return (
-            #     (
-            #         -amount1,
-            #         amount0 - token_in_quantity,
-            #     )
-            #     if zeroForOne
-            #     else (
-            #         -amount0,
-            #         amount1 - token_in_quantity,
-            #     )
-            # )
-
-            return -amount1_delta if zeroForOne else -amount0_delta
+            if with_remainder:
+                return (
+                    (-amount1_delta, token_in_quantity - amount0_delta)
+                    if zeroForOne
+                    else (-amount0_delta, token_in_quantity - amount1_delta)
+                )
+            else:
+                return -amount1_delta if zeroForOne else -amount0_delta
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -837,7 +828,7 @@ class BaseV3LiquidityPool(ABC):
         Uses a lock to guard state-modifying methods that might cause race conditions when used with threads.
         """
 
-        with self.lock:
+        with self.update_lock:
 
             if not (
                 set(
