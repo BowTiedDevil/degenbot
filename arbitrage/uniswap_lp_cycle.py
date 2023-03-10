@@ -368,16 +368,16 @@ class UniswapLpCycle(Arbitrage):
                         f"V3 pool {pool.address} has no liquidity for a 1 -> 0 swap"
                     )
 
-        # limit the amount to be swapped
+        # bound the amount to be swapped
         bounds = (
             1,
             float(self.max_input),
         )
 
-        # bracket the initial guess range for the algo
+        # bracket the initial guess for the algo
         bracket = (
-            0.001 * self.max_input,
-            0.005 * self.max_input,
+            0.01 * self.max_input,
+            0.05 * self.max_input,
         )
 
         def arb_profit(x):
@@ -431,17 +431,19 @@ class UniswapLpCycle(Arbitrage):
             bracket=bracket,
             # Optimizer will run until the consecutive values near the optimum
             # are within `xatol`. ERC-20 tokens can have different decimal precision,
-            # so set the tolerance to 0.01% of the 'nominal' digits
+            # so set the tolerance to 0.1% of the 'nominal' decimal digits
             #
             # Examples:
-            #   WETH (18 decimal places) calculated within 1*10**15 Wei,
+            #   WETH (18 decimal places) calculated within 1*10**14 Wei,
             #   USDC (6 decimal places) calculated within 1*10**2 Wei
             options={"xatol": 10 ** (self.input_token.decimals - 4)},
         )
+
+        # The arb_profit function convert the value to a negative number so the minimize_scalar
+        # correctly finds the optimum input. However we need a practical positive profit,
+        # so we negate the result afterwards
         swap_amount = int(opt.x)
         best_profit = -int(opt.fun)
-
-        profitable = True if best_profit > 0 else False
 
         try:
             best_amounts = self._build_multipool_amounts_out(
@@ -463,67 +465,8 @@ class UniswapLpCycle(Arbitrage):
                 }
             )
 
-            return profitable, (swap_amount, best_profit)
-
-    def calculate_multipool_tokens_out_from_tokens_in(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-        override_state: List[
-            Tuple[
-                Union[LiquidityPool, V3LiquidityPool],
-                dict,
-            ]
-        ] = None,
-    ) -> int:
-        """
-        Calculates the expected token OUTPUT from the last pool for a given token INPUT to the first pool
-        at current pool states. Uses the self.token0 and self.token1 pointers to determine which token
-        is being swapped in and uses the appropriate formula
-        """
-
-        number_of_pools = len(self.swap_pools)
-
-        # sort the override_state values into a dictionary for fast lookup
-        # inside the calculation loop
-        _overrides = {}
-        if override_state is not None:
-            for pool, state in override_state:
-                _overrides[pool.address] = state
-
-        for i in range(number_of_pools):
-
-            # determine the output token for this pool
-            if token_in == self.swap_pools[i].token0:
-                token_out = self.swap_pools[i].token1
-            elif token_in == self.swap_pools[i].token1:
-                token_out = self.swap_pools[i].token0
-            else:
-                raise ValueError(
-                    f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
-                )
-
-            try:
-                # calculate the swap output through pool[i]
-                token_out_quantity = self.swap_pools[
-                    i
-                ].calculate_tokens_out_from_tokens_in(
-                    token_in=token_in,
-                    token_in_quantity=token_in_quantity,
-                    override_state=_overrides.get(self.swap_pools[i].address),
-                )
-            except LiquidityPoolError as e:
-                raise ArbitrageError(
-                    f"(calculate_multipool_tokens_out_from_tokens_in): {e}"
-                ) from e
-
-            if i == number_of_pools - 1:
-                # if we've reached the last pool, return the output amount
-                return token_out_quantity
-            else:
-                # otherwise, use the output as input on the next loop
-                token_in = token_out
-                token_in_quantity = token_out_quantity
+        profitable = True if best_profit > 0 else False
+        return profitable, (swap_amount, best_profit)
 
     def clear_best(self):
         self.best.update(
@@ -615,19 +558,18 @@ class UniswapLpCycle(Arbitrage):
         # print('checking pool amounts')
         # print(self.best['swap_pool_amounts'])
         if not self.best["swap_pool_amounts"]:
-            raise ArbitrageError(
-                "calculate_arbitrage must be executed before calling generate_payloads"
-            )
+            raise ArbitrageError("No arbitrage results available")
 
         # web3py object without a provider, useful for offline transaction creation and signing
         w3 = Web3()
 
         payloads = []
 
-        # generate the payload for the initial transfer if the first pool is type V2
-        if self.swap_pools[0].uniswap_version == 2:
-            # print("\tPAYLOAD: building initial V2 transfer")
-            try:
+        try:
+
+            # generate the payload for the initial transfer if the first pool is type V2
+            if self.swap_pools[0].uniswap_version == 2:
+
                 # transfer the input token to the first swap pool
                 transfer_payload = (
                     # address
@@ -646,15 +588,11 @@ class UniswapLpCycle(Arbitrage):
                     ),
                     0,  # msg.value
                 )
-            except Exception as e:
-                print(f"generate_payloads (transfer_payload): {e}")
-                print(self.best)
-                print(f"id: {self.id}")
-            else:
+
                 payloads.append(transfer_payload)
 
-        # generate the swap payloads for each pool in the path
-        try:
+            # generate the swap payloads for each pool in the path
+
             last_pool = self.swap_pools[-1]
             # print("\tPAYLOAD: identified last pool")
             for i, swap_pool_object in enumerate(self.swap_pools):
@@ -749,12 +687,12 @@ class UniswapLpCycle(Arbitrage):
                         )
                     )
                 else:
-                    raise ArbitrageError(
+                    raise ValueError(
                         f"Could not determine Uniswap version for pool: {swap_pool_object}"
                     )
         except Exception as e:
-            print(f"generate_payloads (swap_payload): {e}")
             print(self.best)
             print(f"id: {self.id}")
+            raise ArbitrageError(f"generate_payloads (catch-all)): {e}") from e
 
         return payloads
