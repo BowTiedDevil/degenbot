@@ -212,14 +212,11 @@ class BaseV3LiquidityPool(ABC):
 
         with self.tick_lock:
 
-            # requested word is already known. This should not occur!
+            # requested word is already known. This can occur in highly threaded programs
             if word_position in self.tick_bitmap.keys():
-                print(f"(V3LiquidityPool) {word_position=} inside known range")
-                print(f"{self.name}")
-                # force exit for debugging
-                import sys
-
-                sys.exit()
+                # print(f"(V3LiquidityPool) {word_position=} inside known range")
+                # print(f"{self.name}")
+                return
 
             if self.tick_bitmap:
                 min_word = min(self.tick_bitmap.keys())
@@ -324,7 +321,7 @@ class BaseV3LiquidityPool(ABC):
 
         return self.tick_data
 
-    def _update_pool_state(self):
+    def _update_pool_state(self) -> None:
         self.state = {
             "liquidity": self.liquidity,
             "sqrt_price_x96": self.sqrt_price_x96,
@@ -515,18 +512,19 @@ class BaseV3LiquidityPool(ABC):
                             step["tickNext"]
                         ]
                     except KeyError:
-                        current_tick_word, _ = self._get_tick_bitmap_position(
-                            state["tick"]
-                        )
-                        next_tick_word, _ = self._get_tick_bitmap_position(
-                            step["tickNext"]
-                        )
+                        # current_tick_word, _ = self._get_tick_bitmap_position(
+                        #     state["tick"]
+                        # )
+                        # next_tick_word, _ = self._get_tick_bitmap_position(
+                        #     step["tickNext"]
+                        # )
                         raise ArbitrageError(
-                            f"(UniswapLpCycle) swap function indicated tick={step['tickNext']} was initialized, but tick_data has no data for this tick!"
-                            f"\nPool address = {self.address}"
-                            f"\nCurrent: Tick={state['tick']}, Word={current_tick_word}"
-                            f"\nNext   : Tick={step['tickNext']}, Word={next_tick_word}"
-                            f"\nBlock  : {chain.height}"
+                            "Tick bitmap or liquidity data is out of date"
+                            # f"(UniswapLpCycle) swap function indicated tick={step['tickNext']} was initialized, but tick_data has no data for this tick!"
+                            # f"\nPool address = {self.address}"
+                            # f"\nCurrent: Tick={state['tick']}, Word={current_tick_word}"
+                            # f"\nNext   : Tick={step['tickNext']}, Word={next_tick_word}"
+                            # f"\nBlock  : {chain.height}"
                         )
 
                     # if (liquidityNet, liquidityGross) == (0, 0):
@@ -672,7 +670,8 @@ class BaseV3LiquidityPool(ABC):
         thus the swap calculation will continue until the target amount is satisfied, regardless of
         price impact
 
-        Some swaps cannot consume the entire input amount.
+        Some swaps will not consume the entire input amount, so call this function using `with_remainder=True`
+        to include that leftover value with the return and offset the input
 
         Accepts a dictionary of state values (`override_state`) to allow calculations beginning from an
         arbitrary starting point. This dictionary must have one or more of the following keys:
