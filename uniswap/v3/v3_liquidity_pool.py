@@ -282,32 +282,35 @@ class BaseV3LiquidityPool(ABC):
                     # update the liquidity data
                     self.tick_data.update(multicall_tick_data)
 
-            # fetch words one by one
+            # fetch words one by one (single_tick = True)
             else:
-                if tick_bitmap := self._brownie_contract.tickBitmap(
-                    word_position
-                ):
-                    _tick_data = (
-                        self.lens._brownie_contract.getPopulatedTicksInWord(
+                try:
+                    if _tick_bitmap := self._brownie_contract.tickBitmap(
+                        word_position
+                    ):
+                        _tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
                             self.address,
                             word_position,
                             block_identifier=block_number,
                         )
-                    )
+                    else:
+                        _tick_data = ()
+                except Exception as e:
+                    print(e)
+                    print(type(e))
+                    raise
                 else:
-                    _tick_data = ()
-
-                if tick_bitmap:
-                    for (
-                        tick,
-                        liquidityNet,
-                        liquidityGross,
-                    ) in _tick_data:
-                        self.tick_data[tick] = (
-                            liquidityNet,
-                            liquidityGross,
-                        )
-                self.tick_bitmap.update({word_position: tick_bitmap})
+                    if _tick_bitmap and _tick_data:
+                        for (
+                            _tick,
+                            _liquidity_net,
+                            _liquidity_gross,
+                        ) in _tick_data:
+                            self.tick_data[_tick] = (
+                                _liquidity_net,
+                                _liquidity_gross,
+                            )
+                    self.tick_bitmap.update({word_position: _tick_bitmap})
 
     def _update_pool_state(self) -> None:
         self.state = {
