@@ -1,6 +1,3 @@
-# TODO: implement a way to track when amountSpecified for a swap
-# exceeds the amount actually swapped
-
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from threading import Lock
@@ -150,7 +147,7 @@ class BaseV3LiquidityPool(ABC):
         self.extra_words = extra_words
 
         _tick_word, _ = self._get_tick_bitmap_position(self.tick)
-        self._get_tick_data_at_word(_tick_word, block_number=block_number)
+        self._update_tick_data_at_word(_tick_word, block_number=block_number)
 
         if name:
             self.name = name
@@ -186,12 +183,12 @@ class BaseV3LiquidityPool(ABC):
         """
         return TickBitmap.position(int(Decimal(tick) // self.tick_spacing))
 
-    def _get_tick_data_at_word(
+    def _update_tick_data_at_word(
         self,
         word_position: int,
         single_word: bool = False,
         block_number: Optional[int] = None,
-    ) -> dict:
+    ) -> None:
         """
         Gets the initialized tick values at a specific word (a 32 byte number
         representing 256 ticks at the tickSpacing interval), stores
@@ -210,18 +207,18 @@ class BaseV3LiquidityPool(ABC):
         when used with threads.
         """
 
-        with self.tick_lock:
+        # Requested word is already known. This can occur in highly threaded programs,
+        # so return early
+        if word_position in self.tick_bitmap.keys():
+            return
 
-            # requested word is already known. This can occur in highly threaded programs
-            if word_position in self.tick_bitmap.keys():
-                # print(f"(V3LiquidityPool) {word_position=} inside known range")
-                # print(f"{self.name}")
-                return
+        with self.tick_lock:
 
             if self.tick_bitmap:
                 min_word = min(self.tick_bitmap.keys())
                 max_word = max(self.tick_bitmap.keys())
-                # if word_position is inside the known range, force single_word mode
+                # if word_position is inside the known range, force single_word mode to avoid
+                # overrunning existing data
                 if min_word < word_position < max_word:
                     single_word = True
             else:
@@ -239,7 +236,7 @@ class BaseV3LiquidityPool(ABC):
                 and not single_word
             ):
 
-                # for both code sections below, `lower_word` and `upper_word` are used to feed the Python
+                # for both sections below, `lower_word` and `upper_word` are used to feed the Python
                 # built-in `range()` generator, which will include the lower word but exclude the upper word
 
                 # requested word is above the known range
@@ -256,7 +253,7 @@ class BaseV3LiquidityPool(ABC):
                     )
                     upper_word = min_word
 
-                # fetch the bitmaps for the range
+                # fetch the tick bitmaps for the range
                 try:
                     with multicall(block_identifier=block_number):
                         multicall_tick_bitmaps = {
@@ -266,16 +263,6 @@ class BaseV3LiquidityPool(ABC):
                                 upper_word,
                             )
                         }
-                except Exception as e:
-                    print(e)
-                    print(type(e))
-                    raise
-                else:
-                    # update the internal reference with the fetched results
-                    self.tick_bitmap.update(multicall_tick_bitmaps)
-
-                try:
-                    with multicall(block_identifier=block_number):
                         multicall_tick_data = {
                             tick: (liquidityNet, liquidityGross)
                             for word_position, bitmap in multicall_tick_bitmaps.items()
@@ -290,6 +277,9 @@ class BaseV3LiquidityPool(ABC):
                     print(type(e))
                     raise
                 else:
+                    # update the bitmaps
+                    self.tick_bitmap.update(multicall_tick_bitmaps)
+                    # update the liquidity data
                     self.tick_data.update(multicall_tick_data)
 
             # fetch words one by one
@@ -318,8 +308,6 @@ class BaseV3LiquidityPool(ABC):
                             liquidityGross,
                         )
                 self.tick_bitmap.update({word_position: tick_bitmap})
-
-        return self.tick_data
 
     def _update_pool_state(self) -> None:
         self.state = {
@@ -426,7 +414,7 @@ class BaseV3LiquidityPool(ABC):
                     # BUG: 'word_position=XXX inside known range' exception is being thrown here
                     # when the helper is being updated by multiple threads
                     # print(f"(swap) {self.name} fetching word {wordPos}")
-                    self._get_tick_data_at_word(
+                    self._update_tick_data_at_word(
                         missing_word,
                         single_word=True,
                     )
@@ -441,7 +429,7 @@ class BaseV3LiquidityPool(ABC):
                         #     f'tickNext={step["tickNext"]} out of range! Fetching word={tick_next_word}'
                         #     f"\n{self.name}"
                         # )
-                        self._get_tick_data_at_word(
+                        self._update_tick_data_at_word(
                             tick_next_word,
                             single_word=True,
                         )
@@ -682,9 +670,6 @@ class BaseV3LiquidityPool(ABC):
             - 'tick_bitmap'  (not yet implemented)
         """
 
-        # TODO: adjust return so a delta is returned as the second parameter. e.g. attempting to swap 1000 tokens
-        # but only 999 are consumed by the swap, a delta of 1 is returned as the second value.
-
         if token_in not in (self.token0, self.token1):
             raise LiquidityPoolError("token_in not found!")
 
@@ -880,7 +865,7 @@ class BaseV3LiquidityPool(ABC):
 
                         # fetch the tick word if unavailable
                         if tick_word not in self.tick_bitmap.keys():
-                            self._get_tick_data_at_word(
+                            self._update_tick_data_at_word(
                                 word_position=tick_word,
                                 single_word=True,
                                 # Fetch the word using the previous block as a known "good" state snapshot
