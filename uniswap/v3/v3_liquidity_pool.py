@@ -51,7 +51,7 @@ class BaseV3LiquidityPool(ABC):
         name: str = "",
         update_method: str = "polling",
         abi: Optional[list] = None,
-        extra_words: int = 50,
+        extra_words: int = 250,
         silent: bool = False,
     ):
 
@@ -146,15 +146,15 @@ class BaseV3LiquidityPool(ABC):
         self._update_method = update_method
         self.extra_words = extra_words
 
-        _tick_word, _ = self._get_tick_bitmap_position(self.tick)
-        self._update_tick_data_at_word(_tick_word, block_number=block_number)
-
         if name:
             self.name = name
         else:
             self.name = f"{self.token0.symbol}-{self.token1.symbol} (V3, {self.fee/10000:.2f}%)"
 
         self.state = {}
+
+        _tick_word, _ = self._get_tick_bitmap_position(self.tick)
+        self._update_tick_data_at_word(_tick_word, block_number=block_number)
         self._update_pool_state()
         self.update_block = block_number
 
@@ -207,6 +207,8 @@ class BaseV3LiquidityPool(ABC):
         when used with threads.
         """
 
+        print(f"{self.name} updating {word_position=}, {single_word=}")
+
         # Requested word is already known. This can occur in highly threaded programs,
         # so return early
         if word_position in self.tick_bitmap.keys():
@@ -214,17 +216,17 @@ class BaseV3LiquidityPool(ABC):
 
         with self.tick_lock:
 
-            if self.tick_bitmap:
+            if not self.tick_bitmap:
+                # if the bitmap is empty, assume that the object has just been instantiated
+                # and set single_word mode to reduce startup time
+                single_word = True
+            else:
                 min_word = min(self.tick_bitmap.keys())
                 max_word = max(self.tick_bitmap.keys())
                 # if word_position is inside the known range, force single_word mode to avoid
                 # overrunning existing data
-                if min_word < word_position < max_word:
-                    single_word = True
-            else:
-                # if the bitmap is empty, assume that the object has just been instantiated
-                # and force single_word mode to reduce startup time
-                single_word = True
+                # if min_word < word_position < max_word:
+                #     single_word = True
 
             if block_number is None:
                 block_number = chain.height
@@ -236,33 +238,27 @@ class BaseV3LiquidityPool(ABC):
                 and not single_word
             ):
 
-                # for both sections below, `lower_word` and `upper_word` are used to feed the Python
-                # built-in `range()` generator, which will include the lower word but exclude the upper word
-
-                # requested word is above the known range
-                if word_position > max_word:
-                    lower_word = max_word + 1
-                    upper_word = max(
-                        word_position + 1, lower_word + self.extra_words
+                words = set(
+                    range(
+                        word_position - self.extra_words // 2,
+                        word_position + self.extra_words // 2,
                     )
+                ) - set(self.tick_bitmap.keys())
 
-                # requested word is below the known range
-                elif word_position < min_word:
-                    lower_word = min(
-                        word_position, min_word - self.extra_words
-                    )
-                    upper_word = min_word
+                print(f"fetching words: {words}")
 
                 # fetch the tick bitmaps for the range
                 try:
                     with multicall(block_identifier=block_number):
                         multicall_tick_bitmaps = {
                             _word: self._brownie_contract.tickBitmap(_word)
-                            for _word in range(
-                                lower_word,
-                                upper_word,
-                            )
+                            # for _word in range(
+                            #     lower_word,
+                            #     upper_word,
+                            # )
+                            for _word in words
                         }
+                    with multicall(block_identifier=block_number):
                         multicall_tick_data = {
                             tick: (liquidityNet, liquidityGross)
                             for word_position, bitmap in multicall_tick_bitmaps.items()
@@ -322,8 +318,8 @@ class BaseV3LiquidityPool(ABC):
     def __UniswapV3Pool_swap(
         self,
         zeroForOne: bool,
-        amountSpecified: int,
-        sqrtPriceLimitX96: int,
+        amount_specified: int,
+        sqrt_price_limit_x96: int,
         override_start_liquidity: Optional[int] = None,
         override_start_sqrt_price_x96: Optional[int] = None,
         override_start_tick: Optional[int] = None,
@@ -342,7 +338,7 @@ class BaseV3LiquidityPool(ABC):
         It is a double-underscore method and is thus obscured from external access (but still accessible if you know how).
         """
 
-        if amountSpecified == 0:
+        if amount_specified == 0:
             raise EVMRevertError("AS")
 
         if override_start_liquidity is not None:
@@ -361,11 +357,11 @@ class BaseV3LiquidityPool(ABC):
             tick = self.tick
 
         if not (
-            sqrtPriceLimitX96 < sqrt_price_x96
-            and sqrtPriceLimitX96 > TickMath.MIN_SQRT_RATIO
+            sqrt_price_limit_x96 < sqrt_price_x96
+            and sqrt_price_limit_x96 > TickMath.MIN_SQRT_RATIO
             if zeroForOne
-            else sqrtPriceLimitX96 > sqrt_price_x96
-            and sqrtPriceLimitX96 < TickMath.MAX_SQRT_RATIO
+            else sqrt_price_limit_x96 > sqrt_price_x96
+            and sqrt_price_limit_x96 < TickMath.MAX_SQRT_RATIO
         ):
             raise EVMRevertError(f"SPL")
 
@@ -379,10 +375,10 @@ class BaseV3LiquidityPool(ABC):
             #   - computedLatestObservation
         }
 
-        exactInput: bool = amountSpecified > 0
+        exactInput: bool = amount_specified > 0
 
         state = {
-            "amountSpecifiedRemaining": amountSpecified,
+            "amountSpecifiedRemaining": amount_specified,
             "amountCalculated": 0,
             "sqrtPriceX96": sqrt_price_x96,
             "tick": tick,
@@ -394,7 +390,7 @@ class BaseV3LiquidityPool(ABC):
 
         while (
             state["amountSpecifiedRemaining"] != 0
-            and state["sqrtPriceX96"] != sqrtPriceLimitX96
+            and state["sqrtPriceX96"] != sqrt_price_limit_x96
         ):
 
             step = {}
@@ -419,7 +415,7 @@ class BaseV3LiquidityPool(ABC):
                     # print(f"(swap) {self.name} fetching word {wordPos}")
                     self._update_tick_data_at_word(
                         missing_word,
-                        single_word=True,
+                        # single_word=True,
                     )
                 else:
                     # nextInitializedTickWithinOneWord will search up to 256 ticks away, which may
@@ -432,10 +428,7 @@ class BaseV3LiquidityPool(ABC):
                         #     f'tickNext={step["tickNext"]} out of range! Fetching word={tick_next_word}'
                         #     f"\n{self.name}"
                         # )
-                        self._update_tick_data_at_word(
-                            tick_next_word,
-                            single_word=True,
-                        )
+                        self._update_tick_data_at_word(tick_next_word)
                     break
 
             # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
@@ -457,11 +450,11 @@ class BaseV3LiquidityPool(ABC):
                 step["feeAmount"],
             ) = SwapMath.computeSwapStep(
                 state["sqrtPriceX96"],
-                sqrtPriceLimitX96
+                sqrt_price_limit_x96
                 if (
-                    step["sqrtPriceNextX96"] < sqrtPriceLimitX96
+                    step["sqrtPriceNextX96"] < sqrt_price_limit_x96
                     if zeroForOne
-                    else step["sqrtPriceNextX96"] > sqrtPriceLimitX96
+                    else step["sqrtPriceNextX96"] > sqrt_price_limit_x96
                 )
                 else step["sqrtPriceNextX96"],
                 state["liquidity"],
@@ -516,7 +509,7 @@ class BaseV3LiquidityPool(ABC):
                             # f"\nCurrent: Tick={state['tick']}, Word={current_tick_word}"
                             # f"\nNext   : Tick={step['tickNext']}, Word={next_tick_word}"
                             # f"\nBlock  : {chain.height}"
-                        )
+                        ) from None
 
                     # if (liquidityNet, liquidityGross) == (0, 0):
                     #     current_tick_word, _ = self._get_tick_bitmap_position(
@@ -553,13 +546,13 @@ class BaseV3LiquidityPool(ABC):
 
         amount0, amount1 = (
             (
-                amountSpecified - state["amountSpecifiedRemaining"],
+                amount_specified - state["amountSpecifiedRemaining"],
                 state["amountCalculated"],
             )
             if zeroForOne == exactInput
             else (
                 state["amountCalculated"],
-                amountSpecified - state["amountSpecifiedRemaining"],
+                amount_specified - state["amountSpecifiedRemaining"],
             )
         )
 
@@ -674,7 +667,7 @@ class BaseV3LiquidityPool(ABC):
         """
 
         if token_in not in (self.token0, self.token1):
-            raise LiquidityPoolError("token_in not found!")
+            raise ValueError("token_in not found!")
 
         # determine whether the swap is token0 -> token1
         zeroForOne = True if token_in == self.token0 else False
@@ -686,8 +679,8 @@ class BaseV3LiquidityPool(ABC):
             # delegate calculations to the ported `swap` function
             (amount0_delta, amount1_delta, *_,) = self.__UniswapV3Pool_swap(
                 zeroForOne=zeroForOne,
-                amountSpecified=token_in_quantity,
-                sqrtPriceLimitX96=(
+                amount_specified=token_in_quantity,
+                sqrt_price_limit_x96=(
                     TickMath.MIN_SQRT_RATIO + 1
                     if zeroForOne
                     else TickMath.MAX_SQRT_RATIO - 1
@@ -701,7 +694,9 @@ class BaseV3LiquidityPool(ABC):
                 override_tick_data=override_state.get("tick_data"),
             )
         except EVMRevertError as e:
-            raise LiquidityPoolError(f"Simulated execution reverted: {e}")
+            raise LiquidityPoolError(
+                f"Simulated execution reverted: {e}"
+            ) from e
         else:
             # if zeroForOne:
             #     if token_in_quantity != amount0_delta:
@@ -755,7 +750,7 @@ class BaseV3LiquidityPool(ABC):
         """
 
         if token_out not in (self.token0, self.token1):
-            raise LiquidityPoolError("token_in not found!")
+            raise ValueError("token_in not found!")
 
         # determine whether the swap is token0 -> token1
         zeroForOne = True if token_out == self.token1 else False
@@ -767,8 +762,8 @@ class BaseV3LiquidityPool(ABC):
             # delegate calculations to the ported `swap` function
             (amount0_delta, amount1_delta, *_,) = self.__UniswapV3Pool_swap(
                 zeroForOne=zeroForOne,
-                amountSpecified=-token_out_quantity,
-                sqrtPriceLimitX96=(
+                amount_specified=-token_out_quantity,
+                sqrt_price_limit_x96=(
                     TickMath.MIN_SQRT_RATIO + 1
                     if zeroForOne
                     else TickMath.MAX_SQRT_RATIO - 1
@@ -782,7 +777,9 @@ class BaseV3LiquidityPool(ABC):
                 override_tick_data=override_state.get("tick_data"),
             )
         except EVMRevertError as e:
-            raise LiquidityPoolError(f"Simulated execution reverted: {e}")
+            raise LiquidityPoolError(
+                f"Simulated execution reverted: {e}"
+            ) from e
         else:
             amountIn, amountOutReceived = (
                 (uint256(amount0_delta), uint256(-amount1_delta))
@@ -974,9 +971,9 @@ class BaseV3LiquidityPool(ABC):
             )
 
         if token_in and token_in not in (self.token0, self.token1):
-            raise LiquidityPoolError("token_in not found!")
+            raise ValueError("token_in not found!")
         if token_out and token_out not in (self.token0, self.token1):
-            raise LiquidityPoolError("token_out not found!")
+            raise ValueError("token_out not found!")
 
         # determine whether the swap is token0 -> token1
         if token_in is not None and token_in_quantity:
@@ -997,10 +994,10 @@ class BaseV3LiquidityPool(ABC):
                 end_tick,
             ) = self.__UniswapV3Pool_swap(
                 zeroForOne=zeroForOne,
-                amountSpecified=token_in_quantity
+                amount_specified=token_in_quantity
                 if token_in_quantity
                 else -token_out_quantity,
-                sqrtPriceLimitX96=sqrt_price_limit
+                sqrt_price_limit_x96=sqrt_price_limit
                 if sqrt_price_limit is not None
                 else (
                     TickMath.MIN_SQRT_RATIO + 1
@@ -1016,7 +1013,9 @@ class BaseV3LiquidityPool(ABC):
                 override_tick_data=override_state.get("tick_data"),
             )
         except EVMRevertError as e:
-            raise LiquidityPoolError(f"Simulated execution reverted: {e}")
+            raise LiquidityPoolError(
+                f"Simulated execution reverted: {e}"
+            ) from e
         else:
             return {
                 "amount0_delta": amount0_delta,
