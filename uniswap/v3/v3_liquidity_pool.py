@@ -51,7 +51,7 @@ class BaseV3LiquidityPool(ABC):
         name: str = "",
         update_method: str = "polling",
         abi: Optional[list] = None,
-        extra_words: int = 250,
+        extra_words: int = 10,
         silent: bool = False,
     ):
 
