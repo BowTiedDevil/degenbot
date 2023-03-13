@@ -42,9 +42,6 @@ class UniswapLpCycle(Arbitrage):
                 raise ArbitrageError(
                     f"Could not identify Uniswap version for pool {pool}!"
                 )
-            # assert pool.uniswap_version in [2, 3], ArbitrageError(
-            #     f"Could not identify Uniswap version for pool {pool}!"
-            # )
         self.swap_pools = swap_pools
         self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
         self.swap_pool_tokens = [
@@ -112,101 +109,68 @@ class UniswapLpCycle(Arbitrage):
     def __str__(self) -> str:
         return self.name
 
-    def _build_multipool_amounts_out(
+    def _build_amounts_out(
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
         override_state: Optional[
-            List[Tuple[Union[LiquidityPool, V3LiquidityPool], dict]]
+            List[
+                Tuple[
+                    Union[LiquidityPool, V3LiquidityPool],
+                    dict,
+                ]
+            ]
         ] = None,
     ) -> List[dict]:
-
-        number_of_pools = len(self.swap_pools)
 
         pools_amounts_out = []
 
         # sort the override_state values into a dictionary for fast lookup inside the calculation loop
-        _overrides = {}
-        if override_state is not None:
-            for pool, state in override_state:
-                _overrides[pool.address] = state
+        _overrides = (
+            {pool.address: state for pool, state in override_state}
+            if override_state is not None
+            else {}
+        )
 
-        for i in range(number_of_pools):
+        for i, pool in enumerate(self.swap_pools):
+
+            token0 = pool.token0
+            token1 = pool.token1
+
+            if token_in == token0:
+                token_out = token1
+                _zeroForOne = True
+            elif token_in == token1:
+                token_out = token0
+                _zeroForOne = False
+            else:
+                raise ValueError(
+                    f"Could not identify token_in! Found {token_in}, pool holds {token0}, {token1} "
+                )
+
+            try:
+                # calculate the swap output through pool
+                token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
+                    token_in=token_in,
+                    token_in_quantity=token_in_quantity,
+                    override_state=_overrides.get(pool.address),
+                )
+            except LiquidityPoolError as e:
+                raise ArbitrageError(
+                    f"(calculate_tokens_out_from_tokens_in): {e}"
+                )
 
             # determine the uniswap version for the pool and format the output appropriately
-            if self.swap_pools[i].uniswap_version == 2:
-                # determine the output token for the pool
-                if token_in == self.swap_pools[i].token0:
-                    token_out = self.swap_pools[i].token1
-                elif token_in == self.swap_pools[i].token1:
-                    token_out = self.swap_pools[i].token0
-                else:
-                    raise ValueError(
-                        f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
-                    )
-
-                try:
-                    # calculate the swap output through pool[i]
-                    token_out_quantity = self.swap_pools[
-                        i
-                    ].calculate_tokens_out_from_tokens_in(
-                        token_in=token_in,
-                        token_in_quantity=token_in_quantity,
-                        override_state=_overrides.get(
-                            self.swap_pools[i].address
-                        ),
-                    )
-                except LiquidityPoolError as e:
-                    raise ArbitrageError(
-                        f"(calculate_tokens_out_from_tokens_in): {e}"
-                    )
-
-                if token_in == self.swap_pools[i].token0:
-                    pools_amounts_out.append(
-                        {
-                            "uniswap_version": 2,
-                            "amounts": [0, token_out_quantity],
-                        }
-                    )
-                elif token_in == self.swap_pools[i].token1:
-                    pools_amounts_out.append(
-                        {
-                            "uniswap_version": 2,
-                            "amounts": [token_out_quantity, 0],
-                        }
-                    )
-            elif self.swap_pools[i].uniswap_version == 3:
-                # determine the output token for the pool
-                if token_in == self.swap_pools[i].token0:
-                    token_out = self.swap_pools[i].token1
-                elif token_in == self.swap_pools[i].token1:
-                    token_out = self.swap_pools[i].token0
-                else:
-                    raise ValueError(
-                        f"Could not identify token_in! Found {token_in}, pool holds {self.swap_pools[i].token0}, {self.swap_pools[i].token1} "
-                    )
-
-                try:
-                    # calculate the swap output through pool[i]
-                    token_out_quantity = self.swap_pools[
-                        i
-                    ].calculate_tokens_out_from_tokens_in(
-                        token_in=token_in,
-                        token_in_quantity=token_in_quantity,
-                        override_state=_overrides.get(
-                            self.swap_pools[i].address
-                        ),
-                    )
-                except LiquidityPoolError as e:
-                    raise ArbitrageError(
-                        f"(calculate_tokens_out_from_tokens_in): {e}"
-                    )
-
-                if token_in == self.swap_pools[i].token0:
-                    _zeroForOne = True
-                elif token_in == self.swap_pools[i].token1:
-                    _zeroForOne = False
-
+            if pool.uniswap_version == 2:
+                pools_amounts_out.append(
+                    {
+                        "uniswap_version": 2,
+                        "amounts": [0, token_out_quantity]
+                        if _zeroForOne
+                        else [token_out_quantity, 0],
+                    }
+                )
+            elif pool.uniswap_version == 3:
                 pools_amounts_out.append(
                     {
                         "uniswap_version": 3,
@@ -222,19 +186,16 @@ class UniswapLpCycle(Arbitrage):
                         else TickMath.MAX_SQRT_RATIO - 1,
                     }
                 )
-
             else:
                 raise ValueError(
                     f"Could not identify Uniswap version for pool: {self.swap_pools[i]}"
                 )
 
-            if i == number_of_pools - 1:
-                # if we've reached the last pool, return the pool_amounts_out list
-                return pools_amounts_out
-            else:
-                # otherwise, feed the results back into the loop
-                token_in = token_out
-                token_in_quantity = token_out_quantity
+            # feed the output into input, continue the loop
+            token_in = token_out
+            token_in_quantity = token_out_quantity
+
+        return pools_amounts_out
 
     def _update_pool_states(self):
         """
@@ -251,7 +212,6 @@ class UniswapLpCycle(Arbitrage):
         override_update_method: Optional[str] = None,
     ) -> bool:
 
-        # TODO: implement block_number check for V2 pools (V3 done)
         found_updates = False
 
         if override_update_method:
@@ -263,6 +223,7 @@ class UniswapLpCycle(Arbitrage):
                 or override_update_method == "polling"
             ):
                 if pool.uniswap_version == 2:
+                    pool: LiquidityPool
                     # TODO: implement a more robust check that gracefully
                     # handles externally-updated V2 pools
                     pool_updated = pool.update_reserves(
@@ -277,6 +238,7 @@ class UniswapLpCycle(Arbitrage):
                             )
                         found_updates = True
                 elif pool.uniswap_version == 3:
+                    pool: V3LiquidityPool
                     pool_updated, _ = pool.auto_update(
                         silent=silent,
                         block_number=block_number,
@@ -317,7 +279,7 @@ class UniswapLpCycle(Arbitrage):
             # if the 'init' flag is True, the `best` dict is empty so the calc should be done for the
             # first time, regardless of state
             self.auto_update()
-            self.best["init"] == False
+            self.best["init"] = False
         elif self.pool_states == {
             pool.address: pool.state for pool in self.swap_pools
         }:
@@ -376,8 +338,8 @@ class UniswapLpCycle(Arbitrage):
 
         # bracket the initial guess for the algo
         bracket = (
+            1,
             0.01 * self.max_input,
-            0.05 * self.max_input,
         )
 
         def arb_profit(x):
@@ -396,7 +358,7 @@ class UniswapLpCycle(Arbitrage):
                             override_state=_overrides.get(pool.address),
                         )
                     )
-                except (EVMRevertError, LiquidityPoolError):
+                except (EVMRevertError, LiquidityPoolError) as e:
                     # The optimizer might send invalid data into the swap calculation during
                     # iteration. We don't want it to stop, so catch the exception and pretend
                     # the swap results in token_out_quantity = 0.
@@ -429,7 +391,7 @@ class UniswapLpCycle(Arbitrage):
             method="bounded",
             bounds=bounds,
             bracket=bracket,
-            # Optimizer will run until the consecutive values near the optimum
+            # Optimizer will run until the consecutive input values
             # are within `xatol`. ERC-20 tokens can have different decimal precision,
             # so set the tolerance to 0.1% of the 'nominal' decimal digits
             #
@@ -439,24 +401,28 @@ class UniswapLpCycle(Arbitrage):
             options={"xatol": 10 ** (self.input_token.decimals - 4)},
         )
 
-        # The arb_profit function convert the value to a negative number so the minimize_scalar
+        # The arb_profit function converts the value to a negative number so the minimize_scalar
         # correctly finds the optimum input. However we need a practical positive profit,
         # so we negate the result afterwards
         swap_amount = int(opt.x)
         best_profit = -int(opt.fun)
 
         try:
-            best_amounts = self._build_multipool_amounts_out(
+            best_amounts = self._build_amounts_out(
                 token_in=self.input_token,
                 token_in_quantity=swap_amount,
                 override_state=override_state,
             )
-        except (EVMRevertError, LiquidityPoolError) as e:
+        # except (EVMRevertError, LiquidityPoolError) as e:
+        except ArbitrageError as e:
             # Simulated EVM reverts inside the ported `swap` function were ignored to execute the optimizer
             # through to completion, but now we want to raise a real error to avoid generating bad payloads
             # that will revert
-            raise ArbitrageError("No possible arbitrage") from e
+            raise ArbitrageError(f"No possible arbitrage: {e}") from None
+        except Exception as e:
+            raise ArbitrageError(f"No possible arbitrage: {e}") from e
         else:
+            # print(f"built multipool amounts! {self.name}")
             self.best.update(
                 {
                     "swap_amount": swap_amount,
