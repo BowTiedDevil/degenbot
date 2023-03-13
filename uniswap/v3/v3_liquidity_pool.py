@@ -51,7 +51,7 @@ class BaseV3LiquidityPool(ABC):
         name: str = "",
         update_method: str = "polling",
         abi: Optional[list] = None,
-        extra_words: int = 10,
+        extra_words: int = 250,
         silent: bool = False,
     ):
 
@@ -207,12 +207,15 @@ class BaseV3LiquidityPool(ABC):
         when used with threads.
         """
 
-        print(f"{self.name} updating {word_position=}, {single_word=}")
+        # Return immediately if requested word is already known.
+        # This can occur in threaded bots. The lock prevents race conditions,
+        # but this method might be running simultaneously across different threads.
+        # Used to throw an exception, now just returns early.
 
-        # Requested word is already known. This can occur in highly threaded programs,
-        # so return early
         if word_position in self.tick_bitmap.keys():
             return
+
+        # print(f"updating tick data for pool: {self.name}")
 
         with self.tick_lock:
 
@@ -245,7 +248,7 @@ class BaseV3LiquidityPool(ABC):
                     )
                 ) - set(self.tick_bitmap.keys())
 
-                print(f"fetching words: {words}")
+                # print(f"fetching words: {words}")
 
                 # fetch the tick bitmaps for the range
                 try:
@@ -281,32 +284,30 @@ class BaseV3LiquidityPool(ABC):
             # fetch words one by one (single_tick = True)
             else:
                 try:
-                    if _tick_bitmap := self._brownie_contract.tickBitmap(
+                    if single_tick_bitmap := self._brownie_contract.tickBitmap(
                         word_position
                     ):
-                        _tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
+                        single_tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
                             self.address,
                             word_position,
                             block_identifier=block_number,
                         )
-                    else:
-                        _tick_data = ()
                 except Exception as e:
                     print(e)
                     print(type(e))
                     raise
                 else:
-                    if _tick_bitmap and _tick_data:
+                    if single_tick_bitmap:
                         for (
                             _tick,
                             _liquidity_net,
                             _liquidity_gross,
-                        ) in _tick_data:
+                        ) in single_tick_data:
                             self.tick_data[_tick] = (
                                 _liquidity_net,
                                 _liquidity_gross,
                             )
-                    self.tick_bitmap.update({word_position: _tick_bitmap})
+                    self.tick_bitmap[word_position] = single_tick_bitmap
 
     def _update_pool_state(self) -> None:
         self.state = {
@@ -428,7 +429,10 @@ class BaseV3LiquidityPool(ABC):
                         #     f'tickNext={step["tickNext"]} out of range! Fetching word={tick_next_word}'
                         #     f"\n{self.name}"
                         # )
-                        self._update_tick_data_at_word(tick_next_word)
+                        self._update_tick_data_at_word(
+                            tick_next_word,
+                            single_word=True,
+                        )
                     break
 
             # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
@@ -914,7 +918,6 @@ class BaseV3LiquidityPool(ABC):
                                     tick,
                                     self.tick_spacing,
                                 )
-                                continue
                             else:
                                 self.tick_data[tick] = (
                                     new_liquidity_net,
