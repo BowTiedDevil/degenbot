@@ -123,13 +123,13 @@ class BaseV3LiquidityPool(ABC):
             self.token0 = self._token_manager.get_erc20token(
                 address=self._brownie_contract.token0(),
                 min_abi=True,
-                silent=silent,
+                silent=True,
                 unload_brownie_contract_after_init=True,
             )
             self.token1 = self._token_manager.get_erc20token(
                 address=self._brownie_contract.token1(),
                 min_abi=True,
-                silent=silent,
+                silent=True,
                 unload_brownie_contract_after_init=True,
             )
 
@@ -149,7 +149,9 @@ class BaseV3LiquidityPool(ABC):
         if name:
             self.name = name
         else:
-            self.name = f"{self.token0.symbol}-{self.token1.symbol} (V3, {self.fee/10000:.2f}%)"
+            self.name = (
+                f"{self.token0}-{self.token1} (V3, {self.fee/10000:.2f}%)"
+            )
 
         self.state = {}
 
