@@ -1,4 +1,3 @@
-import time
 from decimal import Decimal
 from fractions import Fraction
 from typing import List, Optional, Union, Tuple
@@ -119,13 +118,11 @@ class LiquidityPool:
                 silent=silent,
                 unload_brownie_contract_after_init=True,
             )
-            # self.token0 = Erc20Token(address=self._contract.token0())
-            # self.token1 = Erc20Token(address=self._contract.token1())
 
         if name is not None:
             self.name = name
         else:
-            self.name = f"{self.token0.symbol}-{self.token1.symbol} (V2, {100*self.fee.numerator/self.fee.denominator:.2f}%)"
+            self.name = f"{self.token0}-{self.token1} (V2, {100*self.fee.numerator/self.fee.denominator:.2f}%)"
 
         if update_reserves_on_start:
             (
@@ -149,7 +146,7 @@ class LiquidityPool:
             self._update_method == "external"
             and unload_brownie_contract_after_init
         ):
-            # huge memory savings if LP contract object is not used after initialization
+            # memory saving if LP contract object is not used after initialization
             self._contract = None
 
         self.state = {}
@@ -158,10 +155,10 @@ class LiquidityPool:
         if not silent:
             print(self.name)
             print(
-                f"• Token 0: {self.token0.symbol} - Reserves: {self.reserves_token0}"
+                f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}"
             )
             print(
-                f"• Token 1: {self.token1.symbol} - Reserves: {self.reserves_token1}"
+                f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}"
             )
 
     def __eq__(self, other) -> bool:
@@ -302,7 +299,7 @@ class LiquidityPool:
                 raise ValueError("wtf happened here? (token_in)")
 
         # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
-        if token_out_quantity >= reserves_out - 1:
+        if token_out_quantity > reserves_out - 1:
             raise LiquidityPoolError(
                 f"Requested amount out ({token_out_quantity}) exceeds pool reserves ({reserves_out})"
             )
@@ -600,18 +597,14 @@ class LiquidityPool:
                     if not silent:
                         print(f"[{self.name}]")
                         if print_reserves:
-                            print(
-                                f"{self.token0.symbol}: {self.reserves_token0}"
-                            )
-                            print(
-                                f"{self.token1.symbol}: {self.reserves_token1}"
-                            )
+                            print(f"{self.token0}: {self.reserves_token0}")
+                            print(f"{self.token1}: {self.reserves_token1}")
                         if print_ratios:
                             print(
-                                f"{self.token0.symbol}/{self.token1.symbol}: {(self.reserves_token0/10**self.token0.decimals) / (self.reserves_token1/10**self.token1.decimals)}"
+                                f"{self.token0}/{self.token1}: {(self.reserves_token0/10**self.token0.decimals) / (self.reserves_token1/10**self.token1.decimals)}"
                             )
                             print(
-                                f"{self.token1.symbol}/{self.token0.symbol}: {(self.reserves_token1/10**self.token1.decimals) / (self.reserves_token0/10**self.token0.decimals)}"
+                                f"{self.token1}/{self.token0}: {(self.reserves_token1/10**self.token1.decimals) / (self.reserves_token0/10**self.token0.decimals)}"
                             )
 
                     # recalculate possible swaps using the new reserves
@@ -657,14 +650,14 @@ class LiquidityPool:
             if not silent:
                 print(f"[{self.name}]")
                 if print_reserves:
-                    print(f"{self.token0.symbol}: {self.reserves_token0}")
-                    print(f"{self.token1.symbol}: {self.reserves_token1}")
+                    print(f"{self.token0}: {self.reserves_token0}")
+                    print(f"{self.token1}: {self.reserves_token1}")
                 if print_ratios:
                     print(
-                        f"{self.token0.symbol}/{self.token1.symbol}: {self.reserves_token0 / self.reserves_token1}"
+                        f"{self.token0}/{self.token1}: {self.reserves_token0 / self.reserves_token1}"
                     )
                     print(
-                        f"{self.token1.symbol}/{self.token0.symbol}: {self.reserves_token1 / self.reserves_token0}"
+                        f"{self.token1}/{self.token0}: {self.reserves_token1 / self.reserves_token0}"
                     )
             self.calculate_tokens_in_from_ratio_out()
             return True
