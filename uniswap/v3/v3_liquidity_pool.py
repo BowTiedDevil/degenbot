@@ -159,8 +159,12 @@ class BaseV3LiquidityPool(ABC):
         self.update_block = block_number
 
         if not silent:
-            pass
-            # TODO: add status print, similar to V2 helper
+            print(self.name)
+            print(f"• Token 0: {self.token0}")
+            print(f"• Token 1: {self.token1}")
+            print(f"• Liquidity: {self.liquidity}")
+            print(f"• SqrtPrice: {self.sqrt_price_x96}")
+            print(f"• Tick: {self.tick}")
 
     def __str__(self):
         """
