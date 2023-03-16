@@ -53,6 +53,8 @@ class BaseV3LiquidityPool(ABC):
         abi: Optional[list] = None,
         extra_words: int = 250,
         silent: bool = False,
+        tick_data: dict = None,
+        tick_bitmap: dict = None,
     ):
 
         # held by the _get_tick_data_at_word method, which will retrieve and store liquidity and bitmap data
@@ -61,7 +63,7 @@ class BaseV3LiquidityPool(ABC):
         # held by the auto_update and external_update method, which will retrieve and store mutable state data (liquidity, tick, sqrtPrice, etc)
         self.update_lock = Lock()
 
-        block_number = chain.height
+        self.update_block = chain.height
 
         self.uniswap_version = 3
 
@@ -135,14 +137,29 @@ class BaseV3LiquidityPool(ABC):
 
         self.fee = self._brownie_contract.fee()  # immutable
         self.liquidity = self._brownie_contract.liquidity(
-            block_identifier=block_number
+            block_identifier=self.update_block
         )
         self.tick_spacing = self._brownie_contract.tickSpacing()  # immutable
-        slot0 = self._brownie_contract.slot0(block_identifier=block_number)
+        slot0 = self._brownie_contract.slot0(
+            block_identifier=self.update_block
+        )
         self.sqrt_price_x96 = slot0[0]
         self.tick = slot0[1]
-        self.tick_data = {}
-        self.tick_bitmap = {}
+
+        if tick_bitmap is not None:
+            self.tick_bitmap = tick_bitmap
+        else:
+            self.tick_bitmap = {}
+
+        if tick_data is not None:
+            self.tick_data = tick_data
+        else:
+            _tick_word, _ = self._get_tick_bitmap_position(self.tick)
+            self.tick_data = {}
+            self._update_tick_data_at_word(
+                _tick_word, block_number=self.update_block
+            )
+
         self._update_method = update_method
         self.extra_words = extra_words
 
@@ -154,11 +171,7 @@ class BaseV3LiquidityPool(ABC):
             )
 
         self.state = {}
-
-        _tick_word, _ = self._get_tick_bitmap_position(self.tick)
-        self._update_tick_data_at_word(_tick_word, block_number=block_number)
         self._update_pool_state()
-        self.update_block = block_number
 
         if not silent:
             print(self.name)
