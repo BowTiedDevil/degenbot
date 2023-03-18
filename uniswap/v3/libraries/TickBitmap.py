@@ -13,14 +13,13 @@ from decimal import Decimal
 
 
 def flipTick(
-    tickBitmap: int,
+    tickBitmap: dict,
     tick: int,
     tickSpacing: int,
 ):
 
     if not (tick % tickSpacing == 0):
         raise EVMRevertError("Tick not correctly spaced!")
-    # assert tick % tickSpacing == 0, "Tick not correctly spaced!"
 
     wordPos, bitPos = position(int(Decimal(tick) // tickSpacing))
     # print(f"flipping {tick=} @ {wordPos=}, {bitPos=}")
@@ -30,7 +29,7 @@ def flipTick(
         )
     else:
         mask = 1 << bitPos
-        tickBitmap[wordPos] ^= mask
+        tickBitmap[wordPos]["bitmap"] ^= mask
 
 
 def position(tick: int) -> Tuple[int, int]:
@@ -56,10 +55,13 @@ def nextInitializedTickWithinOneWord(
         wordPos, bitPos = position(compressed)
         # all the 1s at or to the right of the current bitPos
         mask: int = (1 << bitPos) - 1 + (1 << bitPos)
-        if (bitmap_word := tickBitmap.get(wordPos)) is not None:
-            masked: int = bitmap_word & mask
-        else:
+        # if (bitmap_word := tickBitmap.get(wordPos)) is not None:
+        try:
+            bitmap_word = tickBitmap[wordPos]["bitmap"]
+        except:
             raise BitmapWordUnavailableError(wordPos)
+        else:
+            masked: int = bitmap_word & mask
 
         # if there are no initialized ticks to the right of or at the current tick, return rightmost in the word
         initialized_status: bool = masked != 0
@@ -76,10 +78,13 @@ def nextInitializedTickWithinOneWord(
         # all the 1s at or to the left of the bitPos
         mask: int = ~((1 << bitPos) - 1)
 
-        if (bitmap_word := tickBitmap.get(wordPos)) is not None:
-            masked: int = bitmap_word & mask
-        else:
+        # if (bitmap_word := tickBitmap.get(wordPos)) is not None:
+        try:
+            bitmap_word = tickBitmap[wordPos]["bitmap"]
+        except:
             raise BitmapWordUnavailableError(wordPos)
+        else:
+            masked: int = bitmap_word & mask
 
         # if there are no initialized ticks to the left of the current tick, return leftmost in the word
         initialized_status: bool = masked != 0
