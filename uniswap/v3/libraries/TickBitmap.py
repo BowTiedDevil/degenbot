@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Optional
 
 from degenbot.exceptions import (
     LiquidityPoolError,
@@ -16,6 +16,7 @@ def flipTick(
     tickBitmap: dict,
     tick: int,
     tickSpacing: int,
+    update_block: Optional[int] = None,
 ):
 
     if not (tick % tickSpacing == 0):
@@ -30,6 +31,8 @@ def flipTick(
     else:
         mask = 1 << bitPos
         tickBitmap[wordPos]["bitmap"] ^= mask
+        if update_block is not None:
+            tickBitmap[wordPos]["block"] = update_block
 
 
 def position(tick: int) -> Tuple[int, int]:
@@ -39,7 +42,7 @@ def position(tick: int) -> Tuple[int, int]:
 
 
 def nextInitializedTickWithinOneWord(
-    tickBitmap: int,
+    tickBitmap: dict,
     tick: int,
     tickSpacing: int,
     lte: bool,
