@@ -57,6 +57,9 @@ class BaseV3LiquidityPool(ABC):
         tick_bitmap: dict = None,
     ):
 
+        self.tick_data: dict
+        self.tick_bitmap: dict
+
         # held by the _get_tick_data_at_word method, which will retrieve and store liquidity and bitmap data
         self.tick_lock = Lock()
 
@@ -242,13 +245,6 @@ class BaseV3LiquidityPool(ABC):
                 # if the bitmap is empty, assume that the object has just been instantiated
                 # and set single_word mode to reduce startup time
                 single_word = True
-            else:
-                min_word = min(self.tick_bitmap.keys())
-                max_word = max(self.tick_bitmap.keys())
-                # if word_position is inside the known range, force single_word mode to avoid
-                # overrunning existing data
-                # if min_word < word_position < max_word:
-                #     single_word = True
 
             if block_number is None:
                 block_number = chain.height
@@ -273,7 +269,12 @@ class BaseV3LiquidityPool(ABC):
                 try:
                     with multicall(block_identifier=block_number):
                         multicall_tick_bitmaps = {
-                            _word: self._brownie_contract.tickBitmap(_word)
+                            _word: {
+                                "bitmap": self._brownie_contract.tickBitmap(
+                                    _word
+                                ),
+                                "block": block_number,
+                            }
                             # for _word in range(
                             #     lower_word,
                             #     upper_word,
@@ -282,7 +283,11 @@ class BaseV3LiquidityPool(ABC):
                         }
                     with multicall(block_identifier=block_number):
                         multicall_tick_data = {
-                            tick: (liquidityNet, liquidityGross)
+                            tick: {
+                                "liquidityNet": liquidityNet,
+                                "liquidityGross": liquidityGross,
+                                "block": block_number,
+                            }
                             for word_position, bitmap in multicall_tick_bitmaps.items()
                             for tick, liquidityNet, liquidityGross in self.lens._brownie_contract.getPopulatedTicksInWord(
                                 self.address,
@@ -304,7 +309,8 @@ class BaseV3LiquidityPool(ABC):
             else:
                 try:
                     if single_tick_bitmap := self._brownie_contract.tickBitmap(
-                        word_position
+                        word_position,
+                        block_identifier=block_number,
                     ):
                         single_tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
                             self.address,
@@ -322,11 +328,16 @@ class BaseV3LiquidityPool(ABC):
                             _liquidity_net,
                             _liquidity_gross,
                         ) in single_tick_data:
-                            self.tick_data[_tick] = (
-                                _liquidity_net,
-                                _liquidity_gross,
-                            )
-                    self.tick_bitmap[word_position] = single_tick_bitmap
+                            self.tick_data[_tick] = {
+                                "liquidityNet": _liquidity_net,
+                                "liquidityGross": _liquidity_gross,
+                                "block": block_number,
+                            }
+
+                    self.tick_bitmap[word_position] = {
+                        "bitmap": single_tick_bitmap,
+                        "block": block_number,
+                    }
 
     def _update_pool_state(self) -> None:
         self.state = {
@@ -515,8 +526,14 @@ class BaseV3LiquidityPool(ABC):
                     # )
 
                     try:
-                        liquidityNet, liquidityGross = self.tick_data[
-                            step["tickNext"]
+                        # liquidityNet, liquidityGross = self.tick_data[
+                        #     step["tickNext"]
+                        # ]
+                        liquidityNet = self.tick_data[step["tickNext"]][
+                            "liquidityNet"
+                        ]
+                        liquidityGross = self.tick_data[step["tickNext"]][
+                            "liquidityGross"
                         ]
                     except KeyError:
                         # current_tick_word, _ = self._get_tick_bitmap_position(
@@ -854,6 +871,9 @@ class BaseV3LiquidityPool(ABC):
                     f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
                 )
 
+            # Check if submitted block number is less than the recorded block and raise error
+            # if so. This allows same-block updates since multiple state-changing events may
+            # occur sequentially in a block
             if block_number < self.update_block:
                 raise ExternalUpdateError(
                     f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
@@ -874,12 +894,14 @@ class BaseV3LiquidityPool(ABC):
                 elif key == "liquidity_change":
                     liquidity_delta, lower_tick, upper_tick = value
 
+                    # Mint/Burn events may affect the current liquidity if the current tick is
+                    # between the tick range of this event, so check and adjust
                     if lower_tick <= self.tick <= upper_tick:
                         # prev_liq = self.liquidity
                         self.liquidity += liquidity_delta
                         # new_liq = self.liquidity
                         # print(f"In-range liquidity: was {prev_liq}, now {new_liq}")
-                        self.state["liquidity"] = self.liquidity
+                        # self.state["liquidity"] = self.liquidity
                         updated = True
 
                     for i, tick in enumerate([lower_tick, upper_tick]):
@@ -897,29 +919,33 @@ class BaseV3LiquidityPool(ABC):
 
                         with self.tick_lock:
 
-                            # get the liquidity info for this tick, or set both to zero if the tick was previously uninitialized
-                            (
-                                tick_liquidity_net,
-                                tick_liquidity_gross,
-                            ) = self.tick_data.get(tick, (0, 0))
+                            # Get the liquidity info for this tick. get() returns None if the key
+                            # is not found, which indicates that the tick was uninitialized
+                            liquidity_at_tick: dict = self.tick_data.get(tick)
 
-                            if (
-                                tick_liquidity_net,
-                                tick_liquidity_gross,
-                            ) == (0, 0):
+                            if liquidity_at_tick is None:
                                 # print(f"Tick {tick} initialized")
+                                # print(f"{liquidity_delta=}")
+                                # print(f"{self.address}")
                                 TickBitmap.flipTick(
                                     self.tick_bitmap,
                                     tick,
                                     self.tick_spacing,
+                                    update_block=block_number,
                                 )
+                                tick_liquidity_net = 0
+                                tick_liquidity_gross = 0
+                            else:
+                                tick_liquidity_net = liquidity_at_tick[
+                                    "liquidityNet"
+                                ]
+                                tick_liquidity_gross = liquidity_at_tick[
+                                    "liquidityGross"
+                                ]
 
                             # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
                             # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
-                            #
-                            # NOTE: for burn events (removing liquidity), event_liquidity is negated,
-                            # but the logic holds (liquidityNet is reduced at the start of the range,
-                            # and increased at the end of the range)
+                            # Same equation, but for BURN events the liquidity_delta value is negative
                             new_liquidity_net = (
                                 tick_liquidity_net + liquidity_delta
                                 if i == 0
@@ -929,24 +955,45 @@ class BaseV3LiquidityPool(ABC):
                                 tick_liquidity_gross + liquidity_delta
                             )
 
+                            # Delete entirely if there is no liquidity referencing this tick
                             if new_liquidity_gross == 0:
-                                # print(f"Tick {tick} cleared")
+                                # print(f"deleting empty tick: {tick=}")
+                                # print(f"{liquidity_delta=}")
+                                # print(f"{self.tick_data[tick]=}")
+                                # print(f"{self.address}")
                                 del self.tick_data[tick]
                                 TickBitmap.flipTick(
                                     self.tick_bitmap,
                                     tick,
                                     self.tick_spacing,
+                                    update_block=block_number,
                                 )
+                            # otherwise record the new values
                             else:
-                                self.tick_data[tick] = (
-                                    new_liquidity_net,
-                                    new_liquidity_gross,
-                                )
+                                self.tick_data[tick] = {
+                                    "liquidityNet": new_liquidity_net,
+                                    "liquidityGross": new_liquidity_gross,
+                                    "block": block_number,
+                                }
+
+                    # print(self.tick_data[tick])
+                    # print(self.address)
+                    # print(liquidity_delta)
+                    # print(lower_tick)
+                    # print(upper_tick)
 
                     updated = True
 
                 else:
                     print(f"Unknown key-value pair ({key}:{value})")
+
+            if not silent:
+                print(f"Liquidity: {self.liquidity}")
+                print(f"SqrtPriceX96: {self.sqrt_price_x96}")
+                print(f"Tick: {self.tick}")
+                print(
+                    f"liquidity event: {liquidity_delta} in tick range [{lower_tick},{upper_tick}], pool: {self.name}"
+                )
 
             if updated:
                 self.update_block = block_number
@@ -956,14 +1003,6 @@ class BaseV3LiquidityPool(ABC):
                         "liquidity": self.liquidity,
                         "sqrt_price_x96": self.sqrt_price_x96,
                     }
-                )
-
-            if not silent:
-                print(f"Liquidity: {self.liquidity}")
-                print(f"SqrtPriceX96: {self.sqrt_price_x96}")
-                print(f"Tick: {self.tick}")
-                print(
-                    f"liquidity event: {liquidity_delta} in tick range [{lower_tick},{upper_tick}], pool: {self.name}"
                 )
 
             return updated
