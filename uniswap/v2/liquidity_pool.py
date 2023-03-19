@@ -105,6 +105,8 @@ class LiquidityPool:
                     self.token0 = token
                 elif token.address == self._contract.token1():
                     self.token1 = token
+                else:
+                    raise ValueError(f"{token} not found in pool {self}")
         else:
             self.token0 = self._token_manager.get_erc20token(
                 address=self._contract.token0(),
@@ -349,12 +351,6 @@ class LiquidityPool:
                 "Must provide override values for both token reserves"
             )
 
-        # assert (
-        #     override_reserves_token0 == 0 and override_reserves_token1 == 0
-        # ) or (
-        #     override_reserves_token0 != 0 and override_reserves_token1 != 0
-        # ), "Must provide override values for both token reserves"
-
         if token_in_quantity < 0:
             raise ValueError("token_in_quantity cannot be negative")
 
@@ -402,38 +398,25 @@ class LiquidityPool:
     ):
         # check to ensure that token_in and token_out are exactly the two tokens held by the LP
         if not (
-            (
-                token_in.address == self.token0.address
-                and token_out.address == self.token1.address
-            )
-            or (
-                token_in.address == self.token1.address
-                and token_out.address == self.token0.address
-            )
+            (token_in == self.token0 and token_out == self.token1)
+            or (token_in == self.token1 and token_out == self.token0)
         ):
             raise ValueError(
                 "Tokens must match the two tokens held by this pool!"
             )
-        # assert (
-        #     token_in.address == self.token0.address
-        #     and token_out.address == self.token1.address
-        # ) or (
-        #     token_in.address == self.token1.address
-        #     and token_out.address == self.token0.address
-        # ), "Tokens must match the two tokens held by this pool!"
 
         if not silent:
             print(
                 f"{token_in} -> {token_out} @ ({token_in_qty} {token_in} = {token_out_qty} {token_out})"
             )
 
-        if token_in.address == self.token0.address:
+        if token_in == self.token0:
             # calculate the ratio of token0/token1 for swap of token0 -> token1
             self._ratio_token0_in = Decimal(
                 (token_in_qty * 10**token_in.decimals)
             ) / Decimal(token_out_qty * 10**token_out.decimals)
 
-        if token_in.address == self.token1.address:
+        if token_in == self.token1:
             # calculate the ratio of token1/token0 for swap of token1 -> token0
             self._ratio_token1_in = Decimal(
                 (token_in_qty * 10**token_in.decimals)
@@ -450,7 +433,7 @@ class LiquidityPool:
         override_state: dict = None,
     ) -> dict:
         """
-        [TBD]
+        TODO
         """
 
         if token_in_quantity is None and token_out_quantity is None:
@@ -629,10 +612,6 @@ class LiquidityPool:
                 raise ValueError(
                     "Called update_reserves without providing reserve values for both tokens!"
                 )
-            # assert (
-            #     external_token0_reserves is not None
-            #     and external_token1_reserves is not None
-            # ), "Called update_reserves without providing reserve values for both tokens!"
 
             # skip follow-up processing if the LP object already has the latest reserves, or if no reserves were provided
             if (
