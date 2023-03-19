@@ -8,7 +8,7 @@ class DegenbotError(Exception):
     pass
 
 
-class DeprecationError(DegenbotError):
+class DeprecationError(ValueError):
     """
     Thrown when a feature, class, method, etc. is deprecated.
     """
