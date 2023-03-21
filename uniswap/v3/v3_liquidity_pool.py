@@ -51,7 +51,7 @@ class BaseV3LiquidityPool(ABC):
         name: str = "",
         update_method: str = "polling",
         abi: Optional[list] = None,
-        extra_words: int = 250,
+        extra_words: int = 10,
         silent: bool = False,
         tick_data: dict = None,
         tick_bitmap: dict = None,
@@ -60,10 +60,13 @@ class BaseV3LiquidityPool(ABC):
         self.tick_data: dict
         self.tick_bitmap: dict
 
-        # held by the _get_tick_data_at_word method, which will retrieve and store liquidity and bitmap data
+        # held by the _get_tick_data_at_word method, which will retrieve
+        # and store liquidity and bitmap data
         self.tick_lock = Lock()
 
-        # held by the auto_update and external_update method, which will retrieve and store mutable state data (liquidity, tick, sqrtPrice, etc)
+        # held by the auto_update and external_update method, which will
+        # retrieve and store mutable state data
+        # (liquidity, tick, sqrtPrice, etc)
         self.update_lock = Lock()
 
         self.update_block = chain.height
@@ -452,7 +455,12 @@ class BaseV3LiquidityPool(ABC):
                     # nextInitializedTickWithinOneWord will search up to 256 ticks away, which may
                     # return a tick in an adjacent word if there are no initialized ticks in the current word.
                     # This word may not be known to the helper, so check and fetch the containing word for this tick
-                    tick_next_word, _ = TickBitmap.position(step["tickNext"])
+
+                    # BUGFIX: previously called position directly, which implies tickSpacing=1,
+                    # so the call returned an inaccurate word and short-circuited the optimization
+                    tick_next_word, _ = self._get_tick_bitmap_position(
+                        step["tickNext"]
+                    )
 
                     if tick_next_word not in self.tick_bitmap.keys():
                         # print(
