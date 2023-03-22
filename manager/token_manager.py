@@ -1,8 +1,12 @@
-from degenbot.exceptions import ManagerError
-from .base import Manager
-from degenbot.token import Erc20Token
-from web3 import Web3
 from threading import Lock
+from typing import Optional
+
+from brownie import chain
+from web3 import Web3
+
+from degenbot.exceptions import ManagerError
+from degenbot.manager.base import Manager
+from degenbot.token import Erc20Token
 
 
 class Erc20TokenHelperManager(Manager):
@@ -15,7 +19,10 @@ class Erc20TokenHelperManager(Manager):
 
     _state = {}
 
-    def __init__(self, chain_id: int):
+    def __init__(self, chain_id: Optional[int] = None):
+
+        if chain_id is None:
+            chain_id = chain.id
 
         # the internal state data for this object is held in the
         # class-level _state dictionary, keyed by the chain ID
