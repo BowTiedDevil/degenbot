@@ -4,7 +4,7 @@ from typing import List, Tuple
 from brownie import Contract
 from scipy.optimize import minimize_scalar
 
-from degenbot.uniswap.v2 import LiquidityPool
+from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 from degenbot.token import Erc20Token
 
 # TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
@@ -222,7 +222,9 @@ class FlashBorrowToLpSwapNew:
                 override_future_borrow_pool_reserves_token0 != 0
                 and override_future_borrow_pool_reserves_token1 != 0
             ):
-                raise ValueError( "Must override reserves for token0 and token1")
+                raise ValueError(
+                    "Must override reserves for token0 and token1"
+                )
             # assert (
             #     override_future_borrow_pool_reserves_token0 != 0
             #     and override_future_borrow_pool_reserves_token1 != 0
@@ -234,7 +236,9 @@ class FlashBorrowToLpSwapNew:
                 override_future_borrow_pool_reserves_token0 == 0
                 and override_future_borrow_pool_reserves_token1 == 0
             ):
-                raise ValueError("Do not provide override reserves without setting override_future = True")
+                raise ValueError(
+                    "Do not provide override reserves without setting override_future = True"
+                )
             # assert (
             #     override_future_borrow_pool_reserves_token0 == 0
             #     and override_future_borrow_pool_reserves_token1 == 0
@@ -442,7 +446,9 @@ class FlashBorrowToLpSwapNew:
                 override_future_borrow_pool_reserves_token0 != 0
                 and override_future_borrow_pool_reserves_token1 != 0
             ):
-                raise ValueError( "Must override reserves for token0 and token1")
+                raise ValueError(
+                    "Must override reserves for token0 and token1"
+                )
             # assert (
             #     override_future_borrow_pool_reserves_token0 != 0
             #     and override_future_borrow_pool_reserves_token1 != 0
@@ -452,7 +458,9 @@ class FlashBorrowToLpSwapNew:
                 override_future_borrow_pool_reserves_token0 == 0
                 and override_future_borrow_pool_reserves_token1 == 0
             ):
-                raise ValueError("Do not provide override reserves without setting override_future = True")
+                raise ValueError(
+                    "Do not provide override reserves without setting override_future = True"
+                )
 
             # assert (
             #     override_future_borrow_pool_reserves_token0 == 0

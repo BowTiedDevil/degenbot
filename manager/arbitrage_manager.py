@@ -1,19 +1,19 @@
-from degenbot.arbitrage import Arbitrage, UniswapLpCycle
-from degenbot.exceptions import ManagerError
-from .token_manager import Erc20TokenHelperManager
-from .base import Manager
+from threading import Lock
+from typing import List, Optional, Union
+
+from web3 import Web3
+
+from degenbot.arbitrage.base import Arbitrage
+from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
+from degenbot.manager.base import Manager
+from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
-from degenbot.uniswap.v2 import LiquidityPool
-from degenbot.uniswap.v3 import V3LiquidityPool
-from degenbot.uniswap.manager import (
+from degenbot.uniswap.manager.uniswap_managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )
-
-
-from threading import Lock
-from typing import Optional, Union, List
-from web3 import Web3
+from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
 
 class ArbitrageHelperManager(Manager):

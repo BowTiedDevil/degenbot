@@ -13,8 +13,8 @@ from degenbot.exceptions import (
     ZeroLiquidityError,
 )
 from degenbot.token import Erc20Token
-from degenbot.uniswap.v2 import LiquidityPool
-from degenbot.uniswap.v3 import V3LiquidityPool
+from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 from degenbot.uniswap.v3.libraries import TickMath
 
 

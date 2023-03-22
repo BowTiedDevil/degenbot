@@ -4,7 +4,7 @@ from typing import List
 from brownie import Contract
 from scipy import optimize
 
-from degenbot.uniswap.v2 import LiquidityPool
+from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 from degenbot.token import Erc20Token
 
 

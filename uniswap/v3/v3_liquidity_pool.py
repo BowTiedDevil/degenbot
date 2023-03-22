@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from decimal import Decimal
 from threading import Lock
 from typing import List, Optional, Tuple
+
 from brownie import Contract, chain, multicall, network
 from web3 import Web3
 
@@ -14,15 +15,15 @@ from degenbot.exceptions import (
 )
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
-from .abi import UNISWAP_V3_POOL_ABI
-from .libraries import (
+from degenbot.uniswap.v3.abi import UNISWAP_V3_POOL_ABI
+from degenbot.uniswap.v3.libraries import (
     LiquidityMath,
     SwapMath,
     TickBitmap,
     TickMath,
 )
-from .libraries.Helpers import *
-from .tick_lens import TickLens
+from degenbot.uniswap.v3.libraries.Helpers import *
+from degenbot.uniswap.v3.tick_lens import TickLens
 
 
 class BaseV3LiquidityPool(ABC):

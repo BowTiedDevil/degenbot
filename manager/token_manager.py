@@ -1,5 +1,5 @@
 from degenbot.exceptions import ManagerError
-from degenbot.manager import Manager
+from .base import Manager
 from degenbot.token import Erc20Token
 from web3 import Web3
 from threading import Lock
@@ -13,7 +13,7 @@ class Erc20TokenHelperManager(Manager):
     objects reference the same state data
     """
 
-    erc20tokens = {}
+    _erc20tokens = {}
     lock = Lock()
 
     def get_erc20token(
@@ -29,7 +29,7 @@ class Erc20TokenHelperManager(Manager):
 
         address = Web3.toChecksumAddress(address)
 
-        if token_helper := self.erc20tokens.get(address):
+        if token_helper := self._erc20tokens.get(address):
             return token_helper
 
         try:
@@ -40,5 +40,6 @@ class Erc20TokenHelperManager(Manager):
             )
 
         with self.lock:
-            self.erc20tokens[address] = token_helper
-            return token_helper
+            self._erc20tokens[address] = token_helper
+
+        return token_helper

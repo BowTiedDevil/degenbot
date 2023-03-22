@@ -5,16 +5,14 @@ from brownie import Contract
 from web3 import Web3
 
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.exceptions import (
-    Erc20TokenError,
-    ManagerError,
-)
+from degenbot.exceptions import Erc20TokenError, ManagerError
 from degenbot.manager.base import Manager
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.uniswap.functions import generate_v3_pool_address
-from degenbot.uniswap.v2 import LiquidityPool
+from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2.abi import UNISWAPV2_FACTORY_ABI
-from degenbot.uniswap.v3 import TickLens, V3LiquidityPool
+from degenbot.uniswap.v3.tick_lens import TickLens
+from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 from degenbot.uniswap.v3.abi import UNISWAP_V3_FACTORY_ABI
 
 
@@ -44,11 +42,6 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         else:
             self._state[factory_address] = {}
             self.__dict__ = self._state[factory_address]
-
-        # if erc20token_manager is not None:
-        #     self.erc20token_manager = erc20token_manager
-        # else:
-        #     self.erc20token_manager = Erc20TokenHelperManager()
 
         self.factory_contract = Contract.from_abi(
             name="Uniswap V2: Factory",

@@ -11,21 +11,21 @@ from degenbot.exceptions import (
     TransactionError,
 )
 from degenbot.transaction.base import Transaction
-from degenbot.uniswap.manager import (
+from degenbot.uniswap.manager.uniswap_managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )
-from degenbot.uniswap.v2 import LiquidityPool
+from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3.abi import (
     UNISWAP_V3_ROUTER_ABI,
     UNISWAP_V3_ROUTER2_ABI,
 )
-from degenbot.uniswap.v3 import V3LiquidityPool
-from degenbot.manager import Erc20TokenHelperManager
+from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
+from degenbot.manager.token_manager import Erc20TokenHelperManager
 
 
 # Internal dict of known router contracts, pre-populated with mainnet addresses
-# Stored at the class level so routers can be added via class method `add_router`
+# Routers can be added via class method `add_router`
 _routers = {
     "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F": {
         "name": "Sushiswap: Router",
@@ -177,6 +177,12 @@ class UniswapTransaction(Transaction):
                     )
                 else:
                     v2_pool_objects.append(pool_helper)
+
+            # print("pools:")
+            # for pool in v2_pool_objects:
+            #     print(f"{pool}: {pool.address}")
+            #     print(f"{pool.reserves_token0=}")
+            #     print(f"{pool.reserves_token1=}")
 
             # the pool manager created Erc20Token objects in the code block above,
             # so calls to `get_erc20token` will return the previously-created helper

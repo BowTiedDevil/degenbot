@@ -6,7 +6,7 @@ from scipy import optimize
 
 from degenbot.exceptions import ArbCalculationError, InvalidSwapPathError
 from degenbot.token import Erc20Token
-from degenbot.uniswap.v2 import LiquidityPool
+from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 
 
 class LpSwapWithFuture:
