@@ -7,10 +7,10 @@ from web3 import Web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import (
     Erc20TokenError,
-    LiquidityPoolError,
     ManagerError,
 )
-from degenbot.manager import Erc20TokenHelperManager, Manager
+from degenbot.manager.base import Manager
+from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.uniswap.functions import generate_v3_pool_address
 from degenbot.uniswap.v2 import LiquidityPool
 from degenbot.uniswap.v2.abi import UNISWAPV2_FACTORY_ABI
@@ -67,6 +67,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         pool_address: Optional[str] = None,
         token_addresses: Optional[Tuple[str]] = None,
         silent: bool = False,
+        update_method: str = "polling",
     ) -> LiquidityPool:
         """
         Get the pool object from its address, or a tuple of token addresses
@@ -95,7 +96,8 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                         pool_helper.token1.address,
                     )
                 ] = pool_helper
-                return pool_helper
+
+            return pool_helper
 
         elif token_addresses is not None:
 
@@ -141,6 +143,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                     address=pool_address,
                     tokens=erc20token_helpers,
                     silent=silent,
+                    update_method=update_method,
                 )
             except:
                 raise ManagerError(f"Could not build V2 pool: {pool_address=}")
@@ -148,7 +151,8 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             with self.lock:
                 self.pools_by_address[pool_address] = pool_helper
                 self.pools_by_tokens[tokens_key] = pool_helper
-                return pool_helper
+
+            return pool_helper
 
 
 class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
@@ -193,6 +197,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         token_addresses: Optional[Tuple[str]] = None,
         pool_fee: Optional[int] = None,
         silent: bool = False,
+        update_method: str = "polling",
     ) -> V3LiquidityPool:
         """
         Get the pool object from its address, or a tuple of token addresses and fee
@@ -221,9 +226,12 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                     address=pool_address,
                     lens=self.lens,
                     silent=silent,
+                    update_method=update_method,
                 )
-            except:
-                raise ManagerError(f"Could not build V3 pool: {pool_address=}")
+            except Exception as e:
+                raise ManagerError(
+                    f"Could not build V3 pool: {pool_address=}: {e}"
+                ) from e
 
             token_addresses = (
                 pool_helper.token0.address,
@@ -234,7 +242,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 dict_key = *token_addresses, pool_fee
                 self.pools_by_address[pool_address] = pool_helper
                 self.pools_by_tokens_and_fee[dict_key] = pool_helper
-                return pool_helper
+
+            return pool_helper
 
         elif token_addresses is not None and pool_fee is not None:
 
@@ -289,4 +298,5 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             with self.lock:
                 self.pools_by_address[pool_address] = pool_helper
                 self.pools_by_tokens_and_fee[dict_key] = pool_helper
-                return pool_helper
+
+            return pool_helper
