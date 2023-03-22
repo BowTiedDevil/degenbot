@@ -2,10 +2,8 @@ from abc import ABC, abstractmethod
 from decimal import Decimal
 from threading import Lock
 from typing import List, Optional, Tuple
-from warnings import catch_warnings, simplefilter
-
 from brownie import Contract, chain, multicall, network
-from brownie.convert import to_address
+from web3 import Web3
 
 from degenbot.exceptions import (
     ArbitrageError,
@@ -14,17 +12,17 @@ from degenbot.exceptions import (
     ExternalUpdateError,
     LiquidityPoolError,
 )
-from degenbot.manager import Erc20TokenHelperManager
+from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
-from degenbot.uniswap.v3.abi import UNISWAP_V3_POOL_ABI
-from degenbot.uniswap.v3.libraries import (
+from .abi import UNISWAP_V3_POOL_ABI
+from .libraries import (
     LiquidityMath,
     SwapMath,
     TickBitmap,
     TickMath,
 )
-from degenbot.uniswap.v3.libraries.Helpers import *
-from degenbot.uniswap.v3.tick_lens import TickLens
+from .libraries.Helpers import *
+from .tick_lens import TickLens
 
 
 class BaseV3LiquidityPool(ABC):
@@ -79,35 +77,17 @@ class BaseV3LiquidityPool(ABC):
                     f"Expected exactly two tokens, found {len(tokens)}"
                 )
 
-        self.address = to_address(address)
+        self.address = Web3.toChecksumAddress(address)
 
-        with catch_warnings():
-            simplefilter("ignore")
+        if abi is None:
+            abi = UNISWAP_V3_POOL_ABI
 
-            if abi:
-                try:
-                    self._brownie_contract = Contract.from_abi(
-                        name="", address=address, abi=abi
-                    )
-                except:
-                    raise
-            else:
-                try:
-                    self._brownie_contract = Contract(address)
-                except:
-                    try:
-                        self._brownie_contract = Contract.from_explorer(
-                            address=address, silent=True
-                        )
-                    except:
-                        try:
-                            self._brownie_contract = Contract.from_abi(
-                                name="",
-                                address=address,
-                                abi=UNISWAP_V3_POOL_ABI,
-                            )
-                        except:
-                            raise
+        try:
+            self._brownie_contract = Contract.from_abi(
+                name="", address=address, abi=abi
+            )
+        except:
+            raise
 
         if lens:
             self.lens = lens
@@ -215,10 +195,10 @@ class BaseV3LiquidityPool(ABC):
         block_number: Optional[int] = None,
     ) -> None:
         """
-        Gets the initialized tick values at a specific word (a 32 byte number
-        representing 256 ticks at the tickSpacing interval), stores
+        Update the initialized tick values at a specific word (a 32 byte number
+        representing 256 ticks at the tickSpacing interval). Store
         the liquidity values in the `self.tick_data` dictionary using the tick
-        as the key, and updates the tick_bitmap dict.
+        as the key, and update the `self.tick_bitmap` dictionary.
 
         This function attempts to use Brownie's built-in multicall for any network
         with the 'multicall2' key set. If available, it will request extra words
@@ -879,9 +859,8 @@ class BaseV3LiquidityPool(ABC):
                     f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
                 )
 
-            # Check if submitted block number is less than the recorded block and raise error
-            # if so. This allows same-block updates since multiple state-changing events may
-            # occur sequentially in a block
+            # Check if submitted block number is less than the recorded block and raise error if so.
+            # This allows same-block updates since multiple state-changing events may occur sequentially in a block
             if block_number < self.update_block:
                 raise ExternalUpdateError(
                     f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
@@ -905,11 +884,7 @@ class BaseV3LiquidityPool(ABC):
                     # Mint/Burn events may affect the current liquidity if the current tick is
                     # between the tick range of this event, so check and adjust
                     if lower_tick <= self.tick <= upper_tick:
-                        # prev_liq = self.liquidity
                         self.liquidity += liquidity_delta
-                        # new_liq = self.liquidity
-                        # print(f"In-range liquidity: was {prev_liq}, now {new_liq}")
-                        # self.state["liquidity"] = self.liquidity
                         updated = True
 
                     for i, tick in enumerate([lower_tick, upper_tick]):
@@ -932,9 +907,6 @@ class BaseV3LiquidityPool(ABC):
                             liquidity_at_tick: dict = self.tick_data.get(tick)
 
                             if liquidity_at_tick is None:
-                                # print(f"Tick {tick} initialized")
-                                # print(f"{liquidity_delta=}")
-                                # print(f"{self.address}")
                                 TickBitmap.flipTick(
                                     self.tick_bitmap,
                                     tick,
@@ -965,10 +937,6 @@ class BaseV3LiquidityPool(ABC):
 
                             # Delete entirely if there is no liquidity referencing this tick
                             if new_liquidity_gross == 0:
-                                # print(f"deleting empty tick: {tick=}")
-                                # print(f"{liquidity_delta=}")
-                                # print(f"{self.tick_data[tick]=}")
-                                # print(f"{self.address}")
                                 del self.tick_data[tick]
                                 TickBitmap.flipTick(
                                     self.tick_bitmap,
@@ -983,12 +951,6 @@ class BaseV3LiquidityPool(ABC):
                                     "liquidityGross": new_liquidity_gross,
                                     "block": block_number,
                                 }
-
-                    # print(self.tick_data[tick])
-                    # print(self.address)
-                    # print(liquidity_delta)
-                    # print(lower_tick)
-                    # print(upper_tick)
 
                     updated = True
 
