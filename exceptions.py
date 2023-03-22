@@ -90,6 +90,14 @@ class ZeroLiquidityError(ArbitrageError):
     pass
 
 
+class ZeroSwapError(ArbitrageError):
+    """
+    Thrown by the arbitrage helper a calculated swap resulted in zero output
+    """
+
+    pass
+
+
 # 2nd level exceptions for Uniswap Liquidity Pool classes
 
 

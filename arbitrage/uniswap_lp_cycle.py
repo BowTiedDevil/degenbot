@@ -11,6 +11,7 @@ from degenbot.exceptions import (
     EVMRevertError,
     LiquidityPoolError,
     ZeroLiquidityError,
+    ZeroSwapError,
 )
 from degenbot.token import Erc20Token
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
@@ -159,6 +160,11 @@ class UniswapLpCycle(Arbitrage):
                 raise ArbitrageError(
                     f"(calculate_tokens_out_from_tokens_in): {e}"
                 )
+            else:
+                if token_out_quantity == 0:
+                    raise ZeroSwapError(
+                        f"Zero-output swap through pool {pool}"
+                    )
 
             # determine the uniswap version for the pool and format the output appropriately
             if pool.uniswap_version == 2:
