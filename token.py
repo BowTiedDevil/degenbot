@@ -81,7 +81,7 @@ class Erc20Token:
 
         try:
             self.name = self._contract.name()
-        except OverflowError:
+        except (OverflowError, ValueError):
             self.name = brownie_w3.eth.call(
                 {
                     "to": self.address,
