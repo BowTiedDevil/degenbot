@@ -224,8 +224,6 @@ class UniswapLpCycle(Arbitrage):
             ):
                 if pool.uniswap_version == 2:
                     pool: LiquidityPool
-                    # TODO: implement a more robust check that gracefully
-                    # handles externally-updated V2 pools
                     pool_updated = pool.update_reserves(
                         silent=silent,
                         override_update_method=override_update_method,
@@ -338,8 +336,8 @@ class UniswapLpCycle(Arbitrage):
 
         # bracket the initial guess for the algo
         bracket = (
-            1,
-            0.01 * self.max_input,
+            0.1,
+            0.2 * self.max_input,
         )
 
         def arb_profit(x):
