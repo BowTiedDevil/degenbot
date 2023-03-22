@@ -9,12 +9,25 @@ class Erc20TokenHelperManager(Manager):
     """
     A class that generates and tracks Erc20Token helpers
 
-    The dictionary of token helpers is held as a class attribute, so all manager
-    objects reference the same state data
+    The state dictionary is held using the "Borg" singleton pattern, which
+    ensures that all instances of the class have access to the same state data
     """
 
-    _erc20tokens = {}
-    lock = Lock()
+    _state = {}
+
+    def __init__(self, chain_id: int):
+
+        # the internal state data for this object is held in the
+        # class-level _state dictionary, keyed by the chain ID
+        if self._state.get(chain_id):
+            self.__dict__ = self._state[chain_id]
+        else:
+            self._state[chain_id] = {}
+            self.__dict__ = self._state[chain_id]
+
+            # initialize internal attributes
+            self._erc20tokens = {}
+            self._lock = Lock()
 
     def get_erc20token(
         self,
@@ -39,7 +52,7 @@ class Erc20TokenHelperManager(Manager):
                 f"Could not create Erc20Token helper: {address=}"
             )
 
-        with self.lock:
+        with self._lock:
             self._erc20tokens[address] = token_helper
 
         return token_helper

@@ -27,9 +27,6 @@ from degenbot.uniswap.v3.tick_lens import TickLens
 
 
 class BaseV3LiquidityPool(ABC):
-
-    _token_manager = Erc20TokenHelperManager()
-
     @abstractmethod
     def _derived():
         """
@@ -58,6 +55,8 @@ class BaseV3LiquidityPool(ABC):
 
         self.tick_data: dict
         self.tick_bitmap: dict
+
+        self._token_manager = Erc20TokenHelperManager(chain.id)
 
         # held by the _get_tick_data_at_word method, which will retrieve
         # and store liquidity and bitmap data

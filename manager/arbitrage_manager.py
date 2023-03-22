@@ -35,40 +35,36 @@ class ArbitrageHelperManager(Manager):
         42161: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
     }
 
-    def __init__(
-        self,
-        chain_id: int,
-    ):
+    def __init__(self, chain_id: int):
+
+        # the internal state data for this object is held in the
+        # class-level _state dictionary, keyed by the chain ID
         if self._state.get(chain_id):
             self.__dict__ = self._state[chain_id]
         else:
             self._state[chain_id] = {}
             self.__dict__ = self._state[chain_id]
 
-        self.chain_id = chain_id
-
-        # a reference to all known arbs, keyed by id
-        self.arbs = {}
-
-        # a reference to all V2 pool managers, keyed by factory address
-        self.v2_pool_managers = {}
-
-        # a reference to all V3 pool managers, keyed by factory address
-        self.v3_pool_managers = {}
-
-        self.erc20tokenmanager = Erc20TokenHelperManager()
-
-        self.blacklisted_ids = set()
-
-        self.lock = Lock()
+            # initialize internal attributes
+            self._arbs = {}  # all known arbs, keyed by id
+            self._blacklisted_ids = set()
+            self._chain_id = chain_id
+            self._erc20tokenmanager = Erc20TokenHelperManager(chain_id)
+            self._lock = Lock()
+            self._v2_pool_managers = (
+                {}
+            )  # all V2 pool managers, keyed by factory address
+            self._v3_pool_managers = (
+                {}
+            )  # all V3 pool managers, keyed by factory address
 
     def add_factory(self, factory_address: str, uniswap_version: int):
         if uniswap_version == 2:
-            self.v2_pool_managers[
+            self._v2_pool_managers[
                 factory_address
             ] = UniswapV2LiquidityPoolManager(factory_address)
         elif uniswap_version == 3:
-            self.v3_pool_managers[
+            self._v3_pool_managers[
                 factory_address
             ] = UniswapV3LiquidityPoolManager(factory_address)
         else:
@@ -87,12 +83,12 @@ class ArbitrageHelperManager(Manager):
     ):
 
         native_wrapped_token_address = self.WRAPPED_NATIVE_TOKENS[
-            self.chain_id
+            self._chain_id
         ]
 
         print(native_wrapped_token_address)
 
-        input_token = self.erc20tokenmanager.get_erc20token(
+        input_token = self._erc20tokenmanager.get_erc20token(
             native_wrapped_token_address
         )
 
@@ -106,14 +102,14 @@ class ArbitrageHelperManager(Manager):
             if type(pool) == str:
                 pool_address = pool
                 pool_helper = None
-                for v2_pool_manager in self.v2_pool_managers.values():
+                for v2_pool_manager in self._v2_pool_managers.values():
                     try:
                         _pool_helper = v2_pool_manager.get_pool(pool_address)
                     except:
                         pass
                     else:
                         pool_helper = _pool_helper
-                for v3_pool_manager in self.v3_pool_managers.values():
+                for v3_pool_manager in self._v3_pool_managers.values():
                     try:
                         _pool_helper = v3_pool_manager.get_pool(pool_address)
                     except:
@@ -135,7 +131,7 @@ class ArbitrageHelperManager(Manager):
         ).hex()
 
         try:
-            arb_helper = self.arbs[arb_id]
+            arb_helper = self._arbs[arb_id]
         except KeyError:
             arb_helper = UniswapLpCycle(
                 input_token=input_token,
@@ -144,8 +140,8 @@ class ArbitrageHelperManager(Manager):
                 id=arb_id,
             )
 
-            with self.lock:
-                self.arbs[arb_id] = arb_helper
+            with self._lock:
+                self._arbs[arb_id] = arb_helper
 
         return arb_helper
 
@@ -161,7 +157,7 @@ class ArbitrageHelperManager(Manager):
         Get an arbitrage path object from its ID. An ID is a keccak address of all pool addresses, in order.
         """
 
-        if arb_helper := self.arbs.get(arb_id):
+        if arb_helper := self._arbs.get(arb_id):
             return arb_helper
 
         # # identify the arb from the dict of known IDs

@@ -17,9 +17,6 @@ from degenbot.uniswap.v2.router import Router
 
 
 class LiquidityPool:
-
-    _token_manager = Erc20TokenHelperManager()
-
     def __init__(
         self,
         address: str,
@@ -36,6 +33,8 @@ class LiquidityPool:
         update_reserves_on_start: bool = True,
         unload_brownie_contract_after_init: bool = False,
     ) -> None:
+
+        self._token_manager = Erc20TokenHelperManager(chain.id)
 
         self.uniswap_version = 2
 
