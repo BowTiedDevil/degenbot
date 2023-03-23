@@ -648,13 +648,15 @@ class BaseV3LiquidityPool(ABC):
                     self.liquidity = _liquidity
 
                 if updated:
-                    self.update_block = block_number
                     self._update_pool_state()
 
                 if not silent:
                     print(f"Liquidity: {self.liquidity}")
                     print(f"SqrtPriceX96: {self.sqrt_price_x96}")
                     print(f"Tick: {self.tick}")
+
+                # BUGFIX: update the block even if there are no state changes
+                self.update_block = block_number
 
         return updated, self.state
 
