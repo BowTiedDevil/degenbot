@@ -5,6 +5,7 @@ from web3 import Web3
 
 from degenbot.arbitrage.base import Arbitrage
 from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
+from degenbot.exceptions import ManagerError
 from degenbot.manager.base import Manager
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
@@ -58,7 +59,19 @@ class ArbitrageHelperManager(Manager):
                 {}
             )  # all V3 pool managers, keyed by factory address
 
-    def add_factory(self, factory_address: str, uniswap_version: int):
+    def add_pool_manager(self, factory_address: str, uniswap_version: int):
+        """
+        Create a Uniswap pool manager from the factory contract address and version, store in the internal dictionary of pool managers
+        """
+
+        if (
+            factory_address in self._v2_pool_managers.keys()
+            or factory_address in self._v3_pool_managers.keys()
+        ):
+            raise ValueError(
+                f"Pool manager for factory={factory_address} already exists"
+            )
+
         if uniswap_version == 2:
             self._v2_pool_managers[
                 factory_address
@@ -74,13 +87,16 @@ class ArbitrageHelperManager(Manager):
         self,
         arb_type: str,
         update_method: str = "polling",
-        chain_id: Optional[int] = None,
         input_token: Optional[Union[str, Erc20Token]] = None,
         swap_pools: Union[
             List[Union[LiquidityPool, V3LiquidityPool]],
             List[str],
         ] = None,
-    ):
+    ) -> Arbitrage:
+
+        """
+        Returns the arb helper
+        """
 
         native_wrapped_token_address = self.WRAPPED_NATIVE_TOKENS[
             self._chain_id
@@ -130,19 +146,20 @@ class ArbitrageHelperManager(Manager):
             hexstr="".join([pool.address[2:] for pool in swap_pools])
         ).hex()
 
+        # check if the helper is already known, throw exception if so
         try:
             arb_helper = self._arbs[arb_id]
         except KeyError:
-            arb_helper = UniswapLpCycle(
-                input_token=input_token,
-                swap_pools=swap_pools,
-                max_input=None,
-                id=arb_id,
-            )
+            pass
+        else:
+            raise ValueError(f"Arbitrage helper already exists")
 
-            with self._lock:
-                self._arbs[arb_id] = arb_helper
-
+        arb_helper = UniswapLpCycle(
+            input_token=input_token,
+            swap_pools=swap_pools,
+            max_input=None,
+            id=arb_id,
+        )
         return arb_helper
 
     def get(
@@ -154,28 +171,50 @@ class ArbitrageHelperManager(Manager):
         update_method: str = "polling",
     ) -> "Arbitrage":
         """
-        Get an arbitrage path object from its ID. An ID is a keccak address of all pool addresses, in order.
+        Get an arbitrage path object from its ID and the type. An ID is a keccak address of all pool addresses, in order.
+
+        Type can only be "cycle", but additional types will be added later
         """
 
-        if arb_helper := self._arbs.get(arb_id):
+        try:
+            arb_helper = self._arbs[arb_id][arb_type]
+        except KeyError:
+            pass
+        else:
             return arb_helper
 
-        # # identify the arb from the dict of known IDs
-        # try:
-        #     if arb_type == "cycle":
-        #         if input_token is None:
-        #             native_wrapped_token_address = self.WRAPPED_NATIVE_TOKENS[
-        #                 chain_id
-        #             ]
-        #             input_token = self.erc20tokenmanager.get_erc20token(
-        #                 native_wrapped_token_address
-        #             )
-        #         elif not isinstance(input_token, Erc20Token):
-        #             input_token = self.erc20tokenmanager.get_erc20token(
-        #                 input_token
-        #             )
-        #         arb_helper = UniswapLpCycle(input_token=input_token)
-        # except:
-        #     raise ManagerError(f"Could not create Arbitrage helper: {arb_id=}")
+        # identify the arb from the dict of known IDs
+        try:
+            if arb_type == "cycle":
+                if input_token is None:
+                    native_wrapped_token_address = self.WRAPPED_NATIVE_TOKENS[
+                        chain_id
+                    ]
+                    input_token = self.erc20tokenmanager.get_erc20token(
+                        native_wrapped_token_address
+                    )
+                elif not isinstance(input_token, Erc20Token):
+                    input_token = self.erc20tokenmanager.get_erc20token(
+                        input_token
+                    )
+                # arb_helper = UniswapLpCycle(input_token=input_token)
+                arb_helper = self.build(
+                    arb_type=arb_type,
+                    update_method=update_method,
+                    input_token=input_token,
+                )
+        except:
+            raise ManagerError(f"Could not create Arbitrage helper: {arb_id=}")
 
         return arb_helper
+
+    # def build(
+    #     self,
+    #     arb_type: str,
+    #     update_method: str = "polling",
+    #     input_token: Optional[Union[str, Erc20Token]] = None,
+    #     swap_pools: Union[
+    #         List[Union[LiquidityPool, V3LiquidityPool]],
+    #         List[str],
+    #     ] = None,
+    # ):
