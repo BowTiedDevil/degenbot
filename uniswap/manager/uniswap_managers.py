@@ -43,7 +43,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             self.__dict__ = self._state[factory_address]
 
             # initialize internal attributes
-            self.factory_contract = Contract.from_abi(
+            self._factory_contract = Contract.from_abi(
                 name="Uniswap V2: Factory",
                 address=factory_address,
                 abi=UNISWAPV2_FACTORY_ABI,
@@ -126,7 +126,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 return pool_helper
 
             if (
-                pool_address := self.factory_contract.getPair(*tokens_key)
+                pool_address := self._factory_contract.getPair(*tokens_key)
             ) == ZERO_ADDRESS:
                 raise ManagerError("No V2 LP available")
 
@@ -169,7 +169,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             self.__dict__ = self._state[factory_address]
 
             # initialize internal attributes
-            self.factory_contract = Contract.from_abi(
+            self._factory_contract = Contract.from_abi(
                 name="Uniswap V3: Factory",
                 address=factory_address,
                 abi=UNISWAP_V3_FACTORY_ABI,
