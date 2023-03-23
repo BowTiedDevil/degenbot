@@ -524,11 +524,11 @@ class UniswapLpCycle(Arbitrage):
             A list of payloads, formatted as a tuple: (address, calldata, msg.value)
         """
 
-        # check all amounts for zero-amount swaps, which will execute but are undesirable
-        # print('checking pool amounts')
-        # print(self.best['swap_pool_amounts'])
-        if not self.best["swap_pool_amounts"]:
-            raise ArbitrageError("No arbitrage results available")
+        # # check all amounts for zero-amount swaps, which will execute but are undesirable
+        # # print('checking pool amounts')
+        # # print(self.best['swap_pool_amounts'])
+        # if not self.best["swap_pool_amounts"]:
+        #     raise ArbitrageError("No arbitrage results available")
 
         # web3py object without a provider, useful for offline transaction creation and signing
         w3 = Web3()
