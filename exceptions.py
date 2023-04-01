@@ -25,6 +25,14 @@ class ArbitrageError(DegenbotError):
     pass
 
 
+class BlockUnavailableError(DegenbotError):
+    """
+    Exception raised when a call for a specific block fails (trie node unavailable)
+    """
+
+    pass
+
+
 class Erc20TokenError(DegenbotError):
     """
     Exception raised inside ERC-20 token helpers
@@ -99,8 +107,6 @@ class ZeroSwapError(ArbitrageError):
 
 
 # 2nd level exceptions for Uniswap Liquidity Pool classes
-
-
 class BitmapWordUnavailableError(LiquidityPoolError):
     """
     Thrown by the ported V3 swap function when the bitmap word is not available. This should be caught by the helper to perform automatic fetching, and should not be raised to the calling function

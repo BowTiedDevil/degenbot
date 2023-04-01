@@ -4,6 +4,9 @@ from degenbot.exceptions import EVMRevertError
 # an exception if the input value exceeds the maximum value
 # for this type
 
+MIN_INT16 = -(2**15)
+MAX_INT16 = 2**15 - 1
+
 MIN_INT128 = -(2**127)
 MAX_INT128 = 2**127 - 1
 

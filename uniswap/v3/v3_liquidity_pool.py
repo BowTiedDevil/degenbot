@@ -132,18 +132,38 @@ class BaseV3LiquidityPool(ABC):
         self.sqrt_price_x96 = slot0[0]
         self.tick = slot0[1]
 
+        self._update_method = update_method
+        self.extra_words = extra_words
+
+        # default to a sparse bitmap
+        self.tick_bitmap = {"sparse": True}
+
         if tick_bitmap is not None:
-            self.tick_bitmap = tick_bitmap
-        else:
-            self.tick_bitmap = {}
+            self.tick_bitmap.update(tick_bitmap)
+            self.tick_bitmap.update(
+                {
+                    word: {
+                        "bitmap": 0,
+                        "block": None,
+                    }
+                    for word in (
+                        set(range(MIN_INT16, MAX_INT16 + 1))
+                        - set(self.tick_bitmap.keys())
+                    )
+                }
+            )
+            # if a snapshot was provided, assume it is complete (sparse=False)
+            self.tick_bitmap["sparse"] = False
 
         if tick_data is not None:
             self.tick_data = tick_data
         else:
-            _tick_word, _ = self._get_tick_bitmap_position(self.tick)
+            word_position, _ = self._get_tick_bitmap_position(self.tick)
             self.tick_data = {}
             self._update_tick_data_at_word(
-                _tick_word, block_number=self.update_block
+                word_position,
+                single_word=True,
+                block_number=self.update_block,
             )
 
         self._update_method = update_method
@@ -239,10 +259,11 @@ class BaseV3LiquidityPool(ABC):
                 and not single_word
             ):
 
+                # limit word values to int16 range
                 words = set(
                     range(
-                        word_position - self.extra_words // 2,
-                        word_position + self.extra_words // 2,
+                        max(MIN_INT16, word_position - self.extra_words // 2),
+                        min(MAX_INT16, word_position + self.extra_words // 2),
                     )
                 ) - set(self.tick_bitmap.keys())
 
@@ -252,17 +273,13 @@ class BaseV3LiquidityPool(ABC):
                 try:
                     with multicall(block_identifier=block_number):
                         multicall_tick_bitmaps = {
-                            _word: {
+                            word: {
                                 "bitmap": self._brownie_contract.tickBitmap(
-                                    _word
+                                    word
                                 ),
                                 "block": block_number,
                             }
-                            # for _word in range(
-                            #     lower_word,
-                            #     upper_word,
-                            # )
-                            for _word in words
+                            for word in words
                         }
                     with multicall(block_identifier=block_number):
                         multicall_tick_data = {
@@ -305,22 +322,21 @@ class BaseV3LiquidityPool(ABC):
                     print(type(e))
                     raise
                 else:
-                    if single_tick_bitmap:
-                        for (
-                            _tick,
-                            _liquidity_net,
-                            _liquidity_gross,
-                        ) in single_tick_data:
-                            self.tick_data[_tick] = {
-                                "liquidityNet": _liquidity_net,
-                                "liquidityGross": _liquidity_gross,
-                                "block": block_number,
-                            }
-
                     self.tick_bitmap[word_position] = {
                         "bitmap": single_tick_bitmap,
                         "block": block_number,
                     }
+                    if single_tick_bitmap:
+                        for (
+                            tick,
+                            liquidity_net,
+                            liquidity_gross,
+                        ) in single_tick_data:
+                            self.tick_data[tick] = {
+                                "liquidityNet": liquidity_net,
+                                "liquidityGross": liquidity_gross,
+                                "block": block_number,
+                            }
 
     def _update_pool_state(self) -> None:
         self.state = {
@@ -823,6 +839,7 @@ class BaseV3LiquidityPool(ABC):
         updates: dict,
         block_number: Optional[int] = None,
         silent: bool = True,
+        fetch_missing: bool = True,
     ) -> bool:
         """
         Accepts and processes a dict with at least one key from:
