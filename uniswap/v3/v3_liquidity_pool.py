@@ -878,12 +878,15 @@ class BaseV3LiquidityPool(ABC):
                     f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
                 )
 
-            # Check if submitted block number is less than the recorded block and raise error if so.
-            # This allows same-block updates since multiple state-changing events may occur sequentially in a block
-            if block_number < self.update_block:
-                raise ExternalUpdateError(
-                    f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
-                )
+            # WIP: removed this check for testing (typ 2 places - see auto_update above)
+            # HACK:
+            # FIXME:
+            # # Check if submitted block number is less than the recorded block and raise error if so.
+            # # This allows same-block updates since multiple state-changing events may occur sequentially in a block
+            # if block_number < self.update_block:
+            #     raise ExternalUpdateError(
+            #         f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
+            #     )
 
             updated = False
 
