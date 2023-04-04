@@ -285,7 +285,9 @@ class BaseV3LiquidityPool(ABC):
                             if bitmap
                         }
                 except Exception as e:
-                    print(e)
+                    print(
+                        f"(V3LiquidityPool (_update_tick_data_at_word) (multicall): {e}"
+                    )
                     print(type(e))
                     raise
                 else:
@@ -307,7 +309,9 @@ class BaseV3LiquidityPool(ABC):
                             block_identifier=block_number,
                         )
                 except Exception as e:
-                    print(e)
+                    print(
+                        f"(V3LiquidityPool) (_update_tick_data_at_word) (single tick): {e}"
+                    )
                     print(type(e))
                     raise
                 else:
