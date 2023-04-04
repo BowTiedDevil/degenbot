@@ -238,11 +238,6 @@ class BaseV3LiquidityPool(ABC):
 
         with self.tick_lock:
 
-            if not self.tick_bitmap:
-                # if the bitmap is empty, assume that the object has just been instantiated
-                # and set single_word mode to reduce startup time
-                single_word = True
-
             if block_number is None:
                 block_number = chain.height
 
