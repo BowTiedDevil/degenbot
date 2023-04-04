@@ -642,12 +642,12 @@ class BaseV3LiquidityPool(ABC):
                 )
 
             try:
-                _sqrt_price_x96, _tick, *_ = self._brownie_contract.slot0(
-                    block_identifier=block_number,
-                )
-                _liquidity = self._brownie_contract.liquidity(
-                    block_identifier=block_number
-                )
+            _sqrt_price_x96, _tick, *_ = self._brownie_contract.slot0(
+                block_identifier=block_number,
+            )
+            _liquidity = self._brownie_contract.liquidity(
+                block_identifier=block_number
+            )
             except:
                 raise
             else:
