@@ -82,20 +82,14 @@ class BaseV3LiquidityPool(ABC):
         if abi is None:
             abi = UNISWAP_V3_POOL_ABI
 
-        try:
-            self._brownie_contract = Contract.from_abi(
-                name="", address=address, abi=abi
-            )
-        except:
-            raise
+        self._brownie_contract = Contract.from_abi(
+            name="", address=address, abi=abi
+        )
 
         if lens:
             self.lens = lens
         else:
-            try:
-                self.lens = TickLens()
-            except:
-                raise
+            self.lens = TickLens()
 
         if tokens:
             self.token0 = min(tokens)
