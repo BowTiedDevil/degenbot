@@ -480,10 +480,10 @@ class UniswapLpCycle(Arbitrage):
         """
 
         # create the token object
-        try:
-            token = Erc20Token(input_token_address)
-        except:
-            raise
+        token = Erc20Token(
+            input_token_address,
+            min_abi=True,
+        )
 
         # create the pool objects
         pool_objects = []
