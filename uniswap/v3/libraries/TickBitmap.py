@@ -1,7 +1,6 @@
 from typing import Tuple, Optional
 
 from degenbot.exceptions import (
-    LiquidityPoolError,
     MissingTickWordError,
     BitmapWordUnavailableError,
 )
@@ -24,16 +23,20 @@ def flipTick(
 
     wordPos, bitPos = position(int(Decimal(tick) // tickSpacing))
     # print(f"flipping {tick=} @ {wordPos=}, {bitPos=}")
-    if tickBitmap.get(wordPos) is None:
-        # print(f"initializing {tick=}")
-        tickBitmap[wordPos] = {"bitmap": 0}
-        # raise MissingTickWordError(
-        #     f"Called flipTick on missing word: {wordPos=}"
-        # )
 
-    mask = 1 << bitPos
-    tickBitmap[wordPos]["bitmap"] ^= mask
-    tickBitmap[wordPos]["block"] = update_block
+    # if tickBitmap.get(wordPos) is None:
+    #     raise MissingTickWordError(
+    #         f"Called flipTick on missing word: {wordPos=}"
+    #     )
+
+    try:
+        mask = 1 << bitPos
+        tickBitmap[wordPos]["bitmap"] ^= mask
+        tickBitmap[wordPos]["block"] = update_block
+    except KeyError:
+        raise MissingTickWordError(
+            f"Called flipTick on missing word: {wordPos=}"
+        )
 
 
 def position(tick: int) -> Tuple[int, int]:
