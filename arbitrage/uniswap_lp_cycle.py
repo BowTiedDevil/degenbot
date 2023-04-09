@@ -435,7 +435,7 @@ class UniswapLpCycle(Arbitrage):
                 }
             )
 
-        profitable = True if best_profit > 0 else False
+        profitable = best_profit > 0
         return profitable, (swap_amount, best_profit)
 
     def clear_best(self):
