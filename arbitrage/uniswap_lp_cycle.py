@@ -99,8 +99,11 @@ class UniswapLpCycle(Arbitrage):
             "strategy": "cycle",
             "swap_amount": 0,
             "input_token": self.input_token,
+            "last_swap_amount": 0,
             "profit_amount": 0,
             "profit_token": self.input_token,
+            "strategy": "cycle",
+            "swap_amount": 0,
             "swap_pools": self.swap_pools,
             "swap_pool_addresses": self.swap_pool_addresses,
             "swap_pool_amounts": [],
@@ -342,8 +345,15 @@ class UniswapLpCycle(Arbitrage):
 
         # bracket the initial guess for the algo
         bracket = (
-            0.1,
-            0.2 * self.max_input,
+            (
+                0.95 * self.best["last_swap_amount"],
+                1.05 * self.best["last_swap_amount"],
+            )
+            if self.best["last_swap_amount"]
+            else (
+                0.1,
+                0.2 * self.max_input,
+            )
         )
 
         def arb_profit(x):
@@ -429,6 +439,7 @@ class UniswapLpCycle(Arbitrage):
             # print(f"built multipool amounts! {self.name}")
             self.best.update(
                 {
+                    "last_swap_amount": swap_amount,
                     "swap_amount": swap_amount,
                     "profit_amount": best_profit,
                     "swap_pool_amounts": best_amounts,
