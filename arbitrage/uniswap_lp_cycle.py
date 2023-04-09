@@ -547,16 +547,14 @@ class UniswapLpCycle(Arbitrage):
         payloads = []
 
         try:
-
             # generate the payload for the initial transfer if the first pool is type V2
             if self.swap_pools[0].uniswap_version == 2:
-
                 # transfer the input token to the first swap pool
                 transfer_payload = (
                     # address
                     self.input_token.address,
                     # bytes calldata
-                    w3.keccak(text="transfer(address,uint256)")[0:4]
+                    Web3.keccak(text="transfer(address,uint256)")[0:4]
                     + abi_encode(
                         [
                             "address",
@@ -606,7 +604,7 @@ class UniswapLpCycle(Arbitrage):
                             # address
                             swap_pool_object.address,
                             # bytes calldata
-                            w3.keccak(
+                            Web3.keccak(
                                 text="swap(uint256,uint256,address,bytes)"
                             )[0:4]
                             + abi_encode(
@@ -639,7 +637,7 @@ class UniswapLpCycle(Arbitrage):
                             # address
                             swap_pool_object.address,
                             # bytes calldata
-                            w3.keccak(
+                            Web3.keccak(
                                 text="swap(address,bool,int256,uint160,bytes)"
                             )[0:4]
                             + abi_encode(
