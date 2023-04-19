@@ -91,10 +91,9 @@ class UniswapLpCycle(Arbitrage):
 
         self.name = " -> ".join([pool.name for pool in self.swap_pools])
 
-        # WIP: add state tracking for all pools. Populated from relevant state data from each pool,
-        # retrieved directly from pool.state attribute
-        self.pool_states = {}
-        self._update_pool_states()
+        self.pool_states = {pool.address: None for pool in self.swap_pools}
+        # self.pool_states = {}
+        # self._update_pool_states()
 
         self.best = {
             "input_token": self.input_token,
