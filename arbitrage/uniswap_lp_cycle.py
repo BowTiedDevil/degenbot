@@ -445,6 +445,7 @@ class UniswapLpCycle(Arbitrage):
                     "last_swap_amount": swap_amount,
                     "swap_amount": swap_amount,
                     "profit_amount": best_profit,
+                    "swap_amount": swap_amount,
                     "swap_pool_amounts": best_amounts,
                 }
             )
@@ -457,6 +458,7 @@ class UniswapLpCycle(Arbitrage):
             {
                 "swap_amount": 0,
                 "profit_amount": 0,
+                "swap_amount": 0,
                 "swap_pool_amounts": [],
             }
         )
