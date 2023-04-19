@@ -282,22 +282,19 @@ class UniswapLpCycle(Arbitrage):
         ] = None,
     ) -> Tuple[bool, Tuple[int, int]]:
 
-        if self.best["init"] == True:
-            # if the 'init' flag is True, the `best` dict is empty so the calc should be done for the
-            # first time, regardless of state
-            self.auto_update()
-            self.best["init"] = False
-        elif self.pool_states == {
-            pool.address: pool.state for pool in self.swap_pools
-        }:
-            # short-circuit if pool state has not changed,
-            # return previously-calculated swap and profit values
-            return False, (
-                self.best["swap_amount"],
-                self.best["profit_amount"],
-            )
-        else:
-            self._update_pool_states()
+        # if self.pool_states == {
+        #     pool.address: pool.state for pool in self.swap_pools
+        # }:
+        #     print("short-circuit")
+        #     # short-circuit if pool state has not changed,
+        #     # return previously-calculated swap and profit values
+        #     return False, (
+        #         self.best["swap_amount"],
+        #         self.best["profit_amount"],
+        #     )
+
+        # print("update state")
+        # self._update_pool_states()
 
         # sort the override_state values into a dictionary for fast lookup
         # inside the calculation loop
