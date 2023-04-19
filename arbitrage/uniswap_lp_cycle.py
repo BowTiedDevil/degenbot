@@ -305,13 +305,21 @@ class UniswapLpCycle(Arbitrage):
 
         # check the pools for zero liquidity in the direction of the trade
         for i, pool in enumerate(self.swap_pools):
-
-            if pool.uniswap_version == 2 and (
-                pool.reserves_token0 <= 1 or pool.reserves_token1 <= 1
-            ):
-                raise ZeroLiquidityError(
-                    f"V2 pool {pool.address} has no liquidity"
-                )
+            if pool.uniswap_version == 2:
+                if (
+                    pool.reserves_token1 <= 1
+                    and self.swap_vectors[i]["zeroForOne"]
+                ):
+                    raise ZeroLiquidityError(
+                        f"V2 pool {pool.address} has no liquidity for a 0 -> 1 swap"
+                    )
+                elif (
+                    pool.reserves_token0 <= 1
+                    and not self.swap_vectors[i]["zeroForOne"]
+                ):
+                    raise ZeroLiquidityError(
+                        f"V2 pool {pool.address} has no liquidity for a 1 -> 0 swap"
+                    )
 
             if pool.uniswap_version == 3 and pool.state["liquidity"] == 0:
 
