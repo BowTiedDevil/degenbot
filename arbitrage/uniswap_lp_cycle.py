@@ -325,18 +325,16 @@ class UniswapLpCycle(Arbitrage):
 
                 # check if the swap is 0 -> 1 and cannot swap any more token0 for token1
                 if (
-                    self.swap_vectors[i]["zeroForOne"]
-                    and pool.state["sqrt_price_x96"]
-                    == TickMath.MIN_SQRT_RATIO + 1
+                    pool.state["sqrt_price_x96"] == TickMath.MIN_SQRT_RATIO + 1
+                    and self.swap_vectors[i]["zeroForOne"]
                 ):
                     raise ZeroLiquidityError(
                         f"V3 pool {pool.address} has no liquidity for a 0 -> 1 swap"
                     )
                 # check if the swap is 1 -> 0 (zeroForOne=False) and cannot swap any more token1 for token0
                 elif (
-                    not self.swap_vectors[i]["zeroForOne"]
-                    and pool.state["sqrt_price_x96"]
-                    == TickMath.MAX_SQRT_RATIO - 1
+                    pool.state["sqrt_price_x96"] == TickMath.MAX_SQRT_RATIO - 1
+                    and not self.swap_vectors[i]["zeroForOne"]
                 ):
                     raise ZeroLiquidityError(
                         f"V3 pool {pool.address} has no liquidity for a 1 -> 0 swap"
