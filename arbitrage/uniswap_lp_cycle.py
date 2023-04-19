@@ -14,7 +14,10 @@ from degenbot.exceptions import (
     ZeroSwapError,
 )
 from degenbot.token import Erc20Token
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2.liquidity_pool import (
+    LiquidityPool,
+    CamelotLiquidityPool,
+)
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 from degenbot.uniswap.v3.libraries import TickMath
 
@@ -27,7 +30,6 @@ class UniswapLpCycle(Arbitrage):
         max_input: Optional[int] = None,
         id: Optional[str] = None,
     ):
-
         self.id = id
         self.input_token = input_token
 
@@ -95,9 +97,6 @@ class UniswapLpCycle(Arbitrage):
         self._update_pool_states()
 
         self.best = {
-            "init": True,
-            "strategy": "cycle",
-            "swap_amount": 0,
             "input_token": self.input_token,
             "last_swap_amount": 0,
             "profit_amount": 0,
@@ -126,7 +125,6 @@ class UniswapLpCycle(Arbitrage):
             ]
         ] = None,
     ) -> List[dict]:
-
         pools_amounts_out = []
 
         # sort the override_state values into a dictionary for fast lookup inside the calculation loop
@@ -137,7 +135,6 @@ class UniswapLpCycle(Arbitrage):
         )
 
         for i, pool in enumerate(self.swap_pools):
-
             token0 = pool.token0
             token1 = pool.token1
 
@@ -220,7 +217,6 @@ class UniswapLpCycle(Arbitrage):
         block_number: Optional[int] = None,
         override_update_method: Optional[str] = None,
     ) -> bool:
-
         found_updates = False
 
         if override_update_method:
@@ -261,12 +257,14 @@ class UniswapLpCycle(Arbitrage):
             elif pool._update_method == "external":
                 if pool.state != self.pool_states[pool.address]:
                     found_updates = True
+                    break
             else:
                 raise ValueError(
                     "auto_update: could not determine update method!"
                 )
 
         if found_updates:
+            # print(f"found updates: {self}")
             self._update_pool_states()
             self.clear_best()
 
@@ -281,6 +279,11 @@ class UniswapLpCycle(Arbitrage):
             ]
         ] = None,
     ) -> Tuple[bool, Tuple[int, int]]:
+        # if self.best["init"] == True:
+        #     print("forced init=True")
+        #     # if the 'init' flag is True, the `best` dict is empty so the calc should be done for the
+        #     # first time, regardless of state
+        #     self.auto_update()
 
         # if self.pool_states == {
         #     pool.address: pool.state for pool in self.swap_pools
@@ -322,7 +325,6 @@ class UniswapLpCycle(Arbitrage):
                     )
 
             if pool.uniswap_version == 3 and pool.state["liquidity"] == 0:
-
                 # check if the swap is 0 -> 1 and cannot swap any more token0 for token1
                 if (
                     pool.state["sqrt_price_x96"] == TickMath.MIN_SQRT_RATIO + 1
@@ -354,13 +356,12 @@ class UniswapLpCycle(Arbitrage):
             )
             if self.best["last_swap_amount"]
             else (
-                0.1,
+                0.1 * self.max_input,
                 0.2 * self.max_input,
             )
         )
 
         def arb_profit(x):
-
             token_in_quantity = int(x)  # round the input down
 
             for i, pool in enumerate(self.swap_pools):
@@ -376,32 +377,14 @@ class UniswapLpCycle(Arbitrage):
                         )
                     )
                 except (EVMRevertError, LiquidityPoolError) as e:
-                    # The optimizer might send invalid data into the swap calculation during
+                    # The optimizer might send invalid amounts into the swap calculation during
                     # iteration. We don't want it to stop, so catch the exception and pretend
                     # the swap results in token_out_quantity = 0.
                     token_out_quantity = 0
+                    break
+                    # return 0
 
             return -float(token_out_quantity - token_in_quantity)
-
-            # try:
-            #     for i, pool in enumerate(self.swap_pools):
-            #         token_in = self.swap_vectors[i]["token_in"]
-            #         token_out_quantity = (
-            #             pool.calculate_tokens_out_from_tokens_in(
-            #                 token_in=token_in,
-            #                 token_in_quantity=x
-            #                 if i == 0
-            #                 else token_out_quantity,
-            #                 override_state=_overrides.get(pool.address),
-            #             )
-            #         )
-            # except (EVMRevertError, LiquidityPoolError):
-            #     # The optimizer might send invalid data into the swap calculation during
-            #     # iteration. We don't want it to stop, so catch the exception and pretend
-            #     # the swap results in token_out_quantity = 0.
-            #     token_out_quantity = 0
-
-            # return -float(token_out_quantity - x)
 
         opt = optimize.minimize_scalar(
             fun=arb_profit,
@@ -410,12 +393,12 @@ class UniswapLpCycle(Arbitrage):
             bracket=bracket,
             # Optimizer will run until the consecutive input values
             # are within `xatol`. ERC-20 tokens can have different decimal precision,
-            # so set the tolerance to 0.1% of the 'nominal' decimal digits
+            # so set the tolerance to 2/3 of the 'nominal' decimal digits
             #
             # Examples:
-            #   WETH (18 decimal places) calculated within 1*10**14 Wei,
-            #   USDC (6 decimal places) calculated within 1*10**2 Wei
-            options={"xatol": 10 ** (self.input_token.decimals - 4)},
+            #   WETH (18 decimal places) calculated within 1*10**12 Wei,
+            #   USDC (6 decimal places) calculated within 1*10**4 Wei
+            options={"xatol": 10 ** int(2 / 3 * self.input_token.decimals)},
         )
 
         # The arb_profit function converts the value to a negative number so the minimize_scalar
@@ -443,7 +426,6 @@ class UniswapLpCycle(Arbitrage):
             self.best.update(
                 {
                     "last_swap_amount": swap_amount,
-                    "swap_amount": swap_amount,
                     "profit_amount": best_profit,
                     "swap_amount": swap_amount,
                     "swap_pool_amounts": best_amounts,
@@ -456,7 +438,6 @@ class UniswapLpCycle(Arbitrage):
     def clear_best(self):
         self.best.update(
             {
-                "swap_amount": 0,
                 "profit_amount": 0,
                 "swap_amount": 0,
                 "swap_pool_amounts": [],
@@ -509,10 +490,10 @@ class UniswapLpCycle(Arbitrage):
                 pool_objects.append(LiquidityPool(address=pool_address))
             elif pool_type == "V3":
                 pool_objects.append(V3LiquidityPool(address=pool_address))
+            elif pool_type == "CamelotV2":
+                pool_objects.append(CamelotLiquidityPool(address=pool_address))
             else:
-                raise ArbitrageError(
-                    f"Pool type not understood! Expected 'V2' or 'V3', got {pool_type}"
-                )
+                raise ArbitrageError(f"Pool type {pool_type} unknown!")
 
         return cls(
             input_token=token,
@@ -540,14 +521,11 @@ class UniswapLpCycle(Arbitrage):
             A list of payloads, formatted as a tuple: (address, calldata, msg.value)
         """
 
-        # # check all amounts for zero-amount swaps, which will execute but are undesirable
-        # # print('checking pool amounts')
-        # # print(self.best['swap_pool_amounts'])
-        # if not self.best["swap_pool_amounts"]:
-        #     raise ArbitrageError("No arbitrage results available")
-
-        # web3py object without a provider, useful for offline transaction creation and signing
-        w3 = Web3()
+        # check for zero-amount swaps
+        if not self.best["swap_pool_amounts"]:
+            # print('checking pool amounts')
+            # print(self.best['swap_pool_amounts'])
+            raise ArbitrageError("No arbitrage results available")
 
         payloads = []
 
@@ -580,7 +558,6 @@ class UniswapLpCycle(Arbitrage):
             last_pool = self.swap_pools[-1]
             # print("\tPAYLOAD: identified last pool")
             for i, swap_pool_object in enumerate(self.swap_pools):
-
                 if swap_pool_object is last_pool:
                     next_pool = None
                 else:
@@ -676,7 +653,7 @@ class UniswapLpCycle(Arbitrage):
                     )
         except Exception as e:
             print(self.best)
-            print(f"id: {self.id}")
+            # print(f"id: {self.id}")
             raise ArbitrageError(f"generate_payloads (catch-all)): {e}") from e
 
         return payloads
