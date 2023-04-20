@@ -83,17 +83,9 @@ class UniswapLpCycle(Arbitrage):
                 }
             )
 
-        # print(f"swap_token array built:")
-        # for i, swap_pair in enumerate(self.swap_tokens):
-        #     print(
-        #         f"Pool {i} swap {swap_pair.get('token_in')} -> {swap_pair.get('token_out')}"
-        #     )
-
         self.name = " -> ".join([pool.name for pool in self.swap_pools])
 
         self.pool_states = {pool.address: None for pool in self.swap_pools}
-        # self.pool_states = {}
-        # self._update_pool_states()
 
         self.best = {
             "input_token": self.input_token,
@@ -162,7 +154,7 @@ class UniswapLpCycle(Arbitrage):
             else:
                 if token_out_quantity == 0:
                     raise ZeroSwapError(
-                        f"Zero-output swap through pool {pool}"
+                        f"Zero-output swap through pool {pool} @ {pool.address}"
                     )
 
             # determine the uniswap version for the pool and format the output appropriately
@@ -218,7 +210,7 @@ class UniswapLpCycle(Arbitrage):
     ) -> bool:
         found_updates = False
 
-        if override_update_method:
+        if override_update_method and not silent:
             print(f"OVERRIDDEN UPDATE METHOD: {override_update_method}")
 
         for pool in self.swap_pools:
@@ -278,25 +270,6 @@ class UniswapLpCycle(Arbitrage):
             ]
         ] = None,
     ) -> Tuple[bool, Tuple[int, int]]:
-        # if self.best["init"] == True:
-        #     print("forced init=True")
-        #     # if the 'init' flag is True, the `best` dict is empty so the calc should be done for the
-        #     # first time, regardless of state
-        #     self.auto_update()
-
-        # if self.pool_states == {
-        #     pool.address: pool.state for pool in self.swap_pools
-        # }:
-        #     print("short-circuit")
-        #     # short-circuit if pool state has not changed,
-        #     # return previously-calculated swap and profit values
-        #     return False, (
-        #         self.best["swap_amount"],
-        #         self.best["profit_amount"],
-        #     )
-
-        # print("update state")
-        # self._update_pool_states()
 
         # sort the override_state values into a dictionary for fast lookup
         # inside the calculation loop
@@ -350,13 +323,13 @@ class UniswapLpCycle(Arbitrage):
         # bracket the initial guess for the algo
         bracket = (
             (
-                0.95 * self.best["last_swap_amount"],
-                1.05 * self.best["last_swap_amount"],
+                self.best["last_swap_amount"],
+                1.25 * self.best["last_swap_amount"],
             )
             if self.best["last_swap_amount"]
             else (
-                0.1 * self.max_input,
-                0.2 * self.max_input,
+                0.5 * self.max_input,
+                0.75 * self.max_input,
             )
         )
 
@@ -381,7 +354,6 @@ class UniswapLpCycle(Arbitrage):
                     # the swap results in token_out_quantity = 0.
                     token_out_quantity = 0
                     break
-                    # return 0
 
             return -float(token_out_quantity - token_in_quantity)
 
@@ -392,12 +364,16 @@ class UniswapLpCycle(Arbitrage):
             bracket=bracket,
             # Optimizer will run until the consecutive input values
             # are within `xatol`. ERC-20 tokens can have different decimal precision,
-            # so set the tolerance to 2/3 of the 'nominal' decimal digits
+            # so set the tolerance to 1/3 of the 'nominal' decimal digits
             #
             # Examples:
-            #   WETH (18 decimal places) calculated within 1*10**12 Wei,
-            #   USDC (6 decimal places) calculated within 1*10**4 Wei
-            options={"xatol": 10 ** int(2 / 3 * self.input_token.decimals)},
+            #   WETH (18 decimal places) calculated within 1*10**6 Wei,
+            #   USDC (6 decimal places) calculated within 1*10**2 Wei
+            options={
+                "xatol": 1.0,
+                # "xatol": 10 ** int(1 / 3 * self.input_token.decimals),
+                # "disp": 3,
+            },
         )
 
         # The arb_profit function converts the value to a negative number so the minimize_scalar
@@ -652,7 +628,6 @@ class UniswapLpCycle(Arbitrage):
                     )
         except Exception as e:
             print(self.best)
-            # print(f"id: {self.id}")
             raise ArbitrageError(f"generate_payloads (catch-all)): {e}") from e
 
         return payloads
