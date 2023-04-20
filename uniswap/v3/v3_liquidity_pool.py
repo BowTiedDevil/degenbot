@@ -69,6 +69,7 @@ class BaseV3LiquidityPool(ABC):
         self.update_lock = Lock()
 
         self.update_block = chain.height
+        self.liquidity_update_block = self.update_block
 
         self.uniswap_version = 3
 
@@ -158,20 +159,6 @@ class BaseV3LiquidityPool(ABC):
 
         if tick_bitmap is not None:
             self.tick_bitmap.update(tick_bitmap)
-
-            # self.tick_bitmap.update(
-            #     {
-            #         word: {
-            #             "bitmap": 0,
-            #             "block": None,
-            #         }
-            #         for word in (
-            #             set(range(MIN_INT16, MAX_INT16 + 1))
-            #             - set(self.tick_bitmap.keys())
-            #         )
-            #     }
-            # )
-
             # if a snapshot was provided, assume it is complete (sparse=False)
             self.tick_bitmap["sparse"] = False
 
@@ -328,6 +315,8 @@ class BaseV3LiquidityPool(ABC):
                     self.tick_bitmap.update(multicall_tick_bitmaps)
                     # update the liquidity data
                     self.tick_data.update(multicall_tick_data)
+                    # update the block
+                    self.liquidity_update_block = block_number
 
             # fetch words one by one (single_tick = True)
             else:
@@ -363,13 +352,7 @@ class BaseV3LiquidityPool(ABC):
                                 "liquidityGross": liquidity_gross,
                                 "block": block_number,
                             }
-
-    def _update_pool_state(self) -> None:
-        self.state = {
-            "liquidity": self.liquidity,
-            "sqrt_price_x96": self.sqrt_price_x96,
-            "tick": self.tick,
-        }
+                    self.liquidity_update_block = block_number
 
     def __UniswapV3Pool_swap(
         self,
@@ -1014,10 +997,7 @@ class BaseV3LiquidityPool(ABC):
                                     "block": None,
                                 }
 
-                            # Get the liquidity info for this tick. get() returns None if the key
-                            # is not found, which indicates that the tick was uninitialized
-                            # liquidity_at_tick: dict = self.tick_data.get(tick)
-
+                        # Get the liquidity info for this tick
                         try:
                             tick_liquidity_net = self.tick_data[tick][
                                 "liquidityNet"
@@ -1034,23 +1014,6 @@ class BaseV3LiquidityPool(ABC):
                             )
                             tick_liquidity_net = 0
                             tick_liquidity_gross = 0
-
-                        # if liquidity_at_tick is None:
-                        #     TickBitmap.flipTick(
-                        #         self.tick_bitmap,
-                        #         tick,
-                        #         self.tick_spacing,
-                        #         update_block=block_number,
-                        #     )
-                        #     tick_liquidity_net = 0
-                        #     tick_liquidity_gross = 0
-                        # else:
-                        #     tick_liquidity_net = liquidity_at_tick[
-                        #         "liquidityNet"
-                        #     ]
-                        #     tick_liquidity_gross = liquidity_at_tick[
-                        #         "liquidityGross"
-                        #     ]
 
                         # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
                         # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
@@ -1081,6 +1044,7 @@ class BaseV3LiquidityPool(ABC):
                                 "block": block_number,
                             }
 
+                self.liquidity_update_block = block_number
                 updated_state = True
 
             if not silent:
@@ -1095,9 +1059,10 @@ class BaseV3LiquidityPool(ABC):
                 self.update_block = block_number
                 self.state.update(
                     {
-                        "tick": self.tick,
+                        "last_liquidity_update": self.liquidity_update_block,
                         "liquidity": self.liquidity,
                         "sqrt_price_x96": self.sqrt_price_x96,
+                        "tick": self.tick,
                     }
                 )
 
