@@ -201,6 +201,14 @@ class BaseV3LiquidityPool(ABC):
         """
         return TickBitmap.position(int(Decimal(tick) // self.tick_spacing))
 
+    def _update_pool_state(self) -> None:
+        self.state = {
+            "last_liquidity_update": self.liquidity_update_block,
+            "liquidity": self.liquidity,
+            "sqrt_price_x96": self.sqrt_price_x96,
+            "tick": self.tick,
+        }
+
     def _update_tick_data_at_word(
         self,
         word_position: int,
