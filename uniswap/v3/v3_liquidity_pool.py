@@ -116,6 +116,29 @@ class BaseV3LiquidityPool(ABC):
             )
 
         self.fee = self._brownie_contract.fee()  # immutable
+
+        # check that the address is a valid V3 pool (see https://github.com/Uniswap/v3-periphery/blob/main/contracts/libraries/PoolAddress.sol)
+        FACTORY = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+        POOL_INIT_HASH = "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
+
+        computed_pool_address = Web3.toChecksumAddress(
+            Web3.keccak(
+                hexstr="0xff"
+                + FACTORY[2:]
+                + Web3.keccak(
+                    eth_abi.encode(
+                        ["address", "address", "uint24"],
+                        [self.token0.address, self.token1.address, self.fee],
+                    )
+                ).hex()[2:]
+                + POOL_INIT_HASH[2:]
+            )[12:]
+        )
+        if computed_pool_address != address:
+            raise ValueError(
+                f"Pool address {address} does not match deterministic address {computed_pool_address} from factory"
+            )
+
         self.liquidity = self._brownie_contract.liquidity(
             block_identifier=self.update_block
         )
