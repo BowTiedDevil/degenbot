@@ -85,7 +85,7 @@ class BaseV3LiquidityPool(ABC):
             abi = UNISWAP_V3_POOL_ABI
 
         self._brownie_contract = Contract.from_abi(
-            name="", address=address, abi=abi
+            name="", address=address, abi=abi, persist=False
         )
 
         if lens:

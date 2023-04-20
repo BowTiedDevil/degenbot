@@ -85,6 +85,7 @@ class LiquidityPool:
             name=f"{self.address}",
             abi=abi,
             address=self.address,
+            persist=False,
         )
         self.abi = abi
         # else:
@@ -707,6 +708,7 @@ class CamelotLiquidityPool(LiquidityPool):
             name=f"{address}",
             abi=abi,
             address=address,
+            persist=False,
         )
         abi = abi
 
