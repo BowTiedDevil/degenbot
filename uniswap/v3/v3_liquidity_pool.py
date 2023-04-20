@@ -3,6 +3,7 @@ from decimal import Decimal
 from threading import Lock
 from typing import List, Optional, Tuple
 
+import eth_abi
 from brownie import Contract, chain, multicall, network
 from web3 import Web3
 
