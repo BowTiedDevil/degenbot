@@ -270,7 +270,6 @@ class UniswapLpCycle(Arbitrage):
             ]
         ] = None,
     ) -> Tuple[bool, Tuple[int, int]]:
-
         # sort the override_state values into a dictionary for fast lookup
         # inside the calculation loop
         _overrides = {}
@@ -397,7 +396,6 @@ class UniswapLpCycle(Arbitrage):
         except Exception as e:
             raise ArbitrageError(f"No possible arbitrage: {e}") from e
         else:
-            # print(f"built multipool amounts! {self.name}")
             self.best.update(
                 {
                     "last_swap_amount": swap_amount,
