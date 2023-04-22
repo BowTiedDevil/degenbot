@@ -100,7 +100,7 @@ class ZeroLiquidityError(ArbitrageError):
 
 class ZeroSwapError(ArbitrageError):
     """
-    Thrown by the arbitrage helper a calculated swap resulted in zero output
+    Thrown by the arbitrage helper if a calculated swap resulted in zero output
     """
 
     pass
