@@ -126,19 +126,21 @@ class UniswapLpCycle(Arbitrage):
         )
 
         for i, pool in enumerate(self.swap_pools):
-            token0 = pool.token0
-            token1 = pool.token1
+            pool_vector = self.swap_vectors[i]
+            token_in = pool_vector["token_in"]
+            token_out = pool_vector["token_out"]
+            _zeroForOne = pool_vector["zeroForOne"]
 
-            if token_in == token0:
-                token_out = token1
-                _zeroForOne = True
-            elif token_in == token1:
-                token_out = token0
-                _zeroForOne = False
-            else:
-                raise ValueError(
-                    f"Could not identify token_in! Found {token_in}, pool holds {token0}, {token1} "
-                )
+            # if token_in == token0:
+            #     token_out = token1
+            #     _zeroForOne = True
+            # elif token_in == token1:
+            #     token_out = token0
+            #     _zeroForOne = False
+            # else:
+            #     raise ValueError(
+            #         f"Could not identify token_in! Found {token_in}, pool holds {token0}, {token1} "
+            #     )
 
             try:
                 # calculate the swap output through pool
