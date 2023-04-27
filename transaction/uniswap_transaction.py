@@ -104,8 +104,12 @@ class UniswapTransaction(Transaction):
             pass
 
         self.hash = tx_hash
-        self.nonce = tx_nonce
-        self.value = tx_value
+        self.nonce = (
+            int(tx_nonce, 16) if isinstance(tx_nonce, str) else tx_nonce
+        )
+        self.value = (
+            int(tx_value, 16) if isinstance(tx_value, str) else tx_value
+        )
         self.func_name = func_name
         self.func_params = func_params
         self.func_deadline = func_params.get("deadline")
