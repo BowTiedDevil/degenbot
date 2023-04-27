@@ -73,8 +73,8 @@ class UniswapTransaction(Transaction):
     def __init__(
         self,
         tx_hash: str,
-        tx_nonce: int,
-        tx_value: int,
+        tx_nonce: Union[int, str],
+        tx_value: Union[int, str],
         func_name: str,
         func_params: dict,
         router_address: str,
