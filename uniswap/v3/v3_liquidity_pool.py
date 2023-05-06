@@ -191,6 +191,18 @@ class BaseV3LiquidityPool(ABC):
             print(f"• SqrtPrice: {self.sqrt_price_x96}")
             print(f"• Tick: {self.tick}")
 
+    # The Brownie contract object cannot be pickled, so remove it and return the state
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_brownie_contract"] = None
+        state["tick_lock"] = None
+        state["update_lock"] = None
+        state["lens"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
     def __str__(self):
         """
         Return the pool name when the object is included in a print statement, or cast as a string
