@@ -79,11 +79,13 @@ class BaseV3LiquidityPool(ABC):
 
         self.address = Web3.toChecksumAddress(address)
 
-        if abi is None:
-            abi = UNISWAP_V3_POOL_ABI
+        if abi is not None:
+            self.abi = abi
+        else:
+            self.abi = UNISWAP_V3_POOL_ABI
 
         self._brownie_contract = Contract.from_abi(
-            name="", address=address, abi=abi, persist=False
+            name="", address=address, abi=self.abi, persist=False
         )
 
         if lens:
