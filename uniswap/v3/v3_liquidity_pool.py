@@ -908,12 +908,17 @@ class BaseV3LiquidityPool(ABC):
                 f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
             )
 
-        # Check if submitted block number is less than the recorded block and raise error if so.
-        # This allows same-block updates since multiple state-changing events may occur sequentially in a block
-        if block_number < self.update_block and not force:
-            raise ExternalUpdateError(
-                f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
-            )
+        def check_update_block(block) -> bool:
+            """
+            Check if `block_number` is valid (matches or exceeds the last update block)
+            """
+            return self.update_block <= block
+
+        def check_liquidity_update_block(block) -> bool:
+            """
+            Check if `block_number` is valid (matches or exceeds the last liquidity update block)
+            """
+            return self.liquidity_update_block <= block
 
         for key in updates.keys():
             if key not in [
@@ -928,48 +933,21 @@ class BaseV3LiquidityPool(ABC):
 
             updated_state = False
 
-            # TODO: deal separately with helper-level update_block attribute OR update_block inside tick_data and tick_bitmap
+            if check_update_block(block_number) or force:
+                for key in ["tick", "liquidity", "sqrt_price_x96"]:
+                    if key in updates and updates[key] != self.__dict__[key]:
+                        # the self.tick attribute is stored internally as
+                        # self.__dict__['tick'], which we can set directly
+                        # if our update key matches the attribute name
+                        self.__dict__[key] = updates[key]
+                        updated_state = True
 
-            # IMPROVEMENT: replaced unnecessary loop in favor of specific updates
-            # for key, value in updates.items():
-            #     if key == "tick":
-            #         self.tick = value
-            #         updated_state = True
-            #     elif key == "liquidity":
-            #         self.liquidity = value
-            #         updated_state = True
-            #     elif key == "sqrt_price_x96":
-            #         self.sqrt_price_x96 = value
-            #         updated_state = True
-            #     elif key == "liquidity_change":
-
-            try:
-                self.tick = updates["tick"]
-            except KeyError:
-                pass
-            else:
-                updated_state = True
-
-            try:
-                self.liquidity = updates["liquidity"]
-            except KeyError:
-                pass
-            else:
-                updated_state = True
-
-            try:
-                self.sqrt_price_x96 = updates["sqrt_price_x96"]
-            except KeyError:
-                pass
-            else:
-                updated_state = True
-
-            try:
-                liquidity_change = updates["liquidity_change"]
-            except KeyError:
-                pass
-            else:
-                liquidity_delta, lower_tick, upper_tick = liquidity_change
+            if "liquidity_change" in updates and (
+                check_liquidity_update_block(block_number) or force
+            ):
+                liquidity_delta, lower_tick, upper_tick = updates[
+                    "liquidity_change"
+                ]
 
                 with self.tick_lock:
 
