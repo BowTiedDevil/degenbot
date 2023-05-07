@@ -58,8 +58,6 @@ class BaseV3LiquidityPool(ABC):
         self.tick_data: dict
         self.tick_bitmap: dict
 
-        self._token_manager = Erc20TokenHelperManager(chain.id)
-
         # held by the _get_tick_data_at_word method, which will retrieve
         # and store liquidity and bitmap data
         self.tick_lock = Lock()
@@ -104,16 +102,17 @@ class BaseV3LiquidityPool(ABC):
                     "Token addresses do not match tokens recorded at contract"
                 )
         else:
-            self.token0 = self._token_manager.get_erc20token(
+            _token_manager = Erc20TokenHelperManager(chain.id)
+            self.token0 = _token_manager.get_erc20token(
                 address=self._brownie_contract.token0(),
                 min_abi=True,
-                silent=True,
+                silent=silent,
                 unload_brownie_contract_after_init=True,
             )
-            self.token1 = self._token_manager.get_erc20token(
+            self.token1 = _token_manager.get_erc20token(
                 address=self._brownie_contract.token1(),
                 min_abi=True,
-                silent=True,
+                silent=silent,
                 unload_brownie_contract_after_init=True,
             )
 
