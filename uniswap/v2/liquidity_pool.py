@@ -177,12 +177,9 @@ class LiquidityPool:
             self.reserves_token0 = self.reserves_token1 = 0
 
         if self._update_method == "event":
-            print("***")
-            print(
-                "DEPRECATION WARNING: the 'event' update method is inaccurate, please update your bot to use the default 'polling' method"
+            raise ValueError(
+                "The 'event' update method is inaccurate and unsupported, please update your bot to use the default 'polling' method"
             )
-            print("***")
-            raise Exception
 
         if (
             self._update_method == "external"
