@@ -33,9 +33,36 @@ class LiquidityPool:
         update_reserves_on_start: bool = True,
         unload_brownie_contract_after_init: bool = False,
     ) -> None:
+        """
+        Create a new `LiquidityPool` object for interaction with a Uniswap V2 pool.
 
-        self._token_manager = Erc20TokenHelperManager(chain.id)
-
+        Arguments
+        ---------
+        address : str
+            Address for the deployed pool contract.
+        tokens : List[Erc20Token], optional
+            Erc20Token objects for the tokens held by the deployed pool.
+        name : str, optional
+            Name of the contract, e.g. "DAI-WETH".
+        update_method : str
+            A string that sets the method used to fetch updates to the pool. Can be "polling", which fetches updates from the chain object using the contract object, or "external" which relies on updates being provided from outside the object.
+        router : Router, optional
+            A reference to a Router object, which can be used to execute swaps using the attributes held within this object.
+        abi : list
+            Contract ABI.
+        fee : Fraction
+            The swap fee imposed by the pool. Defaults to `Fraction(3,1000)` which is equivalent to 0.3%.
+        fee_token0 : Fraction, optional
+            Swap fee for token0. Same purpose as `fee` except useful for pools with different fees for each token.
+        fee_token1 : Fraction, optional
+            Swap fee for token1. Same purpose as `fee` except useful for pools with different fees for each token.
+        silent : bool
+            Suppress status output.
+        update_reserves_on_start : bool
+            Update the reserves during instantiation.
+        unload_brownie_contract_after_init : bool
+            Remove the Brownie contract helper before completion. Saves memory for objects that are externally-updated, and do not need to perform calls to the chain after creation.
+        """
         self.uniswap_version = 2
 
         # transforms to checksummed address
