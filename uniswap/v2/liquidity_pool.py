@@ -126,7 +126,6 @@ class LiquidityPool:
         if tokens is not None:
             if len(tokens) != 2:
                 raise ValueError(f"Expected 2 tokens, found {len(tokens)}")
-            # assert len(tokens) == 2, f"Expected 2 tokens, found {len(tokens)}"
             for token in tokens:
                 if token.address == self._contract.token0():
                     self.token0 = token
