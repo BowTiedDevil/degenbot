@@ -108,13 +108,14 @@ class LiquidityPool:
                 else:
                     raise ValueError(f"{token} not found in pool {self}")
         else:
-            self.token0 = self._token_manager.get_erc20token(
+            _token_manager = Erc20TokenHelperManager(chain.id)
+            self.token0 = _token_manager.get_erc20token(
                 address=self._contract.token0(),
                 min_abi=True,
                 silent=silent,
                 unload_brownie_contract_after_init=True,
             )
-            self.token1 = self._token_manager.get_erc20token(
+            self.token1 = _token_manager.get_erc20token(
                 address=self._contract.token1(),
                 min_abi=True,
                 silent=silent,
