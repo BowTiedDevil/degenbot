@@ -752,7 +752,7 @@ class BaseV3LiquidityPool(ABC):
 
         try:
             # delegate calculations to the ported `swap` function
-            (amount0_delta, amount1_delta, *_,) = self.__UniswapV3Pool_swap(
+            amount0_delta, amount1_delta, *_ = self.__UniswapV3Pool_swap(
                 zeroForOne=zeroForOne,
                 amount_specified=token_in_quantity,
                 sqrt_price_limit_x96=(
@@ -835,7 +835,7 @@ class BaseV3LiquidityPool(ABC):
 
         try:
             # delegate calculations to the ported `swap` function
-            (amount0_delta, amount1_delta, *_,) = self.__UniswapV3Pool_swap(
+            amount0_delta, amount1_delta, *_ = self.__UniswapV3Pool_swap(
                 zeroForOne=zeroForOne,
                 amount_specified=-token_out_quantity,
                 sqrt_price_limit_x96=(
@@ -857,10 +857,11 @@ class BaseV3LiquidityPool(ABC):
             ) from e
         else:
             amountIn, amountOutReceived = (
-                (uint256(amount0_delta), uint256(-amount1_delta))
+                (amount0_delta, -amount1_delta)
                 if zeroForOne
-                else (uint256(amount1_delta), uint256(-amount0_delta))
+                else (amount1_delta, -amount0_delta)
             )
+
             return amountIn
 
     def external_update(
