@@ -50,6 +50,9 @@ class UniswapLpCycle(Arbitrage):
         self.swap_pool_tokens = [
             [pool.token0, pool.token1] for pool in self.swap_pools
         ]
+
+        # set up a pre-determined list of "swap vectors", which allows the helper
+        # to identify the tokens and direction of each swap along the path
         self.swap_vectors = []
         for i, pool in enumerate(self.swap_pools):
             if i == 0:
