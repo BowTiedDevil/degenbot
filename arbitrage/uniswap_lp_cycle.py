@@ -116,14 +116,14 @@ class UniswapLpCycle(Arbitrage):
             ]
         ] = None,
     ) -> List[dict]:
-        pools_amounts_out = []
-
         # sort the override_state values into a dictionary for fast lookup inside the calculation loop
         _overrides = (
             {pool.address: state for pool, state in override_state}
             if override_state is not None
             else {}
         )
+
+        pools_amounts_out = []
 
         for i, pool in enumerate(self.swap_pools):
             pool_vector = self.swap_vectors[i]
@@ -143,11 +143,32 @@ class UniswapLpCycle(Arbitrage):
             #     )
 
             try:
-                # calculate the swap output through pool
-                token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
-                    token_in=token_in,
-                    token_in_quantity=token_in_quantity,
-                    override_state=_overrides.get(pool.address),
+                # calculate the swap output through the pool
+                if pool.uniswap_version == 2:
+                    token_out_quantity = (
+                        pool.calculate_tokens_out_from_tokens_in(
+                            token_in=token_in,
+                            token_in_quantity=token_in_quantity
+                            if i == 0
+                            else token_out_quantity,
+                            override_state=_overrides.get(pool.address),
+                        )
+                    )
+                elif pool.uniswap_version == 3:
+                    (
+                        token_out_quantity,
+                        token_in_remainder,
+                    ) = pool.calculate_tokens_out_from_tokens_in(
+                        token_in=token_in,
+                        token_in_quantity=token_in_quantity
+                        if i == 0
+                        else token_out_quantity,
+                        override_state=_overrides.get(pool.address),
+                        with_remainder=True,
+                    )
+                else:
+                    raise ValueError(
+                        f"Could not determine Uniswap version for pool {pool}"
                 )
             except LiquidityPoolError as e:
                 raise ArbitrageError(
