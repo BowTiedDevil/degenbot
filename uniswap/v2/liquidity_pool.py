@@ -360,11 +360,7 @@ class LiquidityPool:
                 f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})"
             )
 
-        # numerator = reserves_in * token_out_quantity * self.fee.denominator
         numerator = reserves_in * token_out_quantity * fee.denominator
-        # denominator = (reserves_out - token_out_quantity) * (
-        #     self.fee.denominator - self.fee.numerator
-        # )
         denominator = (reserves_out - token_out_quantity) * (
             fee.denominator - fee.numerator
         )
