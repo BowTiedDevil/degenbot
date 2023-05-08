@@ -3,7 +3,7 @@ from fractions import Fraction
 from typing import List, Optional, Union, Tuple
 
 from brownie import Contract, Wei, chain
-from brownie.convert import to_address
+from web3 import Web3
 
 from degenbot.exceptions import (
     DeprecationError,
@@ -40,7 +40,7 @@ class LiquidityPool:
 
         # transforms to checksummed address
         try:
-            self.address = to_address(address)
+            self.address = Web3.toChecksumAddress(address)
         except ValueError:
             print(
                 "Could not checksum address, storing non-checksummed version"
