@@ -162,6 +162,16 @@ class Erc20Token:
         if unload_brownie_contract_after_init:
             self._contract = None
 
+    # The Brownie contract object cannot be pickled, so remove it and return the state
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        if self._contract is not None:
+            state["_contract"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
     def __eq__(self, other) -> bool:
         if not isinstance(other, Erc20Token):
             raise TypeError(
