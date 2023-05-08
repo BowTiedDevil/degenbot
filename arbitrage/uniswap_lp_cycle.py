@@ -327,16 +327,15 @@ class UniswapLpCycle(Arbitrage):
         )
 
         # bracket the initial guess for the algo
-        bracket = (
-            (
-                self.best["last_swap_amount"],
-                1.25 * self.best["last_swap_amount"],
-            )
+        bracket_amount = (
+            self.best["last_swap_amount"]
             if self.best["last_swap_amount"]
-            else (
-                0.5 * self.max_input,
-                0.75 * self.max_input,
-            )
+            else self.max_input
+        )
+        bracket = (
+            0.90 * bracket_amount,
+            0.95 * bracket_amount,
+            bracket_amount,
         )
 
         def arb_profit(x):
