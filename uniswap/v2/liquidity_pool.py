@@ -93,7 +93,7 @@ class LiquidityPool:
         # else:
         #     self.abi = self._contract.abi
 
-        self.factory = to_address(self._contract.factory())
+        self.factory = Web3.toChecksumAddress(self._contract.factory())
 
         # if a token pair was provided, check and set pointers for token0 and token1
         if tokens is not None:
