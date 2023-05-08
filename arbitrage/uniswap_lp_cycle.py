@@ -263,6 +263,11 @@ class UniswapLpCycle(Arbitrage):
 
         return found_updates
 
+    # TODO: investigate if the helper can deal with the pickle/unpickle process
+    def calculate_arbitrage_return_best(self):
+        self.calculate_arbitrage()
+        return self.id, self.best
+
     def calculate_arbitrage(
         self,
         override_state: List[
