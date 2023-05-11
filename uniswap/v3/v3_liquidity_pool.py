@@ -54,7 +54,6 @@ class BaseV3LiquidityPool(ABC):
         tick_data: dict = None,
         tick_bitmap: dict = None,
     ):
-
         self.tick_data: dict
         self.tick_bitmap: dict
 
@@ -270,7 +269,6 @@ class BaseV3LiquidityPool(ABC):
         # print(f"updating tick data for pool: {self.name}")
 
         with self.tick_lock:
-
             if block_number is None:
                 block_number = chain.height
 
@@ -280,7 +278,6 @@ class BaseV3LiquidityPool(ABC):
                 network.main.CONFIG.active_network.get("multicall2")
                 and not single_word
             ):
-
                 # limit word values to int16 range
                 words = set(
                     range(
@@ -444,7 +441,6 @@ class BaseV3LiquidityPool(ABC):
             state["amountSpecifiedRemaining"] != 0
             and state["sqrtPriceX96"] != sqrt_price_limit_x96
         ):
-
             step = {}
 
             step["sqrtPriceStartX96"] = state["sqrtPriceX96"]
@@ -552,7 +548,6 @@ class BaseV3LiquidityPool(ABC):
             if state["sqrtPriceX96"] == step["sqrtPriceNextX96"]:
                 # if the tick is initialized, run the tick transition
                 if step["initialized"]:
-
                     # use the default value (0, 0) so the tuple assignment works. Throws exception
                     # if the default value None is returned from get()
                     # liquidityNet, liquidityGross = self.tick_data.get(
@@ -657,7 +652,6 @@ class BaseV3LiquidityPool(ABC):
         """
 
         with self.update_lock:
-
             updated = False
 
             # use the block_number if provided, otherwise pull from Brownie
@@ -931,7 +925,6 @@ class BaseV3LiquidityPool(ABC):
                 print(f"Unknown key-value pair ({key}:{updates[key]})")
 
         with self.update_lock:
-
             updated_state = False
 
             if check_update_block(block_number) or force:
@@ -951,15 +944,12 @@ class BaseV3LiquidityPool(ABC):
                 ]
 
                 with self.tick_lock:
-
                     # Mint/Burn events may affect the current liquidity if the current tick is
                     # in the tick range associated with this event, so check and adjust
                     if lower_tick <= self.tick <= upper_tick:
                         self.liquidity += liquidity_delta
-                        updated_state = True
 
                     for i, tick in enumerate([lower_tick, upper_tick]):
-
                         tick_word, _ = self._get_tick_bitmap_position(tick)
 
                         if tick_word not in self.tick_bitmap:
