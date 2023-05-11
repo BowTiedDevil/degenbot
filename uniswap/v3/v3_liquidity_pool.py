@@ -262,7 +262,7 @@ class BaseV3LiquidityPool(ABC):
         # but this method might be running simultaneously across different threads.
         # Used to throw an exception, now just returns early.
 
-        if word_position in self.tick_bitmap.keys():
+        if word_position in self.tick_bitmap:
             print(f"returning early, {word_position=} found")
             print(self.tick_bitmap[word_position])
             return
@@ -287,7 +287,7 @@ class BaseV3LiquidityPool(ABC):
                         max(MIN_INT16, word_position - self.extra_words // 2),
                         min(MAX_INT16, word_position + self.extra_words // 2),
                     )
-                ) - set(self.tick_bitmap.keys())
+                ) - set(self.tick_bitmap)
 
                 # print(f"fetching words: {words}")
 
@@ -488,7 +488,7 @@ class BaseV3LiquidityPool(ABC):
 
                     if (
                         self.tick_bitmap["sparse"]
-                        and tick_next_word not in self.tick_bitmap.keys()
+                        and tick_next_word not in self.tick_bitmap
                     ):
                         # print(
                         #     f'tickNext={step["tickNext"]} out of range! Fetching word={tick_next_word}'
@@ -896,7 +896,7 @@ class BaseV3LiquidityPool(ABC):
 
         if not (
             set(["liquidity", "sqrt_price_x96", "tick", "liquidity_change"])
-            & set(updates.keys())
+            & set(updates)
         ):
             raise ValueError(
                 "At least one of (liquidity, sqrt_price_x96, tick, liquidity_change) must be provided"
@@ -921,7 +921,7 @@ class BaseV3LiquidityPool(ABC):
             """
             return self.liquidity_update_block <= block
 
-        for key in updates.keys():
+        for key in updates:
             if key not in [
                 "tick",
                 "liquidity",
@@ -962,8 +962,7 @@ class BaseV3LiquidityPool(ABC):
 
                         tick_word, _ = self._get_tick_bitmap_position(tick)
 
-                        if tick_word not in self.tick_bitmap.keys():
-
+                        if tick_word not in self.tick_bitmap:
                             # the tick bitmap must be available for the word prior to flipping
                             # the initialized status of any tick
 
