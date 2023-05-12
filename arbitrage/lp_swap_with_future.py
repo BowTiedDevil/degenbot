@@ -1,4 +1,4 @@
-from fractions import Fraction
+from fractions import Fraction  # noqa: E999
 from typing import List, Tuple
 
 from brownie.convert.datatypes import Wei
