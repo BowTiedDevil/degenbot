@@ -82,7 +82,7 @@ class UniswapTransaction(Transaction):
 
         self.routers = _routers
 
-        if router_address not in self.routers.keys():
+        if router_address not in self.routers:
             raise ValueError(f"Router address {router_address} unknown!")
 
         try:
@@ -123,7 +123,7 @@ class UniswapTransaction(Transaction):
     def add_router(cls, router_address: str, router_dict: dict):
 
         router_address = web3.Web3.toChecksumAddress(router_address)
-        if router_address in _routers.keys():
+        if router_address in _routers:
             raise ValueError("Router address already known!")
 
         _routers[router_address] = router_dict
