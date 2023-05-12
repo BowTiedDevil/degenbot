@@ -64,8 +64,8 @@ class ArbitrageHelperManager(Manager):
         """
 
         if (
-            factory_address in self._v2_pool_managers.keys()
-            or factory_address in self._v3_pool_managers.keys()
+            factory_address in self._v2_pool_managers
+            or factory_address in self._v3_pool_managers
         ):
             raise ValueError(
                 f"Pool manager for factory={factory_address} already exists"
