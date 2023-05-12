@@ -1,5 +1,5 @@
 from threading import Lock
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from web3 import Web3
 
@@ -25,11 +25,11 @@ class ArbitrageHelperManager(Manager):
     objects reference the same state data
     """
 
-    _state = {}
+    _state: Dict = {}
 
     # a dictionary of contract addresses for the native blockchain token,
     # keyed by chain ID
-    WRAPPED_NATIVE_TOKENS = {
+    WRAPPED_NATIVE_TOKENS: Dict[int, str] = {
         # Ethereum (ETH)
         1: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
         # Arbitrum (AETH)
@@ -37,7 +37,6 @@ class ArbitrageHelperManager(Manager):
     }
 
     def __init__(self, chain_id: int):
-
         # the internal state data for this object is held in the
         # class-level _state dictionary, keyed by the chain ID
         if self._state.get(chain_id):
@@ -47,17 +46,17 @@ class ArbitrageHelperManager(Manager):
             self.__dict__ = self._state[chain_id]
 
             # initialize internal attributes
-            self._arbs = {}  # all known arbs, keyed by id
-            self._blacklisted_ids = set()
+            self._arbs: Dict = {}  # all known arbs, keyed by id
+            self._blacklisted_ids: set = set()
             self._chain_id = chain_id
             self._erc20tokenmanager = Erc20TokenHelperManager(chain_id)
             self._lock = Lock()
-            self._v2_pool_managers = (
-                {}
-            )  # all V2 pool managers, keyed by factory address
-            self._v3_pool_managers = (
-                {}
-            )  # all V3 pool managers, keyed by factory address
+            self._v2_pool_managers: Dict[
+                str, UniswapV2LiquidityPoolManager
+            ] = {}  # all V2 pool managers, keyed by factory address
+            self._v3_pool_managers: Dict[
+                str, UniswapV3LiquidityPoolManager
+            ] = {}  # all V3 pool managers, keyed by factory address
 
     def add_pool_manager(self, factory_address: str, uniswap_version: int):
         """
@@ -86,14 +85,13 @@ class ArbitrageHelperManager(Manager):
     def build(
         self,
         arb_type: str,
-        update_method: str = "polling",
-        input_token: Optional[Union[str, Erc20Token]] = None,
         swap_pools: Union[
             List[Union[LiquidityPool, V3LiquidityPool]],
             List[str],
-        ] = None,
+        ],
+        update_method: str = "polling",
+        input_token: Optional[Union[str, Erc20Token]] = None,
     ) -> Arbitrage:
-
         """
         Returns the arb helper
         """
@@ -108,42 +106,46 @@ class ArbitrageHelperManager(Manager):
             native_wrapped_token_address
         )
 
+        _swap_pools: List[Union[LiquidityPool, V3LiquidityPool]] = []
+
+        # replace all pool addresses with helper objects
         for i, pool in enumerate(swap_pools):
+            if isinstance(pool, str):
+                # if an address was provided, get the pool helper object
+                pool_helper: Union[LiquidityPool, V3LiquidityPool]
 
-            if type(pool) not in (str, LiquidityPool, V3LiquidityPool):
-                raise TypeError(
-                    f"Pool {pool} is {type(pool)}! Expected LiquidityPool, V3LiquidityPool, or string"
-                )
-
-            if type(pool) == str:
-                pool_address = pool
-                pool_helper = None
+                # iterate through the pool managers (may be multiple compatible DEX on one chain)
                 for v2_pool_manager in self._v2_pool_managers.values():
                     try:
-                        _pool_helper = v2_pool_manager.get_pool(pool_address)
+                        pool_helper = v2_pool_manager.get_pool(pool)
                     except:
                         pass
-                    else:
-                        pool_helper = _pool_helper
                 for v3_pool_manager in self._v3_pool_managers.values():
                     try:
-                        _pool_helper = v3_pool_manager.get_pool(pool_address)
+                        pool_helper = v3_pool_manager.get_pool(pool)
                     except:
                         pass
-                    else:
-                        pool_helper = _pool_helper
-
-                print(pool_helper)
-
-                if pool_helper is None:
+                try:
+                    pool_helper
+                except:
+                    # will throw if the pool helper could not be found
                     raise ValueError(
                         f"Could not generate Uniswap LP helper for pool {pool}"
                     )
                 else:
-                    swap_pools[i] = pool_helper
+                    print(pool_helper)
+            elif isinstance(pool, (LiquidityPool, V3LiquidityPool)):
+                # otherwise, use the helper directly
+                pool_helper = pool
+            else:
+                raise TypeError(
+                    f"Pool {pool} is {type(pool)}! Expected LiquidityPool, V3LiquidityPool, or string"
+                )
+
+            _swap_pools[i] = pool_helper
 
         arb_id = Web3.keccak(
-            hexstr="".join([pool.address[2:] for pool in swap_pools])
+            hexstr="".join([pool.address[2:] for pool in _swap_pools])
         ).hex()
 
         # check if the helper is already known, throw exception if so
@@ -156,7 +158,7 @@ class ArbitrageHelperManager(Manager):
 
         arb_helper = UniswapLpCycle(
             input_token=input_token,
-            swap_pools=swap_pools,
+            swap_pools=_swap_pools,
             max_input=None,
             id=arb_id,
         )
@@ -166,7 +168,7 @@ class ArbitrageHelperManager(Manager):
         self,
         arb_id: str,
         arb_type: str,
-        chain_id: Optional[int] = None,
+        chain_id: int,
         input_token: Optional[Union[str, Erc20Token]] = None,
         update_method: str = "polling",
     ) -> "Arbitrage":
@@ -176,6 +178,7 @@ class ArbitrageHelperManager(Manager):
         Type can only be "cycle", but additional types will be added later
         """
 
+        # attempt to retrieve the arb (might already exist)
         try:
             arb_helper = self._arbs[arb_id][arb_type]
         except KeyError:
@@ -183,38 +186,29 @@ class ArbitrageHelperManager(Manager):
         else:
             return arb_helper
 
-        # identify the arb from the dict of known IDs
+        # otherwise create a new arb helper
         try:
             if arb_type == "cycle":
                 if input_token is None:
                     native_wrapped_token_address = self.WRAPPED_NATIVE_TOKENS[
                         chain_id
                     ]
-                    input_token = self.erc20tokenmanager.get_erc20token(
+                    input_token = self._erc20tokenmanager.get_erc20token(
                         native_wrapped_token_address
                     )
                 elif not isinstance(input_token, Erc20Token):
-                    input_token = self.erc20tokenmanager.get_erc20token(
+                    input_token = self._erc20tokenmanager.get_erc20token(
                         input_token
                     )
                 # arb_helper = UniswapLpCycle(input_token=input_token)
                 arb_helper = self.build(
                     arb_type=arb_type,
+                    # TODO: read pools from a file,
+                    # swap_pools=XXX,
                     update_method=update_method,
                     input_token=input_token,
                 )
         except:
             raise ManagerError(f"Could not create Arbitrage helper: {arb_id=}")
-
-        return arb_helper
-
-    # def build(
-    #     self,
-    #     arb_type: str,
-    #     update_method: str = "polling",
-    #     input_token: Optional[Union[str, Erc20Token]] = None,
-    #     swap_pools: Union[
-    #         List[Union[LiquidityPool, V3LiquidityPool]],
-    #         List[str],
-    #     ] = None,
-    # ):
+        else:
+            return arb_helper

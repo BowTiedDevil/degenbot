@@ -14,7 +14,6 @@ class MultiLiquidityPool:
         update_method: str = "polling",
         silent: bool = False,
     ):
-
         self.token_in = token_in
         self.token_out = token_out
         self.token_in_quantity = 0
@@ -134,7 +133,7 @@ class MultiLiquidityPool:
         token_in: Erc20Token,
         token_in_quantity: int,
         silent: bool = False,
-    ) -> int:
+    ) -> None:
         """
         Calculates the expected token OUTPUT from the last pool for a given token INPUT to the first pool at current pool reserves.
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
@@ -144,7 +143,6 @@ class MultiLiquidityPool:
         number_of_pools = len(self._pools)
 
         for i in range(number_of_pools):
-
             # determine the output token for this pool
             if token_in.address == self._pools[i].token0.address:
                 token_out = self._pools[i].token1
@@ -199,14 +197,12 @@ class MultiLiquidityPool:
         token_in: Erc20Token,
         token_in_quantity: int,
         silent: bool = True,
-    ) -> List[list]:
-
+    ) -> None:
         number_of_pools = len(self._pools)
 
         self.pools_amounts_out = []
 
         for i in range(number_of_pools):
-
             # determine the output token for pool0
             if token_in.address == self._pools[i].token0.address:
                 token_out = self._pools[i].token1

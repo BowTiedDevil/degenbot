@@ -66,6 +66,8 @@ class LiquidityPool:
         """
         self.uniswap_version = 2
 
+        self.address: Union[str, ChecksumAddress]
+
         # transforms to checksummed address
         try:
             self.address = Web3.toChecksumAddress(address)
@@ -459,7 +461,7 @@ class LiquidityPool:
         token_out: Erc20Token,
         token_out_qty: Union[Wei, int],
         silent: bool = False,
-    ):
+    ) -> None:
         # check to ensure that token_in and token_out are exactly the two tokens held by the LP
         if not (
             (token_in == self.token0 and token_out == self.token1)
@@ -495,7 +497,7 @@ class LiquidityPool:
         token_out: Optional[Erc20Token] = None,
         token_out_quantity: Optional[int] = None,
         override_state: Optional[dict] = None,
-    ) -> dict:
+    ) -> Optional[dict]:
         """
         TODO
         """
@@ -595,6 +597,8 @@ class LiquidityPool:
                 "reserves_token0": self.reserves_token0 + token0_delta,
                 "reserves_token1": self.reserves_token1 + token1_delta,
             }
+        else:
+            return None
 
     def update_reserves(
         self,
@@ -610,6 +614,8 @@ class LiquidityPool:
         Checks for updated reserve values when set to "polling", otherwise
         if set to "external" assumes that provided reserves are valid
         """
+
+        success = False
 
         # get the chain height from Brownie if a specific update_block is not provided
         if update_block is None:
@@ -656,12 +662,10 @@ class LiquidityPool:
 
                     # recalculate possible swaps using the new reserves
                     self.calculate_tokens_in_from_ratio_out()
-
                     self._update_pool_state()
-
-                    return True
+                    success = True
                 else:
-                    return False
+                    success = False
             except Exception as e:
                 print(
                     f"LiquidityPool: Exception in update_reserves (polling): {e}"
@@ -683,7 +687,7 @@ class LiquidityPool:
                 and external_token1_reserves == self.reserves_token1
             ):
                 self.new_reserves = False
-                return False
+                success = False
             else:
                 self.reserves_token0 = external_token0_reserves
                 self.reserves_token1 = external_token1_reserves
@@ -703,13 +707,17 @@ class LiquidityPool:
                         f"{self.token1}/{self.token0}: {self.reserves_token1 / self.reserves_token0}"
                     )
             self.calculate_tokens_in_from_ratio_out()
-            return True
+            success = True
         elif self._update_method == "event":
             raise DeprecationError(
                 "***"
                 "DEPRECATION WARNING: the 'event' update method is deprecated. Please update your bot to use the default 'polling' method"
                 "***"
             )
+        else:
+            success = False
+
+        return success
 
 
 class CamelotLiquidityPool(LiquidityPool):
@@ -727,7 +735,6 @@ class CamelotLiquidityPool(LiquidityPool):
         update_reserves_on_start: bool = True,
         unload_brownie_contract_after_init: bool = False,
     ) -> None:
-
         if abi is None:
             import json
 
