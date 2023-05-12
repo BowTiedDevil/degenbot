@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from threading import Lock
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import eth_abi
-from brownie import Contract, chain, multicall, network
+from brownie import Contract, chain, multicall, network  # type:ignore
 from web3 import Web3
 
 from degenbot.exceptions import (
@@ -30,7 +30,7 @@ from degenbot.uniswap.v3.tick_lens import TickLens
 
 class BaseV3LiquidityPool(ABC):
     @abstractmethod
-    def _derived():
+    def _derived(self):
         """
         An abstract method designed to ensure that all consumers of this API
         use a derived class instead of this base class. Calling BaseV3LiquidityPool()
@@ -51,8 +51,8 @@ class BaseV3LiquidityPool(ABC):
         abi: Optional[list] = None,
         extra_words: int = 10,
         silent: bool = False,
-        tick_data: dict = None,
-        tick_bitmap: dict = None,
+        tick_data: Optional[dict] = None,
+        tick_bitmap: Optional[dict] = None,
     ):
         self.tick_data: dict
         self.tick_bitmap: dict
@@ -180,7 +180,7 @@ class BaseV3LiquidityPool(ABC):
                 f"{self.token0}-{self.token1} (V3, {self.fee/10000:.2f}%)"
             )
 
-        self.state = {}
+        self.state: dict = {}
         self._update_pool_state()
 
         if not silent:
@@ -705,7 +705,7 @@ class BaseV3LiquidityPool(ABC):
         token_in_quantity: int,
         override_state: Optional[dict] = None,
         with_remainder: bool = False,
-    ) -> int:
+    ) -> Union[int, Tuple[int, int]]:
         """
         This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
         to calculate the number of tokens withdrawn (out) for a given number of tokens deposited (in).
@@ -1088,6 +1088,11 @@ class BaseV3LiquidityPool(ABC):
             override_state = {}
 
         try:
+            if token_in_quantity is not None:
+                amount_specified = token_in_quantity
+            elif token_out_quantity is not None:
+                amount_specified = -token_out_quantity
+
             # delegate calculations to the ported `swap` function
             (
                 amount0_delta,
@@ -1097,9 +1102,7 @@ class BaseV3LiquidityPool(ABC):
                 end_tick,
             ) = self.__UniswapV3Pool_swap(
                 zeroForOne=zeroForOne,
-                amount_specified=token_in_quantity
-                if token_in_quantity
-                else -token_out_quantity,
+                amount_specified=amount_specified,
                 sqrt_price_limit_x96=sqrt_price_limit
                 if sqrt_price_limit is not None
                 else (
@@ -1130,5 +1133,5 @@ class BaseV3LiquidityPool(ABC):
 
 
 class V3LiquidityPool(BaseV3LiquidityPool):
-    def _derived():
+    def _derived(self):
         pass

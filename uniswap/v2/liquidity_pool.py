@@ -1,8 +1,9 @@
 from decimal import Decimal
 from fractions import Fraction
-from typing import List, Optional, Union, Tuple
+from typing import List, Optional, Tuple, Union
 
-from brownie import Contract, Wei, chain
+from brownie import Contract, Wei, chain  # type: ignore
+from eth_typing import ChecksumAddress
 from web3 import Web3
 
 from degenbot.exceptions import (
@@ -10,8 +11,8 @@ from degenbot.exceptions import (
     ExternalUpdateError,
     LiquidityPoolError,
 )
-from degenbot.token import Erc20Token
 from degenbot.manager.token_manager import Erc20TokenHelperManager
+from degenbot.token import Erc20Token
 from degenbot.uniswap.v2.abi import UNISWAPV2_LP_ABI
 from degenbot.uniswap.v2.router import Router
 
@@ -27,8 +28,8 @@ class LiquidityPool:
         abi: Optional[list] = None,
         # default fee for most UniswapV2 AMMs is 0.3%
         fee: Fraction = Fraction(3, 1000),
-        fee_token0: Fraction = None,
-        fee_token1: Fraction = None,
+        fee_token0: Optional[Fraction] = None,
+        fee_token1: Optional[Fraction] = None,
         silent: bool = False,
         update_reserves_on_start: bool = True,
         unload_brownie_contract_after_init: bool = False,
@@ -96,9 +97,9 @@ class LiquidityPool:
         self.fee_token0 = fee_token0 if fee_token0 is not None else fee
         self.fee_token1 = fee_token1 if fee_token1 is not None else fee
         self._update_method = update_method
-        self._ratio_token0_in = None
-        self._ratio_token1_in = None
-        self.new_reserves = None
+        self._ratio_token0_in: Optional[Decimal] = None
+        self._ratio_token1_in: Optional[Decimal] = None
+        self.new_reserves = False
         self.update_block = chain.height
 
         if abi is None:
@@ -188,7 +189,7 @@ class LiquidityPool:
             # memory saving if LP contract object is not used after initialization
             self._contract = None
 
-        self.state = {}
+        self.state: dict = {}
         self._update_pool_state()
 
         if not silent:
@@ -224,10 +225,13 @@ class LiquidityPool:
             "reserves_token1": self.reserves_token1,
         }
 
-    def calculate_tokens_in_from_ratio_out(self) -> int:
+    def calculate_tokens_in_from_ratio_out(self) -> None:
         """
         Calculates the maximum token inputs for the target output ratios at current pool reserves
         """
+
+        self.token0_max_swap: int
+        self.token1_max_swap: int
 
         # token0 in, token1 out
         # formula: dx = y0*C - x0/(1-FEE), where C = token0/token1
@@ -490,7 +494,7 @@ class LiquidityPool:
         token_in_quantity: Optional[int] = None,
         token_out: Optional[Erc20Token] = None,
         token_out_quantity: Optional[int] = None,
-        override_state: dict = None,
+        override_state: Optional[dict] = None,
     ) -> dict:
         """
         TODO
@@ -534,7 +538,7 @@ class LiquidityPool:
         # bugfix: (changed check `token_in_quantity is not None`)
         # swaps with zero amounts (a stupid value, but valid) were falling through
         # both blocks and function was returning None
-        if token_in_quantity is not None:
+        if token_in_quantity is not None and token_in is not None:
             # delegate calculations to the `calculate_tokens_out_from_tokens_in` method
             token_out_quantity = self.calculate_tokens_out_from_tokens_in(
                 token_in=token_in,

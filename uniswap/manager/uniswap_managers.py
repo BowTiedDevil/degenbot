@@ -1,19 +1,20 @@
 from threading import Lock
-from typing import Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
-from brownie import Contract, chain
+from brownie import Contract, chain  # type: ignore
 from web3 import Web3
 
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import Erc20TokenError, ManagerError
 from degenbot.manager.base import Manager
 from degenbot.manager.token_manager import Erc20TokenHelperManager
+from degenbot.token import Erc20Token
 from degenbot.uniswap.functions import generate_v3_pool_address
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2.abi import UNISWAPV2_FACTORY_ABI
+from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v3.abi import UNISWAP_V3_FACTORY_ABI
 from degenbot.uniswap.v3.tick_lens import TickLens
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
-from degenbot.uniswap.v3.abi import UNISWAP_V3_FACTORY_ABI
 
 
 class UniswapLiquidityPoolManager(Manager):
@@ -21,7 +22,7 @@ class UniswapLiquidityPoolManager(Manager):
     Single-concern base class to allow derived classes to share state
     """
 
-    _state = {}
+    _state: dict = {}
 
 
 class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
@@ -33,7 +34,6 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
     """
 
     def __init__(self, factory_address: str):
-
         # the internal state data for this object is held in the
         # class-level _state dictionary, keyed by the factory address
         if self._state.get(factory_address):
@@ -49,15 +49,17 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 abi=UNISWAPV2_FACTORY_ABI,
             )
             self._lock = Lock()
-            self._pools_by_address = {}
-            self._pools_by_tokens = {}
+            self._pools_by_address: Dict[str, LiquidityPool] = dict()
+            self._pools_by_tokens: Dict[
+                Tuple[str, str], LiquidityPool
+            ] = dict()
 
             self._token_manager = Erc20TokenHelperManager(chain.id)
 
     def get_pool(
         self,
         pool_address: Optional[str] = None,
-        token_addresses: Optional[Tuple[str]] = None,
+        token_addresses: Optional[Tuple[str, str]] = None,
         silent: bool = False,
         update_method: str = "polling",
     ) -> LiquidityPool:
@@ -65,11 +67,16 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         Get the pool object from its address, or a tuple of token addresses
         """
 
-        if pool_address is not None:
+        pool_helper: LiquidityPool
 
+        if pool_address is not None:
             pool_address = Web3.toChecksumAddress(pool_address)
 
-            if pool_helper := self._pools_by_address.get(pool_address):
+            try:
+                pool_helper = self._pools_by_address[pool_address]
+            except KeyError:
+                pass
+            else:
                 return pool_helper
 
             try:
@@ -89,18 +96,16 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                     )
                 ] = pool_helper
 
-            return pool_helper
-
         elif token_addresses is not None:
-
             if len(token_addresses) != 2:
                 raise ValueError(
                     f"Expected two tokens, found {len(token_addresses)}"
                 )
 
             try:
+                erc20token_helpers: Tuple[Erc20Token, Erc20Token]
                 erc20token_helpers = tuple(
-                    [
+                    (
                         self._token_manager.get_erc20token(
                             address=token_address,
                             min_abi=True,
@@ -108,8 +113,8 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                             unload_brownie_contract_after_init=True,
                         )
                         for token_address in token_addresses
-                    ]
-                )
+                    )
+                )  # type: ignore
             except Erc20TokenError:
                 raise ManagerError(
                     f"Could not build Erc20Token helpers for pool {pool_address}"
@@ -120,9 +125,15 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 min(erc20token_helpers),
                 max(erc20token_helpers),
             )
-            tokens_key = tuple([token.address for token in erc20token_helpers])
 
-            if pool_helper := self._pools_by_tokens.get(tokens_key):
+            tokens_key: Tuple[str, str]
+            tokens_key = tuple([token.address for token in erc20token_helpers])  # type: ignore
+
+            try:
+                pool_helper = self._pools_by_tokens[tokens_key]
+            except KeyError:
+                pass
+            else:
                 return pool_helper
 
             if (
@@ -133,7 +144,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             try:
                 pool_helper = LiquidityPool(
                     address=pool_address,
-                    tokens=erc20token_helpers,
+                    tokens=list(erc20token_helpers),
                     silent=silent,
                     update_method=update_method,
                 )
@@ -144,7 +155,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._pools_by_address[pool_address] = pool_helper
                 self._pools_by_tokens[tokens_key] = pool_helper
 
-            return pool_helper
+        return pool_helper
 
 
 class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
@@ -159,7 +170,6 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         self,
         factory_address,
     ):
-
         # the internal state data for this object is held in the
         # class-level _state dictionary, keyed by the factory address
         if self._state.get(factory_address):
@@ -183,10 +193,12 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
     def get_pool(
         self,
         pool_address: Optional[str] = None,
-        token_addresses: Optional[Tuple[str]] = None,
+        token_addresses: Optional[Tuple[str, str]] = None,
         pool_fee: Optional[int] = None,
         silent: bool = False,
-        update_method: str = "polling",
+        # accept any number of keyword arguments, which are
+        # passed directly to Erc20Token without validation
+        **kwargs,
     ) -> V3LiquidityPool:
         """
         Get the pool object from its address, or a tuple of token addresses and fee
@@ -198,6 +210,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             raise ValueError(
                 f"Insufficient arguments provided. Pass address OR tokens+fee"
             )
+
+        dict_key: tuple[str, str, int]
 
         if pool_address is not None:
             if token_addresses is not None or pool_fee is not None:
@@ -215,12 +229,14 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                     address=pool_address,
                     lens=self._lens,
                     silent=silent,
-                    update_method=update_method,
+                    **kwargs,
                 )
             except Exception as e:
                 raise ManagerError(
                     f"Could not build V3 pool: {pool_address=}: {e}"
                 ) from e
+
+            pool_fee = pool_helper.fee
 
             token_addresses = (
                 pool_helper.token0.address,
@@ -232,10 +248,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._pools_by_address[pool_address] = pool_helper
                 self._pools_by_tokens_and_fee[dict_key] = pool_helper
 
-            return pool_helper
-
         elif token_addresses is not None and pool_fee is not None:
-
             if len(token_addresses) != 2:
                 raise ValueError(
                     f"Expected two tokens, found {len(token_addresses)}"
@@ -261,7 +274,10 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 min(erc20token_helpers),
                 max(erc20token_helpers),
             )
-            tokens_key = tuple([token.address for token in erc20token_helpers])
+            tokens_key: Tuple[str, str]
+            tokens_key = tuple(
+                [token.address for token in erc20token_helpers]
+            )  # type:ignore
             dict_key = *tokens_key, pool_fee
 
             if pool_helper := self._pools_by_tokens_and_fee.get(dict_key):
@@ -278,7 +294,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 pool_helper = V3LiquidityPool(
                     address=pool_address,
                     lens=self._lens,
-                    tokens=erc20token_helpers,
+                    tokens=list(erc20token_helpers),
                     silent=silent,
                 )
             except:
@@ -288,4 +304,4 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._pools_by_address[pool_address] = pool_helper
                 self._pools_by_tokens_and_fee[dict_key] = pool_helper
 
-            return pool_helper
+        return pool_helper

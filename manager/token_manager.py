@@ -1,7 +1,7 @@
 from threading import Lock
 from typing import Optional
 
-from brownie import chain
+from brownie import chain  # type: ignore
 from web3 import Web3
 
 from degenbot.exceptions import ManagerError
@@ -17,7 +17,7 @@ class Erc20TokenHelperManager(Manager):
     ensures that all instances of the class have access to the same state data
     """
 
-    _state = {}
+    _state: dict = {}
 
     def __init__(self, chain_id: Optional[int] = None):
 
@@ -33,7 +33,7 @@ class Erc20TokenHelperManager(Manager):
             self.__dict__ = self._state[chain_id]
 
             # initialize internal attributes
-            self._erc20tokens = {}
+            self._erc20tokens: dict = {}
             self._lock = Lock()
 
     def get_erc20token(

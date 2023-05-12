@@ -1,11 +1,11 @@
 from fractions import Fraction
-from typing import List
+from typing import List, Optional
 
-from brownie import Contract
-from scipy import optimize
+from brownie import Contract  # type: ignore
+from scipy import optimize  # type: ignore
 
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 from degenbot.token import Erc20Token
+from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 
 
 class FlashBorrowToLpSwap:
@@ -14,12 +14,11 @@ class FlashBorrowToLpSwap:
         borrow_pool: LiquidityPool,
         borrow_token: Erc20Token,
         swap_factory_address: str,
-        swap_token_addresses: List[Erc20Token],
+        swap_token_addresses: List[str],
         swap_router_fee=Fraction(3, 1000),
         name: str = "",
         update_method="polling",
     ):
-
         if borrow_token.address != swap_token_addresses[0]:
             raise ValueError(
                 "Token addresses must begin with the borrowed token"
@@ -152,7 +151,6 @@ class FlashBorrowToLpSwap:
             return False
 
     def _calculate_arbitrage(self):
-
         # set up the boundaries for the Brent optimizer based on which token is being borrowed
         if self.borrow_token.address == self.borrow_pool.token0.address:
             bounds = (
@@ -244,7 +242,6 @@ class FlashBorrowToLpSwap:
         number_of_pools = len(self.swap_pools)
 
         for i in range(number_of_pools):
-
             # determine the output token for pool0
             if token_in.address == self.swap_pools[i].token0.address:
                 token_out = self.swap_pools[i].token1
@@ -263,13 +260,13 @@ class FlashBorrowToLpSwap:
             )
 
             if i == number_of_pools - 1:
-                # if we've reached the last pool, build the amounts_out list and then
-                # return the output amount
-                return token_out_quantity
+                break
             else:
                 # otherwise, use the output as input on the next loop
                 token_in = token_out
                 token_in_quantity = token_out_quantity
+
+        return token_out_quantity
 
     def _build_multipool_amounts_out(
         self,
@@ -277,13 +274,11 @@ class FlashBorrowToLpSwap:
         token_in_quantity: int,
         silent: bool = False,
     ) -> List[list]:
-
         number_of_pools = len(self.swap_pools)
 
         pools_amounts_out = []
 
         for i in range(number_of_pools):
-
             # determine the output token for pool0
             if token_in.address == self.swap_pools[i].token0.address:
                 token_out = self.swap_pools[i].token1
@@ -308,8 +303,10 @@ class FlashBorrowToLpSwap:
 
             if i == number_of_pools - 1:
                 # if we've reached the last pool, return the amounts_out list
-                return pools_amounts_out
+                break
             else:
                 # otherwise, use the output as input on the next loop
                 token_in = token_out
                 token_in_quantity = token_out_quantity
+
+        return pools_amounts_out

@@ -1,8 +1,8 @@
 from fractions import Fraction
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
-from brownie import Contract
-from scipy.optimize import minimize_scalar
+from brownie import Contract  # type: ignore
+from scipy.optimize import minimize_scalar  # type: ignore
 
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 from degenbot.token import Erc20Token
@@ -16,12 +16,11 @@ class FlashBorrowToLpSwapNew:
         borrow_pool: LiquidityPool,
         borrow_token: Erc20Token,
         repay_token: Erc20Token,
-        swap_pool_addresses: List[str] = None,
-        swap_pools: List[LiquidityPool] = None,
+        swap_pool_addresses: Optional[List[str]] = None,
+        swap_pools: Optional[List[LiquidityPool]] = None,
         name: str = "",
         update_method="polling",
     ):
-
         if swap_pools is None and swap_pool_addresses is None:
             raise TypeError(
                 "Provide a list of LiquidityPool objects or a list of pool addresses."
@@ -54,6 +53,12 @@ class FlashBorrowToLpSwapNew:
             raise ValueError(
                 "swap pools passed by address must be updated with the 'polling' method"
             )
+
+        if swap_pool_addresses is None:
+            swap_pool_addresses = []
+
+        if swap_pools is None:
+            swap_pools = []
 
         # assert not (
         #     update_method == "external" and swap_pool_addresses
@@ -173,13 +178,11 @@ class FlashBorrowToLpSwapNew:
         token_in: Erc20Token,
         token_in_quantity: int,
     ) -> List[List[int]]:
-
         number_of_pools = len(self.swap_pools)
 
         pools_amounts_out = []
 
         for i in range(number_of_pools):
-
             # determine the output token for pool0
             if token_in.address == self.swap_pools[i].token0.address:
                 token_out = self.swap_pools[i].token1
@@ -203,12 +206,13 @@ class FlashBorrowToLpSwapNew:
                 pools_amounts_out.append([token_out_quantity, 0])
 
             if i == number_of_pools - 1:
-                # if we've reached the last pool, return the pool_amounts_out list
-                return pools_amounts_out
+                break
             else:
                 # otherwise, feed the results back into the loop
                 token_in = token_out
                 token_in_quantity = token_out_quantity
+
+        return pools_amounts_out
 
     def _calculate_arbitrage(
         self,
@@ -216,7 +220,6 @@ class FlashBorrowToLpSwapNew:
         override_future_borrow_pool_reserves_token0: int = 0,
         override_future_borrow_pool_reserves_token1: int = 0,
     ):
-
         if override_future:
             if not (
                 override_future_borrow_pool_reserves_token0 != 0
@@ -372,7 +375,6 @@ class FlashBorrowToLpSwapNew:
         number_of_pools = len(self.swap_pools)
 
         for i in range(number_of_pools):
-
             # determine the output token for pool0
             if token_in.address == self.swap_pools[i].token0.address:
                 token_out = self.swap_pools[i].token1
@@ -391,13 +393,13 @@ class FlashBorrowToLpSwapNew:
             )
 
             if i == number_of_pools - 1:
-                # if we've reached the last pool, build the amounts_out list and then
-                # return the output amount
-                return token_out_quantity
+                break
             else:
                 # otherwise, use the output as input on the next loop
                 token_in = token_out
                 token_in_quantity = token_out_quantity
+
+        return token_out_quantity
 
     def update_reserves(
         self,
@@ -407,7 +409,6 @@ class FlashBorrowToLpSwapNew:
         override_future: bool = False,
         override_future_borrow_pool_reserves_token0: int = 0,
         override_future_borrow_pool_reserves_token1: int = 0,
-        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int, int]]]] = [],
     ) -> bool:
         """
         Checks each liquidity pool for updates by passing a call to .update_reserves(), which returns False if there are no updates.
@@ -416,7 +417,6 @@ class FlashBorrowToLpSwapNew:
         recalculate = False
 
         if self._update_method != "external":
-
             # calculate initial arbitrage after the object is instantiated, otherwise proceed with normal checks
             if self.best["init"] == True:
                 self.best["init"] = False
@@ -440,7 +440,6 @@ class FlashBorrowToLpSwapNew:
                     recalculate = True
 
         if override_future:
-
             recalculate = True
             if not (
                 override_future_borrow_pool_reserves_token0 != 0

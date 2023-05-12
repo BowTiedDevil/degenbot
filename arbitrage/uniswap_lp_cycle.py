@@ -1,8 +1,8 @@
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Dict
 from warnings import warn
 
 from eth_abi import encode as abi_encode
-from scipy import optimize
+from scipy import optimize  # type: ignore
 from web3 import Web3
 
 from degenbot.arbitrage.base import Arbitrage
@@ -15,11 +15,11 @@ from degenbot.exceptions import (
 )
 from degenbot.token import Erc20Token
 from degenbot.uniswap.v2.liquidity_pool import (
-    LiquidityPool,
     CamelotLiquidityPool,
+    LiquidityPool,
 )
-from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 from degenbot.uniswap.v3.libraries import TickMath
+from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
 
 class UniswapLpCycle(Arbitrage):
@@ -233,8 +233,7 @@ class UniswapLpCycle(Arbitrage):
                 pool._update_method == "polling"
                 or override_update_method == "polling"
             ):
-                if pool.uniswap_version == 2:
-                    pool: LiquidityPool
+                if isinstance(pool, LiquidityPool):
                     pool_updated = pool.update_reserves(
                         silent=silent,
                         override_update_method=override_update_method,
@@ -246,8 +245,7 @@ class UniswapLpCycle(Arbitrage):
                                 f"(UniswapLpCycle) found update for pool {pool}"
                             )
                         found_updates = True
-                elif pool.uniswap_version == 3:
-                    pool: V3LiquidityPool
+                elif isinstance(pool, V3LiquidityPool):
                     pool_updated, _ = pool.auto_update(
                         silent=silent,
                         block_number=block_number,
@@ -283,11 +281,8 @@ class UniswapLpCycle(Arbitrage):
 
     def calculate_arbitrage(
         self,
-        override_state: List[
-            Tuple[
-                Union[LiquidityPool, V3LiquidityPool],
-                dict,
-            ]
+        override_state: Optional[
+            List[Tuple[Union[LiquidityPool, V3LiquidityPool], dict]]
         ] = None,
     ) -> Tuple[bool, Tuple[int, int]]:
         # sort the override_state values into a dictionary for fast lookup
@@ -299,7 +294,7 @@ class UniswapLpCycle(Arbitrage):
 
         # check the pools for zero liquidity in the direction of the trade
         for i, pool in enumerate(self.swap_pools):
-            if pool.uniswap_version == 2:
+            if isinstance(pool, LiquidityPool):
                 if (
                     pool.reserves_token1 <= 1
                     and self.swap_vectors[i]["zeroForOne"]
@@ -315,7 +310,10 @@ class UniswapLpCycle(Arbitrage):
                         f"V2 pool {pool.address} has no liquidity for a 1 -> 0 swap"
                     )
 
-            if pool.uniswap_version == 3 and pool.state["liquidity"] == 0:
+            if (
+                isinstance(pool, V3LiquidityPool)
+                and pool.state["liquidity"] == 0
+            ):
                 # check if the swap is 0 -> 1 and cannot swap any more token0 for token1
                 if (
                     pool.state["sqrt_price_x96"] == TickMath.MIN_SQRT_RATIO + 1
@@ -334,8 +332,8 @@ class UniswapLpCycle(Arbitrage):
                     )
 
         # bound the amount to be swapped
-        bounds = (
-            1,
+        bounds: Tuple[float, float] = (
+            1.0,
             float(self.max_input),
         )
 
@@ -345,7 +343,7 @@ class UniswapLpCycle(Arbitrage):
             if self.best["last_swap_amount"]
             else self.max_input
         )
-        bracket = (
+        bracket: Tuple[float, float, float] = (
             0.90 * bracket_amount,
             0.95 * bracket_amount,
             bracket_amount,
@@ -475,7 +473,9 @@ class UniswapLpCycle(Arbitrage):
         )
 
         # create the pool objects
-        pool_objects = []
+        pool_objects: List[
+            Union[LiquidityPool, V3LiquidityPool, CamelotLiquidityPool]
+        ] = []
         for pool_address, pool_type in swap_pool_addresses:
             # determine if the pool is a V2 or V3 type
             if pool_type == "V2":
@@ -624,13 +624,13 @@ class UniswapLpCycle(Arbitrage):
                                 ],
                                 [
                                     swap_destination_address,
-                                    self.best.get("swap_pool_amounts")[i][
+                                    self.best["swap_pool_amounts"][i][
                                         "zeroForOne"
                                     ],
-                                    self.best.get("swap_pool_amounts")[i][
+                                    self.best["swap_pool_amounts"][i][
                                         "amountSpecified"
                                     ],
-                                    self.best.get("swap_pool_amounts")[i][
+                                    self.best["swap_pool_amounts"][i][
                                         "sqrtPriceLimitX96"
                                     ],
                                     b"",

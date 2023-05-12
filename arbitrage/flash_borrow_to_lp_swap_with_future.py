@@ -1,12 +1,12 @@
 from fractions import Fraction
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
-from brownie import Contract
-from brownie.convert.datatypes import Wei
-from scipy import optimize
+from brownie import Contract  # type: ignore
+from brownie.convert.datatypes import Wei  # type: ignore
+from scipy import optimize  # type: ignore
 
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 from degenbot.token import Erc20Token
+from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 
 # TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
 
@@ -17,11 +17,16 @@ class FlashBorrowToLpSwapWithFuture:
         borrow_pool: LiquidityPool,
         borrow_token: Erc20Token,
         repay_token: Erc20Token,
-        swap_pool_addresses: List[str] = None,
-        swap_pools: List[LiquidityPool] = None,
+        swap_pool_addresses: Optional[List[str]] = None,
+        swap_pools: Optional[List[LiquidityPool]] = None,
         name: str = "",
         update_method="polling",
     ):
+        if swap_pools is None:
+            swap_pools = []
+
+        if swap_pool_addresses is None:
+            swap_pool_addresses = []
 
         if not (swap_pools or swap_pool_addresses):
             raise ValueError(
@@ -32,7 +37,7 @@ class FlashBorrowToLpSwapWithFuture:
         #     swap_pools or swap_pool_addresses
         # ), "At least one pool address or LiquidityPool object must be provided"
 
-        if not not (swap_pool_addresses and swap_pools):
+        if swap_pool_addresses and swap_pools:
             raise ValueError(
                 "Choose pool addresses or LiquidityPool objects, not both"
             )
@@ -180,15 +185,18 @@ class FlashBorrowToLpSwapWithFuture:
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
+        pool_overrides: Optional[
+            List[Tuple[LiquidityPool, Tuple[int, int]]]
+        ] = None,
     ) -> List[List[int]]:
-
         number_of_pools = len(self.swap_pools)
+
+        if pool_overrides is None:
+            pool_overrides = []
 
         pools_amounts_out = []
 
         for i in range(number_of_pools):
-
             # determine the output token for pool0
             if token_in.address == self.swap_pools[i].token0.address:
                 token_out = self.swap_pools[i].token1
@@ -226,18 +234,23 @@ class FlashBorrowToLpSwapWithFuture:
                 pools_amounts_out.append([token_out_quantity, 0])
 
             if i == number_of_pools - 1:
-                # if we've reached the last pool, return the pool_amounts_out list
-                return pools_amounts_out
+                break
             else:
                 # otherwise, feed the results back into the loop
                 token_in = token_out
                 token_in_quantity = token_out_quantity
 
+        return pools_amounts_out
+
     def _calculate_arbitrage(
         self,
         override_future: bool = False,
-        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
+        pool_overrides: Optional[
+            List[Tuple[LiquidityPool, Tuple[int, int]]]
+        ] = None,
     ):
+        if pool_overrides is None:
+            pool_overrides = []
 
         borrow_pool_reserves_token0 = self.borrow_pool.reserves_token0
         borrow_pool_reserves_token1 = self.borrow_pool.reserves_token1
@@ -380,7 +393,9 @@ class FlashBorrowToLpSwapWithFuture:
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
+        pool_overrides: Optional[
+            List[Tuple[LiquidityPool, Tuple[int, int]]]
+        ] = None,
     ) -> int:
         """
         Calculates the expected token OUTPUT from the last pool for a given token INPUT to the first pool
@@ -390,10 +405,12 @@ class FlashBorrowToLpSwapWithFuture:
         2022-06-14 update: add support for overriding pool reserves
         """
 
+        if pool_overrides is None:
+            pool_overrides = []
+
         number_of_pools = len(self.swap_pools)
 
         for i in range(number_of_pools):
-
             # determine the output token for pool0
             if token_in.address == self.swap_pools[i].token0.address:
                 token_out = self.swap_pools[i].token1
@@ -424,12 +441,13 @@ class FlashBorrowToLpSwapWithFuture:
             )
 
             if i == number_of_pools - 1:
-                # if we've reached the last pool, return the output amount
-                return token_out_quantity
+                break
             else:
                 # otherwise, use the output as input on the next loop
                 token_in = token_out
                 token_in_quantity = token_out_quantity
+
+        return token_out_quantity
 
     def clear_best(self):
         self.best.update(
@@ -459,16 +477,21 @@ class FlashBorrowToLpSwapWithFuture:
         print_reserves: bool = True,
         print_ratios: bool = True,
         override_future: bool = False,
-        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
+        pool_overrides: Optional[
+            List[Tuple[LiquidityPool, Tuple[int, int]]]
+        ] = None,
     ) -> bool:
         """
         Updates reserve values for one or more liquidity pools by calling update_reserves(), which returns False if the reserves have not changed.
         Will calculate arbitrage amounts only after checking all pools and finding a reason to update, or on startup (via the 'init' dictionary key)
         """
+
+        if pool_overrides is None:
+            pool_overrides = []
+
         recalculate = False
 
         if self._update_method != "external":
-
             # calculate initial arbitrage after the object is instantiated, otherwise proceed with normal checks
             if self.best["init"] == True:
                 self.best["init"] = False
@@ -492,7 +515,6 @@ class FlashBorrowToLpSwapWithFuture:
                     recalculate = True
 
         if override_future:
-
             if not pool_overrides:
                 raise ValueError("Overrides must be provided!")
             # assert pool_overrides, "Overrides must be provided!"

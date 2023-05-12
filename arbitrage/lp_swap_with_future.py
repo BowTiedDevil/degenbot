@@ -1,8 +1,9 @@
 from fractions import Fraction
-from typing import List, Tuple
+from typing import List, Optional, Tuple
+from warnings import warn
 
-from brownie.convert.datatypes import Wei
-from scipy import optimize
+from brownie.convert.datatypes import Wei  # type: ignore
+from scipy import optimize  # type: ignore
 
 from degenbot.exceptions import ArbCalculationError, InvalidSwapPathError
 from degenbot.token import Erc20Token
@@ -13,14 +14,13 @@ class LpSwapWithFuture:
     def __init__(
         self,
         input_token: Erc20Token,
-        swap_pool_addresses: List[str] = None,
-        swap_pools: List[LiquidityPool] = None,
+        swap_pool_addresses: Optional[List[str]] = None,
+        swap_pools: Optional[List[LiquidityPool]] = None,
         name: str = "",
         update_method="polling",
-        max_input: int = None,
-        id: str = None,
+        max_input: Optional[int] = None,
+        id: Optional[str] = None,
     ):
-
         if not (swap_pools or swap_pool_addresses):
             raise ValueError(
                 "At least one pool address or LiquidityPool object must be provided"
@@ -64,11 +64,13 @@ class LpSwapWithFuture:
         if id:
             self.id = id
 
+        self.swap_pools: list[LiquidityPool]
+
         # if the object was initialized with pool objects, use these directly
-        if swap_pools:
+        if swap_pools is not None:
             self.swap_pools = swap_pools
         # otherwise, create internal objects
-        else:
+        elif swap_pool_addresses is not None:
             self.swap_pools = []
             for address in swap_pool_addresses:
                 self.swap_pools.append(
@@ -145,7 +147,11 @@ class LpSwapWithFuture:
             "swap_pool_tokens": self.swap_pool_tokens,
         }
 
+        if max_input is None:
+            warn("No maximum input provided, setting to 100 WETH")
+            max_input = 100 * 10**18
         self.max_input = max_input
+
         # track the gas estimate to execute this arb
         self.gas_estimate = 0
 
@@ -158,15 +164,18 @@ class LpSwapWithFuture:
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
+        pool_overrides: Optional[
+            List[Tuple[LiquidityPool, Tuple[int, int]]]
+        ] = None,
     ) -> List[List[int]]:
-
         number_of_pools = len(self.swap_pools)
+
+        if pool_overrides is None:
+            pool_overrides = []
 
         pools_amounts_out = []
 
         for i in range(number_of_pools):
-
             # determine the output token for the pool
             if token_in == self.swap_pools[i].token0:
                 token_out = self.swap_pools[i].token1
@@ -206,22 +215,28 @@ class LpSwapWithFuture:
 
             if i == number_of_pools - 1:
                 # if we've reached the last pool, return the pool_amounts_out list
-                return pools_amounts_out
+                break
             else:
                 # otherwise, feed the results back into the loop
                 token_in = token_out
                 token_in_quantity = token_out_quantity
 
+        return pools_amounts_out
+
     def _calculate_arbitrage(
         self,
         override_future: bool = False,
-        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
+        pool_overrides: Optional[
+            List[Tuple[LiquidityPool, Tuple[int, int]]]
+        ] = None,
     ):
+        if pool_overrides is None:
+            pool_overrides = []
 
         # set up the boundaries for the Brent optimizer based on which token
         # is being borrowed
         bounds = (
-            1,
+            1.0,
             float(self.max_input),
         )
 
@@ -303,7 +318,9 @@ class LpSwapWithFuture:
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
+        pool_overrides: Optional[
+            List[Tuple[LiquidityPool, Tuple[int, int]]]
+        ] = None,
     ) -> int:
         """
         Calculates the expected token OUTPUT from the last pool for a given token INPUT to the first pool
@@ -313,10 +330,12 @@ class LpSwapWithFuture:
         2022-06-14 update: add support for overriding pool reserves
         """
 
+        if pool_overrides is None:
+            pool_overrides = []
+
         number_of_pools = len(self.swap_pools)
 
         for i in range(number_of_pools):
-
             # determine the output token for pool0
             if token_in.address == self.swap_pools[i].token0.address:
                 token_out = self.swap_pools[i].token1
@@ -347,12 +366,13 @@ class LpSwapWithFuture:
             )
 
             if i == number_of_pools - 1:
-                # if we've reached the last pool, return the output amount
-                return token_out_quantity
+                break
             else:
                 # otherwise, use the output as input on the next loop
                 token_in = token_out
                 token_in_quantity = token_out_quantity
+
+        return token_out_quantity
 
     def clear_best(self):
         self.best.update(
@@ -378,16 +398,21 @@ class LpSwapWithFuture:
         print_reserves: bool = True,
         print_ratios: bool = True,
         override_future: bool = False,
-        pool_overrides: List[List[Tuple[LiquidityPool, Tuple[int]]]] = [],
+        pool_overrides: Optional[
+            List[Tuple[LiquidityPool, Tuple[int, int]]]
+        ] = None,
     ) -> bool:
         """
         Updates reserve values for one or more liquidity pools by calling update_reserves(), which returns False if the reserves have not changed.
         Will calculate arbitrage amounts only after checking all pools and finding a reason to update, or on startup (via the 'init' dictionary key)
         """
+
+        if pool_overrides is None:
+            pool_overrides = []
+
         recalculate = False
 
         if self._update_method != "external":
-
             # calculate initial arbitrage after the object is instantiated, otherwise proceed with normal checks
             if self.best["init"] == True:
                 self.best["init"] = False
@@ -403,7 +428,6 @@ class LpSwapWithFuture:
                     recalculate = True
 
         if override_future:
-
             if not pool_overrides:
                 raise ValueError("Overrides must be provided!")
             # assert pool_overrides, "Overrides must be provided!"
