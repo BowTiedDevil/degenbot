@@ -537,6 +537,8 @@ class LiquidityPool:
         elif token_out is not None and token_out == self.token1:
             token_in = self.token0
 
+        pool_state_after_swap = {}
+
         # bugfix: (changed check `token_in_quantity is not None`)
         # swaps with zero amounts (a stupid value, but valid) were falling through
         # both blocks and function was returning None
@@ -560,7 +562,7 @@ class LiquidityPool:
                 else token_in_quantity
             )
 
-            return {
+            pool_state_after_swap = {
                 "amount0_delta": token0_delta,
                 "amount1_delta": token1_delta,
                 "reserves_token0": self.reserves_token0 + token0_delta,
@@ -591,12 +593,14 @@ class LiquidityPool:
                 else -token_out_quantity
             )
 
-            return {
+            pool_state_after_swap = {
                 "amount0_delta": token0_delta,
                 "amount1_delta": token1_delta,
                 "reserves_token0": self.reserves_token0 + token0_delta,
                 "reserves_token1": self.reserves_token1 + token1_delta,
             }
+
+        return pool_state_after_swap
 
     def update_reserves(
         self,
