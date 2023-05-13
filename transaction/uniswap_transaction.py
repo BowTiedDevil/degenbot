@@ -18,6 +18,7 @@ from degenbot.uniswap.manager.uniswap_managers import (
     UniswapV3LiquidityPoolManager,
 )
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v3.functions import decode_v3_path
 from degenbot.uniswap.v3.abi import (
     UNISWAP_V3_ROUTER2_ABI,
     UNISWAP_V3_ROUTER_ABI,
@@ -156,29 +157,7 @@ class UniswapTransaction(Transaction):
         associated with the transaction
         """
 
-        def decode_v3_path(path: bytes) -> list:
-            path_pos = 0
-            exactInputParams_path_decoded: List[Union[str, int]] = []
-            # read alternating 20 and 3 byte chunks from the encoded path,
-            # store each address (hex) and fee (int)
-            for byte_length in itertools.cycle((20, 3)):
-                # stop at the end
-                if path_pos == len(path):
-                    break
-                elif byte_length == 20:
-                    address = path[path_pos : path_pos + byte_length].hex()
-                    exactInputParams_path_decoded.append(address)
-                elif byte_length == 3:
-                    fee = int(
-                        path[path_pos : path_pos + byte_length].hex(),
-                        16,
-                    )
-                    exactInputParams_path_decoded.append(fee)
-                path_pos += byte_length
-
-            return exactInputParams_path_decoded
-
-        def v2_swap_exact_in(
+        def _v2_swap_exact_in(
             params: dict,
             unwrapped_input: Optional[bool] = False,
             silent: bool = False,
@@ -312,7 +291,7 @@ class UniswapTransaction(Transaction):
 
             return future_pool_states
 
-        def v2_swap_exact_out(
+        def _v2_swap_exact_out(
             params: dict,
             unwrapped_input: Optional[bool] = False,
             silent: bool = False,
@@ -419,7 +398,7 @@ class UniswapTransaction(Transaction):
 
             return future_pool_states
 
-        def v3_swap_exact_in(
+        def _v3_swap_exact_in(
             params: dict,
             silent: bool = False,
         ) -> Tuple[V3LiquidityPool, Dict]:
@@ -517,10 +496,10 @@ class UniswapTransaction(Transaction):
 
             return v3_pool, final_state
 
-        def v3_swap_exact_out(
+        def _v3_swap_exact_out(
             params: dict,
             silent: bool = False,
-        ) -> List[Tuple[V3LiquidityPool, dict]]:
+        ) -> Tuple[V3LiquidityPool, dict]:
             sqrtPriceLimitX96 = None
             amountInMaximum = None
 
@@ -615,12 +594,7 @@ class UniswapTransaction(Transaction):
                     f"amountIn ({amountIn}) < amountOutMin ({amountInMaximum})"
                 )
 
-            return [
-                (
-                    v3_pool,
-                    final_state,
-                )
-            ]
+            return v3_pool, final_state
 
         if func_name is None:
             func_name = self.func_name
@@ -643,7 +617,7 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
                 future_state.extend(
-                    v2_swap_exact_in(func_params, silent=silent)
+                    _v2_swap_exact_in(func_params, silent=silent)
                 )
 
             elif func_name in (
@@ -653,7 +627,7 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
                 future_state.extend(
-                    v2_swap_exact_in(
+                    _v2_swap_exact_in(
                         func_params, unwrapped_input=True, silent=silent
                     )
                 )
@@ -665,28 +639,28 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
                 future_state.extend(
-                    v2_swap_exact_in(func_params, silent=silent)
+                    _v2_swap_exact_in(func_params, silent=silent)
                 )
 
             elif func_name in ("swapTokensForExactETH"):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
                 future_state.extend(
-                    v2_swap_exact_out(params=func_params, silent=silent)
+                    _v2_swap_exact_out(params=func_params, silent=silent)
                 )
 
             elif func_name in ("swapTokensForExactTokens"):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
                 future_state.extend(
-                    v2_swap_exact_out(params=func_params, silent=silent)
+                    _v2_swap_exact_out(params=func_params, silent=silent)
                 )
 
             elif func_name in ("swapETHForExactTokens"):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
                 future_state.extend(
-                    v2_swap_exact_out(
+                    _v2_swap_exact_out(
                         params=func_params, unwrapped_input=True, silent=silent
                     )
                 )
@@ -701,17 +675,14 @@ class UniswapTransaction(Transaction):
             elif func_name == "exactInputSingle":
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                # v3_pool, swap_info, pool_state = v3_swap_exact_in(
-                #     params=func_params
-                # )
-                # future_state.append([v3_pool, pool_state])
                 future_state.append(
-                    v3_swap_exact_in(params=func_params, silent=silent)
+                    _v3_swap_exact_in(params=func_params, silent=silent)
                 )
             elif func_name == "exactInput":
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
+                # from ISwapRouter.sol - https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
                 try:
                     (
                         exactInputParams_path,
@@ -723,6 +694,7 @@ class UniswapTransaction(Transaction):
                 except:
                     pass
 
+                # from IV3SwapRouter.sol - https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
                 try:
                     (
                         exactInputParams_path,
@@ -734,36 +706,9 @@ class UniswapTransaction(Transaction):
                     pass
 
                 # decode the path
-                path_pos = 0
-                exactInputParams_path_decoded = []
-                # read alternating 20 and 3 byte chunks from the encoded path,
-                # store each address (hex) and fee (int)
-                for byte_length in itertools.cycle((20, 3)):
-                    # stop at the end
-                    if path_pos == len(exactInputParams_path):
-                        break
-                    elif (
-                        byte_length == 20
-                        and len(exactInputParams_path)
-                        >= path_pos + byte_length
-                    ):
-                        address = exactInputParams_path[
-                            path_pos : path_pos + byte_length
-                        ].hex()
-                        exactInputParams_path_decoded.append(address)
-                    elif (
-                        byte_length == 3
-                        and len(exactInputParams_path)
-                        >= path_pos + byte_length
-                    ):
-                        fee = int(
-                            exactInputParams_path[
-                                path_pos : path_pos + byte_length
-                            ].hex(),
-                            16,
-                        )
-                        exactInputParams_path_decoded.append(fee)
-                    path_pos += byte_length
+                exactInputParams_path_decoded = decode_v3_path(
+                    exactInputParams_path
+                )
 
                 if not silent:
                     print(f" • path = {exactInputParams_path_decoded}")
@@ -779,8 +724,7 @@ class UniswapTransaction(Transaction):
                         f" • amountOutMinimum = {exactInputParams_amountOutMinimum}"
                     )
 
-                # decode the path - tokenIn is the first position, tokenOut is the second position
-                # e.g. tokenIn, fee, tokenOut
+                # follow the swap through the given path
                 for token_pos in range(
                     0,
                     len(exactInputParams_path_decoded) - 2,
@@ -792,7 +736,7 @@ class UniswapTransaction(Transaction):
 
                     v3_pool: V3LiquidityPool
                     pool_state: Dict
-                    v3_pool, pool_state = v3_swap_exact_in(
+                    v3_pool, pool_state = _v3_swap_exact_in(
                         params={
                             "params": (
                                 tokenIn,
@@ -815,11 +759,8 @@ class UniswapTransaction(Transaction):
             elif func_name == "exactOutputSingle":
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                # v3_pool, swap_info, pool_state = v3_swap_exact_out(
-                #     params=func_params
-                # )
-                future_state.extend(
-                    v3_swap_exact_out(params=func_params, silent=silent)
+                future_state.append(
+                    _v3_swap_exact_out(params=func_params, silent=silent)
                 )
             elif func_name == "exactOutput":
                 if not silent:
@@ -848,29 +789,9 @@ class UniswapTransaction(Transaction):
                 except Exception as e:
                     pass
 
-                # decode the path
-                path_pos = 0
-                exactOutputParams_path_decoded = []
-                # read alternating 20 and 3 byte chunks from the encoded path,
-                # store each address (hex) and fee (int)
-                for byte_length in itertools.cycle((20, 3)):
-                    # stop at the end
-                    if path_pos == len(exactOutputParams_path):
-                        break
-                    elif byte_length == 20:
-                        address = exactOutputParams_path[
-                            path_pos : path_pos + byte_length
-                        ].hex()
-                        exactOutputParams_path_decoded.append(address)
-                    elif byte_length == 3:
-                        fee = int(
-                            exactOutputParams_path[
-                                path_pos : path_pos + byte_length
-                            ].hex(),
-                            16,
-                        )
-                        exactOutputParams_path_decoded.append(fee)
-                    path_pos += byte_length
+                exactOutputParams_path_decoded = decode_v3_path(
+                    exactOutputParams_path
+                )
 
                 if not silent:
                     print(f" • path = {exactOutputParams_path_decoded}")
@@ -894,7 +815,7 @@ class UniswapTransaction(Transaction):
                     fee = exactOutputParams_path_decoded[token_pos + 1]
                     tokenIn = exactOutputParams_path_decoded[token_pos + 2]
 
-                    v3_pool, pool_state = v3_swap_exact_out(
+                    v3_pool, pool_state = _v3_swap_exact_out(
                         params={
                             "params": (
                                 tokenIn,
@@ -909,12 +830,11 @@ class UniswapTransaction(Transaction):
                                 else max(
                                     pool_state["amount0_delta"],
                                     pool_state["amount1_delta"],
-                                )
-                                # else max(swap_info.values()),
+                                ),
                             )
                         },
                         silent=silent,
-                    )[0]
+                    )
 
                     future_state.append((v3_pool, pool_state))
 
@@ -1000,7 +920,7 @@ class UniswapTransaction(Transaction):
                                 token_pos + 2
                             ]
 
-                            v3_pool, pool_state = v3_swap_exact_in(
+                            v3_pool, pool_state = _v3_swap_exact_in(
                                 params={
                                     "params": (
                                         tokenIn,
@@ -1057,7 +977,7 @@ class UniswapTransaction(Transaction):
                                 token_pos + 2
                             ]
 
-                            v3_pool, pool_state = v3_swap_exact_out(
+                            v3_pool, pool_state = _v3_swap_exact_out(
                                 params={
                                     "params": (
                                         tokenIn,
@@ -1077,7 +997,7 @@ class UniswapTransaction(Transaction):
                                     )
                                 },
                                 silent=silent,
-                            )[0]
+                            )
 
                             future_state.append((v3_pool, pool_state))
 
@@ -1123,7 +1043,7 @@ class UniswapTransaction(Transaction):
                         }
 
                         result.extend(
-                            v2_swap_exact_in(func_params, silent=silent)
+                            _v2_swap_exact_in(func_params, silent=silent)
                         )
 
                         return result
@@ -1158,7 +1078,7 @@ class UniswapTransaction(Transaction):
                         }
 
                         result.extend(
-                            v2_swap_exact_out(func_params, silent=silent)
+                            _v2_swap_exact_out(func_params, silent=silent)
                         )
 
                         return result
