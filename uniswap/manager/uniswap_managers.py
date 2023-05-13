@@ -9,10 +9,10 @@ from degenbot.exceptions import Erc20TokenError, ManagerError
 from degenbot.manager.base import Manager
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
-from degenbot.uniswap.functions import generate_v3_pool_address
 from degenbot.uniswap.v2.abi import UNISWAPV2_FACTORY_ABI
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3.abi import UNISWAP_V3_FACTORY_ABI
+from degenbot.uniswap.v3.functions import generate_v3_pool_address
 from degenbot.uniswap.v3.tick_lens import TickLens
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
@@ -24,6 +24,22 @@ class UniswapLiquidityPoolManager(Manager):
 
     _state: dict = {}
 
+    def __init__(self, factory_address: str, chain_id: int):
+        # the internal state data for all child objects is held in the
+        # class-level _state dictionary, keyed by chain ID and factory address
+        try:
+            self._state[chain_id]
+        except KeyError:
+            self._state[chain_id] = {}
+            self._state[chain_id][
+                "erc20token_manager"
+            ] = Erc20TokenHelperManager(chain_id)
+
+        try:
+            self._state[chain_id][factory_address]
+        except KeyError:
+            self._state[chain_id][factory_address] = {}
+
 
 class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
     """
@@ -33,16 +49,22 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
     ensures that all instances of the class have access to the same state data
     """
 
-    def __init__(self, factory_address: str):
-        # the internal state data for this object is held in the
-        # class-level _state dictionary, keyed by the factory address
-        if self._state.get(factory_address):
-            self.__dict__ = self._state[factory_address]
-        else:
-            self._state[factory_address] = {}
-            self.__dict__ = self._state[factory_address]
+    def __init__(self, factory_address: str, chain_id: Optional[int] = None):
+        if chain_id is None:
+            chain_id = chain.id
 
+        factory_address = Web3.toChecksumAddress(factory_address)
+
+        super().__init__(
+            factory_address=factory_address,
+            chain_id=chain_id,
+        )
+
+        self.__dict__ = self._state[chain_id][factory_address]
+
+        if not self.__dict__:
             # initialize internal attributes
+            self.address = factory_address
             self._factory_contract = Contract.from_abi(
                 name="Uniswap V2: Factory",
                 address=factory_address,
@@ -53,8 +75,10 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             self._pools_by_tokens: Dict[
                 Tuple[str, str], LiquidityPool
             ] = dict()
+            self._token_manager = self._state[chain_id]["erc20token_manager"]
 
-            self._token_manager = Erc20TokenHelperManager(chain.id)
+        # from pprint import pprint
+        # pprint(self._state)
 
     def get_pool(
         self,
@@ -166,18 +190,18 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
     ensures that all instances of the class have access to the same state data
     """
 
-    def __init__(
-        self,
-        factory_address,
-    ):
-        # the internal state data for this object is held in the
-        # class-level _state dictionary, keyed by the factory address
-        if self._state.get(factory_address):
-            self.__dict__ = self._state[factory_address]
-        else:
-            self._state[factory_address] = {}
-            self.__dict__ = self._state[factory_address]
+    def __init__(self, factory_address: str, chain_id: Optional[int] = None):
+        if chain_id is None:
+            chain_id = chain.id
 
+        super().__init__(
+            factory_address=factory_address,
+            chain_id=chain_id,
+        )
+
+        self.__dict__ = self._state[chain_id][factory_address]
+
+        if self.__dict__ == {}:
             # initialize internal attributes
             self._factory_contract = Contract.from_abi(
                 name="Uniswap V3: Factory",
@@ -186,9 +210,11 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             )
             self._lens = TickLens()
             self._lock = Lock()
-            self._pools_by_address = {}
-            self._pools_by_tokens_and_fee = {}
-            self._token_manager = Erc20TokenHelperManager(chain.id)
+            self._pools_by_address: Dict[str, V3LiquidityPool] = {}
+            self._pools_by_tokens_and_fee: Dict[
+                Tuple[str, str, int], V3LiquidityPool
+            ] = {}
+            self._token_manager = self._state[chain_id]["erc20token_manager"]
 
     def get_pool(
         self,
@@ -221,7 +247,11 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
             pool_address = Web3.toChecksumAddress(pool_address)
 
-            if pool_helper := self._pools_by_address.get(pool_address):
+            try:
+                pool_helper = self._pools_by_address[pool_address]
+            except KeyError:
+                pass
+            else:
                 return pool_helper
 
             try:
@@ -280,14 +310,22 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             )  # type:ignore
             dict_key = *tokens_key, pool_fee
 
-            if pool_helper := self._pools_by_tokens_and_fee.get(dict_key):
+            try:
+                pool_helper = self._pools_by_tokens_and_fee[dict_key]
+            except KeyError:
+                pass
+            else:
                 return pool_helper
 
             pool_address = generate_v3_pool_address(
                 token_addresses=tokens_key, fee=pool_fee
             )
 
-            if pool_helper := self._pools_by_address.get(pool_address):
+            try:
+                pool_helper = self._pools_by_address[pool_address]
+            except KeyError:
+                pass
+            else:
                 return pool_helper
 
             try:

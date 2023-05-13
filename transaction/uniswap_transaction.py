@@ -114,6 +114,7 @@ class UniswapTransaction(Transaction):
         except:
             pass
 
+        self.token_manager = Erc20TokenHelperManager()
         self.hash = tx_hash
         self.nonce = (
             int(tx_nonce, 16) if isinstance(tx_nonce, str) else tx_nonce
@@ -184,13 +185,13 @@ class UniswapTransaction(Transaction):
 
             # the pool manager created Erc20Token objects in the code block above,
             # so calls to `get_erc20token` will return the previously-created helper
-            token_in = Erc20TokenHelperManager().get_erc20token(
+            token_in = self.token_manager.get_erc20token(
                 address=params["path"][0],
                 silent=silent,
                 min_abi=True,
                 unload_brownie_contract_after_init=True,
             )
-            token_out = Erc20TokenHelperManager().get_erc20token(
+            token_out = self.token_manager.get_erc20token(
                 address=params["path"][-1],
                 silent=silent,
                 min_abi=True,
@@ -207,6 +208,7 @@ class UniswapTransaction(Transaction):
             future_pool_states: List[Tuple[LiquidityPool, Dict]] = []
             token_in_quantity: int
             token_out_quantity: int
+
             for i, v2_pool in enumerate(v2_pool_objects):
                 token_in_quantity = (
                     swap_in_quantity if i == 0 else token_out_quantity
@@ -312,13 +314,13 @@ class UniswapTransaction(Transaction):
 
             # the pool manager creates Erc20Token objects as it works,
             # so calls to `get_erc20token` will return the previously-created helper
-            token_in = Erc20TokenHelperManager().get_erc20token(
+            token_in = self.token_manager.get_erc20token(
                 address=params["path"][0],
                 silent=silent,
                 min_abi=True,
                 unload_brownie_contract_after_init=True,
             )
-            token_out = Erc20TokenHelperManager().get_erc20token(
+            token_out = self.token_manager.get_erc20token(
                 address=params["path"][-1],
                 silent=silent,
                 min_abi=True,
@@ -330,6 +332,7 @@ class UniswapTransaction(Transaction):
             token_in_quantity: int
             token_out_quantity: int
 
+            # TODO: check this, swap_in_quantity is unused
             if unwrapped_input:
                 swap_in_quantity = self.value
 
@@ -473,7 +476,7 @@ class UniswapTransaction(Transaction):
                 print(f"Predicting output of swap through pool: {v3_pool}")
 
             try:
-                token_in_object = Erc20TokenHelperManager().get_erc20token(
+                token_in_object = self.token_manager.get_erc20token(
                     address=tokenIn,
                     silent=silent,
                     min_abi=True,
@@ -561,7 +564,7 @@ class UniswapTransaction(Transaction):
                 print(f"Predicting output of swap through pool: {v3_pool}")
 
             try:
-                token_out_object = Erc20TokenHelperManager().get_erc20token(
+                token_out_object = self.token_manager.get_erc20token(
                     address=tokenOut,
                     silent=silent,
                     min_abi=True,
