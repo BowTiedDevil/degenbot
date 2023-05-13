@@ -925,7 +925,7 @@ class BaseV3LiquidityPool(ABC):
                 "sqrt_price_x96",
                 "liquidity_change",
             ]:
-                print(f"Unknown key-value pair ({key}:{updates[key]})")
+                warn(f"Ignoring unknown key-value ({key}:{updates[key]})")
 
         with self.update_lock:
             updated_state = False
@@ -1070,6 +1070,11 @@ class BaseV3LiquidityPool(ABC):
             or (token_out and token_out_quantity)
         ):
             raise ValueError
+
+        if token_in_quantity is None and token_out_quantity is None:
+            raise ValueError(
+                "Must provide a quantity for token_in or token_out"
+            )
 
         if token_in and token_out:
             raise ValueError(
