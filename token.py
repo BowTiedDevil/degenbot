@@ -37,9 +37,8 @@ class Erc20Token:
         unload_brownie_contract_after_init: bool = False,
         min_abi: bool = False,
     ) -> None:
-
         try:
-            self.address = to_address(address)
+            self.address: str = Web3.toChecksumAddress(address)
         except ValueError:
             print(
                 "Could not checksum address, storing non-checksummed version"
@@ -131,21 +130,21 @@ class Erc20Token:
         if type(self.symbol) in [HexString, HexBytes]:
             self.symbol = self.symbol.decode()
 
-        if "decimals" in dir(self._contract):
+        self.decimals: int
+
+        try:
             self.decimals = self._contract.decimals()
-        elif "DECIMALS" in dir(self._contract):
-            self.decimals = self._contract.DECIMALS()
-        elif "_decimals" in dir(self._contract):
-            self.decimals = self._contract._decimals()
-        else:
-            print(
-                f"Contract does not have a 'decimals' or similar functions. Setting to 18, confirm on Etherscan: address {address}"
+        except:
+            warn(
+                f"Token contract at {address} does not implement a 'decimals' function. Setting to 0."
             )
-            self.decimals = 18
+            self.decimals = 0
 
         if user:
             self.balance = self._contract.balanceOf(self._user)
             self.normalized_balance = self.balance / (10**self.decimals)
+
+        self.price: Optional[float]
 
         if oracle_address:
             self._price_oracle = ChainlinkPriceContract(address=oracle_address)
@@ -156,8 +155,7 @@ class Erc20Token:
         if not silent:
             print(f"• {self.symbol} ({self.name})")
 
-        # WIP: huge memory savings if token contract object is not used after initialization
-        # testing in progress
+        # Memory savings if token contract object is not used after initialization
         if unload_brownie_contract_after_init:
             self._contract = None
 

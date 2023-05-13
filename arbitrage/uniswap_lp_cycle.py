@@ -53,7 +53,7 @@ class UniswapLpCycle(Arbitrage):
 
         # set up a pre-determined list of "swap vectors", which allows the helper
         # to identify the tokens and direction of each swap along the path
-        self.swap_vectors = []
+        self.swap_vectors: List[Dict] = []
         for i, pool in enumerate(self.swap_pools):
             if i == 0:
                 if self.input_token == pool.token0:
@@ -90,7 +90,7 @@ class UniswapLpCycle(Arbitrage):
 
         self.pool_states = {pool.address: None for pool in self.swap_pools}
 
-        self.best = {
+        self.best: dict = {
             "input_token": self.input_token,
             "last_swap_amount": 0,
             "profit_amount": 0,
@@ -126,7 +126,7 @@ class UniswapLpCycle(Arbitrage):
             else {}
         )
 
-        pools_amounts_out = []
+        pools_amounts_out: List[Dict] = []
 
         for i, pool in enumerate(self.swap_pools):
             pool_vector = self.swap_vectors[i]
@@ -135,8 +135,10 @@ class UniswapLpCycle(Arbitrage):
             _zeroForOne = pool_vector["zeroForOne"]
 
             try:
+                token_out_quantity: int
+                token_in_remainder: int
                 # calculate the swap output through the pool
-                if pool.uniswap_version == 2:
+                if isinstance(pool, LiquidityPool):
                     token_out_quantity = (
                         pool.calculate_tokens_out_from_tokens_in(
                             token_in=token_in,
@@ -146,7 +148,7 @@ class UniswapLpCycle(Arbitrage):
                             override_state=_overrides.get(pool.address),
                         )
                     )
-                elif pool.uniswap_version == 3:
+                elif isinstance(pool, V3LiquidityPool):
                     (
                         token_out_quantity,
                         token_in_remainder,
@@ -338,7 +340,7 @@ class UniswapLpCycle(Arbitrage):
         )
 
         # bracket the initial guess for the algo
-        bracket_amount = (
+        bracket_amount: int = (
             self.best["last_swap_amount"]
             if self.best["last_swap_amount"]
             else self.max_input
@@ -477,7 +479,6 @@ class UniswapLpCycle(Arbitrage):
             Union[LiquidityPool, V3LiquidityPool, CamelotLiquidityPool]
         ] = []
         for pool_address, pool_type in swap_pool_addresses:
-            # determine if the pool is a V2 or V3 type
             if pool_type == "V2":
                 pool_objects.append(LiquidityPool(address=pool_address))
             elif pool_type == "V3":

@@ -2,8 +2,8 @@ import time
 from decimal import Decimal
 from typing import Optional
 
-from brownie import Contract
-from brownie.network.account import LocalAccount
+from brownie import Contract  # type: ignore
+from brownie.network.account import LocalAccount  # type: ignore
 
 
 class Router:
@@ -21,7 +21,7 @@ class Router:
         self.address = address
 
         try:
-            self._contract = Contract(self.address)
+            self._contract = Contract(address)
         except Exception as e:
             print(e)
             if abi:
@@ -32,8 +32,9 @@ class Router:
                 self._contract = Contract.from_explorer(address=address)
 
         self.name = name
-        self._user = user
-        print(f"• {name}")
+        if user is not None:
+            self._user = user
+            print(f"• {name}")
 
     def __str__(self) -> str:
         return self.name
@@ -49,7 +50,7 @@ class Router:
         scale=0,
     ) -> bool:
         try:
-            params = {}
+            params: dict = {}
             params["from"] = self._user.address
             # if scale:
             #     params['priority_fee'] = get_scaled_priority_fee()

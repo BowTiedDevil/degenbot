@@ -1,6 +1,4 @@
-from brownie import Contract
-
-__all__ = ["ChainlinkPriceContract"]
+from brownie import Contract  # type: ignore
 
 
 class ChainlinkPriceContract:
@@ -13,13 +11,12 @@ class ChainlinkPriceContract:
         self,
         address: str,
     ) -> None:
-
         try:
             self._contract = Contract(address)
         except Exception as e:
             print(e)
             try:
-                self._contract: Contract = Contract.from_explorer(address)
+                self._contract = Contract.from_explorer(address)
             except Exception as e:
                 print(e)
 
@@ -29,9 +26,6 @@ class ChainlinkPriceContract:
     def update_price(
         self,
     ) -> None:
-        try:
-            self.price: float = self._contract.latestRoundData()[1] / (
-                10**self._decimals
-            )
-        except:
-            pass
+        self.price: float = self._contract.latestRoundData()[1] / (
+            10**self._decimals
+        )
