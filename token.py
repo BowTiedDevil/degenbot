@@ -7,6 +7,7 @@ from brownie.convert import to_address  # type: ignore
 from brownie.convert.datatypes import HexString  # type: ignore
 from brownie.network.account import LocalAccount  # type: ignore
 from hexbytes import HexBytes
+from web3 import Web3
 
 from degenbot.chainlink import ChainlinkPriceContract
 
@@ -86,22 +87,11 @@ class Erc20Token:
                     "data": brownie_w3.keccak(text="name()"),
                 }
             )
-
-        # if "name" in dir(self._contract):
-        #     self.name = self._contract.name()
-        # elif "NAME" in dir(self._contract):
-        #     self.name = self._contract.NAME()
-        # elif (
-        #     "_name" in dir(self._contract)
-        #     and type(self._contract._name) != str
-        # ):
-        #     self.name = self._contract._name()
-        # else:
-        #     print(
-        #         f"Contract does not have a 'name' or similar function. Setting to 'UNKNOWN', confirm on Etherscan: address {address}"
-        #     )
-        #     self.name = "UNKNOWN"
-
+        except:
+            warn(
+                f"Token contract at {address} does not implement a 'name' function."
+            )
+            self.name = f"UNKNOWN TOKEN @ {self.address}"
         if type(self.name) in [HexString, HexBytes]:
             self.name = self.name.decode()
 
@@ -114,19 +104,6 @@ class Erc20Token:
                     "data": brownie_w3.keccak(text="symbol()"),
                 }
             )
-
-        # if "symbol" in dir(self._contract):
-        #     self.symbol = self._contract.symbol()
-        # elif "SYMBOL" in dir(self._contract):
-        #     self.symbol = self._contract.SYMBOL()
-        # elif "_symbol" in dir(self._contract):
-        #     self.symbol = self._contract._symbol()
-        # else:
-        #     print(
-        #         f"Contract does not have a 'symbol' or similar function. Setting to 'UNKNOWN', confirm on Etherscan: address {address}"
-        #     )
-        #     self.symbol = "UNKNOWN"
-
         if type(self.symbol) in [HexString, HexBytes]:
             self.symbol = self.symbol.decode()
 
