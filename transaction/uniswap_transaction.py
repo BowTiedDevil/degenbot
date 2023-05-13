@@ -1,15 +1,17 @@
-import eth_abi
 import itertools
-import web3
+from typing import Dict, List, Optional, Tuple, Union
 
-from typing import List, Optional, Tuple, Union
+import eth_abi
+from web3 import Web3
+
 from degenbot.exceptions import (
     DegenbotError,
-    LiquidityPoolError,
     EVMRevertError,
+    LiquidityPoolError,
     ManagerError,
     TransactionError,
 )
+from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.transaction.base import Transaction
 from degenbot.uniswap.manager.uniswap_managers import (
     UniswapV2LiquidityPoolManager,
@@ -17,61 +19,70 @@ from degenbot.uniswap.manager.uniswap_managers import (
 )
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3.abi import (
-    UNISWAP_V3_ROUTER_ABI,
     UNISWAP_V3_ROUTER2_ABI,
+    UNISWAP_V3_ROUTER_ABI,
 )
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
-from degenbot.manager.token_manager import Erc20TokenHelperManager
 
-
-# Internal dict of known router contracts, pre-populated with mainnet addresses
-# Routers can be added via class method `add_router`
-_routers = {
-    "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F": {
-        "name": "Sushiswap: Router",
-        "uniswap_version": 2,
-        "factory_address": {2: "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"},
-    },
-    "0xf164fC0Ec4E93095b804a4795bBe1e041497b92a": {
-        "name": "UniswapV2: Router",
-        "uniswap_version": 2,
-        "factory_address": {2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"},
-    },
-    "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D": {
-        "name": "UniswapV2: Router 2",
-        "uniswap_version": 2,
-        "factory_address": {2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"},
-    },
-    "0xE592427A0AEce92De3Edee1F18E0157C05861564": {
-        "name": "UniswapV3: Router",
-        "uniswap_version": 3,
-        "factory_address": {3: "0x1F98431c8aD98523631AE4a59f267346ea31F984"},
-    },
-    "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45": {
-        "name": "UniswapV3: Router 2",
-        "uniswap_version": 3,
-        "factory_address": {
-            2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-            3: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+# Internal dict of known router contracts by chain ID. Pre-populated with mainnet addresses
+# New routers can be added via class method `add_router`
+_ROUTERS: Dict[int, Dict[str, Dict]] = {
+    1: {
+        "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F": {
+            "name": "Sushiswap: Router",
+            "uniswap_version": 2,
+            "factory_address": {
+                2: "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"
+            },
         },
-    },
-    "0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B": {
-        "name": "Uniswap Universal Router",
-        # TODO: determine if 'uniswap_version' is necessary,
-        # or convert to tuple (2,3) so routers that support
-        # two or more versions can be handled correctly
-        "uniswap_version": 3,
-        "factory_address": {
-            2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-            3: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        "0xf164fC0Ec4E93095b804a4795bBe1e041497b92a": {
+            "name": "UniswapV2: Router",
+            "uniswap_version": 2,
+            "factory_address": {
+                2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+            },
         },
-    },
+        "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D": {
+            "name": "UniswapV2: Router 2",
+            "uniswap_version": 2,
+            "factory_address": {
+                2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+            },
+        },
+        "0xE592427A0AEce92De3Edee1F18E0157C05861564": {
+            "name": "UniswapV3: Router",
+            "uniswap_version": 3,
+            "factory_address": {
+                3: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+            },
+        },
+        "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45": {
+            "name": "UniswapV3: Router 2",
+            "uniswap_version": 3,
+            "factory_address": {
+                2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+                3: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+            },
+        },
+        "0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B": {
+            "name": "Uniswap Universal Router",
+            # TODO: determine if 'uniswap_version' is necessary,
+            # or convert to tuple (2,3) so routers that support
+            # two or more versions can be handled correctly
+            "uniswap_version": 3,
+            "factory_address": {
+                2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+                3: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+            },
+        },
+    }
 }
 
 
 class UniswapTransaction(Transaction):
     def __init__(
         self,
+        chain_id: int,
         tx_hash: str,
         tx_nonce: Union[int, str],
         tx_value: Union[int, str],
@@ -79,8 +90,7 @@ class UniswapTransaction(Transaction):
         func_params: dict,
         router_address: str,
     ):
-
-        self.routers = _routers
+        self.routers = _ROUTERS[chain_id]
 
         if router_address not in self.routers:
             raise ValueError(f"Router address {router_address} unknown!")
@@ -113,11 +123,8 @@ class UniswapTransaction(Transaction):
         self.func_name = func_name
         self.func_params = func_params
         self.func_deadline = func_params.get("deadline")
-        self.func_previous_block_hash = (
-            hash.hex()
-            if (hash := self.func_params.get("previousBlockhash"))
-            else None
-        )
+        if hash := self.func_params.get("previousBlockhash"):
+            self.func_previous_block_hash = hash.hex()
 
     @classmethod
     def add_router(cls, chain_id: int, router_address: str, router_dict: dict):
@@ -149,7 +156,7 @@ class UniswapTransaction(Transaction):
         associated with the transaction
         """
 
-        def decode_v3_path(path: bytes) -> list:            
+        def decode_v3_path(path: bytes) -> list:
             path_pos = 0
             exactInputParams_path_decoded: List[Union[str, int]] = []
             # read alternating 20 and 3 byte chunks from the encoded path,
@@ -175,10 +182,9 @@ class UniswapTransaction(Transaction):
             params: dict,
             unwrapped_input: Optional[bool] = False,
             silent: bool = False,
-        ) -> List[Tuple[LiquidityPool, dict]]:
-
-            v2_pool_objects = []
-            for token_addresses in itertools.pairwise(params.get("path")):
+        ) -> List[Tuple[LiquidityPool, Dict]]:
+            v2_pool_objects: List[LiquidityPool] = []
+            for token_addresses in itertools.pairwise(params["path"]):
                 try:
                     pool_helper: LiquidityPool = self.v2_pool_manager.get_pool(
                         token_addresses=token_addresses,
@@ -212,13 +218,16 @@ class UniswapTransaction(Transaction):
                 unload_brownie_contract_after_init=True,
             )
 
+            swap_in_quantity: int
             if unwrapped_input:
                 swap_in_quantity = self.value
             else:
-                swap_in_quantity = params.get("amountIn")
+                swap_in_quantity = params["amountIn"]
 
             # predict future pool states assuming the swap executes in isolation
-            future_pool_states = []
+            future_pool_states: List[Tuple[LiquidityPool, Dict]] = []
+            token_in_quantity: int
+            token_out_quantity: int
             for i, v2_pool in enumerate(v2_pool_objects):
                 token_in_quantity = (
                     swap_in_quantity if i == 0 else token_out_quantity
@@ -308,9 +317,8 @@ class UniswapTransaction(Transaction):
             unwrapped_input: Optional[bool] = False,
             silent: bool = False,
         ) -> List[Tuple[LiquidityPool, dict]]:
-
             pool_objects: List[LiquidityPool] = []
-            for token_addresses in itertools.pairwise(params.get("path")):
+            for token_addresses in itertools.pairwise(params["path"]):
                 try:
                     pool_helper: LiquidityPool = self.v2_pool_manager.get_pool(
                         token_addresses=token_addresses,
@@ -338,7 +346,10 @@ class UniswapTransaction(Transaction):
                 unload_brownie_contract_after_init=True,
             )
 
-            swap_out_quantity = params.get("amountOut")
+            swap_out_quantity: int = params["amountOut"]
+
+            token_in_quantity: int
+            token_out_quantity: int
 
             if unwrapped_input:
                 swap_in_quantity = self.value
@@ -411,8 +422,7 @@ class UniswapTransaction(Transaction):
         def v3_swap_exact_in(
             params: dict,
             silent: bool = False,
-        ) -> List[Tuple[V3LiquidityPool, dict]]:
-
+        ) -> Tuple[V3LiquidityPool, Dict]:
             # decode with Router ABI
             # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
             try:
@@ -425,7 +435,7 @@ class UniswapTransaction(Transaction):
                     amountIn,
                     amountOutMinimum,
                     sqrtPriceLimitX96,
-                ) = params.get("params")
+                ) = params["params"]
             except:
                 pass
 
@@ -440,7 +450,7 @@ class UniswapTransaction(Transaction):
                     amountIn,
                     amountOutMinimum,
                     sqrtPriceLimitX96,
-                ) = params.get("params")
+                ) = params["params"]
             except:
                 pass
 
@@ -451,7 +461,7 @@ class UniswapTransaction(Transaction):
                     tokenOut,
                     fee,
                     amountIn,
-                ) = params.get("params")
+                ) = params["params"]
             except:
                 pass
 
@@ -464,7 +474,7 @@ class UniswapTransaction(Transaction):
                     zeroForOne,
                     path,
                     payer,
-                ) = params.get("params")
+                ) = params["params"]
             except:
                 pass
 
@@ -505,18 +515,12 @@ class UniswapTransaction(Transaction):
                     f"V3 operation could not be simulated: {e}"
                 )
 
-            return [
-                (
-                    v3_pool,
-                    final_state,
-                )
-            ]
+            return v3_pool, final_state
 
         def v3_swap_exact_out(
             params: dict,
             silent: bool = False,
         ) -> List[Tuple[V3LiquidityPool, dict]]:
-
             sqrtPriceLimitX96 = None
             amountInMaximum = None
 
@@ -532,7 +536,7 @@ class UniswapTransaction(Transaction):
                     amountOut,
                     amountInMaximum,
                     sqrtPriceLimitX96,
-                ) = params.get("params")
+                ) = params["params"]
             except:
                 pass
 
@@ -547,7 +551,7 @@ class UniswapTransaction(Transaction):
                     amountOut,
                     amountInMaximum,
                     sqrtPriceLimitX96,
-                ) = params.get("params")
+                ) = params["params"]
             except:
                 pass
 
@@ -558,7 +562,7 @@ class UniswapTransaction(Transaction):
                     tokenOut,
                     fee,
                     amountOut,
-                ) = params.get("params")
+                ) = params["params"]
             except:
                 pass
 
@@ -624,10 +628,11 @@ class UniswapTransaction(Transaction):
         if func_params is None:
             func_params = self.func_params
 
-        future_state = []
+        future_state: List[
+            Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
+        ] = []
 
         try:
-
             # -----------------------------------------------------
             # UniswapV2 functions
             # -----------------------------------------------------
@@ -700,7 +705,7 @@ class UniswapTransaction(Transaction):
                 #     params=func_params
                 # )
                 # future_state.append([v3_pool, pool_state])
-                future_state.extend(
+                future_state.append(
                     v3_swap_exact_in(params=func_params, silent=silent)
                 )
             elif func_name == "exactInput":
@@ -714,7 +719,7 @@ class UniswapTransaction(Transaction):
                         exactInputParams_deadline,
                         exactInputParams_amountIn,
                         exactInputParams_amountOutMinimum,
-                    ) = func_params.get("params")
+                    ) = func_params["params"]
                 except:
                     pass
 
@@ -724,7 +729,7 @@ class UniswapTransaction(Transaction):
                         exactInputParams_recipient,
                         exactInputParams_amountIn,
                         exactInputParams_amountOutMinimum,
-                    ) = func_params.get("params")
+                    ) = func_params["params"]
                 except:
                     pass
 
@@ -785,6 +790,8 @@ class UniswapTransaction(Transaction):
                     fee = exactInputParams_path_decoded[token_pos + 1]
                     tokenOut = exactInputParams_path_decoded[token_pos + 2]
 
+                    v3_pool: V3LiquidityPool
+                    pool_state: Dict
                     v3_pool, pool_state = v3_swap_exact_in(
                         params={
                             "params": (
@@ -803,8 +810,8 @@ class UniswapTransaction(Transaction):
                             )
                         },
                         silent=silent,
-                    )[0]
-                    future_state.append([v3_pool, pool_state])
+                    )
+                    future_state.append((v3_pool, pool_state))
             elif func_name == "exactOutputSingle":
                 if not silent:
                     print(f"{func_name}: {self.hash}")
@@ -826,7 +833,7 @@ class UniswapTransaction(Transaction):
                         exactOutputParams_deadline,
                         exactOutputParams_amountOut,
                         exactOutputParams_amountInMaximum,
-                    ) = func_params.get("params")
+                    ) = func_params["params"]
                 except Exception as e:
                     pass
 
@@ -837,7 +844,7 @@ class UniswapTransaction(Transaction):
                         exactOutputParams_recipient,
                         exactOutputParams_amountOut,
                         exactOutputParams_amountInMaximum,
-                    ) = func_params.get("params")
+                    ) = func_params["params"]
                 except Exception as e:
                     pass
 
@@ -850,20 +857,12 @@ class UniswapTransaction(Transaction):
                     # stop at the end
                     if path_pos == len(exactOutputParams_path):
                         break
-                    elif (
-                        byte_length == 20
-                        and len(exactOutputParams_path)
-                        >= path_pos + byte_length
-                    ):
+                    elif byte_length == 20:
                         address = exactOutputParams_path[
                             path_pos : path_pos + byte_length
                         ].hex()
                         exactOutputParams_path_decoded.append(address)
-                    elif (
-                        byte_length == 3
-                        and len(exactOutputParams_path)
-                        >= path_pos + byte_length
-                    ):
+                    elif byte_length == 3:
                         fee = int(
                             exactOutputParams_path[
                                 path_pos : path_pos + byte_length
@@ -917,13 +916,12 @@ class UniswapTransaction(Transaction):
                         silent=silent,
                     )[0]
 
-                    future_state.append([v3_pool, pool_state])
+                    future_state.append((v3_pool, pool_state))
 
             # -----------------------------------------------------
             # Universal Router functions
             # -----------------------------------------------------
             elif func_name == "execute":
-
                 COMMANDS = {
                     0x00: "V3_SWAP_EXACT_IN",
                     0x01: "V3_SWAP_EXACT_OUT",
@@ -961,17 +959,17 @@ class UniswapTransaction(Transaction):
                     0x21: "SEAPORT_V2",
                 }
 
-                def simulate_dispatch(command_type: bytes, inputs: bytes):
-
+                def simulate_dispatch(command_type: int, inputs: bytes):
                     COMMAND_TYPE_MASK = 0x3F
                     command = COMMANDS[command_type & COMMAND_TYPE_MASK]
 
                     print(command)
 
-                    result = []
+                    result: List[
+                        Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
+                    ] = []
 
                     if command == "V3_SWAP_EXACT_IN":
-
                         if not silent:
                             print(f"{func_name}: {self.hash}")
 
@@ -1020,13 +1018,12 @@ class UniswapTransaction(Transaction):
                                     )
                                 },
                                 silent=silent,
-                            )[0]
-                            result.append([v3_pool, pool_state])
+                            )
+                            result.append((v3_pool, pool_state))
 
                         return result
 
                     elif command == "V3_SWAP_EXACT_OUT":
-
                         if not silent:
                             print(f"{func_name}: {self.hash}")
 
@@ -1082,7 +1079,7 @@ class UniswapTransaction(Transaction):
                                 silent=silent,
                             )[0]
 
-                            future_state.append([v3_pool, pool_state])
+                            future_state.append((v3_pool, pool_state))
 
                         return result
 
@@ -1097,7 +1094,6 @@ class UniswapTransaction(Transaction):
                     elif command == "PAY_PORTION":
                         pass
                     elif command == "V2_SWAP_EXACT_IN":
-
                         if not silent:
                             print(f"{func_name}: {self.hash}")
 
@@ -1133,7 +1129,6 @@ class UniswapTransaction(Transaction):
                         return result
 
                     elif command == "V2_SWAP_EXACT_OUT":
-
                         if not silent:
                             print(f"{func_name}: {self.hash}")
 
@@ -1217,9 +1212,10 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
-                commands = func_params.get("commands")
-                inputs = func_params.get("inputs")
-                deadline = func_params.get("deadline")
+                commands = func_params["commands"]
+                inputs = func_params["inputs"]
+                # not used?
+                # deadline = func_params.get("deadline")
 
                 future_state = []
 
@@ -1264,14 +1260,13 @@ class UniswapTransaction(Transaction):
             return future_state
 
     def simulate_multicall(self, silent: bool = False):
-
         future_state = []
 
-        for payload in self.func_params.get("data"):
+        for payload in self.func_params["data"]:
             try:
                 # decode with Router ABI
                 payload_func, payload_args = (
-                    web3.Web3()
+                    Web3()
                     .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
                     .decode_function_input(payload)
                 )
@@ -1281,7 +1276,7 @@ class UniswapTransaction(Transaction):
             try:
                 # decode with Router2 ABI
                 payload_func, payload_args = (
-                    web3.Web3()
+                    Web3()
                     .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
                     .decode_function_input(payload)
                 )
@@ -1289,14 +1284,13 @@ class UniswapTransaction(Transaction):
                 pass
 
             if payload_func.fn_name == "multicall":
-
                 if not silent:
                     print("Unwrapping nested multicall")
 
                 for payload in payload_args["data"]:
                     try:
                         _func, _params = (
-                            web3.Web3()
+                            Web3()
                             .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
                             .decode_function_input(payload)
                         )
@@ -1305,7 +1299,7 @@ class UniswapTransaction(Transaction):
 
                     try:
                         _func, _params = (
-                            web3.Web3()
+                            Web3()
                             .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
                             .decode_function_input(payload)
                         )

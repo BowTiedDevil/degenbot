@@ -497,7 +497,7 @@ class LiquidityPool:
         token_out: Optional[Erc20Token] = None,
         token_out_quantity: Optional[int] = None,
         override_state: Optional[dict] = None,
-    ) -> Optional[dict]:
+    ) -> dict:
         """
         TODO
         """
@@ -597,8 +597,6 @@ class LiquidityPool:
                 "reserves_token0": self.reserves_token0 + token0_delta,
                 "reserves_token1": self.reserves_token1 + token1_delta,
             }
-        else:
-            return None
 
     def update_reserves(
         self,
