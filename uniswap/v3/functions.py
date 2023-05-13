@@ -1,4 +1,4 @@
-from typing import Tuple, List, Union
+from typing import Tuple, List, Union, Iterable, Optional
 from itertools import cycle
 
 import eth_abi
@@ -33,33 +33,36 @@ def decode_v3_path(path: bytes) -> List[Union[str, int]]:
     return decoded_path
 
 
-def generate_v3_pool_address(token_addresses: Tuple[str, str], fee: int):
+def generate_v3_pool_address(
+    token_addresses: Iterable[str],
+    fee: int,
+    factory_address: Optional[str] = None,
+    init_hash: Optional[str] = None,
+) -> str:
     """
     Generate the deterministic pool address from the token addresses and fee.
 
     Adapted from https://github.com/Uniswap/v3-periphery/blob/main/contracts/libraries/PoolAddress.sol
     """
 
-    V3_FACTORY = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-    POOL_INIT_CODE_HASH = (
-        "0xE34F199B19B2B4F47F68442619D555527D244F78A3297EA89325F843F87B8B54"
-    )
+    if factory_address is None:
+        factory_address = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
 
-    token_addresses = (min(token_addresses), max(token_addresses))
+    if init_hash is None:
+        init_hash = "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
 
-    pool_address = Web3.toChecksumAddress(
+    token_addresses = sorted([address.lower() for address in token_addresses])
+
+    return Web3.toChecksumAddress(
         Web3.keccak(
-            hexstr=(
-                "ff"
-                + V3_FACTORY[2:]
-                + Web3.keccak(
-                    eth_abi.encode(
-                        ["address", "address", "uint24"],
-                        [*token_addresses, fee],
-                    )
-                ).hex()[2:]
-                + POOL_INIT_CODE_HASH[2:]
-            )
-        )[-20:].hex()
+            hexstr="0xff"
+            + factory_address[2:]
+            + Web3.keccak(
+                eth_abi.encode(
+                    ["address", "address", "uint24"],
+                    [*token_addresses, fee],
+                )
+            ).hex()[2:]
+            + init_hash[2:]
+        )[12:]
     )
-    return pool_address
