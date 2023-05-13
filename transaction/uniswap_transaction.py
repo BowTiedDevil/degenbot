@@ -120,13 +120,22 @@ class UniswapTransaction(Transaction):
         )
 
     @classmethod
-    def add_router(cls, router_address: str, router_dict: dict):
+    def add_router(cls, chain_id: int, router_address: str, router_dict: dict):
+        """
+        Add a new router
+        """
+        router_address = Web3.toChecksumAddress(router_address)
 
-        router_address = web3.Web3.toChecksumAddress(router_address)
-        if router_address in _routers:
+        for key in ["name", "uniswap_version", "factory_address"]:
+            if key not in router_dict:
+                raise ValueError(f"{key} not found in router_dict")
+
+        try:
+            _ROUTERS[chain_id][router_address]
+        except:
+            _ROUTERS[chain_id][router_address] = router_dict
+        else:
             raise ValueError("Router address already known!")
-
-        _routers[router_address] = router_dict
 
     def simulate(
         self,
@@ -140,19 +149,19 @@ class UniswapTransaction(Transaction):
         associated with the transaction
         """
 
-        def decode_v3_path(path: bytes) -> list:
+        def decode_v3_path(path: bytes) -> list:            
             path_pos = 0
-            exactInputParams_path_decoded = []
+            exactInputParams_path_decoded: List[Union[str, int]] = []
             # read alternating 20 and 3 byte chunks from the encoded path,
             # store each address (hex) and fee (int)
             for byte_length in itertools.cycle((20, 3)):
                 # stop at the end
                 if path_pos == len(path):
                     break
-                elif byte_length == 20 and len(path) >= path_pos + byte_length:
+                elif byte_length == 20:
                     address = path[path_pos : path_pos + byte_length].hex()
                     exactInputParams_path_decoded.append(address)
-                elif byte_length == 3 and len(path) >= path_pos + byte_length:
+                elif byte_length == 3:
                     fee = int(
                         path[path_pos : path_pos + byte_length].hex(),
                         16,
