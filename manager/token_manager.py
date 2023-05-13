@@ -20,7 +20,6 @@ class Erc20TokenHelperManager(Manager):
     _state: dict = {}
 
     def __init__(self, chain_id: Optional[int] = None):
-
         if chain_id is None:
             chain_id = chain.id
 

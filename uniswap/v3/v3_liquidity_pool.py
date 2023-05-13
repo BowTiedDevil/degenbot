@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from decimal import Decimal
 from threading import Lock
 from typing import List, Optional, Tuple, Union
+from warnings import warn
 
 import eth_abi
 from brownie import Contract, chain, multicall, network  # type:ignore
@@ -44,6 +45,7 @@ class BaseV3LiquidityPool(ABC):
     def __init__(
         self,
         address: str,
+        fee: Optional[int] = None,
         lens: Optional[Contract] = None,
         tokens: Optional[List[Erc20Token]] = None,
         name: str = "",
@@ -194,7 +196,7 @@ class BaseV3LiquidityPool(ABC):
             print(f"• SqrtPrice: {self.sqrt_price_x96}")
             print(f"• Tick: {self.tick}")
 
-    # The Brownie contract object cannot be pickled, so remove it and return the state
+    # Some objects cannot be pickled, so set those references to None and return the state
     def __getstate__(self):
         state = self.__dict__.copy()
         state["_brownie_contract"] = None
