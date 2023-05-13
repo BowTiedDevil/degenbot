@@ -117,7 +117,10 @@ class BaseV3LiquidityPool(ABC):
                 unload_brownie_contract_after_init=True,
             )
 
-        self.fee = self._brownie_contract.fee()  # immutable
+        if fee is None:
+            fee = self._brownie_contract.fee()
+
+        self.fee: int = fee
 
         # check that the address is a valid V3 pool (see https://github.com/Uniswap/v3-periphery/blob/main/contracts/libraries/PoolAddress.sol)
         FACTORY = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
