@@ -293,9 +293,6 @@ class UniswapTransaction(Transaction):
                 unload_brownie_contract_after_init=True,
             )
 
-            print(f"In : {token_in}")
-            print(f"Out: {token_out}")
-
             token_in_quantity: int
             token_out_quantity: int = params["amountOut"]
 
