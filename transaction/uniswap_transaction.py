@@ -19,11 +19,11 @@ from degenbot.uniswap.manager.uniswap_managers import (
     UniswapV3LiquidityPoolManager,
 )
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
-from degenbot.uniswap.v3.functions import decode_v3_path
 from degenbot.uniswap.v3.abi import (
     UNISWAP_V3_ROUTER2_ABI,
     UNISWAP_V3_ROUTER_ABI,
 )
+from degenbot.uniswap.v3.functions import decode_v3_path
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
 # Internal dict of known router contracts by chain ID. Pre-populated with mainnet addresses
