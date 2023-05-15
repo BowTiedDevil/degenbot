@@ -169,9 +169,380 @@ class UniswapTransaction(Transaction):
         associated with the transaction
         """
 
-        future_pool_states: List[Tuple[LiquidityPool, Dict]] = []
+        _UNIVERSAL_ROUTER_COMMANDS = {
+            0x00: "V3_SWAP_EXACT_IN",
+            0x01: "V3_SWAP_EXACT_OUT",
+            0x02: "PERMIT2_TRANSFER_FROM",
+            0x03: "PERMIT2_PERMIT_BATCH",
+            0x04: "SWEEP",
+            0x05: "TRANSFER",
+            0x06: "PAY_PORTION",
+            0x07: None,  # COMMAND_PLACEHOLDER
+            0x08: "V2_SWAP_EXACT_IN",
+            0x09: "V2_SWAP_EXACT_OUT",
+            0x0A: "PERMIT2_PERMIT",
+            0x0B: "WRAP_ETH",
+            0x0C: "UNWRAP_WETH",
+            0x0D: "ERMIT2_TRANSFER_FROM_BATCH",
+            0x0E: "BALANCE_CHECK_ERC20",
+            0x0F: None,  # COMMAND_PLACEHOLDER
+            0x10: "SEAPORT",
+            0x11: "LOOKS_RARE_721",
+            0x12: "NFTX",
+            0x13: "CRYPTOPUNKS",
+            0x14: "LOOKS_RARE_1155",
+            0x15: "OWNER_CHECK_721",
+            0x16: "OWNER_CHECK_1155",
+            0x17: "SWEEP_ERC721",
+            0x18: "X2Y2_721",
+            0x19: "SUDOSWAP",
+            0x1A: "NFT20",
+            0x1B: "X2Y2_1155",
+            0x1C: "FOUNDATION",
+            0x1D: "SWEEP_ERC1155",
+            0x1E: "ELEMENT_MARKET",
+            0x1F: None,  # COMMAND_PLACEHOLDER
+            0x20: "EXECUTE_SUB_PLAN",
+            0x21: "SEAPORT_V2",
+        }
 
-        def _v2_swap_exact_in(
+        future_pool_state: List[
+            Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
+        ] = []
+        future_pool_states: List[Tuple[LiquidityPool, Dict]] = []
+        v2_pool: LiquidityPool
+        v3_pool: V3LiquidityPool
+        pool_state: Dict
+
+        def _simulate_universal_dispatch(
+            command_type: int,
+            inputs: bytes,
+        ):
+            COMMAND_TYPE_MASK = 0x3F
+            command = _UNIVERSAL_ROUTER_COMMANDS[
+                command_type & COMMAND_TYPE_MASK
+            ]
+
+            print(command)
+
+            pool_state: Dict
+            pool_states: List[
+                Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
+            ] = []
+
+            if command in [
+                "PERMIT2_TRANSFER_FROM",
+                "PERMIT2_PERMIT_BATCH",
+                "SWEEP",
+                "TRANSFER",
+                "PAY_PORTION",
+                "PERMIT2_PERMIT",
+                "WRAP_ETH",
+                "UNWRAP_WETH",
+                "PERMIT2_TRANSFER_FROM_BATCH",
+                "BALANCE_CHECK_ERC20",
+                "SEAPORT",
+                "LOOKS_RARE_721",
+                "NFTX",
+                "CRYPTOPUNKS",
+                "LOOKS_RARE_1155",
+                "OWNER_CHECK_721",
+                "OWNER_CHECK_1155",
+                "SWEEP_ERC721",
+                "X2Y2_721",
+                "SUDOSWAP",
+                "NFT20",
+                "X2Y2_1155",
+                "FOUNDATION",
+                "SWEEP_ERC1155",
+                "ELEMENT_MARKET",
+                "EXECUTE_SUB_PLAN",
+                "SEAPORT_V2",
+            ]:
+                pass
+
+            elif command == "V2_SWAP_EXACT_IN":
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+
+                # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
+                (
+                    recipient,
+                    amountIn,
+                    amountOutMin,
+                    path,
+                    payerIsUser,
+                ) = eth_abi.decode(
+                    [
+                        "address",
+                        "uint256",
+                        "uint256",
+                        "address[]",
+                        "bool",
+                    ],
+                    inputs,
+                )
+
+                func_params = {
+                    "amountIn": amountIn,
+                    "amountOutMin": amountOutMin,
+                    "path": path,
+                    "to": recipient,
+                }
+
+                pool_states.extend(
+                    _simulate_v2_swap_exact_in(func_params, silent=silent)
+                )
+
+                return pool_states
+
+            elif command == "V2_SWAP_EXACT_OUT":
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+
+                # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
+                (
+                    recipient,
+                    amountOut,
+                    amountInMax,
+                    path,
+                    payerIsUser,
+                ) = eth_abi.decode(
+                    [
+                        "address",
+                        "uint256",
+                        "uint256",
+                        "address[]",
+                        "bool",
+                    ],
+                    inputs,
+                )
+
+                func_params = {
+                    "amountOut": amountOut,
+                    "amountInMax": amountInMax,
+                    "path": path,
+                    "to": recipient,
+                }
+
+                pool_states.extend(
+                    _simulate_v2_swap_exact_out(func_params, silent=silent)
+                )
+
+                return pool_states
+
+            elif command == "V3_SWAP_EXACT_IN":
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+
+                # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
+                (
+                    recipient,
+                    amountIn,
+                    amountOutMin,
+                    path,
+                    payerIsUser,
+                ) = eth_abi.decode(
+                    ["address", "uint256", "uint256", "bytes", "bool"],
+                    inputs,
+                )
+
+                exactInputParams_path_decoded = decode_v3_path(path)
+
+                # decode the path - tokenIn is the first position, fee is the second position, tokenOut is the third position
+                # paths can be an arbitrary length, but address & fee values are always interleaved
+                # e.g. tokenIn, fee, tokenOut, fee,
+                last_token_pos = len(exactInputParams_path_decoded) - 3
+
+                for token_pos in range(
+                    0,
+                    len(exactInputParams_path_decoded) - 2,
+                    2,
+                ):
+                    tokenIn = exactInputParams_path_decoded[token_pos]
+                    fee = exactInputParams_path_decoded[token_pos + 1]
+                    tokenOut = exactInputParams_path_decoded[token_pos + 2]
+
+                    last_swap = token_pos == last_token_pos
+
+                    v3_pool, pool_state = _simulate_v3_swap_exact_in(
+                        # manually craft the `params` dict
+                        params={
+                            "params": (
+                                tokenIn,
+                                tokenOut,
+                                fee,
+                                # use amountIn for the first swap, otherwise take the output
+                                # amount of the last swap (always negative so we can check
+                                # for the min without knowing the token positions)
+                                amountIn
+                                if token_pos == 0
+                                else -min(
+                                    pool_state["amount0_delta"],
+                                    pool_state["amount1_delta"],
+                                ),
+                                # only apply minimum output to the last swap
+                                amountOutMin if last_swap else None,
+                            )
+                        },
+                        silent=silent,
+                    )
+                    pool_states.append((v3_pool, pool_state))
+
+                return pool_states
+
+            elif command == "V3_SWAP_EXACT_OUT":
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+
+                # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
+                (
+                    recipient,
+                    amountOut,
+                    amountInMax,
+                    path,
+                    payerIsUser,
+                ) = eth_abi.decode(
+                    ["address", "uint256", "uint256", "bytes", "bool"],
+                    inputs,
+                )
+
+                exactOutputParams_path_decoded = decode_v3_path(path)
+
+                # the path is encoded in REVERSE order, so we decode from start to finish
+                # tokenOut is the first position, tokenIn is the second position
+                # e.g. tokenOut, fee, tokenIn
+                last_token_pos = len(exactOutputParams_path_decoded) - 3
+
+                for token_pos in range(
+                    0,
+                    len(exactOutputParams_path_decoded) - 2,
+                    2,
+                ):
+                    tokenOut = exactOutputParams_path_decoded[token_pos]
+                    fee = exactOutputParams_path_decoded[token_pos + 1]
+                    tokenIn = exactOutputParams_path_decoded[token_pos + 2]
+
+                    last_swap = token_pos == last_token_pos
+
+                    v3_pool, pool_state = _simulate_v3_swap_exact_out(
+                        params={
+                            "params": (
+                                tokenIn,
+                                tokenOut,
+                                fee,
+                                # use amountOut for the last swap (token_pos == 0),
+                                # otherwise take the input amount of the previous swap
+                                # (always positive so we can check for the max without
+                                # knowing the token positions)
+                                amountOut
+                                if token_pos == 0
+                                else max(
+                                    pool_state["amount0_delta"],
+                                    pool_state["amount1_delta"],
+                                ),
+                                # only apply maximum input to the last swap
+                                amountInMax if last_swap else None,
+                            )
+                        },
+                        silent=silent,
+                    )
+
+                    pool_states.append((v3_pool, pool_state))
+
+                return pool_states
+
+            else:
+                raise TransactionError(f"Invalid command {command}")
+
+        def _simulate_v3_multicall(
+            params,
+            silent: bool = False,
+        ):
+            """
+            TBD
+            """
+
+            future_state = []
+
+            # for payload in self.func_params["data"]:
+            for payload in params["data"]:
+                try:
+                    # decode with Router ABI
+                    payload_func, payload_args = (
+                        Web3()
+                        .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
+                        .decode_function_input(payload)
+                    )
+                except:
+                    pass
+
+                try:
+                    # decode with Router2 ABI
+                    payload_func, payload_args = (
+                        Web3()
+                        .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
+                        .decode_function_input(payload)
+                    )
+                except:
+                    pass
+
+                if payload_func.fn_name == "multicall":
+                    if not silent:
+                        print("Unwrapping nested multicall")
+
+                    for payload in payload_args["data"]:
+                        try:
+                            _func, _params = (
+                                Web3()
+                                .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
+                                .decode_function_input(payload)
+                            )
+                        except:
+                            pass
+
+                        try:
+                            _func, _params = (
+                                Web3()
+                                .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
+                                .decode_function_input(payload)
+                            )
+                        except:
+                            pass
+
+                        try:
+                            # simulate each payload individually and append its result to
+                            # the future_state tuple
+                            future_state.extend(
+                                self.simulate(
+                                    func_name=_func.fn_name,
+                                    func_params=_params,
+                                    silent=silent,
+                                )
+                            )
+                        except Exception as e:
+                            raise TransactionError(
+                                f"Could not decode nested multicall: {e}"
+                            )
+                else:
+                    try:
+                        # simulate payload individually and append their results to
+                        # future_state
+                        future_state.extend(
+                            self.simulate(
+                                func_name=payload_func.fn_name,
+                                func_params=payload_args,
+                                silent=silent,
+                            )
+                        )
+                    except Exception as e:
+                        raise TransactionError(
+                            f"Could not decode multicall: {e}"
+                        )
+
+            return future_state
+
+        def _simulate_v2_swap_exact_in(
             params: dict,
             unwrapped_input: Optional[bool] = False,
             silent: bool = False,
@@ -275,7 +646,7 @@ class UniswapTransaction(Transaction):
 
             return future_pool_states
 
-        def _v2_swap_exact_out(
+        def _simulate_v2_swap_exact_out(
             params: dict,
             unwrapped_input: Optional[bool] = False,
             silent: bool = False,
@@ -390,7 +761,7 @@ class UniswapTransaction(Transaction):
 
             return future_pool_states
 
-        def _v3_swap_exact_in(
+        def _simulate_v3_swap_exact_in(
             params: dict,
             silent: bool = False,
         ) -> Tuple[V3LiquidityPool, Dict]:
@@ -402,6 +773,8 @@ class UniswapTransaction(Transaction):
             token_out_object: Erc20Token
             token_in_quantity: int
             token_out_quantity: int
+            token_in_address: str
+            token_out_address: str
 
             # decode with Router ABI
             # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
@@ -516,7 +889,7 @@ class UniswapTransaction(Transaction):
 
             return v3_pool, final_state
 
-        def _v3_swap_exact_out(
+        def _simulate_v3_swap_exact_out(
             params: dict,
             silent: bool = False,
         ) -> Tuple[V3LiquidityPool, dict]:
@@ -658,10 +1031,6 @@ class UniswapTransaction(Transaction):
         if func_params is None:
             func_params = self.func_params
 
-        future_state: List[
-            Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
-        ] = []
-
         try:
             # -----------------------------------------------------
             # UniswapV2 functions
@@ -672,8 +1041,8 @@ class UniswapTransaction(Transaction):
             ):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_state.extend(
-                    _v2_swap_exact_in(func_params, silent=silent)
+                future_pool_state.extend(
+                    _simulate_v2_swap_exact_in(func_params, silent=silent)
                 )
 
             elif func_name in (
@@ -682,8 +1051,8 @@ class UniswapTransaction(Transaction):
             ):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_state.extend(
-                    _v2_swap_exact_in(
+                future_pool_state.extend(
+                    _simulate_v2_swap_exact_in(
                         func_params, unwrapped_input=True, silent=silent
                     )
                 )
@@ -694,29 +1063,33 @@ class UniswapTransaction(Transaction):
             ]:
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_state.extend(
-                    _v2_swap_exact_in(func_params, silent=silent)
+                future_pool_state.extend(
+                    _simulate_v2_swap_exact_in(func_params, silent=silent)
                 )
 
             elif func_name in ("swapTokensForExactETH"):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_state.extend(
-                    _v2_swap_exact_out(params=func_params, silent=silent)
+                future_pool_state.extend(
+                    _simulate_v2_swap_exact_out(
+                        params=func_params, silent=silent
+                    )
                 )
 
             elif func_name in ("swapTokensForExactTokens"):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_state.extend(
-                    _v2_swap_exact_out(params=func_params, silent=silent)
+                future_pool_state.extend(
+                    _simulate_v2_swap_exact_out(
+                        params=func_params, silent=silent
+                    )
                 )
 
             elif func_name in ("swapETHForExactTokens"):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_state.extend(
-                    _v2_swap_exact_out(
+                future_pool_state.extend(
+                    _simulate_v2_swap_exact_out(
                         params=func_params, unwrapped_input=True, silent=silent
                     )
                 )
@@ -727,12 +1100,16 @@ class UniswapTransaction(Transaction):
             elif func_name == "multicall":
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_state = self.simulate_multicall(silent=silent)
+                future_pool_state = _simulate_v3_multicall(
+                    params=self.func_params, silent=silent
+                )
             elif func_name == "exactInputSingle":
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_state.append(
-                    _v3_swap_exact_in(params=func_params, silent=silent)
+                future_pool_state.append(
+                    _simulate_v3_swap_exact_in(
+                        params=func_params, silent=silent
+                    )
                 )
             elif func_name == "exactInput":
                 if not silent:
@@ -781,6 +1158,8 @@ class UniswapTransaction(Transaction):
                     )
 
                 # follow the swap through the given path
+                last_token_pos = len(exactInputParams_path_decoded) - 3
+
                 for token_pos in range(
                     0,
                     len(exactInputParams_path_decoded) - 2,
@@ -790,9 +1169,9 @@ class UniswapTransaction(Transaction):
                     fee = exactInputParams_path_decoded[token_pos + 1]
                     tokenOut = exactInputParams_path_decoded[token_pos + 2]
 
-                    v3_pool: V3LiquidityPool
-                    pool_state: Dict
-                    v3_pool, pool_state = _v3_swap_exact_in(
+                    last_swap = token_pos == last_token_pos
+
+                    v3_pool, pool_state = _simulate_v3_swap_exact_in(
                         params={
                             "params": (
                                 tokenIn,
@@ -807,16 +1186,22 @@ class UniswapTransaction(Transaction):
                                     pool_state["amount0_delta"],
                                     pool_state["amount1_delta"],
                                 ),
+                                # only apply minimum output to the last swap
+                                exactInputParams_amountOutMinimum
+                                if last_swap
+                                else None,
                             )
                         },
                         silent=silent,
                     )
-                    future_state.append((v3_pool, pool_state))
+                    future_pool_state.append((v3_pool, pool_state))
             elif func_name == "exactOutputSingle":
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_state.append(
-                    _v3_swap_exact_out(params=func_params, silent=silent)
+                future_pool_state.append(
+                    _simulate_v3_swap_exact_out(
+                        params=func_params, silent=silent
+                    )
                 )
             elif func_name == "exactOutput":
                 if not silent:
@@ -866,6 +1251,8 @@ class UniswapTransaction(Transaction):
                 # the path is encoded in REVERSE order, so we decode from start to finish
                 # tokenOut is the first position, tokenIn is the second position
                 # e.g. tokenOut, fee, tokenIn
+                last_token_pos = len(exactOutputParams_path_decoded) - 3
+
                 for token_pos in range(
                     0,
                     len(exactOutputParams_path_decoded) - 2,
@@ -875,7 +1262,9 @@ class UniswapTransaction(Transaction):
                     fee = exactOutputParams_path_decoded[token_pos + 1]
                     tokenIn = exactOutputParams_path_decoded[token_pos + 2]
 
-                    v3_pool, pool_state = _v3_swap_exact_out(
+                    last_swap = token_pos == last_token_pos
+
+                    v3_pool, pool_state = _simulate_v3_swap_exact_out(
                         params={
                             "params": (
                                 tokenIn,
@@ -891,323 +1280,21 @@ class UniswapTransaction(Transaction):
                                     pool_state["amount0_delta"],
                                     pool_state["amount1_delta"],
                                 ),
+                                # only apply maximum input to the last swap
+                                exactOutputParams_amountInMaximum
+                                if last_swap
+                                else None,
                             )
                         },
                         silent=silent,
                     )
 
-                    future_state.append((v3_pool, pool_state))
+                    future_pool_state.append((v3_pool, pool_state))
 
             # -----------------------------------------------------
             # Universal Router functions
             # -----------------------------------------------------
             elif func_name == "execute":
-                _UNIVERSAL_ROUTER_COMMANDS = {
-                    0x00: "V3_SWAP_EXACT_IN",
-                    0x01: "V3_SWAP_EXACT_OUT",
-                    0x02: "PERMIT2_TRANSFER_FROM",
-                    0x03: "PERMIT2_PERMIT_BATCH",
-                    0x04: "SWEEP",
-                    0x05: "TRANSFER",
-                    0x06: "PAY_PORTION",
-                    0x07: None,  # COMMAND_PLACEHOLDER
-                    0x08: "V2_SWAP_EXACT_IN",
-                    0x09: "V2_SWAP_EXACT_OUT",
-                    0x0A: "PERMIT2_PERMIT",
-                    0x0B: "WRAP_ETH",
-                    0x0C: "UNWRAP_WETH",
-                    0x0D: "ERMIT2_TRANSFER_FROM_BATCH",
-                    0x0E: "BALANCE_CHECK_ERC20",
-                    0x0F: None,  # COMMAND_PLACEHOLDER
-                    0x10: "SEAPORT",
-                    0x11: "LOOKS_RARE_721",
-                    0x12: "NFTX",
-                    0x13: "CRYPTOPUNKS",
-                    0x14: "LOOKS_RARE_1155",
-                    0x15: "OWNER_CHECK_721",
-                    0x16: "OWNER_CHECK_1155",
-                    0x17: "SWEEP_ERC721",
-                    0x18: "X2Y2_721",
-                    0x19: "SUDOSWAP",
-                    0x1A: "NFT20",
-                    0x1B: "X2Y2_1155",
-                    0x1C: "FOUNDATION",
-                    0x1D: "SWEEP_ERC1155",
-                    0x1E: "ELEMENT_MARKET",
-                    0x1F: None,  # COMMAND_PLACEHOLDER
-                    0x20: "EXECUTE_SUB_PLAN",
-                    0x21: "SEAPORT_V2",
-                }
-
-                def simulate_dispatch(command_type: int, inputs: bytes):
-                    COMMAND_TYPE_MASK = 0x3F
-                    command = _UNIVERSAL_ROUTER_COMMANDS[
-                        command_type & COMMAND_TYPE_MASK
-                    ]
-
-                    print(command)
-
-                    pool_state: Dict
-
-                    result: List[
-                        Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
-                    ] = []
-
-                    if command == "V3_SWAP_EXACT_IN":
-                        if not silent:
-                            print(f"{func_name}: {self.hash}")
-
-                        # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
-                        (
-                            recipient,
-                            amountIn,
-                            amountOutMin,
-                            path,
-                            payerIsUser,
-                        ) = eth_abi.decode(
-                            ["address", "uint256", "uint256", "bytes", "bool"],
-                            inputs,
-                        )
-
-                        exactInputParams_path_decoded = decode_v3_path(path)
-
-                        # decode the path - tokenIn is the first position, fee is the second position, tokenOut is the third position
-                        # paths can be an arbitrary length, but address & fee values are always interleaved
-                        # e.g. tokenIn, fee, tokenOut, fee,
-                        last_token_pos = len(exactInputParams_path_decoded) - 3
-
-                        for token_pos in range(
-                            0,
-                            len(exactInputParams_path_decoded) - 2,
-                            2,
-                        ):
-                            tokenIn = exactInputParams_path_decoded[token_pos]
-                            fee = exactInputParams_path_decoded[token_pos + 1]
-                            tokenOut = exactInputParams_path_decoded[
-                                token_pos + 2
-                            ]
-
-                            last_swap = token_pos == last_token_pos
-
-                            v3_pool, pool_state = _v3_swap_exact_in(
-                                # manually craft the `params` dict
-                                params={
-                                    "params": (
-                                        tokenIn,
-                                        tokenOut,
-                                        fee,
-                                        # use amountIn for the first swap, otherwise take the output
-                                        # amount of the last swap (always negative so we can check
-                                        # for the min without knowing the token positions)
-                                        amountIn
-                                        if token_pos == 0
-                                        else -min(
-                                            pool_state["amount0_delta"],
-                                            pool_state["amount1_delta"],
-                                        ),
-                                        # only apply minimum output to the last swap
-                                        amountOutMin if last_swap else None,
-                                    )
-                                },
-                                silent=silent,
-                            )
-                            result.append((v3_pool, pool_state))
-
-                        return result
-
-                    elif command == "V3_SWAP_EXACT_OUT":
-                        if not silent:
-                            print(f"{func_name}: {self.hash}")
-
-                        # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
-                        (
-                            recipient,
-                            amountOut,
-                            amountInMax,
-                            path,
-                            payerIsUser,
-                        ) = eth_abi.decode(
-                            ["address", "uint256", "uint256", "bytes", "bool"],
-                            inputs,
-                        )
-
-                        exactOutputParams_path_decoded = decode_v3_path(path)
-
-                        # the path is encoded in REVERSE order, so we decode from start to finish
-                        # tokenOut is the first position, tokenIn is the second position
-                        # e.g. tokenOut, fee, tokenIn
-                        last_token_pos = (
-                            len(exactOutputParams_path_decoded) - 3
-                        )
-
-                        for token_pos in range(
-                            0,
-                            len(exactOutputParams_path_decoded) - 2,
-                            2,
-                        ):
-                            tokenOut = exactOutputParams_path_decoded[
-                                token_pos
-                            ]
-                            fee = exactOutputParams_path_decoded[token_pos + 1]
-                            tokenIn = exactOutputParams_path_decoded[
-                                token_pos + 2
-                            ]
-
-                            last_swap = token_pos == last_token_pos
-
-                            v3_pool, pool_state = _v3_swap_exact_out(
-                                params={
-                                    "params": (
-                                        tokenIn,
-                                        tokenOut,
-                                        fee,
-                                        # use amountOut for the last swap (token_pos == 0),
-                                        # otherwise take the input amount of the previous swap
-                                        # (always positive so we can check for the max without
-                                        # knowing the token positions)
-                                        amountOut
-                                        if token_pos == 0
-                                        else max(
-                                            pool_state["amount0_delta"],
-                                            pool_state["amount1_delta"],
-                                        ),
-                                        # only apply maximum input to the last swap
-                                        amountInMax if last_swap else None,
-                                    )
-                                },
-                                silent=silent,
-                            )
-
-                            result.append((v3_pool, pool_state))
-
-                        return result
-
-                    elif command == "PERMIT2_TRANSFER_FROM":
-                        pass
-                    elif command == "PERMIT2_PERMIT_BATCH":
-                        pass
-                    elif command == "SWEEP":
-                        pass
-                    elif command == "TRANSFER":
-                        pass
-                    elif command == "PAY_PORTION":
-                        pass
-                    elif command == "V2_SWAP_EXACT_IN":
-                        if not silent:
-                            print(f"{func_name}: {self.hash}")
-
-                        # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
-                        (
-                            recipient,
-                            amountIn,
-                            amountOutMin,
-                            path,
-                            payerIsUser,
-                        ) = eth_abi.decode(
-                            [
-                                "address",
-                                "uint256",
-                                "uint256",
-                                "address[]",
-                                "bool",
-                            ],
-                            inputs,
-                        )
-
-                        func_params = {
-                            "amountIn": amountIn,
-                            "amountOutMin": amountOutMin,
-                            "path": path,
-                            "to": recipient,
-                        }
-
-                        result.extend(
-                            _v2_swap_exact_in(func_params, silent=silent)
-                        )
-
-                        return result
-
-                    elif command == "V2_SWAP_EXACT_OUT":
-                        if not silent:
-                            print(f"{func_name}: {self.hash}")
-
-                        # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
-                        (
-                            recipient,
-                            amountOut,
-                            amountInMax,
-                            path,
-                            payerIsUser,
-                        ) = eth_abi.decode(
-                            [
-                                "address",
-                                "uint256",
-                                "uint256",
-                                "address[]",
-                                "bool",
-                            ],
-                            inputs,
-                        )
-
-                        func_params = {
-                            "amountOut": amountOut,
-                            "amountInMax": amountInMax,
-                            "path": path,
-                            "to": recipient,
-                        }
-
-                        result.extend(
-                            _v2_swap_exact_out(func_params, silent=silent)
-                        )
-
-                        return result
-                    elif command == "PERMIT2_PERMIT":
-                        pass
-                    elif command == "WRAP_ETH":
-                        pass
-                    elif command == "UNWRAP_WETH":
-                        pass
-                    elif command == "PERMIT2_TRANSFER_FROM_BATCH":
-                        pass
-                    elif command == "BALANCE_CHECK_ERC20":
-                        pass
-                    elif command == "SEAPORT":
-                        pass
-                    elif command == "LOOKS_RARE_721":
-                        pass
-                    elif command == "NFTX":
-                        pass
-                    elif command == "CRYPTOPUNKS":
-                        pass
-                    elif command == "LOOKS_RARE_1155":
-                        pass
-                    elif command == "OWNER_CHECK_721":
-                        pass
-                    elif command == "OWNER_CHECK_1155":
-                        pass
-                    elif command == "SWEEP_ERC721":
-                        pass
-                    elif command == "X2Y2_721":
-                        pass
-                    elif command == "SUDOSWAP":
-                        pass
-                    elif command == "NFT20":
-                        pass
-                    elif command == "X2Y2_1155":
-                        pass
-                    elif command == "FOUNDATION":
-                        pass
-                    elif command == "SWEEP_ERC1155":
-                        pass
-                    elif command == "ELEMENT_MARKET":
-                        pass
-                    elif command == "EXECUTE_SUB_PLAN":
-                        pass
-                    elif command == "SEAPORT_V2":
-                        pass
-                    else:
-                        raise TransactionError(f"Invalid command {command}")
-
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
@@ -1216,13 +1303,13 @@ class UniswapTransaction(Transaction):
                 # not used?
                 # deadline = func_params.get("deadline")
 
-                future_state = []
+                future_pool_state = []
 
                 for idx in range(len(commands)):
                     command = commands[idx]
                     input = inputs[idx]
-                    if result := simulate_dispatch(command, input):
-                        future_state.extend(result)
+                    if result := _simulate_universal_dispatch(command, input):
+                        future_pool_state.extend(result)
 
             elif func_name in (
                 "addLiquidity",
@@ -1256,81 +1343,4 @@ class UniswapTransaction(Transaction):
         except (DegenbotError, ValueError) as e:
             raise TransactionError(f"Transaction could not be calculated: {e}")
         else:
-            return future_state
-
-    def simulate_multicall(self, silent: bool = False):
-        future_state = []
-
-        for payload in self.func_params["data"]:
-            try:
-                # decode with Router ABI
-                payload_func, payload_args = (
-                    Web3()
-                    .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
-                    .decode_function_input(payload)
-                )
-            except:
-                pass
-
-            try:
-                # decode with Router2 ABI
-                payload_func, payload_args = (
-                    Web3()
-                    .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
-                    .decode_function_input(payload)
-                )
-            except:
-                pass
-
-            if payload_func.fn_name == "multicall":
-                if not silent:
-                    print("Unwrapping nested multicall")
-
-                for payload in payload_args["data"]:
-                    try:
-                        _func, _params = (
-                            Web3()
-                            .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
-                            .decode_function_input(payload)
-                        )
-                    except:
-                        pass
-
-                    try:
-                        _func, _params = (
-                            Web3()
-                            .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
-                            .decode_function_input(payload)
-                        )
-                    except:
-                        pass
-
-                    try:
-                        # simulate each payload individually and append its result to
-                        # the future_state tuple
-                        future_state.extend(
-                            self.simulate(
-                                func_name=_func.fn_name,
-                                func_params=_params,
-                                silent=silent,
-                            )
-                        )
-                    except Exception as e:
-                        raise TransactionError(
-                            f"Could not decode nested multicall: {e}"
-                        )
-            else:
-                try:
-                    # simulate each payload individually and append its result to
-                    # the future_state tuple
-                    future_state.extend(
-                        self.simulate(
-                            func_name=payload_func.fn_name,
-                            func_params=payload_args,
-                            silent=silent,
-                        )
-                    )
-                except Exception as e:
-                    raise TransactionError(f"Could not decode multicall: {e}")
-
-        return future_state
+            return future_pool_state
