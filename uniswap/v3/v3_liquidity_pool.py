@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from threading import Lock
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from warnings import warn
 
 import eth_abi
@@ -19,6 +19,7 @@ from degenbot.exceptions import (
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.uniswap.v3.abi import UNISWAP_V3_POOL_ABI
+from degenbot.uniswap.v3.functions import generate_v3_pool_address
 from degenbot.uniswap.v3.libraries import (
     LiquidityMath,
     SwapMath,
@@ -1050,7 +1051,7 @@ class BaseV3LiquidityPool(ABC):
         token_out_quantity: Optional[int] = None,
         sqrt_price_limit: Optional[int] = None,
         override_state: Optional[dict] = None,
-    ) -> dict:
+    ) -> Dict[str, Any]:
         """
         [TBD]
         """
