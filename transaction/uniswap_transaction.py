@@ -12,6 +12,7 @@ from degenbot.exceptions import (
     TransactionError,
 )
 from degenbot.manager.token_manager import Erc20TokenHelperManager
+from degenbot.token import Erc20Token
 from degenbot.transaction.base import Transaction
 from degenbot.uniswap.manager.uniswap_managers import (
     UniswapV2LiquidityPoolManager,
@@ -168,12 +169,23 @@ class UniswapTransaction(Transaction):
         associated with the transaction
         """
 
+        future_pool_states: List[Tuple[LiquidityPool, Dict]] = []
+
         def _v2_swap_exact_in(
             params: dict,
             unwrapped_input: Optional[bool] = False,
             silent: bool = False,
         ) -> List[Tuple[LiquidityPool, Dict]]:
+            """
+            TBD
+            """
+
+            token_in_object: Erc20Token
+            token_out_object: Erc20Token
+            token_in_quantity: int
+            token_out_quantity: int
             v2_pool_objects: List[LiquidityPool] = []
+
             for token_addresses in itertools.pairwise(params["path"]):
                 try:
                     pool_helper: LiquidityPool = self.v2_pool_manager.get_pool(
@@ -189,17 +201,12 @@ class UniswapTransaction(Transaction):
 
             # the pool manager creates Erc20Token objects in the code block above,
             # so calls to `get_erc20token` will return the previously-created helper
-            token_in = self.token_manager.get_erc20token(
+            token_in_object = self.token_manager.get_erc20token(
                 address=params["path"][0],
                 silent=silent,
                 min_abi=True,
                 unload_brownie_contract_after_init=True,
             )
-
-            # predict future pool states assuming the swap executes in isolation
-            future_pool_states: List[Tuple[LiquidityPool, Dict]] = []
-            token_in_quantity: int
-            token_out_quantity: int
 
             if unwrapped_input:
                 token_in_quantity = self.value
@@ -210,16 +217,18 @@ class UniswapTransaction(Transaction):
                 # i == 0 for first pool in path, take from 'path' in func_params
                 # otherwise, set token_in equal to token_out from previous iteration
                 # and token_out equal to the other token held by the pool
-                token_in = token_in if i == 0 else token_out
-                token_out = (
+                token_in_object = (
+                    token_in_object if i == 0 else token_out_object
+                )
+                token_out_object = (
                     v2_pool.token0
-                    if token_in is v2_pool.token1
+                    if token_in_object is v2_pool.token1
                     else v2_pool.token1
                 )
 
                 current_state = v2_pool.state
                 future_state = v2_pool.simulate_swap(
-                    token_in=token_in,
+                    token_in=token_in_object,
                     token_in_quantity=token_in_quantity
                     if i == 0
                     else token_out_quantity,
@@ -240,7 +249,7 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"Simulating swap through pool: {v2_pool}")
                     print(
-                        f"\t{token_in_quantity} {token_in} -> {token_out_quantity} {token_out}"
+                        f"\t{token_in_quantity} {token_in_object} -> {token_out_quantity} {token_out_object}"
                     )
                     print("\t(CURRENT)")
                     print(
@@ -257,6 +266,13 @@ class UniswapTransaction(Transaction):
                         f"\t{v2_pool.token1}: {future_state['reserves_token1']}"
                     )
 
+            token_out_quantity_min = params["amountOutMin"]
+
+            if token_out_quantity < token_out_quantity_min:
+                raise TransactionError(
+                    f"Insufficient output for swap! {token_out_quantity} {token_out_object} received, {token_out_quantity_min} required"
+                )
+
             return future_pool_states
 
         def _v2_swap_exact_out(
@@ -264,7 +280,16 @@ class UniswapTransaction(Transaction):
             unwrapped_input: Optional[bool] = False,
             silent: bool = False,
         ) -> List[Tuple[LiquidityPool, dict]]:
+            """
+            TBD
+            """
+
+            token_in_object: Erc20Token
+            token_out_object: Erc20Token
+            token_in_quantity: int
+            token_out_quantity: int
             pool_objects: List[LiquidityPool] = []
+
             for token_addresses in itertools.pairwise(params["path"]):
                 try:
                     pool_helper: LiquidityPool = self.v2_pool_manager.get_pool(
@@ -280,26 +305,13 @@ class UniswapTransaction(Transaction):
 
             # the pool manager creates Erc20Token objects as it works,
             # so calls to `get_erc20token` will return the previously-created helper
-            token_in = self.token_manager.get_erc20token(
-                address=params["path"][0],
-                silent=silent,
-                min_abi=True,
-                unload_brownie_contract_after_init=True,
-            )
-            token_out = self.token_manager.get_erc20token(
+            token_out_object = self.token_manager.get_erc20token(
                 address=params["path"][-1],
                 silent=silent,
                 min_abi=True,
                 unload_brownie_contract_after_init=True,
             )
-
-            token_in_quantity: int
-            token_out_quantity: int = params["amountOut"]
-
-            if unwrapped_input:
-                swap_in_quantity = self.value
-            else:
-                swap_in_quantity = params["amountInMax"]
+            token_out_quantity = params["amountOut"]
 
             # predict future pool states assuming the swap executes in isolation
             # work through the pools backwards, since the swap will execute at a defined output, with input floating
@@ -313,16 +325,18 @@ class UniswapTransaction(Transaction):
                 # i == 0 for last pool in path, take from 'path' in func_params
                 # otherwise, set token_out equal to token_in from previous iteration
                 # and token_in equal to the other token held by the pool
-                token_out = token_out if i == 0 else token_in
-                token_in = (
+                token_out_object = (
+                    token_out_object if i == 0 else token_in_object
+                )
+                token_in_object = (
                     v2_pool.token0
-                    if token_out is v2_pool.token1
+                    if token_out_object is v2_pool.token1
                     else v2_pool.token1
                 )
 
                 current_state = v2_pool.state
                 future_state = v2_pool.simulate_swap(
-                    token_out=token_out,
+                    token_out=token_out_object,
                     token_out_quantity=token_out_quantity,
                 )
 
@@ -347,7 +361,7 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"Simulating swap through pool: {v2_pool}")
                     print(
-                        f"\t{token_in_quantity} {token_in} -> {token_out_quantity} {token_out}"
+                        f"\t{token_in_quantity} {token_in_object} -> {token_out_quantity} {token_out_object}"
                     )
                     print("\t(CURRENT)")
                     print(
@@ -364,9 +378,14 @@ class UniswapTransaction(Transaction):
                         f"\t{v2_pool.token1}: {future_state['reserves_token1']}"
                     )
 
+            if unwrapped_input:
+                swap_in_quantity = self.value
+            else:
+                swap_in_quantity = params["amountInMax"]
+
             if swap_in_quantity < token_in_quantity:
                 raise TransactionError(
-                    f"Insuffucient input for exact output swap! {swap_in_quantity} {token_in} provided, {token_in_quantity} required"
+                    f"Insufficient input for exact output swap! {swap_in_quantity} {token_in_object} provided, {token_in_quantity} required"
                 )
 
             return future_pool_states
@@ -375,18 +394,27 @@ class UniswapTransaction(Transaction):
             params: dict,
             silent: bool = False,
         ) -> Tuple[V3LiquidityPool, Dict]:
+            """
+            TBD
+            """
+
+            token_in_object: Erc20Token
+            token_out_object: Erc20Token
+            token_in_quantity: int
+            token_out_quantity: int
+
             # decode with Router ABI
             # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
             try:
                 (
-                    tokenIn,
-                    tokenOut,
+                    token_in_address,
+                    token_out_address,
                     fee,
                     recipient,
                     deadline,
-                    amountIn,
-                    amountOutMinimum,
-                    sqrtPriceLimitX96,
+                    token_in_quantity,
+                    token_out_quantity_min,
+                    sqrt_price_limit_x96,
                 ) = params["params"]
             except:
                 pass
@@ -395,37 +423,25 @@ class UniswapTransaction(Transaction):
             # https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
             try:
                 (
-                    tokenIn,
-                    tokenOut,
+                    token_in_address,
+                    token_out_address,
                     fee,
                     recipient,
-                    amountIn,
-                    amountOutMinimum,
-                    sqrtPriceLimitX96,
+                    token_in_quantity,
+                    token_out_quantity_min,
+                    sqrt_price_limit_x96,
                 ) = params["params"]
             except:
                 pass
 
-            # decode values from exactInput
+            # decode values from a manually-built exactInput swap
             try:
                 (
-                    tokenIn,
-                    tokenOut,
+                    token_in_address,
+                    token_out_address,
                     fee,
-                    amountIn,
-                ) = params["params"]
-            except:
-                pass
-
-            # decode a direct pool swap encoded by the Universal Router
-            try:
-                (
-                    recipient,
-                    zeroForOne,
-                    amount,
-                    zeroForOne,
-                    path,
-                    payer,
+                    token_in_quantity,
+                    token_out_quantity_min,
                 ) = params["params"]
             except:
                 pass
@@ -433,26 +449,26 @@ class UniswapTransaction(Transaction):
             try:
                 # get the V3 pool involved in the swap
                 v3_pool = self.v3_pool_manager.get_pool(
-                    token_addresses=(tokenIn, tokenOut),
+                    token_addresses=(token_in_address, token_out_address),
                     pool_fee=fee,
                     silent=silent,
                 )
             except (LiquidityPoolError, ManagerError) as e:
                 raise TransactionError(
-                    f"Could not get pool (via tokens {tokenIn} & {tokenOut}): {e}"
+                    f"Could not get pool (via tokens {token_in_address} & {token_out_address}): {e}"
                 )
             except:
                 raise
 
             try:
                 token_in_object = self.token_manager.get_erc20token(
-                    address=tokenIn,
+                    address=token_in_address,
                     silent=silent,
                     min_abi=True,
                     unload_brownie_contract_after_init=True,
                 )
                 token_out_object = self.token_manager.get_erc20token(
-                    address=tokenOut,
+                    address=token_out_address,
                     silent=silent,
                     min_abi=True,
                     unload_brownie_contract_after_init=True,
@@ -467,27 +483,19 @@ class UniswapTransaction(Transaction):
             try:
                 final_state = v3_pool.simulate_swap(
                     token_in=token_in_object,
-                    token_in_quantity=amountIn,
+                    token_in_quantity=token_in_quantity,
                 )
             except EVMRevertError as e:
                 raise TransactionError(f"Simulated V3 revert: {e}")
 
-            # final_state = {
-            #     "amount0_delta": amount0_delta,
-            #     "amount1_delta": amount1_delta,
-            #     "liquidity": end_liquidity,
-            #     "sqrt_price_x96": end_sqrtprice,
-            #     "tick": end_tick,
-            # }
-
-            amountOut = -min(
+            token_out_quantity = -min(
                 final_state["amount0_delta"], final_state["amount1_delta"]
             )
 
             if not silent:
                 print(f"Predicting output of swap through pool: {v3_pool}")
                 print(
-                    f"\t{amountIn} {token_in_object} -> {amountOut} {token_out_object}"
+                    f"\t{token_in_quantity} {token_in_object} -> {token_out_quantity} {token_out_object}"
                 )
                 print("\t(CURRENT)")
                 print(f"\tprice={current_state['sqrt_price_x96']}")
@@ -498,12 +506,29 @@ class UniswapTransaction(Transaction):
                 print(f"\tliquidity={final_state['liquidity']}")
                 print(f"\ttick={final_state['tick']}")
 
+            if (
+                token_out_quantity_min is not None
+                and token_out_quantity < token_out_quantity_min
+            ):
+                raise TransactionError(
+                    f"Insufficient output for swap! {token_out_quantity} {token_out_object} received, {token_out_quantity_min} required"
+                )
+
             return v3_pool, final_state
 
         def _v3_swap_exact_out(
             params: dict,
             silent: bool = False,
         ) -> Tuple[V3LiquidityPool, dict]:
+            """
+            TBD
+            """
+
+            token_in_object: Erc20Token
+            token_out_object: Erc20Token
+            token_in_quantity: int
+            token_out_quantity: int
+
             sqrtPriceLimitX96 = None
             amountInMaximum = None
 
@@ -545,6 +570,7 @@ class UniswapTransaction(Transaction):
                     tokenOut,
                     fee,
                     amountOut,
+                    amountInMaximum,
                 ) = params["params"]
             except:
                 pass
@@ -561,10 +587,13 @@ class UniswapTransaction(Transaction):
             except:
                 raise
 
-            if not silent:
-                print(f"Predicting output of swap through pool: {v3_pool}")
-
             try:
+                token_in_object = self.token_manager.get_erc20token(
+                    address=tokenIn,
+                    silent=silent,
+                    min_abi=True,
+                    unload_brownie_contract_after_init=True,
+                )
                 token_out_object = self.token_manager.get_erc20token(
                     address=tokenOut,
                     silent=silent,
@@ -575,6 +604,8 @@ class UniswapTransaction(Transaction):
                 print(e)
                 print(type(e))
                 raise
+
+            current_state = v3_pool.state
 
             try:
                 final_state = v3_pool.simulate_swap(
@@ -588,14 +619,35 @@ class UniswapTransaction(Transaction):
                 )
 
             # swap input is positive from the POV of the pool
-            amountIn = max(
+            token_in_quantity = max(
+                final_state["amount0_delta"],
+                final_state["amount1_delta"],
+            )
+            token_out_quantity = -min(
                 final_state["amount0_delta"],
                 final_state["amount1_delta"],
             )
 
-            if amountInMaximum and amountIn < amountInMaximum:
+            if not silent:
+                print(f"Predicting output of swap through pool: {v3_pool}")
+                print(
+                    f"\t{token_in_quantity} {token_in_object} -> {token_out_quantity} {token_out_object}"
+                )
+                print("\t(CURRENT)")
+                print(f"\tprice={current_state['sqrt_price_x96']}")
+                print(f"\tliquidity={current_state['liquidity']}")
+                print(f"\ttick={current_state['tick']}")
+                print(f"\t(FUTURE)")
+                print(f"\tprice={final_state['sqrt_price_x96']}")
+                print(f"\tliquidity={final_state['liquidity']}")
+                print(f"\ttick={final_state['tick']}")
+
+            if (
+                amountInMaximum is not None
+                and amountInMaximum < token_in_quantity
+            ):
                 raise TransactionError(
-                    f"amountIn ({amountIn}) < amountOutMin ({amountInMaximum})"
+                    f"Insufficient input for exact output swap! {token_in_quantity} {token_in_object} required, {amountInMaximum} provided"
                 )
 
             return v3_pool, final_state
@@ -751,7 +803,7 @@ class UniswapTransaction(Transaction):
                                 # for the min without knowing the token positions)
                                 exactInputParams_amountIn
                                 if token_pos == 0
-                                else min(
+                                else -min(
                                     pool_state["amount0_delta"],
                                     pool_state["amount1_delta"],
                                 ),
@@ -850,7 +902,7 @@ class UniswapTransaction(Transaction):
             # Universal Router functions
             # -----------------------------------------------------
             elif func_name == "execute":
-                COMMANDS = {
+                _UNIVERSAL_ROUTER_COMMANDS = {
                     0x00: "V3_SWAP_EXACT_IN",
                     0x01: "V3_SWAP_EXACT_OUT",
                     0x02: "PERMIT2_TRANSFER_FROM",
@@ -889,9 +941,13 @@ class UniswapTransaction(Transaction):
 
                 def simulate_dispatch(command_type: int, inputs: bytes):
                     COMMAND_TYPE_MASK = 0x3F
-                    command = COMMANDS[command_type & COMMAND_TYPE_MASK]
+                    command = _UNIVERSAL_ROUTER_COMMANDS[
+                        command_type & COMMAND_TYPE_MASK
+                    ]
 
                     print(command)
+
+                    pool_state: Dict
 
                     result: List[
                         Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
@@ -915,8 +971,11 @@ class UniswapTransaction(Transaction):
 
                         exactInputParams_path_decoded = decode_v3_path(path)
 
-                        # decode the path - tokenIn is the first position, tokenOut is the second position
-                        # e.g. tokenIn, fee, tokenOut
+                        # decode the path - tokenIn is the first position, fee is the second position, tokenOut is the third position
+                        # paths can be an arbitrary length, but address & fee values are always interleaved
+                        # e.g. tokenIn, fee, tokenOut, fee,
+                        last_token_pos = len(exactInputParams_path_decoded) - 3
+
                         for token_pos in range(
                             0,
                             len(exactInputParams_path_decoded) - 2,
@@ -928,7 +987,10 @@ class UniswapTransaction(Transaction):
                                 token_pos + 2
                             ]
 
+                            last_swap = token_pos == last_token_pos
+
                             v3_pool, pool_state = _v3_swap_exact_in(
+                                # manually craft the `params` dict
                                 params={
                                     "params": (
                                         tokenIn,
@@ -939,10 +1001,12 @@ class UniswapTransaction(Transaction):
                                         # for the min without knowing the token positions)
                                         amountIn
                                         if token_pos == 0
-                                        else min(
+                                        else -min(
                                             pool_state["amount0_delta"],
                                             pool_state["amount1_delta"],
                                         ),
+                                        # only apply minimum output to the last swap
+                                        amountOutMin if last_swap else None,
                                     )
                                 },
                                 silent=silent,
@@ -972,6 +1036,10 @@ class UniswapTransaction(Transaction):
                         # the path is encoded in REVERSE order, so we decode from start to finish
                         # tokenOut is the first position, tokenIn is the second position
                         # e.g. tokenOut, fee, tokenIn
+                        last_token_pos = (
+                            len(exactOutputParams_path_decoded) - 3
+                        )
+
                         for token_pos in range(
                             0,
                             len(exactOutputParams_path_decoded) - 2,
@@ -984,6 +1052,8 @@ class UniswapTransaction(Transaction):
                             tokenIn = exactOutputParams_path_decoded[
                                 token_pos + 2
                             ]
+
+                            last_swap = token_pos == last_token_pos
 
                             v3_pool, pool_state = _v3_swap_exact_out(
                                 params={
@@ -1000,14 +1070,15 @@ class UniswapTransaction(Transaction):
                                         else max(
                                             pool_state["amount0_delta"],
                                             pool_state["amount1_delta"],
-                                        )
-                                        # else max(swap_info.values()),
+                                        ),
+                                        # only apply maximum input to the last swap
+                                        amountInMax if last_swap else None,
                                     )
                                 },
                                 silent=silent,
                             )
 
-                            future_state.append((v3_pool, pool_state))
+                            result.append((v3_pool, pool_state))
 
                         return result
 
