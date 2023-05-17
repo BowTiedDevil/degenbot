@@ -411,8 +411,8 @@ class LiquidityPool:
                 "Must provide override values for both token reserves"
             )
 
-        if token_in_quantity < 0:
-            raise ValueError("token_in_quantity cannot be negative")
+        if token_in_quantity <= 0:
+            raise ValueError("token_in_quantity must be positive")
 
         if token_in == self.token0:
             reserves_in = (
