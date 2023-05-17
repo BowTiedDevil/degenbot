@@ -443,15 +443,12 @@ class LiquidityPool:
                 f"Could not identify token_in: {token_in}! Pool holds: {self.token0} {self.token1}"
             )
 
-        # amount_in_with_fee = token_in_quantity * (
-        #     self.fee.denominator - self.fee.numerator
-        # )
         amount_in_with_fee = token_in_quantity * (
             fee.denominator - fee.numerator
         )
         numerator = amount_in_with_fee * reserves_out
-        # denominator = reserves_in * self.fee.denominator + amount_in_with_fee
         denominator = reserves_in * fee.denominator + amount_in_with_fee
+
         return numerator // denominator
 
     def set_swap_target(
