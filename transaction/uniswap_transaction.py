@@ -265,23 +265,26 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
-                # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
-                (
-                    recipient,
-                    amountIn,
-                    amountOutMin,
-                    path,
-                    payerIsUser,
-                ) = eth_abi.decode(
-                    [
-                        "address",
-                        "uint256",
-                        "uint256",
-                        "address[]",
-                        "bool",
-                    ],
-                    inputs,
-                )
+                try:
+                    # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
+                    (
+                        recipient,
+                        amountIn,
+                        amountOutMin,
+                        path,
+                        payerIsUser,
+                    ) = eth_abi.decode(
+                        [
+                            "address",
+                            "uint256",
+                            "uint256",
+                            "address[]",
+                            "bool",
+                        ],
+                        inputs,
+                    )
+                except:
+                    raise TransactionError("Could not decode command")
 
                 func_params = {
                     "amountIn": amountIn,
@@ -300,23 +303,26 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
-                # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
-                (
-                    recipient,
-                    amountOut,
-                    amountInMax,
-                    path,
-                    payerIsUser,
-                ) = eth_abi.decode(
-                    [
-                        "address",
-                        "uint256",
-                        "uint256",
-                        "address[]",
-                        "bool",
-                    ],
-                    inputs,
-                )
+                try:
+                    # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
+                    (
+                        recipient,
+                        amountOut,
+                        amountInMax,
+                        path,
+                        payerIsUser,
+                    ) = eth_abi.decode(
+                        [
+                            "address",
+                            "uint256",
+                            "uint256",
+                            "address[]",
+                            "bool",
+                        ],
+                        inputs,
+                    )
+                except:
+                    raise TransactionError("Could not decode command")
 
                 func_params = {
                     "amountOut": amountOut,
@@ -335,17 +341,20 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
-                # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
-                (
-                    recipient,
-                    amountIn,
-                    amountOutMin,
-                    path,
-                    payerIsUser,
-                ) = eth_abi.decode(
-                    ["address", "uint256", "uint256", "bytes", "bool"],
-                    inputs,
-                )
+                try:
+                    # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
+                    (
+                        recipient,
+                        amountIn,
+                        amountOutMin,
+                        path,
+                        payerIsUser,
+                    ) = eth_abi.decode(
+                        ["address", "uint256", "uint256", "bytes", "bool"],
+                        inputs,
+                    )
+                except:
+                    raise TransactionError("Could not decode command")
 
                 exactInputParams_path_decoded = decode_v3_path(path)
 
@@ -395,17 +404,20 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
-                # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
-                (
-                    recipient,
-                    amountOut,
-                    amountInMax,
-                    path,
-                    payerIsUser,
-                ) = eth_abi.decode(
-                    ["address", "uint256", "uint256", "bytes", "bool"],
-                    inputs,
-                )
+                try:
+                    # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
+                    (
+                        recipient,
+                        amountOut,
+                        amountInMax,
+                        path,
+                        payerIsUser,
+                    ) = eth_abi.decode(
+                        ["address", "uint256", "uint256", "bytes", "bool"],
+                        inputs,
+                    )
+                except:
+                    raise TransactionError("Could not decode command")
 
                 exactOutputParams_path_decoded = decode_v3_path(path)
 
