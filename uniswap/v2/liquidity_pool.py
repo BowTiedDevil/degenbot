@@ -14,6 +14,7 @@ from degenbot.exceptions import (
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.uniswap.v2.abi import UNISWAPV2_LP_ABI
+from degenbot.uniswap.v2.functions import generate_v2_pool_address
 from degenbot.uniswap.v2.router import Router
 
 
@@ -26,6 +27,8 @@ class LiquidityPool:
         update_method: str = "polling",
         router: Optional[Router] = None,
         abi: Optional[list] = None,
+        factory_address: Optional[str] = None,
+        factory_init_hash: Optional[str] = None,
         # default fee for most UniswapV2 AMMs is 0.3%
         fee: Fraction = Fraction(3, 1000),
         fee_token0: Optional[Fraction] = None,
@@ -49,8 +52,13 @@ class LiquidityPool:
             A string that sets the method used to fetch updates to the pool. Can be "polling", which fetches updates from the chain object using the contract object, or "external" which relies on updates being provided from outside the object.
         router : Router, optional
             A reference to a Router object, which can be used to execute swaps using the attributes held within this object.
-        abi : list
+        abi : list, optional
             Contract ABI.
+        factory_address : str, optional
+            The address for the factory contract. The default assumes a mainnet Uniswap V2 factory contract.
+            If creating a `LiquidityPool` object based on another ecosystem, provide this value or the address check will fail.
+        factory_init_hash : str, optional
+            The init hash for the factory contract. The default assumes a mainnet Uniswap V2 factory contract.
         fee : Fraction
             The swap fee imposed by the pool. Defaults to `Fraction(3,1000)` which is equivalent to 0.3%.
         fee_token0 : Fraction, optional
@@ -87,6 +95,11 @@ class LiquidityPool:
             )
             print("***")
             fee = Fraction(fee)
+
+        if factory_address is None != factory_init_hash is None:
+            raise ValueError(
+                f"Init hash not provided for factory {factory_address}"
+            )
 
         if type(fee) != Fraction:
             raise TypeError(
@@ -149,6 +162,17 @@ class LiquidityPool:
                 min_abi=True,
                 silent=silent,
                 unload_brownie_contract_after_init=True,
+            )
+
+        # check that the address is a valid V2 pool
+        computed_pool_address = generate_v2_pool_address(
+            token_addresses=[self.token0.address, self.token1.address],
+            factory_address=factory_address,
+            init_hash=factory_init_hash,
+        )
+        if computed_pool_address != self.address:
+            raise ValueError(
+                f"Pool address {self.address} does not match deterministic address {computed_pool_address} from factory"
             )
 
         if name is not None:
