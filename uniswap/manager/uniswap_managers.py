@@ -16,13 +16,15 @@ from degenbot.uniswap.v3.functions import generate_v3_pool_address
 from degenbot.uniswap.v3.tick_lens import TickLens
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
-_FACTORY = {
+_FACTORY_HASHES = {
     1: {
         # Sushiswap
-        "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac": {
-            "PAIR_HASH": "0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303"
-        },
-    }
+        "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac": "0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303",
+        # UniswapV2
+        "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f": "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
+        # UniswapV3
+        "0x1F98431c8aD98523631AE4a59f267346ea31F984": "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
+    },
 }
 
 
@@ -85,7 +87,9 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 Tuple[str, str], LiquidityPool
             ] = dict()
             self._token_manager = self._state[chain_id]["erc20token_manager"]
-            self.chain_id = chain_id
+            self.factory_init_hash = _FACTORY_HASHES[chain_id][
+                self.factory_address
+            ]
 
         # from pprint import pprint
         # pprint(self._state)
@@ -182,9 +186,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                     silent=silent,
                     update_method=update_method,
                     factory_address=self.factory_address,
-                    factory_init_hash=_FACTORY[self.chain_id][
-                        self.factory_address
-                    ]["PAIR_HASH"],
+                    factory_init_hash=self.factory_init_hash,
                 )
             except Exception as e:
                 raise ManagerError(
