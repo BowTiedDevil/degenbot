@@ -794,7 +794,10 @@ class UniswapTransaction(Transaction):
                     token_out_quantity,
                 )
 
-                if i == 0:
+                if (
+                    i == 0
+                    and recipient != _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG
+                ):
                     self._adjust_balance(
                         token_out_object.address,
                         -token_out_quantity,
