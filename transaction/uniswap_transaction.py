@@ -94,6 +94,7 @@ _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG = (
 _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG = (
     "0x0000000000000000000000000000000000000001"
 )
+_V3_ROUTER_CONTRACT_ADDRESS_FLAG = "0x0000000000000000000000000000000000000000"
 _V3_ROUTER2_CONTRACT_BALANCE_FLAG = 0
 
 last_out = None
@@ -1057,7 +1058,10 @@ class UniswapTransaction(Transaction):
 
             print(f"{recipient=}")
 
-            if recipient != _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG:
+            if recipient not in [
+                _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG,
+                _V3_ROUTER_CONTRACT_ADDRESS_FLAG,
+            ]:
                 self._adjust_balance(
                     token_out_object.address,
                     -token_out_quantity,
