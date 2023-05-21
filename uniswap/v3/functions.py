@@ -1,5 +1,5 @@
-from typing import Tuple, List, Union, Iterable, Optional
 from itertools import cycle
+from typing import Iterable, List, Optional, Union
 
 import eth_abi
 from web3 import Web3
