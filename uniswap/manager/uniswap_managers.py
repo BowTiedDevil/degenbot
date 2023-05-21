@@ -16,6 +16,15 @@ from degenbot.uniswap.v3.functions import generate_v3_pool_address
 from degenbot.uniswap.v3.tick_lens import TickLens
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
+_FACTORY = {
+    1: {
+        # Sushiswap
+        "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac": {
+            "PAIR_HASH": "0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303"
+        },
+    }
+}
+
 
 class UniswapLiquidityPoolManager(Manager):
     """
@@ -64,7 +73,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         if not self.__dict__:
             # initialize internal attributes
-            self.address = factory_address
+            self.factory_address = factory_address
             self._factory_contract = Contract.from_abi(
                 name="Uniswap V2: Factory",
                 address=factory_address,
@@ -76,6 +85,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 Tuple[str, str], LiquidityPool
             ] = dict()
             self._token_manager = self._state[chain_id]["erc20token_manager"]
+            self.chain_id = chain_id
 
         # from pprint import pprint
         # pprint(self._state)
@@ -171,9 +181,15 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                     tokens=list(erc20token_helpers),
                     silent=silent,
                     update_method=update_method,
+                    factory_address=self.factory_address,
+                    factory_init_hash=_FACTORY[self.chain_id][
+                        self.factory_address
+                    ]["PAIR_HASH"],
                 )
-            except:
-                raise ManagerError(f"Could not build V2 pool: {pool_address=}")
+            except Exception as e:
+                raise ManagerError(
+                    f"Could not build V2 pool: {pool_address=}: {e}"
+                )
 
             with self._lock:
                 self._pools_by_address[pool_address] = pool_helper
@@ -285,25 +301,20 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 )
 
             try:
-                erc20token_helpers = tuple(
-                    [
-                        self._token_manager.get_erc20token(
-                            address=token_address,
-                            min_abi=True,
-                            silent=silent,
-                            unload_brownie_contract_after_init=True,
-                        )
-                        for token_address in token_addresses
-                    ]
-                )
+                erc20token_helpers = [
+                    self._token_manager.get_erc20token(
+                        address=token_address,
+                        min_abi=True,
+                        silent=silent,
+                        unload_brownie_contract_after_init=True,
+                    )
+                    for token_address in token_addresses
+                ]
             except Erc20TokenError:
                 raise ManagerError("Could not build Erc20Token helpers")
 
             # dictionary key pair is sorted by address
-            erc20token_helpers = (
-                min(erc20token_helpers),
-                max(erc20token_helpers),
-            )
+            erc20token_helpers = sorted(erc20token_helpers)
             tokens_key: Tuple[str, str]
             tokens_key = tuple(
                 [token.address for token in erc20token_helpers]
@@ -331,12 +342,13 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             try:
                 pool_helper = V3LiquidityPool(
                     address=pool_address,
-                    lens=self._lens,
                     tokens=list(erc20token_helpers),
                     silent=silent,
                 )
             except:
-                raise ManagerError(f"Could not build V3 pool: {pool_address=}")
+                raise ManagerError(
+                    f"Could not build V3 pool: {pool_address=}, {pool_fee=}"
+                )
 
             with self._lock:
                 self._pools_by_address[pool_address] = pool_helper
