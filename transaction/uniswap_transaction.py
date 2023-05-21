@@ -918,8 +918,6 @@ class UniswapTransaction(Transaction):
                                 f"Could not decode nested multicall: {e}"
                             )
                 else:
-                    print(payload_func.fn_name)
-                    print(payload_args)
                     try:
                         # simulate each payload individually and append its result to future_pool_states
                         _future_pool_states.extend(
