@@ -1566,9 +1566,6 @@ class UniswapTransaction(Transaction):
                 "removeLiquidityETHSupportingFeeOnTransferTokens",
                 "removeLiquidityETHWithPermitSupportingFeeOnTransferTokens",
                 "removeLiquidityWithPermit",
-                "swapExactTokensForTokensSupportingFeeOnTransferTokens",
-                "swapExactETHForTokensSupportingFeeOnTransferTokens",
-                "swapExactTokensForETHSupportingFeeOnTransferTokens",
             ):
                 # TODO: add prediction for these functions
                 if not silent:
@@ -1577,7 +1574,6 @@ class UniswapTransaction(Transaction):
                 "refundETH",
                 "selfPermit",
                 "selfPermitAllowed",
-                "unwrapWETH9",
             ):
                 # ignore, these functions do not affect future pool states
                 pass
