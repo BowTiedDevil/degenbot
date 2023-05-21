@@ -26,6 +26,8 @@ from degenbot.uniswap.v3.abi import (
 from degenbot.uniswap.v3.functions import decode_v3_path
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
+from pprint import pprint
+
 # Internal dict of known router contracts by chain ID. Pre-populated with mainnet addresses
 # New routers can be added via class method `add_router`
 _ROUTERS: Dict[int, Dict[str, Dict]] = {
@@ -80,6 +82,22 @@ _ROUTERS: Dict[int, Dict[str, Dict]] = {
     }
 }
 
+# Internal dict of known wrapped token contracts by chain ID. Pre-populated with mainnet addresses
+# TODO: create `add_wrapped_token` method
+_WRAPPED_NATIVE_TOKENS = {1: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"}
+
+# see https://github.com/Uniswap/universal-router/blob/deployed-commit/contracts/libraries/Constants.sol
+_UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG = 1 << 255
+_UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG = (
+    "0x0000000000000000000000000000000000000002"
+)
+_UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG = (
+    "0x0000000000000000000000000000000000000001"
+)
+_V3_ROUTER2_CONTRACT_BALANCE_FLAG = 0
+
+last_out = None
+
 
 class UniswapTransaction(Transaction):
     def __init__(
@@ -92,9 +110,11 @@ class UniswapTransaction(Transaction):
         func_params: dict,
         router_address: str,
     ):
-        self.routers = _ROUTERS[chain_id]
-
         router_address = Web3.toChecksumAddress(router_address)
+
+        self.routers = _ROUTERS[chain_id]
+        self.balance = {}
+        self.chain_id = chain_id
 
         if router_address not in self.routers:
             raise ValueError(f"Router address {router_address} unknown!")
@@ -130,6 +150,26 @@ class UniswapTransaction(Transaction):
         self.func_deadline = func_params.get("deadline")
         if hash := self.func_params.get("previousBlockhash"):
             self.func_previous_block_hash = hash.hex()
+
+    def _adjust_balance(self, token: str, amount: int) -> None:
+        """
+        TBD
+        """
+
+        _token = Web3.toChecksumAddress(token)
+
+        print(
+            f"ADJUSTING BALANCE OF {_token}: {'+' if amount > 0 else ''}{amount} "
+        )
+
+        try:
+            self.balance[_token]
+        except KeyError:
+            self.balance[_token] = 0
+        finally:
+            self.balance[_token] += amount
+            if self.balance[_token] == 0:
+                del self.balance[_token]
 
     @classmethod
     def add_router(cls, chain_id: int, router_address: str, router_dict: dict):
@@ -169,43 +209,6 @@ class UniswapTransaction(Transaction):
         associated with the transaction
         """
 
-        _UNIVERSAL_ROUTER_COMMANDS = {
-            0x00: "V3_SWAP_EXACT_IN",
-            0x01: "V3_SWAP_EXACT_OUT",
-            0x02: "PERMIT2_TRANSFER_FROM",
-            0x03: "PERMIT2_PERMIT_BATCH",
-            0x04: "SWEEP",
-            0x05: "TRANSFER",
-            0x06: "PAY_PORTION",
-            0x07: None,  # COMMAND_PLACEHOLDER
-            0x08: "V2_SWAP_EXACT_IN",
-            0x09: "V2_SWAP_EXACT_OUT",
-            0x0A: "PERMIT2_PERMIT",
-            0x0B: "WRAP_ETH",
-            0x0C: "UNWRAP_WETH",
-            0x0D: "ERMIT2_TRANSFER_FROM_BATCH",
-            0x0E: "BALANCE_CHECK_ERC20",
-            0x0F: None,  # COMMAND_PLACEHOLDER
-            0x10: "SEAPORT",
-            0x11: "LOOKS_RARE_721",
-            0x12: "NFTX",
-            0x13: "CRYPTOPUNKS",
-            0x14: "LOOKS_RARE_1155",
-            0x15: "OWNER_CHECK_721",
-            0x16: "OWNER_CHECK_1155",
-            0x17: "SWEEP_ERC721",
-            0x18: "X2Y2_721",
-            0x19: "SUDOSWAP",
-            0x1A: "NFT20",
-            0x1B: "X2Y2_1155",
-            0x1C: "FOUNDATION",
-            0x1D: "SWEEP_ERC1155",
-            0x1E: "ELEMENT_MARKET",
-            0x1F: None,  # COMMAND_PLACEHOLDER
-            0x20: "EXECUTE_SUB_PLAN",
-            0x21: "SEAPORT_V2",
-        }
-
         future_pool_state: List[
             Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
         ] = []
@@ -217,7 +220,45 @@ class UniswapTransaction(Transaction):
         def _simulate_universal_dispatch(
             command_type: int,
             inputs: bytes,
+            last: bool = False,
         ):
+            _UNIVERSAL_ROUTER_COMMANDS = {
+                0x00: "V3_SWAP_EXACT_IN",
+                0x01: "V3_SWAP_EXACT_OUT",
+                0x02: "PERMIT2_TRANSFER_FROM",
+                0x03: "PERMIT2_PERMIT_BATCH",
+                0x04: "SWEEP",
+                0x05: "TRANSFER",
+                0x06: "PAY_PORTION",
+                0x07: None,  # COMMAND_PLACEHOLDER
+                0x08: "V2_SWAP_EXACT_IN",
+                0x09: "V2_SWAP_EXACT_OUT",
+                0x0A: "PERMIT2_PERMIT",
+                0x0B: "WRAP_ETH",
+                0x0C: "UNWRAP_WETH",
+                0x0D: "ERMIT2_TRANSFER_FROM_BATCH",
+                0x0E: "BALANCE_CHECK_ERC20",
+                0x0F: None,  # COMMAND_PLACEHOLDER
+                0x10: "SEAPORT",
+                0x11: "LOOKS_RARE_721",
+                0x12: "NFTX",
+                0x13: "CRYPTOPUNKS",
+                0x14: "LOOKS_RARE_1155",
+                0x15: "OWNER_CHECK_721",
+                0x16: "OWNER_CHECK_1155",
+                0x17: "SWEEP_ERC721",
+                0x18: "X2Y2_721",
+                0x19: "SUDOSWAP",
+                0x1A: "NFT20",
+                0x1B: "X2Y2_1155",
+                0x1C: "FOUNDATION",
+                0x1D: "SWEEP_ERC1155",
+                0x1E: "ELEMENT_MARKET",
+                0x1F: None,  # COMMAND_PLACEHOLDER
+                0x20: "EXECUTE_SUB_PLAN",
+                0x21: "SEAPORT_V2",
+            }
+
             COMMAND_TYPE_MASK = 0x3F
             command = _UNIVERSAL_ROUTER_COMMANDS[
                 command_type & COMMAND_TYPE_MASK
@@ -237,8 +278,6 @@ class UniswapTransaction(Transaction):
                 "TRANSFER",
                 "PAY_PORTION",
                 "PERMIT2_PERMIT",
-                "WRAP_ETH",
-                "UNWRAP_WETH",
                 "PERMIT2_TRANSFER_FROM_BATCH",
                 "BALANCE_CHECK_ERC20",
                 "SEAPORT",
@@ -261,12 +300,49 @@ class UniswapTransaction(Transaction):
             ]:
                 pass
 
+            elif command == "WRAP_ETH":
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+
+                wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
+
+                try:
+                    recipient, amountMin = eth_abi.decode(
+                        ["address", "uint256"], inputs
+                    )
+                except:
+                    raise TransactionError("Could not decode command")
+
+                if recipient == _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG:
+                    self._adjust_balance(
+                        wrapped_token_address,
+                        amountMin,
+                    )
+
+            elif command == "UNWRAP_WETH":
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+
+                wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
+                wrapped_token_balance = self.balance[wrapped_token_address]
+
+                try:
+                    recipient, amountMin = eth_abi.decode(
+                        ["address", "uint256"], inputs
+                    )
+                except:
+                    raise TransactionError("Could not decode command")
+
+                self._adjust_balance(
+                    wrapped_token_address,
+                    -wrapped_token_balance,
+                )
+
             elif command == "V2_SWAP_EXACT_IN":
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
                 try:
-                    # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
                     (
                         recipient,
                         amountIn,
@@ -293,6 +369,8 @@ class UniswapTransaction(Transaction):
                     "to": recipient,
                 }
 
+                # TODO: convert simulation for V2 to single pool
+
                 pool_states.extend(
                     _simulate_v2_swap_exact_in(func_params, silent=silent)
                 )
@@ -304,7 +382,6 @@ class UniswapTransaction(Transaction):
                     print(f"{func_name}: {self.hash}")
 
                 try:
-                    # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
                     (
                         recipient,
                         amountOut,
@@ -338,11 +415,16 @@ class UniswapTransaction(Transaction):
                 return pool_states
 
             elif command == "V3_SWAP_EXACT_IN":
+                """
+                TBD
+                """
+
+                # TODO: handle multi-pool swaps within the method, instead of single-pool
+
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
                 try:
-                    # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
                     (
                         recipient,
                         amountIn,
@@ -386,26 +468,34 @@ class UniswapTransaction(Transaction):
                                 # for the min without knowing the token positions)
                                 amountIn
                                 if token_pos == 0
-                                else -min(
-                                    pool_state["amount0_delta"],
-                                    pool_state["amount1_delta"],
-                                ),
+                                else token_out_quantity,
                                 # only apply minimum output to the last swap
                                 amountOutMin if last_swap else None,
+                                _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG
+                                if last_swap
+                                else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG,
                             )
                         },
                         silent=silent,
                     )
                     pool_states.append((v3_pool, pool_state))
 
+                    token_out_quantity = -min(
+                        pool_state["amount0_delta"],
+                        pool_state["amount1_delta"],
+                    )
+
                 return pool_states
 
             elif command == "V3_SWAP_EXACT_OUT":
+                """
+                TBD
+                """
+
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
                 try:
-                    # equivalent: abi.decode(inputs, (address, uint256, uint256, bytes, bool))
                     (
                         recipient,
                         amountOut,
@@ -467,93 +557,6 @@ class UniswapTransaction(Transaction):
             else:
                 raise TransactionError(f"Invalid command {command}")
 
-        def _simulate_v3_multicall(
-            params,
-            silent: bool = False,
-        ):
-            """
-            TBD
-            """
-
-            future_state = []
-
-            # for payload in self.func_params["data"]:
-            for payload in params["data"]:
-                try:
-                    # decode with Router ABI
-                    payload_func, payload_args = (
-                        Web3()
-                        .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
-                        .decode_function_input(payload)
-                    )
-                except:
-                    pass
-
-                try:
-                    # decode with Router2 ABI
-                    payload_func, payload_args = (
-                        Web3()
-                        .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
-                        .decode_function_input(payload)
-                    )
-                except:
-                    pass
-
-                if payload_func.fn_name == "multicall":
-                    if not silent:
-                        print("Unwrapping nested multicall")
-
-                    for payload in payload_args["data"]:
-                        try:
-                            _func, _params = (
-                                Web3()
-                                .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
-                                .decode_function_input(payload)
-                            )
-                        except:
-                            pass
-
-                        try:
-                            _func, _params = (
-                                Web3()
-                                .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
-                                .decode_function_input(payload)
-                            )
-                        except:
-                            pass
-
-                        try:
-                            # simulate each payload individually and append its result to
-                            # the future_state tuple
-                            future_state.extend(
-                                self.simulate(
-                                    func_name=_func.fn_name,
-                                    func_params=_params,
-                                    silent=silent,
-                                )
-                            )
-                        except Exception as e:
-                            raise TransactionError(
-                                f"Could not decode nested multicall: {e}"
-                            )
-                else:
-                    try:
-                        # simulate payload individually and append their results to
-                        # future_state
-                        future_state.extend(
-                            self.simulate(
-                                func_name=payload_func.fn_name,
-                                func_params=payload_args,
-                                silent=silent,
-                            )
-                        )
-                    except Exception as e:
-                        raise TransactionError(
-                            f"Could not decode multicall: {e}"
-                        )
-
-            return future_state
-
         def _simulate_v2_swap_exact_in(
             params: dict,
             unwrapped_input: Optional[bool] = False,
@@ -562,6 +565,10 @@ class UniswapTransaction(Transaction):
             """
             TBD
             """
+
+            # TODO: convert simulation for V2 to single pool?
+
+            global last_out
 
             token_in_object: Erc20Token
             token_out_object: Erc20Token
@@ -596,6 +603,10 @@ class UniswapTransaction(Transaction):
             else:
                 token_in_quantity = params["amountIn"]
 
+            print(f"{token_in_quantity=}")
+            recipient = params["to"]
+            print(f"{recipient=}")
+
             for i, v2_pool in enumerate(v2_pool_objects):
                 # i == 0 for first pool in path, take from 'path' in func_params
                 # otherwise, set token_in equal to token_out from previous iteration
@@ -603,18 +614,36 @@ class UniswapTransaction(Transaction):
                 token_in_object = (
                     token_in_object if i == 0 else token_out_object
                 )
+
                 token_out_object = (
                     v2_pool.token0
                     if token_in_object is v2_pool.token1
                     else v2_pool.token1
                 )
 
-                current_state = v2_pool.state
+                # use the transaction input for the first swap, otherwise take the output from the last iteration
+                token_in_quantity = (
+                    token_in_quantity if i == 0 else token_out_quantity
+                )
+
+                # FIXME: very ugly hack, should track token balances across all relevant addresses
+                if (
+                    token_in_quantity
+                    == _UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG
+                ):
+                    token_in_quantity = last_out[1]
+
+                try:
+                    self.balance[token_in_object.address]
+                except KeyError:
+                    self._adjust_balance(
+                        token_in_object.address,
+                        token_in_quantity,
+                    )
+
                 future_state = v2_pool.simulate_swap(
                     token_in=token_in_object,
-                    token_in_quantity=token_in_quantity
-                    if i == 0
-                    else token_out_quantity,
+                    token_in_quantity=token_in_quantity,
                 )
 
                 token_out_quantity = -min(
@@ -629,7 +658,18 @@ class UniswapTransaction(Transaction):
                     )
                 )
 
+                # adjust the post-swap balances for each token
+                self._adjust_balance(
+                    token_in_object.address,
+                    -token_in_quantity,
+                )
+                self._adjust_balance(
+                    token_out_object.address,
+                    token_out_quantity,
+                )
+
                 if not silent:
+                    current_state = v2_pool.state
                     print(f"Simulating swap through pool: {v2_pool}")
                     print(
                         f"\t{token_in_quantity} {token_in_object} -> {token_out_quantity} {token_out_object}"
@@ -649,12 +689,20 @@ class UniswapTransaction(Transaction):
                         f"\t{v2_pool.token1}: {future_state['reserves_token1']}"
                     )
 
-            token_out_quantity_min = params["amountOutMin"]
+            recipient = params["to"]
+            if recipient != _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG:
+                self._adjust_balance(
+                    token_out_object.address,
+                    -token_out_quantity,
+                )
 
+            token_out_quantity_min = params["amountOutMin"]
             if token_out_quantity < token_out_quantity_min:
                 raise TransactionError(
                     f"Insufficient output for swap! {token_out_quantity} {token_out_object} received, {token_out_quantity_min} required"
                 )
+
+            last_out = (token_out_object, token_out_quantity)
 
             return future_pool_states
 
@@ -666,6 +714,8 @@ class UniswapTransaction(Transaction):
             """
             TBD
             """
+
+            # TODO: convert simulation for V2 to single pool
 
             token_in_object: Erc20Token
             token_out_object: Erc20Token
@@ -696,10 +746,7 @@ class UniswapTransaction(Transaction):
             )
             token_out_quantity = params["amountOut"]
 
-            # predict future pool states assuming the swap executes in isolation
             # work through the pools backwards, since the swap will execute at a defined output, with input floating
-            future_pool_states = []
-
             for i, v2_pool in enumerate(pool_objects[::-1]):
                 token_out_quantity = (
                     token_out_quantity if i == 0 else token_in_quantity
@@ -711,13 +758,13 @@ class UniswapTransaction(Transaction):
                 token_out_object = (
                     token_out_object if i == 0 else token_in_object
                 )
+
                 token_in_object = (
                     v2_pool.token0
                     if token_out_object is v2_pool.token1
                     else v2_pool.token1
                 )
 
-                current_state = v2_pool.state
                 future_state = v2_pool.simulate_swap(
                     token_out=token_out_object,
                     token_out_quantity=token_out_quantity,
@@ -728,12 +775,6 @@ class UniswapTransaction(Transaction):
                     future_state["amount1_delta"],
                 )
 
-                # print(
-                #     f"{i}: {token_in_quantity} {token_in} -> {token_out_quantity} {token_out}"
-                # )
-                # print(f"{current_state=}")
-                # print(f"{future_state=}")
-
                 future_pool_states.append(
                     (
                         v2_pool,
@@ -741,7 +782,32 @@ class UniswapTransaction(Transaction):
                     )
                 )
 
+                # adjust the post-swap balances for each token
+                self._adjust_balance(
+                    token_in_object.address,
+                    -token_in_quantity,
+                )
+                self._adjust_balance(
+                    token_out_object.address,
+                    token_out_quantity,
+                )
+
+                if i == 0:
+                    self._adjust_balance(
+                        token_out_object.address,
+                        -token_out_quantity,
+                    )
+
+                # global last_out
+                # last_out = (token_out_object, token_out_quantity)
+                if i == len(pool_objects) - 1:
+                    self._adjust_balance(
+                        token_in_object.address,
+                        token_in_quantity,
+                    )
+
                 if not silent:
+                    current_state = v2_pool.state
                     print(f"Simulating swap through pool: {v2_pool}")
                     print(
                         f"\t{token_in_quantity} {token_in_object} -> {token_out_quantity} {token_out_object}"
@@ -773,6 +839,94 @@ class UniswapTransaction(Transaction):
 
             return future_pool_states
 
+        def _simulate_v3_multicall(
+            params,
+            silent: bool = False,
+        ):
+            """
+            TBD
+            """
+
+            # print(f"\n\n\nmulticall: {params=}\n\n\n")
+
+            # for payload in self.func_params["data"]:
+            for payload in params["data"]:
+                try:
+                    # decode with Router ABI
+                    payload_func, payload_args = (
+                        Web3()
+                        .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
+                        .decode_function_input(payload)
+                    )
+                except:
+                    pass
+
+                try:
+                    # decode with Router2 ABI
+                    payload_func, payload_args = (
+                        Web3()
+                        .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
+                        .decode_function_input(payload)
+                    )
+                except:
+                    pass
+
+                # special case to handle a multicall encoded within another multicall
+                if payload_func.fn_name == "multicall":
+                    if not silent:
+                        print("Unwrapping nested multicall")
+
+                    for payload in payload_args["data"]:
+                        try:
+                            _func, _params = (
+                                Web3()
+                                .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
+                                .decode_function_input(payload)
+                            )
+                        except:
+                            pass
+
+                        try:
+                            _func, _params = (
+                                Web3()
+                                .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
+                                .decode_function_input(payload)
+                            )
+                        except:
+                            pass
+
+                        try:
+                            # simulate each payload individually and append its result to future_pool_states
+                            future_pool_states.extend(
+                                self.simulate(
+                                    func_name=_func.fn_name,
+                                    func_params=_params,
+                                    silent=silent,
+                                )
+                            )
+                        except Exception as e:
+                            raise TransactionError(
+                                f"Could not decode nested multicall: {e}"
+                            )
+                else:
+                    print(payload_func.fn_name)
+                    print(payload_args)
+                    try:
+                        # simulate each payload individually and append its result to future_pool_states
+                        future_pool_states.extend(
+                            self.simulate(
+                                func_name=payload_func.fn_name,
+                                func_params=payload_args,
+                                silent=silent,
+                            )
+                        )
+                    except Exception as e:
+                        raise TransactionError(
+                            f"Could not decode multicall: {e}"
+                        )
+
+            return future_pool_states
+
         def _simulate_v3_swap_exact_in(
             params: dict,
             silent: bool = False,
@@ -780,6 +934,8 @@ class UniswapTransaction(Transaction):
             """
             TBD
             """
+
+            global last_out
 
             token_in_object: Erc20Token
             token_out_object: Erc20Token
@@ -827,6 +983,7 @@ class UniswapTransaction(Transaction):
                     fee,
                     token_in_quantity,
                     token_out_quantity_min,
+                    recipient,
                 ) = params["params"]
             except:
                 pass
@@ -863,7 +1020,19 @@ class UniswapTransaction(Transaction):
                 print(type(e))
                 raise
 
-            current_state = v3_pool.state
+            print(f"{token_in_quantity=}")
+
+            # FIXME: very ugly hack, should track token balances across all relevant addresses
+            if token_in_quantity == _UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG:
+                token_in_quantity = last_out[1]
+
+            try:
+                self.balance[token_in_object.address]
+            except KeyError:
+                self._adjust_balance(
+                    token_in_object.address,
+                    token_in_quantity,
+                )
 
             try:
                 final_state = v3_pool.simulate_swap(
@@ -877,7 +1046,25 @@ class UniswapTransaction(Transaction):
                 final_state["amount0_delta"], final_state["amount1_delta"]
             )
 
+            self._adjust_balance(
+                token_in_object.address,
+                -token_in_quantity,
+            )
+            self._adjust_balance(
+                token_out_object.address,
+                token_out_quantity,
+            )
+
+            print(f"{recipient=}")
+
+            if recipient != _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG:
+                self._adjust_balance(
+                    token_out_object.address,
+                    -token_out_quantity,
+                )
+
             if not silent:
+                current_state = v3_pool.state
                 print(f"Predicting output of swap through pool: {v3_pool}")
                 print(
                     f"\t{token_in_quantity} {token_in_object} -> {token_out_quantity} {token_out_object}"
@@ -898,6 +1085,8 @@ class UniswapTransaction(Transaction):
                 raise TransactionError(
                     f"Insufficient output for swap! {token_out_quantity} {token_out_object} received, {token_out_quantity_min} required"
                 )
+
+            last_out = (token_out_object, token_out_quantity)
 
             return v3_pool, final_state
 
@@ -1013,6 +1202,24 @@ class UniswapTransaction(Transaction):
                 final_state["amount1_delta"],
             )
 
+            try:
+                self.balance[token_in_object.address]
+            except KeyError:
+                self._adjust_balance(
+                    token_in_object.address,
+                    token_in_quantity,
+                )
+
+            # adjust the post-swap balances for each token
+            self._adjust_balance(
+                token_in_object.address,
+                -token_in_quantity,
+            )
+            self._adjust_balance(
+                token_out_object.address,
+                token_out_quantity,
+            )
+
             if not silent:
                 print(f"Predicting output of swap through pool: {v3_pool}")
                 print(
@@ -1124,6 +1331,10 @@ class UniswapTransaction(Transaction):
                     )
                 )
             elif func_name == "exactInput":
+                """
+                TBD
+                """
+
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
@@ -1169,7 +1380,6 @@ class UniswapTransaction(Transaction):
                         f" • amountOutMinimum = {exactInputParams_amountOutMinimum}"
                     )
 
-                # follow the swap through the given path
                 last_token_pos = len(exactInputParams_path_decoded) - 3
 
                 for token_pos in range(
@@ -1182,6 +1392,12 @@ class UniswapTransaction(Transaction):
                     tokenOut = exactInputParams_path_decoded[token_pos + 2]
 
                     last_swap = token_pos == last_token_pos
+
+                    if (
+                        exactInputParams_amountIn
+                        == _V3_ROUTER2_CONTRACT_BALANCE_FLAG
+                    ):
+                        exactInputParams_amountIn = last_out[1]
 
                     v3_pool, pool_state = _simulate_v3_swap_exact_in(
                         params={
@@ -1202,6 +1418,10 @@ class UniswapTransaction(Transaction):
                                 exactInputParams_amountOutMinimum
                                 if last_swap
                                 else None,
+                                # exactInputParams_recipient ,
+                                _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG
+                                if last_swap
+                                else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG,
                             )
                         },
                         silent=silent,
@@ -1216,6 +1436,10 @@ class UniswapTransaction(Transaction):
                     )
                 )
             elif func_name == "exactOutput":
+                """
+                TBD
+                """
+
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
@@ -1303,6 +1527,18 @@ class UniswapTransaction(Transaction):
 
                     future_pool_state.append((v3_pool, pool_state))
 
+            elif func_name == "unwrapWETH9":
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+
+                wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
+                wrapped_token_balance = self.balance[wrapped_token_address]
+
+                self._adjust_balance(
+                    wrapped_token_address,
+                    -wrapped_token_balance,
+                )
+
             # -----------------------------------------------------
             # Universal Router functions
             # -----------------------------------------------------
@@ -1310,16 +1546,14 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
-                commands = func_params["commands"]
+                execute_commands = func_params["commands"]
                 inputs = func_params["inputs"]
                 # not used?
                 # deadline = func_params.get("deadline")
 
-                future_pool_state = []
-
-                for idx in range(len(commands)):
-                    command = commands[idx]
-                    input = inputs[idx]
+                for i, command in enumerate(execute_commands):
+                    command = execute_commands[i]
+                    input = inputs[i]
                     if result := _simulate_universal_dispatch(command, input):
                         future_pool_state.extend(result)
 
@@ -1349,6 +1583,8 @@ class UniswapTransaction(Transaction):
                 pass
             else:
                 print(f"\tUNHANDLED function: {func_name}")
+
+            pprint(self.balance)
 
         # WIP: catch generic DegenbotError (non-fatal) and ValueError (bad inputs),
         # allow the rest to escape
