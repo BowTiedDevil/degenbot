@@ -1,4 +1,5 @@
 import itertools
+from pprint import pprint
 from typing import Dict, List, Optional, Tuple, Union
 
 import eth_abi
@@ -25,8 +26,6 @@ from degenbot.uniswap.v3.abi import (
 )
 from degenbot.uniswap.v3.functions import decode_v3_path
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
-
-from pprint import pprint
 
 # Internal dict of known router contracts by chain ID. Pre-populated with mainnet addresses
 # New routers can be added via class method `add_router`
@@ -83,8 +82,9 @@ _ROUTERS: Dict[int, Dict[str, Dict]] = {
 }
 
 # Internal dict of known wrapped token contracts by chain ID. Pre-populated with mainnet addresses
-# TODO: create `add_wrapped_token` method
 _WRAPPED_NATIVE_TOKENS = {1: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"}
+
+# TODO: create `add_wrapped_token` method
 
 # see https://github.com/Uniswap/universal-router/blob/deployed-commit/contracts/libraries/Constants.sol
 _UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG = 1 << 255
@@ -97,7 +97,7 @@ _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG = (
 _V3_ROUTER_CONTRACT_ADDRESS_FLAG = "0x0000000000000000000000000000000000000000"
 _V3_ROUTER2_CONTRACT_BALANCE_FLAG = 0
 
-last_out = None
+last_out: Tuple[Erc20Token, int]
 
 
 class UniswapTransaction(Transaction):
@@ -114,7 +114,7 @@ class UniswapTransaction(Transaction):
         router_address = Web3.toChecksumAddress(router_address)
 
         self.routers = _ROUTERS[chain_id]
-        self.balance = {}
+        self.balance: Dict[str, int] = {}
         self.chain_id = chain_id
 
         if router_address not in self.routers:
@@ -210,10 +210,9 @@ class UniswapTransaction(Transaction):
         associated with the transaction
         """
 
-        future_pool_state: List[
+        future_pool_states: List[
             Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
         ] = []
-        future_pool_states: List[Tuple[LiquidityPool, Dict]] = []
         v2_pool: LiquidityPool
         v3_pool: V3LiquidityPool
         pool_state: Dict
@@ -268,7 +267,7 @@ class UniswapTransaction(Transaction):
             print(command)
 
             pool_state: Dict
-            pool_states: List[
+            _future_pool_states: List[
                 Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
             ] = []
 
@@ -372,11 +371,11 @@ class UniswapTransaction(Transaction):
 
                 # TODO: convert simulation for V2 to single pool
 
-                pool_states.extend(
+                _future_pool_states.extend(
                     _simulate_v2_swap_exact_in(func_params, silent=silent)
                 )
 
-                return pool_states
+                return _future_pool_states
 
             elif command == "V2_SWAP_EXACT_OUT":
                 if not silent:
@@ -409,11 +408,11 @@ class UniswapTransaction(Transaction):
                     "to": recipient,
                 }
 
-                pool_states.extend(
+                _future_pool_states.extend(
                     _simulate_v2_swap_exact_out(func_params, silent=silent)
                 )
 
-                return pool_states
+                return _future_pool_states
 
             elif command == "V3_SWAP_EXACT_IN":
                 """
@@ -479,14 +478,14 @@ class UniswapTransaction(Transaction):
                         },
                         silent=silent,
                     )
-                    pool_states.append((v3_pool, pool_state))
+                    _future_pool_states.append((v3_pool, pool_state))
 
-                    token_out_quantity = -min(
+                    token_out_quantity: int = -min(
                         pool_state["amount0_delta"],
                         pool_state["amount1_delta"],
                     )
 
-                return pool_states
+                return _future_pool_states
 
             elif command == "V3_SWAP_EXACT_OUT":
                 """
@@ -551,9 +550,9 @@ class UniswapTransaction(Transaction):
                         silent=silent,
                     )
 
-                    pool_states.append((v3_pool, pool_state))
+                    _future_pool_states.append((v3_pool, pool_state))
 
-                return pool_states
+                return _future_pool_states
 
             else:
                 raise TransactionError(f"Invalid command {command}")
@@ -576,6 +575,7 @@ class UniswapTransaction(Transaction):
             token_in_quantity: int
             token_out_quantity: int
             v2_pool_objects: List[LiquidityPool] = []
+            _future_pool_states: List[Tuple[LiquidityPool, Dict]] = []
 
             for token_addresses in itertools.pairwise(params["path"]):
                 try:
@@ -652,7 +652,7 @@ class UniswapTransaction(Transaction):
                     future_state["amount1_delta"],
                 )
 
-                future_pool_states.append(
+                _future_pool_states.append(
                     (
                         v2_pool,
                         future_state,
@@ -705,7 +705,7 @@ class UniswapTransaction(Transaction):
 
             last_out = (token_out_object, token_out_quantity)
 
-            return future_pool_states
+            return _future_pool_states
 
         def _simulate_v2_swap_exact_out(
             params: dict,
@@ -723,6 +723,7 @@ class UniswapTransaction(Transaction):
             token_in_quantity: int
             token_out_quantity: int
             pool_objects: List[LiquidityPool] = []
+            _future_pool_states: List[Tuple[LiquidityPool, Dict]] = []
 
             for token_addresses in itertools.pairwise(params["path"]):
                 try:
@@ -776,7 +777,7 @@ class UniswapTransaction(Transaction):
                     future_state["amount1_delta"],
                 )
 
-                future_pool_states.append(
+                _future_pool_states.append(
                     (
                         v2_pool,
                         future_state,
@@ -838,15 +839,19 @@ class UniswapTransaction(Transaction):
                     f"Insufficient input for exact output swap! {swap_in_quantity} {token_in_object} provided, {token_in_quantity} required"
                 )
 
-            return future_pool_states
+            return _future_pool_states
 
         def _simulate_v3_multicall(
             params,
             silent: bool = False,
-        ):
+        ) -> List[Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]]:
             """
             TBD
             """
+
+            _future_pool_states: List[
+                Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
+            ] = []
 
             # print(f"\n\n\nmulticall: {params=}\n\n\n")
 
@@ -898,7 +903,7 @@ class UniswapTransaction(Transaction):
 
                         try:
                             # simulate each payload individually and append its result to future_pool_states
-                            future_pool_states.extend(
+                            _future_pool_states.extend(
                                 self.simulate(
                                     func_name=_func.fn_name,
                                     func_params=_params,
@@ -914,7 +919,7 @@ class UniswapTransaction(Transaction):
                     print(payload_args)
                     try:
                         # simulate each payload individually and append its result to future_pool_states
-                        future_pool_states.extend(
+                        _future_pool_states.extend(
                             self.simulate(
                                 func_name=payload_func.fn_name,
                                 func_params=payload_args,
@@ -926,7 +931,7 @@ class UniswapTransaction(Transaction):
                             f"Could not decode multicall: {e}"
                         )
 
-            return future_pool_states
+            return _future_pool_states
 
         def _simulate_v3_swap_exact_in(
             params: dict,
@@ -1264,7 +1269,7 @@ class UniswapTransaction(Transaction):
             ):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_pool_state.extend(
+                future_pool_states.extend(
                     _simulate_v2_swap_exact_in(func_params, silent=silent)
                 )
 
@@ -1274,7 +1279,7 @@ class UniswapTransaction(Transaction):
             ):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_pool_state.extend(
+                future_pool_states.extend(
                     _simulate_v2_swap_exact_in(
                         func_params, unwrapped_input=True, silent=silent
                     )
@@ -1286,14 +1291,14 @@ class UniswapTransaction(Transaction):
             ]:
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_pool_state.extend(
+                future_pool_states.extend(
                     _simulate_v2_swap_exact_in(func_params, silent=silent)
                 )
 
             elif func_name in ("swapTokensForExactETH"):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_pool_state.extend(
+                future_pool_states.extend(
                     _simulate_v2_swap_exact_out(
                         params=func_params, silent=silent
                     )
@@ -1302,7 +1307,7 @@ class UniswapTransaction(Transaction):
             elif func_name in ("swapTokensForExactTokens"):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_pool_state.extend(
+                future_pool_states.extend(
                     _simulate_v2_swap_exact_out(
                         params=func_params, silent=silent
                     )
@@ -1311,7 +1316,7 @@ class UniswapTransaction(Transaction):
             elif func_name in ("swapETHForExactTokens"):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_pool_state.extend(
+                future_pool_states.extend(
                     _simulate_v2_swap_exact_out(
                         params=func_params, unwrapped_input=True, silent=silent
                     )
@@ -1323,13 +1328,15 @@ class UniswapTransaction(Transaction):
             elif func_name == "multicall":
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_pool_state = _simulate_v3_multicall(
-                    params=self.func_params, silent=silent
+                future_pool_states.extend(
+                    _simulate_v3_multicall(
+                        params=self.func_params, silent=silent
+                    )
                 )
             elif func_name == "exactInputSingle":
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_pool_state.append(
+                future_pool_states.append(
                     _simulate_v3_swap_exact_in(
                         params=func_params, silent=silent
                     )
@@ -1430,11 +1437,11 @@ class UniswapTransaction(Transaction):
                         },
                         silent=silent,
                     )
-                    future_pool_state.append((v3_pool, pool_state))
+                    future_pool_states.append((v3_pool, pool_state))
             elif func_name == "exactOutputSingle":
                 if not silent:
                     print(f"{func_name}: {self.hash}")
-                future_pool_state.append(
+                future_pool_states.append(
                     _simulate_v3_swap_exact_out(
                         params=func_params, silent=silent
                     )
@@ -1529,7 +1536,7 @@ class UniswapTransaction(Transaction):
                         silent=silent,
                     )
 
-                    future_pool_state.append((v3_pool, pool_state))
+                    future_pool_states.append((v3_pool, pool_state))
 
             elif func_name == "unwrapWETH9":
                 if not silent:
@@ -1559,7 +1566,7 @@ class UniswapTransaction(Transaction):
                     command = execute_commands[i]
                     input = inputs[i]
                     if result := _simulate_universal_dispatch(command, input):
-                        future_pool_state.extend(result)
+                        future_pool_states.extend(result)
 
             elif func_name in (
                 "addLiquidity",
@@ -1590,4 +1597,4 @@ class UniswapTransaction(Transaction):
         except DegenbotError as e:
             raise TransactionError(f"Transaction could not be calculated: {e}")
         else:
-            return future_pool_state
+            return future_pool_states
