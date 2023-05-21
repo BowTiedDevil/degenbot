@@ -1586,9 +1586,8 @@ class UniswapTransaction(Transaction):
 
             pprint(self.balance)
 
-        # WIP: catch generic DegenbotError (non-fatal) and ValueError (bad inputs),
-        # allow the rest to escape
-        except (DegenbotError, ValueError) as e:
+        # catch generic DegenbotError (non-fatal), everything else will escape
+        except DegenbotError as e:
             raise TransactionError(f"Transaction could not be calculated: {e}")
         else:
             return future_pool_state
