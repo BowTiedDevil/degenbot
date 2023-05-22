@@ -220,7 +220,6 @@ class UniswapTransaction(Transaction):
         def _simulate_universal_dispatch(
             command_type: int,
             inputs: bytes,
-            last: bool = False,
         ):
             _UNIVERSAL_ROUTER_COMMANDS = {
                 0x00: "V3_SWAP_EXACT_IN",
@@ -471,7 +470,7 @@ class UniswapTransaction(Transaction):
                                 else token_out_quantity,
                                 # only apply minimum output to the last swap
                                 amountOutMin if last_swap else None,
-                                _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG
+                                recipient
                                 if last_swap
                                 else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG,
                             )
@@ -1432,8 +1431,7 @@ class UniswapTransaction(Transaction):
                                 exactInputParams_amountOutMinimum
                                 if last_swap
                                 else None,
-                                # exactInputParams_recipient ,
-                                _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG
+                                exactInputParams_recipient
                                 if last_swap
                                 else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG,
                             )
