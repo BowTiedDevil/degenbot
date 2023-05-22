@@ -1560,14 +1560,12 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
-                execute_commands = func_params["commands"]
+                commands = func_params["commands"]
                 inputs = func_params["inputs"]
                 # not used?
                 # deadline = func_params.get("deadline")
 
-                for i, command in enumerate(execute_commands):
-                    command = execute_commands[i]
-                    input = inputs[i]
+                for command, input in zip(commands, inputs):
                     if result := _simulate_universal_dispatch(command, input):
                         future_pool_states.extend(result)
 
