@@ -747,7 +747,7 @@ class UniswapTransaction(Transaction):
             )
             token_out_quantity = params["amountOut"]
 
-            recipient = params["to"]            
+            recipient = params["to"]
 
             # work through the pools backwards, since the swap will execute at a defined output, with input floating
             for i, v2_pool in enumerate(pool_objects[::-1]):
@@ -1230,6 +1230,17 @@ class UniswapTransaction(Transaction):
                 token_out_object.address,
                 token_out_quantity,
             )
+
+            print(f"{recipient=}")
+
+            if recipient not in [
+                _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG,
+                _V3_ROUTER_CONTRACT_ADDRESS_FLAG,
+            ]:
+                self._adjust_balance(
+                    token_out_object.address,
+                    -token_out_quantity,
+                )
 
             if not silent:
                 print(f"Predicting output of swap through pool: {v3_pool}")
