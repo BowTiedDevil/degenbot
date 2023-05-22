@@ -198,7 +198,7 @@ class UniswapTransaction(Transaction):
         else:
             raise ValueError("Router address already known!")
 
-    def simulate(
+    def _simulate(
         self,
         func_name: Optional[str] = None,
         func_params: Optional[dict] = None,
@@ -322,8 +322,23 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
+                try:
+                    recipient, amountMin = eth_abi.decode(
+                        ["address", "uint256"], inputs
+                    )
+                except:
+                    raise TransactionError("Could not decode command")
+
                 wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
-                wrapped_token_balance = self.balance[wrapped_token_address]
+                try:
+                    wrapped_token_balance = self.balance[wrapped_token_address]
+                except KeyError:
+                    wrapped_token_balance = 0
+
+                if wrapped_token_balance < amountMin:
+                    raise ValueError(
+                        f"Requested unwrap of min. {amountMin} WETH, received {wrapped_token_balance}"
+                    )
 
                 try:
                     recipient, amountMin = eth_abi.decode(
@@ -544,6 +559,9 @@ class UniswapTransaction(Transaction):
                                 ),
                                 # only apply maximum input to the last swap
                                 amountInMax if last_swap else None,
+                                recipient
+                                if last_swap
+                                else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG,
                             )
                         },
                         silent=silent,
@@ -857,9 +875,6 @@ class UniswapTransaction(Transaction):
                 Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
             ] = []
 
-            # print(f"\n\n\nmulticall: {params=}\n\n\n")
-
-            # for payload in self.func_params["data"]:
             for payload in params["data"]:
                 try:
                     # decode with Router ABI
@@ -908,7 +923,7 @@ class UniswapTransaction(Transaction):
                         try:
                             # simulate each payload individually and append its result to future_pool_states
                             _future_pool_states.extend(
-                                self.simulate(
+                                self._simulate(
                                     func_name=_func.fn_name,
                                     func_params=_params,
                                     silent=silent,
@@ -922,7 +937,7 @@ class UniswapTransaction(Transaction):
                     try:
                         # simulate each payload individually and append its result to future_pool_states
                         _future_pool_states.extend(
-                            self.simulate(
+                            self._simulate(
                                 func_name=payload_func.fn_name,
                                 func_params=payload_args,
                                 silent=silent,
@@ -1156,6 +1171,7 @@ class UniswapTransaction(Transaction):
                     fee,
                     amountOut,
                     amountInMaximum,
+                    recipient,
                 ) = params["params"]
             except:
                 pass
@@ -1342,9 +1358,7 @@ class UniswapTransaction(Transaction):
                 if not silent:
                     print(f"{func_name}: {self.hash}")
                 future_pool_states.extend(
-                    _simulate_v3_multicall(
-                        params=self.func_params, silent=silent
-                    )
+                    _simulate_v3_multicall(params=func_params, silent=silent)
                 )
             elif func_name == "exactInputSingle":
                 if not silent:
@@ -1600,10 +1614,23 @@ class UniswapTransaction(Transaction):
             else:
                 print(f"\tUNHANDLED function: {func_name}")
 
-            pprint(self.balance)
-
         # catch generic DegenbotError (non-fatal), everything else will escape
         except DegenbotError as e:
             raise TransactionError(f"Transaction could not be calculated: {e}")
         else:
             return future_pool_states
+
+    def simulate(
+        self,
+        func_name: Optional[str] = None,
+        func_params: Optional[dict] = None,
+        silent: bool = False,
+    ) -> List[Tuple[Union[LiquidityPool, V3LiquidityPool], dict]]:
+        result = self._simulate(func_name, func_params, silent)
+        if self.balance:
+            print("UNACCOUNTED BALANCE FOUND!")
+            pprint(self.balance)
+            import sys
+
+            sys.exit()
+        return result
