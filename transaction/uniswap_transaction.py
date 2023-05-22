@@ -1374,7 +1374,6 @@ class UniswapTransaction(Transaction):
                 except:
                     pass
 
-                # decode the path
                 exactInputParams_path_decoded = decode_v3_path(
                     exactInputParams_path
                 )
