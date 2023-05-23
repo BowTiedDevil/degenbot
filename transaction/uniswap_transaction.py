@@ -172,6 +172,14 @@ class UniswapTransaction(Transaction):
             if self.balance[_token] == 0:
                 del self.balance[_token]
 
+    def _get_balance(self, token: str) -> int:
+        """
+        TBD
+        """
+
+        _token = Web3.toChecksumAddress(token)
+        return self.balance.get(_token, 0)
+
     @classmethod
     def add_router(cls, chain_id: int, router_address: str, router_dict: dict):
         """
@@ -273,7 +281,6 @@ class UniswapTransaction(Transaction):
             if command in [
                 "PERMIT2_TRANSFER_FROM",
                 "PERMIT2_PERMIT_BATCH",
-                "SWEEP",
                 "TRANSFER",
                 "PAY_PORTION",
                 "PERMIT2_PERMIT",
@@ -298,6 +305,26 @@ class UniswapTransaction(Transaction):
                 "SEAPORT_V2",
             ]:
                 pass
+
+            elif command == "SWEEP":
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
+
+                try:
+                    token, recipient, amountMin = eth_abi.decode(
+                        ["address", "address", "uint256"], inputs
+                    )
+                except:
+                    raise TransactionError("Could not decode command")
+
+                _balance = self._get_balance(token)
+
+                if _balance < amountMin:
+                    raise ValueError(
+                        f"Requested sweep of min. {amountMin} WETH, received {_balance}"
+                    )
+
+                self._adjust_balance(token, -_balance)
 
             elif command == "WRAP_ETH":
                 if not silent:
@@ -1228,14 +1255,6 @@ class UniswapTransaction(Transaction):
                 final_state["amount0_delta"],
                 final_state["amount1_delta"],
             )
-
-            try:
-                self.balance[token_in_object.address]
-            except KeyError:
-                self._adjust_balance(
-                    token_in_object.address,
-                    token_in_quantity,
-                )
 
             # adjust the post-swap balances for each token
             self._adjust_balance(
