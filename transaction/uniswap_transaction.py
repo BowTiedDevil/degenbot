@@ -566,7 +566,11 @@ class UniswapTransaction(Transaction):
                     fee = exactOutputParams_path_decoded[token_pos + 1]
                     tokenIn = exactOutputParams_path_decoded[token_pos + 2]
 
-                    last_swap = token_pos == last_token_pos
+                    first_swap = token_pos == last_token_pos
+                    last_swap = token_pos == 0
+
+                    print(f"{first_swap=}")
+                    print(f"{last_swap=}")
 
                     v3_pool, pool_state = _simulate_v3_swap_exact_out(
                         params={
@@ -574,24 +578,24 @@ class UniswapTransaction(Transaction):
                                 tokenIn,
                                 tokenOut,
                                 fee,
-                                # use amountOut for the last swap (token_pos == 0),
-                                # otherwise take the input amount of the previous swap
-                                # (always positive so we can check for the max without
+                                # use amountOut for the last swap, otherwise take
+                                # the input amount of the previous swap
+                                # (always positive so we can check without
                                 # knowing the token positions)
                                 amountOut
-                                if token_pos == 0
+                                if last_swap
                                 else max(
                                     pool_state["amount0_delta"],
                                     pool_state["amount1_delta"],
                                 ),
-                                # only apply maximum input to the last swap
-                                amountInMax if last_swap else None,
+                                amountInMax if first_swap else None,
                                 recipient
                                 if last_swap
                                 else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG,
                             )
                         },
                         silent=silent,
+                        first_swap=first_swap,
                     )
 
                     _future_pool_states.append((v3_pool, pool_state))
@@ -849,8 +853,6 @@ class UniswapTransaction(Transaction):
                         -token_out_quantity,
                     )
 
-                # global last_out
-                # last_out = (token_out_object, token_out_quantity)
                 if i == len(pool_objects) - 1:
                     self._adjust_balance(
                         token_in_object.address,
@@ -1146,6 +1148,7 @@ class UniswapTransaction(Transaction):
         def _simulate_v3_swap_exact_out(
             params: dict,
             silent: bool = False,
+            first_swap: bool = False,
         ) -> Tuple[V3LiquidityPool, dict]:
             """
             TBD
@@ -1265,6 +1268,11 @@ class UniswapTransaction(Transaction):
                 token_out_object.address,
                 token_out_quantity,
             )
+
+            if first_swap:
+                self._adjust_balance(
+                    token_in_object.address, token_in_quantity
+                )
 
             print(f"{recipient=}")
 
@@ -1398,11 +1406,11 @@ class UniswapTransaction(Transaction):
                 # from ISwapRouter.sol - https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
                 try:
                     (
-                        exactInputParams_path,
-                        exactInputParams_recipient,
-                        exactInputParams_deadline,
-                        exactInputParams_amountIn,
-                        exactInputParams_amountOutMinimum,
+                        path,
+                        recipient,
+                        deadline,
+                        amount_in,
+                        amount_out_minimum,
                     ) = func_params["params"]
                 except:
                     pass
@@ -1410,71 +1418,66 @@ class UniswapTransaction(Transaction):
                 # from IV3SwapRouter.sol - https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
                 try:
                     (
-                        exactInputParams_path,
-                        exactInputParams_recipient,
-                        exactInputParams_amountIn,
-                        exactInputParams_amountOutMinimum,
+                        path,
+                        recipient,
+                        amount_in,
+                        amount_out_minimum,
                     ) = func_params["params"]
                 except:
                     pass
 
-                exactInputParams_path_decoded = decode_v3_path(
-                    exactInputParams_path
-                )
+                path_decoded = decode_v3_path(path)
 
                 if not silent:
-                    print(f" • path = {exactInputParams_path_decoded}")
-                    print(f" • recipient = {exactInputParams_recipient}")
+                    print(f" • path = {path_decoded}")
+                    print(f" • recipient = {recipient}")
                     try:
-                        exactInputParams_deadline
+                        deadline
                     except:
                         pass
                     else:
-                        print(f" • deadline = {exactInputParams_deadline}")
-                    print(f" • amountIn = {exactInputParams_amountIn}")
-                    print(
-                        f" • amountOutMinimum = {exactInputParams_amountOutMinimum}"
-                    )
+                        print(f" • deadline = {deadline}")
+                    print(f" • amountIn = {amount_in}")
+                    print(f" • amountOutMinimum = {amount_out_minimum}")
 
-                last_token_pos = len(exactInputParams_path_decoded) - 3
+                last_token_pos = len(path_decoded) - 3
 
                 for token_pos in range(
                     0,
-                    len(exactInputParams_path_decoded) - 2,
+                    len(path_decoded) - 2,
                     2,
                 ):
-                    tokenIn = exactInputParams_path_decoded[token_pos]
-                    fee = exactInputParams_path_decoded[token_pos + 1]
-                    tokenOut = exactInputParams_path_decoded[token_pos + 2]
+                    token_in_address = path_decoded[token_pos]
+                    fee = path_decoded[token_pos + 1]
+                    token_out_address = path_decoded[token_pos + 2]
 
+                    first_swap = token_pos == 0
                     last_swap = token_pos == last_token_pos
 
-                    if (
-                        exactInputParams_amountIn
-                        == _V3_ROUTER2_CONTRACT_BALANCE_FLAG
-                    ):
-                        exactInputParams_amountIn = last_out[1]
+                    # if (
+                    #     exactInputParams_amountIn
+                    #     == _V3_ROUTER2_CONTRACT_BALANCE_FLAG
+                    # ):
+                    #     exactInputParams_amountIn = last_out[1]
 
                     v3_pool, pool_state = _simulate_v3_swap_exact_in(
                         params={
                             "params": (
-                                tokenIn,
-                                tokenOut,
+                                token_in_address,
+                                token_out_address,
                                 fee,
                                 # use amountIn for the first swap, otherwise take the output
                                 # amount of the last swap (always negative so we can check
                                 # for the min without knowing the token positions)
-                                exactInputParams_amountIn
-                                if token_pos == 0
+                                amount_in
+                                if first_swap
                                 else -min(
                                     pool_state["amount0_delta"],
                                     pool_state["amount1_delta"],
                                 ),
                                 # only apply minimum output to the last swap
-                                exactInputParams_amountOutMinimum
-                                if last_swap
-                                else None,
-                                exactInputParams_recipient
+                                amount_out_minimum if last_swap else None,
+                                recipient
                                 if last_swap
                                 else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG,
                             )
@@ -1501,11 +1504,11 @@ class UniswapTransaction(Transaction):
                 # Router ABI
                 try:
                     (
-                        exactOutputParams_path,
-                        exactOutputParams_recipient,
-                        exactOutputParams_deadline,
-                        exactOutputParams_amountOut,
-                        exactOutputParams_amountInMaximum,
+                        path,
+                        recipient,
+                        deadline,
+                        amount_out,
+                        amount_in_maximum,
                     ) = func_params["params"]
                 except Exception as e:
                     pass
@@ -1513,71 +1516,73 @@ class UniswapTransaction(Transaction):
                 # Router2 ABI
                 try:
                     (
-                        exactOutputParams_path,
-                        exactOutputParams_recipient,
-                        exactOutputParams_amountOut,
-                        exactOutputParams_amountInMaximum,
+                        path,
+                        recipient,
+                        amount_out,
+                        amount_in_maximum,
                     ) = func_params["params"]
                 except Exception as e:
                     pass
 
-                exactOutputParams_path_decoded = decode_v3_path(
-                    exactOutputParams_path
-                )
+                path_decoded = decode_v3_path(path)
 
                 if not silent:
-                    print(f" • path = {exactOutputParams_path_decoded}")
-                    print(f" • recipient = {exactOutputParams_recipient}")
+                    print(f" • path = {path_decoded}")
+                    print(f" • recipient = {recipient}")
                     try:
-                        exactOutputParams_deadline
+                        deadline
                     except:
                         pass
                     else:
-                        print(f" • deadline = {exactOutputParams_deadline}")
-                    print(f" • amountOut = {exactOutputParams_amountOut}")
-                    print(
-                        f" • amountInMaximum = {exactOutputParams_amountInMaximum}"
-                    )
+                        print(f" • deadline = {deadline}")
+                    print(f" • amountOut = {amount_out}")
+                    print(f" • amountInMaximum = {amount_in_maximum}")
 
                 # the path is encoded in REVERSE order, so we decode from start to finish
                 # tokenOut is the first position, tokenIn is the second position
                 # e.g. tokenOut, fee, tokenIn
-                last_token_pos = len(exactOutputParams_path_decoded) - 3
+                last_token_pos = len(path_decoded) - 3
 
                 for token_pos in range(
                     0,
-                    len(exactOutputParams_path_decoded) - 2,
+                    len(path_decoded) - 2,
                     2,
                 ):
-                    tokenOut = exactOutputParams_path_decoded[token_pos]
-                    fee = exactOutputParams_path_decoded[token_pos + 1]
-                    tokenIn = exactOutputParams_path_decoded[token_pos + 2]
+                    token_out_address = path_decoded[token_pos]
+                    fee = path_decoded[token_pos + 1]
+                    token_in_address = path_decoded[token_pos + 2]
 
-                    last_swap = token_pos == last_token_pos
+                    first_swap = token_pos == last_token_pos
+                    last_swap = token_pos == 0
+
+                    print(f"{first_swap=}")
+                    print(f"{last_swap=}")
 
                     v3_pool, pool_state = _simulate_v3_swap_exact_out(
                         params={
                             "params": (
-                                tokenIn,
-                                tokenOut,
+                                token_in_address,
+                                token_out_address,
                                 fee,
                                 # use amountOut for the last swap (token_pos == 0),
                                 # otherwise take the input amount of the previous swap
                                 # (always positive so we can check for the max without
                                 # knowing the token positions)
-                                exactOutputParams_amountOut
-                                if token_pos == 0
+                                amount_out
+                                if last_swap
                                 else max(
                                     pool_state["amount0_delta"],
                                     pool_state["amount1_delta"],
                                 ),
                                 # only apply maximum input to the last swap
-                                exactOutputParams_amountInMaximum
+                                amount_in_maximum if first_swap else None,
+                                recipient
                                 if last_swap
-                                else None,
+                                else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG,
                             )
                         },
                         silent=silent,
+                        first_swap=first_swap,
                     )
 
                     future_pool_states.append((v3_pool, pool_state))
