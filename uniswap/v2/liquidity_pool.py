@@ -164,16 +164,17 @@ class LiquidityPool:
                 unload_brownie_contract_after_init=True,
             )
 
-        # check that the address is a valid V2 pool
-        computed_pool_address = generate_v2_pool_address(
-            token_addresses=[self.token0.address, self.token1.address],
-            factory_address=factory_address,
-            init_hash=factory_init_hash,
-        )
-        if computed_pool_address != self.address:
-            raise ValueError(
-                f"Pool address {self.address} does not match deterministic address {computed_pool_address} from factory"
+        if factory_address is not None and factory_init_hash is not None:
+            # check that the address is a valid V2 pool
+            computed_pool_address = generate_v2_pool_address(
+                token_addresses=[self.token0.address, self.token1.address],
+                factory_address=factory_address,
+                init_hash=factory_init_hash,
             )
+            if computed_pool_address != self.address:
+                raise ValueError(
+                    f"Pool address {self.address} does not match deterministic address {computed_pool_address} from factory"
+                )
 
         if name is not None:
             self.name = name
