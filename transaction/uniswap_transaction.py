@@ -1715,7 +1715,9 @@ class UniswapTransaction(Transaction):
                     print(f"{func_name}: {self.hash}")
 
                 wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
-                wrapped_token_balance = self.balance[wrapped_token_address]
+                wrapped_token_balance = self._get_balance(
+                    self.router_address, wrapped_token_address
+                )
 
                 self._adjust_balance(
                     self.router_address,
