@@ -1,3 +1,5 @@
+# TODO: refactor, class has gotten bulky af frfr
+
 import itertools
 from pprint import pprint
 from typing import Dict, List, Optional, Tuple, Union
@@ -340,6 +342,8 @@ class UniswapTransaction(Transaction):
                 "EXECUTE_SUB_PLAN",
                 "SEAPORT_V2",
             ]:
+                if not silent:
+                    print(f"{func_name}: {self.hash}")
                 pass
 
             elif command == "SWEEP":
@@ -351,7 +355,9 @@ class UniswapTransaction(Transaction):
                         ["address", "address", "uint256"], inputs
                     )
                 except:
-                    raise TransactionError("Could not decode command")
+                    raise TransactionError(
+                        f"Could not decode input for {command}"
+                    )
 
                 _balance = self._get_balance(self.router_address, token)
 
@@ -373,7 +379,9 @@ class UniswapTransaction(Transaction):
                         ["address", "uint256"], inputs
                     )
                 except:
-                    raise TransactionError("Could not decode command")
+                    raise TransactionError(
+                        f"Could not decode input for {command}"
+                    )
 
                 if recipient == _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG:
                     self._adjust_balance(
@@ -391,27 +399,19 @@ class UniswapTransaction(Transaction):
                         ["address", "uint256"], inputs
                     )
                 except:
-                    raise TransactionError("Could not decode command")
+                    raise TransactionError(
+                        f"Could not decode input for {command}"
+                    )
 
                 wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
                 wrapped_token_balance = self._get_balance(
                     self.router_address, wrapped_token_address
                 )
 
-                print(f"Unwrapping {wrapped_token_balance=}")
-                print(f"TOKEN: {wrapped_token_address=}")
-
                 if wrapped_token_balance < amountMin:
                     raise ValueError(
                         f"Requested unwrap of min. {amountMin} WETH, received {wrapped_token_balance}"
                     )
-
-                try:
-                    recipient, amountMin = eth_abi.decode(
-                        ["address", "uint256"], inputs
-                    )
-                except:
-                    raise TransactionError("Could not decode command")
 
                 if recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
                     recipient = self.sender
@@ -450,7 +450,9 @@ class UniswapTransaction(Transaction):
                         inputs,
                     )
                 except:
-                    raise TransactionError("Could not decode command")
+                    raise TransactionError(
+                        f"Could not decode input for {command}"
+                    )
 
                 func_params = {
                     "amountIn": amountIn,
@@ -489,7 +491,9 @@ class UniswapTransaction(Transaction):
                         inputs,
                     )
                 except:
-                    raise TransactionError("Could not decode command")
+                    raise TransactionError(
+                        f"Could not decode input for {command}"
+                    )
 
                 func_params = {
                     "amountOut": amountOut,
@@ -526,7 +530,9 @@ class UniswapTransaction(Transaction):
                         inputs,
                     )
                 except:
-                    raise TransactionError("Could not decode command")
+                    raise TransactionError(
+                        f"Could not decode input for {command}"
+                    )
 
                 exactInputParams_path_decoded = decode_v3_path(path)
 
@@ -601,7 +607,9 @@ class UniswapTransaction(Transaction):
                         inputs,
                     )
                 except:
-                    raise TransactionError("Could not decode command")
+                    raise TransactionError(
+                        f"Could not decode input for {command}"
+                    )
 
                 exactOutputParams_path_decoded = decode_v3_path(path)
 
@@ -731,38 +739,56 @@ class UniswapTransaction(Transaction):
                 first_swap = i == 0
                 last_swap = i == last_pool_pos
 
-                if first_swap and (
-                    token_in_quantity
-                    == _UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG
-                ):
-                    token_in_quantity = self._get_balance(
+                if first_swap:
+                    # if the router and the pool have a zero balance, credit it to the router
+                    # (the user calling for the swap transfers the input)
+                    if not self._get_balance(
+                        self.router_address, token_in_object.address
+                    ) and not self._get_balance(
+                        v2_pool.address, token_in_object.address
+                    ):
+                        self._adjust_balance(
+                            self.router_address,
+                            token_in_object.address,
+                            token_in_quantity,
+                        )
+
+                    if (
+                        token_in_quantity
+                        == _UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG
+                    ):
+                        token_in_quantity = max(
+                            self._get_balance(
+                                self.router_address, token_in_object.address
+                            ),
+                            self._get_balance(
+                                v2_pool.address, token_in_object.address
+                            ),
+                        )
+
+                    router_balance = self._get_balance(
                         self.router_address, token_in_object.address
                     )
-
-                # if the router has a zero balance, credit it (user calling for the swap transfers)
-                if first_swap and not self._get_balance(
-                    self.router_address, token_in_object.address
-                ):
-                    self._adjust_balance(
-                        self.router_address,
-                        token_in_object.address,
-                        token_in_quantity,
+                    pool_balance = self._get_balance(
+                        v2_pool.address, token_in_object.address
                     )
 
-                # for the initial swap, transfer the input balance from the router to the first pool
-                if first_swap and not self._get_balance(
-                    v2_pool.address, token_in_object.address
-                ):
-                    self._adjust_balance(
-                        self.router_address,
-                        token_in_object.address,
-                        -token_in_quantity,
-                    )
-                    self._adjust_balance(
-                        v2_pool.address,
-                        token_in_object.address,
-                        token_in_quantity,
-                    )
+                    print("V2 SWAP: FIRST POOL")
+                    print(f"{router_balance=}")
+                    print(f"{pool_balance=}")
+
+                    if pool_balance < token_in_quantity:
+                        difference = token_in_quantity - pool_balance
+                        self._adjust_balance(
+                            self.router_address,
+                            token_in_object.address,
+                            -difference,
+                        )
+                        self._adjust_balance(
+                            v2_pool.address,
+                            token_in_object.address,
+                            difference,
+                        )
 
                 future_state = v2_pool.simulate_swap(
                     token_in=token_in_object,
@@ -790,7 +816,6 @@ class UniswapTransaction(Transaction):
 
                 print(f"{first_swap=}")
                 print(f"{last_swap=}")
-                print(f"start: {recipient=}")
 
                 if last_swap:
                     if recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
@@ -802,8 +827,6 @@ class UniswapTransaction(Transaction):
                         _recipient = self.router_address
                 else:
                     _recipient = v2_pool_objects[i + 1].address
-
-                print(f"final: {_recipient=}")
 
                 self._adjust_balance(
                     _recipient,
@@ -924,37 +947,55 @@ class UniswapTransaction(Transaction):
                     )
                 )
 
-                if first_swap and not self._get_balance(
-                    self.router_address, token_in_object.address
-                ):
+                # adjust the pool balances for each token
+                self._adjust_balance(
+                    v2_pool.address,
+                    token_in_object.address,
+                    -token_in_quantity,
+                )
+                self._adjust_balance(
+                    v2_pool.address,
+                    token_out_object.address,
+                    token_out_quantity,
+                )
+
+                # print(f"{recipient=}")
+
+                if first_swap:
+                    # transfer the input token amount from the sender to the first pool
+                    print("FIRST SWAP")
                     self._adjust_balance(
-                        self.router_address,
+                        self.sender,
+                        token_in_object.address,
+                        -token_in_quantity,
+                    )
+                    self._adjust_balance(
+                        v2_pool.address,
                         token_in_object.address,
                         token_in_quantity,
                     )
 
-                # adjust the post-swap balances for each token
-                self._adjust_balance(
-                    self.router_address,
-                    token_in_object.address,
-                    -token_in_quantity,
-                )
-
-                print(f"{recipient=}")
-
                 if last_swap:
-                    if recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
-                        _recipient = self.sender
-                    elif recipient in [
+                    print("LAST SWAP")
+                    if recipient in [
                         _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG,
                         _V3_ROUTER_CONTRACT_ADDRESS_FLAG,
                     ]:
                         _recipient = self.router_address
+                    else:
+                        _recipient = self.sender
                 else:
-                    _recipient = pool_objects[::-1][i + 1].address
+                    # send tokens to the next pool
+                    _recipient = pool_objects[::-1][i - 1].address
 
-                print(f"{recipient=}")
+                # print(f"{_recipient=}")
 
+                # transfer the output token from the pool to the recipient
+                self._adjust_balance(
+                    v2_pool.address,
+                    token_out_object.address,
+                    -token_out_quantity,
+                )
                 self._adjust_balance(
                     _recipient,
                     token_out_object.address,
@@ -1394,7 +1435,7 @@ class UniswapTransaction(Transaction):
                         -swap_input_balance,
                     )
 
-            print(f"{recipient=}")
+            # print(f"{recipient=}")
 
             if last_swap:
                 if recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
@@ -1405,7 +1446,7 @@ class UniswapTransaction(Transaction):
                 ]:
                     _recipient = self.router_address
 
-                print(f"{_recipient=}")
+                # print(f"{_recipient=}")
 
                 self._adjust_balance(
                     self.router_address,
