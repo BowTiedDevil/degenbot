@@ -84,8 +84,6 @@ _ROUTERS: Dict[int, Dict[str, Dict]] = {
 # Internal dict of known wrapped token contracts by chain ID. Pre-populated with mainnet addresses
 _WRAPPED_NATIVE_TOKENS = {1: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"}
 
-# TODO: create `add_wrapped_token` method
-
 # see https://github.com/Uniswap/universal-router/blob/deployed-commit/contracts/libraries/Constants.sol
 _UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG = 1 << 255
 _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG = (
