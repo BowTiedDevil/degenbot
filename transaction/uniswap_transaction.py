@@ -227,6 +227,23 @@ class UniswapTransaction(Transaction):
         else:
             raise ValueError("Router address already known!")
 
+    @classmethod
+    def add_wrapped_token(cls, chain_id: int, token_address: dict):
+        """
+        Add a wrapped token address for a given chain ID.
+        """
+
+        token_address = Web3.toChecksumAddress(token_address)
+
+        try:
+            _WRAPPED_NATIVE_TOKENS[chain_id]
+        except KeyError:
+            _WRAPPED_NATIVE_TOKENS[chain_id] = token_address
+        else:
+            raise ValueError(
+                f"Token address {_WRAPPED_NATIVE_TOKENS[chain_id]} already set for chain ID {chain_id}!"
+            )
+
     def _simulate(
         self,
         func_name: Optional[str] = None,
