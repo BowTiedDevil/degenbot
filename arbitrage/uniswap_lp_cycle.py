@@ -2,6 +2,7 @@ from typing import List, Optional, Tuple, Union, Dict
 from warnings import warn
 
 from eth_abi import encode as abi_encode
+from eth_typing import ChecksumAddress
 from scipy import optimize  # type: ignore
 from web3 import Web3
 
@@ -170,7 +171,7 @@ class UniswapLpCycle(Arbitrage):
                 )
             else:
                 if token_out_quantity == 0:
-                    raise ZeroSwapError(
+                    raise ArbitrageError(
                         f"Zero-output swap through pool {pool} @ {pool.address}"
                     )
 
