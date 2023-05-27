@@ -12,7 +12,6 @@ from degenbot.exceptions import (
     EVMRevertError,
     LiquidityPoolError,
     ZeroLiquidityError,
-    ZeroSwapError,
 )
 from degenbot.token import Erc20Token
 from degenbot.uniswap.v2.liquidity_pool import (
