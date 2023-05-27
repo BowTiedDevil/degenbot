@@ -10,6 +10,7 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from degenbot.chainlink import ChainlinkPriceContract
+from degenbot.logging import logger
 
 MIN_ERC20_ABI = json.loads(
     """
@@ -41,9 +42,7 @@ class Erc20Token:
         try:
             self.address: str = Web3.toChecksumAddress(address)
         except ValueError:
-            print(
-                "Could not checksum address, storing non-checksummed version"
-            )
+            warn("Could not checksum address, storing non-checksummed version")
             self.address = address
 
         if user:
@@ -130,7 +129,7 @@ class Erc20Token:
             self.price = None
 
         if not silent:
-            print(f"• {self.symbol} ({self.name})")
+            logger.info(f"• {self.symbol} ({self.name})")
 
         # Memory savings if token contract object is not used after initialization
         if unload_brownie_contract_after_init:

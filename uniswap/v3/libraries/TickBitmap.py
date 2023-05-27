@@ -5,6 +5,7 @@ from degenbot.exceptions import (
     BitmapWordUnavailableError,
     MissingTickWordError,
 )
+from degenbot.logging import logger
 
 from . import BitMath
 from .Helpers import *
@@ -20,12 +21,7 @@ def flipTick(
         raise EVMRevertError("Tick not correctly spaced!")
 
     wordPos, bitPos = position(int(Decimal(tick) // tickSpacing))
-    # print(f"flipping {tick=} @ {wordPos=}, {bitPos=}")
-
-    # if tickBitmap.get(wordPos) is None:
-    #     raise MissingTickWordError(
-    #         f"Called flipTick on missing word: {wordPos=}"
-    #     )
+    logger.debug(f"flipping {tick=} @ {wordPos=}, {bitPos=}")
 
     try:
         mask = 1 << bitPos

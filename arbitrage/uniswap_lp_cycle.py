@@ -13,6 +13,7 @@ from degenbot.exceptions import (
     LiquidityPoolError,
     ZeroLiquidityError,
 )
+from degenbot.logging import logger
 from degenbot.token import Erc20Token
 from degenbot.uniswap.v2.liquidity_pool import (
     CamelotLiquidityPool,
@@ -228,7 +229,7 @@ class UniswapLpCycle(Arbitrage):
         found_updates = False
 
         if override_update_method and not silent:
-            print(f"OVERRIDDEN UPDATE METHOD: {override_update_method}")
+            logger.info(f"OVERRIDDEN UPDATE METHOD: {override_update_method}")
 
         for pool in self.swap_pools:
             if (
@@ -243,7 +244,7 @@ class UniswapLpCycle(Arbitrage):
                     )
                     if pool_updated:
                         if not silent:
-                            print(
+                            logger.info(
                                 f"(UniswapLpCycle) found update for pool {pool}"
                             )
                         found_updates = True
@@ -254,7 +255,7 @@ class UniswapLpCycle(Arbitrage):
                     )
                     if pool_updated:
                         if not silent:
-                            print(
+                            logger.info(
                                 f"(UniswapLpCycle) found update for pool {pool}"
                             )
                         found_updates = True
@@ -550,7 +551,7 @@ class UniswapLpCycle(Arbitrage):
             # generate the swap payloads for each pool in the path
 
             last_pool = self.swap_pools[-1]
-            # print("\tPAYLOAD: identified last pool")
+            logger.debug("\tPAYLOAD: identified last pool")
             for i, swap_pool_object in enumerate(self.swap_pools):
                 if swap_pool_object is last_pool:
                     next_pool = None
@@ -569,12 +570,16 @@ class UniswapLpCycle(Arbitrage):
                     swap_destination_address = from_address
 
                 if swap_pool_object.uniswap_version == 2:
-                    # print(f"\tPAYLOAD: building V2 swap at pool {i}")
-                    # print(f"\tPAYLOAD: pool address {swap_pool_object.address}")
-                    # print(
-                    #     f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]["amounts"]}'
-                    # )
-                    # print(f"\tPAYLOAD: destination address {swap_destination_address}")
+                    logger.debug(f"\tPAYLOAD: building V2 swap at pool {i}")
+                    logger.debug(
+                        f"\tPAYLOAD: pool address {swap_pool_object.address}"
+                    )
+                    logger.debug(
+                        f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]["amounts"]}'
+                    )
+                    logger.debug(
+                        f"\tPAYLOAD: destination address {swap_destination_address}"
+                    )
                     payloads.append(
                         (
                             # address
@@ -602,12 +607,16 @@ class UniswapLpCycle(Arbitrage):
                         )
                     )
                 elif swap_pool_object.uniswap_version == 3:
-                    # print(f"\tPAYLOAD: building V3 swap at pool {i}")
-                    # print(f"\tPAYLOAD: pool address {swap_pool_object.address}")
-                    # print(
-                    #     f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]}'
-                    # )
-                    # print(f"\tPAYLOAD: destination address {swap_destination_address}")
+                    logger.debug(f"\tPAYLOAD: building V3 swap at pool {i}")
+                    logger.debug(
+                        f"\tPAYLOAD: pool address {swap_pool_object.address}"
+                    )
+                    logger.debug(
+                        f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]}'
+                    )
+                    logger.debug(
+                        f"\tPAYLOAD: destination address {swap_destination_address}"
+                    )
                     payloads.append(
                         (
                             # address

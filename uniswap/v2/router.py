@@ -5,6 +5,8 @@ from typing import Optional
 from brownie import Contract  # type: ignore
 from brownie.network.account import LocalAccount  # type: ignore
 
+from degenbot.logging import logger
+
 
 class Router:
     """
@@ -34,7 +36,7 @@ class Router:
         self.name = name
         if user is not None:
             self._user = user
-            print(f"• {name}")
+            logger.info(f"• {name}")
 
     def __str__(self) -> str:
         return self.name

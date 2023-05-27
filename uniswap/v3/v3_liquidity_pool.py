@@ -17,6 +17,7 @@ from degenbot.exceptions import (
     LiquidityPoolError,
     ZeroSwapError,
 )
+from degenbot.logging import logger
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.uniswap.v3.abi import UNISWAP_V3_POOL_ABI
@@ -179,12 +180,12 @@ class BaseV3LiquidityPool(ABC):
         self._update_pool_state()
 
         if not silent:
-            print(self.name)
-            print(f"• Token 0: {self.token0}")
-            print(f"• Token 1: {self.token1}")
-            print(f"• Liquidity: {self.liquidity}")
-            print(f"• SqrtPrice: {self.sqrt_price_x96}")
-            print(f"• Tick: {self.tick}")
+            logger.info(self.name)
+            logger.info(f"• Token 0: {self.token0}")
+            logger.info(f"• Token 1: {self.token1}")
+            logger.info(f"• Liquidity: {self.liquidity}")
+            logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
+            logger.info(f"• Tick: {self.tick}")
 
     # Some objects cannot be pickled, so set those references to None and return the state
     def __getstate__(self):
@@ -257,11 +258,11 @@ class BaseV3LiquidityPool(ABC):
         # Used to throw an exception, now just returns early.
 
         if word_position in self.tick_bitmap:
-            print(f"returning early, {word_position=} found")
-            print(self.tick_bitmap[word_position])
+            logger.debug(f"returning early, {word_position=} found")
+            logger.debug(self.tick_bitmap[word_position])
             return
 
-        # print(f"updating tick data for pool: {self.name}")
+        logger.debug(f"updating tick data for pool: {self.name}")
 
         with self.tick_lock:
             if block_number is None:
@@ -281,7 +282,7 @@ class BaseV3LiquidityPool(ABC):
                     )
                 ) - set(self.tick_bitmap)
 
-                # print(f"fetching words: {words}")
+                logger.debug(f"fetching words: {words}")
 
                 # fetch the tick bitmaps for the range
                 try:
@@ -456,7 +457,9 @@ class BaseV3LiquidityPool(ABC):
                     if self.tick_bitmap["sparse"]:
                         # BUG: 'word_position=XXX inside known range' exception is being thrown here
                         # when the helper is being updated by multiple threads
-                        # print(f"(swap) {self.name} fetching word {wordPos}")
+                        logger.debug(
+                            f"(swap) {self.name} fetching word {missing_word}"
+                        )
                         self._update_tick_data_at_word(
                             missing_word,
                             # single_word=True,
@@ -481,10 +484,10 @@ class BaseV3LiquidityPool(ABC):
                         self.tick_bitmap["sparse"]
                         and tick_next_word not in self.tick_bitmap
                     ):
-                        # print(
-                        #     f'tickNext={step["tickNext"]} out of range! Fetching word={tick_next_word}'
-                        #     f"\n{self.name}"
-                        # )
+                        logger.debug(
+                            f'tickNext={step["tickNext"]} out of range! Fetching word={tick_next_word}'
+                            f"\n{self.name}"
+                        )
                         self._update_tick_data_at_word(
                             tick_next_word,
                             single_word=True,
@@ -684,9 +687,9 @@ class BaseV3LiquidityPool(ABC):
                 self._update_pool_state()
 
             if not silent:
-                print(f"Liquidity: {self.liquidity}")
-                print(f"SqrtPriceX96: {self.sqrt_price_x96}")
-                print(f"Tick: {self.tick}")
+                logger.info(f"Liquidity: {self.liquidity}")
+                logger.info(f"SqrtPriceX96: {self.sqrt_price_x96}")
+                logger.info(f"Tick: {self.tick}")
 
             # WORKAROUND: update the block even if there are no state changes
             # pools were being repeatedly caught by "stale pool" checks
@@ -894,7 +897,7 @@ class BaseV3LiquidityPool(ABC):
         # if block_number was not provided, pull from Brownie
         if block_number is None:
             block_number = chain.height
-            print(
+            warn(
                 f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
             )
 
@@ -952,9 +955,9 @@ class BaseV3LiquidityPool(ABC):
                             # the initialized status of any tick
 
                             if fetch_missing:
-                                # print(
-                                #     f"(external_update) {tick_word=} not found in tick_bitmap {self.tick_bitmap.keys()=}"
-                                # )
+                                logger.debug(
+                                    f"(external_update) {tick_word=} not found in tick_bitmap {self.tick_bitmap.keys()=}"
+                                )
                                 try:
                                     # fetch the single word
                                     self._update_tick_data_at_word(
@@ -1024,10 +1027,10 @@ class BaseV3LiquidityPool(ABC):
                 updated_state = True
 
             if not silent:
-                print(f"Liquidity: {self.liquidity}")
-                print(f"SqrtPriceX96: {self.sqrt_price_x96}")
-                print(f"Tick: {self.tick}")
-                print(
+                logger.info(f"Liquidity: {self.liquidity}")
+                logger.info(f"SqrtPriceX96: {self.sqrt_price_x96}")
+                logger.info(f"Tick: {self.tick}")
+                logger.info(
                     f"liquidity event: {liquidity_delta} in tick range [{lower_tick},{upper_tick}], pool: {self.name}"
                 )
 
