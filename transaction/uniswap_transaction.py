@@ -228,7 +228,7 @@ class UniswapTransaction(Transaction):
             raise ValueError("Router address already known!")
 
     @classmethod
-    def add_wrapped_token(cls, chain_id: int, token_address: dict):
+    def add_wrapped_token(cls, chain_id: int, token_address: str):
         """
         Add a wrapped token address for a given chain ID.
         """

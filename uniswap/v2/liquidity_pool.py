@@ -74,16 +74,7 @@ class LiquidityPool:
         """
         self.uniswap_version = 2
 
-        self.address: Union[str, ChecksumAddress]
-
-        # transforms to checksummed address
-        try:
-            self.address = Web3.toChecksumAddress(address)
-        except ValueError:
-            print(
-                "Could not checksum address, storing non-checksummed version"
-            )
-            self.address = address
+        self.address: ChecksumAddress = Web3.toChecksumAddress(address)
 
         if router:
             self.router = router

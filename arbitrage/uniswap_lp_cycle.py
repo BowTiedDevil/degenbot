@@ -497,7 +497,7 @@ class UniswapLpCycle(Arbitrage):
 
     def generate_payloads(
         self,
-        from_address: str,
+        from_address: Union[str, ChecksumAddress],
     ) -> List[Tuple[str, bytes, int]]:
         """
         Generates a list of calldata payloads for each step in the swap path, with calldata built using the eth_abi.encode method
@@ -513,6 +513,8 @@ class UniswapLpCycle(Arbitrage):
         payloads: List[Tuple[str, bytes, int]]
             A list of payloads, formatted as a tuple: (address, calldata, msg.value)
         """
+
+        from_address = Web3.toChecksumAddress(from_address)
 
         # check for zero-amount swaps
         if not self.best["swap_pool_amounts"]:
