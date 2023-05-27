@@ -880,6 +880,8 @@ class UniswapTransaction(Transaction):
                         _V3_ROUTER_CONTRACT_ADDRESS_FLAG,
                     ]:
                         _recipient = self.router_address
+                    else:
+                        _recipient = recipient
                 else:
                     _recipient = v2_pool_objects[i + 1].address
 
@@ -1500,6 +1502,8 @@ class UniswapTransaction(Transaction):
                     _V3_ROUTER_CONTRACT_ADDRESS_FLAG,
                 ]:
                     _recipient = self.router_address
+                else:
+                    _recipient = recipient
 
                 # print(f"{_recipient=}")
 
