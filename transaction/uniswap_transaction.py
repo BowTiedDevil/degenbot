@@ -5,6 +5,7 @@ from pprint import pprint
 from typing import Dict, List, Optional, Tuple, Union
 
 import eth_abi
+from eth_typing import ChecksumAddress
 from web3 import Web3
 
 from degenbot.exceptions import (
@@ -136,6 +137,7 @@ class UniswapTransaction(Transaction):
         self.balance: Dict[str, Dict[str, int]] = {}
         self.chain_id = chain_id
         self.sender = Web3.toChecksumAddress(tx_sender)
+        self.to: Optional[Union[ChecksumAddress, str]] = None
 
         if router_address not in self.routers:
             raise ValueError(f"Router address {router_address} unknown!")
@@ -771,6 +773,7 @@ class UniswapTransaction(Transaction):
             print(f"{token_in_quantity=}")
             last_pool_pos = len(v2_pool_objects) - 1
             recipient = params["to"]
+            self.to = recipient
 
             for i, v2_pool in enumerate(v2_pool_objects):
                 # i == 0 for first pool in path, take from 'path' in func_params
@@ -960,10 +963,9 @@ class UniswapTransaction(Transaction):
                 unload_brownie_contract_after_init=True,
             )
             token_out_quantity = params["amountOut"]
-
-            recipient = params["to"]
-
             last_pool_pos = len(pool_objects) - 1
+            recipient = params["to"]
+            self.to = recipient
 
             # work through the pools backwards, since the swap will execute at a defined output, with input floating
             for i, v2_pool in enumerate(pool_objects[::-1]):
@@ -1900,7 +1902,7 @@ class UniswapTransaction(Transaction):
         """
 
         result = self._simulate(func_name, func_params, silent)
-        if set(self.balance) - set([self.sender]):
+        if set(self.balance) - set([self.sender, self.to]):
             print("UNACCOUNTED BALANCE FOUND!")
             pprint(self.balance)
             import sys
