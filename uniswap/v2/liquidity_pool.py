@@ -1,3 +1,4 @@
+from warnings import warn
 from decimal import Decimal
 from fractions import Fraction
 from typing import List, Optional, Tuple, Union
@@ -12,6 +13,7 @@ from degenbot.exceptions import (
     LiquidityPoolError,
     ZeroSwapError,
 )
+from degenbot.logging import logger
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.uniswap.v2.abi import UNISWAPV2_LP_ABI
@@ -80,12 +82,10 @@ class LiquidityPool:
         if router:
             self.router = router
 
-        if type(fee) == Decimal:
-            print("***")
-            print(
+        if isinstance(fee, Decimal):
+            warn(
                 f"WARNING: fee set as a Decimal value instead of Fraction. The fee has been converted inside the LP helper from {repr(fee)} to {repr(Fraction(fee))}, please adjust your code to specify a Fraction to remove this warning. e.g. Fraction(3,1000) is equivalent to Decimal('0.003')."
             )
-            print("***")
             fee = Fraction(fee)
 
         if factory_address is None != factory_init_hash is None:
@@ -93,7 +93,7 @@ class LiquidityPool:
                 f"Init hash not provided for factory {factory_address}"
             )
 
-        if type(fee) != Fraction:
+        if not isinstance(fee, Fraction):
             raise TypeError(
                 f"LP fee was not correctly passed! "
                 f"Expected '{Fraction().__class__.__name__}', "
@@ -212,11 +212,11 @@ class LiquidityPool:
         self._update_pool_state()
 
         if not silent:
-            print(self.name)
-            print(
+            logger.info(self.name)
+            logger.info(
                 f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}"
             )
-            print(
+            logger.info(
                 f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}"
             )
 
@@ -296,9 +296,9 @@ class LiquidityPool:
             override_reserves_token0 = override_state["reserves_token0"]
             override_reserves_token1 = override_state["reserves_token1"]
 
-            print("Overrides applied:")
-            print(f"{override_reserves_token0=}")
-            print(f"{override_reserves_token1=}")
+            logger.info("Overrides applied:")
+            logger.info(f"{override_reserves_token0=}")
+            logger.info(f"{override_reserves_token1=}")
 
         if not (
             (
@@ -410,9 +410,9 @@ class LiquidityPool:
             override_reserves_token0 = override_state["reserves_token0"]
             override_reserves_token1 = override_state["reserves_token1"]
 
-            print("Overrides applied:")
-            print(f"{override_reserves_token0=}")
-            print(f"{override_reserves_token1=}")
+            logger.info("Overrides applied:")
+            logger.info(f"{override_reserves_token0=}")
+            logger.info(f"{override_reserves_token1=}")
 
         if not (
             (
@@ -486,7 +486,7 @@ class LiquidityPool:
             )
 
         if not silent:
-            print(
+            logger.info(
                 f"{token_in} -> {token_out} @ ({token_in_qty} {token_in} = {token_out_qty} {token_out})"
             )
 
@@ -530,7 +530,7 @@ class LiquidityPool:
         if override_state is None:
             override_state = {}
         else:
-            print(f"Overridden reserves: {override_state}")
+            logger.info(f"Overridden reserves: {override_state}")
 
         if token_in and token_in not in (self.token0, self.token1):
             raise ValueError(
@@ -664,15 +664,19 @@ class LiquidityPool:
                         reserves1,
                     )
                     if not silent:
-                        print(f"[{self.name}]")
+                        logger.info(f"[{self.name}]")
                         if print_reserves:
-                            print(f"{self.token0}: {self.reserves_token0}")
-                            print(f"{self.token1}: {self.reserves_token1}")
+                            logger.info(
+                                f"{self.token0}: {self.reserves_token0}"
+                            )
+                            logger.info(
+                                f"{self.token1}: {self.reserves_token1}"
+                            )
                         if print_ratios:
-                            print(
+                            logger.info(
                                 f"{self.token0}/{self.token1}: {(self.reserves_token0/10**self.token0.decimals) / (self.reserves_token1/10**self.token1.decimals)}"
                             )
-                            print(
+                            logger.info(
                                 f"{self.token1}/{self.token0}: {(self.reserves_token1/10**self.token1.decimals) / (self.reserves_token0/10**self.token0.decimals)}"
                             )
 
@@ -711,15 +715,15 @@ class LiquidityPool:
                 self._update_pool_state()
 
             if not silent:
-                print(f"[{self.name}]")
+                logger.info(f"[{self.name}]")
                 if print_reserves:
-                    print(f"{self.token0}: {self.reserves_token0}")
-                    print(f"{self.token1}: {self.reserves_token1}")
+                    logger.info(f"{self.token0}: {self.reserves_token0}")
+                    logger.info(f"{self.token1}: {self.reserves_token1}")
                 if print_ratios:
-                    print(
+                    logger.info(
                         f"{self.token0}/{self.token1}: {self.reserves_token0 / self.reserves_token1}"
                     )
-                    print(
+                    logger.info(
                         f"{self.token1}/{self.token0}: {self.reserves_token1 / self.reserves_token0}"
                     )
             self.calculate_tokens_in_from_ratio_out()
