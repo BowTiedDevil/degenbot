@@ -10,6 +10,7 @@ from degenbot.exceptions import (
     DeprecationError,
     ExternalUpdateError,
     LiquidityPoolError,
+    ZeroSwapError,
 )
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
@@ -428,7 +429,7 @@ class LiquidityPool:
             )
 
         if token_in_quantity <= 0:
-            raise ValueError("token_in_quantity must be positive")
+            raise ZeroSwapError("token_in_quantity must be positive")
 
         if token_in == self.token0:
             reserves_in = (

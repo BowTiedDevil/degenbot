@@ -98,14 +98,6 @@ class ZeroLiquidityError(ArbitrageError):
     pass
 
 
-class ZeroSwapError(ArbitrageError):
-    """
-    Thrown by the arbitrage helper if a calculated swap resulted in zero output
-    """
-
-    pass
-
-
 # 2nd level exceptions for Uniswap Liquidity Pool classes
 class BitmapWordUnavailableError(LiquidityPoolError):
     """
@@ -129,6 +121,14 @@ class MissingTickWordError(LiquidityPoolError):
     """
     Thrown by the TickBitmap library when calling for an operation on a word that
     should be available, but is not
+    """
+
+    pass
+
+
+class ZeroSwapError(LiquidityPoolError):
+    """
+    Thrown if a swap calculation resulted or would result in zero output
     """
 
     pass
