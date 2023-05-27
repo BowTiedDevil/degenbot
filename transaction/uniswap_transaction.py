@@ -1241,6 +1241,8 @@ class UniswapTransaction(Transaction):
             except:
                 pass
 
+            self.to = recipient
+
             try:
                 # get the V3 pool involved in the swap
                 v3_pool = self.v3_pool_manager.get_pool(
@@ -1317,8 +1319,6 @@ class UniswapTransaction(Transaction):
                 _V3_ROUTER_CONTRACT_ADDRESS_FLAG,
             ]:
                 recipient = self.router_address
-            else:
-                pass
 
             self._adjust_balance(
                 recipient,
@@ -1412,6 +1412,8 @@ class UniswapTransaction(Transaction):
                 ) = params["params"]
             except:
                 pass
+
+            self.to = recipient
 
             try:
                 v3_pool = self.v3_pool_manager.get_pool(
