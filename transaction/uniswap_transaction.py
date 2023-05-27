@@ -110,9 +110,29 @@ class UniswapTransaction(Transaction):
         func_params: dict,
         router_address: str,
     ):
+        """
+        Build a standalone representation of a transaction submitted to a known Uniswap-based router contract address.
+
+        Supported addresses:
+            - 0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F (Sushiswap Router)
+            - 0xf164fC0Ec4E93095b804a4795bBe1e041497b92a (Uniswap V2 Router)
+            - 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D (Uniswap V2 Router 2)
+            - 0xE592427A0AEce92De3Edee1F18E0157C05861564 (Uniswap V3 Router)
+            - 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45 (Uniswap V3 Router 2)
+            - 0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B (Uniswap Universal Router)
+        """
+
         router_address = Web3.toChecksumAddress(router_address)
 
         self.routers = _ROUTERS[chain_id]
+
+        # The `self.balance` dictionary maintains a ledger of token balances for all addresses involved in the swap.
+        # A positive balance represents a pre-swap deposit, a negative balance represents an outstanding withdrawal.
+        # A full transaction should end with a positive balance of the desired output token, credited to `self.sender`.
+        #
+        # @dev Some routers have special flags that signify the swap amount should be looked up at the time of the swap,
+        # as opposed to a specified amount at the time the transaction is built. The ledger is used to look up the balance
+        # at any point inside the swap, and at the end to confirm that all balances have been accounted for.
         self.balance: Dict[str, Dict[str, int]] = {}
         self.chain_id = chain_id
         self.sender = Web3.toChecksumAddress(tx_sender)
@@ -156,7 +176,11 @@ class UniswapTransaction(Transaction):
 
     def _adjust_balance(self, address: str, token: str, amount: int) -> None:
         """
-        TBD
+        Modify the balance for a given address and token.
+
+        The amount can be positive (credit) or negative (debit).
+
+        The method checksums all addresses.
         """
 
         _token = Web3.toChecksumAddress(token)
@@ -186,7 +210,9 @@ class UniswapTransaction(Transaction):
 
     def _get_balance(self, address: str, token: str) -> int:
         """
-        TBD
+        Get the balance for a given address and token.
+
+        The method checksums all addresses.
         """
 
         _address = Web3.toChecksumAddress(address)
@@ -231,14 +257,16 @@ class UniswapTransaction(Transaction):
     def add_wrapped_token(cls, chain_id: int, token_address: str):
         """
         Add a wrapped token address for a given chain ID.
+
+        The method checksums the token address.
         """
 
-        token_address = Web3.toChecksumAddress(token_address)
+        _token_address = Web3.toChecksumAddress(token_address)
 
         try:
             _WRAPPED_NATIVE_TOKENS[chain_id]
         except KeyError:
-            _WRAPPED_NATIVE_TOKENS[chain_id] = token_address
+            _WRAPPED_NATIVE_TOKENS[chain_id] = _token_address
         else:
             raise ValueError(
                 f"Token address {_WRAPPED_NATIVE_TOKENS[chain_id]} already set for chain ID {chain_id}!"
@@ -347,6 +375,10 @@ class UniswapTransaction(Transaction):
                 pass
 
             elif command == "SWEEP":
+                """
+                This function transfers the current token balance held by the contract to `recipient`
+                """
+
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
@@ -369,6 +401,14 @@ class UniswapTransaction(Transaction):
                 self._adjust_balance(self.router_address, token, -_balance)
 
             elif command == "WRAP_ETH":
+                """
+                This function wraps a quantity of ETH to WETH and transfers it to `recipient`.
+
+                The mainnet WETH contract only implements the `deposit` method, so `recipient` will always be the router address.
+
+                Some L2s and side chains implement a `depositTo` method, so `recipient` is evaluated before adjusting the ledger balance.
+                """
+
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
@@ -384,13 +424,23 @@ class UniswapTransaction(Transaction):
                     )
 
                 if recipient == _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG:
-                    self._adjust_balance(
-                        self.router_address,
-                        wrapped_token_address,
-                        amountMin,
-                    )
+                    _recipient = self.router_address
+                else:
+                    _recipient = recipient
+
+                self._adjust_balance(
+                    _recipient,
+                    wrapped_token_address,
+                    amountMin,
+                )
 
             elif command == "UNWRAP_WETH":
+                """
+                This function unwraps a quantity of WETH to ETH.
+
+                ETH is currently untracked by the `self.balance` ledger, so `recipient` is unused.
+                """
+
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
@@ -413,22 +463,19 @@ class UniswapTransaction(Transaction):
                         f"Requested unwrap of min. {amountMin} WETH, received {wrapped_token_balance}"
                     )
 
-                if recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
-                    recipient = self.sender
-
                 self._adjust_balance(
                     self.router_address,
                     wrapped_token_address,
                     -wrapped_token_balance,
                 )
 
-                self._adjust_balance(
-                    recipient,
-                    wrapped_token_address,
-                    wrapped_token_balance,
-                )
-
             elif command == "V2_SWAP_EXACT_IN":
+                """
+                Decode an exact input swap through Uniswap V2 liquidity pools.
+
+                Returns: a list of tuples representing the pool object and the final state of the pool after the swap completes.
+                """
+
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
@@ -470,6 +517,12 @@ class UniswapTransaction(Transaction):
                 return _future_pool_states
 
             elif command == "V2_SWAP_EXACT_OUT":
+                """
+                Decode an exact output swap through Uniswap V2 liquidity pools.
+
+                Returns: a list of tuples representing the pool object and the final state of the pool after the swap completes.
+                """
+
                 if not silent:
                     print(f"{func_name}: {self.hash}")
 
@@ -510,7 +563,9 @@ class UniswapTransaction(Transaction):
 
             elif command == "V3_SWAP_EXACT_IN":
                 """
-                TBD
+                Decode an exact input swap through Uniswap V3 liquidity pools.
+
+                Returns: a list of tuples representing the pool object and the final state of the pool after the swap completes.
                 """
 
                 # TODO: handle multi-pool swaps within the method, instead of single-pool
@@ -587,10 +642,10 @@ class UniswapTransaction(Transaction):
 
             elif command == "V3_SWAP_EXACT_OUT":
                 """
-                TBD
-                """
+                Decode an exact output swap through Uniswap V3 liquidity pools.
 
-                # pprint(self.balance)
+                Returns: a list of tuples representing the pool object and the final state of the pool after the swap completes.
+                """
 
                 if not silent:
                     print(f"{func_name}: {self.hash}")
@@ -1832,6 +1887,14 @@ class UniswapTransaction(Transaction):
         func_params: Optional[dict] = None,
         silent: bool = False,
     ) -> List[Tuple[Union[LiquidityPool, V3LiquidityPool], dict]]:
+        """
+        Execute a simulation of a transaction, using the attributes stored in the constructor.
+
+        Defers simulation to the `_simulate` method, which may recurse as needed for nested multicalls.
+
+        Performs a final accounting check of addresses in `self.balance` ledger, except for the `self.sender` address.
+        """
+
         result = self._simulate(func_name, func_params, silent)
         if set(self.balance) - set([self.sender]):
             print("UNACCOUNTED BALANCE FOUND!")
