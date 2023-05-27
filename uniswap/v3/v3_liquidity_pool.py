@@ -15,6 +15,7 @@ from degenbot.exceptions import (
     EVMRevertError,
     ExternalUpdateError,
     LiquidityPoolError,
+    ZeroSwapError,
 )
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
@@ -1056,42 +1057,54 @@ class BaseV3LiquidityPool(ABC):
         [TBD]
         """
 
-        if not (
-            (token_in and token_in_quantity)
-            or (token_out and token_out_quantity)
-        ):
-            raise ValueError
+        if token_in is None and token_out is None:
+            raise ValueError("token_in or token_out not provided")
 
-        if token_in_quantity is None and token_out_quantity is None:
+        if token_in_quantity and token_out_quantity:
             raise ValueError(
-                "Must provide a quantity for token_in or token_out"
+                "Provide token_in_quantity or token_out_quantity, not both"
             )
 
-        if token_in and token_out:
-            raise ValueError(
-                "Incompatible options! Provide token_in or token_out, but not both"
-            )
+        if token_in is not None:
+            if token_in_quantity is None:
+                raise ValueError("token_in_quantity not provided")
+            if token_in not in (self.token0, self.token1):
+                raise ValueError("token_in not provided")
 
-        if token_in and token_in not in (self.token0, self.token1):
-            raise ValueError("token_in not found!")
-        if token_out and token_out not in (self.token0, self.token1):
-            raise ValueError("token_out not found!")
+        if token_out is not None:
+            if token_out_quantity is None:
+                raise ValueError("token_out_quantity not provided")
+            if token_out not in (self.token0, self.token1):
+                raise ValueError("token_out not provided")
+
+        if 0 in (token_in_quantity, token_out_quantity):
+            raise ZeroSwapError("Zero input/output swap requested")
 
         # determine whether the swap is token0 -> token1
-        if token_in is not None and token_in_quantity:
+        if token_in is not None:
             zeroForOne = True if token_in == self.token0 else False
-        elif token_out is not None and token_out_quantity:
+        elif token_out is not None:
             zeroForOne = True if token_out == self.token1 else False
 
         if override_state is None:
             override_state = {}
 
-        try:
-            if token_in_quantity is not None:
-                amount_specified = token_in_quantity
-            elif token_out_quantity is not None:
-                amount_specified = -token_out_quantity
+        _sqrt_price_limit = (
+            sqrt_price_limit
+            if sqrt_price_limit is not None
+            else (
+                TickMath.MIN_SQRT_RATIO + 1
+                if zeroForOne
+                else TickMath.MAX_SQRT_RATIO - 1
+            )
+        )
 
+        if token_in_quantity is not None:
+            _amount_specified = token_in_quantity
+        elif token_out_quantity is not None:
+            _amount_specified = -token_out_quantity
+
+        try:
             # delegate calculations to the ported `swap` function
             (
                 amount0_delta,
@@ -1101,14 +1114,8 @@ class BaseV3LiquidityPool(ABC):
                 end_tick,
             ) = self.__UniswapV3Pool_swap(
                 zeroForOne=zeroForOne,
-                amount_specified=amount_specified,
-                sqrt_price_limit_x96=sqrt_price_limit
-                if sqrt_price_limit is not None
-                else (
-                    TickMath.MIN_SQRT_RATIO + 1
-                    if zeroForOne
-                    else TickMath.MAX_SQRT_RATIO - 1
-                ),
+                amount_specified=_amount_specified,
+                sqrt_price_limit_x96=_sqrt_price_limit,
                 override_start_liquidity=override_state.get("liquidity"),
                 override_start_sqrt_price_x96=override_state.get(
                     "sqrt_price_x96"
