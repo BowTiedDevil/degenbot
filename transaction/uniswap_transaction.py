@@ -1877,7 +1877,7 @@ class UniswapTransaction(Transaction):
 
         # catch generic DegenbotError (non-fatal), everything else will escape
         except DegenbotError as e:
-            raise TransactionError(f"Transaction could not be calculated: {e}")
+            raise TransactionError(f"Simulation failed: {e}") from e
         else:
             return future_pool_states
 
