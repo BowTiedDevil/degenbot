@@ -1272,8 +1272,8 @@ class UniswapTransaction(Transaction):
                     unload_brownie_contract_after_init=True,
                 )
             except Exception as e:
-                logger.info(e)
-                logger.info(type(e))
+                print(e)
+                print(type(e))
                 raise
 
             logger.info(f"{token_in_quantity=}")
@@ -1444,8 +1444,8 @@ class UniswapTransaction(Transaction):
                     unload_brownie_contract_after_init=True,
                 )
             except Exception as e:
-                logger.info(e)
-                logger.info(type(e))
+                print(e)
+                print(type(e))
                 raise
 
             current_state = v3_pool.state
