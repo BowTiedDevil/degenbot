@@ -1,3 +1,5 @@
+import logging
+
 from degenbot.arbitrage.flash_borrow_to_lp_swap import FlashBorrowToLpSwap
 from degenbot.arbitrage.flash_borrow_to_lp_swap_new import (
     FlashBorrowToLpSwapNew,
@@ -30,3 +32,5 @@ from degenbot.uniswap.v2.multi_liquidity_pool import MultiLiquidityPool
 from degenbot.uniswap.v2.router import Router
 from degenbot.uniswap.v3.tick_lens import TickLens
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
+
+logger = logging.getLogger(__name__)
