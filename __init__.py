@@ -1,5 +1,3 @@
-import logging
-
 from degenbot.arbitrage.flash_borrow_to_lp_swap import FlashBorrowToLpSwap
 from degenbot.arbitrage.flash_borrow_to_lp_swap_new import (
     FlashBorrowToLpSwapNew,
@@ -13,6 +11,7 @@ from degenbot.arbitrage.flash_borrow_to_router_swap import (
 from degenbot.arbitrage.lp_swap_with_future import LpSwapWithFuture
 from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from degenbot.chainlink import ChainlinkPriceContract
+from degenbot.logging import logger
 from degenbot.manager.arbitrage_manager import ArbitrageHelperManager
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
@@ -32,5 +31,3 @@ from degenbot.uniswap.v2.multi_liquidity_pool import MultiLiquidityPool
 from degenbot.uniswap.v2.router import Router
 from degenbot.uniswap.v3.tick_lens import TickLens
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
-
-logger = logging.getLogger(__name__)
