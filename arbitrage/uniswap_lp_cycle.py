@@ -27,8 +27,8 @@ class UniswapLpCycle(Arbitrage):
         self,
         input_token: Erc20Token,
         swap_pools: List[Union[LiquidityPool, V3LiquidityPool]],
+        id: str,
         max_input: Optional[int] = None,
-        id: Optional[str] = None,
     ):
         self.id = id
         self.input_token = input_token
@@ -441,8 +441,8 @@ class UniswapLpCycle(Arbitrage):
         cls,
         input_token_address: str,
         swap_pool_addresses: List[Tuple[str, str]],
+        id: str,
         max_input: Optional[int] = None,
-        id: Optional[str] = None,
     ) -> "UniswapLpCycle":
         """
         Create a new `UniswapLpCycle` object from token and pool addresses.
