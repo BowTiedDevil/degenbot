@@ -15,6 +15,7 @@ from degenbot.exceptions import (
     ManagerError,
     TransactionError,
 )
+from degenbot.logging import logger
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.transaction.base import Transaction
@@ -195,7 +196,7 @@ class UniswapTransaction(Transaction):
             address_balance = {}
             self.balance[_address] = address_balance
 
-        print(
+        logger.info(
             f"ADJUSTING BALANCE FOR ADDRESS {_address}: {'+' if amount > 0 else ''}{amount} {_token}:  "
         )
 
@@ -339,7 +340,7 @@ class UniswapTransaction(Transaction):
                 command_type & COMMAND_TYPE_MASK
             ]
 
-            print(command)
+            logger.info(command)
 
             pool_state: Dict
             _future_pool_states: List[
@@ -373,7 +374,7 @@ class UniswapTransaction(Transaction):
                 "SEAPORT_V2",
             ]:
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
                 pass
 
             elif command == "SWEEP":
@@ -382,7 +383,7 @@ class UniswapTransaction(Transaction):
                 """
 
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
 
                 try:
                     token, recipient, amountMin = eth_abi.decode(
@@ -412,7 +413,7 @@ class UniswapTransaction(Transaction):
                 """
 
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
 
                 wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
 
@@ -444,7 +445,7 @@ class UniswapTransaction(Transaction):
                 """
 
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
 
                 try:
                     recipient, amountMin = eth_abi.decode(
@@ -479,7 +480,7 @@ class UniswapTransaction(Transaction):
                 """
 
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
 
                 try:
                     (
@@ -526,7 +527,7 @@ class UniswapTransaction(Transaction):
                 """
 
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
 
                 try:
                     (
@@ -573,7 +574,7 @@ class UniswapTransaction(Transaction):
                 # TODO: handle multi-pool swaps within the method, instead of single-pool
 
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
 
                 try:
                     (
@@ -650,7 +651,7 @@ class UniswapTransaction(Transaction):
                 """
 
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
 
                 try:
                     (
@@ -687,8 +688,8 @@ class UniswapTransaction(Transaction):
                     first_swap = token_pos == last_token_pos
                     last_swap = token_pos == 0
 
-                    print(f"{first_swap=}")
-                    print(f"{last_swap=}")
+                    logger.info(f"{first_swap=}")
+                    logger.info(f"{last_swap=}")
 
                     v3_pool, pool_state = _simulate_v3_swap_exact_out(
                         params={
@@ -719,7 +720,7 @@ class UniswapTransaction(Transaction):
 
                     _future_pool_states.append((v3_pool, pool_state))
 
-                # pprint(self.balance)
+                # plogger.info(self.balance)
                 return _future_pool_states
 
             else:
@@ -770,7 +771,7 @@ class UniswapTransaction(Transaction):
             else:
                 token_in_quantity = params["amountIn"]
 
-            print(f"{token_in_quantity=}")
+            logger.info(f"{token_in_quantity=}")
             last_pool_pos = len(v2_pool_objects) - 1
             recipient = params["to"]
             self.to = recipient
@@ -831,9 +832,9 @@ class UniswapTransaction(Transaction):
                         v2_pool.address, token_in_object.address
                     )
 
-                    print("V2 SWAP: FIRST POOL")
-                    print(f"{router_balance=}")
-                    print(f"{pool_balance=}")
+                    logger.info("V2 SWAP: FIRST POOL")
+                    logger.info(f"{router_balance=}")
+                    logger.info(f"{pool_balance=}")
 
                     if pool_balance < token_in_quantity:
                         difference = token_in_quantity - pool_balance
@@ -872,8 +873,8 @@ class UniswapTransaction(Transaction):
                     -token_in_quantity,
                 )
 
-                print(f"{first_swap=}")
-                print(f"{last_swap=}")
+                logger.info(f"{first_swap=}")
+                logger.info(f"{last_swap=}")
 
                 if last_swap:
                     if recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
@@ -896,22 +897,22 @@ class UniswapTransaction(Transaction):
 
                 if not silent:
                     current_state = v2_pool.state
-                    print(f"Simulating swap through pool: {v2_pool}")
-                    print(
+                    logger.info(f"Simulating swap through pool: {v2_pool}")
+                    logger.info(
                         f"\t{token_in_quantity} {token_in_object} -> {token_out_quantity} {token_out_object}"
                     )
-                    print("\t(CURRENT)")
-                    print(
+                    logger.info("\t(CURRENT)")
+                    logger.info(
                         f"\t{v2_pool.token0}: {current_state['reserves_token0']}"
                     )
-                    print(
+                    logger.info(
                         f"\t{v2_pool.token1}: {current_state['reserves_token1']}"
                     )
-                    print(f"\t(FUTURE)")
-                    print(
+                    logger.info(f"\t(FUTURE)")
+                    logger.info(
                         f"\t{v2_pool.token0}: {future_state['reserves_token0']}"
                     )
-                    print(
+                    logger.info(
                         f"\t{v2_pool.token1}: {future_state['reserves_token1']}"
                     )
 
@@ -1018,11 +1019,11 @@ class UniswapTransaction(Transaction):
                     token_out_quantity,
                 )
 
-                # print(f"{recipient=}")
+                # logger.info(f"{recipient=}")
 
                 if first_swap:
                     # transfer the input token amount from the sender to the first pool
-                    print("FIRST SWAP")
+                    logger.info("FIRST SWAP")
                     self._adjust_balance(
                         self.sender,
                         token_in_object.address,
@@ -1035,7 +1036,7 @@ class UniswapTransaction(Transaction):
                     )
 
                 if last_swap:
-                    print("LAST SWAP")
+                    logger.info("LAST SWAP")
                     if recipient in [
                         _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG,
                         _V3_ROUTER_CONTRACT_ADDRESS_FLAG,
@@ -1047,7 +1048,7 @@ class UniswapTransaction(Transaction):
                     # send tokens to the next pool
                     _recipient = pool_objects[::-1][i - 1].address
 
-                # print(f"{_recipient=}")
+                # logger.info(f"{_recipient=}")
 
                 # transfer the output token from the pool to the recipient
                 self._adjust_balance(
@@ -1063,22 +1064,22 @@ class UniswapTransaction(Transaction):
 
                 if not silent:
                     current_state = v2_pool.state
-                    print(f"Simulating swap through pool: {v2_pool}")
-                    print(
+                    logger.info(f"Simulating swap through pool: {v2_pool}")
+                    logger.info(
                         f"\t{token_in_quantity} {token_in_object} -> {token_out_quantity} {token_out_object}"
                     )
-                    print("\t(CURRENT)")
-                    print(
+                    logger.info("\t(CURRENT)")
+                    logger.info(
                         f"\t{v2_pool.token0}: {current_state['reserves_token0']}"
                     )
-                    print(
+                    logger.info(
                         f"\t{v2_pool.token1}: {current_state['reserves_token1']}"
                     )
-                    print(f"\t(FUTURE)")
-                    print(
+                    logger.info(f"\t(FUTURE)")
+                    logger.info(
                         f"\t{v2_pool.token0}: {future_state['reserves_token0']}"
                     )
-                    print(
+                    logger.info(
                         f"\t{v2_pool.token1}: {future_state['reserves_token1']}"
                     )
 
@@ -1130,7 +1131,7 @@ class UniswapTransaction(Transaction):
                 # special case to handle a multicall encoded within another multicall
                 if payload_func.fn_name == "multicall":
                     if not silent:
-                        print("Unwrapping nested multicall")
+                        logger.info("Unwrapping nested multicall")
 
                     for payload in payload_args["data"]:
                         try:
@@ -1271,11 +1272,11 @@ class UniswapTransaction(Transaction):
                     unload_brownie_contract_after_init=True,
                 )
             except Exception as e:
-                print(e)
-                print(type(e))
+                logger.info(e)
+                logger.info(type(e))
                 raise
 
-            print(f"{token_in_quantity=}")
+            logger.info(f"{token_in_quantity=}")
 
             if token_in_quantity == _UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG:
                 token_in_quantity = self._get_balance(
@@ -1311,7 +1312,7 @@ class UniswapTransaction(Transaction):
                 -token_in_quantity,
             )
 
-            print(f"{recipient=}")
+            logger.debug(f"{recipient=}")
             if recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
                 recipient = self.sender
             elif recipient in [
@@ -1328,18 +1329,21 @@ class UniswapTransaction(Transaction):
 
             if not silent:
                 current_state = v3_pool.state
-                print(f"Predicting output of swap through pool: {v3_pool}")
-                print(
+                logger.info()
+                logger.info(
+                    f"Predicting output of swap through pool: {v3_pool}"
+                )
+                logger.info(
                     f"\t{token_in_quantity} {token_in_object} -> {token_out_quantity} {token_out_object}"
                 )
-                print("\t(CURRENT)")
-                print(f"\tprice={current_state['sqrt_price_x96']}")
-                print(f"\tliquidity={current_state['liquidity']}")
-                print(f"\ttick={current_state['tick']}")
-                print(f"\t(FUTURE)")
-                print(f"\tprice={final_state['sqrt_price_x96']}")
-                print(f"\tliquidity={final_state['liquidity']}")
-                print(f"\ttick={final_state['tick']}")
+                logger.info("\t(CURRENT)")
+                logger.info(f"\tprice={current_state['sqrt_price_x96']}")
+                logger.info(f"\tliquidity={current_state['liquidity']}")
+                logger.info(f"\ttick={current_state['tick']}")
+                logger.info(f"\t(FUTURE)")
+                logger.info(f"\tprice={final_state['sqrt_price_x96']}")
+                logger.info(f"\tliquidity={final_state['liquidity']}")
+                logger.info(f"\ttick={final_state['tick']}")
 
             if (
                 token_out_quantity_min is not None
@@ -1440,8 +1444,8 @@ class UniswapTransaction(Transaction):
                     unload_brownie_contract_after_init=True,
                 )
             except Exception as e:
-                print(e)
-                print(type(e))
+                logger.info(e)
+                logger.info(type(e))
                 raise
 
             current_state = v3_pool.state
@@ -1496,7 +1500,7 @@ class UniswapTransaction(Transaction):
                         -swap_input_balance,
                     )
 
-            # print(f"{recipient=}")
+            # logger.info(f"{recipient=}")
 
             if last_swap:
                 if recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
@@ -1509,7 +1513,7 @@ class UniswapTransaction(Transaction):
                 else:
                     _recipient = recipient
 
-                # print(f"{_recipient=}")
+                # logger.info(f"{_recipient=}")
 
                 self._adjust_balance(
                     self.router_address,
@@ -1523,18 +1527,20 @@ class UniswapTransaction(Transaction):
                 )
 
             if not silent:
-                print(f"Predicting output of swap through pool: {v3_pool}")
-                print(
+                logger.info(
+                    f"Predicting output of swap through pool: {v3_pool}"
+                )
+                logger.info(
                     f"\t{token_in_quantity} {token_in_object} -> {token_out_quantity} {token_out_object}"
                 )
-                print("\t(CURRENT)")
-                print(f"\tprice={current_state['sqrt_price_x96']}")
-                print(f"\tliquidity={current_state['liquidity']}")
-                print(f"\ttick={current_state['tick']}")
-                print(f"\t(FUTURE)")
-                print(f"\tprice={final_state['sqrt_price_x96']}")
-                print(f"\tliquidity={final_state['liquidity']}")
-                print(f"\ttick={final_state['tick']}")
+                logger.info("\t(CURRENT)")
+                logger.info(f"\tprice={current_state['sqrt_price_x96']}")
+                logger.info(f"\tliquidity={current_state['liquidity']}")
+                logger.info(f"\ttick={current_state['tick']}")
+                logger.info(f"\t(FUTURE)")
+                logger.info(f"\tprice={final_state['sqrt_price_x96']}")
+                logger.info(f"\tliquidity={final_state['liquidity']}")
+                logger.info(f"\ttick={final_state['tick']}")
 
             if (
                 amountInMaximum is not None
@@ -1561,7 +1567,7 @@ class UniswapTransaction(Transaction):
                 "swapExactTokensForETHSupportingFeeOnTransferTokens",
             ):
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
                 future_pool_states.extend(
                     _simulate_v2_swap_exact_in(func_params, silent=silent)
                 )
@@ -1571,7 +1577,7 @@ class UniswapTransaction(Transaction):
                 "swapExactETHForTokensSupportingFeeOnTransferTokens",
             ):
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
                 future_pool_states.extend(
                     _simulate_v2_swap_exact_in(
                         func_params, unwrapped_input=True, silent=silent
@@ -1583,14 +1589,14 @@ class UniswapTransaction(Transaction):
                 "swapExactTokensForTokensSupportingFeeOnTransferTokens",
             ]:
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
                 future_pool_states.extend(
                     _simulate_v2_swap_exact_in(func_params, silent=silent)
                 )
 
             elif func_name in ("swapTokensForExactETH"):
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
                 future_pool_states.extend(
                     _simulate_v2_swap_exact_out(
                         params=func_params, silent=silent
@@ -1599,7 +1605,7 @@ class UniswapTransaction(Transaction):
 
             elif func_name in ("swapTokensForExactTokens"):
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
                 future_pool_states.extend(
                     _simulate_v2_swap_exact_out(
                         params=func_params, silent=silent
@@ -1608,7 +1614,7 @@ class UniswapTransaction(Transaction):
 
             elif func_name in ("swapETHForExactTokens"):
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
                 future_pool_states.extend(
                     _simulate_v2_swap_exact_out(
                         params=func_params, unwrapped_input=True, silent=silent
@@ -1620,13 +1626,13 @@ class UniswapTransaction(Transaction):
             # -----------------------------------------------------
             elif func_name == "multicall":
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
                 future_pool_states.extend(
                     _simulate_v3_multicall(params=func_params, silent=silent)
                 )
             elif func_name == "exactInputSingle":
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
                 future_pool_states.append(
                     _simulate_v3_swap_exact_in(
                         params=func_params, silent=silent, first_swap=True
@@ -1638,7 +1644,7 @@ class UniswapTransaction(Transaction):
                 """
 
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
 
                 # from ISwapRouter.sol - https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
                 try:
@@ -1666,16 +1672,16 @@ class UniswapTransaction(Transaction):
                 path_decoded = decode_v3_path(path)
 
                 if not silent:
-                    print(f" • path = {path_decoded}")
-                    print(f" • recipient = {recipient}")
+                    logger.info(f" • path = {path_decoded}")
+                    logger.info(f" • recipient = {recipient}")
                     try:
                         deadline
                     except:
                         pass
                     else:
-                        print(f" • deadline = {deadline}")
-                    print(f" • amountIn = {amount_in}")
-                    print(f" • amountOutMinimum = {amount_out_minimum}")
+                        logger.info(f" • deadline = {deadline}")
+                    logger.info(f" • amountIn = {amount_in}")
+                    logger.info(f" • amountOutMinimum = {amount_out_minimum}")
 
                 last_token_pos = len(path_decoded) - 3
 
@@ -1725,7 +1731,7 @@ class UniswapTransaction(Transaction):
                     future_pool_states.append((v3_pool, pool_state))
             elif func_name == "exactOutputSingle":
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
                 future_pool_states.append(
                     _simulate_v3_swap_exact_out(
                         params=func_params,
@@ -1740,7 +1746,7 @@ class UniswapTransaction(Transaction):
                 """
 
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
 
                 # Router ABI
                 try:
@@ -1768,16 +1774,16 @@ class UniswapTransaction(Transaction):
                 path_decoded = decode_v3_path(path)
 
                 if not silent:
-                    print(f" • path = {path_decoded}")
-                    print(f" • recipient = {recipient}")
+                    logger.info(f" • path = {path_decoded}")
+                    logger.info(f" • recipient = {recipient}")
                     try:
                         deadline
                     except:
                         pass
                     else:
-                        print(f" • deadline = {deadline}")
-                    print(f" • amountOut = {amount_out}")
-                    print(f" • amountInMaximum = {amount_in_maximum}")
+                        logger.info(f" • deadline = {deadline}")
+                    logger.info(f" • amountOut = {amount_out}")
+                    logger.info(f" • amountInMaximum = {amount_in_maximum}")
 
                 # the path is encoded in REVERSE order, so we decode from start to finish
                 # tokenOut is the first position, tokenIn is the second position
@@ -1796,8 +1802,8 @@ class UniswapTransaction(Transaction):
                     first_swap = token_pos == last_token_pos
                     last_swap = token_pos == 0
 
-                    print(f"{first_swap=}")
-                    print(f"{last_swap=}")
+                    logger.info(f"{first_swap=}")
+                    logger.info(f"{last_swap=}")
 
                     v3_pool, pool_state = _simulate_v3_swap_exact_out(
                         params={
@@ -1831,7 +1837,7 @@ class UniswapTransaction(Transaction):
 
             elif func_name == "unwrapWETH9":
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
 
                 wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
                 wrapped_token_balance = self._get_balance(
@@ -1849,7 +1855,7 @@ class UniswapTransaction(Transaction):
             # -----------------------------------------------------
             elif func_name == "execute":
                 if not silent:
-                    print(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_name}: {self.hash}")
 
                 commands = func_params["commands"]
                 inputs = func_params["inputs"]
@@ -1872,7 +1878,7 @@ class UniswapTransaction(Transaction):
             ):
                 # TODO: add prediction for these functions
                 if not silent:
-                    print(f"TODO: {func_name}")
+                    logger.info(f"TODO: {func_name}")
             elif func_name in (
                 "refundETH",
                 "selfPermit",
@@ -1881,7 +1887,7 @@ class UniswapTransaction(Transaction):
                 # ignore, these functions do not affect future pool states
                 pass
             else:
-                print(f"\tUNHANDLED function: {func_name}")
+                logger.info(f"\tUNHANDLED function: {func_name}")
 
         # catch generic DegenbotError (non-fatal), everything else will escape
         except DegenbotError as e:
@@ -1905,7 +1911,7 @@ class UniswapTransaction(Transaction):
 
         result = self._simulate(func_name, func_params, silent)
         if set(self.balance) - set([self.sender, self.to]):
-            print("UNACCOUNTED BALANCE FOUND!")
+            logger.info("UNACCOUNTED BALANCE FOUND!")
             pprint(self.balance)
             import sys
 
