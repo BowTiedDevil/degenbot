@@ -127,6 +127,13 @@ class BaseV3LiquidityPool(ABC):
 
         self.fee: int = fee
 
+        if name:
+            self.name = name
+        else:
+            self.name = (
+                f"{self.token0}-{self.token1} (V3, {self.fee/10000:.2f}%)"
+            )
+
         # check that the address is a valid V3 pool (see https://github.com/Uniswap/v3-periphery/blob/main/contracts/libraries/PoolAddress.sol)
         computed_pool_address = generate_v3_pool_address(
             token_addresses=[self.token0.address, self.token1.address],
@@ -167,13 +174,6 @@ class BaseV3LiquidityPool(ABC):
                 word_position,
                 single_word=True,
                 block_number=self.update_block,
-            )
-
-        if name:
-            self.name = name
-        else:
-            self.name = (
-                f"{self.token0}-{self.token1} (V3, {self.fee/10000:.2f}%)"
             )
 
         self.state: dict = {}
@@ -262,7 +262,7 @@ class BaseV3LiquidityPool(ABC):
             logger.debug(self.tick_bitmap[word_position])
             return
 
-        # logger.debug(f"updating tick data for pool: {self.name}")
+        logger.debug(f"updating tick data for pool: {self.name}")
 
         with self.tick_lock:
             if block_number is None:
