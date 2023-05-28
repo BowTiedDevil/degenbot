@@ -1329,7 +1329,6 @@ class UniswapTransaction(Transaction):
 
             if not silent:
                 current_state = v3_pool.state
-                logger.info()
                 logger.info(
                     f"Predicting output of swap through pool: {v3_pool}"
                 )
