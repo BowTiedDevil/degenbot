@@ -262,7 +262,7 @@ class BaseV3LiquidityPool(ABC):
             logger.debug(self.tick_bitmap[word_position])
             return
 
-        logger.debug(f"updating tick data for pool: {self.name}")
+        # logger.debug(f"updating tick data for pool: {self.name}")
 
         with self.tick_lock:
             if block_number is None:
