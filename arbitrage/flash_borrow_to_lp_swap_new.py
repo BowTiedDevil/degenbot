@@ -4,8 +4,8 @@ from typing import List, Optional, Tuple
 from brownie import Contract  # type: ignore
 from scipy.optimize import minimize_scalar  # type: ignore
 
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 from degenbot.token import Erc20Token
+from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 
 # TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
 
