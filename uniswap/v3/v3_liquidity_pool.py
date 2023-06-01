@@ -92,6 +92,8 @@ class BaseV3LiquidityPool(ABC):
             name="", address=address, abi=self.abi, persist=False
         )
 
+        self.factory = Web3.toChecksumAddress(self._brownie_contract.factory())
+
         if lens:
             self.lens = lens
         else:
