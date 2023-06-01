@@ -164,8 +164,7 @@ class FlashBorrowToLpSwapNew:
             elif token_in.address == self.swap_pools[i].token1.address:
                 token_out = self.swap_pools[i].token0
             else:
-                print("wtf?")
-                raise Exception
+                raise ValueError(f"Could not identify token_in {token_in}")
 
             # calculate the swap output through pool[i]
             token_out_quantity = self.swap_pools[
@@ -236,8 +235,9 @@ class FlashBorrowToLpSwapNew:
                 0.01 * reserves_token1,
             )
         else:
-            print("WTF? Could not identify borrow token")
-            raise Exception
+            raise ValueError(
+                f"Could not identify borrow token {self.borrow_token}"
+            )
 
         # TODO: extend calculate_multipool_tokens_out_from_tokens_in() to support overriding token reserves for an arbitrary pool,
         # currently only supports overriding the borrow pool reserves
@@ -266,8 +266,9 @@ class FlashBorrowToLpSwapNew:
         elif self.borrow_token.address == self.borrow_pool.token1.address:
             borrow_amounts = [0, best_borrow]
         else:
-            print("wtf?")
-            raise Exception
+            raise ValueError(
+                f"Could not identify borrow token {self.borrow_token}"
+            )
 
         best_repay = self.borrow_pool.calculate_tokens_in_from_tokens_out(
             token_in=self.repay_token,
@@ -348,8 +349,7 @@ class FlashBorrowToLpSwapNew:
             elif token_in.address == self.swap_pools[i].token1.address:
                 token_out = self.swap_pools[i].token0
             else:
-                print("wtf?")
-                raise Exception
+                raise ValueError(f"Could not identify token_in {token_in}")
 
             # calculate the swap output through pool[i]
             token_out_quantity = self.swap_pools[
