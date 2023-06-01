@@ -690,8 +690,8 @@ class UniswapTransaction(Transaction):
                     first_swap = token_pos == last_token_pos
                     last_swap = token_pos == 0
 
-                    logger.info(f"{first_swap=}")
-                    logger.info(f"{last_swap=}")
+                    logger.debug(f"{first_swap=}")
+                    logger.debug(f"{last_swap=}")
 
                     v3_pool, pool_state = _simulate_v3_swap_exact_out(
                         params={
@@ -875,8 +875,8 @@ class UniswapTransaction(Transaction):
                     -token_in_quantity,
                 )
 
-                logger.info(f"{first_swap=}")
-                logger.info(f"{last_swap=}")
+                logger.debug(f"{first_swap=}")
+                logger.debug(f"{last_swap=}")
 
                 if last_swap:
                     if recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
@@ -1698,12 +1698,6 @@ class UniswapTransaction(Transaction):
                     first_swap = token_pos == 0
                     last_swap = token_pos == last_token_pos
 
-                    # if (
-                    #     exactInputParams_amountIn
-                    #     == _V3_ROUTER2_CONTRACT_BALANCE_FLAG
-                    # ):
-                    #     exactInputParams_amountIn = last_out[1]
-
                     v3_pool, pool_state = _simulate_v3_swap_exact_in(
                         params={
                             "params": (
@@ -1803,8 +1797,8 @@ class UniswapTransaction(Transaction):
                     first_swap = token_pos == last_token_pos
                     last_swap = token_pos == 0
 
-                    logger.info(f"{first_swap=}")
-                    logger.info(f"{last_swap=}")
+                    logger.debug(f"{first_swap=}")
+                    logger.debug(f"{last_swap=}")
 
                     v3_pool, pool_state = _simulate_v3_swap_exact_out(
                         params={
