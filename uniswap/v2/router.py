@@ -23,15 +23,17 @@ class Router:
         self.address = address
 
         try:
-            self._contract = Contract(address)
+            self._brownie_contract = Contract(address)
         except Exception as e:
             print(e)
             if abi:
-                self._contract = Contract.from_abi(
+                self._brownie_contract = Contract.from_abi(
                     name=name, address=address, abi=abi
                 )
             else:
-                self._contract = Contract.from_explorer(address=address)
+                self._brownie_contract = Contract.from_explorer(
+                    address=address
+                )
 
         self.name = name
         if user is not None:
@@ -57,7 +59,7 @@ class Router:
             # if scale:
             #     params['priority_fee'] = get_scaled_priority_fee()
 
-            self._contract.swapExactTokensForTokens(
+            self._brownie_contract.swapExactTokensForTokens(
                 token_in_quantity,
                 int(token_out_quantity * (1 - slippage)),
                 [token_in_address, token_out_address],

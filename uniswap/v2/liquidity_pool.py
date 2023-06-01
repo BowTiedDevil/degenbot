@@ -112,11 +112,7 @@ class LiquidityPool:
         if abi is None:
             abi = UNISWAPV2_LP_ABI
 
-        # try:
-        #     self._contract = Contract(self.address)
-        # except:
-        # try:
-        self._contract = Contract.from_abi(
+        self._brownie_contract = Contract.from_abi(
             name=f"{self.address}",
             abi=abi,
             address=self.address,
@@ -135,22 +131,22 @@ class LiquidityPool:
             if len(tokens) != 2:
                 raise ValueError(f"Expected 2 tokens, found {len(tokens)}")
             for token in tokens:
-                if token.address == self._contract.token0():
+                if token.address == self._brownie_contract.token0():
                     self.token0 = token
-                elif token.address == self._contract.token1():
+                elif token.address == self._brownie_contract.token1():
                     self.token1 = token
                 else:
                     raise ValueError(f"{token} not found in pool {self}")
         else:
             _token_manager = Erc20TokenHelperManager(chain.id)
             self.token0 = _token_manager.get_erc20token(
-                address=self._contract.token0(),
+                address=self._brownie_contract.token0(),
                 min_abi=True,
                 silent=silent,
                 unload_brownie_contract_after_init=True,
             )
             self.token1 = _token_manager.get_erc20token(
-                address=self._contract.token1(),
+                address=self._brownie_contract.token1(),
                 min_abi=True,
                 silent=silent,
                 unload_brownie_contract_after_init=True,
@@ -190,7 +186,9 @@ class LiquidityPool:
                 self.reserves_token0,
                 self.reserves_token1,
                 *_,
-            ) = self._contract.getReserves(block_identifier=self.update_block)[
+            ) = self._brownie_contract.getReserves(
+                block_identifier=self.update_block
+            )[
                 0:2
             ]
         else:
@@ -206,7 +204,7 @@ class LiquidityPool:
             and unload_brownie_contract_after_init
         ):
             # memory saving if LP contract object is not used after initialization
-            self._contract = None
+            self._brownie_contract = None
 
         self.state: dict = {}
         self._update_pool_state()
@@ -650,7 +648,7 @@ class LiquidityPool:
             or override_update_method == "polling"
         ):
             try:
-                reserves0, reserves1, *_ = self._contract.getReserves(
+                reserves0, reserves1, *_ = self._brownie_contract.getReserves(
                     block_identifier=self.update_block
                 )
                 # Compare reserves to last-known values,

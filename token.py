@@ -49,7 +49,7 @@ class Erc20Token:
             self._user = user
 
         if min_abi:
-            self._contract = Contract.from_abi(
+            self._brownie_contract = Contract.from_abi(
                 name=f"ERC-20 @ {address}",
                 address=self.address,
                 abi=MIN_ERC20_ABI,
@@ -60,12 +60,12 @@ class Erc20Token:
                 simplefilter("ignore")
                 try:
                     # attempt to load stored contract
-                    self._contract = Contract(self.address)
+                    self._brownie_contract = Contract(self.address)
                 except:
                     # use the provided ABI if given
                     if abi:
                         try:
-                            self._contract = Contract.from_abi(
+                            self._brownie_contract = Contract.from_abi(
                                 name="", address=self.address, abi=abi
                             )
                         except:
@@ -73,12 +73,14 @@ class Erc20Token:
                     # otherwise attempt to fetch from the block explorer
                     else:
                         try:
-                            self._contract = Contract.from_explorer(address)
+                            self._brownie_contract = Contract.from_explorer(
+                                address
+                            )
                         except:
                             raise
 
         try:
-            self.name = self._contract.name()
+            self.name = self._brownie_contract.name()
         except (OverflowError, ValueError):
             self.name = brownie_w3.eth.call(
                 {
@@ -95,7 +97,7 @@ class Erc20Token:
             self.name = self.name.decode()
 
         try:
-            self.symbol = self._contract.symbol()
+            self.symbol = self._brownie_contract.symbol()
         except OverflowError:
             self.symbol = brownie_w3.eth.call(
                 {
@@ -109,7 +111,7 @@ class Erc20Token:
         self.decimals: int
 
         try:
-            self.decimals = self._contract.decimals()
+            self.decimals = self._brownie_contract.decimals()
         except:
             warn(
                 f"Token contract at {address} does not implement a 'decimals' function. Setting to 0."
@@ -117,7 +119,7 @@ class Erc20Token:
             self.decimals = 0
 
         if user:
-            self.balance = self._contract.balanceOf(self._user)
+            self.balance = self._brownie_contract.balanceOf(self._user)
             self.normalized_balance = self.balance / (10**self.decimals)
 
         self.price: Optional[float]
@@ -133,12 +135,12 @@ class Erc20Token:
 
         # Memory savings if token contract object is not used after initialization
         if unload_brownie_contract_after_init:
-            self._contract = None
+            self._brownie_contract = None
 
     # The Brownie contract object cannot be pickled, so remove it and return the state
     def __getstate__(self):
         state = self.__dict__.copy()
-        if self._contract is not None:
+        if self._brownie_contract is not None:
             state["_contract"] = None
         return state
 
@@ -162,7 +164,9 @@ class Erc20Token:
         return self.symbol
 
     def get_approval(self, external_address: str):
-        return self._contract.allowance(self._user.address, external_address)
+        return self._brownie_contract.allowance(
+            self._user.address, external_address
+        )
 
     def set_approval(self, external_address: str, value: int):
         """
@@ -182,7 +186,7 @@ class Erc20Token:
             value = 2**256 - 1
 
         try:
-            self._contract.approve(
+            self._brownie_contract.approve(
                 external_address,
                 value,
                 {"from": self._user.address},
@@ -192,7 +196,7 @@ class Erc20Token:
             raise
 
     def update_balance(self):
-        self.balance = self._contract.balanceOf(self._user)
+        self.balance = self._brownie_contract.balanceOf(self._user)
         self.normalized_balance = self.balance / (10**self.decimals)
 
     def update_price(self):
