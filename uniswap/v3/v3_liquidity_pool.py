@@ -4,7 +4,6 @@ from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple, Union
 from warnings import warn
 
-import eth_abi
 from brownie import Contract, chain, multicall, network  # type:ignore
 from web3 import Web3
 
