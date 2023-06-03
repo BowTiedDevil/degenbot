@@ -5,15 +5,13 @@ class DegenbotError(Exception):
     for all more-specific exceptions raised by various degenbot modules
     """
 
-    pass
-
 
 class DeprecationError(ValueError):
     """
     Thrown when a feature, class, method, etc. is deprecated.
-    """
 
-    pass
+    Subclasses `ValueError` instead of `Exception`, less likely to be ignored.
+    """
 
 
 # 1st level exceptions (derived from `DegenbotError`)
@@ -22,15 +20,11 @@ class ArbitrageError(DegenbotError):
     Exception raised inside arbitrage helpers
     """
 
-    pass
-
 
 class BlockUnavailableError(DegenbotError):
     """
     Exception raised when a call for a specific block fails (trie node unavailable)
     """
-
-    pass
 
 
 class Erc20TokenError(DegenbotError):
@@ -38,15 +32,11 @@ class Erc20TokenError(DegenbotError):
     Exception raised inside ERC-20 token helpers
     """
 
-    pass
-
 
 class EVMRevertError(DegenbotError):
     """
     Thrown when a simulated EVM contract operation would revert
     """
-
-    pass
 
 
 class LiquidityPoolError(DegenbotError):
@@ -54,15 +44,11 @@ class LiquidityPoolError(DegenbotError):
     Exception raised inside liquidity pool helpers
     """
 
-    pass
-
 
 class ManagerError(DegenbotError):
     """
     Exception raised inside manager helpers
     """
-
-    pass
 
 
 class TransactionError(DegenbotError):
@@ -70,16 +56,12 @@ class TransactionError(DegenbotError):
     Exception raised inside transaction simulation helpers
     """
 
-    pass
-
 
 # 2nd level exceptions for Arbitrage classes
 class ArbCalculationError(ArbitrageError):
     """
     Thrown when an arbitrage calculation fails
     """
-
-    pass
 
 
 class InvalidSwapPathError(ArbitrageError):
@@ -95,8 +77,6 @@ class ZeroLiquidityError(ArbitrageError):
     Thrown by the arbitrage helper if a pool in the path has no liquidity in the direction of the proposed swap
     """
 
-    pass
-
 
 # 2nd level exceptions for Uniswap Liquidity Pool classes
 class BitmapWordUnavailableError(LiquidityPoolError):
@@ -106,15 +86,11 @@ class BitmapWordUnavailableError(LiquidityPoolError):
     not be raised to the calling function
     """
 
-    pass
-
 
 class ExternalUpdateError(LiquidityPoolError):
     """
     Thrown when an external update does not pass sanity checks
     """
-
-    pass
 
 
 class MissingTickWordError(LiquidityPoolError):
@@ -123,12 +99,8 @@ class MissingTickWordError(LiquidityPoolError):
     should be available, but is not
     """
 
-    pass
-
 
 class ZeroSwapError(LiquidityPoolError):
     """
     Thrown if a swap calculation resulted or would result in zero output
     """
-
-    pass
