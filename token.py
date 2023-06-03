@@ -141,7 +141,7 @@ class Erc20Token:
     def __getstate__(self):
         state = self.__dict__.copy()
         if self._brownie_contract is not None:
-            state["_contract"] = None
+            state["_brownie_contract"] = None
         return state
 
     def __setstate__(self, state):

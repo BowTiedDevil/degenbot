@@ -217,7 +217,8 @@ class LiquidityPool:
     # The Brownie contract object cannot be pickled, so remove it and return the state
     def __getstate__(self):
         state = self.__dict__.copy()
-        state["_contract"] = None
+        if self._brownie_contract is not None:
+            state["_brownie_contract"] = None
         return state
 
     def __setstate__(self, state):
