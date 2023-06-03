@@ -945,7 +945,13 @@ class BaseV3LiquidityPool(ABC):
                 with self.tick_lock:
                     # Mint/Burn events may affect the current liquidity if the current tick is
                     # in the tick range associated with this event, so check and adjust
-                    if lower_tick <= self.tick <= upper_tick:
+                    if (
+                        lower_tick <= self.tick <= upper_tick
+                        and block_number > self.update_block
+                    ):
+                        logger.debug(
+                            f"Adjusting in-range liquidity {block_number=}, {self.update_block=}, {self.tick=}"
+                        )
                         self.liquidity += liquidity_delta
 
                     for i, tick in enumerate([lower_tick, upper_tick]):
@@ -1028,15 +1034,24 @@ class BaseV3LiquidityPool(ABC):
                 updated_state = True
 
             if not silent:
-                logger.info(f"Liquidity: {self.liquidity}")
-                logger.info(f"SqrtPriceX96: {self.sqrt_price_x96}")
-                logger.info(f"Tick: {self.tick}")
-                logger.info(
+                logger.debug(f"Liquidity: {self.liquidity}")
+                logger.debug(f"SqrtPriceX96: {self.sqrt_price_x96}")
+                logger.debug(f"Tick: {self.tick}")
+                logger.debug(
                     f"liquidity event: {liquidity_delta} in tick range [{lower_tick},{upper_tick}], pool: {self.name}"
+                    "\n"
+                    f"old liquidity: {tick_liquidity_net} net, {tick_liquidity_gross} gross"
+                    "\n"
+                    f"new liquidity: {new_liquidity_net} net, {new_liquidity_gross} gross"
+                )
+                logger.debug(
+                    f"update block: {block_number} (last={self.update_block})"
                 )
 
             if updated_state:
-                self.update_block = block_number
+                # if the update was forced, do not refresh the update block
+                if not force:
+                    self.update_block = block_number
                 self.state.update(
                     {
                         "last_liquidity_update": self.liquidity_update_block,
