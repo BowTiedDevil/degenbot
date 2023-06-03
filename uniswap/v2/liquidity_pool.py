@@ -291,9 +291,9 @@ class LiquidityPool:
             override_reserves_token0 = override_state["reserves_token0"]
             override_reserves_token1 = override_state["reserves_token1"]
 
-            logger.info("Overrides applied:")
-            logger.info(f"{override_reserves_token0=}")
-            logger.info(f"{override_reserves_token1=}")
+            logger.debug("Overrides applied:")
+            logger.debug(f"{override_reserves_token0=}")
+            logger.debug(f"{override_reserves_token1=}")
 
         if not (
             (
@@ -405,9 +405,9 @@ class LiquidityPool:
             override_reserves_token0 = override_state["reserves_token0"]
             override_reserves_token1 = override_state["reserves_token1"]
 
-            logger.info("Overrides applied:")
-            logger.info(f"{override_reserves_token0=}")
-            logger.info(f"{override_reserves_token1=}")
+            logger.debug("Overrides applied:")
+            logger.debug(f"{override_reserves_token0=}")
+            logger.debug(f"{override_reserves_token1=}")
 
         if not (
             (
