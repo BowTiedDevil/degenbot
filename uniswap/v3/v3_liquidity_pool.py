@@ -947,7 +947,7 @@ class BaseV3LiquidityPool(ABC):
                     # in the tick range associated with this event, so check and adjust
                     if (
                         lower_tick <= self.tick <= upper_tick
-                        and block_number > self.update_block
+                        and block_number >= self.update_block
                     ):
                         logger.debug(
                             f"Adjusting in-range liquidity {block_number=}, {self.update_block=}, {self.tick=}"
