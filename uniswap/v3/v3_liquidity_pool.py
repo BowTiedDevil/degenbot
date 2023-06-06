@@ -1052,14 +1052,7 @@ class BaseV3LiquidityPool(ABC):
                 # if the update was forced, do not refresh the update block
                 if not force:
                     self.update_block = block_number
-                self.state.update(
-                    {
-                        "last_liquidity_update": self.liquidity_update_block,
-                        "liquidity": self.liquidity,
-                        "sqrt_price_x96": self.sqrt_price_x96,
-                        "tick": self.tick,
-                    }
-                )
+                self._update_pool_state()
 
             return updated_state
 
