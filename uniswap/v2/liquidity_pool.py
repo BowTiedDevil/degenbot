@@ -1,7 +1,7 @@
-from warnings import warn
 from decimal import Decimal
 from fractions import Fraction
 from typing import List, Optional, Tuple, Union
+from warnings import warn
 
 from brownie import Contract, Wei, chain  # type: ignore
 from eth_typing import ChecksumAddress
@@ -16,7 +16,7 @@ from degenbot.exceptions import (
 from degenbot.logging import logger
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
-from degenbot.uniswap.v2.abi import UNISWAPV2_LP_ABI, CAMELOT_LP_ABI
+from degenbot.uniswap.v2.abi import CAMELOT_LP_ABI, UNISWAPV2_LP_ABI
 from degenbot.uniswap.v2.functions import generate_v2_pool_address
 from degenbot.uniswap.v2.router import Router
 
