@@ -272,7 +272,6 @@ class UniswapLpCycle(Arbitrage):
                 )
 
         if found_updates:
-            # print(f"found updates: {self}")
             self._update_pool_states()
             self.clear_best()
 
@@ -453,20 +452,16 @@ class UniswapLpCycle(Arbitrage):
         input_token_address : str
             A address for the input_token
         swap_pool_addresses : List[str]
-            An ordered list of tuples, representing the address for each pool in the swap path,
-            and a string specifying the Uniswap version for that pool (either "V2" or "V3")
+            An ordered list of tuples, representing the address for each pool in the swap path, and a string specifying the Uniswap version for that pool (either "V2" or "V3")
 
             e.g. swap_pool_addresses = [
                 ("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD","V3"),
                 ("0xbb2b8038a1640196fbe3e38816f3e67cba72d940","V2")
             ]
-
         max_input: int, optional
-            The maximum input for the cycle token in question
-            (typically limited by the balance of the deployed contract or operating EOA)
+            The maximum input amount for the input token (limited by the balance of the deployed contract or operating EOA)
         id: str, optional
-            A unique identifier for bookkeeping purposes
-            (not used internally, the attribute is provided for operator convenience)
+            A unique identifier for bookkeeping purposes, not validated
         """
 
         # create the token object
@@ -477,7 +472,11 @@ class UniswapLpCycle(Arbitrage):
 
         # create the pool objects
         pool_objects: List[
-            Union[LiquidityPool, V3LiquidityPool, CamelotLiquidityPool]
+            Union[
+                LiquidityPool,
+                V3LiquidityPool,
+                CamelotLiquidityPool,
+            ]
         ] = []
         for pool_address, pool_type in swap_pool_addresses:
             if pool_type == "V2":
@@ -501,8 +500,7 @@ class UniswapLpCycle(Arbitrage):
         from_address: Union[str, ChecksumAddress],
     ) -> List[Tuple[str, bytes, int]]:
         """
-        Generates a list of calldata payloads for each step in the swap path, with calldata built using the eth_abi.encode method
-        and the `swap` function of either the V2 or V3 pool
+        Generate a list of calldata payloads for each step in the swap path, with calldata built using the eth_abi.encode method and the `swap` function of either the V2 or V3 pool
 
         Arguments
         ---------
@@ -519,8 +517,6 @@ class UniswapLpCycle(Arbitrage):
 
         # check for zero-amount swaps
         if not self.best["swap_pool_amounts"]:
-            # print('checking pool amounts')
-            # print(self.best['swap_pool_amounts'])
             raise ArbitrageError("No arbitrage results available")
 
         payloads = []
@@ -540,7 +536,7 @@ class UniswapLpCycle(Arbitrage):
                             "uint256",
                         ],
                         [
-                            self.swap_pool_addresses[0],
+                            self.swap_pools[0].address,
                             self.best.get("swap_amount"),
                         ],
                     ),
@@ -549,10 +545,9 @@ class UniswapLpCycle(Arbitrage):
 
                 payloads.append(transfer_payload)
 
-            # generate the swap payloads for each pool in the path
-
             last_pool = self.swap_pools[-1]
-            logger.debug("\tPAYLOAD: identified last pool")
+
+            # generate the swap payloads for each pool in the path
             for i, swap_pool_object in enumerate(self.swap_pools):
                 if swap_pool_object is last_pool:
                     next_pool = None
