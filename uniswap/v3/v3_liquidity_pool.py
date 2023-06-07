@@ -902,17 +902,17 @@ class BaseV3LiquidityPool(ABC):
                 f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
             )
 
-        def check_update_block(block) -> bool:
+        def is_valid_update_block(block_number) -> bool:
             """
             Check if `block_number` is valid (matches or exceeds the last update block)
             """
-            return self.update_block <= block
+            return block_number >= self.update_block
 
-        def check_liquidity_update_block(block) -> bool:
+        def is_valid_liquidity_update_block(block_number) -> bool:
             """
             Check if `block_number` is valid (matches or exceeds the last liquidity update block)
             """
-            return self.liquidity_update_block <= block
+            return block_number >= self.liquidity_update_block
 
         for key in updates:
             if key not in [
@@ -926,33 +926,39 @@ class BaseV3LiquidityPool(ABC):
         with self.update_lock:
             updated_state = False
 
-            if check_update_block(block_number) or force:
-                for key in ["tick", "liquidity", "sqrt_price_x96"]:
-                    if key in updates and updates[key] != self.__dict__[key]:
+            if is_valid_update_block(block_number) or force:
+                for update_type in ["tick", "liquidity", "sqrt_price_x96"]:
+                    if (
+                        update_type in updates
+                        and updates[update_type] != self.__dict__[update_type]
+                    ):
                         # the self.tick attribute is stored internally as
                         # self.__dict__['tick'], which we can set directly
                         # if our update key matches the attribute name
-                        self.__dict__[key] = updates[key]
+                        self.__dict__[update_type] = updates[update_type]
                         updated_state = True
 
             if "liquidity_change" in updates and (
-                check_liquidity_update_block(block_number) or force
+                is_valid_liquidity_update_block(block_number) or force
             ):
                 liquidity_delta, lower_tick, upper_tick = updates[
                     "liquidity_change"
                 ]
 
                 with self.tick_lock:
-                    # Mint/Burn events may affect the current liquidity if the current tick is
-                    # in the tick range associated with this event, so check and adjust
+                    # adjust in-range liquidity if current tick is within the position's range
                     if (
                         lower_tick <= self.tick <= upper_tick
-                        and block_number >= self.update_block
+                        # bugfix: check the liquidity update timestamp  - fixes issue where
+                        # liquidity events were applied after a slot0 update, which put
+                        # `self.liquidity` into an inconsistent state
+                        and is_valid_update_block(block_number)
                     ):
-                        logger.debug(
-                            f"Adjusting in-range liquidity {block_number=}, {self.update_block=}, {self.tick=}"
-                        )
                         self.liquidity += liquidity_delta
+                        logger.debug(
+                            f"Adjusting in-range liquidity {block_number=}, {self.update_block=}, {self.tick=}, {self.address=}, {self.liquidity=}"
+                        )
+                        assert self.liquidity >= 0
 
                     for i, tick in enumerate([lower_tick, upper_tick]):
                         tick_word, _ = self._get_tick_bitmap_position(tick)
@@ -1049,10 +1055,10 @@ class BaseV3LiquidityPool(ABC):
                 )
 
             if updated_state:
+                self._update_pool_state()
                 # if the update was forced, do not refresh the update block
                 if not force:
                     self.update_block = block_number
-                self._update_pool_state()
 
             return updated_state
 
