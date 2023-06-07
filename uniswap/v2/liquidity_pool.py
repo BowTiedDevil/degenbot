@@ -100,9 +100,14 @@ class LiquidityPool:
                 f"was '{fee.__class__.__name__}'"
             )
 
-        self.fee = fee
         self.fee_token0 = fee_token0 if fee_token0 is not None else fee
         self.fee_token1 = fee_token1 if fee_token1 is not None else fee
+
+        if self.fee_token0 and self.fee_token1:
+            self.fee = None
+        else:
+            self.fee = fee
+
         self._update_method = update_method
         self._ratio_token0_in: Optional[Decimal] = None
         self._ratio_token1_in: Optional[Decimal] = None
@@ -725,9 +730,7 @@ class LiquidityPool:
             success = True
         elif self._update_method == "event":
             raise DeprecationError(
-                "***"
-                "DEPRECATION WARNING: the 'event' update method is deprecated. Please update your bot to use the default 'polling' method"
-                "***"
+                "The 'event' update method is deprecated. Please update your bot to use the default 'polling' method"
             )
         else:
             success = False
@@ -736,6 +739,136 @@ class LiquidityPool:
 
 
 class CamelotLiquidityPool(LiquidityPool):
+    FEE_DENOMINATOR = 100_000
+
+    def _calculate_tokens_out_from_tokens_in_stable_swap(
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        override_reserves_token0: Optional[int] = None,
+        override_reserves_token1: Optional[int] = None,
+        override_state: Optional[dict] = None,
+    ) -> int:
+        """
+        Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
+        Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
+        """
+
+        # TODO: check for conflicting overrides
+        if override_state and (
+            override_reserves_token0 is None
+            and override_reserves_token1 is None
+        ):
+            override_reserves_token0 = override_state["reserves_token0"]
+            override_reserves_token1 = override_state["reserves_token1"]
+
+            logger.debug("Overrides applied:")
+            logger.debug(f"{override_reserves_token0=}")
+            logger.debug(f"{override_reserves_token1=}")
+
+        if not (
+            (
+                override_reserves_token0 is not None
+                and override_reserves_token1 is not None
+            )
+            or (
+                override_reserves_token0 is None
+                and override_reserves_token1 is None
+            )
+        ):
+            raise ValueError(
+                "Must provide override values for both token reserves"
+            )
+
+        if token_in_quantity <= 0:
+            raise ZeroSwapError("token_in_quantity must be positive")
+
+        precision_multiplier_token0 = 10**self.token0.decimals
+        precision_multiplier_token1 = 10**self.token1.decimals
+
+        def _k(balance0, balance1) -> int:
+            _x: int = balance0 * 10**18 // precision_multiplier_token0
+            _y: int = balance1 * 10**18 // precision_multiplier_token1
+            _a: int = _x * _y // 10**18
+            _b: int = (_x * _x // 10**18) + (_y * _y // 10**18)
+            return _a * _b // 10**18  # x^3*y+y^3*x >= k
+
+        def _get_y(x0: int, xy: int, y: int) -> int:
+            for _ in range(255):
+                y_prev = y
+                k = _f(x0, y)
+                if k < xy:
+                    dy = (xy - k) * 10**18 // _d(x0, y)
+                    y = y + dy
+                else:
+                    dy = (k - xy) * 10**18 // _d(x0, y)
+                    y = y - dy
+
+                if y > y_prev:
+                    if y - y_prev <= 1:
+                        return y
+                else:
+                    if y_prev - y <= 1:
+                        return y
+
+            return y
+
+        def _f(x0: int, y: int) -> int:
+            return (
+                x0 * (y * y // 10**18 * y // 10**18) // 10**18
+                + (x0 * x0 // 10**18 * x0 // 10**18) * y // 10**18
+            )
+
+        def _d(x0: int, y: int) -> int:
+            return 3 * x0 * (y * y // 10**18) // 10**18 + (
+                x0 * x0 // 10**18 * x0 // 10**18
+            )
+
+        fee_percent = (
+            self.fee_token0 if token_in == self.token0 else self.fee_token1
+        )
+
+        _reserve0 = (
+            override_reserves_token0
+            if override_reserves_token0 is not None
+            else self.reserves_token0
+        )
+        _reserve1 = (
+            override_reserves_token1
+            if override_reserves_token1 is not None
+            else self.reserves_token1
+        )
+
+        # remove fee from amount received
+        token_in_quantity -= (
+            token_in_quantity * fee_percent // self.FEE_DENOMINATOR
+        )
+        xy = _k(_reserve0, _reserve1)
+        _reserve0 = _reserve0 * 10**18 // precision_multiplier_token0
+        _reserve1 = _reserve1 * 10**18 // precision_multiplier_token1
+
+        reserve_a, reserve_b = (
+            (_reserve0, _reserve1)
+            if token_in == self.token0
+            else (_reserve1, _reserve0)
+        )
+        token_in_quantity = (
+            token_in_quantity * 10**18 // precision_multiplier_token0
+            if token_in == self.token0
+            else token_in_quantity * 10**18 // precision_multiplier_token1
+        )
+        y = reserve_b - _get_y(token_in_quantity + reserve_a, xy, reserve_b)
+
+        return (
+            y
+            * (
+                precision_multiplier_token1
+                if token_in == self.token0
+                else precision_multiplier_token0
+            )
+            // 10**18
+        )
+
     def __init__(
         self,
         address: str,
@@ -744,8 +877,6 @@ class CamelotLiquidityPool(LiquidityPool):
         update_method: str = "polling",
         router: Optional[Router] = None,
         abi: Optional[list] = None,
-        # default fee for most UniswapV2 AMMs is 0.3%
-        fee: Fraction = Fraction(3, 1000),
         silent: bool = False,
         update_reserves_on_start: bool = True,
         unload_brownie_contract_after_init: bool = False,
@@ -756,12 +887,16 @@ class CamelotLiquidityPool(LiquidityPool):
         if abi is None:
             abi = CAMELOT_LP_ABI
 
+        address = Web3.toChecksumAddress(address)
+
         _contract = Contract.from_abi(
-            name=f"{address}",
+            name=f"CamelotV2 pool: {address}",
             abi=abi,
             address=address,
             persist=False,
         )
+
+        stable_pool = _contract.stableSwap()
 
         _, _, fee_token0, fee_token1 = _contract.getReserves()
         fee_denominator = _contract.FEE_DENOMINATOR()
@@ -770,9 +905,21 @@ class CamelotLiquidityPool(LiquidityPool):
 
         super().__init__(
             address=address,
+            tokens=tokens,
+            name=name,
+            update_method=update_method,
+            router=router,
             abi=abi,
             fee_token0=fee_token0,
             fee_token1=fee_token1,
             silent=silent,
-            update_method=update_method,
+            update_reserves_on_start=update_reserves_on_start,
+            unload_brownie_contract_after_init=unload_brownie_contract_after_init,
         )
+
+        if stable_pool:
+            print(f"BUILDING STABLE CAMELOT POOL: {address}")
+            # replace the calculate_tokens_out_from_tokens_in method for stable-only pools
+            self.calculate_tokens_out_from_tokens_in = (
+                self._calculate_tokens_out_from_tokens_in_stable_swap
+            )
