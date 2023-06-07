@@ -1036,8 +1036,7 @@ class BaseV3LiquidityPool(ABC):
                                 "block": block_number,
                             }
 
-                self.liquidity_update_block = block_number
-                updated_state = True
+                self.liquidity_update_block = block_number                
 
             if not silent:
                 logger.debug(f"Liquidity: {self.liquidity}")
