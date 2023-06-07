@@ -129,8 +129,9 @@ class UniswapLpCycle(Arbitrage):
 
         pools_amounts_out: List[Dict] = []
 
-        for i, pool in enumerate(self.swap_pools):
-            pool_vector = self.swap_vectors[i]
+        for i, (pool, pool_vector) in enumerate(
+            zip(self.swap_pools, self.swap_vectors)
+        ):
             token_in = pool_vector["token_in"]
             token_out = pool_vector["token_out"]
             _zeroForOne = pool_vector["zeroForOne"]
