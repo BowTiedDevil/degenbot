@@ -657,9 +657,6 @@ class BaseV3LiquidityPool(ABC):
             if block_number is None:
                 block_number = chain.height
 
-            # only process calls if the submitted block number (or retrieved block number)
-            # is equal to or exceeds the block number of the last update
-
             if block_number < self.update_block:
                 raise ExternalUpdateError(
                     f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
@@ -914,14 +911,22 @@ class BaseV3LiquidityPool(ABC):
             """
             return block_number >= self.liquidity_update_block
 
-        for key in updates:
-            if key not in [
+        # if not force:
+        #     if not is_valid_update_block(block_number):
+        #         raise ExternalUpdateError(
+        #             f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
+        #         )
+
+        for update_type in updates:
+            if update_type not in [
                 "tick",
                 "liquidity",
                 "sqrt_price_x96",
                 "liquidity_change",
             ]:
-                warn(f"Ignoring unknown key-value ({key}:{updates[key]})")
+                warn(
+                    f"Ignoring unknown key-value ({update_type}:{updates[update_type]})"
+                )
 
         with self.update_lock:
             updated_state = False
@@ -998,14 +1003,15 @@ class BaseV3LiquidityPool(ABC):
                                 "liquidityGross"
                             ]
                         except KeyError:
+                            # if it doesn't exist, initialize the tick and set the current values to zero
+                            tick_liquidity_net = 0
+                            tick_liquidity_gross = 0
                             TickBitmap.flipTick(
                                 self.tick_bitmap,
                                 tick,
                                 self.tick_spacing,
                                 update_block=block_number,
                             )
-                            tick_liquidity_net = 0
-                            tick_liquidity_gross = 0
 
                         # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
                         # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
@@ -1019,7 +1025,7 @@ class BaseV3LiquidityPool(ABC):
                             tick_liquidity_gross + liquidity_delta
                         )
 
-                        # Delete entirely if there is no liquidity referencing this tick
+                        # Delete entirely if there is no liquidity referencing this tick, then flip it in the bitmap
                         if new_liquidity_gross == 0:
                             del self.tick_data[tick]
                             TickBitmap.flipTick(
@@ -1036,7 +1042,7 @@ class BaseV3LiquidityPool(ABC):
                                 "block": block_number,
                             }
 
-                self.liquidity_update_block = block_number                
+                self.liquidity_update_block = block_number
 
             if not silent:
                 logger.debug(f"Liquidity: {self.liquidity}")
