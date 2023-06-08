@@ -825,9 +825,13 @@ class CamelotLiquidityPool(LiquidityPool):
                 x0 * x0 // 10**18 * x0 // 10**18
             )
 
+        # fee is stored as a uint16 in the contract, but as a Fraction in this helper
+        # so must be converted here before use.
+        # e.g. 0.04% fee = Fraction(1,2500) in the helper, but fee = 40 in the contract
+        # to convert, multiply the fraction by the `FEE_DENOMINATOR`, so fee = 1/2500 * 100000 = 40
         fee_percent = (
             self.fee_token0 if token_in == self.token0 else self.fee_token1
-        )
+        ) * self.FEE_DENOMINATOR
 
         _reserve0 = (
             override_reserves_token0
