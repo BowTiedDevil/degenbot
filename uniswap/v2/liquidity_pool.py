@@ -22,6 +22,10 @@ from degenbot.uniswap.v2.router import Router
 
 
 class LiquidityPool:
+    """
+    Represents a Uniswap V2 liquidity pool
+    """
+
     def __init__(
         self,
         address: str,
