@@ -42,7 +42,7 @@ class UniswapLpCycle(Arbitrage):
         self.gas_estimate = 0
 
         for pool in swap_pools:
-            if pool.uniswap_version not in [2, 3]:
+            if not isinstance(pool, (LiquidityPool, V3LiquidityPool)):
                 raise ArbitrageError(
                     f"Could not identify Uniswap version for pool {pool}!"
                 )
@@ -177,7 +177,7 @@ class UniswapLpCycle(Arbitrage):
                     )
 
             # determine the uniswap version for the pool and format the output appropriately
-            if pool.uniswap_version == 2:
+            if isinstance(pool, LiquidityPool):
                 pools_amounts_out.append(
                     {
                         "uniswap_version": 2,
@@ -186,7 +186,7 @@ class UniswapLpCycle(Arbitrage):
                         else [token_out_quantity, 0],
                     }
                 )
-            elif pool.uniswap_version == 3:
+            elif isinstance(pool, V3LiquidityPool):
                 pools_amounts_out.append(
                     {
                         "uniswap_version": 3,
@@ -523,7 +523,7 @@ class UniswapLpCycle(Arbitrage):
 
         try:
             # generate the payload for the initial transfer if the first pool is type V2
-            if self.swap_pools[0].uniswap_version == 2:
+            if isinstance(self.swap_pools[0], LiquidityPool):
                 # transfer the input token to the first swap pool
                 transfer_payload = (
                     # address
@@ -556,16 +556,16 @@ class UniswapLpCycle(Arbitrage):
 
                 if next_pool is not None:
                     # if it is a V2 pool, set swap destination to its address
-                    if next_pool.uniswap_version == 2:
+                    if isinstance(next_pool, LiquidityPool):
                         swap_destination_address = next_pool.address
                     # if it is a V3 pool, set swap destination to `from_address`
-                    elif next_pool.uniswap_version == 3:
+                    elif isinstance(next_pool, V3LiquidityPool):
                         swap_destination_address = from_address
                 else:
                     # we have reached the last pool, so set the destination to `from_address` regardless of type
                     swap_destination_address = from_address
 
-                if swap_pool_object.uniswap_version == 2:
+                if isinstance(swap_pool_object, LiquidityPool):
                     logger.debug(f"\tPAYLOAD: building V2 swap at pool {i}")
                     logger.debug(
                         f"\tPAYLOAD: pool address {swap_pool_object.address}"
@@ -602,7 +602,7 @@ class UniswapLpCycle(Arbitrage):
                             0,  # msg.value
                         )
                     )
-                elif swap_pool_object.uniswap_version == 3:
+                elif isinstance(swap_pool_object, V3LiquidityPool):                    
                     logger.debug(f"\tPAYLOAD: building V3 swap at pool {i}")
                     logger.debug(
                         f"\tPAYLOAD: pool address {swap_pool_object.address}"
