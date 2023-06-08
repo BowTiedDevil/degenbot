@@ -243,7 +243,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         pool_fee: Optional[int] = None,
         silent: bool = False,
         # accept any number of keyword arguments, which are
-        # passed directly to Erc20Token without validation
+        # passed directly to the `V3LiquidityPool` constructor without validation
         **kwargs,
     ) -> V3LiquidityPool:
         """
