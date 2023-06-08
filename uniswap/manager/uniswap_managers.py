@@ -18,12 +18,12 @@ from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
 _INIT_HASHES_BY_FACTORY = {
     1: {
-        # Sushiswap (V2)
-        "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac": "0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303",
         # Uniswap (V2)
         "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f": "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
         # Uniswap (V3)
         "0x1F98431c8aD98523631AE4a59f267346ea31F984": "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
+        # Sushiswap (V2)
+        "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac": "0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303",
         # Sushiswap (V3)
         "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F": "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
     },
