@@ -115,6 +115,8 @@ class LiquidityPool:
         self._update_method = update_method
         self._ratio_token0_in: Optional[Decimal] = None
         self._ratio_token1_in: Optional[Decimal] = None
+        self.token0_max_swap = 0
+        self.token1_max_swap = 0
         self.new_reserves = False
         self.update_block = chain.height
 
@@ -250,9 +252,6 @@ class LiquidityPool:
         """
         Calculates the maximum token inputs for the target output ratios at current pool reserves
         """
-
-        self.token0_max_swap: int
-        self.token1_max_swap: int
 
         # token0 in, token1 out
         # formula: dx = y0*C - x0/(1-FEE), where C = token0/token1
