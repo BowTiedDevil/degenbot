@@ -1,6 +1,6 @@
 from decimal import Decimal
 from fractions import Fraction
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union
 from warnings import warn
 
 from brownie import Contract, Wei, chain  # type: ignore
