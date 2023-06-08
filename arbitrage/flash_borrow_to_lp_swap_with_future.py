@@ -8,8 +8,6 @@ from scipy import optimize  # type: ignore
 from degenbot.token import Erc20Token
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 
-# TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
-
 
 class FlashBorrowToLpSwapWithFuture:
     def __init__(
@@ -33,18 +31,10 @@ class FlashBorrowToLpSwapWithFuture:
                 "At least one pool address or LiquidityPool object must be provided"
             )
 
-        # assert (
-        #     swap_pools or swap_pool_addresses
-        # ), "At least one pool address or LiquidityPool object must be provided"
-
         if swap_pool_addresses and swap_pools:
             raise ValueError(
                 "Choose pool addresses or LiquidityPool objects, not both"
             )
-
-        # assert not (
-        #     swap_pool_addresses and swap_pools
-        # ), "Choose pool addresses or LiquidityPool objects, not both"
 
         if not update_method in [
             "polling",
@@ -52,19 +42,10 @@ class FlashBorrowToLpSwapWithFuture:
         ]:
             raise ValueError("update_method must be 'polling' or 'external'")
 
-        # assert update_method in [
-        #     "polling",
-        #     "external",
-        # ], "update_method must be 'polling' or 'external'"
-
         if update_method == "external" and swap_pool_addresses:
             raise ValueError(
                 "swap pools by address must be updated with the 'polling' method"
             )
-
-        # assert not (
-        #     update_method == "external" and swap_pool_addresses
-        # ), "swap pools by address must be updated with the 'polling' method"
 
         self.borrow_pool = borrow_pool
         self.borrow_token = borrow_token
@@ -110,21 +91,11 @@ class FlashBorrowToLpSwapWithFuture:
         ]:
             raise ValueError("Borrowed token not found in the first swap pool")
 
-        # assert self.borrow_token.address in [
-        #     self.swap_pools[0].token0.address,
-        #     self.swap_pools[0].token1.address,
-        # ], "Borrowed token not found in the first swap pool"
-
         if not self.repay_token.address in [
             self.swap_pools[-1].token0.address,
             self.swap_pools[-1].token1.address,
         ]:
             raise ValueError("Repay token not found in the last swap pool")
-
-        # assert self.repay_token.address in [
-        #     self.swap_pools[-1].token0.address,
-        #     self.swap_pools[-1].token1.address,
-        # ], "Repay token not found in the last swap pool"
 
         if self.swap_pools[0].token0.address == borrow_token.address:
             forward_token_address = self.swap_pools[0].token1.address
@@ -517,7 +488,6 @@ class FlashBorrowToLpSwapWithFuture:
         if override_future:
             if not pool_overrides:
                 raise ValueError("Overrides must be provided!")
-            # assert pool_overrides, "Overrides must be provided!"
 
             recalculate = True
 
@@ -526,19 +496,12 @@ class FlashBorrowToLpSwapWithFuture:
                     raise TypeError(
                         "Override does not include a LiquidityPool object!"
                     )
-                # assert (
-                #     type(override_pool) is LiquidityPool
-                # ), "override does not include a LiquidityPool object!"
 
                 if type(override_reserves) is not tuple:
                     raise TypeError("Overrides not formatted as a tuple")
-                # assert (
-                #     type(override_reserves) is tuple
-                # ), "overrides not formatted as a tuple"
 
                 if len(override_reserves) != 2:
                     raise ValueError("Override length must be 2")
-                # assert len(override_reserves) == 2, "override length must be 2"
 
                 if type(override_reserves[0]) not in (
                     int,
