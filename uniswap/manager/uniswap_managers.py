@@ -82,6 +82,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 name="Uniswap V2: Factory",
                 address=factory_address,
                 abi=UNISWAPV2_FACTORY_ABI,
+                persist=False,
             )
             self._lock = Lock()
             self._pools_by_address: Dict[str, LiquidityPool] = dict()
@@ -227,6 +228,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 name="Uniswap V3: Factory",
                 address=factory_address,
                 abi=UNISWAP_V3_FACTORY_ABI,
+                persist=False,
             )
             self._lens = TickLens()
             self._lock = Lock()
