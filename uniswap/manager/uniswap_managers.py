@@ -97,7 +97,9 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             self._pools_by_tokens: Dict[
                 Tuple[str, str], LiquidityPool
             ] = dict()
-            self._token_manager = self._state[chain_id]["erc20token_manager"]
+            self._token_manager: Erc20TokenHelperManager = self._state[
+                chain_id
+            ]["erc20token_manager"]
             self.factory_init_hash = _INIT_HASHES_BY_FACTORY[chain_id][
                 self.factory_address
             ]
@@ -152,31 +154,24 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 )
 
             try:
-                erc20token_helpers: Tuple[Erc20Token, Erc20Token]
-                erc20token_helpers = tuple(
-                    (
-                        self._token_manager.get_erc20token(
-                            address=token_address,
-                            min_abi=True,
-                            silent=silent,
-                            unload_brownie_contract_after_init=True,
-                        )
-                        for token_address in token_addresses
+                erc20token_helpers: List[Erc20Token] = [
+                    self._token_manager.get_erc20token(
+                        address=token_address,
+                        min_abi=True,
+                        silent=silent,
+                        unload_brownie_contract_after_init=True,
                     )
-                )  # type: ignore
+                    for token_address in token_addresses
+                ]
             except Erc20TokenError:
                 raise ManagerError(
                     f"Could not build Erc20Token helpers for pool {pool_address}"
                 )
 
-            # dictionary key pair is sorted by address
-            erc20token_helpers = (
-                min(erc20token_helpers),
-                max(erc20token_helpers),
-            )
-
             tokens_key: Tuple[str, str]
-            tokens_key = tuple([token.address for token in erc20token_helpers])  # type: ignore
+            tokens_key = tuple(
+                [token.address for token in sorted(erc20token_helpers)]
+            )  # type: ignore [assignment]
 
             try:
                 pool_helper = self._pools_by_tokens[tokens_key]
@@ -193,7 +188,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             try:
                 pool_helper = LiquidityPool(
                     address=pool_address,
-                    tokens=list(erc20token_helpers),
+                    tokens=erc20token_helpers,
                     silent=silent,
                     update_method=update_method,
                     factory_address=self.factory_address,
