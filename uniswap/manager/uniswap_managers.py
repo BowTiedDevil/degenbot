@@ -244,9 +244,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         token_addresses: Optional[Tuple[str, str]] = None,
         pool_fee: Optional[int] = None,
         silent: bool = False,
-        # accept any number of keyword arguments, which are
-        # passed directly to the `V3LiquidityPool` constructor without validation
-        **kwargs,
+        # keyword arguments passed directly to the `V3LiquidityPool` constructor
+        **v3liquiditypool_kwargs,
     ) -> V3LiquidityPool:
         """
         Get the pool object from its address, or a tuple of token addresses and fee
@@ -281,7 +280,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                     address=pool_address,
                     lens=self._lens,
                     silent=silent,
-                    **kwargs,
+                    **v3liquiditypool_kwargs,
                 )
             except Exception as e:
                 raise ManagerError(
