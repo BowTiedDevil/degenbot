@@ -172,18 +172,16 @@ class LiquidityPool:
         if name is not None:
             self.name = name
         else:
-            if (
-                self.fee_token0 is not None and self.fee_token1 is not None
-            ) and (self.fee_token0 != self.fee_token1):
-                fee_string = f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
-            elif (
-                self.fee_token0 is not None and self.fee_token1 is not None
-            ) and (self.fee_token0 == self.fee_token1):
-                fee_string = f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
-            else:
+            if self.fee is not None:
                 fee_string = (
                     f"{100*self.fee.numerator/self.fee.denominator:.2f}"
                 )
+            elif self.fee_token0 is not None and self.fee_token1 is not None:
+                if self.fee_token0 != self.fee_token1:
+                    fee_string = f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
+                elif self.fee_token0 == self.fee_token1:
+                    fee_string = f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
+
             self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
 
         if update_reserves_on_start:
