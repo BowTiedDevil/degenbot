@@ -510,10 +510,6 @@ class FlashBorrowToLpSwapWithFuture:
                     raise TypeError(
                         f"override for token0 must be int/Wei, is {type(override_reserves[0])}"
                     )
-                # assert type(override_reserves[0]) in (
-                #     int,
-                #     Wei,
-                # ), f"override for token0 must be int/Wei, is {type(override_reserves[0])}"
 
                 if type(override_reserves[1]) not in (
                     int,
@@ -522,10 +518,6 @@ class FlashBorrowToLpSwapWithFuture:
                     raise TypeError(
                         f"override for token1 must be int/Wei, is {type(override_reserves[1])}"
                     )
-                # assert type(override_reserves[1]) in (
-                #     int,
-                #     Wei,
-                # ), f"override for token1 must be int/Wei, is {type(override_reserves[1])}"
 
         # update the reserves tracked in self.reserves and flag the arb for recalculation if they did not match
         for pool in [self.borrow_pool] + self.swap_pools:
