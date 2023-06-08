@@ -16,7 +16,7 @@ from degenbot.uniswap.v3.functions import generate_v3_pool_address
 from degenbot.uniswap.v3.tick_lens import TickLens
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
-_FACTORY_HASHES = {
+_INIT_HASHES_BY_FACTORY = {
     1: {
         # Sushiswap
         "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac": "0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303",
@@ -87,7 +87,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 Tuple[str, str], LiquidityPool
             ] = dict()
             self._token_manager = self._state[chain_id]["erc20token_manager"]
-            self.factory_init_hash = _FACTORY_HASHES[chain_id][
+            self.factory_init_hash = _INIT_HASHES_BY_FACTORY[chain_id][
                 self.factory_address
             ]
 
