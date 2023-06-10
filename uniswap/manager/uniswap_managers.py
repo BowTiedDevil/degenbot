@@ -248,7 +248,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         pool_fee: Optional[int] = None,
         silent: bool = False,
         # keyword arguments passed directly to the `V3LiquidityPool` constructor
-        **v3liquiditypool_kwargs,
+        v3liquiditypool_kwargs: Optional[dict] = None,
     ) -> V3LiquidityPool:
         """
         Get the pool object from its address, or a tuple of token addresses and fee
@@ -262,6 +262,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             )
 
         dict_key: tuple[str, str, int]
+
+        pool_helper: V3LiquidityPool
 
         if pool_address is not None:
             if token_addresses is not None or pool_fee is not None:
