@@ -262,8 +262,10 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             )
 
         dict_key: tuple[str, str, int]
-
         pool_helper: V3LiquidityPool
+
+        if v3liquiditypool_kwargs is None:
+            v3liquiditypool_kwargs = {}
 
         if pool_address is not None:
             if token_addresses is not None or pool_fee is not None:
@@ -353,7 +355,9 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 pool_helper = V3LiquidityPool(
                     address=pool_address,
                     tokens=list(erc20token_helpers),
+                    lens=self._lens,
                     silent=silent,
+                    **v3liquiditypool_kwargs,
                 )
             except:
                 raise ManagerError(
