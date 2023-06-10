@@ -923,7 +923,6 @@ class CamelotLiquidityPool(LiquidityPool):
         )
 
         if stable_pool:
-            print(f"BUILDING STABLE CAMELOT POOL: {address}")
             # replace the calculate_tokens_out_from_tokens_in method for stable-only pools
             self.calculate_tokens_out_from_tokens_in = (
                 self._calculate_tokens_out_from_tokens_in_stable_swap
