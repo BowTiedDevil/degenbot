@@ -26,7 +26,10 @@ from degenbot.uniswap.v2.abi import (
     UNISWAPV2_ROUTER,
     UNISWAPV2_ROUTER_ABI,
 )
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2.liquidity_pool import (
+    LiquidityPool,
+    CamelotLiquidityPool,
+)
 from degenbot.uniswap.v2.multi_liquidity_pool import MultiLiquidityPool
 from degenbot.uniswap.v2.router import Router
 from degenbot.uniswap.v3.tick_lens import TickLens
