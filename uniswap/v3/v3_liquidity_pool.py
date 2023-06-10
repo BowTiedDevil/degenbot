@@ -53,6 +53,8 @@ class BaseV3LiquidityPool(ABC):
         name: str = "",
         update_method: str = "polling",
         abi: Optional[list] = None,
+        factory_address: Optional[str] = None,
+        factory_init_hash: Optional[str] = None,
         extra_words: int = 10,
         silent: bool = False,
         tick_data: Optional[dict] = None,
@@ -135,15 +137,17 @@ class BaseV3LiquidityPool(ABC):
                 f"{self.token0}-{self.token1} (V3, {self.fee/10000:.2f}%)"
             )
 
-        # check that the address is a valid V3 pool (see https://github.com/Uniswap/v3-periphery/blob/main/contracts/libraries/PoolAddress.sol)
-        computed_pool_address = generate_v3_pool_address(
-            token_addresses=[self.token0.address, self.token1.address],
-            fee=self.fee,
-        )
-        if computed_pool_address != self.address:
-            raise ValueError(
-                f"Pool address {self.address} does not match deterministic address {computed_pool_address} from factory"
+        if factory_address is not None and factory_init_hash is not None:
+            # check that the address is a valid V3 pool (see https://github.com/Uniswap/v3-periphery/blob/main/contracts/libraries/PoolAddress.sol)
+            computed_pool_address = generate_v3_pool_address(
+                token_addresses=[self.token0.address, self.token1.address],
+                fee=self.fee,
+                factory_address=factory_address,
             )
+            if computed_pool_address != self.address:
+                raise ValueError(
+                    f"Pool address {self.address} does not match deterministic address {computed_pool_address} from factory"
+                )
 
         self.liquidity = self._brownie_contract.liquidity(
             block_identifier=self.update_block
