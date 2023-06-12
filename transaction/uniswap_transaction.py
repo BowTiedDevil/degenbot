@@ -776,7 +776,7 @@ class UniswapTransaction(Transaction):
             logger.info(f"{token_in_quantity=}")
             last_pool_pos = len(v2_pool_objects) - 1
             recipient = params["to"]
-            self.to = recipient
+            self.to = Web3.toChecksumAddress(recipient)
 
             for i, v2_pool in enumerate(v2_pool_objects):
                 # i == 0 for first pool in path, take from 'path' in func_params
@@ -968,7 +968,7 @@ class UniswapTransaction(Transaction):
             token_out_quantity = params["amountOut"]
             last_pool_pos = len(pool_objects) - 1
             recipient = params["to"]
-            self.to = recipient
+            self.to = Web3.toChecksumAddress(recipient)
 
             # work through the pools backwards, since the swap will execute at a defined output, with input floating
             for i, v2_pool in enumerate(pool_objects[::-1]):
@@ -1244,7 +1244,7 @@ class UniswapTransaction(Transaction):
             except:
                 pass
 
-            self.to = recipient
+            self.to = Web3.toChecksumAddress(recipient)
 
             try:
                 # get the V3 pool involved in the swap
@@ -1418,7 +1418,7 @@ class UniswapTransaction(Transaction):
             except:
                 pass
 
-            self.to = recipient
+            self.to = Web3.toChecksumAddress(recipient)
 
             try:
                 v3_pool = self.v3_pool_manager.get_pool(
@@ -1513,6 +1513,7 @@ class UniswapTransaction(Transaction):
                     _recipient = self.router_address
                 else:
                     _recipient = recipient
+                    self.to = Web3.toChecksumAddress(recipient)
 
                 # logger.info(f"{_recipient=}")
 
