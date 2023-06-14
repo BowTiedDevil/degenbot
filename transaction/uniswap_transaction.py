@@ -1846,6 +1846,40 @@ class UniswapTransaction(Transaction):
                     -wrapped_token_balance,
                 )
 
+            elif func_name == "sweepToken":
+                """
+                This function transfers the current token balance held by the contract to `recipient`
+                """
+
+                if not silent:
+                    logger.info(f"{func_name}: {self.hash}")
+                    logger.info(f"{func_params=}")
+
+                try:
+                    token_address = func_params["token"]
+                    amount_out_minimum = func_params["amountMinimum"]
+                    recipient = func_params.get("recipient")
+
+                except Exception as e:
+                    print(e)
+                else:
+                    # Router2 ABI omits `recipient`, always uses `msg.sender`
+                    if recipient is None:
+                        recipient = self.sender
+
+                _balance = self._get_balance(
+                    self.router_address, token_address
+                )
+
+                if _balance < amount_out_minimum:
+                    raise ValueError(
+                        f"Requested sweep of min. {amount_out_minimum} {token_address}, received {_balance}"
+                    )
+
+                self._adjust_balance(
+                    self.router_address, token_address, -_balance
+                )
+
             # -----------------------------------------------------
             # Universal Router functions
             # -----------------------------------------------------
