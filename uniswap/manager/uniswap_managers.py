@@ -45,9 +45,18 @@ class UniswapLiquidityPoolManager(Manager):
 
     _state: dict = {}
 
-    def __init__(self, factory_address: str, chain_id: int):
-        # the internal state data for all child objects is held in the
-        # class-level _state dictionary, keyed by chain ID and factory address
+    def __init__(
+        self,
+        factory_address: str,
+        chain_id: int,
+    ):
+        """
+        Initialize the specific state dictionary for the given chain id and
+        factory address
+        """
+
+        # the internal state data for all child objects is held in a nested
+        # class-level dictionary, keyed by chain ID and factory address
         try:
             self._state[chain_id]
         except KeyError:
@@ -85,8 +94,8 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         if not self.__dict__:
             # initialize internal attributes
-            self.factory_address = factory_address
-            self._factory_contract = Contract.from_abi(
+            self._factory_address = factory_address
+            self._brownie_factory_contract = Contract.from_abi(
                 name="Uniswap V2: Factory",
                 address=factory_address,
                 abi=UNISWAPV2_FACTORY_ABI,
@@ -100,8 +109,8 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             self._token_manager: Erc20TokenHelperManager = self._state[
                 chain_id
             ]["erc20token_manager"]
-            self.factory_init_hash = _INIT_HASHES_BY_FACTORY[chain_id][
-                self.factory_address
+            self._factory_init_hash = _INIT_HASHES_BY_FACTORY[chain_id][
+                self._factory_address
             ]
 
         # from pprint import pprint
@@ -181,7 +190,9 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 return pool_helper
 
             if (
-                pool_address := self._factory_contract.getPair(*tokens_key)
+                pool_address := self._brownie_factory_contract.getPair(
+                    *tokens_key
+                )
             ) == ZERO_ADDRESS:
                 raise ManagerError("No V2 LP available")
 
@@ -191,8 +202,8 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                     tokens=erc20token_helpers,
                     silent=silent,
                     update_method=update_method,
-                    factory_address=self.factory_address,
-                    factory_init_hash=self.factory_init_hash,
+                    factory_address=self._factory_address,
+                    factory_init_hash=self._factory_init_hash,
                 )
             except Exception as e:
                 raise ManagerError(
@@ -227,7 +238,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         if self.__dict__ == {}:
             # initialize internal attributes
-            self._factory_contract = Contract.from_abi(
+            self._factory_address = factory_address
+            self._brownie_factory_contract = Contract.from_abi(
                 name="Uniswap V3: Factory",
                 address=factory_address,
                 abi=UNISWAP_V3_FACTORY_ABI,
@@ -240,6 +252,9 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 Tuple[str, str, int], V3LiquidityPool
             ] = {}
             self._token_manager = self._state[chain_id]["erc20token_manager"]
+            self._factory_init_hash = _INIT_HASHES_BY_FACTORY[chain_id][
+                self._factory_address
+            ]
 
     def get_pool(
         self,
@@ -287,6 +302,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                     address=pool_address,
                     lens=self._lens,
                     silent=silent,
+                    factory_address=self._factory_address,
+                    factory_init_hash=self._factory_init_hash,
                     **v3liquiditypool_kwargs,
                 )
             except Exception as e:
