@@ -1853,7 +1853,6 @@ class UniswapTransaction(Transaction):
 
                 if not silent:
                     logger.info(f"{func_name}: {self.hash}")
-                    logger.info(f"{func_params=}")
 
                 try:
                     token_address = func_params["token"]
