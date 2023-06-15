@@ -3,7 +3,6 @@ from typing import Optional
 from warnings import catch_warnings, simplefilter, warn
 
 from brownie import Contract, web3 as brownie_w3  # type: ignore
-from brownie.convert import to_address  # type: ignore
 from brownie.convert.datatypes import HexString  # type: ignore
 from brownie.network.account import LocalAccount  # type: ignore
 from hexbytes import HexBytes
