@@ -1,15 +1,15 @@
 from fractions import Fraction
 from typing import List, Optional, Tuple
 
-from brownie import Contract  # type: ignore
 from brownie.convert.datatypes import Wei  # type: ignore
 from scipy import optimize  # type: ignore
 
 from degenbot.token import Erc20Token
+from degenbot.types import ArbitrageHelper
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 
 
-class FlashBorrowToLpSwapWithFuture:
+class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
     def __init__(
         self,
         borrow_pool: LiquidityPool,

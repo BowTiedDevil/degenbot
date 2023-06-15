@@ -5,12 +5,13 @@ from brownie import Contract  # type: ignore
 from scipy.optimize import minimize_scalar  # type: ignore
 
 from degenbot.token import Erc20Token
+from degenbot.types import ArbitrageHelper
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 
 # TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
 
 
-class FlashBorrowToLpSwapNew:
+class FlashBorrowToLpSwapNew(ArbitrageHelper):
     def __init__(
         self,
         borrow_pool: LiquidityPool,

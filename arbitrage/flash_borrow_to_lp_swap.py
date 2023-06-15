@@ -5,10 +5,11 @@ from brownie import Contract  # type: ignore
 from scipy import optimize  # type: ignore
 
 from degenbot.token import Erc20Token
+from degenbot.types import ArbitrageHelper
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 
 
-class FlashBorrowToLpSwap:
+class FlashBorrowToLpSwap(ArbitrageHelper):
     def __init__(
         self,
         borrow_pool: LiquidityPool,

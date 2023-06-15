@@ -6,7 +6,7 @@ from eth_typing import ChecksumAddress
 from scipy import optimize  # type: ignore
 from web3 import Web3
 
-from degenbot.arbitrage.base import Arbitrage
+from degenbot.types import ArbitrageHelper
 from degenbot.exceptions import (
     ArbitrageError,
     EVMRevertError,
@@ -23,7 +23,7 @@ from degenbot.uniswap.v3.libraries import TickMath
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
 
-class UniswapLpCycle(Arbitrage):
+class UniswapLpCycle(ArbitrageHelper):
     def __init__(
         self,
         input_token: Erc20Token,

@@ -6,11 +6,12 @@ from brownie.convert.datatypes import Wei  # type: ignore
 from scipy import optimize  # type: ignore
 
 from degenbot.exceptions import ArbCalculationError, InvalidSwapPathError
+from degenbot.types import ArbitrageHelper
 from degenbot.token import Erc20Token
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 
 
-class LpSwapWithFuture:
+class LpSwapWithFuture(ArbitrageHelper):
     def __init__(
         self,
         input_token: Erc20Token,
