@@ -403,6 +403,9 @@ class LiquidityPool:
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         """
 
+        if token_in_quantity <= 0:
+            raise ZeroSwapError("token_in_quantity must be positive")
+
         # TODO: check for conflicting overrides
         if override_state and (
             override_reserves_token0 is None
@@ -411,26 +414,10 @@ class LiquidityPool:
             override_reserves_token0 = override_state["reserves_token0"]
             override_reserves_token1 = override_state["reserves_token1"]
 
-            logger.debug("Overrides applied:")
+        if override_reserves_token0:
             logger.debug(f"{override_reserves_token0=}")
+        if override_reserves_token1:
             logger.debug(f"{override_reserves_token1=}")
-
-        if not (
-            (
-                override_reserves_token0 is not None
-                and override_reserves_token1 is not None
-            )
-            or (
-                override_reserves_token0 is None
-                and override_reserves_token1 is None
-            )
-        ):
-            raise ValueError(
-                "Must provide override values for both token reserves"
-            )
-
-        if token_in_quantity <= 0:
-            raise ZeroSwapError("token_in_quantity must be positive")
 
         if token_in == self.token0:
             reserves_in = (
@@ -746,8 +733,6 @@ class CamelotLiquidityPool(LiquidityPool):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        override_reserves_token0: Optional[int] = None,
-        override_reserves_token1: Optional[int] = None,
         override_state: Optional[dict] = None,
     ) -> int:
         """
@@ -755,31 +740,23 @@ class CamelotLiquidityPool(LiquidityPool):
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         """
 
-        # TODO: check for conflicting overrides
-        if override_state and (
-            override_reserves_token0 is None
-            and override_reserves_token1 is None
-        ):
-            override_reserves_token0 = override_state["reserves_token0"]
-            override_reserves_token1 = override_state["reserves_token1"]
+        override_reserves_token0: Optional[int] = None
+        override_reserves_token1: Optional[int] = None
 
-            logger.debug("Overrides applied:")
-            logger.debug(f"{override_reserves_token0=}")
-            logger.debug(f"{override_reserves_token1=}")
+        if override_state is not None:
+            try:
+                override_reserves_token0 = override_state["reserves_token0"]
+            except KeyError:
+                pass
+            else:
+                logger.debug(f"{override_reserves_token0=}")
 
-        if not (
-            (
-                override_reserves_token0 is not None
-                and override_reserves_token1 is not None
-            )
-            or (
-                override_reserves_token0 is None
-                and override_reserves_token1 is None
-            )
-        ):
-            raise ValueError(
-                "Must provide override values for both token reserves"
-            )
+            try:
+                override_reserves_token1 = override_state["reserves_token1"]
+            except KeyError:
+                pass
+            else:
+                logger.debug(f"{override_reserves_token1=}")
 
         if token_in_quantity <= 0:
             raise ZeroSwapError("token_in_quantity must be positive")
@@ -787,22 +764,22 @@ class CamelotLiquidityPool(LiquidityPool):
         precision_multiplier_token0 = 10**self.token0.decimals
         precision_multiplier_token1 = 10**self.token1.decimals
 
-        def _k(balance0, balance1) -> int:
-            _x: int = balance0 * 10**18 // precision_multiplier_token0
-            _y: int = balance1 * 10**18 // precision_multiplier_token1
+        def _k(balance_0, balance_1) -> int:
+            _x: int = balance_0 * 10**18 // precision_multiplier_token0
+            _y: int = balance_1 * 10**18 // precision_multiplier_token1
             _a: int = _x * _y // 10**18
             _b: int = (_x * _x // 10**18) + (_y * _y // 10**18)
             return _a * _b // 10**18  # x^3*y+y^3*x >= k
 
-        def _get_y(x0: int, xy: int, y: int) -> int:
+        def _get_y(x_0: int, xy: int, y: int) -> int:
             for _ in range(255):
                 y_prev = y
-                k = _f(x0, y)
+                k = _f(x_0, y)
                 if k < xy:
-                    dy = (xy - k) * 10**18 // _d(x0, y)
+                    dy = (xy - k) * 10**18 // _d(x_0, y)
                     y = y + dy
                 else:
-                    dy = (k - xy) * 10**18 // _d(x0, y)
+                    dy = (k - xy) * 10**18 // _d(x_0, y)
                     y = y - dy
 
                 if y > y_prev:
@@ -814,31 +791,34 @@ class CamelotLiquidityPool(LiquidityPool):
 
             return y
 
-        def _f(x0: int, y: int) -> int:
+        def _f(x_0: int, y: int) -> int:
             return (
-                x0 * (y * y // 10**18 * y // 10**18) // 10**18
-                + (x0 * x0 // 10**18 * x0 // 10**18) * y // 10**18
+                x_0 * (y * y // 10**18 * y // 10**18) // 10**18
+                + (x_0 * x_0 // 10**18 * x_0 // 10**18) * y // 10**18
             )
 
-        def _d(x0: int, y: int) -> int:
-            return 3 * x0 * (y * y // 10**18) // 10**18 + (
-                x0 * x0 // 10**18 * x0 // 10**18
+        def _d(x_0: int, y: int) -> int:
+            return 3 * x_0 * (y * y // 10**18) // 10**18 + (
+                x_0 * x_0 // 10**18 * x_0 // 10**18
             )
 
-        # fee is stored as a uint16 in the contract, but as a Fraction in this helper
-        # so must be converted here before use.
-        # e.g. 0.04% fee = Fraction(1,2500) in the helper, but fee = 40 in the contract
-        # to convert, multiply the fraction by the `FEE_DENOMINATOR`, so fee = 1/2500 * 100000 = 40
+        # fee_percent is stored as a uint16 in the contract, but as a Fraction
+        # in this helper, so must be converted.
+        #
+        # e.g. 0.04% fee = Fraction(1,2500) in the helper, fee = 40 in the
+        # contract. To convert, multiply the fraction by the `FEE_DENOMINATOR`,
+        # so fee_percent = 1/2500 * 100000 = 40
+
         fee_percent = (
-            self.fee_token0 if token_in == self.token0 else self.fee_token1
+            self.fee_token0 if token_in is self.token0 else self.fee_token1
         ) * self.FEE_DENOMINATOR
 
-        _reserve0 = (
+        reserves_token0 = (
             override_reserves_token0
             if override_reserves_token0 is not None
             else self.reserves_token0
         )
-        _reserve1 = (
+        reserves_token1 = (
             override_reserves_token1
             if override_reserves_token1 is not None
             else self.reserves_token1
@@ -848,18 +828,21 @@ class CamelotLiquidityPool(LiquidityPool):
         token_in_quantity -= (
             token_in_quantity * fee_percent // self.FEE_DENOMINATOR
         )
-        xy = _k(_reserve0, _reserve1)
-        _reserve0 = _reserve0 * 10**18 // precision_multiplier_token0
-        _reserve1 = _reserve1 * 10**18 // precision_multiplier_token1
-
+        xy = _k(reserves_token0, reserves_token1)
+        reserves_token0 = (
+            reserves_token0 * 10**18 // precision_multiplier_token0
+        )
+        reserves_token1 = (
+            reserves_token1 * 10**18 // precision_multiplier_token1
+        )
         reserve_a, reserve_b = (
-            (_reserve0, _reserve1)
-            if token_in == self.token0
-            else (_reserve1, _reserve0)
+            (reserves_token0, reserves_token1)
+            if token_in is self.token0
+            else (reserves_token1, reserves_token0)
         )
         token_in_quantity = (
             token_in_quantity * 10**18 // precision_multiplier_token0
-            if token_in == self.token0
+            if token_in is self.token0
             else token_in_quantity * 10**18 // precision_multiplier_token1
         )
         y = reserve_b - _get_y(token_in_quantity + reserve_a, xy, reserve_b)
@@ -868,7 +851,7 @@ class CamelotLiquidityPool(LiquidityPool):
             y
             * (
                 precision_multiplier_token1
-                if token_in == self.token0
+                if token_in is self.token0
                 else precision_multiplier_token0
             )
             // 10**18
@@ -901,7 +884,7 @@ class CamelotLiquidityPool(LiquidityPool):
             persist=False,
         )
 
-        stable_pool = _contract.stableSwap()
+        stable_pool: bool = _contract.stableSwap()
 
         _, _, fee_token0, fee_token1 = _contract.getReserves()
         fee_denominator = _contract.FEE_DENOMINATOR()
@@ -924,6 +907,4 @@ class CamelotLiquidityPool(LiquidityPool):
 
         if stable_pool:
             # replace the calculate_tokens_out_from_tokens_in method for stable-only pools
-            self.calculate_tokens_out_from_tokens_in = (
-                self._calculate_tokens_out_from_tokens_in_stable_swap
-            )
+            self.calculate_tokens_out_from_tokens_in = self._calculate_tokens_out_from_tokens_in_stable_swap  # type: ignore
