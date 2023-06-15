@@ -16,7 +16,7 @@ from degenbot.uniswap.v3.functions import generate_v3_pool_address
 from degenbot.uniswap.v3.tick_lens import TickLens
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
-_INIT_HASHES_BY_FACTORY = {
+_FACTORY_INIT_HASH = {
     1: {
         # Uniswap (V2)
         "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f": "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
@@ -36,6 +36,43 @@ _INIT_HASHES_BY_FACTORY = {
         "0x1af415a1EbA07a4986a52B6f2e7dE7003D82231e": "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
     },
 }
+
+_all_pools: Dict[
+    int,
+    Dict[str, Union[LiquidityPool, V3LiquidityPool]],
+] = {}
+
+
+class AllPools:
+    def __init__(self, chain_id):
+        try:
+            _all_pools[chain_id]
+        except KeyError:
+            _all_pools[chain_id] = {}
+        finally:
+            self.pools = _all_pools[chain_id]
+
+    def __delitem__(self, pool_address: str):
+        del self.pools[pool_address]
+
+    def __getitem__(self, pool_address: str):
+        return self.pools[pool_address]
+
+    def __setitem__(
+        self,
+        pool_address: str,
+        pool_helper: Union[LiquidityPool, V3LiquidityPool],
+    ):
+        self.pools[pool_address] = pool_helper
+
+    def __len__(self):
+        return len(self.pools)
+
+    def get(self, pool_address: str):
+        try:
+            return self.pools[pool_address]
+        except KeyError:
+            return None
 
 
 class UniswapLiquidityPoolManager(Manager):
@@ -94,6 +131,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         if not self.__dict__:
             # initialize internal attributes
+            self.chain_id = chain_id
             self._factory_address = factory_address
             self._brownie_factory_contract = Contract.from_abi(
                 name="Uniswap V2: Factory",
@@ -109,9 +147,10 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             self._token_manager: Erc20TokenHelperManager = self._state[
                 chain_id
             ]["erc20token_manager"]
-            self._factory_init_hash = _INIT_HASHES_BY_FACTORY[chain_id][
+            self._factory_init_hash = _FACTORY_INIT_HASH[chain_id][
                 self._factory_address
             ]
+            self.all_pools = AllPools(chain_id)
 
         # from pprint import pprint
         # pprint(self._state)
@@ -155,6 +194,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                         pool_helper.token1.address,
                     )
                 ] = pool_helper
+                self.all_pools[pool_address] = pool_helper
 
         elif token_addresses is not None:
             if len(token_addresses) != 2:
@@ -213,6 +253,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             with self._lock:
                 self._pools_by_address[pool_address] = pool_helper
                 self._pools_by_tokens[tokens_key] = pool_helper
+                self.all_pools[pool_address] = pool_helper
 
         return pool_helper
 
@@ -238,6 +279,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         if self.__dict__ == {}:
             # initialize internal attributes
+            self.chain_id = chain_id
             self._factory_address = factory_address
             self._brownie_factory_contract = Contract.from_abi(
                 name="Uniswap V3: Factory",
@@ -252,9 +294,10 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 Tuple[str, str, int], V3LiquidityPool
             ] = {}
             self._token_manager = self._state[chain_id]["erc20token_manager"]
-            self._factory_init_hash = _INIT_HASHES_BY_FACTORY[chain_id][
+            self._factory_init_hash = _FACTORY_INIT_HASH[chain_id][
                 self._factory_address
             ]
+            self.all_pools = AllPools(chain_id)
 
     def get_pool(
         self,
@@ -262,11 +305,12 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         token_addresses: Optional[Tuple[str, str]] = None,
         pool_fee: Optional[int] = None,
         silent: bool = False,
-        # keyword arguments passed directly to the `V3LiquidityPool` constructor
+        # keyword arguments passed to the `V3LiquidityPool` constructor
         v3liquiditypool_kwargs: Optional[dict] = None,
     ) -> V3LiquidityPool:
         """
-        Get the pool object from its address, or a tuple of token addresses and fee
+        Get the pool object from its address, or a tuple of token
+        addresses and fee
         """
 
         if not (pool_address is None) ^ (
@@ -322,6 +366,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 dict_key = *token_addresses, pool_fee
                 self._pools_by_address[pool_address] = pool_helper
                 self._pools_by_tokens_and_fee[dict_key] = pool_helper
+                self.all_pools[pool_address] = pool_helper
 
         elif token_addresses is not None and pool_fee is not None:
             if len(token_addresses) != 2:
@@ -384,5 +429,6 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             with self._lock:
                 self._pools_by_address[pool_address] = pool_helper
                 self._pools_by_tokens_and_fee[dict_key] = pool_helper
+                self.all_pools[pool_address] = pool_helper
 
         return pool_helper
