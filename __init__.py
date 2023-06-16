@@ -9,8 +9,10 @@ from degenbot.arbitrage import (
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.logging import logger
 from degenbot.manager import AllPools, AllTokens
-from degenbot.manager.arbitrage_manager import ArbitrageHelperManager
-from degenbot.manager.token_manager import Erc20TokenHelperManager
+
+# not ready for release
+# from degenbot.manager import ArbitrageHelperManager
+from degenbot.manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.transaction import UniswapTransaction
 from degenbot.uniswap.abi import (
