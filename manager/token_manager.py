@@ -1,5 +1,5 @@
 from threading import Lock
-from typing import Optional
+from typing import Optional, Dict
 
 from brownie import chain  # type: ignore
 from web3 import Web3
@@ -7,6 +7,44 @@ from web3 import Web3
 from degenbot.exceptions import ManagerError
 from degenbot.manager.base import Manager
 from degenbot.token import Erc20Token
+from degenbot.types import TokenHelper
+
+_all_tokens: Dict[
+    int,
+    Dict[str, TokenHelper],
+] = {}
+
+
+class AllTokens:
+    def __init__(self, chain_id):
+        try:
+            _all_tokens[chain_id]
+        except KeyError:
+            _all_tokens[chain_id] = {}
+        finally:
+            self.tokens = _all_tokens[chain_id]
+
+    def __delitem__(self, token_address: str):
+        del self.tokens[token_address]
+
+    def __getitem__(self, token_address: str):
+        return self.tokens[token_address]
+
+    def __setitem__(
+        self,
+        token_address: str,
+        token_helper: TokenHelper,
+    ):
+        self.tokens[token_address] = token_helper
+
+    def __len__(self):
+        return len(self.tokens)
+
+    def get(self, token_address: str):
+        try:
+            return self.tokens[token_address]
+        except KeyError:
+            return None
 
 
 class Erc20TokenHelperManager(Manager):
