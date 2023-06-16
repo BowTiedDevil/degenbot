@@ -4,7 +4,7 @@ from typing import Optional
 from brownie import Contract  # type: ignore
 from web3 import Web3
 
-from .abi import UNISWAP_V3_TICKLENS_ABI
+from degenbot.uniswap.abi import UNISWAP_V3_TICKLENS_ABI
 
 _MAINNET_ADDRESS = "0xbfd8137f7d1516D3ea5cA83523914859ec47F573"
 

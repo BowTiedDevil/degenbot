@@ -19,7 +19,7 @@ from degenbot.exceptions import (
 from degenbot.logging import logger
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
-from degenbot.uniswap.v3.abi import UNISWAP_V3_POOL_ABI
+from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
 from degenbot.uniswap.v3.functions import generate_v3_pool_address
 from degenbot.uniswap.v3.libraries import (
     LiquidityMath,
