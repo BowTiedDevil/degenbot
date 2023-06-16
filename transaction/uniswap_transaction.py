@@ -18,7 +18,7 @@ from degenbot.exceptions import (
 from degenbot.logging import logger
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
-from degenbot.transaction.base import Transaction
+from degenbot.types import TransactionHelper
 from degenbot.uniswap.manager.uniswap_managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
@@ -91,7 +91,7 @@ _V3_ROUTER_CONTRACT_ADDRESS_FLAG = "0x0000000000000000000000000000000000000000"
 _V3_ROUTER2_CONTRACT_BALANCE_FLAG = 0
 
 
-class UniswapTransaction(Transaction):
+class UniswapTransaction(TransactionHelper):
     def __init__(
         self,
         chain_id: int,
