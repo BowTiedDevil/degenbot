@@ -955,7 +955,12 @@ class BaseV3LiquidityPool(PoolHelper):
                     "liquidity_change"
                 ]
 
-                with self.tick_lock:
+                # print("acquiring tick_lock")
+                # with self.tick_lock:
+                #     print("acquired tick_lock")
+
+                # TESTING BUGFIX for lock race condition
+                if True:
                     # adjust in-range liquidity if current tick is within the position's range
                     if (
                         lower_tick <= self.tick <= upper_tick
