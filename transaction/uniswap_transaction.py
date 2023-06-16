@@ -19,17 +19,17 @@ from degenbot.logging import logger
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.types import TransactionHelper
-from degenbot.uniswap.manager.uniswap_managers import (
+from degenbot.uniswap import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
-from degenbot.uniswap.v3.abi import (
+from degenbot.uniswap.v2 import LiquidityPool
+from degenbot.uniswap.abi import (
     UNISWAP_V3_ROUTER2_ABI,
     UNISWAP_V3_ROUTER_ABI,
 )
 from degenbot.uniswap.v3.functions import decode_v3_path
-from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
+from degenbot.uniswap.v3 import V3LiquidityPool
 
 # Internal dict of known router contracts by chain ID. Pre-populated with mainnet addresses
 # New routers can be added via class method `add_router`
@@ -280,9 +280,9 @@ class UniswapTransaction(TransactionHelper):
     def _simulate(
         self,
         func_name: Optional[str] = None,
-        func_params: Optional[dict] = None,
+        func_params: Optional[Dict] = None,
         silent: bool = False,
-    ) -> List[Tuple[Union[LiquidityPool, V3LiquidityPool], dict]]:
+    ) -> List[Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]]:
         """
         Take a Uniswap V2 / V3 transaction (specified by name and a dictionary of arguments
         to that function) and return a list of pools and state dictionaries for all hops
@@ -294,7 +294,7 @@ class UniswapTransaction(TransactionHelper):
         ] = []
         v2_pool: LiquidityPool
         v3_pool: V3LiquidityPool
-        pool_state: Dict
+        pool_state: dict
 
         def _simulate_universal_dispatch(
             command_type: int,
@@ -930,7 +930,7 @@ class UniswapTransaction(TransactionHelper):
             params: dict,
             unwrapped_input: Optional[bool] = False,
             silent: bool = False,
-        ) -> List[Tuple[LiquidityPool, dict]]:
+        ) -> List[Tuple[LiquidityPool, Dict]]:
             """
             TBD
             """
@@ -1361,7 +1361,7 @@ class UniswapTransaction(TransactionHelper):
             silent: bool = False,
             first_swap: bool = False,
             last_swap: bool = False,
-        ) -> Tuple[V3LiquidityPool, dict]:
+        ) -> Tuple[V3LiquidityPool, Dict]:
             """
             TBD
             """
@@ -1515,7 +1515,8 @@ class UniswapTransaction(TransactionHelper):
                     _recipient = recipient
                     self.to = Web3.toChecksumAddress(recipient)
 
-                # logger.info(f"{_recipient=}")
+                # logger.debug(f"{_recipient=}")
+                # logger.debug(f"{self.to=}")
 
                 self._adjust_balance(
                     self.router_address,
@@ -1632,6 +1633,7 @@ class UniswapTransaction(TransactionHelper):
                 future_pool_states.extend(
                     _simulate_v3_multicall(params=func_params, silent=silent)
                 )
+
             elif func_name == "exactInputSingle":
                 if not silent:
                     logger.info(f"{func_name}: {self.hash}")
@@ -1640,6 +1642,7 @@ class UniswapTransaction(TransactionHelper):
                         params=func_params, silent=silent, first_swap=True
                     )
                 )
+
             elif func_name == "exactInput":
                 """
                 TBD
@@ -1725,6 +1728,7 @@ class UniswapTransaction(TransactionHelper):
                         first_swap=first_swap,
                     )
                     future_pool_states.append((v3_pool, pool_state))
+
             elif func_name == "exactOutputSingle":
                 if not silent:
                     logger.info(f"{func_name}: {self.hash}")
@@ -1736,6 +1740,7 @@ class UniswapTransaction(TransactionHelper):
                         last_swap=True,
                     )
                 )
+
             elif func_name == "exactOutput":
                 """
                 TBD
@@ -1906,8 +1911,8 @@ class UniswapTransaction(TransactionHelper):
                 "removeLiquidityWithPermit",
             ):
                 # TODO: add prediction for these functions
-                if not silent:
-                    logger.info(f"TODO: {func_name}")
+                logger.debug(f"TODO: {func_name}")
+
             elif func_name in (
                 "refundETH",
                 "selfPermit",
@@ -1915,6 +1920,7 @@ class UniswapTransaction(TransactionHelper):
             ):
                 # ignore, these functions do not affect future pool states
                 pass
+
             else:
                 logger.info(f"\tUNHANDLED function: {func_name}")
 
@@ -1927,15 +1933,15 @@ class UniswapTransaction(TransactionHelper):
     def simulate(
         self,
         func_name: Optional[str] = None,
-        func_params: Optional[dict] = None,
+        func_params: Optional[Dict] = None,
         silent: bool = False,
-    ) -> List[Tuple[Union[LiquidityPool, V3LiquidityPool], dict]]:
+    ) -> List[Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]]:
         """
         Execute a simulation of a transaction, using the attributes stored in the constructor.
 
         Defers simulation to the `_simulate` method, which may recurse as needed for nested multicalls.
 
-        Performs a final accounting check of addresses in `self.balance` ledger, except for the `self.sender` address.
+        Performs a final accounting check of addresses in `self.balance` ledger, excluding the `msg.sender` and `recipient` addresses.
         """
 
         result = self._simulate(func_name, func_params, silent)
@@ -1944,5 +1950,6 @@ class UniswapTransaction(TransactionHelper):
             pprint(self.balance)
             import sys
 
+            # hard-quit as a debugging technique to identify transactions that are not balanced
             sys.exit()
         return result
