@@ -9,12 +9,13 @@ from degenbot.exceptions import Erc20TokenError, ManagerError
 from degenbot.manager.base import Manager
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
-from degenbot.uniswap.v2.abi import UNISWAPV2_FACTORY_ABI
+from degenbot.uniswap.abi import UNISWAPV2_FACTORY_ABI
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
-from degenbot.uniswap.v3.abi import UNISWAP_V3_FACTORY_ABI
+from degenbot.uniswap.abi import UNISWAP_V3_FACTORY_ABI
 from degenbot.uniswap.v3.functions import generate_v3_pool_address
 from degenbot.uniswap.v3.tick_lens import TickLens
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
+from degenbot.manager import AllPools
 
 _FACTORY_INIT_HASH = {
     1: {
@@ -37,42 +38,42 @@ _FACTORY_INIT_HASH = {
     },
 }
 
-_all_pools: Dict[
-    int,
-    Dict[str, Union[LiquidityPool, V3LiquidityPool]],
-] = {}
+# _all_pools: Dict[
+#     int,
+#     Dict[str, Union[LiquidityPool, V3LiquidityPool]],
+# ] = {}
 
 
-class AllPools:
-    def __init__(self, chain_id):
-        try:
-            _all_pools[chain_id]
-        except KeyError:
-            _all_pools[chain_id] = {}
-        finally:
-            self.pools = _all_pools[chain_id]
+# class AllPools:
+#     def __init__(self, chain_id):
+#         try:
+#             _all_pools[chain_id]
+#         except KeyError:
+#             _all_pools[chain_id] = {}
+#         finally:
+#             self.pools = _all_pools[chain_id]
 
-    def __delitem__(self, pool_address: str):
-        del self.pools[pool_address]
+#     def __delitem__(self, pool_address: str):
+#         del self.pools[pool_address]
 
-    def __getitem__(self, pool_address: str):
-        return self.pools[pool_address]
+#     def __getitem__(self, pool_address: str):
+#         return self.pools[pool_address]
 
-    def __setitem__(
-        self,
-        pool_address: str,
-        pool_helper: Union[LiquidityPool, V3LiquidityPool],
-    ):
-        self.pools[pool_address] = pool_helper
+#     def __setitem__(
+#         self,
+#         pool_address: str,
+#         pool_helper: Union[LiquidityPool, V3LiquidityPool],
+#     ):
+#         self.pools[pool_address] = pool_helper
 
-    def __len__(self):
-        return len(self.pools)
+#     def __len__(self):
+#         return len(self.pools)
 
-    def get(self, pool_address: str):
-        try:
-            return self.pools[pool_address]
-        except KeyError:
-            return None
+#     def get(self, pool_address: str):
+#         try:
+#             return self.pools[pool_address]
+#         except KeyError:
+#             return None
 
 
 class UniswapLiquidityPoolManager(Manager):
