@@ -3,18 +3,18 @@ from typing import Dict, List, Optional, Union
 
 from web3 import Web3
 
-from degenbot.arbitrage.base import Arbitrage
 from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from degenbot.exceptions import ManagerError
 from degenbot.manager.base import Manager
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
-from degenbot.uniswap.manager.uniswap_managers import (
+from degenbot.types import ArbitrageHelper
+from degenbot.uniswap import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
-from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
+from degenbot.uniswap.v2 import LiquidityPool
+from degenbot.uniswap.v3 import V3LiquidityPool
 
 
 class ArbitrageHelperManager(Manager):
@@ -91,7 +91,7 @@ class ArbitrageHelperManager(Manager):
         ],
         update_method: str = "polling",
         input_token: Optional[Union[str, Erc20Token]] = None,
-    ) -> Arbitrage:
+    ) -> ArbitrageHelper:
         """
         Returns the arb helper
         """
@@ -171,7 +171,7 @@ class ArbitrageHelperManager(Manager):
         chain_id: int,
         input_token: Optional[Union[str, Erc20Token]] = None,
         update_method: str = "polling",
-    ) -> "Arbitrage":
+    ) -> ArbitrageHelper:
         """
         Get an arbitrage path object from its ID and the type. An ID is a keccak address of all pool addresses, in order.
 
