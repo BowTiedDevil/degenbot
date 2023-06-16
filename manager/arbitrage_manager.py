@@ -3,12 +3,11 @@ from typing import Dict, List, Optional, Union
 
 from web3 import Web3
 
+from degenbot import Erc20TokenHelperManager
 from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from degenbot.exceptions import ManagerError
-from degenbot.manager.base import Manager
-from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
-from degenbot.types import ArbitrageHelper
+from degenbot.types import ArbitrageHelper, HelperManager
 from degenbot.uniswap import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
@@ -17,7 +16,7 @@ from degenbot.uniswap.v2 import LiquidityPool
 from degenbot.uniswap.v3 import V3LiquidityPool
 
 
-class ArbitrageHelperManager(Manager):
+class ArbitrageHelperManager(HelperManager):
     """
     A class that generates and tracks Arbitrage helpers
 
@@ -32,8 +31,12 @@ class ArbitrageHelperManager(Manager):
     WRAPPED_NATIVE_TOKENS: Dict[int, str] = {
         # Ethereum (ETH)
         1: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        # Fantom (WFTM)
+        250: "0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83",
         # Arbitrum (AETH)
         42161: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+        # Avalanche (WAVAX)
+        43114: "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7",
     }
 
     def __init__(self, chain_id: int):

@@ -6,16 +6,15 @@ from web3 import Web3
 
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import Erc20TokenError, ManagerError
-from degenbot.manager.base import Manager
-from degenbot.manager.token_manager import Erc20TokenHelperManager
+from degenbot.manager import AllPools
+from degenbot.manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
-from degenbot.uniswap.abi import UNISWAPV2_FACTORY_ABI
+from degenbot.types import HelperManager
+from degenbot.uniswap.abi import UNISWAP_V3_FACTORY_ABI, UNISWAPV2_FACTORY_ABI
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
-from degenbot.uniswap.abi import UNISWAP_V3_FACTORY_ABI
 from degenbot.uniswap.v3.functions import generate_v3_pool_address
 from degenbot.uniswap.v3.tick_lens import TickLens
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
-from degenbot.manager import AllPools
 
 _FACTORY_INIT_HASH = {
     1: {
@@ -76,7 +75,7 @@ _FACTORY_INIT_HASH = {
 #             return None
 
 
-class UniswapLiquidityPoolManager(Manager):
+class UniswapLiquidityPoolManager(HelperManager):
     """
     Single-concern base class to allow derived classes to share state
     """

@@ -1,13 +1,12 @@
 from threading import Lock
-from typing import Optional, Dict
+from typing import Dict, Optional
 
 from brownie import chain  # type: ignore
 from web3 import Web3
 
 from degenbot.exceptions import ManagerError
-from degenbot.manager.base import Manager
 from degenbot.token import Erc20Token
-from degenbot.types import TokenHelper
+from degenbot.types import HelperManager, TokenHelper
 
 _all_tokens: Dict[
     int,
@@ -47,7 +46,7 @@ class AllTokens:
             return None
 
 
-class Erc20TokenHelperManager(Manager):
+class Erc20TokenHelperManager(HelperManager):
     """
     A class that generates and tracks Erc20Token helpers
 
