@@ -13,6 +13,7 @@ from degenbot.exceptions import (
     LiquidityPoolError,
     ZeroSwapError,
 )
+from degenbot.types import PoolHelper
 from degenbot.logging import logger
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
@@ -21,7 +22,7 @@ from degenbot.uniswap.v2.functions import generate_v2_pool_address
 from degenbot.uniswap.v2.router import Router
 
 
-class LiquidityPool:
+class LiquidityPool(PoolHelper):
     """
     Represents a Uniswap V2 liquidity pool
     """

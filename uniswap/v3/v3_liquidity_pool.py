@@ -7,6 +7,7 @@ from warnings import warn
 from brownie import Contract, chain, multicall, network  # type:ignore
 from web3 import Web3
 
+from degenbot.types import PoolHelper
 from degenbot.exceptions import (
     ArbitrageError,
     BitmapWordUnavailableError,
@@ -31,7 +32,7 @@ from degenbot.uniswap.v3.libraries.Helpers import *
 from degenbot.uniswap.v3.tick_lens import TickLens
 
 
-class BaseV3LiquidityPool(ABC):
+class BaseV3LiquidityPool(PoolHelper):
     @abstractmethod
     def _derived(self):
         """
