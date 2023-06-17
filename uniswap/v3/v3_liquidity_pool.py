@@ -464,8 +464,6 @@ class V3LiquidityPool(PoolHelper):
                 except BitmapWordUnavailableError as e:
                     missing_word = e.args[-1]
                     if self.tick_bitmap["sparse"]:
-                        # BUG: 'word_position=XXX inside known range' exception is being thrown here
-                        # when the helper is being updated by multiple threads
                         logger.debug(
                             f"(swap) {self.name} fetching word {missing_word}"
                         )
@@ -555,17 +553,7 @@ class V3LiquidityPool(PoolHelper):
             if state["sqrtPriceX96"] == step["sqrtPriceNextX96"]:
                 # if the tick is initialized, run the tick transition
                 if step["initialized"]:
-                    # use the default value (0, 0) so the tuple assignment works. Throws exception
-                    # if the default value None is returned from get()
-                    # liquidityNet, liquidityGross = self.tick_data.get(
-                    #     step["tickNext"],
-                    #     (0, 0),
-                    # )
-
                     try:
-                        # liquidityNet, liquidityGross = self.tick_data[
-                        #     step["tickNext"]
-                        # ]
                         liquidityNet = self.tick_data[step["tickNext"]][
                             "liquidityNet"
                         ]
@@ -573,36 +561,9 @@ class V3LiquidityPool(PoolHelper):
                             "liquidityGross"
                         ]
                     except KeyError:
-                        # current_tick_word, _ = self._get_tick_bitmap_position(
-                        #     state["tick"]
-                        # )
-                        # next_tick_word, _ = self._get_tick_bitmap_position(
-                        #     step["tickNext"]
-                        # )
                         raise ArbitrageError(
                             "Tick bitmap or liquidity data is out of date"
-                            # f"(UniswapLpCycle) swap function indicated tick={step['tickNext']} was initialized, but tick_data has no data for this tick!"
-                            # f"\nPool address = {self.address}"
-                            # f"\nCurrent: Tick={state['tick']}, Word={current_tick_word}"
-                            # f"\nNext   : Tick={step['tickNext']}, Word={next_tick_word}"
-                            # f"\nBlock  : {chain.height}"
                         ) from None
-
-                    # if (liquidityNet, liquidityGross) == (0, 0):
-                    #     current_tick_word, _ = self._get_tick_bitmap_position(
-                    #         state["tick"]
-                    #     )
-                    #     next_tick_word, _ = self._get_tick_bitmap_position(
-                    #         step["tickNext"]
-                    #     )
-                    #     # WIP: investigate if this error is thrown when the next tick is on a word boundary
-                    #     raise ArbitrageError(
-                    #         f"(UniswapLpCycle) swap function indicated tick={step['tickNext']} was initialized, but tick_data has no data for this tick!"
-                    #         f"\nPool address = {self.address}"
-                    #         f"\nCurrent: Tick={state['tick']}, Word={current_tick_word}"
-                    #         f"\nNext   : Tick={step['tickNext']}, Word={next_tick_word}"
-                    #         f"\nBlock  : {chain.height}"
-                    #     )
 
                     if zeroForOne:
                         liquidityNet = -liquidityNet
