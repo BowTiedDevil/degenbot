@@ -67,7 +67,14 @@ _ROUTERS: Dict[int, Dict[str, Dict]] = {
             },
         },
         "0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B": {
-            "name": "Uniswap Universal Router",
+            "name": "Uniswap Universal Router (Old)",
+            "factory_address": {
+                2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+                3: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+            },
+        },
+        "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD": {
+            "name": "Universal Universal Router (New) ",
             "factory_address": {
                 2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
                 3: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
