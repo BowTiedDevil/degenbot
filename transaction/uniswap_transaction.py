@@ -1929,6 +1929,9 @@ class UniswapTransaction(TransactionHelper):
             ):
                 # TODO: add prediction for these functions
                 logger.debug(f"TODO: {func_name}")
+                raise TransactionError(
+                    f"Aborting simulation involving un-implemented function {func_name}"
+                )
 
             elif func_name in (
                 "refundETH",
