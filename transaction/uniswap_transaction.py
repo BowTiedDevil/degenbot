@@ -219,7 +219,7 @@ class UniswapTransaction(TransactionHelper):
             address_balance = {}
             self.balance[_address] = address_balance
 
-        logger.info(
+        logger.debug(
             f"ADJUSTING BALANCE FOR ADDRESS {_address}: {'+' if amount > 0 else ''}{amount} {_token}:  "
         )
 
