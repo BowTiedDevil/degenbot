@@ -428,6 +428,9 @@ class UniswapTransaction(TransactionHelper):
                         f"Could not decode input for {command}"
                     )
 
+                if recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
+                    recipient = self.sender
+
                 _balance = self._get_balance(self.router_address, token)
 
                 if _balance < amountMin:
