@@ -371,7 +371,7 @@ class V3LiquidityPool(PoolHelper):
                             }
                     self.liquidity_update_block = block_number
 
-    def __UniswapV3Pool_swap(
+    def _uniswap_v3_pool_swap(
         self,
         zeroForOne: bool,
         amount_specified: int,
@@ -390,8 +390,6 @@ class V3LiquidityPool(PoolHelper):
 
         It is called by the `calculate_tokens_in_from_tokens_out` and `calculate_tokens_out_from_tokens_in` methods to calculate
         swap amounts, ticks crossed, liquidity changes at various ticks, etc.
-
-        It is a double-underscore method and is thus obscured from external access (but still accessible if you know how).
         """
 
         if amount_specified == 0:
@@ -751,8 +749,7 @@ class V3LiquidityPool(PoolHelper):
             override_state = {}
 
         try:
-            # delegate calculations to the ported `swap` function
-            amount0_delta, amount1_delta, *_ = self.__UniswapV3Pool_swap(
+            amount0_delta, amount1_delta, *_ = self._uniswap_v3_pool_swap(
                 zeroForOne=zeroForOne,
                 amount_specified=token_in_quantity,
                 sqrt_price_limit_x96=(
@@ -834,8 +831,7 @@ class V3LiquidityPool(PoolHelper):
             override_state = {}
 
         try:
-            # delegate calculations to the ported `swap` function
-            amount0_delta, amount1_delta, *_ = self.__UniswapV3Pool_swap(
+            amount0_delta, amount1_delta, *_ = self._uniswap_v3_pool_swap(
                 zeroForOne=zeroForOne,
                 amount_specified=-token_out_quantity,
                 sqrt_price_limit_x96=(
@@ -1137,14 +1133,13 @@ class V3LiquidityPool(PoolHelper):
             _amount_specified = -token_out_quantity
 
         try:
-            # delegate calculations to the ported `swap` function
             (
                 amount0_delta,
                 amount1_delta,
                 end_sqrtprice,
                 end_liquidity,
                 end_tick,
-            ) = self.__UniswapV3Pool_swap(
+            ) = self._uniswap_v3_pool_swap(
                 zeroForOne=zeroForOne,
                 amount_specified=_amount_specified,
                 sqrt_price_limit_x96=_sqrt_price_limit,
