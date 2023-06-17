@@ -23,13 +23,10 @@ from degenbot.uniswap import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )
+from degenbot.uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from degenbot.uniswap.v2 import LiquidityPool
-from degenbot.uniswap.abi import (
-    UNISWAP_V3_ROUTER2_ABI,
-    UNISWAP_V3_ROUTER_ABI,
-)
-from degenbot.uniswap.v3.functions import decode_v3_path
 from degenbot.uniswap.v3 import V3LiquidityPool
+from degenbot.uniswap.v3.functions import decode_v3_path
 
 # Internal dict of known router contracts by chain ID. Pre-populated with mainnet addresses
 # New routers can be added via class method `add_router`
