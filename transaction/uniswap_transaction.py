@@ -175,6 +175,34 @@ class UniswapTransaction(TransactionHelper):
         if hash := self.func_params.get("previousBlockhash"):
             self.func_previous_block_hash = hash.hex()
 
+    def _simulate_unwrap(self, wrapped_token: str):
+        logger.info(f"Unwrapping {wrapped_token}")
+
+        wrapped_token_balance = self._get_balance(
+            self.router_address, wrapped_token
+        )
+
+        self._adjust_balance(
+            self.router_address,
+            wrapped_token,
+            -wrapped_token_balance,
+        )
+
+    def _simulate_sweep(self, token: str, recipient: str):
+        logger.info(f"Sweeping {token} to {recipient}")
+
+        token_balance = self._get_balance(self.router_address, token)
+        self._adjust_balance(
+            self.router_address,
+            token,
+            -token_balance,
+        )
+        self._adjust_balance(
+            recipient,
+            token,
+            token_balance,
+        )
+
     def _adjust_balance(self, address: str, token: str, amount: int) -> None:
         """
         Modify the balance for a given address and token.
@@ -410,7 +438,7 @@ class UniswapTransaction(TransactionHelper):
                         f"Requested sweep of min. {amountMin} WETH, received {_balance}"
                     )
 
-                self._adjust_balance(self.router_address, token, -_balance)
+                self._simulate_sweep(token, recipient)
 
             elif command == "WRAP_ETH":
                 """
@@ -475,11 +503,7 @@ class UniswapTransaction(TransactionHelper):
                         f"Requested unwrap of min. {amountMin} WETH, received {wrapped_token_balance}"
                     )
 
-                self._adjust_balance(
-                    self.router_address,
-                    wrapped_token_address,
-                    -wrapped_token_balance,
-                )
+                self._simulate_unwrap(wrapped_token_address)
 
             elif command == "V2_SWAP_EXACT_IN":
                 """
@@ -1844,19 +1868,8 @@ class UniswapTransaction(TransactionHelper):
                     future_pool_states.append((v3_pool, pool_state))
 
             elif func_name == "unwrapWETH9":
-                if not silent:
-                    logger.info(f"{func_name}: {self.hash}")
-
                 wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
-                wrapped_token_balance = self._get_balance(
-                    self.router_address, wrapped_token_address
-                )
-
-                self._adjust_balance(
-                    self.router_address,
-                    wrapped_token_address,
-                    -wrapped_token_balance,
-                )
+                self._simulate_unwrap(wrapped_token_address)
 
             elif func_name == "sweepToken":
                 """
@@ -1887,9 +1900,7 @@ class UniswapTransaction(TransactionHelper):
                         f"Requested sweep of min. {amount_out_minimum} {token_address}, received {_balance}"
                     )
 
-                self._adjust_balance(
-                    self.router_address, token_address, -_balance
-                )
+                self._simulate_sweep(token_address, recipient)
 
             # -----------------------------------------------------
             # Universal Router functions
