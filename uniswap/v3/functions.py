@@ -1,5 +1,5 @@
 from itertools import cycle
-from typing import Iterable, List, Optional, Union
+from typing import Iterable, List, Union
 
 import eth_abi
 from web3 import Web3
@@ -36,20 +36,14 @@ def decode_v3_path(path: bytes) -> List[Union[str, int]]:
 def generate_v3_pool_address(
     token_addresses: Iterable[str],
     fee: int,
-    factory_address: Optional[str] = None,
-    init_hash: Optional[str] = None,
+    factory_address: str,
+    init_hash: str,
 ) -> str:
     """
     Generate the deterministic pool address from the token addresses and fee.
 
     Adapted from https://github.com/Uniswap/v3-periphery/blob/main/contracts/libraries/PoolAddress.sol
     """
-
-    if factory_address is None:
-        factory_address = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-
-    if init_hash is None:
-        init_hash = "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
 
     token_addresses = sorted([address.lower() for address in token_addresses])
 
