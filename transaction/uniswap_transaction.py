@@ -328,7 +328,7 @@ class UniswapTransaction(TransactionHelper):
         v3_pool: V3LiquidityPool
         pool_state: dict
 
-        def _simulate_universal_dispatch(
+        def _simulate_universal_router_dispatch(
             command_type: int,
             inputs: bytes,
         ):
@@ -1912,7 +1912,9 @@ class UniswapTransaction(TransactionHelper):
                 # deadline = func_params.get("deadline")
 
                 for command, input in zip(commands, inputs):
-                    if result := _simulate_universal_dispatch(command, input):
+                    if result := _simulate_universal_router_dispatch(
+                        command, input
+                    ):
                         future_pool_states.extend(result)
 
             elif func_name in (
