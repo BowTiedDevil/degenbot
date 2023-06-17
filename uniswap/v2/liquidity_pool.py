@@ -161,7 +161,6 @@ class LiquidityPool(PoolHelper):
             )
 
         if factory_address is not None and factory_init_hash is not None:
-            # check that the address is a valid V2 pool
             computed_pool_address = generate_v2_pool_address(
                 token_addresses=[self.token0.address, self.token1.address],
                 factory_address=factory_address,
@@ -209,7 +208,6 @@ class LiquidityPool(PoolHelper):
             self._update_method == "external"
             and unload_brownie_contract_after_init
         ):
-            # memory saving if LP contract object is not used after initialization
             self._brownie_contract = None
 
         self.state: dict = {}
@@ -238,9 +236,6 @@ class LiquidityPool(PoolHelper):
         return self.address == other.address
 
     def __str__(self):
-        """
-        Return the pool name when the object is included in a print statement, or cast as a string
-        """
         return self.name
 
     def _update_pool_state(self):
@@ -465,7 +460,6 @@ class LiquidityPool(PoolHelper):
         token_out_qty: Union[Wei, int],
         silent: bool = False,
     ) -> None:
-        # check to ensure that token_in and token_out are exactly the two tokens held by the LP
         if not (
             (token_in == self.token0 and token_out == self.token1)
             or (token_in == self.token1 and token_out == self.token0)
@@ -546,7 +540,6 @@ class LiquidityPool(PoolHelper):
         # swaps with zero amounts (a stupid value, but valid) were falling through
         # both blocks and function was returning None
         if token_in_quantity is not None and token_in is not None:
-            # delegate calculations to the `calculate_tokens_out_from_tokens_in` method
             token_out_quantity = self.calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
@@ -576,7 +569,6 @@ class LiquidityPool(PoolHelper):
         # swaps with zero amounts (a stupid value, but valid) were falling through
         # both blocks and function was returning None
         elif token_out_quantity is not None:
-            # delegate calculations to the `calculate_tokens_in_from_tokens_out` method
             token_in_quantity = self.calculate_tokens_in_from_tokens_out(
                 token_in=token_in,
                 token_out=token_out,
@@ -642,8 +634,6 @@ class LiquidityPool(PoolHelper):
                 reserves0, reserves1, *_ = self._brownie_contract.getReserves(
                     block_identifier=self.update_block
                 )
-                # Compare reserves to last-known values,
-                # store and (optionally) print the reserves if they have changed
                 if (self.reserves_token0, self.reserves_token1) != (
                     reserves0,
                     reserves1,
@@ -870,9 +860,6 @@ class CamelotLiquidityPool(LiquidityPool):
         update_reserves_on_start: bool = True,
         unload_brownie_contract_after_init: bool = False,
     ) -> None:
-        """
-        TBD
-        """
         if abi is None:
             abi = CAMELOT_LP_ABI
 
