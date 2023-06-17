@@ -64,12 +64,12 @@ class BaseV3LiquidityPool(PoolHelper):
         self.tick_data: dict
         self.tick_bitmap: dict
 
-        # held by the _get_tick_data_at_word method, which will retrieve
-        # and store liquidity and bitmap data
+        # held by the _get_tick_data_at_word method, which will sets liquidity
+        # and bitmap data
         self.tick_lock = Lock()
 
-        # held by the auto_update and external_update method, which will
-        # retrieve and store mutable state data (liquidity, tick, sqrtPrice, etc)
+        # held by the auto_update and external_update method, which sets
+        # mutable state data (liquidity, tick, sqrtPrice, etc)
         self.update_lock = Lock()
 
         self.update_block = chain.height
@@ -139,7 +139,6 @@ class BaseV3LiquidityPool(PoolHelper):
             )
 
         if factory_address is not None and factory_init_hash is not None:
-            # check that the address is a valid V3 pool (see https://github.com/Uniswap/v3-periphery/blob/main/contracts/libraries/PoolAddress.sol)
             computed_pool_address = generate_v3_pool_address(
                 token_addresses=[self.token0.address, self.token1.address],
                 fee=self.fee,
