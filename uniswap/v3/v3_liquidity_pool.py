@@ -127,22 +127,22 @@ class V3LiquidityPool(PoolHelper):
                 unload_brownie_contract_after_init=True,
             )
 
+        if fee is None:
+            fee = self._brownie_contract.fee()
+        self.fee: int = fee
+        self.tick_spacing = self._TICKSPACING_BY_FEE[self.fee]  # immutable
+
         if factory_address is not None and factory_init_hash is not None:
             computed_pool_address = generate_v3_pool_address(
                 token_addresses=[self.token0.address, self.token1.address],
                 fee=self.fee,
                 factory_address=factory_address,
+                init_hash=factory_init_hash,
             )
             if computed_pool_address != self.address:
                 raise ValueError(
                     f"Pool address {self.address} does not match deterministic address {computed_pool_address} from factory"
                 )
-
-        if fee is None:
-            fee = self._brownie_contract.fee()
-
-        self.fee: int = fee
-        self.tick_spacing = self._TICKSPACING_BY_FEE[self.fee]  # immutable
 
         if name:
             self.name = name
