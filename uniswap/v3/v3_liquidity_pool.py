@@ -52,7 +52,7 @@ class BaseV3LiquidityPool(PoolHelper):
         lens: Optional[Contract] = None,
         tokens: Optional[List[Erc20Token]] = None,
         name: str = "",
-        update_method: str = "polling",
+        update_method: Optional[str] = None,
         abi: Optional[list] = None,
         factory_address: Optional[str] = None,
         factory_init_hash: Optional[str] = None,
@@ -160,7 +160,11 @@ class BaseV3LiquidityPool(PoolHelper):
         self.sqrt_price_x96 = slot0[0]
         self.tick = slot0[1]
 
-        self._update_method = update_method
+        if update_method is not None:
+            warn(
+                "The `update_method` argument is deprecated and unused. This constructor argument will be removed in the future."
+            )
+            self._update_method = update_method
         self.extra_words = extra_words
 
         # default to a sparse bitmap
