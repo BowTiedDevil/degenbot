@@ -3,10 +3,9 @@ from warnings import warn
 
 from eth_abi import encode as abi_encode
 from eth_typing import ChecksumAddress
-from scipy import optimize  # type: ignore
+from scipy.optimize import minimize_scalar  # type: ignore
 from web3 import Web3
 
-from degenbot.types import ArbitrageHelper
 from degenbot.exceptions import (
     ArbitrageError,
     EVMRevertError,
@@ -15,12 +14,10 @@ from degenbot.exceptions import (
 )
 from degenbot.logging import logger
 from degenbot.token import Erc20Token
-from degenbot.uniswap.v2.liquidity_pool import (
-    CamelotLiquidityPool,
-    LiquidityPool,
-)
+from degenbot.types import ArbitrageHelper
+from degenbot.uniswap.v2 import CamelotLiquidityPool, LiquidityPool
+from degenbot.uniswap.v3 import V3LiquidityPool
 from degenbot.uniswap.v3.libraries import TickMath
-from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
 
 class UniswapLpCycle(ArbitrageHelper):
@@ -421,23 +418,12 @@ class UniswapLpCycle(ArbitrageHelper):
 
             return -float(token_out_quantity - token_in_quantity)
 
-        opt = optimize.minimize_scalar(
+        opt = minimize_scalar(
             fun=arb_profit,
             method="bounded",
             bounds=bounds,
             bracket=bracket,
-            # Optimizer will run until the consecutive input values
-            # are within `xatol`. ERC-20 tokens can have different decimal precision,
-            # so set the tolerance to 1/3 of the 'nominal' decimal digits
-            #
-            # Examples:
-            #   WETH (18 decimal places) calculated within 1*10**6 Wei,
-            #   USDC (6 decimal places) calculated within 1*10**2 Wei
-            options={
-                "xatol": 1.0,
-                # "xatol": 10 ** int(1 / 3 * self.input_token.decimals),
-                # "disp": 3,
-            },
+            options={"xatol": 1.0},
         )
 
         # The arb_profit function converts the value to a negative number so the minimize_scalar
