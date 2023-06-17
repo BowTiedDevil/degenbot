@@ -186,7 +186,7 @@ class UniswapTransaction(TransactionHelper):
         )
 
     def _simulate_sweep(self, token: str, recipient: str):
-        logger.info(f"Sweeping {token} to {recipient}")
+        logger.debug(f"Sweeping {token} to {recipient}")
 
         token_balance = self._get_balance(self.router_address, token)
         self._adjust_balance(
@@ -407,9 +407,7 @@ class UniswapTransaction(TransactionHelper):
                 "EXECUTE_SUB_PLAN",
                 "SEAPORT_V2",
             ]:
-                if not silent:
-                    logger.info(f"{func_name}: {self.hash}")
-                pass
+                logger.debug(f"{command}: NOT IMPLEMENTED")
 
             elif command == "SWEEP":
                 """
@@ -1883,7 +1881,6 @@ class UniswapTransaction(TransactionHelper):
                     token_address = func_params["token"]
                     amount_out_minimum = func_params["amountMinimum"]
                     recipient = func_params.get("recipient")
-
                 except Exception as e:
                     print(e)
                 else:
