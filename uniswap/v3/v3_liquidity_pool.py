@@ -36,20 +36,8 @@ from degenbot.uniswap.v3.libraries.Helpers import (
 from degenbot.uniswap.v3.tick_lens import TickLens
 
 
-class BaseV3LiquidityPool(PoolHelper):
+class V3LiquidityPool(PoolHelper):
     uniswap_version = 3
-
-    @abstractmethod
-    def _derived(self):
-        """
-        An abstract method designed to ensure that all consumers of this API
-        use a derived class instead of this base class. Calling BaseV3LiquidityPool()
-        will raise a NotImplementedError exception.
-
-        Consumers should use V3LiquidityPool() instead, or create their own derived
-        class and define a `_derived` method within that class.
-        """
-        raise NotImplementedError
 
     def __init__(
         self,
@@ -1170,8 +1158,3 @@ class BaseV3LiquidityPool(PoolHelper):
                 "sqrt_price_x96": end_sqrtprice,
                 "tick": end_tick,
             }
-
-
-class V3LiquidityPool(BaseV3LiquidityPool):
-    def _derived(self):
-        pass
