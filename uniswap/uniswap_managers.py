@@ -6,15 +6,13 @@ from web3 import Web3
 
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import Erc20TokenError, ManagerError
-from degenbot.manager import AllPools
-from degenbot.manager import Erc20TokenHelperManager
+from degenbot.manager import AllPools, Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.types import HelperManager
 from degenbot.uniswap.abi import UNISWAP_V3_FACTORY_ABI, UNISWAPV2_FACTORY_ABI
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2 import LiquidityPool
+from degenbot.uniswap.v3 import TickLens, V3LiquidityPool
 from degenbot.uniswap.v3.functions import generate_v3_pool_address
-from degenbot.uniswap.v3.tick_lens import TickLens
-from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
 _FACTORY_INIT_HASH = {
     1: {
@@ -36,43 +34,6 @@ _FACTORY_INIT_HASH = {
         "0x1af415a1EbA07a4986a52B6f2e7dE7003D82231e": "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
     },
 }
-
-# _all_pools: Dict[
-#     int,
-#     Dict[str, Union[LiquidityPool, V3LiquidityPool]],
-# ] = {}
-
-
-# class AllPools:
-#     def __init__(self, chain_id):
-#         try:
-#             _all_pools[chain_id]
-#         except KeyError:
-#             _all_pools[chain_id] = {}
-#         finally:
-#             self.pools = _all_pools[chain_id]
-
-#     def __delitem__(self, pool_address: str):
-#         del self.pools[pool_address]
-
-#     def __getitem__(self, pool_address: str):
-#         return self.pools[pool_address]
-
-#     def __setitem__(
-#         self,
-#         pool_address: str,
-#         pool_helper: Union[LiquidityPool, V3LiquidityPool],
-#     ):
-#         self.pools[pool_address] = pool_helper
-
-#     def __len__(self):
-#         return len(self.pools)
-
-#     def get(self, pool_address: str):
-#         try:
-#             return self.pools[pool_address]
-#         except KeyError:
-#             return None
 
 
 class UniswapLiquidityPoolManager(HelperManager):
@@ -151,9 +112,6 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._factory_address
             ]
             self.all_pools = AllPools(chain_id)
-
-        # from pprint import pprint
-        # pprint(self._state)
 
     def get_pool(
         self,
@@ -403,7 +361,10 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 return pool_helper
 
             pool_address = generate_v3_pool_address(
-                token_addresses=tokens_key, fee=pool_fee
+                token_addresses=tokens_key,
+                fee=pool_fee,
+                factory_address=self._factory_address,
+                init_hash=self._factory_init_hash,
             )
 
             try:
