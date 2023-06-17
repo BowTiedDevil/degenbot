@@ -955,102 +955,96 @@ class BaseV3LiquidityPool(PoolHelper):
                     "liquidity_change"
                 ]
 
-                # print("acquiring tick_lock")
-                # with self.tick_lock:
-                #     print("acquired tick_lock")
+                # adjust in-range liquidity if current tick is within the position's range
+                if (
+                    lower_tick <= self.tick <= upper_tick
+                    # bugfix: check the liquidity update timestamp  - fixes issue where
+                    # liquidity events were applied after a slot0 update, which put
+                    # `self.liquidity` into an inconsistent state
+                    and is_valid_update_block(block_number)
+                ):
+                    self.liquidity += liquidity_delta
+                    logger.debug(
+                        f"Adjusting in-range liquidity {block_number=}, {self.update_block=}, {self.tick=}, {self.address=}, {self.liquidity=}"
+                    )
+                    assert self.liquidity >= 0
 
-                # TESTING BUGFIX for lock race condition
-                if True:
-                    # adjust in-range liquidity if current tick is within the position's range
-                    if (
-                        lower_tick <= self.tick <= upper_tick
-                        # bugfix: check the liquidity update timestamp  - fixes issue where
-                        # liquidity events were applied after a slot0 update, which put
-                        # `self.liquidity` into an inconsistent state
-                        and is_valid_update_block(block_number)
-                    ):
-                        self.liquidity += liquidity_delta
-                        logger.debug(
-                            f"Adjusting in-range liquidity {block_number=}, {self.update_block=}, {self.tick=}, {self.address=}, {self.liquidity=}"
-                        )
-                        assert self.liquidity >= 0
+                for i, tick in enumerate([lower_tick, upper_tick]):
+                    tick_word, _ = self._get_tick_bitmap_position(tick)
 
-                    for i, tick in enumerate([lower_tick, upper_tick]):
-                        tick_word, _ = self._get_tick_bitmap_position(tick)
+                    if tick_word not in self.tick_bitmap:
+                        # the tick bitmap must be available for the word prior to flipping
+                        # the initialized status of any tick
 
-                        if tick_word not in self.tick_bitmap:
-                            # the tick bitmap must be available for the word prior to flipping
-                            # the initialized status of any tick
-
-                            if fetch_missing:
-                                logger.debug(
-                                    f"(external_update) {tick_word=} not found in tick_bitmap {self.tick_bitmap.keys()=}"
+                        if fetch_missing:
+                            logger.debug(
+                                f"(external_update) {tick_word=} not found in tick_bitmap {self.tick_bitmap.keys()=}"
+                            )
+                            try:
+                                # fetch the single word
+                                self._update_tick_data_at_word(
+                                    word_position=tick_word,
+                                    single_word=True,
+                                    # Fetch the word using the previous block as a known "good" state snapshot
+                                    block_number=block_number - 1,
                                 )
-                                try:
-                                    # fetch the single word
-                                    self._update_tick_data_at_word(
-                                        word_position=tick_word,
-                                        single_word=True,
-                                        # Fetch the word using the previous block as a known "good" state snapshot
-                                        block_number=block_number - 1,
-                                    )
-                                except ValueError as e:
-                                    raise BlockUnavailableError(
-                                        f"Could not query chain at block {block_number - 1}"
-                                    )
-                            else:
-                                self.tick_bitmap[tick_word] = {
-                                    "bitmap": 0,
-                                    "block": None,
-                                }
-
-                        # Get the liquidity info for this tick
-                        try:
-                            tick_liquidity_net = self.tick_data[tick][
-                                "liquidityNet"
-                            ]
-                            tick_liquidity_gross = self.tick_data[tick][
-                                "liquidityGross"
-                            ]
-                        except KeyError:
-                            # if it doesn't exist, initialize the tick and set the current values to zero
-                            tick_liquidity_net = 0
-                            tick_liquidity_gross = 0
-                            TickBitmap.flipTick(
-                                self.tick_bitmap,
-                                tick,
-                                self.tick_spacing,
-                                update_block=block_number,
-                            )
-
-                        # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
-                        # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
-                        # Same equation, but for BURN events the liquidity_delta value is negative
-                        new_liquidity_net = (
-                            tick_liquidity_net + liquidity_delta
-                            if i == 0
-                            else tick_liquidity_net - liquidity_delta
-                        )
-                        new_liquidity_gross = (
-                            tick_liquidity_gross + liquidity_delta
-                        )
-
-                        # Delete entirely if there is no liquidity referencing this tick, then flip it in the bitmap
-                        if new_liquidity_gross == 0:
-                            del self.tick_data[tick]
-                            TickBitmap.flipTick(
-                                self.tick_bitmap,
-                                tick,
-                                self.tick_spacing,
-                                update_block=block_number,
-                            )
-                        # otherwise record the new values
+                            except ValueError as e:
+                                raise BlockUnavailableError(
+                                    f"Could not query chain at block {block_number - 1}"
+                                )
                         else:
-                            self.tick_data[tick] = {
-                                "liquidityNet": new_liquidity_net,
-                                "liquidityGross": new_liquidity_gross,
-                                "block": block_number,
+                            self.tick_bitmap[tick_word] = {
+                                "bitmap": 0,
+                                "block": None,
                             }
+
+                    # Get the liquidity info for this tick
+                    try:
+                        tick_liquidity_net = self.tick_data[tick][
+                            "liquidityNet"
+                        ]
+                        tick_liquidity_gross = self.tick_data[tick][
+                            "liquidityGross"
+                        ]
+                    except KeyError:
+                        # if it doesn't exist, initialize the tick and set the current values to zero
+                        tick_liquidity_net = 0
+                        tick_liquidity_gross = 0
+                        TickBitmap.flipTick(
+                            self.tick_bitmap,
+                            tick,
+                            self.tick_spacing,
+                            update_block=block_number,
+                        )
+
+                    # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
+                    # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
+                    # Same equation, but for BURN events the liquidity_delta value is negative
+                    new_liquidity_net = (
+                        tick_liquidity_net + liquidity_delta
+                        if i == 0
+                        else tick_liquidity_net - liquidity_delta
+                    )
+                    new_liquidity_gross = (
+                        tick_liquidity_gross + liquidity_delta
+                    )
+
+                    # Delete entirely if there is no liquidity referencing this tick, then flip it in the bitmap
+                    if new_liquidity_gross == 0:
+                        del self.tick_data[tick]
+                        TickBitmap.flipTick(
+                            self.tick_bitmap,
+                            tick,
+                            self.tick_spacing,
+                            update_block=block_number,
+                        )
+                    # otherwise record the new values
+                    else:
+                        self.tick_data[tick] = {
+                            "liquidityNet": new_liquidity_net,
+                            "liquidityGross": new_liquidity_gross,
+                            "block": block_number,
+                        }
 
                 self.liquidity_update_block = block_number
 
