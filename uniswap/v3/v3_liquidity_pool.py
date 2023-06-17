@@ -36,6 +36,13 @@ from degenbot.uniswap.v3.tick_lens import TickLens
 class V3LiquidityPool(PoolHelper):
     uniswap_version = 3
 
+    _TICKSPACING_BY_FEE = {
+        100: 1,
+        500: 10,
+        3000: 60,
+        10000: 200,
+    }
+
     def __init__(
         self,
         address: str,
@@ -52,6 +59,7 @@ class V3LiquidityPool(PoolHelper):
         tick_data: Optional[dict] = None,
         tick_bitmap: Optional[dict] = None,
     ):
+        self.address = Web3.toChecksumAddress(address)
         self.tick_data: dict
         self.tick_bitmap: dict
 
@@ -66,21 +74,16 @@ class V3LiquidityPool(PoolHelper):
         self.update_block = chain.height
         self.liquidity_update_block = self.update_block
 
-        if tokens is not None:
-            if len(tokens) != 2:
-                raise ValueError(
-                    f"Expected exactly two tokens, found {len(tokens)}"
-                )
-
-        self.address = Web3.toChecksumAddress(address)
-
         if abi is not None:
             self.abi = abi
         else:
             self.abi = UNISWAP_V3_POOL_ABI
 
         self._brownie_contract = Contract.from_abi(
-            name="", address=address, abi=self.abi, persist=False
+            name="Uniswap V3 Pool",
+            address=address,
+            abi=self.abi,
+            persist=False,
         )
 
         self.factory = Web3.toChecksumAddress(self._brownie_contract.factory())
@@ -90,12 +93,21 @@ class V3LiquidityPool(PoolHelper):
         else:
             self.lens = TickLens()
 
-        if tokens:
+        token0_address: str = self._brownie_contract.token0()
+        token1_address: str = self._brownie_contract.token1()
+
+        if tokens is not None:
+            if len(tokens) != 2:
+                raise ValueError(
+                    f"Expected exactly two tokens, found {len(tokens)}"
+                )
+
             self.token0 = min(tokens)
             self.token1 = max(tokens)
+
             if not (
-                self.token0.address == self._brownie_contract.token0()
-                and self.token1.address == self._brownie_contract.token1()
+                self.token0.address == token0_address
+                and self.token1.address == token1_address
             ):
                 raise ValueError(
                     "Token addresses do not match tokens recorded at contract"
@@ -103,28 +115,16 @@ class V3LiquidityPool(PoolHelper):
         else:
             _token_manager = Erc20TokenHelperManager(chain.id)
             self.token0 = _token_manager.get_erc20token(
-                address=self._brownie_contract.token0(),
+                address=token0_address,
                 min_abi=True,
                 silent=silent,
                 unload_brownie_contract_after_init=True,
             )
             self.token1 = _token_manager.get_erc20token(
-                address=self._brownie_contract.token1(),
+                address=token1_address,
                 min_abi=True,
                 silent=silent,
                 unload_brownie_contract_after_init=True,
-            )
-
-        if fee is None:
-            fee = self._brownie_contract.fee()
-
-        self.fee: int = fee
-
-        if name:
-            self.name = name
-        else:
-            self.name = (
-                f"{self.token0}-{self.token1} (V3, {self.fee/10000:.2f}%)"
             )
 
         if factory_address is not None and factory_init_hash is not None:
@@ -138,10 +138,23 @@ class V3LiquidityPool(PoolHelper):
                     f"Pool address {self.address} does not match deterministic address {computed_pool_address} from factory"
                 )
 
+        if fee is None:
+            fee = self._brownie_contract.fee()
+
+        self.fee: int = fee
+        self.tick_spacing = self._TICKSPACING_BY_FEE[self.fee]  # immutable
+
+        if name:
+            self.name = name
+        else:
+            self.name = (
+                f"{self.token0}-{self.token1} (V3, {self.fee/10000:.2f}%)"
+            )
+
         self.liquidity = self._brownie_contract.liquidity(
             block_identifier=self.update_block
         )
-        self.tick_spacing = self._brownie_contract.tickSpacing()  # immutable
+
         slot0 = self._brownie_contract.slot0(
             block_identifier=self.update_block
         )
