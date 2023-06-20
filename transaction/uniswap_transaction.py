@@ -432,7 +432,7 @@ class UniswapTransaction(TransactionHelper):
                 _balance = self._get_balance(self.router_address, token)
 
                 if _balance < amountMin:
-                    raise ValueError(
+                    raise TransactionError(
                         f"Requested sweep of min. {amountMin} WETH, received {_balance}"
                     )
 
@@ -497,7 +497,7 @@ class UniswapTransaction(TransactionHelper):
                 )
 
                 if wrapped_token_balance < amountMin:
-                    raise ValueError(
+                    raise TransactionError(
                         f"Requested unwrap of min. {amountMin} WETH, received {wrapped_token_balance}"
                     )
 
