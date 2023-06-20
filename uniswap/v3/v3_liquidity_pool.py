@@ -163,7 +163,7 @@ class V3LiquidityPool(PoolHelper):
 
         if update_method is not None:
             warn(
-                "The `update_method` argument is deprecated and unused. This constructor argument will be removed in the future."
+                "The `update_method` argument to `V3LiquidityPool()` is unused and otherwise ignored. Remove it to stop seeing this message."
             )
             self._update_method = update_method
         self.extra_words = extra_words
