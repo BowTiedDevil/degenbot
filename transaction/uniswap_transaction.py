@@ -95,6 +95,11 @@ _V3_ROUTER_CONTRACT_ADDRESS_FLAG = "0x0000000000000000000000000000000000000000"
 _V3_ROUTER2_CONTRACT_BALANCE_FLAG = 0
 
 
+def _check_deadline(deadline):
+    if chain.time() > deadline:
+        raise TransactionError("Deadline expired")
+
+
 class UniswapTransaction(TransactionHelper):
     def __init__(
         self,
@@ -1908,8 +1913,10 @@ class UniswapTransaction(TransactionHelper):
 
                 commands = func_params["commands"]
                 inputs = func_params["inputs"]
-                # not used?
-                # deadline = func_params.get("deadline")
+
+                deadline = func_params.get("deadline")
+                if deadline:
+                    _check_deadline(deadline)
 
                 for command, input in zip(commands, inputs):
                     if result := _simulate_universal_router_dispatch(
