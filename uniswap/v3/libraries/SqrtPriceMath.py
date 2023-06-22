@@ -3,7 +3,15 @@ from typing import Optional, Union
 from degenbot.exceptions import EVMRevertError
 
 from . import FixedPoint96, FullMath, UnsafeMath
-from .Helpers import *
+from .Helpers import (
+    MAX_UINT128,
+    MIN_UINT128,
+    MIN_UINT160,
+    to_int256,
+    to_uint160,
+    uint128,
+    uint256,
+)
 
 # type hinting aliases
 Int128 = int
@@ -19,7 +27,6 @@ def getAmount0Delta(
     liquidity: Union[Int128, Uint128],
     roundUp: Optional[bool] = None,
 ) -> Uint256:
-
     if roundUp is not None or MIN_UINT128 <= liquidity <= MAX_UINT128:
         if sqrtRatioAX96 > sqrtRatioBX96:
             (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96)
@@ -29,7 +36,6 @@ def getAmount0Delta(
 
         if not (sqrtRatioAX96 > 0):
             raise EVMRevertError("require sqrtRatioAX96 > 0")
-        # assert sqrtRatioAX96 > 0, "FAIL!"
 
         return (
             UnsafeMath.divRoundingUp(
@@ -62,7 +68,6 @@ def getAmount1Delta(
     liquidity: Union[Int128, Uint128],
     roundUp: Optional[bool] = None,
 ) -> Uint256:
-
     if roundUp is not None or MIN_UINT128 <= liquidity <= MAX_UINT128:
         if sqrtRatioAX96 > sqrtRatioBX96:
             sqrtRatioAX96, sqrtRatioBX96 = sqrtRatioBX96, sqrtRatioAX96
@@ -124,7 +129,7 @@ def getNextSqrtPriceFromAmount0RoundingUp(
             raise EVMRevertError(
                 "product / amount == sqrtPX96 && numerator1 > product"
             )
-        # assert product // amount == sqrtPX96 and numerator1 > product, "FAIL!"
+
         denominator = numerator1 - product
         return to_uint160(
             FullMath.mulDivRoundingUp(numerator1, sqrtPX96, denominator)
@@ -137,7 +142,6 @@ def getNextSqrtPriceFromAmount1RoundingDown(
     amount: Uint256,
     add: bool,
 ) -> Uint160:
-
     if add:
         quotient = (
             (amount << FixedPoint96.RESOLUTION) // liquidity
@@ -156,7 +160,7 @@ def getNextSqrtPriceFromAmount1RoundingDown(
 
         if not (sqrtPX96 > quotient):
             raise EVMRevertError("require sqrtPX96 > quotient")
-        # assert sqrtPX96 > quotient, "FAIL!"
+
         # always fits 160 bits
         return sqrtPX96 - quotient
 
@@ -167,14 +171,11 @@ def getNextSqrtPriceFromInput(
     amountIn: Uint256,
     zeroForOne: bool,
 ) -> Uint160:
-
     if not (sqrtPX96 > MIN_UINT160):
         raise EVMRevertError("sqrtPX96 must be greater than 0")
-    # assert sqrtPX96 > MIN_UINT160, "sqrtPX96 must be greater than 0"
 
     if not (liquidity > MIN_UINT160):
         raise EVMRevertError("liquidity must be greater than 0")
-    # assert liquidity > MIN_UINT160, "liquidity must be greater than 0"
 
     # round to make sure that we don't pass the target price
     return (
@@ -194,14 +195,11 @@ def getNextSqrtPriceFromOutput(
     amountOut: int,
     zeroForOne: bool,
 ):
-
     if not (sqrtPX96 > 0):
         raise EVMRevertError
-    # assert sqrtPX96 > 0, "FAIL!"
 
     if not (liquidity > 0):
         raise EVMRevertError
-    # assert liquidity > 0, "FAIL!"
 
     # round to make sure that we pass the target price
     return (
