@@ -10,13 +10,17 @@ def decode_v3_path(path: bytes) -> List[Union[str, int]]:
     Decode the `path` byte string used by the Uniswap V3 Router/Router2 contracts.
     `path` is a close-packed encoding of pool addresses and fees.
     """
+
     path_pos = 0
     decoded_path: List[Union[str, int]] = []
+
     # read alternating 20 and 3 byte chunks from the encoded path,
-    # store each address (hex) and fee (int)
+    # store each address (hex string) and fee (int)
     for byte_length in cycle((20, 3)):
         if byte_length == 20:
-            address = path[path_pos : path_pos + byte_length].hex()
+            address = Web3.toChecksumAddress(
+                path[path_pos : path_pos + byte_length].hex()
+            )
             decoded_path.append(address)
         elif byte_length == 3:
             fee = int(
