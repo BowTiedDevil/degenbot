@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  check:
+  check_dependencies:
     strategy:
       fail-fast: false
       matrix:
@@ -16,26 +16,30 @@ jobs:
     steps:
         - name: Setup files
           uses: actions/checkout@v3
+
         - name: Setup Python ${{ matrix.python-version }}
           uses: actions/setup-python@v4
           with:
             python-version: ${{ matrix.python-version }}
             cache: 'pip'
+
+        - name: Upgrade pip
+          run: pip install --upgrade pip
+
+        - name: Install pip-tools
+          run: pip install pip-tools
+
+        - name: Run pip-compile
+          run: if [ -f requirements.in ]; then pip-compile --resolver=backtracking; fi
+
         - name: Install dependencies
-          run: | 
-            pip install --upgrade pip
-            pip install pip-tools
-            if [ -f requirements.in ]; then pip-compile --resolver=backtracking; fi
-            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          run: if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
         - name: Rename requirements.txt
-          run: mv requirements.txt requirements_${{ matrix.python-version }}.txt
-        - name: Add to Degenbot
-          run: |
-            git add requirements_${{ matrix.python-version }}.txt
-            git commit -m 'Update Requirements'
-            git push origin main
+          run: mv requirements.txt requirements_${{ matrix.os }}_${{ matrix.python-version }}.txt
+
         - name: Upload requirements.txt
           uses: actions/upload-artifact@v3
           with:
-            name: requirements_${{ matrix.python-version }}
-            path: requirements_${{ matrix.python-version }}.txt
+            name: requirements_${{ matrix.os }}_${{ matrix.python-version }}
+            path: requirements_${{ matrix.os }}_${{ matrix.python-version }}.txt
