@@ -1325,14 +1325,14 @@ class UniswapTransaction(TransactionHelper):
 
             return _future_pool_states
 
-        def _simulate_v3_swap_exact_in(
-            params: dict,
-            silent: bool = False,
-            first_swap: bool = False,
-        ) -> Tuple[V3LiquidityPool, Dict]:
-            """
-            TBD
-            """
+        # def _simulate_v3_swap_exact_in(
+        #     params: dict,
+        #     silent: bool = False,
+        #     first_swap: bool = False,
+        # ) -> Tuple[V3LiquidityPool, Dict]:
+        #     """
+        #     TBD
+        #     """
 
             token_in_object: Erc20Token
             token_out_object: Erc20Token
@@ -2055,7 +2055,43 @@ class UniswapTransaction(TransactionHelper):
                         last_swap=last_swap,
                     )
 
+                    _amount_out = -min(
+                        pool_state["amount0_delta"],
+                        pool_state["amount1_delta"],
+                    )
+
+                    # check that the output of each intermediate swap meets
+                    # the input for the next swap
+                    if not last_swap:
+                        # pool states are appended to `future_pool_states`
+                        # so the previous swap will be in the last position
+                        _, _last_swap_state = future_pool_states[-1]
+
+                        _last_amount_in = max(
+                            _last_swap_state["amount0_delta"],
+                            _last_swap_state["amount1_delta"],
+                        )
+
+                        if _amount_out != _last_amount_in:
+                            raise TransactionError(
+                                f"Insufficient swap amount through requested pool {v3_pool}. Needed {_last_amount_in}, received {_amount_out}"
+                            )
+
                     future_pool_states.append((v3_pool, pool_state))
+
+                # V3 Router enforces a maximum input
+                if first_swap:
+                    _, _pool_state = future_pool_states[0]
+
+                    amount_deposited = max(
+                        _pool_state["amount0_delta"],
+                        _pool_state["amount1_delta"],
+                    )
+
+                    if amount_deposited > amount_in_maximum:
+                        raise TransactionError(
+                            f"Maximum input exceeded. Specified {amount_in_maximum}, {amount_deposited} required."
+                        )
 
             elif func_name == "unwrapWETH9":
                 wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
