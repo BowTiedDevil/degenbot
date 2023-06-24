@@ -1923,7 +1923,16 @@ class UniswapTransaction(TransactionHelper):
                         )
 
             elif func_name == "unwrapWETH9":
+                amountMin = func_params["amountMinimum"]
                 wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
+                wrapped_token_balance = self._get_balance(
+                    self.router_address, wrapped_token_address
+                )
+                if wrapped_token_balance < amountMin:
+                    raise TransactionError(
+                        f"Requested unwrap of min. {amountMin} WETH, received {wrapped_token_balance}"
+                    )
+
                 self._simulate_unwrap(wrapped_token_address)
 
             elif func_name == "sweepToken":
