@@ -1,3 +1,4 @@
+cython
 eth-brownie
 eth-abi
 requests
