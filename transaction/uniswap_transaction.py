@@ -1,4 +1,5 @@
 # TODO: refactor, class has gotten bulky af frfr
+# TODO: implement min. in / min. out checks in all swap methods
 
 import itertools
 from pprint import pprint
@@ -1318,10 +1319,10 @@ class UniswapTransaction(TransactionHelper):
                                 silent=silent,
                             )
                         )
+                    except TransactionError:
+                        raise
                     except Exception as e:
-                        raise TransactionError(
-                            f"Could not decode multicall: {e}"
-                        )
+                        raise ValueError(f"Could not decode multicall: {e}")
 
             return _future_pool_states
 
@@ -2003,7 +2004,11 @@ class UniswapTransaction(TransactionHelper):
             else:
                 logger.info(f"\tUNHANDLED function: {func_name}")
 
-        # catch generic DegenbotError (non-fatal), everything else will escape
+        # bugfix: prevents nested multicalls from spamming exception message
+        # e.g. 'Simulation failed: Simulation failed: {error}'
+        except TransactionError:
+            raise
+        # catch generic DegenbotError (non-fatal) and re-raise as TransactionError
         except DegenbotError as e:
             raise TransactionError(f"Simulation failed: {e}") from e
         else:
