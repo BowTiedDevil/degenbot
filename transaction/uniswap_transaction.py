@@ -4,9 +4,9 @@
 import itertools
 from pprint import pprint
 from typing import Dict, List, Optional, Tuple, Union
-from brownie import chain  # type: ignore
 
 import eth_abi
+from brownie import chain  # type: ignore
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
