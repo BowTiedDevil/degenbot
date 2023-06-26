@@ -1935,6 +1935,23 @@ class UniswapTransaction(TransactionHelper):
 
                 self._simulate_unwrap(wrapped_token_address)
 
+            elif func_name == "unwrapWETH9WithFee":
+                _amount_in = func_params["amountMinimum"]
+                _recipient = func_params["recipient"]
+                _fee_bips = func_params["feeBips"]
+                _fee_recipient = func_params["feeRecipient"]
+
+                wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
+                wrapped_token_balance = self._get_balance(
+                    self.router_address, wrapped_token_address
+                )
+                if wrapped_token_balance < _amount_in:
+                    raise TransactionError(
+                        f"Requested unwrap of min. {_amount_in} WETH, received {wrapped_token_balance}"
+                    )
+
+                self._simulate_unwrap(wrapped_token_address)
+
             elif func_name == "sweepToken":
                 """
                 This function transfers the current token balance held by the contract to `recipient`
