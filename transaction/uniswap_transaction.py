@@ -1180,9 +1180,15 @@ class UniswapTransaction(TransactionHelper):
                         if last_swap
                         else pools[::-1][pool_pos - 1].address
                     )
+
+                    # get the input token by proceeding backwards from the 2nd to last position,
+                    # e.g. for a token0 -> token1 -> token2 -> token3 swap proceeding through pool0 -> pool1 -> pool2,
+                    # the last swap (pool_pos = 0) will have input token as token2 (index -2),
+                    # the first swap (pool_pos = 1) will have input token as token1 (index -3),
+                    # and so on
                     _token_in = (
                         pool.token0
-                        if tx_path[pool_pos] == pool.token0
+                        if pool.token0 == tx_path[-2 - pool_pos]
                         else pool.token1
                     )
 
