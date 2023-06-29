@@ -147,11 +147,14 @@ class Erc20Token:
         self.__dict__.update(state)
 
     def __eq__(self, other) -> bool:
-        if not isinstance(other, Erc20Token):
+        if isinstance(other, Erc20Token):
+            return self.address == other.address
+        elif isinstance(other, str):
+            return self.address.lower() == other.lower()
+        else:
             raise TypeError(
-                f"Equality can only be evaluated against another Erc20Token. Found {type(other)}"
+                f"Equality can be evaluated against another Erc20Token or a str. Type was: {type(other)}"
             )
-        return self.address.lower() == other.address.lower()
 
     def __lt__(self, other) -> bool:
         return self.address.lower() < other.address.lower()
