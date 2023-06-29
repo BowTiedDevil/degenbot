@@ -259,8 +259,6 @@ class UniswapTransaction(TransactionHelper):
             )
             amount_in = self._get_balance(pool.address, token_in.address)
 
-        assert amount_in > 0
-
         if first_swap and not self._get_balance(
             pool.address, token_in.address
         ):
@@ -434,8 +432,6 @@ class UniswapTransaction(TransactionHelper):
             amount_in = self._get_balance(
                 self.router_address, token_in.address
             )
-
-        assert amount_in > 0
 
         # the swap may occur after wrapping ETH, in which case amountIn will be already set.
         # if not, credit the router (user will send as part of contract call)
@@ -1481,6 +1477,9 @@ class UniswapTransaction(TransactionHelper):
                     except TransactionError:
                         raise
                     except Exception as e:
+                        import traceback
+
+                        traceback.print_exc()
                         raise ValueError(f"Could not decode multicall: {e}")
 
             return _future_pool_states
