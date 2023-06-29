@@ -377,6 +377,7 @@ class UniswapTransaction(TransactionHelper):
                 to_addr=pool.address,
             )
 
+        # TODO: handle recipient address handling within router-level logic
         if last_swap:
             logger.info("LAST SWAP")
             if recipient in [
@@ -1142,6 +1143,11 @@ class UniswapTransaction(TransactionHelper):
                     raise TransactionError(
                         f"Could not decode input for {command}"
                     )
+
+                if tx_recipient == _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG:
+                    tx_recipient = self.router_address
+                elif tx_recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
+                    tx_recipient = self.sender
 
                 _future_pool_states = []
 
