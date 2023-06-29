@@ -228,14 +228,10 @@ class UniswapTransaction(TransactionHelper):
         TBD
         """
 
-        # WIP: convert simulation to single pool
-
         if token_in not in [pool.token0, pool.token1]:
             raise ValueError(f"Token {token_in} not found in pool {pool}")
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
-
-        logger.debug(f"{amount_in=}")
 
         future_state = pool.simulate_swap(
             token_in=token_in,
@@ -333,7 +329,6 @@ class UniswapTransaction(TransactionHelper):
         """
         TBD
         """
-        # WIP: convert simulation to single pool
 
         if token_in not in [pool.token0, pool.token1]:
             raise ValueError(f"Token {token_in} not found in pool {pool}")
@@ -1063,7 +1058,6 @@ class UniswapTransaction(TransactionHelper):
 
                 last_pool_pos = len(tx_path) - 2
 
-                # WIP: convert simulation for V2 to single pool
                 for pool_pos, pool in enumerate(pools):
                     first_swap = pool_pos == 0
                     last_swap = pool_pos == last_pool_pos
@@ -1163,7 +1157,6 @@ class UniswapTransaction(TransactionHelper):
 
                 last_pool_pos = len(pools) - 1
 
-                # WIP: convert simulation for V2 to single pool
                 for pool_pos, pool in enumerate(pools[::-1]):
                     first_swap = pool_pos == last_pool_pos
                     last_swap = pool_pos == 0
@@ -1277,7 +1270,6 @@ class UniswapTransaction(TransactionHelper):
                     _amount_in = tx_amount_in if first_swap else _amount_out
                     _amount_out_min = tx_amount_out_min if last_swap else None
 
-                    # WIP: change to generalized method
                     _, pool_state = self._simulate_v3_swap_exact_in(
                         pool=v3_pool,
                         recipient=_recipient,
@@ -1543,7 +1535,6 @@ class UniswapTransaction(TransactionHelper):
 
                 last_pool_pos = len(tx_path) - 2
 
-                # WIP: convert simulation for V2 to single pool
                 for pool_pos, pool in enumerate(pools):
                     first_swap = pool_pos == 0
                     last_swap = pool_pos == last_pool_pos
@@ -1620,7 +1611,6 @@ class UniswapTransaction(TransactionHelper):
 
                 last_pool_pos = len(pools) - 1
 
-                # WIP: convert simulation for V2 to single pool
                 for pool_pos, pool in enumerate(pools[::-1]):
                     first_swap = pool_pos == last_pool_pos
                     last_swap = pool_pos == 0
@@ -1714,7 +1704,6 @@ class UniswapTransaction(TransactionHelper):
                     pool_fee=tx_fee,
                 )
 
-                # WIP: change to generalized method
                 _, pool_state = self._simulate_v3_swap_exact_in(
                     pool=v3_pool,
                     recipient=tx_recipient,
@@ -1808,7 +1797,6 @@ class UniswapTransaction(TransactionHelper):
                         pool_fee=tx_fee,
                     )
 
-                    # WIP: change to generalized method
                     _, pool_state = self._simulate_v3_swap_exact_in(
                         pool=v3_pool,
                         recipient=tx_recipient
@@ -1880,7 +1868,6 @@ class UniswapTransaction(TransactionHelper):
                     pool_fee=tx_fee,
                 )
 
-                # WIP: change to generalized method
                 _, pool_state = self._simulate_v3_swap_exact_out(
                     pool=v3_pool,
                     recipient=tx_recipient,
