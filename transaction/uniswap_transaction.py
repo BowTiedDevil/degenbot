@@ -340,8 +340,6 @@ class UniswapTransaction(TransactionHelper):
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
-        logger.debug(f"{amount_out=}")
-
         future_state = pool.simulate_swap(
             token_out=token_out,
             token_out_quantity=amount_out,
@@ -382,13 +380,11 @@ class UniswapTransaction(TransactionHelper):
         if last_swap:
             logger.info("LAST SWAP")
             if recipient in [
-                _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG,
                 _V3_ROUTER_CONTRACT_ADDRESS_FLAG,
             ]:
                 _recipient = self.router_address
             else:
                 _recipient = self.sender
-                self.to.add(_recipient)
         else:
             _recipient = Web3.toChecksumAddress(recipient)
 
@@ -1071,9 +1067,6 @@ class UniswapTransaction(TransactionHelper):
                     first_swap = pool_pos == 0
                     last_swap = pool_pos == last_pool_pos
 
-                    logger.debug(f"{first_swap=}")
-                    logger.debug(f"{last_swap=}")
-
                     token_in = (
                         pool.token0
                         if tx_path[pool_pos] == pool.token0
@@ -1168,9 +1161,6 @@ class UniswapTransaction(TransactionHelper):
                 for pool_pos, pool in enumerate(pools[::-1]):
                     first_swap = pool_pos == last_pool_pos
                     last_swap = pool_pos == 0
-
-                    logger.debug(f"{first_swap=}")
-                    logger.debug(f"{last_swap=}")
 
                     _amount_out = tx_amount_out if last_swap else _amount_in
                     _amount_in_max = tx_amount_in_max if first_swap else None
@@ -1349,9 +1339,6 @@ class UniswapTransaction(TransactionHelper):
                     first_swap = token_pos == last_token_pos
                     last_swap = token_pos == 0
 
-                    logger.debug(f"{first_swap=}")
-                    logger.debug(f"{last_swap=}")
-
                     v3_pool = self.v3_pool_manager.get_pool(
                         token_addresses=(
                             tx_token_in_address,
@@ -1445,9 +1432,6 @@ class UniswapTransaction(TransactionHelper):
                     )
                 except:
                     pass
-
-                print(f"{payload_func=}")
-                print(f"{payload_args=}")
 
                 # special case to handle a multicall encoded within another multicall
                 if payload_func.fn_name == "multicall":
@@ -1558,9 +1542,6 @@ class UniswapTransaction(TransactionHelper):
                     first_swap = pool_pos == 0
                     last_swap = pool_pos == last_pool_pos
 
-                    logger.debug(f"{first_swap=}")
-                    logger.debug(f"{last_swap=}")
-
                     _token_in = (
                         pool.token0
                         if tx_path[pool_pos] == pool.token0
@@ -1637,9 +1618,6 @@ class UniswapTransaction(TransactionHelper):
                 for pool_pos, pool in enumerate(pools[::-1]):
                     first_swap = pool_pos == last_pool_pos
                     last_swap = pool_pos == 0
-
-                    logger.debug(f"{first_swap=}")
-                    logger.debug(f"{last_swap=}")
 
                     _amount_out = tx_amount_out if last_swap else _amount_in
                     _amount_in_max = tx_amount_in_max if first_swap else None
@@ -1984,9 +1962,6 @@ class UniswapTransaction(TransactionHelper):
 
                     first_swap = token_pos == last_token_pos
                     last_swap = token_pos == 0
-
-                    logger.debug(f"{first_swap=}")
-                    logger.debug(f"{last_swap=}")
 
                     v3_pool = self.v3_pool_manager.get_pool(
                         token_addresses=(
