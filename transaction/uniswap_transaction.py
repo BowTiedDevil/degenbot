@@ -350,23 +350,6 @@ class UniswapTransaction(TransactionHelper):
             future_state["amount1_delta"],
         )
 
-        # process the swap
-        self._adjust_balance(pool.address, token_in.address, -_amount_in)
-        self._adjust_balance(pool.address, token_out.address, amount_out)
-
-        if not silent:
-            current_state = pool.state
-            logger.info(f"Simulating swap through pool: {pool}")
-            logger.info(
-                f"\t{_amount_in} {token_in} -> {amount_out} {token_out}"
-            )
-            logger.info("\t(CURRENT)")
-            logger.info(f"\t{pool.token0}: {current_state['reserves_token0']}")
-            logger.info(f"\t{pool.token1}: {current_state['reserves_token1']}")
-            logger.info(f"\t(FUTURE)")
-            logger.info(f"\t{pool.token0}: {future_state['reserves_token0']}")
-            logger.info(f"\t{pool.token1}: {future_state['reserves_token1']}")
-
         if first_swap:
             # transfer the input token amount from the sender to the first pool
             logger.info("FIRST SWAP")
@@ -389,7 +372,24 @@ class UniswapTransaction(TransactionHelper):
         else:
             _recipient = Web3.toChecksumAddress(recipient)
 
-        # transfer the input token from the pool to the recipient
+        if not silent:
+            current_state = pool.state
+            logger.info(f"Simulating swap through pool: {pool}")
+            logger.info(
+                f"\t{_amount_in} {token_in} -> {amount_out} {token_out}"
+            )
+            logger.info("\t(CURRENT)")
+            logger.info(f"\t{pool.token0}: {current_state['reserves_token0']}")
+            logger.info(f"\t{pool.token1}: {current_state['reserves_token1']}")
+            logger.info(f"\t(FUTURE)")
+            logger.info(f"\t{pool.token0}: {future_state['reserves_token0']}")
+            logger.info(f"\t{pool.token1}: {future_state['reserves_token1']}")
+
+        # process the swap
+        self._adjust_balance(pool.address, token_in.address, -_amount_in)
+        self._adjust_balance(pool.address, token_out.address, amount_out)
+
+        # transfer the output token from the pool to the recipient
         self._transfer_balance(
             token=token_out.address,
             amount=amount_out,
