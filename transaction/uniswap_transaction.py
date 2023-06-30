@@ -99,6 +99,28 @@ def _raise_if_expired(deadline: int):
         raise TransactionError("Deadline expired")
 
 
+def get_v2_pools_from_token_path(
+    tx_path,
+    pool_manager: UniswapV2LiquidityPoolManager,
+) -> List[LiquidityPool]:
+    return [
+        pool_manager.get_pool(
+            token_addresses=token_addresses,
+            silent=True,
+        )
+        for token_addresses in itertools.pairwise(tx_path)
+    ]
+
+
+class SimulationLedger:
+    """
+    TBD
+    """
+
+    def __init__(self):
+        pass
+
+
 class UniswapTransaction(TransactionHelper):
     @classmethod
     def add_router(cls, chain_id: int, router_address: str, router_dict: dict):
@@ -229,15 +251,6 @@ class UniswapTransaction(TransactionHelper):
         self.func_params = func_params
         if previous_block_hash := self.func_params.get("previousBlockhash"):
             self.func_previous_block_hash = previous_block_hash.hex()
-
-    def _get_v2_pools(self, tx_path) -> List[LiquidityPool]:
-        return [
-            self.v2_pool_manager.get_pool(
-                token_addresses=token_addresses,
-                silent=True,
-            )
-            for token_addresses in itertools.pairwise(tx_path)
-        ]
 
     def _transfer_balance(
         self,
@@ -1045,7 +1058,9 @@ class UniswapTransaction(TransactionHelper):
                     )
 
                 try:
-                    pools = self._get_v2_pools(tx_path)
+                    pools = get_v2_pools_from_token_path(
+                        tx_path, self.v2_pool_manager
+                    )
                 except (LiquidityPoolError, ManagerError):
                     raise TransactionError(
                         f"LiquidityPool could not be built for all steps in path {tx_path}"
@@ -1144,7 +1159,9 @@ class UniswapTransaction(TransactionHelper):
                     logger.info(f"{func_name}: {self.hash}")
 
                 try:
-                    pools = self._get_v2_pools(tx_path)
+                    pools = get_v2_pools_from_token_path(
+                        tx_path, self.v2_pool_manager
+                    )
                 except (LiquidityPoolError, ManagerError):
                     raise TransactionError(
                         f"LiquidityPool could not be built for all steps in path {tx_path}"
@@ -1530,11 +1547,13 @@ class UniswapTransaction(TransactionHelper):
                     _raise_if_expired(tx_deadline)
 
                 try:
-                    pools = self._get_v2_pools(tx_path)
-                except (LiquidityPoolError, ManagerError):
-                    raise TransactionError(
-                        f"LiquidityPool could not be built for all steps in path {tx_path}"
-                    )
+                        pools = get_v2_pools_from_token_path(
+                            tx_path, self.v2_pool_manager
+                        )
+                    except (LiquidityPoolError, ManagerError):
+                        raise TransactionError(
+                            f"LiquidityPool could not be built for all steps in path {tx_path}"
+                        )
 
                 last_pool_pos = len(tx_path) - 2
 
@@ -1606,11 +1625,13 @@ class UniswapTransaction(TransactionHelper):
                     _raise_if_expired(tx_deadline)
 
                 try:
-                    pools = self._get_v2_pools(tx_path)
-                except (LiquidityPoolError, ManagerError):
-                    raise TransactionError(
-                        f"LiquidityPool could not be built for all steps in path {tx_path}"
-                    )
+                        pools = get_v2_pools_from_token_path(
+                            tx_path, self.v2_pool_manager
+                        )
+                    except (LiquidityPoolError, ManagerError):
+                        raise TransactionError(
+                            f"LiquidityPool could not be built for all steps in path {tx_path}"
+                        )
 
                 last_pool_pos = len(pools) - 1
 
