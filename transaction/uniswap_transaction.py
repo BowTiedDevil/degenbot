@@ -100,6 +100,62 @@ def _raise_if_expired(deadline: int):
 
 
 class UniswapTransaction(TransactionHelper):
+    @classmethod
+    def add_router(cls, chain_id: int, router_address: str, router_dict: dict):
+        """
+        Add a new router address for a given chain ID.
+
+        The `router_dict` argument should contain at minimum the following key-value pairs:
+            - 'name': [str]
+            - 'factory_address': {
+                [int]: [address],
+                [int]: [address],
+            }
+
+            The dicts inside 'factory_address' are keyed by the Uniswap version associated with their contracts, e.g.
+            router_dict = {
+                'name': 'SomeDEX',
+                'factory_address': {
+                    2: '0x...',
+                    3: '0x...',
+                }
+            }
+        """
+        router_address = Web3.toChecksumAddress(router_address)
+
+        for key in [
+            "name",
+            "factory_address",
+        ]:
+            if key not in router_dict:
+                raise ValueError(f"{key} not found in router_dict")
+
+        try:
+            _ROUTERS[chain_id][router_address]
+        except:
+            _ROUTERS[chain_id][router_address] = router_dict
+        else:
+            raise ValueError("Router address already known!")
+
+    @classmethod
+    def add_wrapped_token(cls, chain_id: int, token_address: str):
+        """
+        Add a wrapped token address for a given chain ID.
+
+        The method checksums the token address.
+        """
+
+        _token_address = Web3.toChecksumAddress(token_address)
+
+        try:
+            _WRAPPED_NATIVE_TOKENS[chain_id]
+        except KeyError:
+            _WRAPPED_NATIVE_TOKENS[chain_id] = _token_address
+        else:
+            raise ValueError(
+                f"Token address {_WRAPPED_NATIVE_TOKENS[chain_id]} already set for chain ID {chain_id}!"
+            )
+
     def __init__(
         self,
         chain_id: int,
@@ -717,62 +773,6 @@ class UniswapTransaction(TransactionHelper):
 
         _token = Web3.toChecksumAddress(_token)
         return address_balances.get(_token, 0)
-
-    @classmethod
-    def add_router(cls, chain_id: int, router_address: str, router_dict: dict):
-        """
-        Add a new router address for a given chain ID.
-
-        The `router_dict` argument should contain at minimum the following key-value pairs:
-            - 'name': [str]
-            - 'factory_address': {
-                [int]: [address],
-                [int]: [address],
-            }
-
-            The dicts inside 'factory_address' are keyed by the Uniswap version associated with their contracts, e.g.
-            router_dict = {
-                'name': 'SomeDEX',
-                'factory_address': {
-                    2: '0x...',
-                    3: '0x...',
-                }
-            }
-        """
-        router_address = Web3.toChecksumAddress(router_address)
-
-        for key in [
-            "name",
-            "factory_address",
-        ]:
-            if key not in router_dict:
-                raise ValueError(f"{key} not found in router_dict")
-
-        try:
-            _ROUTERS[chain_id][router_address]
-        except:
-            _ROUTERS[chain_id][router_address] = router_dict
-        else:
-            raise ValueError("Router address already known!")
-
-    @classmethod
-    def add_wrapped_token(cls, chain_id: int, token_address: str):
-        """
-        Add a wrapped token address for a given chain ID.
-
-        The method checksums the token address.
-        """
-
-        _token_address = Web3.toChecksumAddress(token_address)
-
-        try:
-            _WRAPPED_NATIVE_TOKENS[chain_id]
-        except KeyError:
-            _WRAPPED_NATIVE_TOKENS[chain_id] = _token_address
-        else:
-            raise ValueError(
-                f"Token address {_WRAPPED_NATIVE_TOKENS[chain_id]} already set for chain ID {chain_id}!"
-            )
 
     def _simulate(
         self,
