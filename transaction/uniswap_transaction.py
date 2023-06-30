@@ -162,7 +162,6 @@ class UniswapTransaction(TransactionHelper):
         except:
             pass
 
-        self.token_manager = Erc20TokenHelperManager()
         self.hash = tx_hash
         self.nonce = (
             int(tx_nonce, 16) if isinstance(tx_nonce, str) else tx_nonce
