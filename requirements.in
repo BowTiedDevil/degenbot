@@ -8,3 +8,5 @@ matplotlib
 networkx
 scipy
 titanoboa
+vyper
+eth-ape
