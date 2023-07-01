@@ -1,6 +1,6 @@
 from threading import Lock
 from typing import Dict, List, Optional, Tuple, Union
-
+from eth_typing import ChecksumAddress
 from brownie import Contract, chain  # type: ignore
 from web3 import Web3
 
@@ -260,7 +260,9 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
     def get_pool(
         self,
         pool_address: Optional[str] = None,
-        token_addresses: Optional[Tuple[str, str]] = None,
+        token_addresses: Optional[
+            Tuple[Union[str, ChecksumAddress], Union[str, ChecksumAddress]]
+        ] = None,
         pool_fee: Optional[int] = None,
         silent: bool = False,
         # keyword arguments passed to the `V3LiquidityPool` constructor
