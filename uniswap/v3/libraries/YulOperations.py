@@ -26,11 +26,11 @@ def shr(x, y):
     return y >> x
 
 
-def _or(x, y):
+def or_(x, y):
     return x | y
 
 
-def _not(x):
+def not_(x):
     return ~x
 
 

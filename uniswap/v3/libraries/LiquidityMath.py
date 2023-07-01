@@ -11,21 +11,18 @@ def addDelta(x: int, y: int) -> int:
 
     if not (0 <= x <= 2**128 - 1):
         raise EVMRevertError("x not a valid uint128")
-    # assert 0 <= x <= 2**128 - 1, "x not a valid uint128"
 
     if not (-(2**127) <= y <= 2**127 - 1):
         raise EVMRevertError("y not a valid int128")
-    # assert -(2**127) <= y <= 2**127 - 1, "y not a valid int128"
 
     if y < 0:
         z = x - uint128(-y)
         if not (0 <= z <= 2**128 - 1):
             raise EVMRevertError("LS")
-        # assert 0 <= z <= 2**128 - 1, "LS"
+
     else:
         z = x + uint128(y)
         if not (0 <= z <= 2**128 - 1):
             raise EVMRevertError("LA")
-        # assert 0 <= z <= 2**128 - 1, "LA"
 
     return z

@@ -9,11 +9,9 @@ MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342
 
 
 def getSqrtRatioAtTick(tick: int) -> int:
-
     absTick = uint256(-int256(tick)) if tick < 0 else uint256(int256(tick))
     if not (0 <= absTick <= uint256(MAX_TICK)):
         raise EVMRevertError("T")
-    # assert 0 <= absTick <= uint256(MAX_TICK), "T"
 
     ratio = (
         0xFFFCB933BD6FAD37AA2D162D1A594001
@@ -70,56 +68,52 @@ def getSqrtRatioAtTick(tick: int) -> int:
 
 
 def getTickAtSqrtRatio(sqrtPriceX96: int) -> int:
-
     if not (0 <= sqrtPriceX96 <= 2**160 - 1):
         raise EVMRevertError("not a valid uint160")
-    # assert 0 <= sqrtPriceX96 <= 2**160 - 1, "not a valid uint160"
 
     # second inequality must be < because the price can never reach the price at the max tick
     if not (sqrtPriceX96 >= MIN_SQRT_RATIO and sqrtPriceX96 < MAX_SQRT_RATIO):
         raise EVMRevertError("R")
-    # assert (
-    #     sqrtPriceX96 >= MIN_SQRT_RATIO and sqrtPriceX96 < MAX_SQRT_RATIO
-    # ), "R"
+
     ratio = uint256(sqrtPriceX96) << 32
 
     r: int = ratio
     msb: int = 0
 
     f = yul.shl(7, yul.gt(r, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF))
-    msb = yul._or(msb, f)
+    msb = yul.or_(msb, f)
     r = yul.shr(f, r)
 
     f = yul.shl(7, yul.gt(r, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF))
-    msb = yul._or(msb, f)
+    msb = yul.or_(msb, f)
     r = yul.shr(f, r)
 
     f = yul.shl(6, yul.gt(r, 0xFFFFFFFFFFFFFFFF))
-    msb = yul._or(msb, f)
+    msb = yul.or_(msb, f)
     r = yul.shr(f, r)
 
     f = yul.shl(5, yul.gt(r, 0xFFFFFFFF))
-    msb = yul._or(msb, f)
+    msb = yul.or_(msb, f)
     r = yul.shr(f, r)
 
     f = yul.shl(4, yul.gt(r, 0xFFFF))
-    msb = yul._or(msb, f)
+    msb = yul.or_(msb, f)
     r = yul.shr(f, r)
 
     f = yul.shl(3, yul.gt(r, 0xFF))
-    msb = yul._or(msb, f)
+    msb = yul.or_(msb, f)
     r = yul.shr(f, r)
 
     f = yul.shl(2, yul.gt(r, 0xF))
-    msb = yul._or(msb, f)
+    msb = yul.or_(msb, f)
     r = yul.shr(f, r)
 
     f = yul.shl(1, yul.gt(r, 0x3))
-    msb = yul._or(msb, f)
+    msb = yul.or_(msb, f)
     r = yul.shr(f, r)
 
     f = yul.gt(r, 0x1)
-    msb = yul._or(msb, f)
+    msb = yul.or_(msb, f)
 
     if msb >= 128:
         r = ratio >> (msb - 127)
@@ -130,72 +124,72 @@ def getTickAtSqrtRatio(sqrtPriceX96: int) -> int:
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(63, f))
+    log_2 = yul.or_(log_2, yul.shl(63, f))
     r = yul.shr(f, r)
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(62, f))
+    log_2 = yul.or_(log_2, yul.shl(62, f))
     r = yul.shr(f, r)
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(61, f))
+    log_2 = yul.or_(log_2, yul.shl(61, f))
     r = yul.shr(f, r)
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(60, f))
+    log_2 = yul.or_(log_2, yul.shl(60, f))
     r = yul.shr(f, r)
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(59, f))
+    log_2 = yul.or_(log_2, yul.shl(59, f))
     r = yul.shr(f, r)
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(58, f))
+    log_2 = yul.or_(log_2, yul.shl(58, f))
     r = yul.shr(f, r)
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(57, f))
+    log_2 = yul.or_(log_2, yul.shl(57, f))
     r = yul.shr(f, r)
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(56, f))
+    log_2 = yul.or_(log_2, yul.shl(56, f))
     r = yul.shr(f, r)
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(55, f))
+    log_2 = yul.or_(log_2, yul.shl(55, f))
     r = yul.shr(f, r)
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(54, f))
+    log_2 = yul.or_(log_2, yul.shl(54, f))
     r = yul.shr(f, r)
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(53, f))
+    log_2 = yul.or_(log_2, yul.shl(53, f))
     r = yul.shr(f, r)
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(52, f))
+    log_2 = yul.or_(log_2, yul.shl(52, f))
     r = yul.shr(f, r)
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(51, f))
+    log_2 = yul.or_(log_2, yul.shl(51, f))
     r = yul.shr(f, r)
 
     r = yul.shr(127, yul.mul(r, r))
     f = yul.shr(128, r)
-    log_2 = yul._or(log_2, yul.shl(50, f))
+    log_2 = yul.or_(log_2, yul.shl(50, f))
 
     log_sqrt10001 = log_2 * 255738958999603826347141  # 128.128 number
 
