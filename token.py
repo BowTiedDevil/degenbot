@@ -5,6 +5,7 @@ from warnings import catch_warnings, simplefilter, warn
 from brownie import Contract, web3 as brownie_w3  # type: ignore
 from brownie.convert.datatypes import HexString  # type: ignore
 from brownie.network.account import LocalAccount  # type: ignore
+from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
 
@@ -38,11 +39,7 @@ class Erc20Token:
         unload_brownie_contract_after_init: bool = False,
         min_abi: bool = False,
     ) -> None:
-        try:
-            self.address: str = Web3.toChecksumAddress(address)
-        except ValueError:
-            warn("Could not checksum address, storing non-checksummed version")
-            self.address = address
+        self.address: ChecksumAddress = Web3.toChecksumAddress(address)
 
         if user:
             self._user = user
