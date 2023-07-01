@@ -104,3 +104,10 @@ class ZeroSwapError(LiquidityPoolError):
     """
     Thrown if a swap calculation resulted or would result in zero output
     """
+
+
+# 2nd level exceptions for Transaction classes
+class LedgerError(TransactionError):
+    """
+    Thrown when the ledger does not align with the expected state
+    """
