@@ -870,7 +870,7 @@ class UniswapTransaction(TransactionHelper):
             "selfPermitAllowed",
         }
 
-        def _process_universal_router_dispatch(
+        def _process_universal_router_command(
             command_type: int,
             inputs: bytes,
             silent: bool,
@@ -2184,7 +2184,7 @@ class UniswapTransaction(TransactionHelper):
 
                 for command, input in zip(tx_commands, tx_inputs):
                     _future_pool_states.append(
-                        _process_universal_router_dispatch(
+                        _process_universal_router_command(
                             command,
                             input,
                             silent=silent,
