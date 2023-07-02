@@ -976,7 +976,11 @@ class UniswapTransaction(TransactionHelper):
                 """
 
                 try:
-                    _token, _recipient, bips = eth_abi.decode(
+                    (
+                        _pay_portion_token_address,
+                        _pay_portion_recipient,
+                        _pay_portion_bips,
+                    ) = eth_abi.decode(
                         ["address", "address", "uint256"], inputs
                     )
                 except:
@@ -986,20 +990,20 @@ class UniswapTransaction(TransactionHelper):
                 # ref: https://docs.uniswap.org/contracts/universal-router/technical-reference#pay_portion
                 # ref: https://github.com/Uniswap/universal-router/blob/main/contracts/libraries/Constants.sol
                 # TODO: refactor if ledger needs to support ETH balances
-                if _token == ZERO_ADDRESS:
+                if _pay_portion_token_address == ZERO_ADDRESS:
                     logger.debug(f"PAY_PORTION called with Constants.ETH")
                     return
 
-                _balance = self.ledger.token_balance(
-                    self.router_address, _token
+                sweep_token_balance = self.ledger.token_balance(
+                    self.router_address, _pay_portion_token_address
                 )
                 self.ledger.transfer(
-                    _token,
-                    _balance * bips // 10_000,
+                    _pay_portion_token_address,
+                    sweep_token_balance * _pay_portion_bips // 10_000,
                     self.router_address,
-                    _recipient,
+                    _pay_portion_recipient,
                 )
-                self.to.add(Web3.toChecksumAddress(_recipient))
+                self.to.add(Web3.toChecksumAddress(_pay_portion_recipient))
 
             elif command == "SWEEP":
                 """
@@ -1007,25 +1011,32 @@ class UniswapTransaction(TransactionHelper):
                 """
 
                 try:
-                    token, tx_recipient, amountMin = eth_abi.decode(
+                    (
+                        sweep_token_address,
+                        sweep_recipient,
+                        sweep_amount_min,
+                    ) = eth_abi.decode(
                         ["address", "address", "uint256"], inputs
                     )
                 except:
                     raise ValueError(f"Could not decode input for {command}")
 
-                if tx_recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
-                    tx_recipient = self.sender
+                if (
+                    sweep_recipient
+                    == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG
+                ):
+                    sweep_recipient = self.sender
 
-                _balance = self.ledger.token_balance(
-                    self.router_address, token
+                sweep_token_balance = self.ledger.token_balance(
+                    self.router_address, sweep_token_address
                 )
 
-                if _balance < amountMin:
+                if sweep_token_balance < sweep_amount_min:
                     raise TransactionError(
-                        f"Requested sweep of min. {amountMin} WETH, received {_balance}"
+                        f"Requested sweep of min. {sweep_amount_min} WETH, received {sweep_token_balance}"
                     )
 
-                self._simulate_sweep(token, tx_recipient)
+                self._simulate_sweep(sweep_token_address, sweep_recipient)
 
             elif command == "WRAP_ETH":
                 """
@@ -1036,10 +1047,8 @@ class UniswapTransaction(TransactionHelper):
                 Some L2s and side chains implement a `depositTo` method, so `recipient` is evaluated before adjusting the ledger balance.
                 """
 
-                wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
-
                 try:
-                    tx_recipient, amountMin = eth_abi.decode(
+                    tx_recipient, _wrap_amount_min = eth_abi.decode(
                         ["address", "uint256"], inputs
                     )
                 except:
@@ -1050,37 +1059,41 @@ class UniswapTransaction(TransactionHelper):
                 else:
                     _recipient = tx_recipient
 
+                _wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
+
                 self.ledger.adjust(
                     _recipient,
-                    wrapped_token_address,
-                    amountMin,
+                    _wrapped_token_address,
+                    _wrap_amount_min,
                 )
 
             elif command == "UNWRAP_WETH":
                 """
                 This function unwraps a quantity of WETH to ETH.
 
-                ETH is currently untracked by the `self.ledger` ledger, so `recipient` is unused.
+                ETH is currently untracked by the ledger, so `recipient` is unused.
                 """
 
+                # TODO: process ETH balance in ledger if needed
+
                 try:
-                    tx_recipient, amountMin = eth_abi.decode(
+                    _unwrap_recipient, _unwrap_amount_min = eth_abi.decode(
                         ["address", "uint256"], inputs
                     )
                 except:
                     raise ValueError(f"Could not decode input for {command}")
 
-                wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
-                wrapped_token_balance = self.ledger.token_balance(
-                    self.router_address, wrapped_token_address
+                _wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
+                _wrapped_token_balance = self.ledger.token_balance(
+                    self.router_address, _wrapped_token_address
                 )
 
-                if wrapped_token_balance < amountMin:
+                if _wrapped_token_balance < _unwrap_amount_min:
                     raise TransactionError(
-                        f"Requested unwrap of min. {amountMin} WETH, received {wrapped_token_balance}"
+                        f"Requested unwrap of min. {_unwrap_amount_min} WETH, received {_wrapped_token_balance}"
                     )
 
-                self._simulate_unwrap(wrapped_token_address)
+                self._simulate_unwrap(_wrapped_token_address)
 
             elif command == "V2_SWAP_EXACT_IN":
                 """
