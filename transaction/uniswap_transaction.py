@@ -7,6 +7,7 @@ from brownie import chain  # type: ignore
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
+from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import (
     DegenbotError,
     EVMRevertError,
@@ -982,7 +983,11 @@ class UniswapTransaction(TransactionHelper):
                     raise ValueError(f"Could not decode input for {command}")
 
                 # shorthand for ETH
-                if _token == 0:
+                # ref: https://docs.uniswap.org/contracts/universal-router/technical-reference#pay_portion
+                # ref: https://github.com/Uniswap/universal-router/blob/main/contracts/libraries/Constants.sol
+                # TODO: refactor if ledger needs to support ETH balances
+                if _token == ZERO_ADDRESS:
+                    logger.debug(f"PAY_PORTION called with Constants.ETH")
                     return
 
                 _balance = self.ledger.token_balance(
