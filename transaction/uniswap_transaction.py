@@ -864,10 +864,21 @@ class UniswapTransaction(TransactionHelper):
             "sweepTokenWithFee",
         }
 
+        # Functions that do not affect the pool state.
+        # Typically related to allowances.
         NO_OP_FUNCTIONS = {
+            # ---
+            # ref: https://docs.uniswap.org/contracts/v3/reference/periphery/interfaces/IPeripheryPayments#refundeth
             "refundETH",
+            # ---
+            #
+            # EIP-2612 token permit functions
+            # ref: https://docs.uniswap.org/contracts/v3/reference/periphery/base/SelfPermit
             "selfPermit",
             "selfPermitAllowed",
+            "selfPermitAllowedIfNecessary",
+            "selfPermitIfNecessary",
+            # ---
         }
 
         def _process_universal_router_command(
@@ -875,7 +886,10 @@ class UniswapTransaction(TransactionHelper):
             inputs: bytes,
             silent: bool,
         ):
-            _UNIVERSAL_ROUTER_COMMANDS = {
+            # ---
+            # https://docs.uniswap.org/contracts/universal-router/technical-reference
+            # ---
+            UNIVERSAL_ROUTER_COMMAND_VALUES = {
                 0x00: "V3_SWAP_EXACT_IN",
                 0x01: "V3_SWAP_EXACT_OUT",
                 0x02: "PERMIT2_TRANSFER_FROM",
@@ -912,22 +926,7 @@ class UniswapTransaction(TransactionHelper):
                 0x21: "SEAPORT_V2",
             }
 
-            COMMAND_TYPE_MASK = 0x3F
-            command = _UNIVERSAL_ROUTER_COMMANDS[
-                command_type & COMMAND_TYPE_MASK
-            ]
-
-            logger.info(command)
-
-            _amount_in: int
-            _amount_out: int
-
-            pool_state: Dict
-            _future_pool_states: List[
-                Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
-            ] = []
-
-            if command in [
+            UNIMPLEMENTED_UNIVERAL_ROUTER_COMMANDS = {
                 "PERMIT2_TRANSFER_FROM",
                 "PERMIT2_PERMIT_BATCH",
                 "TRANSFER",
@@ -951,8 +950,24 @@ class UniswapTransaction(TransactionHelper):
                 "ELEMENT_MARKET",
                 "EXECUTE_SUB_PLAN",
                 "SEAPORT_V2",
+            }
+
+            COMMAND_TYPE_MASK = 0x3F
+            command = UNIVERSAL_ROUTER_COMMAND_VALUES[
+                command_type & COMMAND_TYPE_MASK
+            ]
+
             logger.debug(f"Processing Universal Router command: {command}")
 
+            _amount_in: int
+            _amount_out: int
+            _pool_state: Dict
+            _future_pool_states: List[
+                Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
+            ] = []
+
+            if command in UNIMPLEMENTED_UNIVERAL_ROUTER_COMMANDS:
+                logger.debug(f"UNIMPLEMENTED COMMAND: {command}")
 
             elif command == "PAY_PORTION":
                 """
