@@ -502,7 +502,7 @@ class UniswapTransaction(TransactionHelper):
 
         if first_swap:
             # transfer the input token amount from the sender to the first pool
-            logger.info("FIRST SWAP")
+            logger.debug("FIRST SWAP")
             self.ledger.transfer(
                 token=token_in.address,
                 amount=_amount_in,
@@ -512,7 +512,7 @@ class UniswapTransaction(TransactionHelper):
 
         # TODO: handle recipient address handling within router-level logic
         if last_swap:
-            logger.info("LAST SWAP")
+            logger.debug("LAST SWAP")
             if recipient in [
                 _V3_ROUTER_CONTRACT_ADDRESS_FLAG,
             ]:
@@ -686,8 +686,8 @@ class UniswapTransaction(TransactionHelper):
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
-        logger.info(f"{amount_out=}")
-        logger.info(f"{amount_in_max=}")
+        # logger.debug(f"{amount_out=}")
+        # logger.debug(f"{amount_in_max=}")
 
         try:
             final_state = pool.simulate_swap(
@@ -737,7 +737,7 @@ class UniswapTransaction(TransactionHelper):
                     -swap_input_balance,
                 )
 
-        # logger.info(f"{recipient=}")
+        # logger.debug(f"{recipient=}")
 
         if last_swap:
             if recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
@@ -781,7 +781,7 @@ class UniswapTransaction(TransactionHelper):
         return pool, final_state
 
     def _simulate_unwrap(self, wrapped_token: str):
-        logger.info(f"Unwrapping {wrapped_token}")
+        logger.debug(f"Unwrapping {wrapped_token}")
 
         wrapped_token_balance = self.ledger.token_balance(
             self.router_address, wrapped_token
@@ -951,16 +951,13 @@ class UniswapTransaction(TransactionHelper):
                 "ELEMENT_MARKET",
                 "EXECUTE_SUB_PLAN",
                 "SEAPORT_V2",
-            ]:
-                logger.debug(f"{command}: NOT IMPLEMENTED")
+            logger.debug(f"Processing Universal Router command: {command}")
+
 
             elif command == "PAY_PORTION":
                 """
                 Transfers a portion of the current token balance held by the contract to `recipient`
                 """
-
-                if not silent:
-                    logger.info(f"{func_name}: {self.hash}")
 
                 try:
                     _token, _recipient, bips = eth_abi.decode(
@@ -988,9 +985,6 @@ class UniswapTransaction(TransactionHelper):
                 """
                 This function transfers the current token balance held by the contract to `recipient`
                 """
-
-                if not silent:
-                    logger.info(f"{func_name}: {self.hash}")
 
                 try:
                     token, tx_recipient, amountMin = eth_abi.decode(
@@ -1022,9 +1016,6 @@ class UniswapTransaction(TransactionHelper):
                 Some L2s and side chains implement a `depositTo` method, so `recipient` is evaluated before adjusting the ledger balance.
                 """
 
-                if not silent:
-                    logger.info(f"{func_name}: {self.hash}")
-
                 wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
 
                 try:
@@ -1052,9 +1043,6 @@ class UniswapTransaction(TransactionHelper):
                 ETH is currently untracked by the `self.ledger` ledger, so `recipient` is unused.
                 """
 
-                if not silent:
-                    logger.info(f"{func_name}: {self.hash}")
-
                 try:
                     tx_recipient, amountMin = eth_abi.decode(
                         ["address", "uint256"], inputs
@@ -1080,9 +1068,6 @@ class UniswapTransaction(TransactionHelper):
 
                 Returns: a list of tuples representing the pool object and the final state of the pool after the swap completes.
                 """
-
-                if not silent:
-                    logger.info(f"{func_name}: {self.hash}")
 
                 try:
                     (
@@ -1170,9 +1155,6 @@ class UniswapTransaction(TransactionHelper):
                 Returns: a list of tuples representing the pool object and the final state of the pool after the swap completes.
                 """
 
-                if not silent:
-                    logger.info(f"{func_name}: {self.hash}")
-
                 try:
                     (
                         tx_recipient,
@@ -1199,9 +1181,6 @@ class UniswapTransaction(TransactionHelper):
                     tx_recipient = self.sender
 
                 _future_pool_states = []
-
-                if not silent:
-                    logger.info(f"{func_name}: {self.hash}")
 
                 try:
                     pools = get_v2_pools_from_token_path(
@@ -1269,9 +1248,6 @@ class UniswapTransaction(TransactionHelper):
 
                 Returns: a list of tuples representing the pool object and the final state of the pool after the swap completes.
                 """
-
-                if not silent:
-                    logger.info(f"{func_name}: {self.hash}")
 
                 try:
                     (
@@ -1355,9 +1331,6 @@ class UniswapTransaction(TransactionHelper):
 
                 Returns: a list of tuples representing the pool object and the final state of the pool after the swap completes.
                 """
-
-                if not silent:
-                    logger.info(f"{func_name}: {self.hash}")
 
                 try:
                     (
@@ -1491,8 +1464,7 @@ class UniswapTransaction(TransactionHelper):
 
                 # special case to handle a multicall encoded within another multicall
                 if payload_func.fn_name == "multicall":
-                    if not silent:
-                        logger.info("Unwrapping nested multicall")
+                    logger.debug("Unwrapping nested multicall")
 
                     for payload in payload_args["data"]:
                         try:
@@ -1564,8 +1536,7 @@ class UniswapTransaction(TransactionHelper):
                     "swapExactTokensForTokens",
                     "swapExactTokensForTokensSupportingFeeOnTransferTokens",
                 ):
-                    if not silent:
-                        logger.info(f"{func_name}: {self.hash}")
+                    logger.debug(f"{func_name}: {self.hash}")
 
                     try:
                         tx_amount_in = func_params["amountIn"]
@@ -1640,13 +1611,9 @@ class UniswapTransaction(TransactionHelper):
                     "swapTokensForExactTokens",
                     "swapETHForExactTokens",
                 ):
-                    if not silent:
-                        logger.info(f"{func_name}: {self.hash}")
+                    logger.debug(f"{func_name}: {self.hash}")
 
                     _future_pool_states = []
-
-                    if not silent:
-                        logger.info(f"{func_name}: {self.hash}")
 
                     tx_amount_out = func_params["amountOut"]
                     try:
@@ -1741,10 +1708,10 @@ class UniswapTransaction(TransactionHelper):
         def _process_uniswap_v3_router_transaction() -> (
             List[Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]]
         ):
+            logger.debug(f"{func_name}: {self.hash}")
+
             try:
                 if func_name == "multicall":
-                    if not silent:
-                        logger.info(f"{func_name}: {self.hash}")
                     future_pool_states.extend(
                         _process_v3_multicall(
                             params=func_params, silent=silent
@@ -1752,9 +1719,6 @@ class UniswapTransaction(TransactionHelper):
                     )
 
                 elif func_name == "exactInputSingle":
-                    if not silent:
-                        logger.info(f"{func_name}: {self.hash}")
-
                     # decode with Router ABI
                     # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
                     try:
@@ -1819,9 +1783,6 @@ class UniswapTransaction(TransactionHelper):
                     """
                     TBD
                     """
-
-                    if not silent:
-                        logger.info(f"{func_name}: {self.hash}")
 
                     # from ISwapRouter.sol - https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
                     try:
@@ -1916,9 +1877,6 @@ class UniswapTransaction(TransactionHelper):
                         )
 
                 elif func_name == "exactOutputSingle":
-                    if not silent:
-                        logger.info(f"{func_name}: {self.hash}")
-
                     # decode with Router ABI
                     # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
                     try:
@@ -1988,9 +1946,6 @@ class UniswapTransaction(TransactionHelper):
                     """
                     TBD
                     """
-
-                    if not silent:
-                        logger.info(f"{func_name}: {self.hash}")
 
                     # Router ABI
                     try:
@@ -2170,9 +2125,6 @@ class UniswapTransaction(TransactionHelper):
                     This function transfers the current token balance held by the contract to `recipient`
                     """
 
-                    if not silent:
-                        logger.info(f"{func_name}: {self.hash}")
-
                     try:
                         tx_token_address = func_params["token"]
                         tx_amount_out_minimum = func_params["amountMinimum"]
@@ -2212,13 +2164,12 @@ class UniswapTransaction(TransactionHelper):
                 Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
             ] = []
 
+            logger.debug(f"{func_name}: {self.hash}")
+
             if func_name != "execute":
                 raise ValueError(
                     f"UNHANDLED UNIVERSAL ROUTER FUNCTION: {func_name}"
                 )
-
-            if not silent:
-                logger.info(f"{func_name}: {self.hash}")
 
             try:
                 try:
