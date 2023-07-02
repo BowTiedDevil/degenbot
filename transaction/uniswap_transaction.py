@@ -824,7 +824,7 @@ class UniswapTransaction(TransactionHelper):
             Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
         ] = []
 
-        V2_FUNCTIONS = {
+        V2_ROUTER_FUNCTIONS = {
             "swapExactTokensForETH",
             "swapExactTokensForETHSupportingFeeOnTransferTokens",
             "swapExactETHForTokens",
@@ -836,7 +836,7 @@ class UniswapTransaction(TransactionHelper):
             "swapETHForExactTokens",
         }
 
-        V3_FUNCTIONS = {
+        V3_ROUTER_FUNCTIONS = {
             "exactInputSingle",
             "exactInput",
             "exactOutputSingle",
@@ -2201,11 +2201,11 @@ class UniswapTransaction(TransactionHelper):
             else:
                 return _future_pool_states
 
-        if func_name in V2_FUNCTIONS:
+        if func_name in V2_ROUTER_FUNCTIONS:
             future_pool_states.extend(
                 _process_uniswap_v2_router_transaction(),
             )
-        elif func_name in V3_FUNCTIONS:
+        elif func_name in V3_ROUTER_FUNCTIONS:
             future_pool_states.extend(
                 _process_uniswap_v3_router_transaction(),
             )
