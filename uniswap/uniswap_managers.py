@@ -1,7 +1,8 @@
 from threading import Lock
 from typing import Dict, List, Optional, Tuple, Union
-from eth_typing import ChecksumAddress
+
 from brownie import Contract, chain  # type: ignore
+from eth_typing import ChecksumAddress
 from web3 import Web3
 
 from degenbot.constants import ZERO_ADDRESS
@@ -101,7 +102,9 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 persist=False,
             )
             self._lock = Lock()
-            self._pools_by_address: Dict[str, LiquidityPool] = dict()
+            self._pools_by_address: Dict[
+                ChecksumAddress, LiquidityPool
+            ] = dict()
             self._pools_by_tokens: Dict[
                 Tuple[str, str], LiquidityPool
             ] = dict()
@@ -251,7 +254,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             )
             self._lens = TickLens()
             self._lock = Lock()
-            self._pools_by_address: Dict[str, V3LiquidityPool] = {}
+            self._pools_by_address: Dict[ChecksumAddress, V3LiquidityPool] = {}
             self._pools_by_tokens_and_fee: Dict[
                 Tuple[str, str, int], V3LiquidityPool
             ] = {}
@@ -342,7 +345,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 )
 
             try:
-                erc20token_helpers = [
+                erc20token_helpers: List[Erc20Token] = [
                     self._token_manager.get_erc20token(
                         address=token_address,
                         min_abi=True,
