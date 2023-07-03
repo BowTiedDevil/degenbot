@@ -112,6 +112,15 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._factory_address
             ]
 
+    def _add_pool(self, pool_helper: LiquidityPool):
+        with self._lock:
+            pool_key = (
+                pool_helper.token0.address,
+                pool_helper.token1.address,
+            )
+            self._pools_by_address[pool_helper.address] = pool_helper
+            self._pools_by_tokens[pool_key] = pool_helper
+
     def get_pool(
         self,
         pool_address: Optional[str] = None,
@@ -143,14 +152,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             except:
                 raise ManagerError(f"Could not build V2 pool: {pool_address=}")
 
-            with self._lock:
-                self._pools_by_address[pool_address] = pool_helper
-                self._pools_by_tokens[
-                    (
-                        pool_helper.token0.address,
-                        pool_helper.token1.address,
-                    )
-                ] = pool_helper
+            self._add_pool(pool_helper)
 
         elif token_addresses is not None:
             if len(token_addresses) != 2:
@@ -212,10 +214,8 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 raise ManagerError(
                     f"Could not build V2 pool: {pool_address=}: {e}"
                 )
-
-            with self._lock:
-                self._pools_by_address[pool_address] = pool_helper
-                self._pools_by_tokens[tokens_key] = pool_helper
+            else:
+                self._add_pool(pool_helper)
 
         return pool_helper
 
@@ -259,6 +259,17 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             self._factory_init_hash = _FACTORY_INIT_HASH[chain_id][
                 self._factory_address
             ]
+
+    def _add_pool(self, pool_helper: V3LiquidityPool):
+        with self._lock:
+            pool_key = (
+                pool_helper.token0.address,
+                pool_helper.token1.address,
+                pool_helper.fee,
+            )
+
+            self._pools_by_address[pool_helper.address] = pool_helper
+            self._pools_by_tokens_and_fee[pool_key] = pool_helper
 
     def get_pool(
         self,
@@ -322,17 +333,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                     f"Could not build V3 pool: {pool_address=}: {e}"
                 ) from e
 
-            pool_fee = pool_helper.fee
-
-            token_addresses = (
-                pool_helper.token0.address,
-                pool_helper.token1.address,
-            )
-
-            with self._lock:
-                dict_key = *token_addresses, pool_fee
-                self._pools_by_address[pool_address] = pool_helper
-                self._pools_by_tokens_and_fee[dict_key] = pool_helper
+            self._add_pool(pool_helper)
 
         elif token_addresses is not None and pool_fee is not None:
             if len(token_addresses) != 2:
@@ -402,8 +403,6 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                     f"Could not build V3 pool: {pool_address=}, {pool_fee=}"
                 )
 
-            with self._lock:
-                self._pools_by_address[pool_address] = pool_helper
-                self._pools_by_tokens_and_fee[dict_key] = pool_helper
+            self._add_pool(pool_helper)
 
         return pool_helper
