@@ -14,7 +14,7 @@ from degenbot.exceptions import (
     ZeroSwapError,
 )
 from degenbot.logging import logger
-from degenbot.manager.token_manager import Erc20TokenHelperManager
+from degenbot.manager import AllPools, Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.types import PoolHelper
 from degenbot.uniswap.abi import CAMELOT_LP_ABI, UNISWAPV2_LP_ABI
@@ -212,6 +212,8 @@ class LiquidityPool(PoolHelper):
 
         self.state: dict = {}
         self._update_pool_state()
+
+        AllPools(chain.id)[self.address] = self
 
         if not silent:
             logger.info(self.name)
