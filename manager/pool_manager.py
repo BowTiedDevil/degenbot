@@ -3,6 +3,7 @@ from typing import Dict, Union
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
+from degenbot.exceptions import PoolAlreadyExistsError
 from degenbot.types import PoolHelper
 
 # Internal state dictionary that maintains a keyed dictionary of all
@@ -51,6 +52,12 @@ class AllPools:
         pool_helper: PoolHelper,
     ):
         _pool_address = to_checksum_address(pool_address)
+
+        if self.pools.get(_pool_address):
+            raise PoolAlreadyExistsError(
+                f"Address {_pool_address} already known! Tracking {self.pools[_pool_address]}"
+            )
+
         self.pools[_pool_address] = pool_helper
 
     def __len__(self):
