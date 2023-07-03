@@ -864,6 +864,10 @@ class UniswapTransaction(TransactionHelper):
             "removeLiquidityETHWithPermitSupportingFeeOnTransferTokens",
             "removeLiquidityWithPermit",
             "sweepTokenWithFee",
+            # V3 multicall functions
+            # ref: https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/base/ApproveAndCall.sol
+            "mint",
+            "increaseLiquidity",
         }
 
         # Functions that do not affect the pool state.
