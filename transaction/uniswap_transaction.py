@@ -846,6 +846,7 @@ class UniswapTransaction(TransactionHelper):
             "sweepToken",
             "unwrapWETH9",
             "unwrapWETH9WithFee",
+            "wrapETH",
         }
 
         UNIVERSAL_ROUTER_FUNCTIONS = {
@@ -2181,6 +2182,17 @@ class UniswapTransaction(TransactionHelper):
                         )
 
                     self._simulate_sweep(tx_token_address, tx_recipient)
+
+                elif func_name == "wrapETH":
+                    _wrapped_token_amount = func_params["value"]
+                    _wrapped_token_address = _WRAPPED_NATIVE_TOKENS[
+                        self.chain_id
+                    ]
+                    self.ledger.adjust(
+                        self.router_address,
+                        _wrapped_token_address,
+                        _wrapped_token_amount,
+                    )
 
             # bugfix: prevents nested multicalls from spamming exception message
             # e.g. 'Simulation failed: Simulation failed: {error}'
