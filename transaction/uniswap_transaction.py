@@ -503,7 +503,6 @@ class UniswapTransaction(TransactionHelper):
 
         if first_swap:
             # transfer the input token amount from the sender to the first pool
-            logger.debug("FIRST SWAP")
             self.ledger.transfer(
                 token=token_in.address,
                 amount=_amount_in,
@@ -513,7 +512,6 @@ class UniswapTransaction(TransactionHelper):
 
         # TODO: handle recipient address handling within router-level logic
         if last_swap:
-            logger.debug("LAST SWAP")
             if recipient in [
                 _V3_ROUTER_CONTRACT_ADDRESS_FLAG,
             ]:
