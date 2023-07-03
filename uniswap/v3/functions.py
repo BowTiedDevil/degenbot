@@ -2,17 +2,18 @@ from itertools import cycle
 from typing import Iterable, List, Union
 
 import eth_abi
+from eth_typing import ChecksumAddress
 from web3 import Web3
 
 
-def decode_v3_path(path: bytes) -> List[Union[str, int]]:
+def decode_v3_path(path: bytes) -> List[Union[ChecksumAddress, int]]:
     """
     Decode the `path` byte string used by the Uniswap V3 Router/Router2 contracts.
     `path` is a close-packed encoding of pool addresses and fees.
     """
 
     path_pos = 0
-    decoded_path: List[Union[str, int]] = []
+    decoded_path: List[Union[ChecksumAddress, int]] = []
 
     # read alternating 20 and 3 byte chunks from the encoded path,
     # store each address (hex string) and fee (int)
@@ -42,7 +43,7 @@ def generate_v3_pool_address(
     fee: int,
     factory_address: str,
     init_hash: str,
-) -> str:
+) -> ChecksumAddress:
     """
     Generate the deterministic pool address from the token addresses and fee.
 
