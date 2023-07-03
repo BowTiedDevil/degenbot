@@ -6,7 +6,7 @@ from web3 import Web3
 
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import Erc20TokenError, ManagerError
-from degenbot.manager import Erc20TokenHelperManager
+from degenbot.manager import AllPools, Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.types import HelperManager
 from degenbot.uniswap.abi import UNISWAP_V3_FACTORY_ABI, UNISWAPV2_FACTORY_ABI
@@ -192,6 +192,13 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             ) == ZERO_ADDRESS:
                 raise ManagerError("No V2 LP available")
 
+            # check if the AllPools collection already has this pool
+            pool_helper = AllPools(chain.id).get(pool_address)
+            if pool_helper:
+                self._add_pool(pool_helper)
+                return pool_helper
+
+            # the pool is new, so build it
             try:
                 pool_helper = LiquidityPool(
                     address=pool_address,
@@ -294,7 +301,11 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 pool_helper = self._pools_by_address[pool_address]
             except KeyError:
                 pass
-            else:
+
+            # check if the collection already has this pool
+            pool_helper = AllPools(chain.id).get(pool_address)
+            if pool_helper:
+                self._add_pool(pool_helper)
                 return pool_helper
 
             try:
@@ -371,6 +382,13 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             else:
                 return pool_helper
 
+            # check if the AllPools collection already has this pool
+            pool_helper = AllPools(chain.id).get(pool_address)
+            if pool_helper:
+                self._add_pool(pool_helper)
+                return pool_helper
+
+            # the pool is new, so build it
             try:
                 pool_helper = V3LiquidityPool(
                     address=pool_address,
