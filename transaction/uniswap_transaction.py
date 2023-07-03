@@ -718,22 +718,29 @@ class UniswapTransaction(TransactionHelper):
             _amount_out,
         )
 
-        # Exact output swaps proceed in reverse order, so the last iteration will show a negative balance
-        # of the input token, which must be accounted for.
-        #
-        # Check for a balance:
-        #   - If zero, take no action
-        #   - If non-zero, adjust with the assumption the user has paid that amount with the transaction call
-        #
         if first_swap:
-            swap_input_balance = self.ledger.token_balance(
-                self.router_address, token_in.address
+            # Exact output swaps proceed in reverse order, so the last iteration will show a negative balance
+            # of the input token, which must be accounted for.
+
+            # logger.debug(f"FIRST SWAP")
+            router_input_token_balance = self.ledger.token_balance(
+                self.router_address, token_in
             )
-            if swap_input_balance:
+            # logger.debug(f"{router_input_token_balance=}")
+
+            # Check for a balance:
+            #   - If zero or positive, take no action
+            #   - If negative, adjust with the assumption the user has paid that amount with the transaction call
+            if router_input_token_balance < 0:
                 self.ledger.adjust(
                     self.router_address,
                     token_in,
-                    -swap_input_balance,
+                    _amount_in,
+                )
+
+            if amount_in_max is not None and amount_in_max < _amount_in:
+                raise TransactionError(
+                    f"Insufficient input for exact output swap! {_amount_in} {token_in} required, {amount_in_max} provided"
                 )
 
         # logger.debug(f"{recipient=}")
@@ -771,11 +778,6 @@ class UniswapTransaction(TransactionHelper):
             logger.info(f"\tprice={final_state['sqrt_price_x96']}")
             logger.info(f"\tliquidity={final_state['liquidity']}")
             logger.info(f"\ttick={final_state['tick']}")
-
-        if amount_in_max is not None and amount_in_max < _amount_in:
-            raise TransactionError(
-                f"Insufficient input for exact output swap! {_amount_in} {token_in} required, {amount_in_max} provided"
-            )
 
         return pool, final_state
 
