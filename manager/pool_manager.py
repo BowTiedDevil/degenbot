@@ -58,7 +58,4 @@ class AllPools:
 
     def get(self, pool_address: Union[ChecksumAddress, str]):
         _pool_address = to_checksum_address(pool_address)
-        try:
-            return self.pools[_pool_address]
-        except KeyError:
-            return None
+        return self.pools.get(_pool_address)
