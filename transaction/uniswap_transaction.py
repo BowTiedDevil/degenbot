@@ -880,6 +880,8 @@ class UniswapTransaction(TransactionHelper):
             "selfPermitAllowedIfNecessary",
             "selfPermitIfNecessary",
             # ---
+            # ref: https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/base/PeripheryPaymentsExtended.sol
+            "pull",
         }
 
         def _process_universal_router_command(
