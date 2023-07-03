@@ -6,7 +6,7 @@ from web3 import Web3
 
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import Erc20TokenError, ManagerError
-from degenbot.manager import AllPools, Erc20TokenHelperManager
+from degenbot.manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.types import HelperManager
 from degenbot.uniswap.abi import UNISWAP_V3_FACTORY_ABI, UNISWAPV2_FACTORY_ABI
@@ -111,7 +111,6 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             self._factory_init_hash = _FACTORY_INIT_HASH[chain_id][
                 self._factory_address
             ]
-            self.all_pools = AllPools(chain_id)
 
     def get_pool(
         self,
@@ -152,7 +151,6 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                         pool_helper.token1.address,
                     )
                 ] = pool_helper
-                self.all_pools[pool_address] = pool_helper
 
         elif token_addresses is not None:
             if len(token_addresses) != 2:
@@ -211,7 +209,6 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             with self._lock:
                 self._pools_by_address[pool_address] = pool_helper
                 self._pools_by_tokens[tokens_key] = pool_helper
-                self.all_pools[pool_address] = pool_helper
 
         return pool_helper
 
@@ -255,7 +252,6 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             self._factory_init_hash = _FACTORY_INIT_HASH[chain_id][
                 self._factory_address
             ]
-            self.all_pools = AllPools(chain_id)
 
     def get_pool(
         self,
@@ -326,7 +322,6 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 dict_key = *token_addresses, pool_fee
                 self._pools_by_address[pool_address] = pool_helper
                 self._pools_by_tokens_and_fee[dict_key] = pool_helper
-                self.all_pools[pool_address] = pool_helper
 
         elif token_addresses is not None and pool_fee is not None:
             if len(token_addresses) != 2:
@@ -392,6 +387,5 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             with self._lock:
                 self._pools_by_address[pool_address] = pool_helper
                 self._pools_by_tokens_and_fee[dict_key] = pool_helper
-                self.all_pools[pool_address] = pool_helper
 
         return pool_helper
