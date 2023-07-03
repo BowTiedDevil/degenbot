@@ -184,11 +184,9 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             )  # type: ignore [assignment]
 
             try:
-                pool_helper = self._pools_by_tokens[tokens_key]
+                return self._pools_by_tokens[tokens_key]
             except KeyError:
                 pass
-            else:
-                return pool_helper
 
             if (
                 pool_address := self._brownie_factory_contract.getPair(
@@ -312,7 +310,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             pool_address = Web3.toChecksumAddress(pool_address)
 
             try:
-                pool_helper = self._pools_by_address[pool_address]
+                return self._pools_by_address[pool_address]
             except KeyError:
                 pass
 
@@ -322,6 +320,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._add_pool(pool_helper)
                 return pool_helper
 
+            # the pool is new, so build it
             try:
                 pool_helper = V3LiquidityPool(
                     address=pool_address,
@@ -335,8 +334,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 raise ManagerError(
                     f"Could not build V3 pool: {pool_address=}: {e}"
                 ) from e
-
-            self._add_pool(pool_helper)
+            else:
+                self._add_pool(pool_helper)
 
         elif token_addresses is not None and pool_fee is not None:
             if len(token_addresses) != 2:
