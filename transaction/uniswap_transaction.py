@@ -2249,12 +2249,12 @@ class UniswapTransaction(TransactionHelper):
                 tx_inputs = func_params["inputs"]
 
                 for command, input in zip(tx_commands, tx_inputs):
-                    _future_pool_states.append(
-                        _process_universal_router_command(
-                            command,
-                            input,
-                        )
+                    result = _process_universal_router_command(
+                        command,
+                        input,
                     )
+                    if result:
+                        _future_pool_states.extend(result)
 
             # bugfix: prevents nested multicalls from spamming exception
             # message.
