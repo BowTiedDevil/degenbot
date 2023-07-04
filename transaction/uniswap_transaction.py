@@ -17,7 +17,6 @@ from degenbot.exceptions import (
     TransactionError,
 )
 from degenbot.logging import logger
-from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.types import TransactionHelper
 from degenbot.uniswap import (
