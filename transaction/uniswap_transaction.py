@@ -1,3 +1,5 @@
+# TODO: use tx_payer_is_user to simplify accounting
+
 import itertools
 from pprint import pprint
 from typing import Dict, List, Optional, Set, Tuple, Union
@@ -905,7 +907,9 @@ class UniswapTransaction(TransactionHelper):
         def _process_universal_router_command(
             command_type: int,
             inputs: bytes,
-        ) -> List[Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]]:
+        ) -> Optional[
+            List[Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]]
+        ]:
             # ref: https://docs.uniswap.org/contracts/universal-router/technical-reference
 
             UNIVERSAL_ROUTER_COMMAND_VALUES = {
@@ -1011,18 +1015,18 @@ class UniswapTransaction(TransactionHelper):
                 # TODO: refactor if ledger needs to support ETH balances
                 if _pay_portion_token_address == ZERO_ADDRESS:
                     logger.debug(f"PAY_PORTION called with Constants.ETH")
-                    return
 
-                sweep_token_balance = self.ledger.token_balance(
-                    self.router_address, _pay_portion_token_address
-                )
-                self.ledger.transfer(
-                    _pay_portion_token_address,
-                    sweep_token_balance * _pay_portion_bips // 10_000,
-                    self.router_address,
-                    _pay_portion_recipient,
-                )
-                self.to.add(Web3.toChecksumAddress(_pay_portion_recipient))
+                else:
+                    sweep_token_balance = self.ledger.token_balance(
+                        self.router_address, _pay_portion_token_address
+                    )
+                    self.ledger.transfer(
+                        _pay_portion_token_address,
+                        sweep_token_balance * _pay_portion_bips // 10_000,
+                        self.router_address,
+                        _pay_portion_recipient,
+                    )
+                    self.to.add(Web3.toChecksumAddress(_pay_portion_recipient))
 
             elif command == "SWEEP":
                 """
