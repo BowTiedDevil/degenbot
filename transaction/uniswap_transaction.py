@@ -835,7 +835,7 @@ class UniswapTransaction(TransactionHelper):
         dictionaries for all pools used by the transaction
         """
 
-        future_pool_states: List[
+        all_future_pool_states: List[
             Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
         ] = []
 
@@ -906,7 +906,7 @@ class UniswapTransaction(TransactionHelper):
         def _process_universal_router_command(
             command_type: int,
             inputs: bytes,
-        ):
+        ) -> List[Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]]:
             # ref: https://docs.uniswap.org/contracts/universal-router/technical-reference
 
             UNIVERSAL_ROUTER_COMMAND_VALUES = {
@@ -982,7 +982,7 @@ class UniswapTransaction(TransactionHelper):
             _amount_in: int
             _amount_out: int
             _pool_state: Dict
-            _future_pool_states: List[
+            _universal_router_command_future_pool_states: List[
                 Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
             ] = []
 
@@ -1202,9 +1202,9 @@ class UniswapTransaction(TransactionHelper):
                         _pool_state["amount1_delta"],
                     )
 
-                    _future_pool_states.append((pool, _pool_state))
-
-                return _future_pool_states
+                    _universal_router_command_future_pool_states.append(
+                        (pool, _pool_state)
+                    )
 
             elif command == "V2_SWAP_EXACT_OUT":
                 """
@@ -1238,8 +1238,6 @@ class UniswapTransaction(TransactionHelper):
                     tx_recipient = self.router_address
                 elif tx_recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
                     tx_recipient = self.sender
-
-                _future_pool_states = []
 
                 try:
                     pools = get_v2_pools_from_token_path(
@@ -1296,9 +1294,9 @@ class UniswapTransaction(TransactionHelper):
                         _pool_state["amount1_delta"],
                     )
 
-                    _future_pool_states.append((pool, _pool_state))
-
-                return _future_pool_states
+                    _universal_router_command_future_pool_states.append(
+                        (pool, _pool_state)
+                    )
 
             elif command == "V3_SWAP_EXACT_IN":
                 """
@@ -1379,9 +1377,9 @@ class UniswapTransaction(TransactionHelper):
                         _pool_state["amount1_delta"],
                     )
 
-                    _future_pool_states.append((v3_pool, _pool_state))
-
-                return _future_pool_states
+                    _universal_router_command_future_pool_states.append(
+                        (v3_pool, _pool_state)
+                    )
 
             elif command == "V3_SWAP_EXACT_OUT":
                 """
@@ -1468,7 +1466,10 @@ class UniswapTransaction(TransactionHelper):
                     if not last_swap:
                         # pool states are appended to `future_pool_states`
                         # so the previous swap will be in the last position
-                        _, _last_swap_state = _future_pool_states[-1]
+                        (
+                            _,
+                            _last_swap_state,
+                        ) = _universal_router_command_future_pool_states[-1]
 
                         _last_amount_in = max(
                             _last_swap_state["amount0_delta"],
@@ -1480,12 +1481,14 @@ class UniswapTransaction(TransactionHelper):
                                 f"Insufficient swap amount through requested pool {v3_pool}. Needed {_last_amount_in}, received {_amount_out}"
                             )
 
-                    _future_pool_states.append((v3_pool, _pool_state))
-
-                return _future_pool_states
+                    _universal_router_command_future_pool_states.append(
+                        (v3_pool, _pool_state)
+                    )
 
             else:
                 raise ValueError(f"Invalid command {command}")
+
+            return _universal_router_command_future_pool_states
 
         def _process_v3_multicall(
             params,
@@ -1494,7 +1497,7 @@ class UniswapTransaction(TransactionHelper):
             TBD
             """
 
-            _future_pool_states: List[
+            _v3_multicall_future_pool_states: List[
                 Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
             ] = []
 
@@ -1544,7 +1547,7 @@ class UniswapTransaction(TransactionHelper):
                             pass
 
                         try:
-                            _future_pool_states.extend(
+                            _v3_multicall_future_pool_states.extend(
                                 self._simulate(
                                     func_name=_func.fn_name,
                                     func_params=_params,
@@ -1556,7 +1559,7 @@ class UniswapTransaction(TransactionHelper):
                             ) from e
                 else:
                     try:
-                        _future_pool_states.extend(
+                        _v3_multicall_future_pool_states.extend(
                             self._simulate(
                                 func_name=payload_func.fn_name,
                                 func_params=payload_args,
@@ -1570,12 +1573,12 @@ class UniswapTransaction(TransactionHelper):
                         traceback.print_exc()
                         raise ValueError(f"Could not decode multicall: {e}")
 
-            return _future_pool_states
+            return _v3_multicall_future_pool_states
 
         def _process_uniswap_v2_router_transaction() -> (
             List[Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]]
         ):
-            _future_pool_states: List[
+            _v2_router_future_pool_states: List[
                 Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
             ] = []
             _amount_in: int
@@ -1655,9 +1658,9 @@ class UniswapTransaction(TransactionHelper):
                             pool_state["amount1_delta"],
                         )
 
-                        _future_pool_states.append((pool, pool_state))
-
-                    return _future_pool_states
+                        _v2_router_future_pool_states.append(
+                            (pool, pool_state)
+                        )
 
                 elif func_name in (
                     "swapTokensForExactETH",
@@ -1665,8 +1668,6 @@ class UniswapTransaction(TransactionHelper):
                     "swapETHForExactTokens",
                 ):
                     logger.debug(f"{func_name}: {self.hash}")
-
-                    _future_pool_states = []
 
                     tx_amount_out = func_params["amountOut"]
                     try:
@@ -1743,9 +1744,12 @@ class UniswapTransaction(TransactionHelper):
                             pool_state["amount1_delta"],
                         )
 
-                        _future_pool_states.append((pool, pool_state))
+                        _v2_router_future_pool_states.append(
+                            (pool, pool_state)
+                        )
 
-                    return _future_pool_states
+                else:
+                    raise ValueError(f"Unknown function: {func_name}!")
 
             # bugfix: prevents nested multicalls from spamming exception
             # message. e.g. 'Simulation failed: Simulation failed: {error}'
@@ -1756,18 +1760,22 @@ class UniswapTransaction(TransactionHelper):
             except DegenbotError as e:
                 raise TransactionError(f"Simulation failed: {e}") from e
             else:
-                return future_pool_states
+                return _v2_router_future_pool_states
 
         def _process_uniswap_v3_router_transaction() -> (
             List[Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]]
         ):
             logger.debug(f"{func_name}: {self.hash}")
 
+            _v3_router_future_pool_states: List[
+                Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
+            ] = []
+
             silent = self.silent
 
             try:
                 if func_name == "multicall":
-                    future_pool_states.extend(
+                    _v3_router_future_pool_states.extend(
                         _process_v3_multicall(params=func_params)
                     )
 
@@ -1824,7 +1832,7 @@ class UniswapTransaction(TransactionHelper):
                         first_swap=True,
                     )
 
-                    future_pool_states.append((v3_pool, pool_state))
+                    _v3_router_future_pool_states.append((v3_pool, pool_state))
 
                     token_out_quantity = -min(
                         pool_state["amount0_delta"],
@@ -1922,7 +1930,9 @@ class UniswapTransaction(TransactionHelper):
                             first_swap=first_swap,
                         )
 
-                        future_pool_states.append((v3_pool, pool_state))
+                        _v3_router_future_pool_states.append(
+                            (v3_pool, pool_state)
+                        )
 
                         token_out_quantity = -min(
                             pool_state["amount0_delta"],
@@ -1983,7 +1993,7 @@ class UniswapTransaction(TransactionHelper):
                         last_swap=True,
                     )
 
-                    future_pool_states.append((v3_pool, pool_state))
+                    _v3_router_future_pool_states.append((v3_pool, pool_state))
 
                     amount_deposited = max(
                         pool_state["amount0_delta"],
@@ -2105,7 +2115,10 @@ class UniswapTransaction(TransactionHelper):
                         if not last_swap:
                             # pool states are appended to `future_pool_states`
                             # so the previous swap will be in the last position
-                            _, _last_swap_state = future_pool_states[-1]
+                            (
+                                _,
+                                _last_swap_state,
+                            ) = _v3_router_future_pool_states[-1]
 
                             _last_amount_in = max(
                                 _last_swap_state["amount0_delta"],
@@ -2117,11 +2130,13 @@ class UniswapTransaction(TransactionHelper):
                                     f"Insufficient swap amount through requested pool {v3_pool}. Needed {_last_amount_in}, received {_amount_out}"
                                 )
 
-                        future_pool_states.append((v3_pool, pool_state))
+                        _v3_router_future_pool_states.append(
+                            (v3_pool, pool_state)
+                        )
 
                     # V3 Router enforces a maximum input
                     if first_swap:
-                        _, _pool_state = future_pool_states[0]
+                        _, _pool_state = _v3_router_future_pool_states[0]
 
                         amount_deposited = max(
                             _pool_state["amount0_delta"],
@@ -2221,12 +2236,12 @@ class UniswapTransaction(TransactionHelper):
             except DegenbotError as e:
                 raise TransactionError(f"Simulation failed: {e}") from e
             else:
-                return future_pool_states
+                return _v3_router_future_pool_states
 
         def _process_uniswap_universal_router_transaction() -> (
             List[Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]]
         ):
-            _future_pool_states: List[
+            _universal_router_future_pool_states: List[
                 Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]
             ] = []
 
@@ -2254,7 +2269,7 @@ class UniswapTransaction(TransactionHelper):
                         input,
                     )
                     if result:
-                        _future_pool_states.extend(result)
+                        _universal_router_future_pool_states.extend(result)
 
             # bugfix: prevents nested multicalls from spamming exception
             # message.
@@ -2266,18 +2281,18 @@ class UniswapTransaction(TransactionHelper):
             except DegenbotError as e:
                 raise TransactionError(f"Simulation failed: {e}") from e
             else:
-                return _future_pool_states
+                return _universal_router_future_pool_states
 
         if func_name in V2_ROUTER_FUNCTIONS:
-            future_pool_states.extend(
+            all_future_pool_states.extend(
                 _process_uniswap_v2_router_transaction(),
             )
         elif func_name in V3_ROUTER_FUNCTIONS:
-            future_pool_states.extend(
+            all_future_pool_states.extend(
                 _process_uniswap_v3_router_transaction(),
             )
         elif func_name in UNIVERSAL_ROUTER_FUNCTIONS:
-            future_pool_states.extend(
+            all_future_pool_states.extend(
                 _process_uniswap_universal_router_transaction(),
             )
         elif func_name in UNHANDLED_FUNCTIONS:
@@ -2293,7 +2308,7 @@ class UniswapTransaction(TransactionHelper):
             # logger.info(f"UNHANDLED: {func_name}")
             raise ValueError(f"UNHANDLED: {func_name}")
 
-        return future_pool_states
+        return all_future_pool_states
 
     def simulate(
         self,
