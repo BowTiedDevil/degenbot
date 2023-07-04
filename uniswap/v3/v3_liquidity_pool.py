@@ -1125,7 +1125,7 @@ class V3LiquidityPool(PoolHelper):
             return {
                 "amount0_delta": amount0_delta,
                 "amount1_delta": amount1_delta,
-                "liquidity": end_liquidity,
                 "sqrt_price_x96": end_sqrtprice,
+                "liquidity": end_liquidity,
                 "tick": end_tick,
             }
