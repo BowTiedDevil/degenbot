@@ -373,6 +373,8 @@ class UniswapTransaction(TransactionHelper):
         if previous_block_hash := self.func_params.get("previousBlockhash"):
             self.func_previous_block_hash = previous_block_hash.hex()
 
+        self.silent = False
+
     def _simulate_v2_swap_exact_in(
         self,
         pool: LiquidityPool,
@@ -382,11 +384,12 @@ class UniswapTransaction(TransactionHelper):
         amount_out_min: Optional[int] = None,
         first_swap: bool = False,
         last_swap: bool = False,
-        silent: bool = False,
     ) -> Tuple[LiquidityPool, Dict]:
         """
         TBD
         """
+
+        silent = self.silent
 
         if token_in not in [pool.token0, pool.token1]:
             raise ValueError(f"Token {token_in} not found in pool {pool}")
@@ -480,11 +483,12 @@ class UniswapTransaction(TransactionHelper):
         amount_in_max: Optional[int] = None,
         first_swap: bool = False,
         last_swap: bool = False,
-        silent: bool = False,
     ) -> Tuple[LiquidityPool, Dict]:
         """
         TBD
         """
+
+        silent = self.silent
 
         if token_in not in [pool.token0, pool.token1]:
             raise ValueError(f"Token {token_in} not found in pool {pool}")
@@ -565,12 +569,13 @@ class UniswapTransaction(TransactionHelper):
         amount_in: int,
         amount_out_min: Optional[int] = None,
         sqrt_price_limit_x96: Optional[int] = None,
-        silent: bool = False,
         first_swap: bool = False,
     ) -> Tuple[V3LiquidityPool, Dict]:
         """
         TBD
         """
+
+        silent = self.silent
 
         token_out_quantity: int
 
@@ -666,13 +671,14 @@ class UniswapTransaction(TransactionHelper):
         amount_in_max: Optional[int] = None,
         sqrt_price_limit_x96: Optional[int] = None,
         #
-        silent: bool = False,
         first_swap: bool = False,
         last_swap: bool = False,
     ) -> Tuple[V3LiquidityPool, Dict]:
         """
         TBD
         """
+
+        silent = self.silent
 
         token_out: Erc20Token
         _amount_in: int
@@ -746,6 +752,7 @@ class UniswapTransaction(TransactionHelper):
         # logger.debug(f"{recipient=}")
 
         if last_swap:
+            # logger.debug(f"LAST SWAP")
             if recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
                 _recipient = self.sender
             elif recipient in [
@@ -813,7 +820,6 @@ class UniswapTransaction(TransactionHelper):
         self,
         func_name: str,
         func_params: dict,
-        silent: bool = False,
     ) -> List[Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]]:
         """
         Take a Uniswap V2 / V3 transaction (specified by name and a dictionary of arguments
@@ -892,7 +898,6 @@ class UniswapTransaction(TransactionHelper):
         def _process_universal_router_command(
             command_type: int,
             inputs: bytes,
-            silent: bool,
         ):
             # ---
             # https://docs.uniswap.org/contracts/universal-router/technical-reference
@@ -1166,7 +1171,7 @@ class UniswapTransaction(TransactionHelper):
                     ]:
                         _recipient = self.router_address
 
-                    _, pool_state = self._simulate_v2_swap_exact_in(
+                    _, _pool_state = self._simulate_v2_swap_exact_in(
                         pool=pool,
                         recipient=_recipient,
                         token_in=token_in,
@@ -1176,15 +1181,14 @@ class UniswapTransaction(TransactionHelper):
                         else None,
                         first_swap=first_swap,
                         last_swap=last_swap,
-                        silent=silent,
                     )
 
                     _amount_out = -min(
-                        pool_state["amount0_delta"],
-                        pool_state["amount1_delta"],
+                        _pool_state["amount0_delta"],
+                        _pool_state["amount1_delta"],
                     )
 
-                    _future_pool_states.append((pool, pool_state))
+                    _future_pool_states.append((pool, _pool_state))
 
                 return _future_pool_states
 
@@ -1262,7 +1266,7 @@ class UniswapTransaction(TransactionHelper):
                         else pool.token1
                     )
 
-                    _, pool_state = self._simulate_v2_swap_exact_out(
+                    _, _pool_state = self._simulate_v2_swap_exact_out(
                         pool=pool,
                         recipient=_recipient,
                         token_in=_token_in,
@@ -1270,15 +1274,14 @@ class UniswapTransaction(TransactionHelper):
                         amount_in_max=_amount_in_max,
                         first_swap=first_swap,
                         last_swap=last_swap,
-                        silent=silent,
                     )
 
                     _amount_in = max(
-                        pool_state["amount0_delta"],
-                        pool_state["amount1_delta"],
+                        _pool_state["amount0_delta"],
+                        _pool_state["amount1_delta"],
                     )
 
-                    _future_pool_states.append((pool, pool_state))
+                    _future_pool_states.append((pool, _pool_state))
 
                 return _future_pool_states
 
@@ -1346,22 +1349,21 @@ class UniswapTransaction(TransactionHelper):
                     _amount_in = tx_amount_in if first_swap else _amount_out
                     _amount_out_min = tx_amount_out_min if last_swap else None
 
-                    _, pool_state = self._simulate_v3_swap_exact_in(
+                    _, _pool_state = self._simulate_v3_swap_exact_in(
                         pool=v3_pool,
                         recipient=_recipient,
                         token_in=_token_in,
                         amount_in=_amount_in,
                         amount_out_min=_amount_out_min,
-                        silent=silent,
                         first_swap=first_swap,
                     )
 
                     _amount_out = -min(
-                        pool_state["amount0_delta"],
-                        pool_state["amount1_delta"],
+                        _pool_state["amount0_delta"],
+                        _pool_state["amount1_delta"],
                     )
 
-                    _future_pool_states.append((v3_pool, pool_state))
+                    _future_pool_states.append((v3_pool, _pool_state))
 
                 return _future_pool_states
 
@@ -1429,20 +1431,19 @@ class UniswapTransaction(TransactionHelper):
                     _amount_out = tx_amount_out if last_swap else _amount_in
                     _amount_in_max = tx_amount_in_max if first_swap else None
 
-                    _, pool_state = self._simulate_v3_swap_exact_out(
+                    _, _pool_state = self._simulate_v3_swap_exact_out(
                         pool=v3_pool,
                         recipient=_recipient,
                         token_in=_token_in,
                         amount_out=_amount_out,
                         amount_in_max=_amount_in_max,
-                        silent=silent,
                         first_swap=first_swap,
                         last_swap=last_swap,
                     )
 
                     _amount_in = max(
-                        pool_state["amount0_delta"],
-                        pool_state["amount1_delta"],
+                        _pool_state["amount0_delta"],
+                        _pool_state["amount1_delta"],
                     )
 
                     # check that the output of each intermediate swap meets
@@ -1462,7 +1463,7 @@ class UniswapTransaction(TransactionHelper):
                                 f"Insufficient swap amount through requested pool {v3_pool}. Needed {_last_amount_in}, received {_amount_out}"
                             )
 
-                    _future_pool_states.append((v3_pool, pool_state))
+                    _future_pool_states.append((v3_pool, _pool_state))
 
                 return _future_pool_states
 
@@ -1471,7 +1472,6 @@ class UniswapTransaction(TransactionHelper):
 
         def _process_v3_multicall(
             params,
-            silent: bool = False,
         ) -> List[Tuple[Union[LiquidityPool, V3LiquidityPool], Dict]]:
             """
             TBD
@@ -1531,7 +1531,6 @@ class UniswapTransaction(TransactionHelper):
                                 self._simulate(
                                     func_name=_func.fn_name,
                                     func_params=_params,
-                                    silent=silent,
                                 )
                             )
                         except Exception as e:
@@ -1545,7 +1544,6 @@ class UniswapTransaction(TransactionHelper):
                             self._simulate(
                                 func_name=payload_func.fn_name,
                                 func_params=payload_args,
-                                silent=silent,
                             )
                         )
                     except TransactionError:
@@ -1634,7 +1632,6 @@ class UniswapTransaction(TransactionHelper):
                             else None,
                             first_swap=first_swap,
                             last_swap=last_swap,
-                            silent=silent,
                         )
 
                         _amount_out = -min(
@@ -1723,7 +1720,6 @@ class UniswapTransaction(TransactionHelper):
                             amount_in_max=_amount_in_max,
                             first_swap=first_swap,
                             last_swap=last_swap,
-                            silent=silent,
                         )
 
                         _amount_in = max(
@@ -1750,12 +1746,12 @@ class UniswapTransaction(TransactionHelper):
         ):
             logger.debug(f"{func_name}: {self.hash}")
 
+            silent = self.silent
+
             try:
                 if func_name == "multicall":
                     future_pool_states.extend(
-                        _process_v3_multicall(
-                            params=func_params, silent=silent
-                        )
+                        _process_v3_multicall(params=func_params)
                     )
 
                 elif func_name == "exactInputSingle":
@@ -1808,7 +1804,6 @@ class UniswapTransaction(TransactionHelper):
                         else v3_pool.token1,
                         amount_in=tx_amount_in,
                         amount_out_min=tx_amount_out_min,
-                        silent=silent,
                         first_swap=True,
                     )
 
@@ -1905,7 +1900,6 @@ class UniswapTransaction(TransactionHelper):
                             amount_out_min=tx_amount_out_minimum
                             if last_swap
                             else None,
-                            silent=silent,
                             first_swap=first_swap,
                         )
 
@@ -1966,7 +1960,6 @@ class UniswapTransaction(TransactionHelper):
                         else v3_pool.token1,
                         amount_out=tx_amount_out,
                         amount_in_max=tx_amount_in_max,
-                        silent=silent,
                         first_swap=True,
                         last_swap=True,
                     )
@@ -2074,7 +2067,6 @@ class UniswapTransaction(TransactionHelper):
                             token_in=_token_in,
                             amount_out=_amount_out,
                             amount_in_max=_amount_in_max,
-                            silent=silent,
                             first_swap=first_swap,
                             last_swap=last_swap,
                         )
@@ -2238,7 +2230,6 @@ class UniswapTransaction(TransactionHelper):
                         _process_universal_router_command(
                             command,
                             input,
-                            silent=silent,
                         )
                     )
 
@@ -2291,10 +2282,11 @@ class UniswapTransaction(TransactionHelper):
         Performs a final accounting check of addresses in `self.ledger` ledger, excluding the `msg.sender` and `recipient` addresses.
         """
 
+        self.silent = silent
+
         result = self._simulate(
             self.func_name,
             self.func_params,
-            silent,
         )
 
         if set(self.ledger._balances) - set([self.sender]) - self.to:
