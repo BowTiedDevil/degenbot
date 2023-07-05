@@ -16,7 +16,7 @@ from degenbot.exceptions import (
     ZeroSwapError,
 )
 from degenbot.logging import logger
-from degenbot.manager import Erc20TokenHelperManager
+from degenbot.manager import AllPools, Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.types import PoolHelper
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
@@ -190,6 +190,8 @@ class V3LiquidityPool(PoolHelper):
         self.state: dict = {}
         self._update_pool_state()
 
+        AllPools(chain.id)[self.address] = self
+
         if not silent:
             logger.info(self.name)
             logger.info(f"• Token 0: {self.token0}")
@@ -197,6 +199,9 @@ class V3LiquidityPool(PoolHelper):
             logger.info(f"• Liquidity: {self.liquidity}")
             logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
             logger.info(f"• Tick: {self.tick}")
+
+    def __repr__(self):
+        return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self.fee}"
 
     # Some objects cannot be pickled, so set those references to None and return the state
     def __getstate__(self):
@@ -1120,7 +1125,7 @@ class V3LiquidityPool(PoolHelper):
             return {
                 "amount0_delta": amount0_delta,
                 "amount1_delta": amount1_delta,
-                "liquidity": end_liquidity,
                 "sqrt_price_x96": end_sqrtprice,
+                "liquidity": end_liquidity,
                 "tick": end_tick,
             }

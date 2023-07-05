@@ -1,10 +1,32 @@
-from typing import Dict
+from typing import Dict, Union
+
+from eth_typing import ChecksumAddress
+from web3 import Web3
+
+from degenbot.exceptions import PoolAlreadyExistsError
 from degenbot.types import PoolHelper
 
+# Internal state dictionary that maintains a keyed dictionary of all
+# pool helper objects. The top level dict is keyed by chain ID, and
+# sub-dicts are keyed by the checksummed pool address.
 _all_pools: Dict[
     int,
-    Dict[str, PoolHelper],
+    Dict[ChecksumAddress, PoolHelper],
 ] = {}
+
+
+def to_checksum_address(address: Union[ChecksumAddress, str]):
+    """
+    Return the checksummed version of an address.
+    """
+    if type(address) == ChecksumAddress:
+        return address
+    elif isinstance(address, str):
+        return Web3.toChecksumAddress(address)
+    else:
+        raise ValueError(
+            f"Unexpected input. Expected str or ChecksumAddress, got {type(address)}"
+        )
 
 
 class AllPools:
@@ -16,24 +38,31 @@ class AllPools:
         finally:
             self.pools = _all_pools[chain_id]
 
-    def __delitem__(self, pool_address: str):
-        del self.pools[pool_address]
+    def __delitem__(self, pool_address: Union[ChecksumAddress, str]):
+        _pool_address = to_checksum_address(pool_address)
+        del self.pools[_pool_address]
 
-    def __getitem__(self, pool_address: str):
-        return self.pools[pool_address]
+    def __getitem__(self, pool_address: Union[ChecksumAddress, str]):
+        _pool_address = to_checksum_address(pool_address)
+        return self.pools[_pool_address]
 
     def __setitem__(
         self,
-        pool_address: str,
+        pool_address: Union[ChecksumAddress, str],
         pool_helper: PoolHelper,
     ):
-        self.pools[pool_address] = pool_helper
+        _pool_address = to_checksum_address(pool_address)
+
+        if self.pools.get(_pool_address):
+            raise PoolAlreadyExistsError(
+                f"Address {_pool_address} already known! Tracking {self.pools[_pool_address]}"
+            )
+
+        self.pools[_pool_address] = pool_helper
 
     def __len__(self):
         return len(self.pools)
 
-    def get(self, pool_address: str):
-        try:
-            return self.pools[pool_address]
-        except KeyError:
-            return None
+    def get(self, pool_address: Union[ChecksumAddress, str]):
+        _pool_address = to_checksum_address(pool_address)
+        return self.pools.get(_pool_address)

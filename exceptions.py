@@ -111,3 +111,11 @@ class LedgerError(TransactionError):
     """
     Thrown when the ledger does not align with the expected state
     """
+
+
+# 2nd level exceptions for AllPools class
+class PoolAlreadyExistsError(ManagerError):
+    """
+    Thrown by the AllPools class if a caller attempts to store a pool helper
+    at an already-known address.
+    """
