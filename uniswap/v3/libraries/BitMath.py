@@ -2,7 +2,6 @@ from degenbot.exceptions import EVMRevertError
 
 
 def mostSignificantBit(x: int) -> int:
-
     if x <= 0:
         raise EVMRevertError("FAIL: x > 0")
     # assert x > 0, "FAIL: x > 0"
@@ -44,7 +43,6 @@ def mostSignificantBit(x: int) -> int:
 
 
 def leastSignificantBit(x: int) -> int:
-
     if x <= 0:
         raise EVMRevertError("FAIL: x > 0")
     # assert x > 0, "FAIL: x > 0"

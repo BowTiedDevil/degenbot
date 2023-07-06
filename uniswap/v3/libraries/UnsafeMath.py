@@ -1,4 +1,4 @@
-from . import YulOperations as yul
+import degenbot.uniswap.v3.libraries.YulOperations as yul
 
 
 def divRoundingUp(x, y):

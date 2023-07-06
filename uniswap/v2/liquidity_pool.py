@@ -17,7 +17,7 @@ from degenbot.logging import logger
 from degenbot.manager import AllPools, Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.types import PoolHelper
-from degenbot.uniswap.abi import CAMELOT_LP_ABI, UNISWAPV2_LP_ABI
+from degenbot.uniswap.abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
 from degenbot.uniswap.v2.functions import generate_v2_pool_address
 from degenbot.uniswap.v2.router import Router
 
@@ -122,7 +122,7 @@ class LiquidityPool(PoolHelper):
         self.update_block = chain.height
 
         if abi is None:
-            abi = UNISWAPV2_LP_ABI
+            abi = UNISWAP_V2_POOL_ABI
 
         self._brownie_contract = Contract.from_abi(
             name=f"{self.address}",
@@ -866,7 +866,7 @@ class CamelotLiquidityPool(LiquidityPool):
         unload_brownie_contract_after_init: bool = False,
     ) -> None:
         if abi is None:
-            abi = CAMELOT_LP_ABI
+            abi = CAMELOT_POOL_ABI
 
         address = Web3.toChecksumAddress(address)
 

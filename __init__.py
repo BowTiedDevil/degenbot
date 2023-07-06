@@ -8,26 +8,25 @@ from degenbot.arbitrage import (
 )
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.logging import logger
-from degenbot.manager import AllPools, AllTokens
 
-# not ready for release
-# from degenbot.manager import ArbitrageHelperManager
-from degenbot.manager import Erc20TokenHelperManager
+# from degenbot.manager import ArbitrageHelperManager # not ready for release
+from degenbot.manager import AllPools, AllTokens, Erc20TokenHelperManager
+from degenbot.token import (
+    MIN_ERC20_ABI as ERC20,
+)  # backward compatibility for old scripts
 from degenbot.token import Erc20Token
 from degenbot.transaction import UniswapTransaction
 from degenbot.uniswap.abi import (
-    # backward compatibility for old scripts
-    UNISWAPV2_FACTORY_ABI,
-    UNISWAPV2_LP_ABI,
-    UNISWAPV2_ROUTER,
-    UNISWAPV2_ROUTER_ABI,
-)
+    UNISWAP_V2_POOL_ABI as UNISWAPV2_LP_ABI,
+)  # backward compatibility for old scripts
 from degenbot.uniswap.uniswap_managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )
-from degenbot.uniswap.v2 import CamelotLiquidityPool, LiquidityPool
-from degenbot.uniswap.v2.multi_liquidity_pool import MultiLiquidityPool
+from degenbot.uniswap.v2 import (
+    CamelotLiquidityPool,
+    LiquidityPool,
+    MultiLiquidityPool,
+)
 from degenbot.uniswap.v2.router import Router
-from degenbot.uniswap.v3.tick_lens import TickLens
-from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
+from degenbot.uniswap.v3 import TickLens, V3LiquidityPool

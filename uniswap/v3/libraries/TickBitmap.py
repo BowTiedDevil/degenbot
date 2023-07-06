@@ -3,12 +3,13 @@ from typing import Optional, Tuple
 
 from degenbot.exceptions import (
     BitmapWordUnavailableError,
+    EVMRevertError,
     MissingTickWordError,
 )
 from degenbot.logging import logger
-
-from . import BitMath
-from .Helpers import *
+from degenbot.uniswap.v3.libraries import BitMath
+from degenbot.uniswap.v3.libraries.constants import MAX_UINT8
+from degenbot.uniswap.v3.libraries.functions import int16, int24, uint8
 
 
 def flipTick(

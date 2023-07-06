@@ -1,4 +1,3 @@
-from abc import ABC
 from typing import Optional
 
 from brownie import Contract  # type: ignore
@@ -9,7 +8,7 @@ from degenbot.uniswap.abi import UNISWAP_V3_TICKLENS_ABI
 _MAINNET_ADDRESS = "0xbfd8137f7d1516D3ea5cA83523914859ec47F573"
 
 
-class TickLens(ABC):
+class TickLens:
     def __init__(
         self,
         address: Optional[str] = None,

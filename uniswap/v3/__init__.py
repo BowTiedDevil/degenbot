@@ -1,6 +1,6 @@
 import degenbot.uniswap.abi as abi  # alias for older scripts that may be floating around
-
-from . import functions, libraries
-from .snapshot import V3LiquiditySnapshot
-from .tick_lens import TickLens
-from .v3_liquidity_pool import V3LiquidityPool
+import degenbot.uniswap.v3.functions
+import degenbot.uniswap.v3.libraries
+from degenbot.uniswap.v3.snapshot import LiquidityEvent, V3LiquiditySnapshot
+from degenbot.uniswap.v3.tick_lens import TickLens
+from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool

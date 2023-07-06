@@ -1,7 +1,7 @@
 from typing import Tuple
 
-from . import FullMath, SqrtPriceMath
-from .Helpers import uint256
+from degenbot.uniswap.v3.libraries import FullMath, SqrtPriceMath
+from degenbot.uniswap.v3.libraries.functions import uint256
 
 
 def computeSwapStep(
@@ -11,7 +11,6 @@ def computeSwapStep(
     amountRemaining: int,
     feePips: int,
 ) -> Tuple[int, int, int, int]:
-
     zeroForOne: bool = sqrtRatioCurrentX96 >= sqrtRatioTargetX96
     exactIn: bool = amountRemaining >= 0
 

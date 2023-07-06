@@ -10,7 +10,7 @@ from degenbot.exceptions import Erc20TokenError, ManagerError
 from degenbot.manager import AllPools, Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.types import HelperManager
-from degenbot.uniswap.abi import UNISWAP_V3_FACTORY_ABI, UNISWAPV2_FACTORY_ABI
+from degenbot.uniswap.abi import UNISWAP_V3_FACTORY_ABI, UNISWAP_V2_FACTORY_ABI
 from degenbot.uniswap.v2 import LiquidityPool
 from degenbot.uniswap.v3 import TickLens, V3LiquidityPool
 from degenbot.uniswap.v3.functions import generate_v3_pool_address
@@ -98,7 +98,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             self._brownie_factory_contract = Contract.from_abi(
                 name="Uniswap V2: Factory",
                 address=factory_address,
-                abi=UNISWAPV2_FACTORY_ABI,
+                abi=UNISWAP_V2_FACTORY_ABI,
                 persist=False,
             )
             self._lock = Lock()

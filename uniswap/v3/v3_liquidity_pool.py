@@ -22,14 +22,13 @@ from degenbot.types import PoolHelper
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
 from degenbot.uniswap.v3.functions import generate_v3_pool_address
 from degenbot.uniswap.v3.libraries import (
-    MAX_INT16,
-    MIN_INT16,
     LiquidityMath,
     SwapMath,
     TickBitmap,
     TickMath,
-    to_int256,
 )
+from degenbot.uniswap.v3.libraries.constants import MAX_INT16, MIN_INT16
+from degenbot.uniswap.v3.libraries.functions import to_int256
 from degenbot.uniswap.v3.tick_lens import TickLens
 
 
