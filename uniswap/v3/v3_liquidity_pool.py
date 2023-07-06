@@ -1,3 +1,4 @@
+import dataclasses
 from decimal import Decimal
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -407,6 +408,29 @@ class V3LiquidityPool(PoolHelper):
         swap amounts, ticks crossed, liquidity changes at various ticks, etc.
         """
 
+        @dataclasses.dataclass(slots=True)
+        class SwapCache:
+            liquidityStart: int
+            tickCumulative: int
+
+        @dataclasses.dataclass(slots=True)
+        class SwapState:
+            amountSpecifiedRemaining: int
+            amountCalculated: int
+            sqrtPriceX96: int
+            tick: int
+            liquidity: int
+
+        @dataclasses.dataclass(slots=True)
+        class StepComputations:
+            sqrtPriceStartX96: int = 0
+            tickNext: int = 0
+            initialized: bool = False
+            sqrtPriceNextX96: int = 0
+            amountIn: int = 0
+            amountOut: int = 0
+            feeAmount: int = 0
+
         if amount_specified == 0:
             raise EVMRevertError("AS")
 
@@ -434,45 +458,45 @@ class V3LiquidityPool(PoolHelper):
         ):
             raise EVMRevertError(f"SPL")
 
-        cache = {
-            "liquidityStart": liquidity,
-            "tickCumulative": 0,
+        cache = SwapCache(
+            liquidityStart=liquidity,
+            tickCumulative=0,
             # ignored attributes:
             #   - blockTimestamp
             #   - feeProtocol
             #   - secondsPerLiquidityCumulativeX128
             #   - computedLatestObservation
-        }
+        )
 
         exactInput: bool = amount_specified > 0
 
-        state = {
-            "amountSpecifiedRemaining": amount_specified,
-            "amountCalculated": 0,
-            "sqrtPriceX96": sqrt_price_x96,
-            "tick": tick,
-            "liquidity": cache["liquidityStart"],
+        state = SwapState(
+            amountSpecifiedRemaining=amount_specified,
+            amountCalculated=0,
+            sqrtPriceX96=sqrt_price_x96,
+            tick=tick,
+            liquidity=cache.liquidityStart,
             # ignored attributes:
             #   - feeGrowthGlobalX128
             #   - protocolFee
-        }
+        )
 
         while (
-            state["amountSpecifiedRemaining"] != 0
-            and state["sqrtPriceX96"] != sqrt_price_limit_x96
+            state.amountSpecifiedRemaining != 0
+            and state.sqrtPriceX96 != sqrt_price_limit_x96
         ):
-            step = {}
+            step = StepComputations()
 
-            step["sqrtPriceStartX96"] = state["sqrtPriceX96"]
+            step.sqrtPriceStartX96 = state.sqrtPriceX96
 
             while True:
                 try:
                     (
-                        step["tickNext"],
-                        step["initialized"],
+                        step.tickNext,
+                        step.initialized,
                     ) = TickBitmap.nextInitializedTickWithinOneWord(
                         self.tick_bitmap,
-                        state["tick"],
+                        state.tick,
                         self.tick_spacing,
                         zeroForOne,
                     )
@@ -499,7 +523,7 @@ class V3LiquidityPool(PoolHelper):
                     # BUGFIX: previously called position directly, which implies tickSpacing=1,
                     # so the call returned an inaccurate word and short-circuited the optimization
                     tick_next_word, _ = self._get_tick_bitmap_position(
-                        step["tickNext"]
+                        step.tickNext
                     )
 
                     if (
@@ -507,7 +531,7 @@ class V3LiquidityPool(PoolHelper):
                         and tick_next_word not in self.tick_bitmap
                     ):
                         logger.debug(
-                            f'tickNext={step["tickNext"]} out of range! Fetching word={tick_next_word}'
+                            f"tickNext={step.tickNext} out of range! Fetching word={tick_next_word}"
                             f"\n{self.name}"
                         )
                         self._update_tick_data_at_word(
@@ -517,62 +541,57 @@ class V3LiquidityPool(PoolHelper):
                     break
 
             # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
-            if step["tickNext"] < TickMath.MIN_TICK:
-                step["tickNext"] = TickMath.MIN_TICK
-            elif step["tickNext"] > TickMath.MAX_TICK:
-                step["tickNext"] = TickMath.MAX_TICK
+            if step.tickNext < TickMath.MIN_TICK:
+                step.tickNext = TickMath.MIN_TICK
+            elif step.tickNext > TickMath.MAX_TICK:
+                step.tickNext = TickMath.MAX_TICK
 
             # get the price for the next tick
-            step["sqrtPriceNextX96"] = TickMath.getSqrtRatioAtTick(
-                step["tickNext"]
-            )
+            step.sqrtPriceNextX96 = TickMath.getSqrtRatioAtTick(step.tickNext)
 
             # compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
             (
-                state["sqrtPriceX96"],
-                step["amountIn"],
-                step["amountOut"],
-                step["feeAmount"],
+                state.sqrtPriceX96,
+                step.amountIn,
+                step.amountOut,
+                step.feeAmount,
             ) = SwapMath.computeSwapStep(
-                state["sqrtPriceX96"],
+                state.sqrtPriceX96,
                 sqrt_price_limit_x96
                 if (
-                    step["sqrtPriceNextX96"] < sqrt_price_limit_x96
+                    step.sqrtPriceNextX96 < sqrt_price_limit_x96
                     if zeroForOne
-                    else step["sqrtPriceNextX96"] > sqrt_price_limit_x96
+                    else step.sqrtPriceNextX96 > sqrt_price_limit_x96
                 )
-                else step["sqrtPriceNextX96"],
-                state["liquidity"],
-                state["amountSpecifiedRemaining"],
+                else step.sqrtPriceNextX96,
+                state.liquidity,
+                state.amountSpecifiedRemaining,
                 self.fee,
             )
 
             if exactInput:
-                state["amountSpecifiedRemaining"] -= to_int256(
-                    step["amountIn"] + step["feeAmount"]
+                state.amountSpecifiedRemaining -= to_int256(
+                    step.amountIn + step.feeAmount
                 )
-                state["amountCalculated"] = to_int256(
-                    state["amountCalculated"] - step["amountOut"]
+                state.amountCalculated = to_int256(
+                    state.amountCalculated - step.amountOut
                 )
             else:
-                state["amountSpecifiedRemaining"] += to_int256(
-                    step["amountOut"]
-                )
-                state["amountCalculated"] = to_int256(
-                    state["amountCalculated"]
-                    + step["amountIn"]
-                    + step["feeAmount"]
+                state.amountSpecifiedRemaining += to_int256(step.amountOut)
+                state.amountCalculated = to_int256(
+                    state.amountCalculated + step.amountIn + step.feeAmount
                 )
 
             # shift tick if we reached the next price
-            if state["sqrtPriceX96"] == step["sqrtPriceNextX96"]:
+            if state.sqrtPriceX96 == step.sqrtPriceNextX96:
                 # if the tick is initialized, run the tick transition
-                if step["initialized"]:
+                if step.initialized:
                     try:
-                        liquidityNet = self.tick_data[step["tickNext"]][
+                        tick_next = step.tickNext
+                        liquidityNet = self.tick_data[tick_next][
                             "liquidityNet"
                         ]
-                        liquidityGross = self.tick_data[step["tickNext"]][
+                        liquidityGross = self.tick_data[tick_next][
                             "liquidityGross"
                         ]
                     except KeyError:
@@ -583,38 +602,34 @@ class V3LiquidityPool(PoolHelper):
                     if zeroForOne:
                         liquidityNet = -liquidityNet
 
-                    state["liquidity"] = LiquidityMath.addDelta(
-                        state["liquidity"], liquidityNet
+                    state.liquidity = LiquidityMath.addDelta(
+                        state.liquidity, liquidityNet
                     )
 
-                state["tick"] = (
-                    step["tickNext"] - 1 if zeroForOne else step["tickNext"]
-                )
+                state.tick = step.tickNext - 1 if zeroForOne else step.tickNext
 
-            elif state["sqrtPriceX96"] != step["sqrtPriceStartX96"]:
+            elif state.sqrtPriceX96 != step.sqrtPriceStartX96:
                 # recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
-                state["tick"] = TickMath.getTickAtSqrtRatio(
-                    state["sqrtPriceX96"]
-                )
+                state.tick = TickMath.getTickAtSqrtRatio(state.sqrtPriceX96)
 
         amount0, amount1 = (
             (
-                amount_specified - state["amountSpecifiedRemaining"],
-                state["amountCalculated"],
+                amount_specified - state.amountSpecifiedRemaining,
+                state.amountCalculated,
             )
             if zeroForOne == exactInput
             else (
-                state["amountCalculated"],
-                amount_specified - state["amountSpecifiedRemaining"],
+                state.amountCalculated,
+                amount_specified - state.amountSpecifiedRemaining,
             )
         )
 
         return (
             amount0,
             amount1,
-            state["sqrtPriceX96"],
-            state["liquidity"],
-            state["tick"],
+            state.sqrtPriceX96,
+            state.liquidity,
+            state.tick,
         )
 
     def auto_update(
