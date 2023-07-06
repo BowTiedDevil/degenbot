@@ -7,6 +7,7 @@ from degenbot.arbitrage import (
     UniswapLpCycle,
 )
 from degenbot.chainlink import ChainlinkPriceContract
+from degenbot.functions import next_base_fee
 from degenbot.logging import logger
 
 # from degenbot.manager import ArbitrageHelperManager # not ready for release
