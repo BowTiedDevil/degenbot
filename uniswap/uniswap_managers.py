@@ -243,14 +243,14 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         if self.__dict__ == {}:
             # initialize internal attributes
             self.chain_id = chain_id
-            self._factory_address = factory_address
+            self._factory_address = Web3.toChecksumAddress(factory_address)
             self._brownie_factory_contract = Contract.from_abi(
                 name="Uniswap V3: Factory",
                 address=factory_address,
                 abi=UNISWAP_V3_FACTORY_ABI,
                 persist=False,
             )
-            self._lens = TickLens()
+            self._lens = TickLens(self._factory_address)
             self._lock = Lock()
             self._pools_by_address: Dict[ChecksumAddress, V3LiquidityPool] = {}
             self._pools_by_tokens_and_fee: Dict[

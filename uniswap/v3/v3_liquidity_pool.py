@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from warnings import warn
 
 from brownie import Contract, chain, multicall, network  # type:ignore
+from eth_typing import ChecksumAddress
 from web3 import Web3
 
 from degenbot.exceptions import (
@@ -33,6 +34,11 @@ from degenbot.uniswap.v3.tick_lens import TickLens
 
 
 class V3LiquidityPool(PoolHelper):
+    # Holds a reference to a TickLens contract object. This is a singleton
+    # contract so there is no need to create separate references for each pool.
+    # Dict is keyed by a tuple of chain ID and factory address
+    _lens_contracts: Dict[Tuple[int, ChecksumAddress], TickLens] = dict()
+
     uniswap_version = 3
 
     _TICKSPACING_BY_FEE = {
@@ -90,7 +96,12 @@ class V3LiquidityPool(PoolHelper):
         if lens:
             self.lens = lens
         else:
-            self.lens = TickLens()
+            # Use the singleton TickLens helper if available
+            try:
+                self.lens = self._lens_contracts[(chain.id, self.factory)]
+            except KeyError:
+                self.lens = TickLens(factory_address=self.factory)
+                self._lens_contracts[(chain.id, self.factory)] = self.lens
 
         token0_address: str = self._brownie_contract.token0()
         token1_address: str = self._brownie_contract.token1()
