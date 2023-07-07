@@ -16,8 +16,10 @@ from degenbot.logging import logger
 from degenbot.token import Erc20Token
 from degenbot.types import ArbitrageHelper
 from degenbot.uniswap.v2 import CamelotLiquidityPool, LiquidityPool
+from degenbot.uniswap.v2.liquidity_pool import UniswapV2PoolState
 from degenbot.uniswap.v3 import V3LiquidityPool
 from degenbot.uniswap.v3.libraries import TickMath
+from degenbot.uniswap.v3.v3_liquidity_pool import UniswapV3PoolState
 
 
 class UniswapLpCycle(ArbitrageHelper):
@@ -86,7 +88,15 @@ class UniswapLpCycle(ArbitrageHelper):
 
         self.name = " -> ".join([pool.name for pool in self.swap_pools])
 
-        self.pool_states = {pool.address: None for pool in self.swap_pools}
+        self.pool_states: Dict[
+            ChecksumAddress,
+            Optional[
+                Union[
+                    UniswapV2PoolState,
+                    UniswapV3PoolState,
+                ]
+            ],
+        ] = {pool.address: None for pool in self.swap_pools}
 
         self.best: dict = {
             "input_token": self.input_token,
@@ -210,9 +220,9 @@ class UniswapLpCycle(ArbitrageHelper):
 
         return pools_amounts_out
 
-    def _update_pool_states(self):
+    def _update_pool_states(self) -> None:
         """
-        Internal method to update the `self.pool_states` state tracking dict
+        Update `self.pool_states` by retrieving `pool.state` from all helpers in `self.swap_pools`
         """
         self.pool_states = {
             pool.address: pool.state for pool in self.swap_pools

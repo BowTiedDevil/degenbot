@@ -8,6 +8,7 @@ from brownie import Contract, chain, multicall, network  # type:ignore
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
+from degenbot.constants import MAX_INT16, MIN_INT16
 from degenbot.exceptions import (
     ArbitrageError,
     BitmapWordUnavailableError,
@@ -29,9 +30,16 @@ from degenbot.uniswap.v3.libraries import (
     TickBitmap,
     TickMath,
 )
-from degenbot.uniswap.v3.libraries.constants import MAX_INT16, MIN_INT16
 from degenbot.uniswap.v3.libraries.functions import to_int256
 from degenbot.uniswap.v3.tick_lens import TickLens
+
+
+@dataclasses.dataclass(slots=True)
+class UniswapV3PoolState:
+    last_liquidity_update: int
+    liquidity: int
+    sqrt_price_x96: int
+    tick: int
 
 
 class V3LiquidityPool(PoolHelper):
@@ -198,8 +206,12 @@ class V3LiquidityPool(PoolHelper):
                 block_number=self.update_block,
             )
 
-        self.state: dict = {}
-        self._update_pool_state()
+        self.state = UniswapV3PoolState(
+            last_liquidity_update=self.liquidity_update_block,
+            liquidity=self.liquidity,
+            sqrt_price_x96=self.sqrt_price_x96,
+            tick=self.tick,
+        )
 
         AllPools(chain.id)[self.address] = self
 
@@ -248,12 +260,12 @@ class V3LiquidityPool(PoolHelper):
         return TickBitmap.position(int(Decimal(tick) // self.tick_spacing))
 
     def _update_pool_state(self) -> None:
-        self.state = {
-            "last_liquidity_update": self.liquidity_update_block,
-            "liquidity": self.liquidity,
-            "sqrt_price_x96": self.sqrt_price_x96,
-            "tick": self.tick,
-        }
+        self.state = UniswapV3PoolState(
+            last_liquidity_update=self.liquidity_update_block,
+            liquidity=self.liquidity,
+            sqrt_price_x96=self.sqrt_price_x96,
+            tick=self.tick,
+        )
 
     def _update_tick_data_at_word(
         self,
@@ -636,7 +648,7 @@ class V3LiquidityPool(PoolHelper):
         self,
         silent: bool = True,
         block_number: Optional[int] = None,
-    ) -> Tuple[bool, dict]:
+    ) -> Tuple[bool, UniswapV3PoolState]:
         """
         Retrieves the current slot0 and liquidity values from the LP, stores any that have changed,
         and returns a tuple with a status boolean indicating whether any update was found,

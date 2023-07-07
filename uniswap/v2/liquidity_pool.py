@@ -1,3 +1,4 @@
+import dataclasses
 from decimal import Decimal
 from fractions import Fraction
 from typing import List, Optional, Union
@@ -20,6 +21,12 @@ from degenbot.types import PoolHelper
 from degenbot.uniswap.abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
 from degenbot.uniswap.v2.functions import generate_v2_pool_address
 from degenbot.uniswap.v2.router import Router
+
+
+@dataclasses.dataclass(slots=True)
+class UniswapV2PoolState:
+    reserves_token0: int
+    reserves_token1: int
 
 
 class LiquidityPool(PoolHelper):
@@ -210,8 +217,10 @@ class LiquidityPool(PoolHelper):
         ):
             self._brownie_contract = None
 
-        self.state: dict = {}
-        self._update_pool_state()
+        self.state = UniswapV2PoolState(
+            reserves_token0=self.reserves_token0,
+            reserves_token1=self.reserves_token1,
+        )
 
         AllPools(chain.id)[self.address] = self
 
@@ -244,10 +253,10 @@ class LiquidityPool(PoolHelper):
         return self.name
 
     def _update_pool_state(self):
-        self.state = {
-            "reserves_token0": self.reserves_token0,
-            "reserves_token1": self.reserves_token1,
-        }
+        self.state = UniswapV2PoolState(
+            reserves_token0=self.reserves_token0,
+            reserves_token1=self.reserves_token1,
+        )
 
     def calculate_tokens_in_from_ratio_out(self) -> None:
         """
