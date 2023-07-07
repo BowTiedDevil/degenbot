@@ -179,13 +179,13 @@ class V3LiquidityPool(PoolHelper):
             self._update_method = update_method
         self.extra_words = extra_words
 
-        # default to a sparse bitmap
-        self.tick_bitmap = {"sparse": True}
+        # default to an empty, sparse bitmap
+        self.tick_bitmap = {}
+        self.sparse_bitmap = True
 
         if tick_bitmap is not None:
-            self.tick_bitmap.update(tick_bitmap)
-            # if a snapshot was provided, assume it is complete (sparse=False)
-            self.tick_bitmap["sparse"] = False
+            # if a snapshot was provided, assume it is complete
+            self.sparse_bitmap = False
 
         if tick_data is not None:
             self.tick_data = tick_data
@@ -502,7 +502,7 @@ class V3LiquidityPool(PoolHelper):
                     )
                 except BitmapWordUnavailableError as e:
                     missing_word = e.args[-1]
-                    if self.tick_bitmap["sparse"]:
+                    if self.sparse_bitmap:
                         logger.debug(
                             f"(swap) {self.name} fetching word {missing_word}"
                         )
@@ -511,7 +511,7 @@ class V3LiquidityPool(PoolHelper):
                             # single_word=True,
                         )
                     else:
-                        self.tick_bitmap[missing_word] = {
+                        # bitmap is complete, so mark the word as empty
                             "bitmap": 0,
                             "block": None,
                         }
@@ -527,7 +527,7 @@ class V3LiquidityPool(PoolHelper):
                     )
 
                     if (
-                        self.tick_bitmap["sparse"]
+                        self.sparse_bitmap
                         and tick_next_word not in self.tick_bitmap
                     ):
                         logger.debug(
@@ -877,8 +877,8 @@ class V3LiquidityPool(PoolHelper):
         Uses a lock to guard state-modifying methods that might cause race conditions when used with threads.
         """
 
-        # if we have supplied a full snapshot during loading, disable the fetching mechanism
-        if not self.tick_bitmap["sparse"]:
+        # Disable the fetch mechanism if the bitmap is complete
+        if not self.sparse_bitmap:
             fetch_missing = False
 
         if not (
