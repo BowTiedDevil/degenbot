@@ -1,0 +1,11 @@
+cython
+eth-brownie
+eth-abi
+requests
+web3
+websockets
+matplotlib
+networkx
+scipy
+titanoboa
+vyper
