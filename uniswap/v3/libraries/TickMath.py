@@ -1,4 +1,5 @@
 import degenbot.uniswap.v3.libraries.YulOperations as yul
+from degenbot.constants import MAX_UINT256
 from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3.libraries.functions import (
     int24,
@@ -64,7 +65,7 @@ def getSqrtRatioAtTick(tick: int) -> int:
         ratio = (ratio * 0x48A170391F7DC42444E8FA2) >> 128
 
     if tick > 0:
-        ratio = (2**256 - 1) // ratio
+        ratio = (MAX_UINT256) // ratio
 
     # this divides by 1<<32 rounding up to go from a Q128.128 to a Q128.96
     # we then downcast because we know the result always fits within 160 bits due to our tick input constraint

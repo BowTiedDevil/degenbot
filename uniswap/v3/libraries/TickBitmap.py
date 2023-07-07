@@ -1,6 +1,7 @@
 from decimal import Decimal
 from typing import Optional, Tuple
 
+from degenbot.constants import MAX_UINT8
 from degenbot.exceptions import (
     BitmapWordUnavailableError,
     EVMRevertError,
@@ -8,7 +9,6 @@ from degenbot.exceptions import (
 )
 from degenbot.logging import logger
 from degenbot.uniswap.v3.libraries import BitMath
-from degenbot.uniswap.v3.libraries.constants import MAX_UINT8
 from degenbot.uniswap.v3.libraries.functions import int16, int24, uint8
 
 
