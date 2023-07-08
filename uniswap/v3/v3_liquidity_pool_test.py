@@ -4,8 +4,8 @@ from degenbot import Erc20Token
 from degenbot.exceptions import LiquidityPoolError
 from degenbot.uniswap.v3.v3_liquidity_pool import (
     UniswapV3BitmapAtWord,
-    V3LiquidityPool,
     UniswapV3LiquidityAtTick,
+    V3LiquidityPool,
 )
 
 
