@@ -1,8 +1,7 @@
 import dataclasses
 from decimal import Decimal
 from threading import Lock
-from typing import Any, Dict, List, Optional, Tuple, Union
-from warnings import warn
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from brownie import Contract, chain, multicall, network  # type:ignore
 from eth_typing import ChecksumAddress
@@ -915,6 +914,9 @@ class V3LiquidityPool(PoolHelper):
             raise ValueError(
                 "At least one of (liquidity, sqrt_price_x96, tick, liquidity_change) must be provided"
             )
+
+        if TYPE_CHECKING:
+            assert isinstance(update, UniswapV3PoolExternalUpdate)
 
         # if block_number was not provided, pull from Brownie
         if block_number is None:

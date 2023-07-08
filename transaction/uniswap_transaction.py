@@ -2,7 +2,7 @@
 
 import itertools
 from pprint import pprint
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
 import eth_abi
 from brownie import chain  # type: ignore
@@ -1336,11 +1336,13 @@ class UniswapTransaction(TransactionHelper):
                     2,
                 ):
                     tx_token_in_address = tx_path_decoded[token_pos]
-                    assert isinstance(tx_token_in_address, str)
                     fee = tx_path_decoded[token_pos + 1]
-                    assert isinstance(fee, int)
                     tx_token_out_address = tx_path_decoded[token_pos + 2]
-                    assert isinstance(tx_token_out_address, str)
+
+                    if TYPE_CHECKING:
+                        assert isinstance(tx_token_in_address, str)
+                        assert isinstance(fee, int)
+                        assert isinstance(tx_token_out_address, str)
 
                     first_swap = token_pos == 0
                     last_swap = token_pos == last_token_pos
@@ -1419,11 +1421,13 @@ class UniswapTransaction(TransactionHelper):
                     2,
                 ):
                     tx_token_out_address = tx_path_decoded[token_pos]
-                    assert isinstance(tx_token_out_address, str)
                     fee = tx_path_decoded[token_pos + 1]
-                    assert isinstance(fee, int)
                     tx_token_in_address = tx_path_decoded[token_pos + 2]
-                    assert isinstance(tx_token_in_address, str)
+
+                    if TYPE_CHECKING:
+                        assert isinstance(tx_token_in_address, str)
+                        assert isinstance(tx_token_out_address, str)
+                        assert isinstance(fee, int)
 
                     first_swap = token_pos == last_token_pos
                     last_swap = token_pos == 0
@@ -1898,11 +1902,13 @@ class UniswapTransaction(TransactionHelper):
                         2,
                     ):
                         tx_token_in_address = tx_path_decoded[token_pos]
-                        assert isinstance(tx_token_in_address, str)
                         tx_fee = tx_path_decoded[token_pos + 1]
-                        assert isinstance(tx_fee, int)
                         tx_token_out_address = tx_path_decoded[token_pos + 2]
-                        assert isinstance(tx_token_out_address, str)
+
+                        if TYPE_CHECKING:
+                            assert isinstance(tx_token_in_address, str)
+                            assert isinstance(tx_fee, int)
+                            assert isinstance(tx_token_out_address, str)
 
                         first_swap = token_pos == 0
                         last_swap = token_pos == last_token_pos
