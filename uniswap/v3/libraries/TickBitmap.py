@@ -26,8 +26,8 @@ def flipTick(
 
     try:
         mask = 1 << bit_pos
-        tick_bitmap[word_pos]["bitmap"] ^= mask
-        tick_bitmap[word_pos]["block"] = update_block
+        tick_bitmap[word_pos].bitmap ^= mask
+        tick_bitmap[word_pos].block = update_block
     except KeyError:
         raise MissingTickWordError(
             f"Called flipTick on missing word={word_pos}"
@@ -60,7 +60,7 @@ def nextInitializedTickWithinOneWord(
         mask = (1 << bit_pos) - 1 + (1 << bit_pos)
 
         try:
-            bitmap_word = tickBitmap[wordPos]["bitmap"]
+            bitmap_word = tick_bitmap[word_pos].bitmap
         except:
             raise BitmapWordUnavailableError(word_pos)
         else:
@@ -82,7 +82,7 @@ def nextInitializedTickWithinOneWord(
         mask = ~((1 << bit_pos) - 1)
 
         try:
-            bitmap_word = tickBitmap[wordPos]["bitmap"]
+            bitmap_word = tick_bitmap[word_pos].bitmap
         except:
             raise BitmapWordUnavailableError(word_pos)
         else:

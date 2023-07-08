@@ -35,6 +35,19 @@ from degenbot.uniswap.v3.tick_lens import TickLens
 
 
 @dataclasses.dataclass(slots=True)
+class UniswapV3BitmapAtWord:
+    bitmap: int = 0
+    block: Optional[int] = None
+
+
+@dataclasses.dataclass(slots=True)
+class UniswapV3LiquidityAtTick:
+    liquidityNet: int = 0
+    liquidityGross: int = 0
+    block: Optional[int] = None
+
+
+@dataclasses.dataclass(slots=True)
 class UniswapV3PoolState:
     last_liquidity_update: int
     liquidity: int
@@ -192,12 +205,29 @@ class V3LiquidityPool(PoolHelper):
         self.sparse_bitmap = True
 
         if tick_bitmap is not None:
+            # transform entries to UniswapV3BitmapAtWord
+            self.tick_bitmap = {
+                word: UniswapV3BitmapAtWord(bitmap=bitmap)
+                for word, tick_bitmap in tick_bitmap.items()
+                if (bitmap := tick_bitmap["bitmap"])
+            }
+
             # if a snapshot was provided, assume it is complete
             self.sparse_bitmap = False
 
         if tick_data is not None:
-            self.tick_data = tick_data
-        else:
+            # transform entries to LiquidityAtTick
+            self.tick_data = {
+                word: UniswapV3LiquidityAtTick(
+                    liquidityNet=liquidity_net,
+                    liquidityGross=liquidity_gross,
+                )
+                for word, tick_data in tick_data.items()
+                if (liquidity_net := tick_data["liquidityNet"])
+                if (liquidity_gross := tick_data["liquidityGross"])
+            }
+
+        if not tick_bitmap and not tick_data:
             word_position, _ = self._get_tick_bitmap_position(self.tick)
             self.tick_data = {}
             self._update_tick_data_at_word(
@@ -327,23 +357,21 @@ class V3LiquidityPool(PoolHelper):
                 try:
                     with multicall(block_identifier=block_number):
                         multicall_tick_bitmaps = {
-                            word: {
-                                "bitmap": self._brownie_contract.tickBitmap(
-                                    word
-                                ),
-                                "block": block_number,
-                            }
+                            word: UniswapV3BitmapAtWord(
+                                bitmap=self._brownie_contract.tickBitmap(word),
+                                block=block_number,
+                            )
                             for word in words
                         }
                     with multicall(block_identifier=block_number):
                         multicall_tick_data = {
-                            tick: {
-                                "liquidityNet": liquidityNet,
-                                "liquidityGross": liquidityGross,
-                                "block": block_number,
-                            }
+                            tick: UniswapV3LiquidityAtTick(
+                                liquidityNet=liquidity_net,
+                                liquidityGross=liquidity_gross,
+                                block=block_number,
+                            )
                             for word_position, bitmap in multicall_tick_bitmaps.items()
-                            for tick, liquidityNet, liquidityGross in self.lens._brownie_contract.getPopulatedTicksInWord(
+                            for tick, liquidity_net, liquidity_gross in self.lens._brownie_contract.getPopulatedTicksInWord(
                                 self.address,
                                 word_position,
                             )
@@ -382,21 +410,21 @@ class V3LiquidityPool(PoolHelper):
                     print(type(e))
                     raise
                 else:
-                    self.tick_bitmap[word_position] = {
-                        "bitmap": single_tick_bitmap,
-                        "block": block_number,
-                    }
+                    self.tick_bitmap[word_position] = UniswapV3BitmapAtWord(
+                        bitmap=single_tick_bitmap,
+                        block=block_number,
+                    )
                     if single_tick_bitmap:
                         for (
                             tick,
                             liquidity_net,
                             liquidity_gross,
                         ) in single_tick_data:
-                            self.tick_data[tick] = {
-                                "liquidityNet": liquidity_net,
-                                "liquidityGross": liquidity_gross,
-                                "block": block_number,
-                            }
+                            self.tick_data[tick] = UniswapV3LiquidityAtTick(
+                                liquidityNet=liquidity_net,
+                                liquidityGross=liquidity_gross,
+                                block=block_number,
+                            )
                     self.liquidity_update_block = block_number
 
     def _uniswap_v3_pool_swap(
@@ -518,15 +546,12 @@ class V3LiquidityPool(PoolHelper):
                         logger.debug(
                             f"(swap) {self.name} fetching word {missing_word}"
                         )
-                        self._update_tick_data_at_word(
-                            missing_word,
-                            # single_word=True,
-                        )
+                        self._update_tick_data_at_word(missing_word)
                     else:
                         # bitmap is complete, so mark the word as empty
-                            "bitmap": 0,
-                            "block": None,
-                        }
+                        self.tick_bitmap[
+                            missing_word
+                        ] = UniswapV3BitmapAtWord()
                 else:
                     # nextInitializedTickWithinOneWord will search up to 256 ticks away, which may
                     # return a tick in an adjacent word if there are no initialized ticks in the current word.
@@ -598,18 +623,8 @@ class V3LiquidityPool(PoolHelper):
             if state.sqrtPriceX96 == step.sqrtPriceNextX96:
                 # if the tick is initialized, run the tick transition
                 if step.initialized:
-                    try:
-                        tick_next = step.tickNext
-                        liquidityNet = self.tick_data[tick_next][
-                            "liquidityNet"
-                        ]
-                        liquidityGross = self.tick_data[tick_next][
-                            "liquidityGross"
-                        ]
-                    except KeyError:
-                        raise ArbitrageError(
-                            "Tick bitmap or liquidity data is out of date"
-                        ) from None
+                    tick_next = step.tickNext
+                    liquidityNet = self.tick_data[tick_next].liquidityNet
 
                     if zeroForOne:
                         liquidityNet = -liquidityNet
@@ -997,20 +1012,24 @@ class V3LiquidityPool(PoolHelper):
                                     f"Could not query chain at block {block_number - 1}"
                                 )
                         else:
-                            self.tick_bitmap[tick_word] = {
-                                "bitmap": 0,
-                                "block": None,
-                            }
+                            # The bitmap is complete (sparse=False), so mark this word as empty
+                            self.tick_bitmap[
+                                tick_word
+                            ] = UniswapV3BitmapAtWord()
 
                     # Get the liquidity info for this tick
                     try:
-                        tick_liquidity_net = self.tick_data[tick][
-                            "liquidityNet"
-                        ]
-                        tick_liquidity_gross = self.tick_data[tick][
-                            "liquidityGross"
-                        ]
-                    except KeyError:
+                        # tick_liquidity_net = self.tick_data[tick][
+                        #     "liquidityNet"
+                        # ]
+                        # tick_liquidity_gross = self.tick_data[tick][
+                        #     "liquidityGross"
+                        # ]
+                        tick_liquidity_net, tick_liquidity_gross = (
+                            self.tick_data[tick].liquidityNet,
+                            self.tick_data[tick].liquidityGross,
+                        )
+                    except (KeyError, AttributeError) as e:
                         # if it doesn't exist, initialize the tick and set the current values to zero
                         tick_liquidity_net = 0
                         tick_liquidity_gross = 0
@@ -1043,12 +1062,12 @@ class V3LiquidityPool(PoolHelper):
                             update_block=block_number,
                         )
                     # otherwise record the new values
-                    else:
-                        self.tick_data[tick] = {
-                            "liquidityNet": new_liquidity_net,
-                            "liquidityGross": new_liquidity_gross,
-                            "block": block_number,
-                        }
+                    else:                        
+                        self.tick_data[tick] = UniswapV3LiquidityAtTick(
+                            liquidityNet=new_liquidity_net,
+                            liquidityGross=new_liquidity_gross,
+                            block=block_number,
+                        )
 
                 self.liquidity_update_block = block_number
 
