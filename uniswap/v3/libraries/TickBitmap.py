@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from degenbot.constants import MAX_UINT8
 from degenbot.exceptions import (
@@ -10,10 +10,11 @@ from degenbot.exceptions import (
 from degenbot.logging import logger
 from degenbot.uniswap.v3.libraries import BitMath
 from degenbot.uniswap.v3.libraries.functions import int16, int24, uint8
+from degenbot.uniswap.v3.v3_liquidity_pool import UniswapV3BitmapAtWord
 
 
 def flipTick(
-    tick_bitmap: dict,
+    tick_bitmap: Dict[int, UniswapV3BitmapAtWord],
     tick: int,
     tick_spacing: int,
     update_block: Optional[int] = None,
@@ -37,9 +38,9 @@ def flipTick(
 
 
 def position(tick: int) -> Tuple[int, int]:
-    wordPos: int = int16(tick >> 8)
-    bitPos: int = uint8(tick % 256)
-    return (wordPos, bitPos)
+    word_pos: int = int16(tick >> 8)
+    bit_pos: int = uint8(tick % 256)
+    return (word_pos, bit_pos)
 
 
 def nextInitializedTickWithinOneWord(
@@ -60,11 +61,11 @@ def nextInitializedTickWithinOneWord(
         mask = (1 << bit_pos) - 1 + (1 << bit_pos)
 
         try:
-            bitmap_word = tick_bitmap[word_pos].bitmap
+            bitmap_at_word = tick_bitmap[word_pos].bitmap
         except:
             raise BitmapWordUnavailableError(word_pos)
         else:
-            masked = bitmap_word & mask
+            masked = bitmap_at_word & mask
 
         # if there are no initialized ticks to the right of or at the current tick, return rightmost in the word
         initialized_status = masked != 0
@@ -82,11 +83,11 @@ def nextInitializedTickWithinOneWord(
         mask = ~((1 << bit_pos) - 1)
 
         try:
-            bitmap_word = tick_bitmap[word_pos].bitmap
+            bitmap_at_word = tick_bitmap[word_pos].bitmap
         except:
             raise BitmapWordUnavailableError(word_pos)
         else:
-            masked = bitmap_word & mask
+            masked = bitmap_at_word & mask
 
         # if there are no initialized ticks to the left of the current tick, return leftmost in the word
         initialized_status = masked != 0
