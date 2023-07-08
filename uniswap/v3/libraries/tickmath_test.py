@@ -28,6 +28,8 @@ def test_tickmath():
     # getSqrtRatioAtTick tests
     with pytest.raises(EVMRevertError, match="T"):
         TickMath.getSqrtRatioAtTick(TickMath.MIN_TICK - 1)
+
+    with pytest.raises(EVMRevertError, match="T"):
         TickMath.getSqrtRatioAtTick(TickMath.MAX_TICK + 1)
 
     assert TickMath.getSqrtRatioAtTick(TickMath.MIN_TICK) == 4295128739
@@ -63,6 +65,8 @@ def test_tickmath():
     # getTickAtSqrtRatio tests
     with pytest.raises(EVMRevertError, match="R"):
         TickMath.getTickAtSqrtRatio(TickMath.MIN_SQRT_RATIO - 1)
+
+    with pytest.raises(EVMRevertError, match="R"):
         TickMath.getTickAtSqrtRatio(TickMath.MAX_SQRT_RATIO)
 
     assert (TickMath.getTickAtSqrtRatio(TickMath.MIN_SQRT_RATIO)) == (

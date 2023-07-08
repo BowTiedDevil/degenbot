@@ -20,5 +20,7 @@ def test_liquiditymath():
     with pytest.raises(EVMRevertError, match="LS"):
         # 0 + -1 underflows
         LiquidityMath.addDelta(0, -1)
+
+    with pytest.raises(EVMRevertError, match="LS"):
         # 3 + -4 underflows
         LiquidityMath.addDelta(3, -4)
