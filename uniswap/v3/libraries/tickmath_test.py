@@ -6,6 +6,9 @@ import pytest
 from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3.libraries import TickMath
 
+# Tests adapted from Typescript tests on Uniswap V3 Github repo
+# ref: https://github.com/Uniswap/v3-core/blob/main/test/TickMath.spec.ts
+
 
 def encodePriceSqrt(reserve1: int, reserve0: int):
     """
@@ -20,12 +23,7 @@ def encodePriceSqrt(reserve1: int, reserve0: int):
         )
 
 
-def test_tickmath():
-    ### ----------------------------------------------------
-    ### TickMath tests
-    ### ----------------------------------------------------
-
-    # getSqrtRatioAtTick tests
+def test_getSqrtRatioAtTick():
     with pytest.raises(EVMRevertError, match="T"):
         TickMath.getSqrtRatioAtTick(TickMath.MIN_TICK - 1)
 
@@ -54,15 +52,18 @@ def test_tickmath():
         == 1461446703485210103287273052203988822378723970342
     )
 
-    # MIN_SQRT_RATIO tests
+
+def test_minSqrtRatio():
     min = TickMath.getSqrtRatioAtTick(TickMath.MIN_TICK)
     assert min == TickMath.MIN_SQRT_RATIO
 
-    # MAX_SQRT_RATIO tests
+
+def test_maxSqrtRatio():
     max = TickMath.getSqrtRatioAtTick(TickMath.MAX_TICK)
     assert max == TickMath.MAX_SQRT_RATIO
 
-    # getTickAtSqrtRatio tests
+
+def test_getTickAtSqrtRatio():
     with pytest.raises(EVMRevertError, match="R"):
         TickMath.getTickAtSqrtRatio(TickMath.MIN_SQRT_RATIO - 1)
 
@@ -98,13 +99,13 @@ def test_tickmath():
         encodePriceSqrt(1, (10) ** (12)),
         TickMath.MAX_SQRT_RATIO - 1,
     ]:
-        jsResult = floor(log(((ratio / 2**96) ** 2), 1.0001))
+        math_result = floor(log(((ratio / 2**96) ** 2), 1.0001))
         result = TickMath.getTickAtSqrtRatio(ratio)
-        absDiff = abs(result - jsResult)
-        assert absDiff <= 1
+        abs_diff = abs(result - math_result)
+        assert abs_diff <= 1
 
         tick = TickMath.getTickAtSqrtRatio(ratio)
-        ratioOfTick = TickMath.getSqrtRatioAtTick(tick)
-        ratioOfTickPlusOne = TickMath.getSqrtRatioAtTick(tick + 1)
-        assert ratio >= ratioOfTick
-        assert ratio < ratioOfTickPlusOne
+        ratio_of_tick = TickMath.getSqrtRatioAtTick(tick)
+        ratio_of_tick_plus_one = TickMath.getSqrtRatioAtTick(tick + 1)
+        assert ratio >= ratio_of_tick
+        assert ratio < ratio_of_tick_plus_one

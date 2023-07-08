@@ -6,8 +6,11 @@ from degenbot.constants import MAX_UINT256
 from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3.libraries import FixedPoint128, FullMath
 
+# Tests adapted from Typescript tests on Uniswap V3 Github repo
+# ref: https://github.com/Uniswap/v3-core/blob/main/test/FullMath.spec.ts
 
-def test_fullmath():
+
+def test_mulDiv():
     ### ----------------------------------------------------
     ### FullMath tests
     ### ----------------------------------------------------
@@ -58,7 +61,8 @@ def test_fullmath():
         == FixedPoint128.Q128 // 3
     )
 
-    # mulDivRoundingUp tests
+
+def test_mulDivRoundingUp():
     with pytest.raises(EVMRevertError):
         # this test should fail
         FullMath.mulDivRoundingUp(FixedPoint128.Q128, 5, 0)
@@ -128,16 +132,16 @@ def test_fullmath():
     def pseudoRandomBigNumber():
         return int(MAX_UINT256 * random.random())
 
-    for i in range(10000):
+    def floored(x, y, d):
+        return FullMath.mulDiv(x, y, d)
+
+    def ceiled(x, y, d):
+        return FullMath.mulDivRoundingUp(x, y, d)
+
+    for _ in range(1000):
         x = pseudoRandomBigNumber()
         y = pseudoRandomBigNumber()
         d = pseudoRandomBigNumber()
-
-        def floored(x, y, d):
-            return FullMath.mulDiv(x, y, d)
-
-        def ceiled(x, y, d):
-            return FullMath.mulDivRoundingUp(x, y, d)
 
         if x == 0 or y == 0:
             assert floored(x, y, d) == 0

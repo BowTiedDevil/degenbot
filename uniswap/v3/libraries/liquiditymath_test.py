@@ -3,8 +3,11 @@ import pytest
 from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3.libraries import LiquidityMath
 
+# Tests adapted from Typescript tests on Uniswap V3 Github repo
+# ref: https://github.com/Uniswap/v3-core/blob/main/test/LiquidityMath.spec.ts
 
-def test_liquiditymath():
+
+def test_addDelta():
     ### ----------------------------------------------------
     ### LiquidityMath tests
     ### ----------------------------------------------------

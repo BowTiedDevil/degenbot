@@ -6,6 +6,9 @@ from degenbot.constants import MAX_UINT128, MAX_UINT256
 from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3.libraries import SqrtPriceMath
 
+# Tests adapted from Typescript tests on Uniswap V3 Github repo
+# ref: https://github.com/Uniswap/v3-core/blob/main/test/SqrtPriceMath.spec.ts
+
 
 def expandTo18Decimals(x: int):
     return x * 10**18
@@ -24,13 +27,7 @@ def encodePriceSqrt(reserve1: int, reserve0: int):
         )
 
 
-def test_sqrtpricemath():
-    ### ----------------------------------------------------
-    ### SqrtPriceMath tests
-    ### ----------------------------------------------------
-
-    # getNextSqrtPriceFromInput tests
-
+def test_getNextSqrtPriceFromInput():
     # fails if price is zero
     with pytest.raises(EVMRevertError):
         # this test should fail
@@ -130,7 +127,8 @@ def test_sqrtpricemath():
         == 1
     )
 
-    # getNextSqrtPriceFromOutput tests
+
+def test_getNextSqrtPriceFromOutput():
     with pytest.raises(EVMRevertError):
         # this test should fail
         SqrtPriceMath.getNextSqrtPriceFromOutput(
@@ -241,7 +239,8 @@ def test_sqrtpricemath():
             encodePriceSqrt(1, 1), 1, MAX_UINT256, False
         )
 
-    # getAmount0Delta
+
+def test_getAmount0Delta():
     amount0 = SqrtPriceMath.getAmount0Delta(
         encodePriceSqrt(1, 1), encodePriceSqrt(2, 1), 0, True
     )
@@ -282,7 +281,8 @@ def test_sqrtpricemath():
     )
     assert amount0Up == amount0Down + 1
 
-    # getAmount1Delta tests
+
+def test_getAmount1Delta():
     amount1 = SqrtPriceMath.getAmount1Delta(
         encodePriceSqrt(1, 1), encodePriceSqrt(2, 1), 0, True
     )
@@ -300,7 +300,8 @@ def test_sqrtpricemath():
         expandTo18Decimals(1),
         True,
     )
-    # TODO: github test asserts value should be 100000000000000000, but test fails...
+    # TODO: investigate github test - asserts value == 100000000000000000,
+    # but test fails (off-by-one)
     assert amount1 == 100000000000000001
 
     amount1RoundedDown = SqrtPriceMath.getAmount1Delta(
@@ -311,7 +312,8 @@ def test_sqrtpricemath():
     )
     assert amount1RoundedDown == amount1 - 1
 
-    # swap computation tests
+
+def test_swap_computation():
     sqrtP = 1025574284609383690408304870162715216695788925244
     liquidity = 50015962439936049619261659728067971248
     zeroForOne = True

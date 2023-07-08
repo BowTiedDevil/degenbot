@@ -2,6 +2,9 @@ from decimal import Decimal, localcontext
 
 from degenbot.uniswap.v3.libraries import SqrtPriceMath, SwapMath
 
+# Tests adapted from Typescript tests on Uniswap V3 Github repo
+# ref: https://github.com/Uniswap/v3-core/blob/main/test/SwapMath.spec.ts
+
 
 def expandTo18Decimals(x: int):
     return x * 10**18
@@ -20,13 +23,7 @@ def encodePriceSqrt(reserve1: int, reserve0: int):
         )
 
 
-def test_swapmath():
-    ### ----------------------------------------------------
-    ### SwapMath tests
-    ### ----------------------------------------------------
-
-    # computeSwapStep tests
-
+def test_computeSwapStep():
     # exact amount in that gets capped at price target in one for zero
     price = encodePriceSqrt(1, 1)
     priceTarget = encodePriceSqrt(101, 100)
