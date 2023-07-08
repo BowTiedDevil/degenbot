@@ -464,8 +464,8 @@ class UniswapTransaction(TransactionHelper):
                 f"\t{amount_in} {token_in} -> {_amount_out} {token_out}"
             )
             logger.info("\t(CURRENT)")
-            logger.info(f"\t{pool.token0}: {current_state['reserves_token0']}")
-            logger.info(f"\t{pool.token1}: {current_state['reserves_token1']}")
+            logger.info(f"\t{pool.token0}: {current_state.reserves_token0}")
+            logger.info(f"\t{pool.token1}: {current_state.reserves_token1}")
             logger.info(f"\t(FUTURE)")
             logger.info(f"\t{pool.token0}: {future_state['reserves_token0']}")
             logger.info(f"\t{pool.token1}: {future_state['reserves_token1']}")
@@ -539,8 +539,8 @@ class UniswapTransaction(TransactionHelper):
                 f"\t{_amount_in} {token_in} -> {amount_out} {token_out}"
             )
             logger.info("\t(CURRENT)")
-            logger.info(f"\t{pool.token0}: {current_state['reserves_token0']}")
-            logger.info(f"\t{pool.token1}: {current_state['reserves_token1']}")
+            logger.info(f"\t{pool.token0}: {current_state.reserves_token0}")
+            logger.info(f"\t{pool.token1}: {current_state.reserves_token1}")
             logger.info(f"\t(FUTURE)")
             logger.info(f"\t{pool.token0}: {future_state['reserves_token0']}")
             logger.info(f"\t{pool.token1}: {future_state['reserves_token1']}")
@@ -649,14 +649,14 @@ class UniswapTransaction(TransactionHelper):
 
         if not silent:
             current_state = pool.state
-            logger.info(f"Predicting output of swap through pool: {pool}")
+            logger.info(f"Simulated output of swap through pool: {pool}")
             logger.info(
                 f"\t{amount_in} {token_in} -> {token_out_quantity} {token_out}"
             )
             logger.info("\t(CURRENT)")
-            logger.info(f"\tprice={current_state['sqrt_price_x96']}")
-            logger.info(f"\tliquidity={current_state['liquidity']}")
-            logger.info(f"\ttick={current_state['tick']}")
+            logger.info(f"\tprice={current_state.sqrt_price_x96}")
+            logger.info(f"\tliquidity={current_state.liquidity}")
+            logger.info(f"\ttick={current_state.tick}")
             logger.info(f"\t(FUTURE)")
             logger.info(f"\tprice={final_state['sqrt_price_x96']}")
             logger.info(f"\tliquidity={final_state['liquidity']}")
@@ -782,14 +782,14 @@ class UniswapTransaction(TransactionHelper):
 
         if not silent:
             current_state = pool.state
-            logger.info(f"Predicting output of swap through pool: {pool}")
+            logger.info(f"Simulated output of swap through pool: {pool}")
             logger.info(
                 f"\t{_amount_in} {token_in} -> {_amount_out} {token_out}"
             )
             logger.info("\t(CURRENT)")
-            logger.info(f"\tprice={current_state['sqrt_price_x96']}")
-            logger.info(f"\tliquidity={current_state['liquidity']}")
-            logger.info(f"\ttick={current_state['tick']}")
+            logger.info(f"\tprice={current_state.sqrt_price_x96}")
+            logger.info(f"\tliquidity={current_state.liquidity}")
+            logger.info(f"\ttick={current_state.tick}")
             logger.info(f"\t(FUTURE)")
             logger.info(f"\tprice={final_state['sqrt_price_x96']}")
             logger.info(f"\tliquidity={final_state['liquidity']}")
