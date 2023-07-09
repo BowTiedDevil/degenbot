@@ -122,7 +122,7 @@ class UniswapLpCycle(ArbitrageHelper):
             List[
                 Tuple[
                     Union[LiquidityPool, V3LiquidityPool],
-                    dict,
+                    Union[UniswapV2PoolState, UniswapV3PoolState],
                 ]
             ]
         ] = None,
@@ -337,7 +337,12 @@ class UniswapLpCycle(ArbitrageHelper):
     def calculate_arbitrage(
         self,
         override_state: Optional[
-            List[Tuple[Union[LiquidityPool, V3LiquidityPool], dict]]
+            List[
+                Tuple[
+                    Union[LiquidityPool, V3LiquidityPool],
+                    Union[UniswapV2PoolState, UniswapV3PoolState],
+                ]
+            ]
         ] = None,
     ) -> Tuple[bool, Tuple[int, int]]:
         # sort the override_state values into a dictionary for fast lookup
@@ -365,13 +370,10 @@ class UniswapLpCycle(ArbitrageHelper):
                         f"V2 pool {pool.address} has no liquidity for a 1 -> 0 swap"
                     )
 
-            if (
-                isinstance(pool, V3LiquidityPool)
-                and pool.state["liquidity"] == 0
-            ):
+            if isinstance(pool, V3LiquidityPool) and pool.state.liquidity == 0:
                 # check if the swap is 0 -> 1 and cannot swap any more token0 for token1
                 if (
-                    pool.state["sqrt_price_x96"] == TickMath.MIN_SQRT_RATIO + 1
+                    pool.state.sqrt_price_x96 == TickMath.MIN_SQRT_RATIO + 1
                     and self.swap_vectors[i]["zeroForOne"]
                 ):
                     raise ZeroLiquidityError(
@@ -379,7 +381,7 @@ class UniswapLpCycle(ArbitrageHelper):
                     )
                 # check if the swap is 1 -> 0 (zeroForOne=False) and cannot swap any more token1 for token0
                 elif (
-                    pool.state["sqrt_price_x96"] == TickMath.MAX_SQRT_RATIO - 1
+                    pool.state.sqrt_price_x96 == TickMath.MAX_SQRT_RATIO - 1
                     and not self.swap_vectors[i]["zeroForOne"]
                 ):
                     raise ZeroLiquidityError(

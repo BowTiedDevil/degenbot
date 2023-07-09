@@ -48,10 +48,22 @@ class UniswapV3LiquidityAtTick:
 
 @dataclasses.dataclass(slots=True)
 class UniswapV3PoolState:
-    last_liquidity_update: int
     liquidity: int
     sqrt_price_x96: int
     tick: int
+    tick_bitmap: Optional[Dict] = None
+    tick_data: Optional[Dict] = None
+    # TODO: check if this field is required
+    last_liquidity_update: int = 0
+
+
+@dataclasses.dataclass(slots=True)
+class UniswapV3PoolSimulationResult:
+    amount0_delta: int
+    amount1_delta: int
+    end_sqrt_price_x96: int
+    end_liquidity: int
+    end_tick: int
 
 
 class V3LiquidityPool(PoolHelper):
@@ -724,7 +736,7 @@ class V3LiquidityPool(PoolHelper):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        override_state: Optional[dict] = None,
+        override_state: Optional[UniswapV3PoolState] = None,
         with_remainder: bool = False,
     ) -> Union[int, Tuple[int, int]]:
         """
@@ -762,9 +774,6 @@ class V3LiquidityPool(PoolHelper):
         # determine whether the swap is token0 -> token1
         zeroForOne = True if token_in == self.token0 else False
 
-        if override_state is None:
-            override_state = {}
-
         try:
             amount0_delta, amount1_delta, *_ = self._uniswap_v3_pool_swap(
                 zeroForOne=zeroForOne,
@@ -774,13 +783,21 @@ class V3LiquidityPool(PoolHelper):
                     if zeroForOne
                     else TickMath.MAX_SQRT_RATIO - 1
                 ),
-                override_start_liquidity=override_state.get("liquidity"),
-                override_start_sqrt_price_x96=override_state.get(
-                    "sqrt_price_x96"
-                ),
-                override_start_tick=override_state.get("tick"),
-                override_tick_bitmap=override_state.get("tick_bitmap"),
-                override_tick_data=override_state.get("tick_data"),
+                override_start_liquidity=override_state.liquidity
+                if override_state
+                else None,
+                override_start_sqrt_price_x96=override_state.sqrt_price_x96
+                if override_state
+                else None,
+                override_start_tick=override_state.tick
+                if override_state
+                else None,
+                override_tick_bitmap=override_state.tick_bitmap
+                if override_state
+                else None,
+                override_tick_data=override_state.tick_data
+                if override_state
+                else None,
             )
         except EVMRevertError as e:
             raise LiquidityPoolError(
@@ -811,7 +828,7 @@ class V3LiquidityPool(PoolHelper):
         self,
         token_out: Erc20Token,
         token_out_quantity: int,
-        override_state: Optional[dict] = None,
+        override_state: Optional[UniswapV3PoolState] = None,
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_in_from_tokens_out`
@@ -844,9 +861,6 @@ class V3LiquidityPool(PoolHelper):
         # determine whether the swap is token0 -> token1
         zeroForOne = True if token_out == self.token1 else False
 
-        if override_state is None:
-            override_state = {}
-
         try:
             amount0_delta, amount1_delta, *_ = self._uniswap_v3_pool_swap(
                 zeroForOne=zeroForOne,
@@ -856,13 +870,21 @@ class V3LiquidityPool(PoolHelper):
                     if zeroForOne
                     else TickMath.MAX_SQRT_RATIO - 1
                 ),
-                override_start_liquidity=override_state.get("liquidity"),
-                override_start_sqrt_price_x96=override_state.get(
-                    "sqrt_price_x96"
-                ),
-                override_start_tick=override_state.get("tick"),
-                override_tick_bitmap=override_state.get("tick_bitmap"),
-                override_tick_data=override_state.get("tick_data"),
+                override_start_liquidity=override_state.liquidity
+                if override_state
+                else None,
+                override_start_sqrt_price_x96=override_state.sqrt_price_x96
+                if override_state
+                else None,
+                override_start_tick=override_state.tick
+                if override_state
+                else None,
+                override_tick_bitmap=override_state.tick_bitmap
+                if override_state
+                else None,
+                override_tick_data=override_state.tick_data
+                if override_state
+                else None,
             )
         except EVMRevertError as e:
             raise LiquidityPoolError(
@@ -1103,8 +1125,8 @@ class V3LiquidityPool(PoolHelper):
         token_out: Optional[Erc20Token] = None,
         token_out_quantity: Optional[int] = None,
         sqrt_price_limit: Optional[int] = None,
-        override_state: Optional[dict] = None,
-    ) -> Dict[str, Any]:
+        override_state: Optional[UniswapV3PoolState] = None,
+    ) -> UniswapV3PoolSimulationResult:
         """
         [TBD]
         """
@@ -1138,9 +1160,6 @@ class V3LiquidityPool(PoolHelper):
         elif token_out is not None:
             zeroForOne = True if token_out == self.token1 else False
 
-        if override_state is None:
-            override_state = {}
-
         _sqrt_price_limit = (
             sqrt_price_limit
             if sqrt_price_limit is not None
@@ -1167,23 +1186,31 @@ class V3LiquidityPool(PoolHelper):
                 zeroForOne=zeroForOne,
                 amount_specified=_amount_specified,
                 sqrt_price_limit_x96=_sqrt_price_limit,
-                override_start_liquidity=override_state.get("liquidity"),
-                override_start_sqrt_price_x96=override_state.get(
-                    "sqrt_price_x96"
-                ),
-                override_start_tick=override_state.get("tick"),
-                override_tick_bitmap=override_state.get("tick_bitmap"),
-                override_tick_data=override_state.get("tick_data"),
+                override_start_liquidity=override_state.liquidity
+                if override_state
+                else None,
+                override_start_sqrt_price_x96=override_state.sqrt_price_x96
+                if override_state
+                else None,
+                override_start_tick=override_state.tick
+                if override_state
+                else None,
+                override_tick_bitmap=override_state.tick_bitmap
+                if override_state
+                else None,
+                override_tick_data=override_state.tick_data
+                if override_state
+                else None,
             )
         except EVMRevertError as e:
             raise LiquidityPoolError(
                 f"Simulated execution reverted: {e}"
             ) from e
         else:
-            return {
-                "amount0_delta": amount0_delta,
-                "amount1_delta": amount1_delta,
-                "sqrt_price_x96": end_sqrtprice,
-                "liquidity": end_liquidity,
-                "tick": end_tick,
-            }
+            return UniswapV3PoolSimulationResult(
+                amount0_delta=amount0_delta,
+                amount1_delta=amount1_delta,
+                end_sqrt_price_x96=end_sqrtprice,
+                end_liquidity=end_liquidity,
+                end_tick=end_tick,
+            )

@@ -29,6 +29,12 @@ class UniswapV2PoolState:
     reserves_token1: int
 
 
+@dataclasses.dataclass(slots=True)
+class UniswapV2PoolSimulationResult:
+    amount0_delta: int
+    amount1_delta: int
+
+
 class LiquidityPool(PoolHelper):
     """
     Represents a Uniswap V2 liquidity pool
@@ -292,38 +298,32 @@ class LiquidityPool(PoolHelper):
         token_out: Optional[Erc20Token] = None,
         override_reserves_token0: Optional[int] = None,
         override_reserves_token1: Optional[int] = None,
-        override_state: Optional[dict] = None,
+        override_state: Optional[UniswapV2PoolState] = None,
     ) -> int:
         """
         Calculates the required token INPUT of token_in for a target OUTPUT at current pool reserves.
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         """
 
-        # TODO: check for conflicting overrides
-        if override_state and (
-            override_reserves_token0 is None
-            and override_reserves_token1 is None
-        ):
-            override_reserves_token0 = override_state["reserves_token0"]
-            override_reserves_token1 = override_state["reserves_token1"]
+        if override_state:
+            if override_reserves_token0 or override_reserves_token1:
+                raise ValueError(
+                    "Provide a single override via `override_state` or individual reserves."
+                )
+            override_reserves_token0 = override_state.reserves_token0
+            override_reserves_token1 = override_state.reserves_token1
 
-            logger.debug("Overrides applied:")
-            logger.debug(f"{override_reserves_token0=}")
-            logger.debug(f"{override_reserves_token1=}")
-
-        if not (
-            (
-                override_reserves_token0 is not None
-                and override_reserves_token1 is not None
-            )
-            or (
-                override_reserves_token0 is None
-                and override_reserves_token1 is None
-            )
+        if (override_reserves_token0 and not override_reserves_token1) or (
+            not override_reserves_token0 and override_reserves_token1
         ):
             raise ValueError(
-                "Must provide override values for both token reserves"
+                "Must provide reserve override values for both tokens"
             )
+
+        if override_reserves_token0 and override_reserves_token1:
+            logger.debug("Reserve overrides applied:")
+            logger.debug(f"token0: {override_reserves_token0}")
+            logger.debug(f"token1: {override_reserves_token1}")
 
         if token_in is not None:
             if token_in not in [self.token0, self.token1]:
@@ -406,7 +406,7 @@ class LiquidityPool(PoolHelper):
         token_in_quantity: int,
         override_reserves_token0: Optional[int] = None,
         override_reserves_token1: Optional[int] = None,
-        override_state: Optional[dict] = None,
+        override_state: Optional[UniswapV2PoolState] = None,
     ) -> int:
         """
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
@@ -416,18 +416,25 @@ class LiquidityPool(PoolHelper):
         if token_in_quantity <= 0:
             raise ZeroSwapError("token_in_quantity must be positive")
 
-        # TODO: check for conflicting overrides
-        if override_state and (
-            override_reserves_token0 is None
-            and override_reserves_token1 is None
-        ):
-            override_reserves_token0 = override_state["reserves_token0"]
-            override_reserves_token1 = override_state["reserves_token1"]
+        if override_state:
+            if override_reserves_token0 or override_reserves_token1:
+                raise ValueError(
+                    "Provide a single override via `override_state` or individual reserves."
+                )
+            override_reserves_token0 = override_state.reserves_token0
+            override_reserves_token1 = override_state.reserves_token1
 
-        if override_reserves_token0:
-            logger.debug(f"{override_reserves_token0=}")
-        if override_reserves_token1:
-            logger.debug(f"{override_reserves_token1=}")
+        if (override_reserves_token0 and not override_reserves_token1) or (
+            not override_reserves_token0 and override_reserves_token1
+        ):
+            raise ValueError(
+                "Must provide reserve override values for both tokens"
+            )
+
+        if override_reserves_token0 and override_reserves_token1:
+            logger.debug("Reserve overrides applied:")
+            logger.debug(f"token0: {override_reserves_token0}")
+            logger.debug(f"token1: {override_reserves_token1}")
 
         if token_in == self.token0:
             reserves_in = (
@@ -507,8 +514,8 @@ class LiquidityPool(PoolHelper):
         token_in_quantity: Optional[int] = None,
         token_out: Optional[Erc20Token] = None,
         token_out_quantity: Optional[int] = None,
-        override_state: Optional[dict] = None,
-    ) -> dict:
+        override_state: Optional[UniswapV2PoolState] = None,
+    ) -> UniswapV2PoolSimulationResult:
         """
         TODO
         """
@@ -524,10 +531,8 @@ class LiquidityPool(PoolHelper):
         if token_in and token_out and token_in == token_out:
             raise ValueError("Both tokens are the same!")
 
-        if override_state is None:
-            override_state = {}
-        else:
-            logger.info(f"Overridden reserves: {override_state}")
+        if override_state:
+            logger.debug(f"State override: {override_state}")
 
         if token_in and token_in not in (self.token0, self.token1):
             raise ValueError(
@@ -548,8 +553,6 @@ class LiquidityPool(PoolHelper):
         elif token_out is not None and token_out == self.token1:
             token_in = self.token0
 
-        pool_state_after_swap = {}
-
         # bugfix: (changed check `token_in_quantity is not None`)
         # swaps with zero amounts (a stupid value, but valid) were falling through
         # both blocks and function was returning None
@@ -557,8 +560,13 @@ class LiquidityPool(PoolHelper):
             token_out_quantity = self.calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
-                override_reserves_token0=override_state.get("reserves_token0"),
-                override_reserves_token1=override_state.get("reserves_token1"),
+                # TODO: consolidate into single override_state arg
+                override_reserves_token0=override_state.reserves_token0
+                if override_state
+                else None,
+                override_reserves_token1=override_state.reserves_token1
+                if override_state
+                else None,
             )
 
             token0_delta = (
@@ -572,13 +580,6 @@ class LiquidityPool(PoolHelper):
                 else token_in_quantity
             )
 
-            pool_state_after_swap = {
-                "amount0_delta": token0_delta,
-                "amount1_delta": token1_delta,
-                "reserves_token0": self.reserves_token0 + token0_delta,
-                "reserves_token1": self.reserves_token1 + token1_delta,
-            }
-
         # bugfix: (changed check `token_out_quantity is not None`)
         # swaps with zero amounts (a stupid value, but valid) were falling through
         # both blocks and function was returning None
@@ -587,8 +588,13 @@ class LiquidityPool(PoolHelper):
                 token_in=token_in,
                 token_out=token_out,
                 token_out_quantity=token_out_quantity,
-                override_reserves_token0=override_state.get("reserves_token0"),
-                override_reserves_token1=override_state.get("reserves_token1"),
+                # TODO: consolidate into single override_state arg
+                override_reserves_token0=override_state.reserves_token0
+                if override_state
+                else None,
+                override_reserves_token1=override_state.reserves_token1
+                if override_state
+                else None,
             )
 
             token0_delta = (
@@ -602,14 +608,10 @@ class LiquidityPool(PoolHelper):
                 else -token_out_quantity
             )
 
-            pool_state_after_swap = {
-                "amount0_delta": token0_delta,
-                "amount1_delta": token1_delta,
-                "reserves_token0": self.reserves_token0 + token0_delta,
-                "reserves_token1": self.reserves_token1 + token1_delta,
-            }
-
-        return pool_state_after_swap
+        return UniswapV2PoolSimulationResult(
+            amount0_delta=token0_delta,
+            amount1_delta=token1_delta,
+        )
 
     def update_reserves(
         self,
