@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple, Union, Dict
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 from warnings import warn
 
 from eth_abi import encode as abi_encode
@@ -148,16 +148,28 @@ class UniswapLpCycle(ArbitrageHelper):
                 token_in_remainder: int
                 # calculate the swap output through the pool
                 if isinstance(pool, LiquidityPool):
+                    pool_state_override = _overrides.get(pool.address)
+                    if TYPE_CHECKING:
+                        assert pool_state_override is None or isinstance(
+                            pool_state_override,
+                            UniswapV2PoolState,
+                        )
                     token_out_quantity = (
                         pool.calculate_tokens_out_from_tokens_in(
                             token_in=token_in,
                             token_in_quantity=token_in_quantity
                             if i == 0
                             else token_out_quantity,
-                            override_state=_overrides.get(pool.address),
+                            override_state=pool_state_override,
                         )
                     )
                 elif isinstance(pool, V3LiquidityPool):
+                    pool_state_override = _overrides.get(pool.address)
+                    if TYPE_CHECKING:
+                        assert pool_state_override is None or isinstance(
+                            pool_state_override,
+                            UniswapV3PoolState,
+                        )
                     (
                         token_out_quantity,
                         token_in_remainder,
@@ -166,7 +178,7 @@ class UniswapLpCycle(ArbitrageHelper):
                         token_in_quantity=token_in_quantity
                         if i == 0
                         else token_out_quantity,
-                        override_state=_overrides.get(pool.address),
+                        override_state=pool_state_override,
                         with_remainder=True,
                     )
                 else:
@@ -695,7 +707,7 @@ class UniswapLpCycle(ArbitrageHelper):
                         f"Could not determine Uniswap version for pool: {swap_pool_object}"
                     )
         except Exception as e:
-            print(self.best)
+            logger.exception("generate_payloads catch-all")
             raise ArbitrageError(f"generate_payloads (catch-all)): {e}") from e
 
         return payloads
