@@ -47,6 +47,20 @@ class UniswapV3LiquidityAtTick:
 
 
 @dataclasses.dataclass(slots=True)
+class UniswapV3PoolExternalUpdate:
+    liquidity: Optional[int] = None
+    sqrt_price_x96: Optional[int] = None
+    tick: Optional[int] = None
+    liquidity_change: Optional[
+        Tuple[
+            int,  # amount
+            int,  # lower_tick
+            int,  # upper_tick
+        ]
+    ] = None
+
+
+@dataclasses.dataclass(slots=True)
 class UniswapV3PoolState:
     liquidity: int
     sqrt_price_x96: int
