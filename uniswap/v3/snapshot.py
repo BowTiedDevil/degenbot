@@ -1,6 +1,6 @@
+import dataclasses
 import json
-from abc import ABC
-from typing import Dict, List, TextIO, Tuple
+from typing import Dict, List, Optional, TextIO
 
 from brownie import web3 as brownie_web3  # type: ignore
 from eth_typing import ChecksumAddress
@@ -10,53 +10,125 @@ from web3._utils.filters import construct_event_filter_params
 
 from degenbot.logging import logger
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
+from degenbot.uniswap.v3.v3_liquidity_pool import (
+    UniswapV3BitmapAtWord,
+    UniswapV3LiquidityAtTick,
+)
 
 
-class V3LiquiditySnapshot(ABC):
+@dataclasses.dataclass(slots=True)
+class UniswapV3LiquidityEvent:
+    block_number: int
+    liquidity: int
+    tick_lower: int
+    tick_upper: int
+
+
+class UniswapV3LiquiditySnapshot:
     """
     Retrieve and maintain liquidity information for a Uniswap V3 liquidity pool.
     """
 
-    def __init__(
-        self, file: TextIO, snapshot_end_block: int, block_span: int = 10_000
-    ):
+    def __init__(self, file: TextIO):
         self.liquidity_snapshot = {}
         json_liquidity_snapshot = json.load(file)
-        snapshot_last_block = json_liquidity_snapshot["snapshot_block"]
+        self.newest_block = json_liquidity_snapshot["snapshot_block"]
 
         logger.info(
-            f"Loaded LP snapshot: {len(json_liquidity_snapshot)} pools @ block {snapshot_last_block}"
+            f"Loaded LP snapshot: {len(json_liquidity_snapshot)} pools @ block {self.newest_block}"
         )
 
-        for pool_address, snapshot in [
+        for pool_address, pool_liquidity_snapshot in [
             (k, v)
             for k, v in json_liquidity_snapshot.items()
             if k not in ["snapshot_block"]
         ]:
-            self.liquidity_snapshot[pool_address] = {
+            self.liquidity_snapshot[Web3.toChecksumAddress(pool_address)] = {
                 "tick_bitmap": {
-                    int(k): v for k, v in snapshot["tick_bitmap"].items()
+                    int(k): v
+                    for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
                 },
                 "tick_data": {
-                    int(k): v for k, v in snapshot["tick_data"].items()
+                    int(k): v
+                    for k, v in pool_liquidity_snapshot["tick_data"].items()
                 },
             }
 
-        v3pool = Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI)
-
         self.liquidity_events: Dict[
-            str, List[Tuple[int, int, Tuple[int, int, int]]]
+            ChecksumAddress, List[UniswapV3LiquidityEvent]
         ] = dict()
+
+    def get_tick_bitmap(
+        self, pool
+    ) -> Optional[Dict[int, UniswapV3BitmapAtWord]]:
+        # print("getting tick bitmap")
+        try:
+            return self.liquidity_snapshot[pool]["tick_bitmap"]
+        except KeyError:
+            return None
+
+    def get_tick_data(
+        self, pool
+    ) -> Optional[Dict[int, UniswapV3LiquidityAtTick]]:
+        # print("getting tick data")
+        try:
+            return self.liquidity_snapshot[pool]["tick_data"]
+        except KeyError:
+            return None
+
+    def get_events(self, pool) -> List[UniswapV3LiquidityEvent]:
+        try:
+            self.liquidity_events[pool]
+        except KeyError:
+            return []
+        else:
+            events = self.liquidity_events[pool]
+            del self.liquidity_events[pool]
+            return events
+
+    def has_events(self, pool) -> bool:
+        # print("has events?")
+        try:
+            self.liquidity_events[pool]
+        except KeyError:
+            return False
+        else:
+            return True
+
+    def add_event(
+        self,
+        pool: ChecksumAddress,
+        block_number: int,
+        liquidity: int,
+        tick_lower: int,
+        tick_upper: int,
+    ) -> None:
+        # logger.info(f"EVENT: {pool=},{liquidity=},{tick_lower=},{tick_upper=}")
+        self.liquidity_events[pool].append(
+            UniswapV3LiquidityEvent(
+                block_number=block_number,
+                liquidity=liquidity,
+                tick_lower=tick_lower,
+                tick_upper=tick_upper,
+            )
+        )
+
+    def update_to(
+        self,
+        last_block: int,
+        span: int = 1000,
+    ) -> None:
+        logger.info(f"Updating snapshot to block {last_block}")
+
+        v3pool = Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI)
 
         for event in [v3pool.events.Mint, v3pool.events.Burn]:
             logger.info(f"processing {event.event_name} events")
             event_abi = event._get_event_abi()
-            start_block = snapshot_last_block + 1
+            start_block = self.newest_block + 1
 
             while True:
-                end_block = min(
-                    snapshot_end_block, start_block + block_span - 1
-                )
+                end_block = min(last_block, start_block + span - 1)
 
                 _, event_filter_params = construct_event_filter_params(
                     event_abi=event_abi,
@@ -75,9 +147,10 @@ class V3LiquiditySnapshot(ABC):
                         brownie_web3.codec, event_abi, log
                     )
 
-                    pool_address = decoded_event["address"]
-                    block = decoded_event["blockNumber"]
-                    tx_index = decoded_event["transactionIndex"]
+                    pool_address = Web3.toChecksumAddress(
+                        decoded_event["address"]
+                    )
+                    liquidity_block = decoded_event["blockNumber"]
                     liquidity = decoded_event["args"]["amount"] * (
                         -1 if decoded_event["event"] == "Burn" else 1
                     )
@@ -93,15 +166,24 @@ class V3LiquiditySnapshot(ABC):
                     except KeyError:
                         self.liquidity_events[pool_address] = []
 
+                    # self.liquidity_events[pool_address].append(
+                    #     (
+                    #         block,
+                    #         tx_index,
+                    #         (
+                    #             liquidity,
+                    #             tick_lower,
+                    #             tick_upper,
+                    #         ),
+                    #     )
+                    # )
+
                     self.liquidity_events[pool_address].append(
-                        (
-                            block,
-                            tx_index,
-                            (
-                                liquidity,
-                                tick_lower,
-                                tick_upper,
-                            ),
+                        UniswapV3LiquidityEvent(
+                            block_number=liquidity_block,
+                            liquidity=liquidity,
+                            tick_lower=tick_lower,
+                            tick_upper=tick_upper,
                         )
                     )
 
@@ -109,40 +191,9 @@ class V3LiquiditySnapshot(ABC):
                     f"Fetched events: block span [{start_block},{end_block}]"
                 )
 
-                if end_block == snapshot_end_block:
+                if end_block == last_block:
                     break
                 else:
                     start_block = end_block + 1
 
-    def get_tick_bitmap(self, pool):
-        # print("getting tick bitmap")
-        try:
-            return self.liquidity_snapshot[pool]["tick_bitmap"]
-        except KeyError:
-            return None
-
-    def get_tick_data(self, pool):
-        # print("getting tick data")
-        try:
-            return self.liquidity_snapshot[pool]["tick_data"]
-        except KeyError:
-            return None
-
-    def get_events(self, pool):
-        # print("getting events")
-        try:
-            self.liquidity_events[pool]
-        except KeyError:
-            yield None
-        else:
-            for event in self.liquidity_events[pool]:
-                yield event
-
-    def has_events(self, pool):
-        # print("has events?")
-        try:
-            self.liquidity_events[pool]
-        except KeyError:
-            return False
-        else:
-            return True
+        logger.info(f"Updated snapshot to block {last_block}")
