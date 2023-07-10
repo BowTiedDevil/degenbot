@@ -280,7 +280,7 @@ class V3LiquidityPool(PoolHelper):
             logger.info(f"• Tick: {self.tick}")
 
     def __repr__(self):
-        return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self.fee}"
+        return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self.fee})"
 
     # Some objects cannot be pickled, so set those references to None and return the state
     def __getstate__(self):

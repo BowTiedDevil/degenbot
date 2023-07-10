@@ -243,7 +243,7 @@ class LiquidityPool(PoolHelper):
             )
 
     def __repr__(self):
-        return f"LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}"
+        return f"LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1})"
 
     # The Brownie contract object cannot be pickled, so remove it and return the state
     def __getstate__(self):
