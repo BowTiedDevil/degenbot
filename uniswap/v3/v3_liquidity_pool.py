@@ -913,7 +913,8 @@ class V3LiquidityPool(PoolHelper):
 
     def external_update(
         self,
-        updates: dict,
+        update: Optional[UniswapV3PoolExternalUpdate] = None,
+        updates: Optional[dict] = None,
         block_number: Optional[int] = None,
         silent: bool = True,
         fetch_missing: bool = True,
@@ -941,12 +942,12 @@ class V3LiquidityPool(PoolHelper):
         if not self.sparse_bitmap:
             fetch_missing = False
 
-        if not (
-            set(["liquidity", "sqrt_price_x96", "tick", "liquidity_change"])
-            & set(updates)
-        ):
-            raise ValueError(
-                "At least one of (liquidity, sqrt_price_x96, tick, liquidity_change) must be provided"
+        if updates and not update:
+            update = UniswapV3PoolExternalUpdate(
+                liquidity=updates.get("liquidity"),
+                sqrt_price_x96=updates.get("sqrt_price_x96"),
+                tick=updates.get("tick"),
+                liquidity_change=updates.get("liquidity_change"),
             )
 
         if TYPE_CHECKING:
@@ -971,44 +972,25 @@ class V3LiquidityPool(PoolHelper):
             """
             return block_number >= self.liquidity_update_block
 
-        # if not force:
-        #     if not is_valid_update_block(block_number):
-        #         raise ExternalUpdateError(
-        #             f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
-        #         )
-
-        for update_type in updates:
-            if update_type not in [
-                "tick",
-                "liquidity",
-                "sqrt_price_x96",
-                "liquidity_change",
-            ]:
-                warn(
-                    f"Ignoring unknown key-value ({update_type}:{updates[update_type]})"
-                )
-
         with self.update_lock:
             updated_state = False
 
             if is_valid_update_block(block_number) or force:
                 for update_type in ["tick", "liquidity", "sqrt_price_x96"]:
                     if (
-                        update_type in updates
-                        and updates[update_type] != self.__dict__[update_type]
-                    ):
-                        # the self.tick attribute is stored internally as
-                        # self.__dict__['tick'], which we can set directly
-                        # if our update key matches the attribute name
-                        self.__dict__[update_type] = updates[update_type]
+                        update_value := getattr(update, update_type, None)
+                    ) and update_value != getattr(self, update_type):
+                        setattr(self, update_type, update_value)
                         updated_state = True
 
-            if "liquidity_change" in updates and (
+            if (
                 is_valid_liquidity_update_block(block_number) or force
-            ):
-                liquidity_delta, lower_tick, upper_tick = updates[
-                    "liquidity_change"
-                ]
+            ) and update.liquidity_change:
+                (
+                    liquidity_delta,
+                    lower_tick,
+                    upper_tick,
+                ) = update.liquidity_change
 
                 # adjust in-range liquidity if current tick is within the position's range
                 if (
