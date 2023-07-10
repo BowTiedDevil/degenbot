@@ -410,11 +410,8 @@ class V3LiquidityPool(PoolHelper):
                     print(type(e))
                     raise
                 else:
-                    # update the bitmaps
                     self.tick_bitmap.update(multicall_tick_bitmaps)
-                    # update the liquidity data
                     self.tick_data.update(multicall_tick_data)
-                    # update the block
                     self.liquidity_update_block = block_number
 
             # fetch words one by one (single_tick = True)
