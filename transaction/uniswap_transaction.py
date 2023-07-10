@@ -1,7 +1,7 @@
 # TODO: use tx_payer_is_user to simplify accounting
 
 import itertools
-from pprint import pprint
+import pprint
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
 import eth_abi
@@ -2485,7 +2485,8 @@ class UniswapTransaction(TransactionHelper):
         )
 
         if set(self.ledger._balances) - set([self.sender]) - self.to:
-            pprint(self.ledger._balances)
-            raise LedgerError("UNACCOUNTED BALANCE FOUND!")
+            raise LedgerError(
+                f"UNACCOUNTED BALANCE FOUND!\n{pprint.pformat(self.ledger._balances)}"
+            )
 
         return results
