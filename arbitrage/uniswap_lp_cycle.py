@@ -16,10 +16,16 @@ from degenbot.logging import logger
 from degenbot.token import Erc20Token
 from degenbot.types import ArbitrageHelper
 from degenbot.uniswap.v2 import CamelotLiquidityPool, LiquidityPool
-from degenbot.uniswap.v2.liquidity_pool import UniswapV2PoolState
+from degenbot.uniswap.v2.liquidity_pool import (
+    UniswapV2PoolSimulationResult,
+    UniswapV2PoolState,
+)
 from degenbot.uniswap.v3 import V3LiquidityPool
 from degenbot.uniswap.v3.libraries import TickMath
-from degenbot.uniswap.v3.v3_liquidity_pool import UniswapV3PoolState
+from degenbot.uniswap.v3.v3_liquidity_pool import (
+    UniswapV3PoolSimulationResult,
+    UniswapV3PoolState,
+)
 
 
 class UniswapLpCycle(ArbitrageHelper):
@@ -114,6 +120,55 @@ class UniswapLpCycle(ArbitrageHelper):
     def __str__(self) -> str:
         return self.name
 
+    def _sort_overrides(
+        self,
+        overrides: List[
+            Tuple[
+                Union[LiquidityPool, V3LiquidityPool],
+                Union[
+                    UniswapV2PoolState,
+                    UniswapV3PoolState,
+                    UniswapV2PoolSimulationResult,
+                    UniswapV3PoolSimulationResult,
+                ],
+            ],
+        ],
+    ) -> Dict[ChecksumAddress, Union[UniswapV2PoolState, UniswapV3PoolState],]:
+        """
+        Validate the overrides, extract and insert the resulting pool states
+        into a dictionary.
+        """
+        if overrides is None:
+            return {}
+
+        sorted_overrides = {}
+
+        for pool, override in overrides:
+            if isinstance(
+                override,
+                (
+                    UniswapV2PoolState,
+                    UniswapV3PoolState,
+                ),
+            ):
+                print(f"Applying override {override} to {pool}")
+                sorted_overrides[pool.address] = override
+            elif isinstance(
+                override,
+                (
+                    UniswapV2PoolSimulationResult,
+                    UniswapV3PoolSimulationResult,
+                ),
+            ):
+                print(f"Applying override {override.future_state} to {pool}")
+                sorted_overrides[pool.address] = override.future_state
+            else:
+                raise ValueError(
+                    f"Override for {pool} has unsupported type {type(override)}"
+                )
+
+        return sorted_overrides
+
     def _build_amounts_out(
         self,
         token_in: Erc20Token,
@@ -121,18 +176,24 @@ class UniswapLpCycle(ArbitrageHelper):
         override_state: Optional[
             List[
                 Tuple[
-                    Union[LiquidityPool, V3LiquidityPool],
-                    Union[UniswapV2PoolState, UniswapV3PoolState],
+                    Union[
+                        LiquidityPool,
+                        V3LiquidityPool,
+                    ],
+                    Union[
+                        UniswapV2PoolState,
+                        UniswapV3PoolState,
+                        UniswapV2PoolSimulationResult,
+                        UniswapV3PoolSimulationResult,
+                    ],
                 ]
             ]
         ] = None,
     ) -> List[dict]:
-        # sort the override_state values into a dictionary for fast lookup inside the calculation loop
-        _overrides = (
-            {pool.address: state for pool, state in override_state}
-            if override_state is not None
-            else {}
-        )
+        if override_state is None:
+            _overrides = {}
+        else:
+            _overrides = self._sort_overrides(override_state)
 
         pools_amounts_out: List[Dict] = []
 
@@ -342,8 +403,31 @@ class UniswapLpCycle(ArbitrageHelper):
 
         return found_updates
 
-    def calculate_arbitrage_return_best(self):
-        self.calculate_arbitrage()
+
+    def calculate_arbitrage_return_best(
+        self,
+        override_state: Optional[
+            List[
+                Tuple[
+                    Union[
+                        LiquidityPool,
+                        V3LiquidityPool,
+                    ],
+                    Union[
+                        UniswapV2PoolState,
+                        UniswapV3PoolState,
+                        UniswapV2PoolSimulationResult,
+                        UniswapV3PoolSimulationResult,
+                    ],
+                ]
+            ]
+        ] = None,
+    ):
+        """
+        A wrapper over `calculate_arbitrage`, useful for sending the calculation into a process pool and retrieving the results after pickling/unpickling the object and losing connection to the original.
+        """
+
+        self.calculate_arbitrage(override_state)
         return self.id, self.best
 
     def calculate_arbitrage(
@@ -351,18 +435,28 @@ class UniswapLpCycle(ArbitrageHelper):
         override_state: Optional[
             List[
                 Tuple[
-                    Union[LiquidityPool, V3LiquidityPool],
-                    Union[UniswapV2PoolState, UniswapV3PoolState],
-                ]
+                    Union[
+                        LiquidityPool,
+                        V3LiquidityPool,
+                    ],
+                    Union[
+                        UniswapV2PoolState,
+                        UniswapV3PoolState,
+                        UniswapV2PoolSimulationResult,
+                        UniswapV3PoolSimulationResult,
+                    ],
+                ],
             ]
         ] = None,
     ) -> Tuple[bool, Tuple[int, int]]:
-        # sort the override_state values into a dictionary for fast lookup
-        # inside the calculation loop
-        _overrides = {}
-        if override_state is not None:
-            for pool, state in override_state:
-                _overrides[pool.address] = state
+        """
+        TBD
+        """
+
+        if override_state is None:
+            _overrides = {}
+        else:
+            _overrides = self._sort_overrides(override_state)
 
         # check the pools for zero liquidity in the direction of the trade
         for i, pool in enumerate(self.swap_pools):

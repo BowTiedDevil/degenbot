@@ -49,6 +49,7 @@ lp.fee = 3000
 lp.token0 = token0
 lp.token1 = token1
 lp.liquidity = 1612978974357835825
+lp.liquidity_update_block = 1
 lp.sqrt_price_x96 = 31549217861118002279483878013792428
 lp.sparse_bitmap = False
 lp.tick = 257907
@@ -2045,6 +2046,7 @@ lp.tick_data = {
         liquidityGross=3974353998848,
     ),
 }
+lp._update_pool_state()
 
 
 def test_calculate_tokens_out_from_tokens_in():
@@ -2133,9 +2135,12 @@ def test_simulations():
     simulated_state = UniswapV3PoolSimulationResult(
         amount0_delta=-6287477,
         amount1_delta=1000000000000000000,
-        end_liquidity=1612978974357835825,
-        end_sqrt_price_x96=31549266832914462409708360853542079,
-        end_tick=257907,
+        current_state=lp.state,
+        future_state=UniswapV3PoolState(
+            liquidity=1612978974357835825,
+            sqrt_price_x96=31549266832914462409708360853542079,
+            tick=257907,
+        ),
     )
 
     assert (
@@ -2160,9 +2165,12 @@ def test_simulations():
     simulated_state = UniswapV3PoolSimulationResult(
         amount0_delta=100000000,
         amount1_delta=-15808930695950518795,
-        end_liquidity=1612978974357835825,
-        end_sqrt_price_x96=31548441339817807300885591332345643,
-        end_tick=257906,
+        current_state=lp.state,
+        future_state=UniswapV3PoolState(
+            liquidity=1612978974357835825,
+            sqrt_price_x96=31548441339817807300885591332345643,
+            tick=257906,
+        ),
     )
 
     assert (
@@ -2201,9 +2209,12 @@ def test_simulations_with_override():
     ) == UniswapV3PoolSimulationResult(
         amount0_delta=-6157179,
         amount1_delta=1 * 10**18,
-        end_sqrt_price_x96=31881342483860761583159860586051776,
-        end_liquidity=1533143241938066251,
-        end_tick=258116,
+        current_state=lp.state,
+        future_state=UniswapV3PoolState(
+            sqrt_price_x96=31881342483860761583159860586051776,
+            liquidity=1533143241938066251,
+            tick=258116,
+        ),
     )
 
     assert lp.simulate_swap(
@@ -2213,9 +2224,12 @@ def test_simulations_with_override():
     ) == UniswapV3PoolSimulationResult(
         amount0_delta=-6157179,
         amount1_delta=999999892383362636,
-        end_sqrt_price_x96=31881342483855216967760245337454994,
-        end_liquidity=1533143241938066251,
-        end_tick=258116,
+        current_state=lp.state,
+        future_state=UniswapV3PoolState(
+            sqrt_price_x96=31881342483855216967760245337454994,
+            liquidity=1533143241938066251,
+            tick=258116,
+        ),
     )
 
 

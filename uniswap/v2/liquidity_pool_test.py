@@ -51,6 +51,7 @@ lp.reserves_token0 = 16231137593
 lp.reserves_token1 = 2571336301536722443178
 lp.token0 = token0
 lp.token1 = token1
+lp._update_pool_state()
 
 
 def test_calculate_tokens_out_from_tokens_in():
@@ -136,6 +137,11 @@ def test_simulations():
     sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=8000000000,
         amount1_delta=-847228560678214929944,
+        current_state=lp.state,
+        future_state=UniswapV2PoolState(
+            reserves_token0=lp.reserves_token0 + 8000000000,
+            reserves_token1=lp.reserves_token1 - 847228560678214929944,
+        ),
     )
 
     # token_in = lp.token0 should have same result as token_out = lp.token1
@@ -157,6 +163,11 @@ def test_simulations():
     sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=-5154005339,
         amount1_delta=1200000000000000000000,
+        current_state=lp.state,
+        future_state=UniswapV2PoolState(
+            reserves_token0=lp.reserves_token0 - 5154005339,
+            reserves_token1=lp.reserves_token1 + 1200000000000000000000,
+        ),
     )
 
     assert (
@@ -180,6 +191,11 @@ def test_simulations_with_override():
     sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=8000000000,
         amount1_delta=-864834865217768537471,
+        current_state=lp.state,
+        future_state=UniswapV2PoolState(
+            reserves_token0=lp.reserves_token0 + 8000000000,
+            reserves_token1=lp.reserves_token1 - 864834865217768537471,
+        ),
     )
 
     pool_state_override = UniswapV2PoolState(
@@ -199,6 +215,11 @@ def test_simulations_with_override():
     sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=13752842264,
         amount1_delta=-1200000000000000000000,
+        current_state=lp.state,
+        future_state=UniswapV2PoolState(
+            reserves_token0=lp.reserves_token0 + 13752842264,
+            reserves_token1=lp.reserves_token1 - 1200000000000000000000,
+        ),
     )
 
     assert (

@@ -33,6 +33,9 @@ class UniswapV2PoolState:
 class UniswapV2PoolSimulationResult:
     amount0_delta: int
     amount1_delta: int
+    # WIP: store current and future states inside the simulation result
+    current_state: UniswapV2PoolState
+    future_state: UniswapV2PoolState
 
 
 class LiquidityPool(PoolHelper):
@@ -611,6 +614,11 @@ class LiquidityPool(PoolHelper):
         return UniswapV2PoolSimulationResult(
             amount0_delta=token0_delta,
             amount1_delta=token1_delta,
+            current_state=self.state,
+            future_state=UniswapV2PoolState(
+                reserves_token0=self.reserves_token0 + token0_delta,
+                reserves_token1=self.reserves_token1 + token1_delta,
+            ),
         )
 
     def update_reserves(

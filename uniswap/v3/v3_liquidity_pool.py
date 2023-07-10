@@ -75,9 +75,9 @@ class UniswapV3PoolState:
 class UniswapV3PoolSimulationResult:
     amount0_delta: int
     amount1_delta: int
-    end_sqrt_price_x96: int
-    end_liquidity: int
-    end_tick: int
+    # WIP: store current and future states inside the simulation result
+    current_state: UniswapV3PoolState
+    future_state: UniswapV3PoolState
 
 
 class V3LiquidityPool(PoolHelper):
@@ -1224,7 +1224,10 @@ class V3LiquidityPool(PoolHelper):
             return UniswapV3PoolSimulationResult(
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
-                end_sqrt_price_x96=end_sqrtprice,
-                end_liquidity=end_liquidity,
-                end_tick=end_tick,
+                current_state=self.state,
+                future_state=UniswapV3PoolState(
+                    liquidity=end_liquidity,
+                    sqrt_price_x96=end_sqrtprice,
+                    tick=end_tick,
+                ),
             )
