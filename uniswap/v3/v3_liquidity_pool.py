@@ -1057,12 +1057,6 @@ class V3LiquidityPool(PoolHelper):
 
                     # Get the liquidity info for this tick
                     try:
-                        # tick_liquidity_net = self.tick_data[tick][
-                        #     "liquidityNet"
-                        # ]
-                        # tick_liquidity_gross = self.tick_data[tick][
-                        #     "liquidityGross"
-                        # ]
                         tick_liquidity_net, tick_liquidity_gross = (
                             self.tick_data[tick].liquidityNet,
                             self.tick_data[tick].liquidityGross,
@@ -1100,7 +1094,7 @@ class V3LiquidityPool(PoolHelper):
                             update_block=block_number,
                         )
                     # otherwise record the new values
-                    else:                        
+                    else:
                         self.tick_data[tick] = UniswapV3LiquidityAtTick(
                             liquidityNet=new_liquidity_net,
                             liquidityGross=new_liquidity_gross,
