@@ -1,4 +1,5 @@
 import dataclasses
+import warnings
 from decimal import Decimal
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
@@ -219,7 +220,7 @@ class V3LiquidityPool(PoolHelper):
         self.tick = slot0[1]
 
         if update_method is not None:
-            warn(
+            warnings.warn(
                 "The `update_method` argument to `V3LiquidityPool()` is unused and otherwise ignored. Remove it to stop seeing this message."
             )
             self._update_method = update_method
@@ -957,7 +958,7 @@ class V3LiquidityPool(PoolHelper):
         # if block_number was not provided, pull from Brownie
         if block_number is None:
             block_number = chain.height
-            warn(
+            warnings.warn(
                 f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
             )
 
