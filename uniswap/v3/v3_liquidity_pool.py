@@ -39,12 +39,17 @@ class UniswapV3BitmapAtWord:
     bitmap: int = 0
     block: Optional[int] = None
 
+    def to_dict(self):
+        return dataclasses.asdict(self)
 
 @dataclasses.dataclass(slots=True)
 class UniswapV3LiquidityAtTick:
     liquidityNet: int = 0
     liquidityGross: int = 0
     block: Optional[int] = None
+
+    def to_dict(self):
+        return dataclasses.asdict(self)
 
 
 @dataclasses.dataclass(slots=True)
