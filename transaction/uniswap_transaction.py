@@ -17,6 +17,7 @@ from degenbot.exceptions import (
     LiquidityPoolError,
     ManagerError,
     TransactionError,
+    TransactionEncodingError,
 )
 from degenbot.logging import logger
 from degenbot.token import Erc20Token
@@ -2479,10 +2480,13 @@ class UniswapTransaction(TransactionHelper):
 
         self.silent = silent
 
-        results = self._simulate(
-            self.func_name,
-            self.func_params,
-        )
+        try:
+            results = self._simulate(
+                self.func_name,
+                self.func_params,
+            )
+        except ValueError as e:
+            raise TransactionEncodingError(e)
 
         if set(self.ledger._balances) - set([self.sender]) - self.to:
             raise LedgerError(
