@@ -151,7 +151,7 @@ class UniswapLpCycle(ArbitrageHelper):
                     UniswapV3PoolState,
                 ),
             ):
-                print(f"Applying override {override} to {pool}")
+                logger.debug(f"Applying override {override} to {pool}")
                 sorted_overrides[pool.address] = override
             elif isinstance(
                 override,
@@ -160,7 +160,9 @@ class UniswapLpCycle(ArbitrageHelper):
                     UniswapV3PoolSimulationResult,
                 ),
             ):
-                print(f"Applying override {override.future_state} to {pool}")
+                logger.debug(
+                    f"Applying override {override.future_state} to {pool}"
+                )
                 sorted_overrides[pool.address] = override.future_state
             else:
                 raise ValueError(
