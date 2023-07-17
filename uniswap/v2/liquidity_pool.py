@@ -260,11 +260,11 @@ class LiquidityPool(PoolHelper):
     def __hash__(self):
         return hash(self.address)
 
+    def __repr__(self):
+        return f"LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1})"
+
     def __setstate__(self, state):
         self.__dict__.update(state)
-
-    def __eq__(self, other) -> bool:
-        return self.address == other.address
 
     def __str__(self):
         return self.name
