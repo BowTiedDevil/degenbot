@@ -1411,6 +1411,7 @@ class UniswapTransaction(TransactionHelper):
                             tx_token_out_address,
                         ),
                         pool_fee=fee,
+                        silent=self.silent,
                     )
 
                     _recipient = (
@@ -1496,6 +1497,7 @@ class UniswapTransaction(TransactionHelper):
                             tx_token_out_address,
                         ),
                         pool_fee=fee,
+                        silent=self.silent,
                     )
 
                     _recipient = (
@@ -1922,6 +1924,7 @@ class UniswapTransaction(TransactionHelper):
                             tx_token_out_address,
                         ),
                         pool_fee=tx_fee,
+                        silent=self.silent,
                     )
 
                     _, _sim_result = self._simulate_v3_swap_exact_in(
@@ -2017,6 +2020,7 @@ class UniswapTransaction(TransactionHelper):
                                 tx_token_out_address,
                             ),
                             pool_fee=tx_fee,
+                            silent=self.silent,
                         )
 
                         _, _sim_result = self._simulate_v3_swap_exact_in(
@@ -2086,6 +2090,7 @@ class UniswapTransaction(TransactionHelper):
                             tx_token_out_address,
                         ),
                         pool_fee=tx_fee,
+                        silent=self.silent,
                     )
 
                     _, _sim_result = self._simulate_v3_swap_exact_out(
@@ -2181,6 +2186,7 @@ class UniswapTransaction(TransactionHelper):
                                 tx_token_out_address,
                             ),
                             pool_fee=tx_fee,
+                            silent=self.silent,
                         )
 
                         _recipient = (
