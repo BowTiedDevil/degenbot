@@ -304,6 +304,9 @@ class V3LiquidityPool(PoolHelper):
     def __hash__(self):
         return hash(self.address)
 
+    def __repr__(self):
+        return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self.fee})"
+
     def __setstate__(self, state):
         self.__dict__.update(state)
 
