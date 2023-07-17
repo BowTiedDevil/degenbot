@@ -230,36 +230,44 @@ class V3LiquidityPool(PoolHelper):
             self._update_method = update_method
         self.extra_words = extra_words
 
-        # default to an empty, sparse bitmap
+        # default to an empty, sparse bitmap with no tick data
+        self.tick_data = {}
         self.tick_bitmap = {}
         self.sparse_bitmap = True
 
+        if tick_bitmap is not None != tick_data is not None:
+            raise ValueError("Must provide both tick_bitmap and tick_data")
+
         if tick_bitmap is not None:
-            # transform entries to UniswapV3BitmapAtWord
+            # transform JSON to UniswapV3BitmapAtWord
             self.tick_bitmap = {
-                word: UniswapV3BitmapAtWord(bitmap=bitmap)
+                int(word): UniswapV3BitmapAtWord(
+                    bitmap=tick_bitmap["bitmap"],
+                    block=tick_bitmap["block"],
+                )
                 for word, tick_bitmap in tick_bitmap.items()
-                if (bitmap := tick_bitmap["bitmap"])
             }
 
             # if a snapshot was provided, assume it is complete
             self.sparse_bitmap = False
 
         if tick_data is not None:
-            # transform entries to LiquidityAtTick
+            # transform JSON to LiquidityAtTick
             self.tick_data = {
-                word: UniswapV3LiquidityAtTick(
-                    liquidityNet=liquidity_net,
-                    liquidityGross=liquidity_gross,
+                int(word): UniswapV3LiquidityAtTick(
+                    liquidityNet=tick_data["liquidityNet"],
+                    liquidityGross=tick_data["liquidityGross"],
+                    block=tick_data["block"],
                 )
                 for word, tick_data in tick_data.items()
-                if (liquidity_net := tick_data["liquidityNet"])
-                if (liquidity_gross := tick_data["liquidityGross"])
             }
 
-        if not tick_bitmap and not tick_data:
+        if tick_bitmap is None and tick_data is None:
+            logger.debug(
+                f"{self} @ {self.address} updating -> {tick_bitmap=}, {tick_data=}"
+            )
             word_position, _ = self._get_tick_bitmap_position(self.tick)
-            self.tick_data = {}
+
             self._update_tick_data_at_word(
                 word_position,
                 single_word=True,
@@ -372,8 +380,6 @@ class V3LiquidityPool(PoolHelper):
             logger.debug(f"returning early, {word_position=} found")
             logger.debug(self.tick_bitmap[word_position])
             return
-
-        logger.debug(f"updating tick data for pool: {self.name}")
 
         with self.tick_lock:
             if block_number is None:
