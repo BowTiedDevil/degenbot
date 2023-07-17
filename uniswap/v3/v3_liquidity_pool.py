@@ -2,7 +2,7 @@ import dataclasses
 import warnings
 from decimal import Decimal
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 from brownie import Contract, chain, multicall, network  # type:ignore
 from eth_typing import ChecksumAddress
@@ -118,8 +118,8 @@ class V3LiquidityPool(PoolHelper):
         tick_bitmap: Optional[dict] = None,
     ):
         self.address = Web3.toChecksumAddress(address)
-        self.tick_data: dict
-        self.tick_bitmap: dict
+        self.tick_data: Dict[int, UniswapV3LiquidityAtTick]
+        self.tick_bitmap: Dict[int, UniswapV3BitmapAtWord]
 
         # held by the _get_tick_data_at_word method, which will sets liquidity
         # and bitmap data
