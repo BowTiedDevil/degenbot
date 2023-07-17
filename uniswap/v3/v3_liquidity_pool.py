@@ -280,6 +280,7 @@ class V3LiquidityPool(PoolHelper):
             logger.info(self.name)
             logger.info(f"• Token 0: {self.token0}")
             logger.info(f"• Token 1: {self.token1}")
+            logger.info(f"• Fee: {self.fee}")
             logger.info(f"• Liquidity: {self.liquidity}")
             logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
             logger.info(f"• Tick: {self.tick}")
