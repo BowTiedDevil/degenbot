@@ -1,4 +1,13 @@
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeAlias,
+    Union,
+)
 from warnings import warn
 
 from eth_abi import encode as abi_encode
@@ -26,6 +35,15 @@ from degenbot.uniswap.v3.v3_liquidity_pool import (
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
+
+StateOverrideTypes: TypeAlias = Sequence[
+    Union[
+        Tuple[LiquidityPool, UniswapV2PoolState],
+        Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+        Tuple[V3LiquidityPool, UniswapV3PoolState],
+        Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
+    ]
+]
 
 
 class UniswapLpCycle(ArbitrageHelper):
@@ -122,17 +140,7 @@ class UniswapLpCycle(ArbitrageHelper):
 
     def _sort_overrides(
         self,
-        overrides: List[
-            Tuple[
-                Union[LiquidityPool, V3LiquidityPool],
-                Union[
-                    UniswapV2PoolState,
-                    UniswapV3PoolState,
-                    UniswapV2PoolSimulationResult,
-                    UniswapV3PoolSimulationResult,
-                ],
-            ],
-        ],
+        overrides: StateOverrideTypes,
     ) -> Dict[ChecksumAddress, Union[UniswapV2PoolState, UniswapV3PoolState],]:
         """
         Validate the overrides, extract and insert the resulting pool states
@@ -141,7 +149,9 @@ class UniswapLpCycle(ArbitrageHelper):
         if overrides is None:
             return {}
 
-        sorted_overrides = {}
+        sorted_overrides: Dict[
+            ChecksumAddress, Union[UniswapV2PoolState, UniswapV3PoolState]
+        ] = {}
 
         for pool, override in overrides:
             if isinstance(
@@ -175,22 +185,7 @@ class UniswapLpCycle(ArbitrageHelper):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        override_state: Optional[
-            List[
-                Tuple[
-                    Union[
-                        LiquidityPool,
-                        V3LiquidityPool,
-                    ],
-                    Union[
-                        UniswapV2PoolState,
-                        UniswapV3PoolState,
-                        UniswapV2PoolSimulationResult,
-                        UniswapV3PoolSimulationResult,
-                    ],
-                ]
-            ]
-        ] = None,
+        override_state: Optional[StateOverrideTypes] = None,
     ) -> List[dict]:
         if override_state is None:
             _overrides = {}
@@ -408,22 +403,7 @@ class UniswapLpCycle(ArbitrageHelper):
 
     def calculate_arbitrage_return_best(
         self,
-        override_state: Optional[
-            List[
-                Tuple[
-                    Union[
-                        LiquidityPool,
-                        V3LiquidityPool,
-                    ],
-                    Union[
-                        UniswapV2PoolState,
-                        UniswapV3PoolState,
-                        UniswapV2PoolSimulationResult,
-                        UniswapV3PoolSimulationResult,
-                    ],
-                ]
-            ]
-        ] = None,
+        override_state: Optional[StateOverrideTypes] = None,
     ):
         """
         A wrapper over `calculate_arbitrage`, useful for sending the calculation into a process pool and retrieving the results after pickling/unpickling the object and losing connection to the original.
@@ -434,22 +414,7 @@ class UniswapLpCycle(ArbitrageHelper):
 
     def calculate_arbitrage(
         self,
-        override_state: Optional[
-            List[
-                Tuple[
-                    Union[
-                        LiquidityPool,
-                        V3LiquidityPool,
-                    ],
-                    Union[
-                        UniswapV2PoolState,
-                        UniswapV3PoolState,
-                        UniswapV2PoolSimulationResult,
-                        UniswapV3PoolSimulationResult,
-                    ],
-                ],
-            ]
-        ] = None,
+        override_state: Optional[StateOverrideTypes] = None,
     ) -> Tuple[bool, Tuple[int, int]]:
         """
         TBD
@@ -650,7 +615,7 @@ class UniswapLpCycle(ArbitrageHelper):
     def generate_payloads(
         self,
         from_address: Union[str, ChecksumAddress],
-    ) -> List[Tuple[str, bytes, int]]:
+    ) -> List[Tuple[ChecksumAddress, bytes, int]]:
         """
         Generate a list of calldata payloads for each step in the swap path, with calldata built using the eth_abi.encode method and the `swap` function of either the V2 or V3 pool
 

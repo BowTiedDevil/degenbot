@@ -855,11 +855,9 @@ class UniswapTransaction(TransactionHelper):
         func_name: str,
         func_params: dict,
     ) -> List[
-        Tuple[
-            Union[LiquidityPool, V3LiquidityPool],
-            Union[
-                UniswapV2PoolSimulationResult, UniswapV3PoolSimulationResult
-            ],
+        Union[
+            Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+            Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
         ]
     ]:
         """
@@ -869,12 +867,9 @@ class UniswapTransaction(TransactionHelper):
         """
 
         all_future_pool_states: List[
-            Tuple[
-                Union[LiquidityPool, V3LiquidityPool],
-                Union[
-                    UniswapV2PoolSimulationResult,
-                    UniswapV3PoolSimulationResult,
-                ],
+            Union[
+                Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
             ]
         ] = []
 
@@ -947,12 +942,9 @@ class UniswapTransaction(TransactionHelper):
             inputs: bytes,
         ) -> Optional[
             List[
-                Tuple[
-                    Union[LiquidityPool, V3LiquidityPool],
-                    Union[
-                        UniswapV2PoolSimulationResult,
-                        UniswapV3PoolSimulationResult,
-                    ],
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
                 ]
             ]
         ]:
@@ -1043,12 +1035,9 @@ class UniswapTransaction(TransactionHelper):
                 ]
 
             _universal_router_command_future_pool_states: List[
-                Tuple[
-                    Union[LiquidityPool, V3LiquidityPool],
-                    Union[
-                        UniswapV2PoolSimulationResult,
-                        UniswapV3PoolSimulationResult,
-                    ],
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
                 ]
             ] = []
 
@@ -1574,12 +1563,9 @@ class UniswapTransaction(TransactionHelper):
         def _process_v3_multicall(
             params,
         ) -> List[
-            Tuple[
-                Union[LiquidityPool, V3LiquidityPool],
-                Union[
-                    UniswapV2PoolSimulationResult,
-                    UniswapV3PoolSimulationResult,
-                ],
+            Union[
+                Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
             ]
         ]:
             """
@@ -1587,12 +1573,9 @@ class UniswapTransaction(TransactionHelper):
             """
 
             _v3_multicall_future_pool_states: List[
-                Tuple[
-                    Union[LiquidityPool, V3LiquidityPool],
-                    Union[
-                        UniswapV2PoolSimulationResult,
-                        UniswapV3PoolSimulationResult,
-                    ],
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
                 ]
             ] = []
 
@@ -1868,24 +1851,18 @@ class UniswapTransaction(TransactionHelper):
 
         def _process_uniswap_v3_router_transaction() -> (
             List[
-                Tuple[
-                    Union[LiquidityPool, V3LiquidityPool],
-                    Union[
-                        UniswapV2PoolSimulationResult,
-                        UniswapV3PoolSimulationResult,
-                    ],
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
                 ]
             ]
         ):
             logger.debug(f"{func_name}: {self.hash}")
 
             _v3_router_future_pool_states: List[
-                Tuple[
-                    Union[LiquidityPool, V3LiquidityPool],
-                    Union[
-                        UniswapV2PoolSimulationResult,
-                        UniswapV3PoolSimulationResult,
-                    ],
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
                 ]
             ] = []
 
@@ -2373,22 +2350,16 @@ class UniswapTransaction(TransactionHelper):
 
         def _process_uniswap_universal_router_transaction() -> (
             List[
-                Tuple[
-                    Union[LiquidityPool, V3LiquidityPool],
-                    Union[
-                        UniswapV2PoolSimulationResult,
-                        UniswapV3PoolSimulationResult,
-                    ],
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
                 ]
             ]
         ):
             _universal_router_future_pool_states: List[
-                Tuple[
-                    Union[LiquidityPool, V3LiquidityPool],
-                    Union[
-                        UniswapV2PoolSimulationResult,
-                        UniswapV3PoolSimulationResult,
-                    ],
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
                 ]
             ] = []
 
@@ -2460,11 +2431,9 @@ class UniswapTransaction(TransactionHelper):
         self,
         silent: bool = False,
     ) -> List[
-        Tuple[
-            Union[LiquidityPool, V3LiquidityPool],
-            Union[
-                UniswapV2PoolSimulationResult, UniswapV3PoolSimulationResult
-            ],
+        Union[
+            Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+            Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
         ]
     ]:
         """
