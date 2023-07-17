@@ -542,7 +542,8 @@ class UniswapLpCycle(ArbitrageHelper):
             raise ArbitrageError(f"No possible arbitrage: {e}") from None
         except Exception as e:
             raise ArbitrageError(f"No possible arbitrage: {e}") from e
-        else:
+
+        if override_state is None:
             self.best.update(
                 {
                     "last_swap_amount": swap_amount,
