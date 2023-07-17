@@ -285,7 +285,7 @@ class V3LiquidityPool(PoolHelper):
             logger.info(f"• Tick: {self.tick}")
 
     def __eq__(self, other) -> bool:
-        if isinstance(other, PoolHelper):
+        if issubclass(type(other), PoolHelper):
             return self.address == other.address
         elif isinstance(other, str):
             return self.address.lower() == other.lower()
