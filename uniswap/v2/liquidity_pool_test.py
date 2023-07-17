@@ -133,6 +133,22 @@ def test_calculate_tokens_in_from_tokens_out_with_override():
     )
 
 
+def test_comparisons():
+    assert lp == "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
+
+    other_lp = MockLiquidityPool()
+    other_lp.name = "WBTC-WETH (V2, 0.30%)"
+    other_lp.address = "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
+
+    assert lp == other_lp
+
+    with pytest.raises(NotImplementedError):
+        assert lp == 420
+
+    # sets depend on __hash__ dunder method
+    set([lp, other_lp])
+
+
 def test_simulations():
     sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=8000000000,
