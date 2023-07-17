@@ -242,7 +242,7 @@ class UniswapLpCycle(ArbitrageHelper):
                 else:
                     raise ValueError(
                         f"Could not determine Uniswap version for pool {pool}"
-                )
+                    )
             except LiquidityPoolError as e:
                 raise ArbitrageError(
                     f"(calculate_tokens_out_from_tokens_in): {e}"
@@ -695,15 +695,15 @@ class UniswapLpCycle(ArbitrageHelper):
                     swap_destination_address = from_address
 
                 if isinstance(swap_pool_object, LiquidityPool):
-                    logger.debug(f"\tPAYLOAD: building V2 swap at pool {i}")
+                    logger.debug(f"PAYLOAD: building V2 swap at pool {i}")
                     logger.debug(
-                        f"\tPAYLOAD: pool address {swap_pool_object.address}"
+                        f"PAYLOAD: pool address {swap_pool_object.address}"
                     )
                     logger.debug(
-                        f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]["amounts"]}'
+                        f'PAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]["amounts"]}'
                     )
                     logger.debug(
-                        f"\tPAYLOAD: destination address {swap_destination_address}"
+                        f"PAYLOAD: destination address {swap_destination_address}"
                     )
                     payloads.append(
                         (
@@ -731,16 +731,16 @@ class UniswapLpCycle(ArbitrageHelper):
                             0,  # msg.value
                         )
                     )
-                elif isinstance(swap_pool_object, V3LiquidityPool):                    
-                    logger.debug(f"\tPAYLOAD: building V3 swap at pool {i}")
+                elif isinstance(swap_pool_object, V3LiquidityPool):
+                    logger.debug(f"PAYLOAD: building V3 swap at pool {i}")
                     logger.debug(
-                        f"\tPAYLOAD: pool address {swap_pool_object.address}"
+                        f"PAYLOAD: pool address {swap_pool_object.address}"
                     )
                     logger.debug(
-                        f'\tPAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]}'
+                        f'PAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]}'
                     )
                     logger.debug(
-                        f"\tPAYLOAD: destination address {swap_destination_address}"
+                        f"PAYLOAD: destination address {swap_destination_address}"
                     )
                     payloads.append(
                         (
