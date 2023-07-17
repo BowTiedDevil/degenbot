@@ -482,7 +482,22 @@ class UniswapLpCycle(ArbitrageHelper):
         def arb_profit(x):
             token_in_quantity = int(x)  # round the input down
 
+            if TYPE_CHECKING:
+                token_out_quantity: int
+
             for i, pool in enumerate(self.swap_pools):
+                pool_override = _overrides.get(pool.address)
+
+                if TYPE_CHECKING:
+                    assert isinstance(pool, LiquidityPool) and (
+                        pool_override is None
+                        or isinstance(pool_override, UniswapV2PoolState)
+                    )
+                    assert isinstance(pool, V3LiquidityPool) and (
+                        pool_override is None
+                        or isinstance(pool_override, UniswapV3PoolState)
+                    )
+
                 try:
                     token_in = self.swap_vectors[i]["token_in"]
                     token_out_quantity = (
@@ -491,7 +506,7 @@ class UniswapLpCycle(ArbitrageHelper):
                             token_in_quantity=token_in_quantity
                             if i == 0
                             else token_out_quantity,
-                            override_state=_overrides.get(pool.address),
+                            override_state=pool_override,
                         )
                     )
                 except (EVMRevertError, LiquidityPoolError) as e:
