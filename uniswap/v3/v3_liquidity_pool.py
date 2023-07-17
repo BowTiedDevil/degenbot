@@ -10,7 +10,6 @@ from web3 import Web3
 
 from degenbot.constants import MAX_INT16, MIN_INT16
 from degenbot.exceptions import (
-    ArbitrageError,
     BitmapWordUnavailableError,
     BlockUnavailableError,
     EVMRevertError,
