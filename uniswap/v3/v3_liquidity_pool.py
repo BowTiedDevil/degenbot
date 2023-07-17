@@ -799,6 +799,9 @@ class V3LiquidityPool(PoolHelper):
         if token_in not in (self.token0, self.token1):
             raise ValueError("token_in not found!")
 
+        if override_state:
+            logger.debug(f"V3 calc with overridden state: {override_state}")
+
         # determine whether the swap is token0 -> token1
         zeroForOne = True if token_in == self.token0 else False
 
