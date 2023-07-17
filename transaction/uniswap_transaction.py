@@ -414,6 +414,20 @@ class UniswapTransaction(TransactionHelper):
 
         current_state = pool.state
 
+        if (
+            amount_in == _UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG
+            or amount_in == _V3_ROUTER2_CONTRACT_BALANCE_FLAG
+        ):
+            _balance = self.ledger.token_balance(self.router_address, token_in)
+
+            self.ledger.transfer(
+                token=token_in,
+                amount=_balance,
+                to_addr=pool.address,
+                from_addr=self.router_address,
+            )
+            amount_in = self.ledger.token_balance(pool.address, token_in)
+
         sim_result = pool.simulate_swap(
             token_in=token_in,
             token_in_quantity=amount_in,
@@ -428,20 +442,6 @@ class UniswapTransaction(TransactionHelper):
             sim_result.amount0_delta,
             sim_result.amount1_delta,
         )
-
-        if (
-            amount_in == _UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG
-            or amount_in == _V3_ROUTER2_CONTRACT_BALANCE_FLAG
-        ):
-            _balance = self.ledger.token_balance(self.router_address, token_in)
-
-            self.ledger.transfer(
-                token=token_in,
-                amount=_balance,
-                to_addr=pool.address,
-                from_addr=self.router_address,
-            )
-            amount_in = self.ledger.token_balance(pool.address, token_in)
 
         if first_swap and not self.ledger.token_balance(
             pool.address, token_in
