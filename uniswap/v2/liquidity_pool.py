@@ -242,8 +242,13 @@ class LiquidityPool(PoolHelper):
                 f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}"
             )
 
-    def __repr__(self):
-        return f"LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1})"
+    def __eq__(self, other) -> bool:
+        if isinstance(other, PoolHelper):
+            return self.address == other.address
+        elif isinstance(other, str):
+            return self.address.lower() == other.lower()
+        else:
+            raise NotImplementedError
 
     # The Brownie contract object cannot be pickled, so remove it and return the state
     def __getstate__(self):
@@ -251,6 +256,9 @@ class LiquidityPool(PoolHelper):
         if self._brownie_contract is not None:
             state["_brownie_contract"] = None
         return state
+
+    def __hash__(self):
+        return hash(self.address)
 
     def __setstate__(self, state):
         self.__dict__.update(state)

@@ -284,8 +284,13 @@ class V3LiquidityPool(PoolHelper):
             logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
             logger.info(f"• Tick: {self.tick}")
 
-    def __repr__(self):
-        return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self.fee})"
+    def __eq__(self, other) -> bool:
+        if isinstance(other, PoolHelper):
+            return self.address == other.address
+        elif isinstance(other, str):
+            return self.address.lower() == other.lower()
+        else:
+            raise NotImplementedError
 
     # Some objects cannot be pickled, so set those references to None and return the state
     def __getstate__(self):
@@ -295,6 +300,9 @@ class V3LiquidityPool(PoolHelper):
         state["update_lock"] = None
         state["lens"] = None
         return state
+
+    def __hash__(self):
+        return hash(self.address)
 
     def __setstate__(self, state):
         self.__dict__.update(state)
