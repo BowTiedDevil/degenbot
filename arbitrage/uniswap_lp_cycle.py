@@ -284,10 +284,6 @@ class UniswapLpCycle(ArbitrageHelper):
                     f"Could not identify Uniswap version for pool: {self.swap_pools[i]}"
                 )
 
-            # feed the output into input, continue the loop
-            token_in = token_out
-            token_in_quantity = token_out_quantity
-
         return pools_amounts_out
 
     def _update_pool_states(self) -> None:
