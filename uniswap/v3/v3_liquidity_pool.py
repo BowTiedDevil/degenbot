@@ -1019,7 +1019,7 @@ class V3LiquidityPool(PoolHelper):
 
                 # adjust in-range liquidity if current tick is within the position's range
                 if (
-                    lower_tick <= self.tick <= upper_tick
+                    lower_tick <= self.tick < upper_tick
                     # bugfix: check the liquidity update timestamp  - fixes issue where
                     # liquidity events were applied after a slot0 update, which put
                     # `self.liquidity` into an inconsistent state
