@@ -1,4 +1,7 @@
 from fractions import Fraction
+from typing import Sequence, Tuple, Union
+
+import web3
 
 from degenbot import Erc20Token
 from degenbot.arbitrage import UniswapLpCycle
@@ -30,13 +33,17 @@ class MockV3LiquidityPool(V3LiquidityPool):
 
 
 wbtc = MockErc20Token()
-wbtc.address = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
+wbtc.address = web3.Web3.toChecksumAddress(
+    "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
+)
 wbtc.decimals = 8
 wbtc.name = "Wrapped BTC"
 wbtc.symbol = "WBTC"
 
 weth = MockErc20Token()
-weth.address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+weth.address = web3.Web3.toChecksumAddress(
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+)
 weth.decimals = 18
 weth.name = "Wrapped Ether"
 weth.symbol = "WETH"
@@ -44,8 +51,12 @@ weth.symbol = "WETH"
 
 v2_lp = MockLiquidityPool()
 v2_lp.name = "WBTC-WETH (V2, 0.30%)"
-v2_lp.address = "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
-v2_lp.factory = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+v2_lp.address = web3.Web3.toChecksumAddress(
+    "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
+)
+v2_lp.factory = web3.Web3.toChecksumAddress(
+    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+)
 v2_lp.fee = None
 v2_lp.fee_token0 = Fraction(3, 1000)
 v2_lp.fee_token1 = Fraction(3, 1000)
@@ -57,8 +68,12 @@ v2_lp._update_pool_state()
 
 v3_lp = MockV3LiquidityPool()
 v3_lp.name = "WBTC-WETH (V3, 0.30%)"
-v3_lp.address = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
-v3_lp.factory = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+v3_lp.address = web3.Web3.toChecksumAddress(
+    "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
+)
+v3_lp.factory = web3.Web3.toChecksumAddress(
+    "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+)
 v3_lp.fee = 3000
 v3_lp.token0 = wbtc
 v3_lp.token1 = weth
@@ -2070,6 +2085,15 @@ arb = UniswapLpCycle(
 )
 
 
+def test_type_checks():
+    # Need to ensure that the mocked helpers will pass the type checks
+    # inside various methods
+    assert isinstance(v2_lp, LiquidityPool)
+    assert isinstance(v3_lp, V3LiquidityPool)
+    assert isinstance(weth, Erc20Token)
+    assert isinstance(wbtc, Erc20Token)
+
+
 def test_arbitrage():
     assert arb.calculate_arbitrage() == (False, (9216006286314, -177578711481))
 
@@ -2086,6 +2110,14 @@ def test_arbitrage_with_overrides():
         tick=258116,
     )
 
+    overrides: Sequence[
+        Union[
+            Tuple[LiquidityPool, UniswapV2PoolState],
+            Tuple[V3LiquidityPool, UniswapV3PoolState],
+        ]
+    ]
+
+    # Override both pools
     overrides = [
         (v2_lp, v2_pool_state_override),
         (v3_lp, v3_pool_state_override),
@@ -2096,15 +2128,7 @@ def test_arbitrage_with_overrides():
         (20522764010327, -282198455271),
     )
 
-    overrides = [
-        (v3_lp, v3_pool_state_override),
-    ]
-
-    assert arb.calculate_arbitrage(override_state=overrides) == (
-        True,
-        (20454968409226055680, 163028226755627520),
-    )
-
+    # Override V2 pool only
     overrides = [
         (v2_lp, v2_pool_state_override),
     ]
@@ -2114,11 +2138,25 @@ def test_arbitrage_with_overrides():
         (15636391570906, -572345612992),
     )
 
+    # Override V3 pool only
+    overrides = [
+        (v3_lp, v3_pool_state_override),
+    ]
+
+    assert arb.calculate_arbitrage(override_state=overrides) == (
+        True,
+        (20454968409226055680, 163028226755627520),
+    )
+
     # Irrelevant V2 and V3 mocked pools, only the address is changed.
     irrelevant_v2_pool = MockLiquidityPool()
-    irrelevant_v2_pool.address = "0x0000000000000000000000000000000000000069"
+    irrelevant_v2_pool.address = web3.Web3.toChecksumAddress(
+        "0x0000000000000000000000000000000000000069"
+    )
     irrelevant_v2_pool.name = "WBTC-WETH (V2, 0.30%)"
-    irrelevant_v2_pool.factory = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+    irrelevant_v2_pool.factory = web3.Web3.toChecksumAddress(
+        "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+    )
     irrelevant_v2_pool.fee = None
     irrelevant_v2_pool.fee_token0 = Fraction(3, 1000)
     irrelevant_v2_pool.fee_token1 = Fraction(3, 1000)
@@ -2128,9 +2166,13 @@ def test_arbitrage_with_overrides():
     irrelevant_v2_pool.token1 = weth
 
     irrelevant_v3_pool = MockV3LiquidityPool()
-    irrelevant_v3_pool.address = "0x0000000000000000000000000000000000000420"
+    irrelevant_v3_pool.address = web3.Web3.toChecksumAddress(
+        "0x0000000000000000000000000000000000000420"
+    )
     irrelevant_v3_pool.name = "WBTC-WETH (V3, 0.30%)"
-    irrelevant_v3_pool.factory = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+    irrelevant_v3_pool.factory = web3.Web3.toChecksumAddress(
+        "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+    )
     irrelevant_v3_pool.fee = 3000
     irrelevant_v3_pool.token0 = wbtc
     irrelevant_v3_pool.token1 = weth
@@ -2149,8 +2191,30 @@ def test_arbitrage_with_overrides():
         (irrelevant_v3_pool, v3_pool_state_override),
     ]
 
-    # This should equal the results from the non-overridden test
+    # This should equal the result from the original test (no overriddes)
     assert arb.calculate_arbitrage(override_state=overrides) == (
         False,
         (9216006286314, -177578711481),
+    )
+
+    overrides = [
+        (v2_lp, v2_pool_state_override),
+        (irrelevant_v3_pool, v3_pool_state_override),  # Should be ignored
+    ]
+
+    # This should equal the result from the test with the V2 override only
+    assert arb.calculate_arbitrage(override_state=overrides) == (
+        False,
+        (15636391570906, -572345612992),
+    )
+
+    overrides = [
+        (irrelevant_v2_pool, v2_pool_state_override),  # Should be ignored
+        (v3_lp, v3_pool_state_override),
+    ]
+
+    # This should equal the result from the test with the V3 override only
+    assert arb.calculate_arbitrage(override_state=overrides) == (
+        True,
+        (20454968409226055680, 163028226755627520),
     )

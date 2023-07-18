@@ -79,9 +79,9 @@ def test_flipTick():
 
 
 def test_nextInitializedTickWithinOneWord():
-    # set up a full-sized empty tick bitmap
-    tick_bitmap = {}
+    tick_bitmap: Dict[int, UniswapV3BitmapAtWord] = {}
 
+    # set up a full-sized empty tick bitmap
     for tick in range(TickMath.MIN_TICK, TickMath.MAX_TICK):
         wordPos, _ = TickBitmap.position(tick=tick)
         if not tick_bitmap.get(wordPos):
