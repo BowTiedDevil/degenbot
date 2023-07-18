@@ -537,6 +537,15 @@ class UniswapTransaction(TransactionHelper):
         if last_swap:
             self.to.add(Web3.toChecksumAddress(recipient))
 
+        if (
+            last_swap
+            and amount_out_min is not None
+            and _amount_out < amount_out_min
+        ):
+            raise TransactionError(
+                f"Insufficient output for swap! {_amount_out} {token_out} received, {amount_out_min} required"
+            )
+
         if not silent:
             logger.info(f"Simulating swap through pool: {pool}")
             logger.info(
@@ -548,15 +557,6 @@ class UniswapTransaction(TransactionHelper):
             logger.info(f"\t(FUTURE)")
             logger.info(f"\t{pool.token0}: {future_state.reserves_token0}")
             logger.info(f"\t{pool.token1}: {future_state.reserves_token1}")
-
-        if (
-            last_swap
-            and amount_out_min is not None
-            and _amount_out < amount_out_min
-        ):
-            raise TransactionError(
-                f"Insufficient output for swap! {_amount_out} {token_out} received, {amount_out_min} required"
-            )
 
         return pool, sim_result
 
@@ -617,18 +617,6 @@ class UniswapTransaction(TransactionHelper):
         else:
             _recipient = Web3.toChecksumAddress(recipient)
 
-        if not silent:
-            logger.info(f"Simulating swap through pool: {pool}")
-            logger.info(
-                f"\t{_amount_in} {token_in} -> {amount_out} {token_out}"
-            )
-            logger.info("\t(CURRENT)")
-            logger.info(f"\t{pool.token0}: {current_state.reserves_token0}")
-            logger.info(f"\t{pool.token1}: {current_state.reserves_token1}")
-            logger.info(f"\t(FUTURE)")
-            logger.info(f"\t{pool.token0}: {future_state.reserves_token0}")
-            logger.info(f"\t{pool.token1}: {future_state.reserves_token1}")
-
         # process the swap
         self.ledger.adjust(pool.address, token_in.address, -_amount_in)
         self.ledger.adjust(pool.address, token_out.address, amount_out)
@@ -649,6 +637,18 @@ class UniswapTransaction(TransactionHelper):
             raise TransactionError(
                 f"Required input {_amount_in} exceeds maximum {amount_in_max}"
             )
+
+        if not silent:
+            logger.info(f"Simulating swap through pool: {pool}")
+            logger.info(
+                f"\t{_amount_in} {token_in} -> {amount_out} {token_out}"
+            )
+            logger.info("\t(CURRENT)")
+            logger.info(f"\t{pool.token0}: {current_state.reserves_token0}")
+            logger.info(f"\t{pool.token1}: {current_state.reserves_token1}")
+            logger.info(f"\t(FUTURE)")
+            logger.info(f"\t{pool.token0}: {future_state.reserves_token0}")
+            logger.info(f"\t{pool.token1}: {future_state.reserves_token1}")
 
         return pool, sim_result
 
@@ -736,6 +736,11 @@ class UniswapTransaction(TransactionHelper):
             _amount_out,
         )
 
+        if amount_out_min is not None and _amount_out < amount_out_min:
+            raise TransactionError(
+                f"Insufficient output for swap! {_amount_out} {token_out} received, {amount_out_min} required"
+            )
+
         if not silent:
             logger.info(f"Simulated output of swap through pool: {pool}")
             logger.info(
@@ -749,11 +754,6 @@ class UniswapTransaction(TransactionHelper):
             logger.info(f"\tprice={_future_pool_state.sqrt_price_x96}")
             logger.info(f"\tliquidity={_future_pool_state.liquidity}")
             logger.info(f"\ttick={_future_pool_state.tick}")
-
-        if amount_out_min is not None and _amount_out < amount_out_min:
-            raise TransactionError(
-                f"Insufficient output for swap! {_amount_out} {token_out} received, {amount_out_min} required"
-            )
 
         return pool, _sim_result
 
