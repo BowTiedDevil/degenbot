@@ -47,7 +47,7 @@ class TickLens:
                 _CONTRACT_ADDRESSES[chain.id][factory_address]
             )
 
-        self.address: str = Web3.toChecksumAddress(address)
+        self.address = Web3.toChecksumAddress(address)
 
         if abi is None:
             abi = UNISWAP_V3_TICKLENS_ABI
