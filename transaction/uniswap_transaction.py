@@ -126,12 +126,15 @@ def get_v2_pools_from_token_path(
 
 class SimulationLedger:
     """
-    A dictionary-like class for tracking token balances across a set of
-    addresses.
+    A dictionary-like class for tracking token balances across addresses.
+
+    Token balances are organized first by the holding address, then by the
+    token contract address.
     """
 
     def __init__(self):
-        # entries are recorded as a dict-of-dicts, keyed by address, then by token address
+        # Entries are recorded as a dict-of-dicts, keyed by address, then by
+        # token address
         self._balances: Dict[
             ChecksumAddress,  # address holding balance
             Dict[
@@ -147,11 +150,28 @@ class SimulationLedger:
         amount: int,
     ) -> None:
         """
-        Modify the balance for a given address and token.
+        Apply an adjustment to the balance for a token held by an address.
 
-        The amount can be positive (credit) or negative (debit).
+        The amount can be positive (credit) or negative (debit). The method
+        checksums all addresses prior to use.
 
-        The method checksums all addresses.
+        Parameters
+        ----------
+        address: str | ChecksumAddress
+            The address holding the token balance.
+        token: Erc20Token | str | ChecksumAddress
+            The token being held. May be passed as an address or an ``Erc20Token``
+        amount: int
+            The amount to adjust. May be negative or positive.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ValueError
+            If inputs did not match the expected types.
         """
 
         _token_address: ChecksumAddress
@@ -198,7 +218,24 @@ class SimulationLedger:
         """
         Get the balance for a given address and token.
 
-        The method checksums all addresses.
+        The method checksums all addresses prior to use.
+
+        Parameters
+        ----------
+        address: str | ChecksumAddress
+            The address holding the token balance.
+        token: Erc20Token | str | ChecksumAddress
+            The token being held. May be passed as an address or an ``Erc20Token``
+
+        Returns
+        -------
+        int
+            The balance of ``token`` at ``address``
+
+        Raises
+        ------
+        ValueError
+            If inputs did not match the expected types.
         """
 
         _address = Web3.toChecksumAddress(address)
@@ -229,6 +266,32 @@ class SimulationLedger:
         from_addr: Union[ChecksumAddress, str],
         to_addr: Union[ChecksumAddress, str],
     ) -> None:
+        """
+        Transfer a balance between addresses.
+
+        The method checksums all addresses prior to use.
+
+        Parameters
+        ----------
+        token: Erc20Token | str | ChecksumAddress
+            The token being held. May be passed as an address or an ``Erc20Token``
+        amount: int
+            The balance to transfer.
+        from_addr: str | ChecksumAddress
+            The address holding the token balance.
+        to_addr: str | ChecksumAddress
+            The address holding the token balance.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ValueError
+            If inputs did not match the expected types.
+        """
+
         if isinstance(token, Erc20Token):
             _token_address = token.address
         elif isinstance(token, str):
@@ -344,6 +407,7 @@ class UniswapTransaction(TransactionHelper):
         # specified amount at the time the transaction is built. The ledger is
         # used to look up the balance at any point inside the swap, and at the
         # end to confirm that all balances have been accounted for.
+
         self.ledger = SimulationLedger()
 
         self.chain_id = (
