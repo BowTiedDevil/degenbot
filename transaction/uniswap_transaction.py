@@ -112,7 +112,7 @@ def _raise_if_expired(deadline: int):
 
 
 def get_v2_pools_from_token_path(
-    tx_path,
+    tx_path: Iterable[Union[str, ChecksumAddress]],
     pool_manager: UniswapV2LiquidityPoolManager,
 ) -> List[LiquidityPool]:
     return [
