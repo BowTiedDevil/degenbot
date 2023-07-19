@@ -146,18 +146,32 @@ class Erc20Token:
     def __eq__(self, other) -> bool:
         if isinstance(other, Erc20Token):
             return self.address == other.address
+        elif type(other) == ChecksumAddress:
+            return self.address == other
         elif isinstance(other, str):
             return self.address.lower() == other.lower()
         else:
-            raise TypeError(
-                f"Equality can be evaluated against another Erc20Token or a str. Type was: {type(other)}"
-            )
+            return NotImplemented
 
     def __lt__(self, other) -> bool:
-        return self.address.lower() < other.address.lower()
+        if isinstance(other, Erc20Token):
+            return self.address < other.address
+        elif type(other) == ChecksumAddress:
+            return self.address < other
+        elif isinstance(other, str):
+            return self.address.lower() < other.lower()
+        else:
+            return NotImplemented
 
     def __gt__(self, other) -> bool:
-        return self.address.lower() > other.address.lower()
+        if isinstance(other, Erc20Token):
+            return self.address > other.address
+        elif type(other) == ChecksumAddress:
+            return self.address > other
+        elif isinstance(other, str):
+            return self.address.lower() > other.lower()
+        else:
+            return NotImplemented
 
     def __str__(self):
         return self.symbol
