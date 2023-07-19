@@ -8,7 +8,7 @@ from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from degenbot.exceptions import ManagerError
 from degenbot.token import Erc20Token
 from degenbot.types import ArbitrageHelper, HelperManager
-from degenbot.uniswap import (
+from degenbot.uniswap.uniswap_managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )
