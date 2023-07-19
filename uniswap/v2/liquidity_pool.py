@@ -15,11 +15,9 @@ from degenbot.exceptions import (
     ZeroSwapError,
 )
 from degenbot.logging import logger
-from degenbot.manager import AllPools, Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.types import PoolHelper
 from degenbot.uniswap.abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
-from degenbot.uniswap.v2.functions import generate_v2_pool_address
 from degenbot.uniswap.v2.router import Router
 
 
@@ -162,6 +160,8 @@ class LiquidityPool(PoolHelper):
                 else:
                     raise ValueError(f"{token} not found in pool {self}")
         else:
+            from degenbot.manager import Erc20TokenHelperManager
+
             _token_manager = Erc20TokenHelperManager(chain.id)
             self.token0 = _token_manager.get_erc20token(
                 address=self._brownie_contract.token0(),
@@ -177,6 +177,8 @@ class LiquidityPool(PoolHelper):
             )
 
         if factory_address is not None and factory_init_hash is not None:
+            from degenbot.uniswap.v2.functions import generate_v2_pool_address
+
             computed_pool_address = generate_v2_pool_address(
                 token_addresses=[self.token0.address, self.token1.address],
                 factory_address=factory_address,
@@ -230,6 +232,8 @@ class LiquidityPool(PoolHelper):
             reserves_token0=self.reserves_token0,
             reserves_token1=self.reserves_token1,
         )
+
+        from degenbot.manager import AllPools
 
         AllPools(chain.id)[self.address] = self
 

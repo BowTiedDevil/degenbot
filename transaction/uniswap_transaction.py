@@ -21,6 +21,7 @@ from degenbot.exceptions import (
 )
 from degenbot.logging import logger
 from degenbot.token import Erc20Token
+from degenbot.transaction.simulation_ledger import SimulationLedger
 from degenbot.types import TransactionHelper
 from degenbot.uniswap import (
     UniswapV2LiquidityPoolManager,
@@ -28,6 +29,7 @@ from degenbot.uniswap import (
 )
 from degenbot.uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from degenbot.uniswap.v2 import LiquidityPool
+from degenbot.uniswap.v2.functions import get_v2_pools_from_token_path
 from degenbot.uniswap.v2.liquidity_pool import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
@@ -109,19 +111,6 @@ _V3_ROUTER2_CONTRACT_BALANCE_FLAG = 0
 def _raise_if_expired(deadline: int):
     if chain.time() > deadline:
         raise TransactionError("Deadline expired")
-
-
-def get_v2_pools_from_token_path(
-    tx_path: Iterable[Union[str, ChecksumAddress]],
-    pool_manager: UniswapV2LiquidityPoolManager,
-) -> List[LiquidityPool]:
-    return [
-        pool_manager.get_pool(
-            token_addresses=token_addresses,
-            silent=True,
-        )
-        for token_addresses in itertools.pairwise(tx_path)
-    ]
 
 
 class UniswapTransaction(TransactionHelper):

@@ -1,7 +1,11 @@
-from typing import List
+from typing import Iterable, List, Union
 
 import eth_abi.packed
+from eth_typing import ChecksumAddress
 from web3 import Web3
+
+from degenbot.uniswap.uniswap_managers import UniswapV2LiquidityPoolManager
+from degenbot.uniswap.v2 import LiquidityPool
 
 
 def generate_v2_pool_address(
@@ -30,3 +34,18 @@ def generate_v2_pool_address(
             + init_hash[2:]
         )[12:]
     )
+
+
+def get_v2_pools_from_token_path(
+    tx_path: Iterable[Union[str, ChecksumAddress]],
+    pool_manager: UniswapV2LiquidityPoolManager,
+) -> List[LiquidityPool]:
+    import itertools
+
+    return [
+        pool_manager.get_pool(
+            token_addresses=token_addresses,
+            silent=True,
+        )
+        for token_addresses in itertools.pairwise(tx_path)
+    ]
