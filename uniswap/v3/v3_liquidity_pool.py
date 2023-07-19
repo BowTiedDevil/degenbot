@@ -245,7 +245,7 @@ class V3LiquidityPool(PoolHelper):
             self.tick_bitmap = {
                 int(word): UniswapV3BitmapAtWord(
                     bitmap=tick_bitmap["bitmap"],
-                    block=tick_bitmap["block"],
+                    block=tick_bitmap.get("block"),
                 )
                 for word, tick_bitmap in tick_bitmap.items()
             }
@@ -259,7 +259,7 @@ class V3LiquidityPool(PoolHelper):
                 int(word): UniswapV3LiquidityAtTick(
                     liquidityNet=tick_data["liquidityNet"],
                     liquidityGross=tick_data["liquidityGross"],
-                    block=tick_data["block"],
+                    block=tick_data.get("block"),
                 )
                 for word, tick_data in tick_data.items()
             }
