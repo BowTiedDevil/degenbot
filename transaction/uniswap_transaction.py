@@ -120,6 +120,62 @@ def _raise_if_expired(deadline: int):
         raise TransactionError("Deadline expired")
 
 
+def _show_v2_states(sim_result: UniswapV2PoolSimulationResult):
+    current_state = sim_result.current_state
+    future_state = sim_result.future_state
+    pool = current_state.pool
+
+    # amount out is negative
+    if sim_result.amount0_delta < sim_result.amount1_delta:
+        token_in = pool.token1
+        token_out = pool.token0
+        amount_in = sim_result.amount1_delta
+        amount_out = -sim_result.amount0_delta
+    else:
+        token_in = pool.token0
+        token_out = pool.token1
+        amount_in = sim_result.amount0_delta
+        amount_out = -sim_result.amount1_delta
+
+    logger.info(f"Simulating swap through pool: {pool}")
+    logger.info(f"\t{amount_in} {token_in} -> {amount_out} {token_out}")
+    logger.info("\t(CURRENT)")
+    logger.info(f"\t{pool.token0}: {current_state.reserves_token0}")
+    logger.info(f"\t{pool.token1}: {current_state.reserves_token1}")
+    logger.info(f"\t(FUTURE)")
+    logger.info(f"\t{pool.token0}: {future_state.reserves_token0}")
+    logger.info(f"\t{pool.token1}: {future_state.reserves_token1}")
+
+
+def _show_v3_states(sim_result: UniswapV3PoolSimulationResult):
+    current_state = sim_result.current_state
+    future_state = sim_result.future_state
+    pool = current_state.pool
+
+    # amount out is negative
+    if sim_result.amount0_delta < sim_result.amount1_delta:
+        token_in = pool.token1
+        token_out = pool.token0
+        amount_in = sim_result.amount1_delta
+        amount_out = -sim_result.amount0_delta
+    else:
+        token_in = pool.token0
+        token_out = pool.token1
+        amount_in = sim_result.amount0_delta
+        amount_out = -sim_result.amount1_delta
+
+    logger.info(f"Simulated output of swap through pool: {pool}")
+    logger.info(f"\t{amount_in} {token_in} -> {amount_out} {token_out}")
+    logger.info("\t(CURRENT)")
+    logger.info(f"\tprice={current_state.sqrt_price_x96}")
+    logger.info(f"\tliquidity={current_state.liquidity}")
+    logger.info(f"\ttick={current_state.tick}")
+    logger.info(f"\t(FUTURE)")
+    logger.info(f"\tprice={future_state.sqrt_price_x96}")
+    logger.info(f"\tliquidity={future_state.liquidity}")
+    logger.info(f"\ttick={future_state.tick}")
+
+
 class UniswapTransaction(TransactionHelper):
     @classmethod
     def add_router(cls, chain_id: int, router_address: str, router_dict: dict):
@@ -352,16 +408,7 @@ class UniswapTransaction(TransactionHelper):
             )
 
         if not silent:
-            logger.info(f"Simulating swap through pool: {pool}")
-            logger.info(
-                f"\t{amount_in} {token_in} -> {_amount_out} {token_out}"
-            )
-            logger.info("\t(CURRENT)")
-            logger.info(f"\t{pool.token0}: {current_state.reserves_token0}")
-            logger.info(f"\t{pool.token1}: {current_state.reserves_token1}")
-            logger.info(f"\t(FUTURE)")
-            logger.info(f"\t{pool.token0}: {future_state.reserves_token0}")
-            logger.info(f"\t{pool.token1}: {future_state.reserves_token1}")
+            _show_v2_states(sim_result)
 
         return pool, sim_result
 
@@ -444,16 +491,7 @@ class UniswapTransaction(TransactionHelper):
             )
 
         if not silent:
-            logger.info(f"Simulating swap through pool: {pool}")
-            logger.info(
-                f"\t{_amount_in} {token_in} -> {amount_out} {token_out}"
-            )
-            logger.info("\t(CURRENT)")
-            logger.info(f"\t{pool.token0}: {current_state.reserves_token0}")
-            logger.info(f"\t{pool.token1}: {current_state.reserves_token1}")
-            logger.info(f"\t(FUTURE)")
-            logger.info(f"\t{pool.token0}: {future_state.reserves_token0}")
-            logger.info(f"\t{pool.token1}: {future_state.reserves_token1}")
+            _show_v2_states(sim_result)
 
         return pool, sim_result
 
@@ -547,18 +585,7 @@ class UniswapTransaction(TransactionHelper):
             )
 
         if not silent:
-            logger.info(f"Simulated output of swap through pool: {pool}")
-            logger.info(
-                f"\t{amount_in} {token_in} -> {_amount_out} {token_out}"
-            )
-            logger.info("\t(CURRENT)")
-            logger.info(f"\tprice={_current_pool_state.sqrt_price_x96}")
-            logger.info(f"\tliquidity={_current_pool_state.liquidity}")
-            logger.info(f"\ttick={_current_pool_state.tick}")
-            logger.info(f"\t(FUTURE)")
-            logger.info(f"\tprice={_future_pool_state.sqrt_price_x96}")
-            logger.info(f"\tliquidity={_future_pool_state.liquidity}")
-            logger.info(f"\ttick={_future_pool_state.tick}")
+            _show_v3_states(_sim_result)
 
         return pool, _sim_result
 
@@ -676,18 +703,7 @@ class UniswapTransaction(TransactionHelper):
             )
 
         if not silent:
-            logger.info(f"Simulated output of swap through pool: {pool}")
-            logger.info(
-                f"\t{_amount_in} {token_in} -> {_amount_out} {token_out}"
-            )
-            logger.info("\t(CURRENT)")
-            logger.info(f"\tprice={_current_pool_state.sqrt_price_x96}")
-            logger.info(f"\tliquidity={_current_pool_state.liquidity}")
-            logger.info(f"\ttick={_current_pool_state.tick}")
-            logger.info(f"\t(FUTURE)")
-            logger.info(f"\tprice={_future_pool_state.sqrt_price_x96}")
-            logger.info(f"\tliquidity={_future_pool_state.liquidity}")
-            logger.info(f"\ttick={_future_pool_state.tick}")
+            _show_v3_states(_sim_result)
 
         return pool, _sim_result
 
