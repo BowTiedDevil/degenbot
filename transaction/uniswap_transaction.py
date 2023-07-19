@@ -2,16 +2,7 @@
 
 import itertools
 import pprint
-from typing import (
-    TYPE_CHECKING,
-    Dict,
-    Iterable,
-    List,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
 import eth_abi
 from brownie import chain  # type: ignore
@@ -32,23 +23,18 @@ from degenbot.logging import logger
 from degenbot.token import Erc20Token
 from degenbot.transaction.simulation_ledger import SimulationLedger
 from degenbot.types import TransactionHelper
+from degenbot.uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from degenbot.uniswap.uniswap_managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )
-from degenbot.uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from degenbot.uniswap.v2 import LiquidityPool
 from degenbot.uniswap.v2.functions import get_v2_pools_from_token_path
-from degenbot.uniswap.v2.liquidity_pool import (
-    UniswapV2PoolSimulationResult,
-    UniswapV2PoolState,
-)
+from degenbot.uniswap.v2.liquidity_pool import UniswapV2PoolSimulationResult
 from degenbot.uniswap.v3 import V3LiquidityPool
 from degenbot.uniswap.v3.functions import decode_v3_path
-from degenbot.uniswap.v3.v3_liquidity_pool import (
-    UniswapV3PoolSimulationResult,
-    UniswapV3PoolState,
-)
+from degenbot.uniswap.v3.v3_liquidity_pool import UniswapV3PoolSimulationResult
+
 
 # Internal dict of known router contracts by chain ID. Pre-populated with
 # mainnet addresses. New routers can be added by class method `add_router`
@@ -912,12 +898,6 @@ class UniswapTransaction(TransactionHelper):
                     UniswapV2PoolSimulationResult,
                     UniswapV3PoolSimulationResult,
                 ]
-                _current_pool_state: Union[
-                    UniswapV2PoolState, UniswapV3PoolState
-                ]
-                _future_pool_state: Union[
-                    UniswapV2PoolState, UniswapV3PoolState
-                ]
 
             _universal_router_command_future_pool_states: List[
                 Union[
@@ -1137,11 +1117,6 @@ class UniswapTransaction(TransactionHelper):
                         last_swap=last_swap,
                     )
 
-                    if TYPE_CHECKING:
-                        assert isinstance(
-                            _future_pool_state, UniswapV2PoolState
-                        )
-
                     _amount_out = -min(
                         _sim_result.amount0_delta, _sim_result.amount1_delta
                     )
@@ -1222,8 +1197,6 @@ class UniswapTransaction(TransactionHelper):
                         if pool.token0 == tx_path[-2 - pool_pos]
                         else pool.token1
                     )
-
-                    _current_pool_state = pool.state
 
                     _, _sim_result = self._simulate_v2_swap_exact_out(
                         pool=pool,
