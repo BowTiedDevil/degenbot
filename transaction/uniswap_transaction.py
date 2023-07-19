@@ -18,7 +18,7 @@ from brownie import chain  # type: ignore
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
-from degenbot.constants import ZERO_ADDRESS
+from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
 from degenbot.exceptions import (
     DegenbotError,
     EVMRevertError,
@@ -102,8 +102,6 @@ _ROUTERS: Dict[int, Dict[str, Dict]] = {
     }
 }
 
-# Internal dict of known wrapped token contracts by chain ID.
-_WRAPPED_NATIVE_TOKENS = {1: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"}
 
 # see https://github.com/Uniswap/universal-router/blob/deployed-commit/contracts/libraries/Constants.sol
 _UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG = 1 << 255
@@ -171,12 +169,12 @@ class UniswapTransaction(TransactionHelper):
         _token_address = Web3.toChecksumAddress(token_address)
 
         try:
-            _WRAPPED_NATIVE_TOKENS[chain_id]
+            WRAPPED_NATIVE_TOKENS[chain_id]
         except KeyError:
-            _WRAPPED_NATIVE_TOKENS[chain_id] = _token_address
+            WRAPPED_NATIVE_TOKENS[chain_id] = _token_address
         else:
             raise ValueError(
-                f"Token address {_WRAPPED_NATIVE_TOKENS[chain_id]} already set for chain ID {chain_id}!"
+                f"Token address {WRAPPED_NATIVE_TOKENS[chain_id]} already set for chain ID {chain_id}!"
             )
 
     def __init__(
@@ -1009,7 +1007,7 @@ class UniswapTransaction(TransactionHelper):
                 else:
                     _recipient = tx_recipient
 
-                _wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
+                _wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
 
                 self.ledger.adjust(
                     _recipient,
@@ -1034,7 +1032,7 @@ class UniswapTransaction(TransactionHelper):
                 except:
                     raise ValueError(f"Could not decode input for {command}")
 
-                _wrapped_token_address = _WRAPPED_NATIVE_TOKENS[self.chain_id]
+                _wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
                 _wrapped_token_balance = self.ledger.token_balance(
                     self.router_address, _wrapped_token_address
                 )
@@ -2139,7 +2137,7 @@ class UniswapTransaction(TransactionHelper):
                     # TODO: if ETH balances are ever needed, handle the
                     # ETH transfer resulting from this function
                     amountMin = func_params["amountMinimum"]
-                    wrapped_token_address = _WRAPPED_NATIVE_TOKENS[
+                    wrapped_token_address = WRAPPED_NATIVE_TOKENS[
                         self.chain_id
                     ]
                     wrapped_token_balance = self.ledger.token_balance(
@@ -2160,7 +2158,7 @@ class UniswapTransaction(TransactionHelper):
                     _fee_bips = func_params["feeBips"]
                     _fee_recipient = func_params["feeRecipient"]
 
-                    wrapped_token_address = _WRAPPED_NATIVE_TOKENS[
+                    wrapped_token_address = WRAPPED_NATIVE_TOKENS[
                         self.chain_id
                     ]
                     wrapped_token_balance = self.ledger.token_balance(
@@ -2204,7 +2202,7 @@ class UniswapTransaction(TransactionHelper):
 
                 elif func_name == "wrapETH":
                     _wrapped_token_amount = func_params["value"]
-                    _wrapped_token_address = _WRAPPED_NATIVE_TOKENS[
+                    _wrapped_token_address = WRAPPED_NATIVE_TOKENS[
                         self.chain_id
                     ]
                     self.ledger.adjust(

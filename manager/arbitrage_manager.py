@@ -5,6 +5,7 @@ from web3 import Web3
 
 from degenbot import Erc20TokenHelperManager
 from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
+from degenbot.constants import WRAPPED_NATIVE_TOKENS
 from degenbot.exceptions import ManagerError
 from degenbot.token import Erc20Token
 from degenbot.types import ArbitrageHelper, HelperManager
@@ -25,19 +26,6 @@ class ArbitrageHelperManager(HelperManager):
     """
 
     _state: Dict = {}
-
-    # a dictionary of contract addresses for the native blockchain token,
-    # keyed by chain ID
-    WRAPPED_NATIVE_TOKENS: Dict[int, str] = {
-        # Ethereum (ETH)
-        1: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        # Fantom (WFTM)
-        250: "0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83",
-        # Arbitrum (AETH)
-        42161: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
-        # Avalanche (WAVAX)
-        43114: "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7",
-    }
 
     def __init__(self, chain_id: int):
         # the internal state data for this object is held in the
@@ -99,9 +87,7 @@ class ArbitrageHelperManager(HelperManager):
         Returns the arb helper
         """
 
-        native_wrapped_token_address = self.WRAPPED_NATIVE_TOKENS[
-            self._chain_id
-        ]
+        native_wrapped_token_address = WRAPPED_NATIVE_TOKENS[self._chain_id]
 
         print(native_wrapped_token_address)
 
@@ -193,7 +179,7 @@ class ArbitrageHelperManager(HelperManager):
         try:
             if arb_type == "cycle":
                 if input_token is None:
-                    native_wrapped_token_address = self.WRAPPED_NATIVE_TOKENS[
+                    native_wrapped_token_address = WRAPPED_NATIVE_TOKENS[
                         chain_id
                     ]
                     input_token = self._erc20tokenmanager.get_erc20token(
