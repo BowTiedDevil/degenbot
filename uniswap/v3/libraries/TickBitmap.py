@@ -44,7 +44,7 @@ def position(tick: int) -> Tuple[int, int]:
 
 
 def nextInitializedTickWithinOneWord(
-    tick_bitmap: dict,
+    tick_bitmap: Dict[int, UniswapV3BitmapAtWord],
     tick: int,
     tick_spacing: int,
     less_than_or_equal: bool,
