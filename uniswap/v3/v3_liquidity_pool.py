@@ -235,8 +235,10 @@ class V3LiquidityPool(PoolHelper):
         self.tick_bitmap = {}
         self.sparse_bitmap = True
 
-        if tick_bitmap is not None != tick_data is not None:
-            raise ValueError("Must provide both tick_bitmap and tick_data")
+        if (tick_bitmap is not None) != (tick_data is not None):
+            raise ValueError(
+                f"Must provide both tick_bitmap and tick_data! Got {tick_bitmap=}, {tick_data=}"
+            )
 
         if tick_bitmap is not None:
             # transform JSON to UniswapV3BitmapAtWord
