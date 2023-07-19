@@ -2058,6 +2058,71 @@ lp.tick_data = {
 lp._update_pool_state()
 
 
+def test_tick_bitmap_equality():
+    with pytest.raises(AssertionError):
+        assert UniswapV3BitmapAtWord(bitmap=1) == UniswapV3BitmapAtWord(
+            bitmap=2
+        )
+
+    # `block` field is set with `compare=False`, so that only the bitmap is
+    # considered by equality checks
+    assert UniswapV3BitmapAtWord(bitmap=1, block=1) == UniswapV3BitmapAtWord(
+        bitmap=1, block=2
+    )
+
+
+def test_tick_data_equality():
+    with pytest.raises(AssertionError):
+        assert UniswapV3LiquidityAtTick(
+            liquidityNet=1, liquidityGross=2
+        ) == UniswapV3LiquidityAtTick(liquidityNet=3, liquidityGross=4)
+
+    # `block` field is set with `compare=False`, so that only the liquidity is
+    # considered by equality checks
+    assert UniswapV3LiquidityAtTick(
+        liquidityNet=1, liquidityGross=2, block=3
+    ) == UniswapV3LiquidityAtTick(liquidityNet=1, liquidityGross=2, block=4)
+
+
+def test_pool_state_equality():
+    with pytest.raises(AssertionError):
+        assert UniswapV3PoolState(
+            liquidity=10 * 10**18, sqrt_price_x96=10 * 10**18, tick=69_420
+        ) == UniswapV3PoolState(
+            liquidity=10 * 10**18, sqrt_price_x96=10 * 10**18, tick=69_421
+        )
+
+    with pytest.raises(AssertionError):
+        assert UniswapV3PoolState(
+            liquidity=10 * 10**18, sqrt_price_x96=10 * 10**18, tick=69_420
+        ) == UniswapV3PoolState(
+            liquidity=10 * 10**18, sqrt_price_x96=11 * 10**18, tick=69_420
+        )
+
+    with pytest.raises(AssertionError):
+        assert UniswapV3PoolState(
+            liquidity=10 * 10**18, sqrt_price_x96=10 * 10**18, tick=69_420
+        ) == UniswapV3PoolState(
+            liquidity=11 * 10**18, sqrt_price_x96=10 * 10**18, tick=69_420
+        )
+
+    # `tick_bitmap` and `tick_data` fields are set with `compare=False`, so
+    # that only the liquidity, price, and tick are considered by equality checks
+    assert UniswapV3PoolState(
+        liquidity=10 * 10**18,
+        sqrt_price_x96=10 * 10**18,
+        tick=69_420,
+        tick_bitmap={"a": "b"},
+        tick_data={"c": "d"},
+    ) == UniswapV3PoolState(
+        liquidity=10 * 10**18,
+        sqrt_price_x96=10 * 10**18,
+        tick=69_420,
+        tick_bitmap={"e": "f"},
+        tick_data={"g": "h"},
+    )
+
+
 def test_calculate_tokens_out_from_tokens_in():
     assert (
         lp.calculate_tokens_out_from_tokens_in(

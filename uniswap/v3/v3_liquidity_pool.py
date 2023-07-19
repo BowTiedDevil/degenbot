@@ -36,16 +36,17 @@ from degenbot.uniswap.v3.tick_lens import TickLens
 @dataclasses.dataclass(slots=True)
 class UniswapV3BitmapAtWord:
     bitmap: int = 0
-    block: Optional[int] = None
+    block: Optional[int] = dataclasses.field(compare=False, default=None)
 
     def to_dict(self):
         return dataclasses.asdict(self)
+
 
 @dataclasses.dataclass(slots=True)
 class UniswapV3LiquidityAtTick:
     liquidityNet: int = 0
     liquidityGross: int = 0
-    block: Optional[int] = None
+    block: Optional[int] = dataclasses.field(compare=False, default=None)
 
     def to_dict(self):
         return dataclasses.asdict(self)
@@ -70,19 +71,20 @@ class UniswapV3PoolState:
     liquidity: int
     sqrt_price_x96: int
     tick: int
-    tick_bitmap: Optional[Dict] = None
-    tick_data: Optional[Dict] = None
+    tick_bitmap: Optional[Dict] = dataclasses.field(
+        compare=False, default=None
+    )
+    tick_data: Optional[Dict] = dataclasses.field(compare=False, default=None)
     # TODO: check if this field is required
-    last_liquidity_update: int = 0
+    last_liquidity_update: int = dataclasses.field(compare=False, default=0)
 
 
 @dataclasses.dataclass(slots=True)
 class UniswapV3PoolSimulationResult:
     amount0_delta: int
     amount1_delta: int
-    # WIP: store current and future states inside the simulation result
-    current_state: UniswapV3PoolState
-    future_state: UniswapV3PoolState
+    current_state: UniswapV3PoolState = dataclasses.field(compare=False)
+    future_state: UniswapV3PoolState = dataclasses.field(compare=False)
 
 
 class V3LiquidityPool(PoolHelper):
