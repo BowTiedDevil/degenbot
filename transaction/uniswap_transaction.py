@@ -2,7 +2,16 @@
 
 import itertools
 import pprint
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 import eth_abi
 from brownie import chain  # type: ignore
@@ -23,7 +32,7 @@ from degenbot.logging import logger
 from degenbot.token import Erc20Token
 from degenbot.transaction.simulation_ledger import SimulationLedger
 from degenbot.types import TransactionHelper
-from degenbot.uniswap import (
+from degenbot.uniswap.uniswap_managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )

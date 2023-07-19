@@ -11,7 +11,3 @@ from degenbot.uniswap.abi import (
     UNISWAP_V3_ROUTER_ABI,
     UNISWAP_V3_TICKLENS_ABI,
 )
-from degenbot.uniswap.uniswap_managers import (
-    UniswapV2LiquidityPoolManager,
-    UniswapV3LiquidityPoolManager,
-)
