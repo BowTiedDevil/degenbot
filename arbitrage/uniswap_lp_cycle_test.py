@@ -2100,11 +2100,13 @@ def test_arbitrage():
 
 def test_arbitrage_with_overrides():
     v2_pool_state_override = UniswapV2PoolState(
+        pool=v2_lp,
         reserves_token0=16027096956,
         reserves_token1=2602647332090181827846,
     )
 
     v3_pool_state_override = UniswapV3PoolState(
+        pool=v3_lp,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
         tick=258116,

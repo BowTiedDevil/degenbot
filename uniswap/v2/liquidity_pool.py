@@ -23,6 +23,7 @@ from degenbot.uniswap.v2.router import Router
 
 @dataclasses.dataclass(slots=True)
 class UniswapV2PoolState:
+    pool: "LiquidityPool"
     reserves_token0: int
     reserves_token1: int
 
@@ -31,7 +32,6 @@ class UniswapV2PoolState:
 class UniswapV2PoolSimulationResult:
     amount0_delta: int
     amount1_delta: int
-    # WIP: store current and future states inside the simulation result
     current_state: UniswapV2PoolState
     future_state: UniswapV2PoolState
 
@@ -229,6 +229,7 @@ class LiquidityPool(PoolHelper):
             self._brownie_contract = None
 
         self.state = UniswapV2PoolState(
+            pool=self,
             reserves_token0=self.reserves_token0,
             reserves_token1=self.reserves_token1,
         )
@@ -275,6 +276,7 @@ class LiquidityPool(PoolHelper):
 
     def _update_pool_state(self):
         self.state = UniswapV2PoolState(
+            pool=self,
             reserves_token0=self.reserves_token0,
             reserves_token1=self.reserves_token1,
         )
@@ -628,6 +630,7 @@ class LiquidityPool(PoolHelper):
             amount1_delta=token1_delta,
             current_state=self.state,
             future_state=UniswapV2PoolState(
+                pool=self,
                 reserves_token0=self.reserves_token0 + token0_delta,
                 reserves_token1=self.reserves_token1 + token1_delta,
             ),

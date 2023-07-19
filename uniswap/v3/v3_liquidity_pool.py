@@ -68,6 +68,7 @@ class UniswapV3PoolExternalUpdate:
 
 @dataclasses.dataclass(slots=True)
 class UniswapV3PoolState:
+    pool: "V3LiquidityPool"
     liquidity: int
     sqrt_price_x96: int
     tick: int
@@ -279,6 +280,7 @@ class V3LiquidityPool(PoolHelper):
             )
 
         self.state = UniswapV3PoolState(
+            pool=self,
             last_liquidity_update=self.liquidity_update_block,
             liquidity=self.liquidity,
             sqrt_price_x96=self.sqrt_price_x96,
@@ -345,6 +347,7 @@ class V3LiquidityPool(PoolHelper):
 
     def _update_pool_state(self) -> None:
         self.state = UniswapV3PoolState(
+            pool=self,
             last_liquidity_update=self.liquidity_update_block,
             liquidity=self.liquidity,
             sqrt_price_x96=self.sqrt_price_x96,
@@ -1229,6 +1232,7 @@ class V3LiquidityPool(PoolHelper):
                 amount1_delta=amount1_delta,
                 current_state=self.state,
                 future_state=UniswapV3PoolState(
+                    pool=self,
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrtprice,
                     tick=end_tick,

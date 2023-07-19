@@ -2087,34 +2087,54 @@ def test_tick_data_equality():
 def test_pool_state_equality():
     with pytest.raises(AssertionError):
         assert UniswapV3PoolState(
-            liquidity=10 * 10**18, sqrt_price_x96=10 * 10**18, tick=69_420
+            pool=lp,
+            liquidity=10 * 10**18,
+            sqrt_price_x96=10 * 10**18,
+            tick=69_420,
         ) == UniswapV3PoolState(
-            liquidity=10 * 10**18, sqrt_price_x96=10 * 10**18, tick=69_421
+            pool=lp,
+            liquidity=10 * 10**18,
+            sqrt_price_x96=10 * 10**18,
+            tick=69_421,
         )
 
     with pytest.raises(AssertionError):
         assert UniswapV3PoolState(
-            liquidity=10 * 10**18, sqrt_price_x96=10 * 10**18, tick=69_420
+            pool=lp,
+            liquidity=10 * 10**18,
+            sqrt_price_x96=10 * 10**18,
+            tick=69_420,
         ) == UniswapV3PoolState(
-            liquidity=10 * 10**18, sqrt_price_x96=11 * 10**18, tick=69_420
+            pool=lp,
+            liquidity=10 * 10**18,
+            sqrt_price_x96=11 * 10**18,
+            tick=69_420,
         )
 
     with pytest.raises(AssertionError):
         assert UniswapV3PoolState(
-            liquidity=10 * 10**18, sqrt_price_x96=10 * 10**18, tick=69_420
+            pool=lp,
+            liquidity=10 * 10**18,
+            sqrt_price_x96=10 * 10**18,
+            tick=69_420,
         ) == UniswapV3PoolState(
-            liquidity=11 * 10**18, sqrt_price_x96=10 * 10**18, tick=69_420
+            pool=lp,
+            liquidity=11 * 10**18,
+            sqrt_price_x96=10 * 10**18,
+            tick=69_420,
         )
 
     # `tick_bitmap` and `tick_data` fields are set with `compare=False`, so
     # that only the liquidity, price, and tick are considered by equality checks
     assert UniswapV3PoolState(
+        pool=lp,
         liquidity=10 * 10**18,
         sqrt_price_x96=10 * 10**18,
         tick=69_420,
         tick_bitmap={"a": "b"},
         tick_data={"c": "d"},
     ) == UniswapV3PoolState(
+        pool=lp,
         liquidity=10 * 10**18,
         sqrt_price_x96=10 * 10**18,
         tick=69_420,
@@ -2147,6 +2167,7 @@ def test_calculate_tokens_out_from_tokens_in_with_override():
     # Tick: 258116
 
     pool_state_override = UniswapV3PoolState(
+        pool=lp,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
         tick=258116,
@@ -2187,6 +2208,7 @@ def test_calculate_tokens_in_from_tokens_out_with_override():
     # Tick: 258116
 
     pool_state_override = UniswapV3PoolState(
+        pool=lp,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
         tick=258116,
@@ -2211,6 +2233,7 @@ def test_simulations():
         amount1_delta=1000000000000000000,
         current_state=lp.state,
         future_state=UniswapV3PoolState(
+            pool=lp,
             liquidity=1612978974357835825,
             sqrt_price_x96=31549266832914462409708360853542079,
             tick=257907,
@@ -2241,6 +2264,7 @@ def test_simulations():
         amount1_delta=-15808930695950518795,
         current_state=lp.state,
         future_state=UniswapV3PoolState(
+            pool=lp,
             liquidity=1612978974357835825,
             sqrt_price_x96=31548441339817807300885591332345643,
             tick=257906,
@@ -2271,6 +2295,7 @@ def test_simulations_with_override():
     # Tick: 258116
 
     pool_state_override = UniswapV3PoolState(
+        pool=lp,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
         tick=258116,
@@ -2285,6 +2310,7 @@ def test_simulations_with_override():
         amount1_delta=1 * 10**18,
         current_state=lp.state,
         future_state=UniswapV3PoolState(
+            pool=lp,
             sqrt_price_x96=31881342483860761583159860586051776,
             liquidity=1533143241938066251,
             tick=258116,
@@ -2300,6 +2326,7 @@ def test_simulations_with_override():
         amount1_delta=999999892383362636,
         current_state=lp.state,
         future_state=UniswapV3PoolState(
+            pool=lp,
             sqrt_price_x96=31881342483855216967760245337454994,
             liquidity=1533143241938066251,
             tick=258116,
