@@ -965,10 +965,17 @@ class V3LiquidityPool(PoolHelper):
 
         If block_number is provided, it will be checked. If omitted, the values are assumed valid and processed.
 
-        Returns a bool indicating whether any updated state value was found and processed
+        def is_valid_update_block(block_number) -> bool:
+            """
+            Check if `block_number` is valid (matches or exceeds the last update block)
+            """
+            return block_number >= self.update_block
 
-        Uses a lock to guard state-modifying methods that might cause race conditions when used with threads.
-        """
+        def is_valid_liquidity_update_block(block_number) -> bool:
+            """
+            Check if `block_number` is valid (matches or exceeds the last liquidity update block)
+            """
+            return block_number >= self.liquidity_update_block
 
         # Disable the fetch mechanism if the bitmap is complete
         if not self.sparse_bitmap:
@@ -992,32 +999,29 @@ class V3LiquidityPool(PoolHelper):
                 f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
             )
 
-        def is_valid_update_block(block_number) -> bool:
-            """
-            Check if `block_number` is valid (matches or exceeds the last update block)
-            """
-            return block_number >= self.update_block
+        if update.liquidity or update.sqrt_price_x96 or update.tick:
+            if not force and not is_valid_update_block(block_number):
+                raise ExternalUpdateError(
+                    "Rejected update for block in the past"
+                )
 
-        def is_valid_liquidity_update_block(block_number) -> bool:
-            """
-            Check if `block_number` is valid (matches or exceeds the last liquidity update block)
-            """
-            return block_number >= self.liquidity_update_block
+        if update.liquidity_change:
+            if not force and not is_valid_liquidity_update_block(block_number):
+                raise ExternalUpdateError(
+                    "Rejected update for block in the past"
+                )
 
         with self.update_lock:
             updated_state = False
 
-            if is_valid_update_block(block_number) or force:
-                for update_type in ["tick", "liquidity", "sqrt_price_x96"]:
-                    if (
-                        update_value := getattr(update, update_type, None)
-                    ) and update_value != getattr(self, update_type):
-                        setattr(self, update_type, update_value)
-                        updated_state = True
+            for update_type in ["tick", "liquidity", "sqrt_price_x96"]:
+                if (
+                    update_value := getattr(update, update_type, None)
+                ) and update_value != getattr(self, update_type):
+                    setattr(self, update_type, update_value)
+                    updated_state = True
 
-            if (
-                is_valid_liquidity_update_block(block_number) or force
-            ) and update.liquidity_change:
+            if update.liquidity_change:
                 (
                     liquidity_delta,
                     lower_tick,

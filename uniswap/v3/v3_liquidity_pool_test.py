@@ -2,14 +2,16 @@ import pytest
 import web3
 
 from degenbot import Erc20Token
-from degenbot.exceptions import LiquidityPoolError
+from degenbot.exceptions import LiquidityPoolError, ExternalUpdateError
 from degenbot.uniswap.v3.v3_liquidity_pool import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
+    UniswapV3PoolExternalUpdate,
     V3LiquidityPool,
 )
+from threading import Lock
 
 
 class MockErc20Token(Erc20Token):
@@ -48,6 +50,8 @@ token1.symbol = "WETH"
 
 lp = MockV3LiquidityPool()
 lp.name = "WBTC-WETH (V3, 0.30%)"
+lp.update_lock = Lock()
+lp.tick_lock = Lock()
 lp.address = web3.Web3.toChecksumAddress(
     "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 )
@@ -59,6 +63,7 @@ lp.token0 = token0
 lp.token1 = token1
 lp.liquidity = 1612978974357835825
 lp.liquidity_update_block = 1
+lp.update_block = 1
 lp.sqrt_price_x96 = 31549217861118002279483878013792428
 lp.sparse_bitmap = False
 lp.tick = 257907
@@ -2372,3 +2377,61 @@ def test_swap_for_all():
         )
         == 2989455025796272434286933989528647
     )
+
+
+def test_external_updates():
+    lp.external_update(
+        update=UniswapV3PoolExternalUpdate(liquidity=69), block_number=2
+    )
+    assert lp.liquidity_update_block == 1 and lp.update_block == 2
+
+    new_liquidity = 10_000_000_000
+
+    lp.external_update(
+        update=UniswapV3PoolExternalUpdate(
+            liquidity_change=(new_liquidity, -887160, -887220)
+        ),
+        block_number=2,
+    )
+
+    # New liquidity is added to liquidityNet at lower tick, subtracted from upper tick.
+    assert lp.tick_data[-887160].liquidityNet == 80064092962998 + new_liquidity
+    assert lp.tick_data[-887220].liquidityNet == 82174936226787 - new_liquidity
+
+    # New liquidity is added to liquidityGross on both sides.
+    assert (
+        lp.tick_data[-887160].liquidityGross == 80064092962998 + new_liquidity
+    )
+    assert (
+        lp.tick_data[-887220].liquidityGross == 82174936226787 + new_liquidity
+    )
+
+    # Try an update for a past block
+    with pytest.raises(ExternalUpdateError):
+        lp.external_update(
+            update=UniswapV3PoolExternalUpdate(liquidity=10), block_number=1
+        )
+
+    # Update the liquidity and then submit a liquidity change for the previous block
+    # which is valid, but the in-range liquidity should not have been changed
+    # NOTE: tick = 257907
+    lp.external_update(
+        update=UniswapV3PoolExternalUpdate(liquidity=69_420_000),
+        block_number=10,
+    )
+    lp.external_update(
+        update=UniswapV3PoolExternalUpdate(
+            liquidity_change=(1, 257880, 257940)
+        ),
+        block_number=3,
+    )
+    assert lp.liquidity == 69_420_000
+
+    # Now repeat the liquidity change for a newer block and check that the in-range liquidity was adjusted
+    lp.external_update(
+        update=UniswapV3PoolExternalUpdate(
+            liquidity_change=(1, 257880, 257940)
+        ),
+        block_number=11,
+    )
+    assert lp.liquidity == 69_420_000 + 1
