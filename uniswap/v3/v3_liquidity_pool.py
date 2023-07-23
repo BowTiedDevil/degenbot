@@ -949,7 +949,7 @@ class V3LiquidityPool(PoolHelper):
         updates: Optional[dict] = None,
         block_number: Optional[int] = None,
         silent: bool = True,
-        fetch_missing: bool = True,
+        fetch_missing: Optional[bool] = None,
         force: bool = False,  # added primarily to support liquidity bootstrapping without excessive refactoring
     ) -> bool:
         """
@@ -977,9 +977,10 @@ class V3LiquidityPool(PoolHelper):
             """
             return block_number >= self.liquidity_update_block
 
-        # Disable the fetch mechanism if the bitmap is complete
-        if not self.sparse_bitmap:
-            fetch_missing = False
+        if fetch_missing is not None:
+            raise DeprecationWarning(
+                "The fetch_missing argument has been deprecated, to address this exception remove it from any calls to external_update"
+            )
 
         if updates and not update:
             update = UniswapV3PoolExternalUpdate(
@@ -1049,7 +1050,7 @@ class V3LiquidityPool(PoolHelper):
                         # the tick bitmap must be available for the word prior to flipping
                         # the initialized status of any tick
 
-                        if fetch_missing:
+                        if self.sparse_bitmap:
                             logger.debug(
                                 f"(external_update) {tick_word=} not found in tick_bitmap {self.tick_bitmap.keys()=}"
                             )
