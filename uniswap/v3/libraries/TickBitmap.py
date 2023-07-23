@@ -49,7 +49,7 @@ def nextInitializedTickWithinOneWord(
     tick_spacing: int,
     less_than_or_equal: bool,
 ) -> Tuple[int, bool]:
-    compressed: int = int(
+    compressed = int(
         Decimal(tick) // tick_spacing
     )  # tick can be negative, use Decimal so floor division rounds to zero instead of negative infinity
     if tick < 0 and tick % tick_spacing != 0:
@@ -57,15 +57,15 @@ def nextInitializedTickWithinOneWord(
 
     if less_than_or_equal:
         word_pos, bit_pos = position(compressed)
-        # all the 1s at or to the right of the current bitPos
-        mask = (1 << bit_pos) - 1 + (1 << bit_pos)
 
         try:
             bitmap_at_word = tick_bitmap[word_pos].bitmap
-        except:
+        except KeyError:
             raise BitmapWordUnavailableError(word_pos)
-        else:
-            masked = bitmap_at_word & mask
+
+        # all the 1s at or to the right of the current bitPos
+        mask = 2 * (1 << bit_pos) - 1
+        masked = bitmap_at_word & mask
 
         # if there are no initialized ticks to the right of or at the current tick, return rightmost in the word
         initialized_status = masked != 0
@@ -79,15 +79,15 @@ def nextInitializedTickWithinOneWord(
     else:
         # start from the word of the next tick, since the current tick state doesn't matter
         word_pos, bit_pos = position(compressed + 1)
-        # all the 1s at or to the left of the bitPos
-        mask = ~((1 << bit_pos) - 1)
 
         try:
             bitmap_at_word = tick_bitmap[word_pos].bitmap
-        except:
+        except KeyError:
             raise BitmapWordUnavailableError(word_pos)
-        else:
-            masked = bitmap_at_word & mask
+
+        # all the 1s at or to the left of the bitPos
+        mask = ~((1 << bit_pos) - 1)
+        masked = bitmap_at_word & mask
 
         # if there are no initialized ticks to the left of the current tick, return leftmost in the word
         initialized_status = masked != 0
