@@ -257,9 +257,13 @@ class LiquidityPool(PoolHelper):
 
     # The Brownie contract object cannot be pickled, so remove it and return the state
     def __getstate__(self):
+        keys_to_remove = [
+            "_brownie_contract",
+        ]
         state = self.__dict__.copy()
-        if self._brownie_contract is not None:
-            state["_brownie_contract"] = None
+        for key in keys_to_remove:
+            if key in state:
+                del state[key]
         return state
 
     def __hash__(self):
@@ -269,7 +273,7 @@ class LiquidityPool(PoolHelper):
         return f"LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1})"
 
     def __setstate__(self, state):
-        self.__dict__.update(state)
+        self.__dict__ = state
 
     def __str__(self):
         return self.name

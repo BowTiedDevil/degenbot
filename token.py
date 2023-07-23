@@ -135,13 +135,15 @@ class Erc20Token:
 
     # The Brownie contract object cannot be pickled, so remove it and return the state
     def __getstate__(self):
+        keys_to_remove = ["_brownie_contract"]
         state = self.__dict__.copy()
-        if self._brownie_contract is not None:
-            state["_brownie_contract"] = None
+        for key in keys_to_remove:
+            if key in state:
+                del state[key]
         return state
 
     def __setstate__(self, state):
-        self.__dict__.update(state)
+        self.__dict__ = state
 
     def __eq__(self, other) -> bool:
         if isinstance(other, Erc20Token):

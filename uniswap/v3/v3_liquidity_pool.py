@@ -312,11 +312,16 @@ class V3LiquidityPool(PoolHelper):
 
     # Some objects cannot be pickled, so set those references to None and return the state
     def __getstate__(self):
+        keys_to_remove = [
+            "_brownie_contract",
+            "tick_lock",
+            "update_lock",
+            "lens",
+        ]
         state = self.__dict__.copy()
-        state["_brownie_contract"] = None
-        state["tick_lock"] = None
-        state["update_lock"] = None
-        state["lens"] = None
+        for key in keys_to_remove:
+            if key in state:
+                del state[key]
         return state
 
     def __hash__(self):
@@ -326,7 +331,7 @@ class V3LiquidityPool(PoolHelper):
         return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self.fee})"
 
     def __setstate__(self, state):
-        self.__dict__.update(state)
+        self.__dict__ = state
 
     def __str__(self):
         """
