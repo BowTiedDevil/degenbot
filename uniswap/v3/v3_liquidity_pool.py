@@ -242,27 +242,34 @@ class V3LiquidityPool(PoolHelper):
             )
 
         if tick_bitmap is not None:
-            # transform JSON to UniswapV3BitmapAtWord
+            # transform dict to UniswapV3BitmapAtWord
             self.tick_bitmap = {
-                int(word): UniswapV3BitmapAtWord(
-                    bitmap=tick_bitmap["bitmap"],
-                    block=tick_bitmap.get("block"),
+                int(word): (
+                    UniswapV3BitmapAtWord(**bitmap_at_word)
+                    if not isinstance(
+                        bitmap_at_word,
+                        UniswapV3BitmapAtWord,
+                    )
+                    else bitmap_at_word
                 )
-                for word, tick_bitmap in tick_bitmap.items()
+                for word, bitmap_at_word in tick_bitmap.items()
             }
 
             # if a snapshot was provided, assume it is complete
             self.sparse_bitmap = False
 
         if tick_data is not None:
-            # transform JSON to LiquidityAtTick
+            # transform dict to LiquidityAtTick
             self.tick_data = {
-                int(word): UniswapV3LiquidityAtTick(
-                    liquidityNet=tick_data["liquidityNet"],
-                    liquidityGross=tick_data["liquidityGross"],
-                    block=tick_data.get("block"),
+                int(tick): (
+                    UniswapV3LiquidityAtTick(**liquidity_at_tick)
+                    if not isinstance(
+                        liquidity_at_tick,
+                        UniswapV3LiquidityAtTick,
+                    )
+                    else liquidity_at_tick
                 )
-                for word, tick_data in tick_data.items()
+                for tick, liquidity_at_tick in tick_data.items()
             }
 
         if tick_bitmap is None and tick_data is None:
