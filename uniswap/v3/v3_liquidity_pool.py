@@ -130,7 +130,7 @@ class V3LiquidityPool(PoolHelper):
         self.update_lock = Lock()
 
         self.update_block = chain.height
-        self.liquidity_update_block = self.update_block
+        self.liquidity_update_block = 0
 
         if abi is not None:
             self.abi = abi
