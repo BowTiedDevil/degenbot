@@ -76,8 +76,6 @@ class UniswapV3PoolState:
         compare=False, default=None
     )
     tick_data: Optional[Dict] = dataclasses.field(compare=False, default=None)
-    # TODO: check if this field is required
-    last_liquidity_update: int = dataclasses.field(compare=False, default=0)
 
 
 @dataclasses.dataclass(slots=True)
@@ -281,7 +279,6 @@ class V3LiquidityPool(PoolHelper):
 
         self.state = UniswapV3PoolState(
             pool=self,
-            last_liquidity_update=self.liquidity_update_block,
             liquidity=self.liquidity,
             sqrt_price_x96=self.sqrt_price_x96,
             tick=self.tick,
@@ -348,7 +345,6 @@ class V3LiquidityPool(PoolHelper):
     def _update_pool_state(self) -> None:
         self.state = UniswapV3PoolState(
             pool=self,
-            last_liquidity_update=self.liquidity_update_block,
             liquidity=self.liquidity,
             sqrt_price_x96=self.sqrt_price_x96,
             tick=self.tick,
