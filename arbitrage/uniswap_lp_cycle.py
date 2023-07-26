@@ -46,6 +46,35 @@ StateOverrideTypes: TypeAlias = Sequence[
 ]
 
 
+@dataclasses.dataclass(slots=True, frozen=True)
+class ArbitrageCalculationResult:
+    id: str
+    input_token: Erc20Token
+    profit_token: Erc20Token
+    input_amount: int
+    profit_amount: int
+    swap_amounts: List
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class UniswapPoolSwapVector:
+    token_in: Erc20Token
+    token_out: Erc20Token
+    zero_for_one: bool
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class UniswapV2PoolSwapAmounts:
+    amounts: Tuple[int, int]
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class UniswapV3PoolSwapAmounts:
+    amount_specified: int
+    zero_for_one: bool
+    sqrt_price_limit_x96: int
+
+
 class UniswapLpCycle(ArbitrageHelper):
     def __init__(
         self,
@@ -77,37 +106,37 @@ class UniswapLpCycle(ArbitrageHelper):
 
         # set up a pre-determined list of "swap vectors", which allows the helper
         # to identify the tokens and direction of each swap along the path
-        self.swap_vectors: List[Dict] = []
+        self._swap_vectors: List[UniswapPoolSwapVector] = []
         for i, pool in enumerate(self.swap_pools):
             if i == 0:
                 if self.input_token == pool.token0:
-                    zeroForOne = True
                     token_in = pool.token0
                     token_out = pool.token1
+                    zero_for_one = True
                 elif self.input_token == pool.token1:
-                    zeroForOne = False
                     token_in = pool.token1
                     token_out = pool.token0
+                    zero_for_one = False
                 else:
-                    raise ArbitrageError("Token could not be identified!")
+                    raise ValueError("Input token could not be identified!")
             else:
                 # token_out references the output from the previous pool
                 if token_out == pool.token0:
-                    zeroForOne = True
                     token_in = pool.token0
                     token_out = pool.token1
+                    zero_for_one = True
                 elif token_out == pool.token1:
-                    zeroForOne = False
                     token_in = pool.token1
                     token_out = pool.token0
+                    zero_for_one = False
                 else:
-                    raise ArbitrageError("Token could not be identified!")
-            self.swap_vectors.append(
-                {
-                    "token_in": token_in,
-                    "token_out": token_out,
-                    "zeroForOne": zeroForOne,
-                }
+                    raise ValueError("Input token could not be identified!")
+            self._swap_vectors.append(
+                UniswapPoolSwapVector(
+                    token_in=token_in,
+                    token_out=token_out,
+                    zero_for_one=zero_for_one,
+                )
             )
 
         self.name = " -> ".join([pool.name for pool in self.swap_pools])
@@ -140,12 +169,13 @@ class UniswapLpCycle(ArbitrageHelper):
 
     def _sort_overrides(
         self,
-        overrides: StateOverrideTypes,
-    ) -> Dict[ChecksumAddress, Union[UniswapV2PoolState, UniswapV3PoolState],]:
+        overrides: Optional[StateOverrideTypes],
+    ) -> Dict[ChecksumAddress, Union[UniswapV2PoolState, UniswapV3PoolState]]:
         """
         Validate the overrides, extract and insert the resulting pool states
         into a dictionary.
         """
+
         if overrides is None:
             return {}
 
@@ -185,28 +215,39 @@ class UniswapLpCycle(ArbitrageHelper):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        override_state: Optional[StateOverrideTypes] = None,
-    ) -> List[dict]:
-        if override_state is None:
-            _overrides = {}
-        else:
-            _overrides = self._sort_overrides(override_state)
+        pool_state_overrides: Optional[
+            Dict[
+                ChecksumAddress, Union[UniswapV2PoolState, UniswapV3PoolState]
+            ]
+        ] = None,
+    ) -> List[Union[UniswapV2PoolSwapAmounts, UniswapV3PoolSwapAmounts]]:
+        """
+        Generate human-readable inputs for a complete swap along the arbitrage
+        path, starting with `token_in_quantity` amount of `token_in`.
+        """
 
-        pools_amounts_out: List[Dict] = []
+        if pool_state_overrides is None:
+            pool_state_overrides = {}
+
+        pools_amounts_out: List[
+            Union[UniswapV2PoolSwapAmounts, UniswapV3PoolSwapAmounts]
+        ] = []
 
         for i, (pool, pool_vector) in enumerate(
-            zip(self.swap_pools, self.swap_vectors)
+            zip(self.swap_pools, self._swap_vectors)
         ):
-            token_in = pool_vector["token_in"]
-            token_out = pool_vector["token_out"]
-            _zeroForOne = pool_vector["zeroForOne"]
+            token_in = pool_vector.token_in
+            token_out = pool_vector.token_out
+            zero_for_one = pool_vector.zero_for_one
 
             try:
                 token_out_quantity: int
                 token_in_remainder: int
                 # calculate the swap output through the pool
                 if isinstance(pool, LiquidityPool):
-                    pool_state_override = _overrides.get(pool.address)
+                    pool_state_override = pool_state_overrides.get(
+                        pool.address
+                    )
                     if TYPE_CHECKING:
                         assert pool_state_override is None or isinstance(
                             pool_state_override,
@@ -222,7 +263,9 @@ class UniswapLpCycle(ArbitrageHelper):
                         )
                     )
                 elif isinstance(pool, V3LiquidityPool):
-                    pool_state_override = _overrides.get(pool.address)
+                    pool_state_override = pool_state_overrides.get(
+                        pool.address
+                    )
                     if TYPE_CHECKING:
                         assert pool_state_override is None or isinstance(
                             pool_state_override,
@@ -256,28 +299,23 @@ class UniswapLpCycle(ArbitrageHelper):
             # determine the uniswap version for the pool and format the output appropriately
             if isinstance(pool, LiquidityPool):
                 pools_amounts_out.append(
-                    {
-                        "uniswap_version": 2,
-                        "amounts": [0, token_out_quantity]
-                        if _zeroForOne
-                        else [token_out_quantity, 0],
-                    }
+                    UniswapV2PoolSwapAmounts(
+                        amounts=(0, token_out_quantity)
+                        if zero_for_one
+                        else (token_out_quantity, 0),
+                    )
                 )
             elif isinstance(pool, V3LiquidityPool):
                 pools_amounts_out.append(
-                    {
-                        "uniswap_version": 3,
-                        # for an exactInput swap, amountSpecified is a positive number representing the INPUT amount
-                        # for an exactOutput swap, amountSpecified is a negative number representing the OUTPUT amount
-                        # specify exactInput for first leg (i==0), exactOutput for others
-                        "amountSpecified": token_in_quantity
+                    UniswapV3PoolSwapAmounts(
+                        amount_specified=token_in_quantity
                         if i == 0
                         else -token_out_quantity,
-                        "zeroForOne": _zeroForOne,
-                        "sqrtPriceLimitX96": TickMath.MIN_SQRT_RATIO + 1
-                        if _zeroForOne
+                        zero_for_one=zero_for_one,
+                        sqrt_price_limit_x96=TickMath.MIN_SQRT_RATIO + 1
+                        if zero_for_one
                         else TickMath.MAX_SQRT_RATIO - 1,
-                    }
+                    )
                 )
             else:
                 raise ValueError(
@@ -386,7 +424,6 @@ class UniswapLpCycle(ArbitrageHelper):
                     )
                     found_updates = True
                     break
-
             else:
                 raise ValueError(f"Could not identify pool {pool}!")
 
@@ -416,24 +453,21 @@ class UniswapLpCycle(ArbitrageHelper):
         TBD
         """
 
-        if override_state is None:
-            _overrides = {}
-        else:
-            _overrides = self._sort_overrides(override_state)
+        _overrides = self._sort_overrides(override_state)
 
         # check the pools for zero liquidity in the direction of the trade
         for i, pool in enumerate(self.swap_pools):
             if isinstance(pool, LiquidityPool):
                 if (
                     pool.reserves_token1 <= 1
-                    and self.swap_vectors[i]["zeroForOne"]
+                    and self._swap_vectors[i].zero_for_one
                 ):
                     raise ZeroLiquidityError(
                         f"V2 pool {pool.address} has no liquidity for a 0 -> 1 swap"
                     )
                 elif (
                     pool.reserves_token0 <= 1
-                    and not self.swap_vectors[i]["zeroForOne"]
+                    and not self._swap_vectors[i].zero_for_one
                 ):
                     raise ZeroLiquidityError(
                         f"V2 pool {pool.address} has no liquidity for a 1 -> 0 swap"
@@ -443,7 +477,7 @@ class UniswapLpCycle(ArbitrageHelper):
                 # check if the swap is 0 -> 1 and cannot swap any more token0 for token1
                 if (
                     pool.state.sqrt_price_x96 == TickMath.MIN_SQRT_RATIO + 1
-                    and self.swap_vectors[i]["zeroForOne"]
+                    and self._swap_vectors[i].zero_for_one
                 ):
                     raise ZeroLiquidityError(
                         f"V3 pool {pool.address} has no liquidity for a 0 -> 1 swap"
@@ -451,7 +485,7 @@ class UniswapLpCycle(ArbitrageHelper):
                 # check if the swap is 1 -> 0 (zeroForOne=False) and cannot swap any more token1 for token0
                 elif (
                     pool.state.sqrt_price_x96 == TickMath.MAX_SQRT_RATIO - 1
-                    and not self.swap_vectors[i]["zeroForOne"]
+                    and not self._swap_vectors[i].zero_for_one
                 ):
                     raise ZeroLiquidityError(
                         f"V3 pool {pool.address} has no liquidity for a 1 -> 0 swap"
@@ -495,7 +529,7 @@ class UniswapLpCycle(ArbitrageHelper):
                     )
 
                 try:
-                    token_in = self.swap_vectors[i]["token_in"]
+                    token_in = self._swap_vectors[i].token_in
                     token_out_quantity = (
                         pool.calculate_tokens_out_from_tokens_in(
                             token_in=token_in,
@@ -532,7 +566,7 @@ class UniswapLpCycle(ArbitrageHelper):
             best_amounts = self._build_amounts_out(
                 token_in=self.input_token,
                 token_in_quantity=swap_amount,
-                override_state=override_state,
+                pool_state_overrides=_overrides,
             )
         # except (EVMRevertError, LiquidityPoolError) as e:
         except ArbitrageError as e:
