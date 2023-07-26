@@ -10,7 +10,7 @@ from typing import (
 )
 from warnings import warn
 
-from eth_abi import encode as abi_encode
+import eth_abi
 from eth_typing import ChecksumAddress
 from scipy.optimize import minimize_scalar  # type: ignore
 from web3 import Web3
@@ -651,26 +651,8 @@ class UniswapLpCycle(ArbitrageHelper):
         payloads = []
 
         try:
-            # generate the payload for the initial transfer if the first pool is type V2
-            if isinstance(self.swap_pools[0], LiquidityPool):
-                # transfer the input token to the first swap pool
-                transfer_payload = (
-                    # address
-                    self.input_token.address,
-                    # bytes calldata
-                    Web3.keccak(text="transfer(address,uint256)")[0:4]
-                    + abi_encode(
-                        [
-                            "address",
-                            "uint256",
-                        ],
-                        [
-                            self.swap_pools[0].address,
-                            self.best.get("swap_amount"),
-                        ],
-                    ),
-                    0,  # msg.value
-                )
+                        + eth_abi.encode(
+                            [
 
                 payloads.append(transfer_payload)
 
@@ -713,7 +695,7 @@ class UniswapLpCycle(ArbitrageHelper):
                             Web3.keccak(
                                 text="swap(uint256,uint256,address,bytes)"
                             )[0:4]
-                            + abi_encode(
+                            + eth_abi.encode(
                                 [
                                     "uint256",
                                     "uint256",
@@ -750,7 +732,7 @@ class UniswapLpCycle(ArbitrageHelper):
                             Web3.keccak(
                                 text="swap(address,bool,int256,uint160,bytes)"
                             )[0:4]
-                            + abi_encode(
+                            + eth_abi.encode(
                                 [
                                     "address",
                                     "bool",
