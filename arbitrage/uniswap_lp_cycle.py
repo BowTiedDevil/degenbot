@@ -344,6 +344,13 @@ class UniswapLpCycle(ArbitrageHelper):
 
         found_updates = False
 
+        if None in self.pool_states.values():
+            found_updates = True
+            self._update_pool_states()
+            self.clear_best()
+
+            return found_updates
+
         if override_update_method:
             logger.debug(f"OVERRIDDEN UPDATE METHOD: {override_update_method}")
 
