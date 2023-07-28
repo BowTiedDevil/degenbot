@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 from typing import (
     TYPE_CHECKING,
@@ -25,8 +26,9 @@ from degenbot.exceptions import (
 from degenbot.logging import logger
 from degenbot.token import Erc20Token
 from degenbot.types import ArbitrageHelper
-from degenbot.uniswap.v2 import CamelotLiquidityPool, LiquidityPool
 from degenbot.uniswap.v2.liquidity_pool import (
+    CamelotLiquidityPool,
+    LiquidityPool,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
@@ -296,6 +298,10 @@ class UniswapLpCycle(ArbitrageHelper):
                     raise ArbitrageError(
                         f"Zero-output swap through pool {pool} @ {pool.address}"
                     )
+                # if token_in_remainder:
+                #     print(
+                #         f"swap through {pool} resulted in remainder: {token_in_quantity=}, {token_in_remainder=}, {token_out_quantity=}"
+                #     )
 
             # determine the uniswap version for the pool and format the output appropriately
             if isinstance(pool, LiquidityPool):
@@ -355,45 +361,6 @@ class UniswapLpCycle(ArbitrageHelper):
         if override_update_method:
             logger.debug(f"OVERRIDDEN UPDATE METHOD: {override_update_method}")
 
-        # for pool in self.swap_pools:
-        #     if (
-        #         pool._update_method == "polling"
-        #         or override_update_method == "polling"
-        #     ):
-        #         if isinstance(pool, LiquidityPool):
-        #             pool_updated = pool.update_reserves(
-        #                 silent=silent,
-        #                 override_update_method=override_update_method,
-        #                 update_block=block_number,
-        #             )
-        #             if pool_updated:
-        #                 if not silent:
-        #                     logger.info(
-        #                         f"(UniswapLpCycle) found update for pool {pool}"
-        #                     )
-        #                 found_updates = True
-        #         elif isinstance(pool, V3LiquidityPool):
-        #             pool_updated, _ = pool.auto_update(
-        #                 silent=silent,
-        #                 block_number=block_number,
-        #             )
-        #             if pool_updated:
-        #                 if not silent:
-        #                     logger.info(
-        #                         f"(UniswapLpCycle) found update for pool {pool}"
-        #                     )
-        #                 found_updates = True
-        #         else:
-        #             print("could not determine Uniswap pool version!")
-        #     elif pool._update_method == "external":
-        #         if pool.state != self.pool_states[pool.address]:
-        #             found_updates = True
-        #             break
-        #     else:
-        #         raise ValueError(
-        #             "auto_update: could not determine update method!"
-        #         )
-
         for pool in self.swap_pools:
             pool_updated = False
             if isinstance(pool, LiquidityPool):
@@ -441,26 +408,10 @@ class UniswapLpCycle(ArbitrageHelper):
 
         return found_updates
 
-
-    def calculate_arbitrage_return_best(
+    def _calculate(
         self,
         override_state: Optional[StateOverrideTypes] = None,
-    ):
-        """
-        A wrapper over `calculate_arbitrage`, useful for sending the calculation into a process pool and retrieving the results after pickling/unpickling the object and losing connection to the original.
-        """
-
-        self.calculate_arbitrage(override_state)
-        return self.id, self.best
-
-    def calculate_arbitrage(
-        self,
-        override_state: Optional[StateOverrideTypes] = None,
-    ) -> Tuple[bool, Tuple[int, int]]:
-        """
-        TBD
-        """
-
+    ) -> ArbitrageCalculationResult:
         _overrides = self._sort_overrides(override_state)
 
         # check the pools for zero liquidity in the direction of the trade
@@ -506,15 +457,11 @@ class UniswapLpCycle(ArbitrageHelper):
         )
 
         # bracket the initial guess for the algo
-        bracket_amount: int = (
-            self.best["last_swap_amount"]
-            if self.best["last_swap_amount"]
-            else self.max_input
-        )
+        bracket_amount: int = self.max_input
         bracket: Tuple[float, float, float] = (
-            0.90 * bracket_amount,
-            0.95 * bracket_amount,
-            bracket_amount,
+            0.45 * bracket_amount,
+            0.50 * bracket_amount,
+            0.55 * bracket_amount,
         )
 
         def arb_profit(x):
@@ -585,18 +532,102 @@ class UniswapLpCycle(ArbitrageHelper):
         except Exception as e:
             raise ArbitrageError(f"No possible arbitrage: {e}") from e
 
+        return ArbitrageCalculationResult(
+            id=self.id,
+            input_token=self.input_token,
+            profit_token=self.input_token,
+            input_amount=swap_amount,
+            profit_amount=best_profit,
+            swap_amounts=best_amounts,
+        )
+
+    def calculate(
+        self,
+        override_state: Optional[StateOverrideTypes] = None,
+    ) -> ArbitrageCalculationResult:
+        """
+        Stateless calculation that does not use `self.best`
+        """
+
+        result = self._calculate(override_state=override_state)
+
+        return result
+
+    async def calculate_with_pool(
+        self,
+        executor,
+        override_state: Optional[StateOverrideTypes] = None,
+    ) -> asyncio.Future:
+        """
+        Wrap the arbitrage calculation into an asyncio task using the specified executor.
+
+        Arguments
+        ---------
+        executor : Executor
+            An executor (from `concurrent.futures`) to process the calculation
+            work. Both `ThreadPoolExecutor` and `ProcessPoolExecutor` are
+            supported, but `ProcessPoolExecutor` is recommended.
+        override_state : List[Tuple[Union[LiquidityPool, V3LiquidityPool], dict]], optional
+            An ordered list of tuples, representing an ordered pair of helper
+            objects for Uniswap V2 / V3 pools and their overridden states.
+
+        Returns
+        -------
+        A future which returns a `ArbitrageCalculationResult` (or exception)
+        when awaited.
+
+        Notes
+        -----
+        This is an async function that must be called with the `await` keyword.
+        """
+
+        for pool in self.swap_pools:
+            if isinstance(pool, V3LiquidityPool) and pool.sparse_bitmap:
+                raise ValueError(
+                    f"Cannot process arbitrage {self} with executor: {pool.address} has sparse bitmap"
+                )
+
+        return asyncio.get_running_loop().run_in_executor(
+            executor,
+            self.calculate,
+            override_state,
+        )
+
+    def calculate_arbitrage_return_best(
+        self,
+        override_state: Optional[StateOverrideTypes] = None,
+    ):
+        """
+        A wrapper over `calculate_arbitrage`, useful for sending the
+        calculation into a process pool and retrieving the results after
+        pickling/unpickling the object and losing connection to the original.
+        """
+
+        self.calculate_arbitrage(override_state)
+        return self.id, self.best
+
+    def calculate_arbitrage(
+        self,
+        override_state: Optional[StateOverrideTypes] = None,
+    ) -> Tuple[bool, Tuple[int, int]]:
+        """
+        TBD
+        """
+
+        result = self._calculate(override_state=override_state)
+
         if override_state is None:
             self.best.update(
                 {
-                    "last_swap_amount": swap_amount,
-                    "profit_amount": best_profit,
-                    "swap_amount": swap_amount,
-                    "swap_pool_amounts": best_amounts,
+                    "last_swap_amount": result.input_amount,
+                    "profit_amount": result.profit_amount,
+                    "swap_amount": result.input_amount,
+                    "swap_pool_amounts": result.swap_amounts,
                 }
             )
 
-        profitable = best_profit > 0
-        return profitable, (swap_amount, best_profit)
+        profitable = result.profit_amount > 0
+        return profitable, (result.input_amount, result.profit_amount)
 
     def clear_best(self):
         self.best.update(
@@ -669,70 +700,128 @@ class UniswapLpCycle(ArbitrageHelper):
     def generate_payloads(
         self,
         from_address: Union[str, ChecksumAddress],
+        swap_amount: Optional[int] = None,
+        pool_swap_amounts: Optional[
+            List[Union[UniswapV2PoolSwapAmounts, UniswapV3PoolSwapAmounts]]
+        ] = None,
     ) -> List[Tuple[ChecksumAddress, bytes, int]]:
         """
-        Generate a list of calldata payloads for each step in the swap path, with calldata built using the eth_abi.encode method and the `swap` function of either the V2 or V3 pool
+        Generate a list of ABI-encoded calldata for each step in the swap path.
+
+        Calldata is built using the eth_abi.encode method and the ABI for the
+        ``swap`` function at the Uniswap pool. V2 and V3 pools are supported.
 
         Arguments
         ---------
         from_address: str
-            The smart contract address that will receive all token swap transfers and implement the necessary V3 callbacks
+            The address that will execute the calldata. Must be a smart
+            contract implementing the required callbacks specific to the pool.
+
+        swap_amount: int, optional
+            The initial amount of `token_in` to swap through the first pool.
+            If this argument is `None`, amount will be retrieved from
+            `self.best`.
+
+        pool_swap_amounts: list, optional
+            An iterable of swap amounts to be encoded. If this argument is
+            `None`, amounts will be retrieved from `self.best`.
 
         Returns
-        ---------
-        payloads: List[Tuple[str, bytes, int]]
-            A list of payloads, formatted as a tuple: (address, calldata, msg.value)
+        -------
+        ``list[(str, bytes, int)]``
+            A list of payload tuples. Each payload tuple has form
+            (address: ChecksumAddress, calldata: bytes, value: int).
+
+        Raises
+        ------
+        ArbitrageError
+            if the generated payloads would revert on-chain, or if the inputs were invalid
         """
 
         from_address = Web3.toChecksumAddress(from_address)
 
-        # check for zero-amount swaps
-        if not self.best["swap_pool_amounts"]:
-            raise ArbitrageError("No arbitrage results available")
+        if swap_amount is None:
+            swap_amount = self.best["swap_amount"]
+
+        if pool_swap_amounts is None:
+            pool_swap_amounts = self.best["swap_pool_amounts"]
+
+        # Abandon empty inputs.
+        # @dev this looks like a useful place for a ValueError, but threaded
+        # clients may execute a pool update for a swap pool before the call
+        # to generate payloads is processed. Abandon the call in this case
+        # and raise a generic non-fatal exception.
+        if not pool_swap_amounts:
+            raise ArbitrageError(
+                "Pool amounts empty, abandoning payload generation."
+            )
 
         payloads = []
+        msg_value: int = (
+            0  # This arbitrage does not require a `msg.value` payment
+        )
+
+        last_pool = self.swap_pools[-1]
 
         try:
+            for i, swap_pool in enumerate(self.swap_pools):
+                if i == 0 and isinstance(swap_pool, LiquidityPool):
+                    # If first hop is a V2 pool, generate a payload to
+                    # transfer the initial swap amount to it
+                    transfer_payload = (
+                        # address
+                        self.input_token.address,
+                        # bytes calldata
+                        Web3.keccak(text="transfer(address,uint256)")[0:4]
                         + eth_abi.encode(
                             [
+                                "address",
+                                "uint256",
+                            ],
+                            [self.swap_pools[0].address, swap_amount],
+                        ),
+                        msg_value,
+                    )
 
-                payloads.append(transfer_payload)
+                    payloads.append(transfer_payload)
 
-            last_pool = self.swap_pools[-1]
+                _swap_amounts: Union[
+                    UniswapV2PoolSwapAmounts, UniswapV3PoolSwapAmounts
+                ] = pool_swap_amounts[i]
 
-            # generate the swap payloads for each pool in the path
-            for i, swap_pool_object in enumerate(self.swap_pools):
-                if swap_pool_object is last_pool:
+                if swap_pool is last_pool:
                     next_pool = None
                 else:
                     next_pool = self.swap_pools[i + 1]
 
                 if next_pool is not None:
-                    # if it is a V2 pool, set swap destination to its address
+                    # V2 pools can accept a pre-swap transfer, so the contract
+                    # does not have to perform intermediate custody
                     if isinstance(next_pool, LiquidityPool):
                         swap_destination_address = next_pool.address
-                    # if it is a V3 pool, set swap destination to `from_address`
+                    # V3 pools cannot accept a pre-swap transfer, so the contract
+                    # must maintain custody prior to a swap
                     elif isinstance(next_pool, V3LiquidityPool):
                         swap_destination_address = from_address
                 else:
-                    # we have reached the last pool, so set the destination to `from_address` regardless of type
+                    # Set the destination address for the last swap to the sending address.
                     swap_destination_address = from_address
 
-                if isinstance(swap_pool_object, LiquidityPool):
+                if isinstance(swap_pool, LiquidityPool):
+                    if TYPE_CHECKING:
+                        assert isinstance(
+                            _swap_amounts, UniswapV2PoolSwapAmounts
+                        )
                     logger.debug(f"PAYLOAD: building V2 swap at pool {i}")
-                    logger.debug(
-                        f"PAYLOAD: pool address {swap_pool_object.address}"
-                    )
-                    logger.debug(
-                        f'PAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]["amounts"]}'
-                    )
+                    logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
+                    logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
                     logger.debug(
                         f"PAYLOAD: destination address {swap_destination_address}"
                     )
                     payloads.append(
                         (
                             # address
-                            swap_pool_object.address,
+                            swap_pool.address,
                             # bytes calldata
                             Web3.keccak(
                                 text="swap(uint256,uint256,address,bytes)"
@@ -745,31 +834,29 @@ class UniswapLpCycle(ArbitrageHelper):
                                     "bytes",
                                 ],
                                 [
-                                    *self.best["swap_pool_amounts"][i][
-                                        "amounts"
-                                    ],
+                                    *_swap_amounts.amounts,
                                     swap_destination_address,
                                     b"",
                                 ],
                             ),
-                            0,  # msg.value
+                            msg_value,
                         )
                     )
-                elif isinstance(swap_pool_object, V3LiquidityPool):
+                elif isinstance(swap_pool, V3LiquidityPool):
+                    if TYPE_CHECKING:
+                        assert isinstance(
+                            _swap_amounts, UniswapV3PoolSwapAmounts
+                        )
                     logger.debug(f"PAYLOAD: building V3 swap at pool {i}")
-                    logger.debug(
-                        f"PAYLOAD: pool address {swap_pool_object.address}"
-                    )
-                    logger.debug(
-                        f'PAYLOAD: swap amounts {self.best["swap_pool_amounts"][i]}'
-                    )
+                    logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
+                    logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
                     logger.debug(
                         f"PAYLOAD: destination address {swap_destination_address}"
                     )
                     payloads.append(
                         (
                             # address
-                            swap_pool_object.address,
+                            swap_pool.address,
                             # bytes calldata
                             Web3.keccak(
                                 text="swap(address,bool,int256,uint160,bytes)"
@@ -784,24 +871,18 @@ class UniswapLpCycle(ArbitrageHelper):
                                 ],
                                 [
                                     swap_destination_address,
-                                    self.best["swap_pool_amounts"][i][
-                                        "zeroForOne"
-                                    ],
-                                    self.best["swap_pool_amounts"][i][
-                                        "amountSpecified"
-                                    ],
-                                    self.best["swap_pool_amounts"][i][
-                                        "sqrtPriceLimitX96"
-                                    ],
+                                    _swap_amounts.zero_for_one,
+                                    _swap_amounts.amount_specified,
+                                    _swap_amounts.sqrt_price_limit_x96,
                                     b"",
                                 ],
                             ),
-                            0,  # msg.value
+                            msg_value,
                         )
                     )
                 else:
                     raise ValueError(
-                        f"Could not determine Uniswap version for pool: {swap_pool_object}"
+                        f"Could not identify pool: {swap_pool}, type={type(swap_pool)}"
                     )
         except Exception as e:
             logger.exception("generate_payloads catch-all")
