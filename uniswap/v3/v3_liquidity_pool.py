@@ -54,14 +54,15 @@ class UniswapV3LiquidityAtTick:
 
 @dataclasses.dataclass(slots=True)
 class UniswapV3PoolExternalUpdate:
+    block_number: int = dataclasses.field(compare=False)
     liquidity: Optional[int] = None
     sqrt_price_x96: Optional[int] = None
     tick: Optional[int] = None
     liquidity_change: Optional[
         Tuple[
-            int,  # amount
-            int,  # lower_tick
-            int,  # upper_tick
+            int,  # Liquidity
+            int,  # TickLower
+            int,  # TickUpper
         ]
     ] = None
 
@@ -121,12 +122,10 @@ class V3LiquidityPool(PoolHelper):
         self.tick_data: Dict[int, UniswapV3LiquidityAtTick]
         self.tick_bitmap: Dict[int, UniswapV3BitmapAtWord]
 
-        # held by the _get_tick_data_at_word method, which will sets liquidity
-        # and bitmap data
+        # held by methods that manipulate liquidity and bitmap data
         self.tick_lock = Lock()
 
-        # held by the auto_update and external_update method, which sets
-        # mutable state data (liquidity, tick, sqrtPrice, etc)
+        # held by methods that manipulate state data
         self.update_lock = Lock()
 
         self.update_block = chain.height
@@ -144,7 +143,12 @@ class V3LiquidityPool(PoolHelper):
             persist=False,
         )
 
-        self.factory = Web3.toChecksumAddress(self._brownie_contract.factory())
+        if factory_address:
+            self.factory = Web3.toChecksumAddress(factory_address)
+        else:
+            self.factory = Web3.toChecksumAddress(
+                self._brownie_contract.factory()
+            )
 
         if lens:
             self.lens = lens
@@ -156,8 +160,12 @@ class V3LiquidityPool(PoolHelper):
                 self.lens = TickLens(factory_address=self.factory)
                 self._lens_contracts[(chain.id, self.factory)] = self.lens
 
-        token0_address: str = self._brownie_contract.token0()
-        token1_address: str = self._brownie_contract.token1()
+        token0_address: ChecksumAddress = Web3.toChecksumAddress(
+            self._brownie_contract.token0()
+        )
+        token1_address: ChecksumAddress = Web3.toChecksumAddress(
+            self._brownie_contract.token1()
+        )
 
         if tokens is not None:
             if len(tokens) != 2:
@@ -169,8 +177,7 @@ class V3LiquidityPool(PoolHelper):
             self.token1 = max(tokens)
 
             if not (
-                self.token0.address == token0_address
-                and self.token1.address == token1_address
+                self.token0 == token0_address and self.token1 == token1_address
             ):
                 raise ValueError(
                     "Token addresses do not match tokens recorded at contract"
@@ -1003,21 +1010,33 @@ class V3LiquidityPool(PoolHelper):
 
         # if block_number was not provided, pull from Brownie
         if block_number is None:
-            block_number = chain.height
-            warnings.warn(
-                f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
+            if update is not None:
+                block_number = update.block_number
+            else:
+                block_number = chain.height
+                warnings.warn(
+                    f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
+                )
+
+        if updates and not update:
+            update = UniswapV3PoolExternalUpdate(
+                block_number=block_number,
+                liquidity=updates.get("liquidity"),
+                sqrt_price_x96=updates.get("sqrt_price_x96"),
+                tick=updates.get("tick"),
+                liquidity_change=updates.get("liquidity_change"),
             )
 
         if update.liquidity or update.sqrt_price_x96 or update.tick:
             if not force and not is_valid_update_block(block_number):
                 raise ExternalUpdateError(
-                    "Rejected update for block in the past"
+                    f"Rejected update for block {block_number} in the past, current update block is {self.update_block}"
                 )
 
         if update.liquidity_change:
             if not force and not is_valid_liquidity_update_block(block_number):
                 raise ExternalUpdateError(
-                    "Rejected update for block in the past"
+                    f"Rejected liquidity update for past block {block_number}, current liquidity update block is {self.liquidity_update_block}"
                 )
 
         with self.update_lock:
@@ -1049,7 +1068,9 @@ class V3LiquidityPool(PoolHelper):
                     logger.debug(
                         f"Adjusting in-range liquidity {block_number=}, {self.update_block=}, {self.tick=}, {self.address=}, {self.liquidity=}"
                     )
-                    assert self.liquidity >= 0
+                    assert (
+                        self.liquidity >= 0
+                    ), f"{self.address=} {self.liquidity=} {update=} {block_number=} {self.tick=}"
 
                 for i, tick in enumerate([lower_tick, upper_tick]):
                     tick_word, _ = self._get_tick_bitmap_position(tick)
