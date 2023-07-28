@@ -1,8 +1,8 @@
 import json
-from typing import Optional
+from typing import Optional, Union
 from warnings import catch_warnings, simplefilter, warn
 
-from brownie import Contract, web3 as brownie_w3  # type: ignore
+import brownie  # type: ignore
 from brownie.convert.datatypes import HexString  # type: ignore
 from brownie.network.account import LocalAccount  # type: ignore
 from eth_typing import ChecksumAddress
@@ -10,6 +10,7 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from degenbot.chainlink import ChainlinkPriceContract
+from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.logging import logger
 
 MIN_ERC20_ABI = json.loads(
@@ -45,7 +46,7 @@ class Erc20Token:
             self._user = user
 
         if min_abi:
-            self._brownie_contract = Contract.from_abi(
+            self._brownie_contract = brownie.Contract.from_abi(
                 name=f"ERC-20 @ {address}",
                 address=self.address,
                 abi=MIN_ERC20_ABI,
@@ -56,21 +57,23 @@ class Erc20Token:
                 simplefilter("ignore")
                 try:
                     # attempt to load stored contract
-                    self._brownie_contract = Contract(self.address)
+                    self._brownie_contract = brownie.Contract(self.address)
                 except:
                     # use the provided ABI if given
                     if abi:
                         try:
-                            self._brownie_contract = Contract.from_abi(
-                                name="", address=self.address, abi=abi
+                            self._brownie_contract = brownie.Contract.from_abi(
+                                name=f"ERC-20 @ {address}",
+                                address=self.address,
+                                abi=abi,
                             )
                         except:
                             raise
                     # otherwise attempt to fetch from the block explorer
                     else:
                         try:
-                            self._brownie_contract = Contract.from_explorer(
-                                address
+                            self._brownie_contract = (
+                                brownie.Contract.from_explorer(address)
                             )
                         except:
                             raise
@@ -78,10 +81,10 @@ class Erc20Token:
         try:
             self.name = self._brownie_contract.name()
         except (OverflowError, ValueError):
-            self.name = brownie_w3.eth.call(
+            self.name = brownie.web3.eth.call(
                 {
                     "to": self.address,
-                    "data": brownie_w3.keccak(text="name()"),
+                    "data": Web3.keccak(text="name()"),
                 }
             )
         except:
@@ -95,10 +98,10 @@ class Erc20Token:
         try:
             self.symbol = self._brownie_contract.symbol()
         except (OverflowError, ValueError):
-            self.symbol = brownie_w3.eth.call(
+            self.symbol = brownie.web3.eth.call(
                 {
                     "to": self.address,
-                    "data": brownie_w3.keccak(text="symbol()"),
+                    "data": Web3.keccak(text="symbol()"),
                 }
             )
         if type(self.symbol) in [HexString, HexBytes]:
@@ -177,22 +180,28 @@ class Erc20Token:
             self._user.address, external_address
         )
 
-    def set_approval(self, external_address: str, value: int):
+    def set_approval(self, external_address: str, value: Union[int, str]):
         """
-        Sets the approval value for an external contract to transfer tokens quantites up to the specified amount from this address.
-        For unlimited approval, set value to -1
+        Sets the approval value for an external contract to transfer tokens
+        quantites up to the specified amount from this address. For unlimited
+        approval, set value to the string "UNLIMITED".
         """
-        if type(value) is not int:
-            raise TypeError("Value must be an integer!")
 
-        if not (-1 <= value <= 2**256 - 1):
-            raise ValueError(
-                "Approval value MUST be an integer between 0 and 2**256-1, or -1"
+        if isinstance(value, int):
+            if not (MIN_UINT256 <= value <= MAX_UINT256):
+                raise ValueError(
+                    f"Provide an integer value between 0 and 2**256-1"
+                )
+        elif isinstance(value, str):
+            if value != "UNLIMITED":
+                raise ValueError("Value must be 'UNLIMITED' or an integer")
+            else:
+                print("Setting unlimited approval!")
+                value = MAX_UINT256
+        else:
+            raise TypeError(
+                f"Value must be an integer or string! Was {type(value)}"
             )
-
-        if value == -1:
-            print("Setting unlimited approval!")
-            value = 2**256 - 1
 
         try:
             self._brownie_contract.approve(
