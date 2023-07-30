@@ -354,24 +354,24 @@ class LiquidityPool(PoolHelper):
             if token_in == self.token0:
                 reserves_in = (
                     override_reserves_token0
-                    if override_reserves_token0 is not None
+                    if override_reserves_token0 is not None and override_reserves_token0 != 0
                     else self.reserves_token0
                 )
                 fee = self.fee_token0
                 reserves_out = (
                     override_reserves_token1
-                    if override_reserves_token1 is not None
+                    if override_reserves_token1 is not None and override_reserves_token1 != 0
                     else self.reserves_token1
                 )
             elif token_in == self.token1:
                 reserves_in = (
                     override_reserves_token1
-                    if override_reserves_token1 is not None
+                    if override_reserves_token1 is not None and override_reserves_token1 != 0
                     else self.reserves_token1
                 )
                 reserves_out = (
                     override_reserves_token0
-                    if override_reserves_token0 is not None
+                    if override_reserves_token0 is not None and override_reserves_token0 != 0
                     else self.reserves_token0
                 )
                 fee = self.fee_token1
@@ -385,24 +385,24 @@ class LiquidityPool(PoolHelper):
             if token_out == self.token1:
                 reserves_in = (
                     override_reserves_token0
-                    if override_reserves_token0 is not None
+                    if override_reserves_token0 is not None and override_reserves_token0 != 0
                     else self.reserves_token0
                 )
                 reserves_out = (
                     override_reserves_token1
-                    if override_reserves_token1 is not None
+                    if override_reserves_token1 is not None and override_reserves_token1 != 0
                     else self.reserves_token1
                 )
                 fee = self.fee_token0
             elif token_out == self.token0:
                 reserves_in = (
                     override_reserves_token1
-                    if override_reserves_token1 is not None
+                    if override_reserves_token1 is not None and override_reserves_token1 != 0
                     else self.reserves_token1
                 )
                 reserves_out = (
                     override_reserves_token0
-                    if override_reserves_token0 is not None
+                    if override_reserves_token0 is not None and override_reserves_token0 != 0
                     else self.reserves_token0
                 )
                 fee = self.fee_token1
@@ -460,24 +460,24 @@ class LiquidityPool(PoolHelper):
         if token_in == self.token0:
             reserves_in = (
                 override_reserves_token0
-                if override_reserves_token0 is not None
+                if override_reserves_token0 is not None and override_reserves_token0 != 0
                 else self.reserves_token0
             )
             reserves_out = (
                 override_reserves_token1
-                if override_reserves_token1 is not None
+                if override_reserves_token1 is not None and override_reserves_token1 != 0
                 else self.reserves_token1
             )
             fee = self.fee_token0
         elif token_in == self.token1:
             reserves_in = (
                 override_reserves_token1
-                if override_reserves_token1 is not None
+                if override_reserves_token1 is not None and override_reserves_token1 != 0
                 else self.reserves_token1
             )
             reserves_out = (
                 override_reserves_token0
-                if override_reserves_token0 is not None
+                if override_reserves_token0 is not None and override_reserves_token0 != 0
                 else self.reserves_token0
             )
             fee = self.fee_token1
