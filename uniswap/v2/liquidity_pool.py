@@ -322,8 +322,15 @@ class LiquidityPool(PoolHelper):
         override_state: Optional[UniswapV2PoolState] = None,
     ) -> int:
         """
-        Calculates the required token INPUT of token_in for a target OUTPUT at current pool reserves.
-        Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
+        Calculates the required token INPUT of token_in for a target OUTPUT
+        at current pool reserves. Uses the `self.token0` and `self.token1`
+        references to determine which token is being swapped in.
+
+        @dev This method accepts overrides in the form of individual tokens
+        reserves or a single override dictionary. The override dictionary is
+        used by other helpers and is the preferred method. The individual
+        overrides are left here for backward compatibility with older scripts,
+        and will be deprecated in the future.
         """
 
         if override_state:

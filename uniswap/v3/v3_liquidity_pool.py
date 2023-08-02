@@ -968,17 +968,20 @@ class V3LiquidityPool(PoolHelper):
         force: bool = False,  # added primarily to support liquidity bootstrapping without excessive refactoring
     ) -> bool:
         """
-        Accepts and processes a dict with at least one key from:
-            - `tick`
-            - `liquidity`
-            - `sqrt_price_x96`
-            - `liquidity_change`: tuple with (liquidity_delta, lower_tick, upper_tick)
+        Process a `UniswapV3PoolExternalUpdate` with one or more of the following update types:
+            - `tick`: int
+            - `liquidity`: int
+            - `sqrt_price_x96`: int
+            - `liquidity_change`: tuple of (liquidity_delta, lower_tick, upper_tick). The delta can be positive or negative to indicate added or removed liquidity.
 
-        If any have changed, update the `self.state` dict and `self.update_block`
+        `block_number` is validated against the most recently recorded block prior to recording any changes. If `force=True`, the block check is skipped.
 
-        Dict entries with keys other than the above will be ignored.
+        If any update is processed, `self.state` and `self.update_block` are updated.
 
-        If block_number is provided, it will be checked. If omitted, the values are assumed valid and processed.
+        Returns a bool indicating whether any updated state value was recorded.
+
+        @dev This method uses a lock to guard state-modifying methods that might cause race conditions when used with threads.
+        """
 
         def is_valid_update_block(block_number) -> bool:
             """
@@ -997,13 +1000,33 @@ class V3LiquidityPool(PoolHelper):
                 "The fetch_missing argument has been deprecated, to address this exception remove it from any calls to external_update"
             )
 
-        if updates and not update:
-            update = UniswapV3PoolExternalUpdate(
-                liquidity=updates.get("liquidity"),
-                sqrt_price_x96=updates.get("sqrt_price_x96"),
-                tick=updates.get("tick"),
-                liquidity_change=updates.get("liquidity_change"),
-            )
+        # warnings.warn(
+        #     "\n"
+        #     + "The `updates` dict argument is deprecated and will be "
+        #     + "removed in the future. It has been converted in-place to a "
+        #     + "`UniswapV3PoolExternalUpdate` object. Pass this using the "
+        #     + "`update=` argument to remove this warning."
+        #     + "\n"
+        #     + "For the values you've provided, pass this data using "
+        #     + "the format: \n"
+        #     + "update=UniswapV3PoolExternalUpdate(\n"
+        #     + (
+        #         f"    liquidity={val}\n"
+        #         if (val := updates.get("liquidity")) is not None
+        #         else ""
+        #     )
+        #     + (
+        #         f"    sqrt_price_x96={val}\n"
+        #         if (val := updates.get("sqrt_price_x96")) is not None
+        #         else ""
+        #     )
+        #     + (
+        #         f"    tick={val}\n"
+        #         if (val := updates.get("tick")) is not None
+        #         else ""
+        #     )
+        #     + ")",
+        # )
 
         if TYPE_CHECKING:
             assert isinstance(update, UniswapV3PoolExternalUpdate)
