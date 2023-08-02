@@ -257,6 +257,7 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
             method="bounded",
             bounds=bounds,
             bracket=bracket,
+            options={"xatol": 1.0},
         )
 
         best_borrow = int(opt.x)

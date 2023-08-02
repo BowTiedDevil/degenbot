@@ -129,8 +129,8 @@ def test_arbitrage_with_overrides():
 
     # override state should reflect a profit opportunity from the severe
     # mismatch in pool reserves (+33% WETH reserves in Sushi pool)
-    assert arb.best_future["borrow_amount"] == 1993359776
-    assert arb.best_future["borrow_pool_amounts"] == [1993359776, 0]
+    assert arb.best_future["borrow_amount"] == 1993359746
+    assert arb.best_future["borrow_pool_amounts"] == [1993359746, 0]
     assert arb.best_future["profit_amount"] == 49092923683591028736
-    assert arb.best_future["repay_amount"] == 222068950640088707958
-    assert arb.best_future["swap_pool_amounts"] == [[0, 271161874323679720587]]
+    assert arb.best_future["repay_amount"] == 222068946927979774742
+    assert arb.best_future["swap_pool_amounts"] == [[0, 271161870611570793739]]
