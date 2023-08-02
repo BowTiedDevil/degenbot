@@ -1,5 +1,4 @@
-from fractions import Fraction
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from brownie import Contract  # type: ignore
 from scipy.optimize import minimize_scalar  # type: ignore
@@ -192,13 +191,13 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
     def _calculate_arbitrage(
         self,
         override_future: bool = False,
-        override_future_borrow_pool_reserves_token0: int = 0,
-        override_future_borrow_pool_reserves_token1: int = 0,
+        override_future_borrow_pool_reserves_token0: Optional[int] = None,
+        override_future_borrow_pool_reserves_token1: Optional[int] = None,
     ):
         if override_future:
-            if not (
-                override_future_borrow_pool_reserves_token0 != 0
-                and override_future_borrow_pool_reserves_token1 != 0
+            if (
+                override_future_borrow_pool_reserves_token0 is None
+                or override_future_borrow_pool_reserves_token1 is None
             ):
                 raise ValueError(
                     "Must override reserves for token0 and token1"
@@ -206,9 +205,9 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
             reserves_token0 = override_future_borrow_pool_reserves_token0
             reserves_token1 = override_future_borrow_pool_reserves_token1
         else:
-            if not (
-                override_future_borrow_pool_reserves_token0 == 0
-                and override_future_borrow_pool_reserves_token1 == 0
+            if (
+                override_future_borrow_pool_reserves_token0 is not None
+                or override_future_borrow_pool_reserves_token1 is not None
             ):
                 raise ValueError(
                     "Do not provide override reserves without setting override_future = True"
@@ -217,7 +216,7 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
             reserves_token1 = self.borrow_pool.reserves_token1
 
         # set up the boundaries for the Brent optimizer based on which token is being borrowed
-        if self.borrow_token.address == self.borrow_pool.token0.address:
+        if self.borrow_token == self.borrow_pool.token0:
             bounds = (
                 1,
                 float(reserves_token0),
@@ -226,7 +225,7 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
                 0.001 * reserves_token0,
                 0.01 * reserves_token0,
             )
-        elif self.borrow_token.address == self.borrow_pool.token1.address:
+        elif self.borrow_token == self.borrow_pool.token1:
             bounds = (
                 1,
                 float(reserves_token1),
@@ -262,9 +261,9 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
 
         best_borrow = int(opt.x)
 
-        if self.borrow_token.address == self.borrow_pool.token0.address:
+        if self.borrow_token == self.borrow_pool.token0:
             borrow_amounts = [best_borrow, 0]
-        elif self.borrow_token.address == self.borrow_pool.token1.address:
+        elif self.borrow_token == self.borrow_pool.token1:
             borrow_amounts = [0, best_borrow]
         else:
             raise ValueError(
@@ -375,8 +374,8 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
         print_reserves: bool = True,
         print_ratios: bool = True,
         override_future: bool = False,
-        override_future_borrow_pool_reserves_token0: int = 0,
-        override_future_borrow_pool_reserves_token1: int = 0,
+        override_future_borrow_pool_reserves_token0: Optional[int] = None,
+        override_future_borrow_pool_reserves_token1: Optional[int] = None,
     ) -> bool:
         """
         Checks each liquidity pool for updates by passing a call to .update_reserves(), which returns False if there are no updates.
@@ -409,18 +408,17 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
 
         if override_future:
             recalculate = True
-            if not (
-                override_future_borrow_pool_reserves_token0 != 0
-                and override_future_borrow_pool_reserves_token1 != 0
+            if (
+                override_future_borrow_pool_reserves_token0 is None
+                or override_future_borrow_pool_reserves_token1 is None
             ):
                 raise ValueError(
                     "Must override reserves for token0 and token1"
                 )
-
         else:
-            if not (
-                override_future_borrow_pool_reserves_token0 == 0
-                and override_future_borrow_pool_reserves_token1 == 0
+            if (
+                override_future_borrow_pool_reserves_token0 is not None
+                or override_future_borrow_pool_reserves_token1 is not None
             ):
                 raise ValueError(
                     "Do not provide override reserves without setting override_future = True"
