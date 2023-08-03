@@ -240,9 +240,13 @@ class UniswapV3LiquiditySnapshot:
             raise ValueError(f"Unexpected input for pool: {type(pool)}")
 
         self._add_pool_if_missing(pool_address)
-        self._liquidity_snapshot[pool_address]["tick_bitmap"].update(
-            tick_bitmap,
+        self._liquidity_snapshot[pool_address].update(
+            {
+                "tick_bitmap": tick_bitmap,
+            }
         )
-        self._liquidity_snapshot[pool_address]["tick_data"].update(
-            tick_data,
+        self._liquidity_snapshot[pool_address].update(
+            {
+                "tick_data": tick_data,
+            }
         )
