@@ -117,6 +117,7 @@ class V3LiquidityPool(PoolHelper):
         silent: bool = False,
         tick_data: Optional[dict] = None,
         tick_bitmap: Optional[dict] = None,
+        state_block: Optional[int] = None,
     ):
         self.address = Web3.toChecksumAddress(address)
         self.tick_data: Dict[int, UniswapV3LiquidityAtTick]
@@ -128,7 +129,7 @@ class V3LiquidityPool(PoolHelper):
         # held by methods that manipulate state data
         self._update_lock = Lock()
 
-        self.update_block = chain.height
+        self.update_block = state_block if state_block else chain.height
         self.liquidity_update_block = 0
 
         if abi is not None:
