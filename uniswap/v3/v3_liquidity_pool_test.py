@@ -50,8 +50,8 @@ token1.symbol = "WETH"
 
 lp = MockV3LiquidityPool()
 lp.name = "WBTC-WETH (V3, 0.30%)"
-lp.update_lock = Lock()
-lp.tick_lock = Lock()
+lp._update_lock = Lock()
+lp._tick_lock = Lock()
 lp.address = web3.Web3.toChecksumAddress(
     "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 )

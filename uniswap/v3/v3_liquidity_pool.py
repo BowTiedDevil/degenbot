@@ -123,10 +123,10 @@ class V3LiquidityPool(PoolHelper):
         self.tick_bitmap: Dict[int, UniswapV3BitmapAtWord]
 
         # held by methods that manipulate liquidity and bitmap data
-        self.tick_lock = Lock()
+        self._tick_lock = Lock()
 
         # held by methods that manipulate state data
-        self.update_lock = Lock()
+        self._update_lock = Lock()
 
         self.update_block = chain.height
         self.liquidity_update_block = 0
@@ -321,8 +321,8 @@ class V3LiquidityPool(PoolHelper):
     def __getstate__(self):
         keys_to_remove = [
             "_brownie_contract",
-            "tick_lock",
-            "update_lock",
+            "_tick_lock",
+            "_update_lock",
             "lens",
         ]
         state = self.__dict__.copy()
@@ -403,7 +403,7 @@ class V3LiquidityPool(PoolHelper):
             logger.debug(self.tick_bitmap[word_position])
             return
 
-        with self.tick_lock:
+        with self._tick_lock:
             if block_number is None:
                 block_number = chain.height
 
@@ -743,7 +743,7 @@ class V3LiquidityPool(PoolHelper):
         when used with threads.
         """
 
-        with self.update_lock:
+        with self._update_lock:
             updated = False
 
             # use the block_number if provided, otherwise pull from Brownie
@@ -1062,7 +1062,7 @@ class V3LiquidityPool(PoolHelper):
                     f"Rejected liquidity update for past block {block_number}, current liquidity update block is {self.liquidity_update_block}"
                 )
 
-        with self.update_lock:
+        with self._update_lock:
             updated_state = False
 
             for update_type in ["tick", "liquidity", "sqrt_price_x96"]:
