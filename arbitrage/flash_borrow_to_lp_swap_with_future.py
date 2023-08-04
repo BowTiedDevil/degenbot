@@ -1,4 +1,3 @@
-from fractions import Fraction
 from typing import List, Optional, Tuple
 
 from brownie.convert.datatypes import Wei  # type: ignore

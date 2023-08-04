@@ -1,6 +1,5 @@
 from typing import List, Optional
 
-from brownie import Contract  # type: ignore
 from scipy.optimize import minimize_scalar  # type: ignore
 
 from degenbot.token import Erc20Token
