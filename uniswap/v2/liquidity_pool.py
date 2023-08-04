@@ -58,9 +58,11 @@ class LiquidityPool(PoolHelper):
         silent: bool = False,
         update_reserves_on_start: bool = True,
         unload_brownie_contract_after_init: bool = False,
+        state_block: Optional[int] = None,
     ) -> None:
         """
-        Create a new `LiquidityPool` object for interaction with a Uniswap V2 pool.
+        Create a new `LiquidityPool` object for interaction with a Uniswap
+        V2 pool.
 
         Arguments
         ---------
@@ -71,29 +73,45 @@ class LiquidityPool(PoolHelper):
         name : str, optional
             Name of the contract, e.g. "DAI-WETH".
         update_method : str
-            A string that sets the method used to fetch updates to the pool. Can be "polling", which fetches updates from the chain object using the contract object, or "external" which relies on updates being provided from outside the object.
+            A string that sets the method used to fetch updates to the pool.
+            Can be "polling", which fetches updates from the chain object
+            using the contract object, or "external" which relies on updates
+            being provided from outside the object.
         router : Router, optional
-            A reference to a Router object, which can be used to execute swaps using the attributes held within this object.
+            A reference to a Router object, which can be used to execute swaps
+            using the attributes held within this object.
         abi : list, optional
             Contract ABI.
         factory_address : str, optional
-            The address for the factory contract. The default assumes a mainnet Uniswap V2 factory contract.
-            If creating a `LiquidityPool` object based on another ecosystem, provide this value or the address check will fail.
+            The address for the factory contract. The default assumes a
+            mainnet Uniswap V2 factory contract. If creating a
+            `LiquidityPool` object based on another ecosystem, provide this
+            value or the address check will fail.
         factory_init_hash : str, optional
-            The init hash for the factory contract. The default assumes a mainnet Uniswap V2 factory contract.
+            The init hash for the factory contract. The default assumes a
+            mainnet Uniswap V2 factory contract.
         fee : Fraction
-            The swap fee imposed by the pool. Defaults to `Fraction(3,1000)` which is equivalent to 0.3%.
+            The swap fee imposed by the pool. Defaults to `Fraction(3,1000)`
+            which is equivalent to 0.3%.
         fee_token0 : Fraction, optional
-            Swap fee for token0. Same purpose as `fee` except useful for pools with different fees for each token.
+            Swap fee for token0. Same purpose as `fee` except useful for
+            pools with different fees for each token.
         fee_token1 : Fraction, optional
-            Swap fee for token1. Same purpose as `fee` except useful for pools with different fees for each token.
+            Swap fee for token1. Same purpose as `fee` except useful for
+            pools with different fees for each token.
         silent : bool
             Suppress status output.
         update_reserves_on_start : bool
             Update the reserves during instantiation.
         unload_brownie_contract_after_init : bool
-            Remove the Brownie contract helper before completion. Saves memory for objects that are externally-updated, and do not need to perform calls to the chain after creation.
+            Remove the Brownie contract helper before completion. Saves
+            memory for objects that are externally-updated, and do not
+            need to perform calls to the chain after creation.
+        state_block: int, optional
+            Fetch initial state values from the chain at a particular block
+            height. Defaults to the latest block if omitted.
         """
+
         self.uniswap_version = 2
 
         self.address: ChecksumAddress = Web3.toChecksumAddress(address)
@@ -133,7 +151,7 @@ class LiquidityPool(PoolHelper):
         self.token0_max_swap = 0
         self.token1_max_swap = 0
         self.new_reserves = False
-        self.update_block = chain.height
+        self.update_block = state_block if state_block else chain.height
 
         if abi is None:
             abi = UNISWAP_V2_POOL_ABI

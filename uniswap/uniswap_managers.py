@@ -192,6 +192,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         token_addresses: Optional[Tuple[str, str]] = None,
         silent: bool = False,
         update_method: str = "polling",
+        state_block: Optional[int] = None,
     ) -> LiquidityPool:
         """
         Get the pool object from its address, or a tuple of token addresses
@@ -213,6 +214,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 pool_helper = LiquidityPool(
                     address=pool_address,
                     silent=silent,
+                    state_block=state_block,
                 )
             except:
                 raise ManagerError(f"Could not build V2 pool: {pool_address=}")
@@ -272,6 +274,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                     update_method=update_method,
                     factory_address=self._factory_address,
                     factory_init_hash=self._factory_init_hash,
+                    state_block=state_block,
                 )
             except Exception as e:
                 raise ManagerError(
@@ -342,6 +345,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         silent: bool = False,
         # keyword arguments passed to the `V3LiquidityPool` constructor
         v3liquiditypool_kwargs: Optional[dict] = None,
+        state_block: Optional[int] = None,
     ) -> V3LiquidityPool:
         """
         Get the pool object from its address, or a tuple of ordered token
@@ -360,6 +364,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         def find_or_build(
             pool_address: ChecksumAddress,
             snapshot: Optional[UniswapV3LiquiditySnapshot],
+            state_block: Optional[int] = None,
         ) -> V3LiquidityPool:
             if TYPE_CHECKING:
                 assert isinstance(v3liquiditypool_kwargs, dict)
@@ -390,6 +395,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                     factory_address=self._factory_address,
                     factory_init_hash=self._factory_init_hash,
                     **v3liquiditypool_kwargs,
+                    state_block=state_block,
                 )
             except Exception as e:
                 raise ManagerError(
@@ -458,6 +464,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             # Immediately return the pool helper if already known
             pool_helper = self._tracked_pools[pool_address]
         except KeyError:
-            pool_helper = find_or_build(pool_address, self._snapshot)
+            pool_helper = find_or_build(
+                pool_address, self._snapshot, state_block
+            )
 
         return pool_helper
