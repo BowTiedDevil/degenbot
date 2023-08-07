@@ -216,8 +216,10 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                     silent=silent,
                     state_block=state_block,
                 )
-            except:
-                raise ManagerError(f"Could not build V2 pool: {pool_address=}")
+            except Exception as e:
+                raise ManagerError(
+                    f"Could not build V2 pool {pool_address}: {e}"
+                )
 
             self._add_pool(pool_helper)
 
@@ -278,7 +280,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 )
             except Exception as e:
                 raise ManagerError(
-                    f"Could not build V2 pool: {pool_address=}: {e}"
+                    f"Could not build V2 pool {pool_address}: {e}"
                 )
             else:
                 self._add_pool(pool_helper)
@@ -399,7 +401,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 )
             except Exception as e:
                 raise ManagerError(
-                    f"Could not build V3 pool: {pool_address=}: {e}"
+                    f"Could not build V3 pool {pool_address}: {e}"
                 ) from e
             else:
                 self._store_pool(pool_helper)
