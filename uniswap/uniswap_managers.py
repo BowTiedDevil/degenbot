@@ -369,14 +369,6 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             if TYPE_CHECKING:
                 assert isinstance(v3liquiditypool_kwargs, dict)
 
-            if snapshot:
-                v3liquiditypool_kwargs.update(
-                    {
-                        "tick_bitmap": snapshot.get_tick_bitmap(pool_address),
-                        "tick_data": snapshot.get_tick_data(pool_address),
-                    }
-                )
-
             # Check if the AllPools collection already has this pool
             pool_helper = AllPools(chain.id).get(pool_address)
             if pool_helper:
@@ -385,6 +377,14 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 )
                 self._store_pool(pool_helper)
                 return pool_helper
+
+            if snapshot:
+                v3liquiditypool_kwargs.update(
+                    {
+                        "tick_bitmap": snapshot.get_tick_bitmap(pool_address),
+                        "tick_data": snapshot.get_tick_data(pool_address),
+                    }
+                )
 
             # The pool is unknown, so build and add it
             try:
