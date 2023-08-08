@@ -120,8 +120,6 @@ class V3LiquidityPool(PoolHelper):
         state_block: Optional[int] = None,
     ):
         self.address = Web3.toChecksumAddress(address)
-        self.tick_data: Dict[int, UniswapV3LiquidityAtTick]
-        self.tick_bitmap: Dict[int, UniswapV3BitmapAtWord]
 
         # held by methods that manipulate liquidity and bitmap data
         self._tick_lock = Lock()
@@ -240,8 +238,8 @@ class V3LiquidityPool(PoolHelper):
         self.extra_words = extra_words
 
         # default to an empty, sparse bitmap with no tick data
-        self.tick_data = {}
-        self.tick_bitmap = {}
+        self.tick_data: Dict[int, UniswapV3LiquidityAtTick] = {}
+        self.tick_bitmap: Dict[int, UniswapV3BitmapAtWord] = {}
         self.sparse_bitmap = True
 
         if (tick_bitmap is not None) != (tick_data is not None):
