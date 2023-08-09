@@ -305,6 +305,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         if chain_id is None:
             chain_id = chain.id
 
+        factory_address = Web3.toChecksumAddress(factory_address)
+
         super().__init__(
             factory_address=factory_address,
             chain_id=chain_id,
