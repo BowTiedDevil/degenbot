@@ -125,3 +125,11 @@ class PoolAlreadyExistsError(ManagerError):
     Thrown by the AllPools class if a caller attempts to store a pool helper
     at an already-known address.
     """
+
+
+# 2nd level exceptions for Uniswap Manager classes
+class PoolNotAssociated(ManagerError):
+    """
+    Thrown by a UniswapV2LiquidityPoolManager or UniswapV3LiquidityPoolManager
+    class if a requested pool address is not associated with the DEX.
+    """
