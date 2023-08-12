@@ -247,6 +247,10 @@ class V3LiquidityPool(PoolHelper):
                 f"Must provide both tick_bitmap and tick_data! Got {tick_bitmap=}, {tick_data=}"
             )
 
+        if tick_bitmap is not None and tick_data is not None:
+            # if a snapshot was provided, assume it is complete
+            self.sparse_bitmap = False
+
         if tick_bitmap is not None:
             # transform dict to UniswapV3BitmapAtWord
             self.tick_bitmap = {
@@ -260,9 +264,6 @@ class V3LiquidityPool(PoolHelper):
                 )
                 for word, bitmap_at_word in tick_bitmap.items()
             }
-
-            # if a snapshot was provided, assume it is complete
-            self.sparse_bitmap = False
 
         if tick_data is not None:
             # transform dict to LiquidityAtTick
