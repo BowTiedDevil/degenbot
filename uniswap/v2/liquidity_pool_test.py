@@ -102,6 +102,17 @@ def test_calculate_tokens_out_from_tokens_in_with_override():
         == 864834865217768537471
     )
 
+    with pytest.raises(
+        ValueError,
+        match="Must provide reserve override values for both tokens",
+    ):
+        lp.calculate_tokens_out_from_tokens_in(
+            token_in=lp.token0,
+            token_in_quantity=8000000000,
+            override_reserves_token0=0,
+            override_reserves_token1=10,
+        )
+
 
 def test_calculate_tokens_in_from_tokens_out():
     # Reserve values for this test are taken at block height 17,600,000
@@ -142,6 +153,17 @@ def test_calculate_tokens_in_from_tokens_out_with_override():
         )
         == 13752842264
     )
+
+    with pytest.raises(
+        ValueError,
+        match="Must provide reserve override values for both tokens",
+    ):
+        lp.calculate_tokens_in_from_tokens_out(
+            token_in=lp.token0,
+            token_out_quantity=1200000000000000000000,
+            override_reserves_token0=0,
+            override_reserves_token1=10,
+        )
 
 
 def test_comparisons():
