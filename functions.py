@@ -2,9 +2,9 @@ from typing import Optional
 
 
 def next_base_fee(
-    last_base_fee: int,
-    last_gas_used: int,
-    last_gas_limit: int,
+    parent_base_fee: int,
+    parent_gas_used: int,
+    parent_gas_limit: int,
     min_base_fee: Optional[int] = None,
     base_fee_max_change_denominator: int = 8,  # limits the maximum base fee increase per block to 1/8 (12.5%)
     elasticity_multiplier: int = 2,
@@ -20,28 +20,28 @@ def next_base_fee(
     Enforces `min_base_fee` if provided.
     """
 
-    last_gas_target = last_gas_limit // elasticity_multiplier
+    last_gas_target = parent_gas_limit // elasticity_multiplier
 
-    if last_gas_used == last_gas_target:
-        next_base_fee = last_base_fee
-    elif last_gas_used > last_gas_target:
-        gas_used_delta = last_gas_used - last_gas_target
+    if parent_gas_used == last_gas_target:
+        next_base_fee = parent_base_fee
+    elif parent_gas_used > last_gas_target:
+        gas_used_delta = parent_gas_used - last_gas_target
         base_fee_delta = max(
-            last_base_fee
+            parent_base_fee
             * gas_used_delta
             // last_gas_target
             // base_fee_max_change_denominator,
             1,
         )
-        next_base_fee = last_base_fee + base_fee_delta
+        next_base_fee = parent_base_fee + base_fee_delta
     else:
-        gas_used_delta = last_gas_target - last_gas_used
+        gas_used_delta = last_gas_target - parent_gas_used
         base_fee_delta = (
-            last_base_fee
+            parent_base_fee
             * gas_used_delta
             // last_gas_target
             // base_fee_max_change_denominator
         )
-        next_base_fee = last_base_fee - base_fee_delta
+        next_base_fee = parent_base_fee - base_fee_delta
 
     return max(min_base_fee, next_base_fee) if min_base_fee else next_base_fee
