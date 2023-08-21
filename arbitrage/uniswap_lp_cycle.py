@@ -778,7 +778,7 @@ class UniswapLpCycle(ArbitrageHelper):
                                 "address",
                                 "uint256",
                             ),
-                            data=(
+                            args=(
                                 self.swap_pools[0].address,
                                 swap_amount,
                             ),
@@ -836,7 +836,7 @@ class UniswapLpCycle(ArbitrageHelper):
                                     "address",
                                     "bytes",
                                 ),
-                                data=(
+                                args=(
                                     *_swap_amounts.amounts,
                                     swap_destination_address,
                                     b"",
@@ -872,7 +872,7 @@ class UniswapLpCycle(ArbitrageHelper):
                                     "uint160",
                                     "bytes",
                                 ),
-                                data=(
+                                args=(
                                     swap_destination_address,
                                     _swap_amounts.zero_for_one,
                                     _swap_amounts.amount_specified,
