@@ -921,7 +921,8 @@ class UniswapTransaction(TransactionHelper):
                         _pay_portion_recipient,
                         _pay_portion_bips,
                     ) = eth_abi.decode(
-                        ["address", "address", "uint256"], inputs
+                        types=("address", "address", "uint256"),
+                        data=inputs,
                     )
                 except:
                     raise ValueError(f"Could not decode input for {command}")
@@ -957,7 +958,8 @@ class UniswapTransaction(TransactionHelper):
                         sweep_recipient,
                         sweep_amount_min,
                     ) = eth_abi.decode(
-                        ["address", "address", "uint256"], inputs
+                        types=("address", "address", "uint256"),
+                        data=inputs,
                     )
                 except:
                     raise ValueError(f"Could not decode input for {command}")
@@ -993,7 +995,8 @@ class UniswapTransaction(TransactionHelper):
 
                 try:
                     tx_recipient, _wrap_amount_min = eth_abi.decode(
-                        ["address", "uint256"], inputs
+                        types=("address", "uint256"),
+                        data=inputs,
                     )
                 except:
                     raise ValueError(f"Could not decode input for {command}")
@@ -1023,7 +1026,8 @@ class UniswapTransaction(TransactionHelper):
 
                 try:
                     _unwrap_recipient, _unwrap_amount_min = eth_abi.decode(
-                        ["address", "uint256"], inputs
+                        types=("address", "uint256"),
+                        data=inputs,
                     )
                 except:
                     raise ValueError(f"Could not decode input for {command}")
@@ -1056,14 +1060,14 @@ class UniswapTransaction(TransactionHelper):
                         tx_path,
                         tx_payer_is_user,
                     ) = eth_abi.decode(
-                        [
+                        types=(
                             "address",
                             "uint256",
                             "uint256",
                             "address[]",
                             "bool",
-                        ],
-                        inputs,
+                        ),
+                        data=inputs,
                     )
                 except:
                     raise ValueError(f"Could not decode input for {command}")
@@ -1141,14 +1145,14 @@ class UniswapTransaction(TransactionHelper):
                         tx_path,
                         tx_payer_is_user,
                     ) = eth_abi.decode(
-                        [
+                        types=(
                             "address",
                             "uint256",
                             "uint256",
                             "address[]",
                             "bool",
-                        ],
-                        inputs,
+                        ),
+                        data=inputs,
                     )
                 except:
                     raise ValueError(f"Could not decode input for {command}")
@@ -1232,8 +1236,14 @@ class UniswapTransaction(TransactionHelper):
                         tx_path,
                         tx_payer_is_user,
                     ) = eth_abi.decode(
-                        ["address", "uint256", "uint256", "bytes", "bool"],
-                        inputs,
+                        types=(
+                            "address",
+                            "uint256",
+                            "uint256",
+                            "bytes",
+                            "bool",
+                        ),
+                        data=inputs,
                     )
                 except:
                     raise ValueError(f"Could not decode input for {command}")
@@ -1319,8 +1329,14 @@ class UniswapTransaction(TransactionHelper):
                         tx_path,
                         tx_payer_is_user,
                     ) = eth_abi.decode(
-                        ["address", "uint256", "uint256", "bytes", "bool"],
-                        inputs,
+                        types=(
+                            "address",
+                            "uint256",
+                            "uint256",
+                            "bytes",
+                            "bool",
+                        ),
+                        data=inputs,
                     )
                 except:
                     raise ValueError(f"Could not decode input for {command}")
