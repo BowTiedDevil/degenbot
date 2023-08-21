@@ -774,11 +774,14 @@ class UniswapLpCycle(ArbitrageHelper):
                         # bytes calldata
                         Web3.keccak(text="transfer(address,uint256)")[0:4]
                         + eth_abi.encode(
-                            [
+                            types=(
                                 "address",
                                 "uint256",
-                            ],
-                            [self.swap_pools[0].address, swap_amount],
+                            ),
+                            data=(
+                                self.swap_pools[0].address,
+                                swap_amount,
+                            ),
                         ),
                         msg_value,
                     )
@@ -827,17 +830,17 @@ class UniswapLpCycle(ArbitrageHelper):
                                 text="swap(uint256,uint256,address,bytes)"
                             )[0:4]
                             + eth_abi.encode(
-                                [
+                                types=(
                                     "uint256",
                                     "uint256",
                                     "address",
                                     "bytes",
-                                ],
-                                [
+                                ),
+                                data=(
                                     *_swap_amounts.amounts,
                                     swap_destination_address,
                                     b"",
-                                ],
+                                ),
                             ),
                             msg_value,
                         )
@@ -862,20 +865,20 @@ class UniswapLpCycle(ArbitrageHelper):
                                 text="swap(address,bool,int256,uint160,bytes)"
                             )[0:4]
                             + eth_abi.encode(
-                                [
+                                types=(
                                     "address",
                                     "bool",
                                     "int256",
                                     "uint160",
                                     "bytes",
-                                ],
-                                [
+                                ),
+                                data=(
                                     swap_destination_address,
                                     _swap_amounts.zero_for_one,
                                     _swap_amounts.amount_specified,
                                     _swap_amounts.sqrt_price_limit_x96,
                                     b"",
-                                ],
+                                ),
                             ),
                             msg_value,
                         )

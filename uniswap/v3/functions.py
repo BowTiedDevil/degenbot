@@ -58,8 +58,8 @@ def generate_v3_pool_address(
             + factory_address[2:]
             + Web3.keccak(
                 eth_abi.encode(
-                    ["address", "address", "uint24"],
-                    [*token_addresses, fee],
+                    types=("address", "address", "uint24"),
+                    data=(*token_addresses, fee),
                 )
             ).hex()[2:]
             + init_hash[2:]
