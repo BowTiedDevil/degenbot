@@ -30,7 +30,7 @@ jobs:
           run: pip install pip-tools
 
         - name: Run pip-compile ${{ matrix.python-version }}
-          run: if [ -f requirements.in ]; then pip-compile --resolver=backtracking; fi
+          run: if [ -f requirements.in ]; then pip-compile; fi
 
         - name: Install dependencies
           run: if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
