@@ -47,7 +47,7 @@ jobs:
           run: brownie --version
         
         - name: Update websockets
-          run: pip install websockets --updgrade
+          run: pip install websockets --upgrade
 
         - name: Upload requirements.txt
           uses: actions/upload-artifact@v3
