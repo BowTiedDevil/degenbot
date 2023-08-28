@@ -33,8 +33,8 @@ jobs:
           if: ${{ matrix.python-version }} == '3.8.18' || ${{ matrix.python-version }} == '3.9.8'
           run: if [ -f requirements.in ]; then pip-compile --resolver=backtracking; fi
 
-        - name: Run pip-compile
-          if: ${{ matrix.python-version }} == '3.10.13' || ${{ matrix.python-version == '3.11.5' }}
+        - name: Run pip-compile 2
+          if: ${{ matrix.python-version }} == '3.10.13' || ${{ matrix.python-version }} == '3.11.5'
           run: if [ -f requirements.in ]; then pip-compile; fi
 
         - name: Install dependencies
