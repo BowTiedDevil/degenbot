@@ -29,11 +29,14 @@ jobs:
         - name: Install pip-tools
           run: pip install pip-tools
 
+        - name: Cython fix for python 3.10+
+          run: echo "Cython<3" > cython_constraint.txt 
+
         - name: Run pip-compile ${{ matrix.python-version }}
-          run: if [ -f requirements.in ]; then pip-compile; fi
+          run: if [ -f requirements.in ]; then PIP_CONSTRAINT=cython_constraint.txt pip-compile; fi
 
         - name: Install dependencies
-          run: if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          run: if [ -f requirements.txt ]; then PIP_CONSTRAINT=cython_constraint.txt pip install -r requirements.txt; fi
 
         - name: Rename requirements.txt
           run: mv requirements.txt requirements_${{ matrix.os }}_${{ matrix.python-version }}.txt
