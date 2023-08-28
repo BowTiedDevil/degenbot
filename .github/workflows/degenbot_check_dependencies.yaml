@@ -30,7 +30,7 @@ jobs:
           run: pip install pip-tools
 
         - name: Run pip-compile
-          if: ${{ matrix.python-version == '3.8.18' || matrix.python-version == '3.9.8' }}
+          if: ${{ matrix.python-version }} == '3.8.18' || ${{ matrix.python-version }} == '3.9.8'
           run: if [ -f requirements.in ]; then pip-compile --resolver=backtracking; fi
 
         - name: Run pip-compile
