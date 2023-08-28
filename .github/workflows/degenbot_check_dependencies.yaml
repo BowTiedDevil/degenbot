@@ -34,7 +34,7 @@ jobs:
           run: if [ -f requirements.in ]; then pip-compile --resolver=backtracking; fi
 
         - name: Run pip-compile
-          if: ${{ matrix.python-version == '3.10.13' || matrix.python-version == '3.11.5' }}
+          if: ${{ matrix.python-version }} == '3.10.13' || ${{ matrix.python-version == '3.11.5' }}
           run: if [ -f requirements.in ]; then pip-compile; fi
 
         - name: Install dependencies
