@@ -59,6 +59,7 @@ class LiquidityPool(PoolHelper):
         update_reserves_on_start: bool = True,
         unload_brownie_contract_after_init: bool = False,
         state_block: Optional[int] = None,
+        unmanaged: bool = False,
     ) -> None:
         """
         Create a new `LiquidityPool` object for interaction with a Uniswap
@@ -254,7 +255,8 @@ class LiquidityPool(PoolHelper):
 
         from degenbot.manager import AllPools
 
-        AllPools(chain.id)[self.address] = self
+        if not unmanaged:
+            AllPools(chain.id)[self.address] = self
 
         if not silent:
             logger.info(self.name)
