@@ -40,6 +40,29 @@ class LiquidityPool(PoolHelper):
     """
     Represents a Uniswap V2 liquidity pool
     """
+    __slots__: Tuple[str, ...] = (
+        "_brownie_contract",
+        "_ratio_token0_in",
+        "_ratio_token1_in",
+        "_update_method",
+        "abi",
+        "address",
+        "factory",
+        "fee_token0",
+        "fee_token1",
+        "fee",
+        "name",
+        "new_reserves",
+        "reserves_token0",
+        "reserves_token1",
+        "router",
+        "state",
+        "token0_max_swap",
+        "token0",
+        "token1_max_swap",
+        "token1",
+        "update_block",
+    )
 
     def __init__(
         self,
@@ -276,15 +299,25 @@ class LiquidityPool(PoolHelper):
             raise NotImplementedError
 
     # The Brownie contract object cannot be pickled, so remove it and return the state
-    def __getstate__(self):
-        keys_to_remove = [
-            "_brownie_contract",
-        ]
-        state = self.__dict__.copy()
-        for key in keys_to_remove:
-            if key in state:
-                del state[key]
-        return state
+    def __getstate__(self) -> dict:
+        keys_to_remove = ("_brownie_contract",)
+
+        try:
+            self.__slots__
+        except AttributeError:
+            pass
+        else:
+            return {
+                attr_name: getattr(self, attr_name, None)
+                for attr_name in self.__slots__
+                if attr_name not in keys_to_remove
+            }
+
+        return {
+            key: value
+            for key, value in self.__dict__.items()
+            if key not in keys_to_remove
+        }
 
     def __hash__(self):
         return hash(self.address)
@@ -292,8 +325,9 @@ class LiquidityPool(PoolHelper):
     def __repr__(self):
         return f"LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1})"
 
-    def __setstate__(self, state):
-        self.__dict__ = state
+    def __setstate__(self, state: Dict):
+        for key, value in state.items():
+            setattr(self, key, value)
 
     def __str__(self):
         return self.name

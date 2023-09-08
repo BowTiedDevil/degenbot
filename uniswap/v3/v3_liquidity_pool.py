@@ -114,6 +114,33 @@ class StepComputations:
 
 
 class V3LiquidityPool(PoolHelper):
+    __slots__: Tuple[str, ...] = (
+        "_brownie_contract",
+        "_liquidity_lock",
+        "_slot0_lock",
+        "_update_log",
+        "_update_method",
+        "abi",
+        "address",
+        "extra_words",
+        "factory",
+        "fee",
+        "lens",
+        "liquidity_update_block",
+        "liquidity",
+        "name",
+        "sparse_bitmap",
+        "sqrt_price_x96",
+        "state",
+        "tick_bitmap",
+        "tick_data",
+        "tick_spacing",
+        "tick",
+        "token0",
+        "token1",
+        "update_block",
+    )
+
     # Holds a reference to a TickLens contract object. This is a singleton
     # contract so there is no need to create separate references for each pool.
     # Dict is keyed by a tuple of chain ID and factory address
@@ -350,12 +377,24 @@ class V3LiquidityPool(PoolHelper):
             "_liquidity_lock",
             "_slot0_lock",
             "lens",
-        ]
-        state = self.__dict__.copy()
-        for key in keys_to_remove:
-            if key in state:
-                del state[key]
-        return state
+        )
+
+        try:
+            self.__slots__
+        except AttributeError:
+            pass
+        else:
+            return {
+                attr_name: getattr(self, attr_name, None)
+                for attr_name in self.__slots__
+                if attr_name not in keys_to_remove
+            }
+
+        return {
+            key: value
+            for key, value in self.__dict__.items()
+            if key not in keys_to_remove
+        }
 
     def __hash__(self):
         return hash(self.address)
@@ -363,8 +402,9 @@ class V3LiquidityPool(PoolHelper):
     def __repr__(self):
         return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self.fee})"
 
-    def __setstate__(self, state):
-        self.__dict__ = state
+    def __setstate__(self, state: dict):
+        for key, value in state.items():
+            setattr(self, key, value)
 
     def __str__(self):
         """
