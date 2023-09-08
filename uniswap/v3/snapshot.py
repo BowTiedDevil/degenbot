@@ -28,29 +28,6 @@ class UniswapV3LiquidityEvent:
     tx_index: int
 
 
-def _process_log(
-    log, event_abi
-) -> Tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
-    decoded_event = get_event_data(brownie.web3.codec, event_abi, log)
-
-    pool_address = Web3.toChecksumAddress(decoded_event["address"])
-    tx_index = decoded_event["transactionIndex"]
-    liquidity_block = decoded_event["blockNumber"]
-    liquidity = decoded_event["args"]["amount"] * (
-        -1 if decoded_event["event"] == "Burn" else 1
-    )
-    tick_lower = decoded_event["args"]["tickLower"]
-    tick_upper = decoded_event["args"]["tickUpper"]
-
-    return pool_address, UniswapV3LiquidityEvent(
-        block_number=liquidity_block,
-        liquidity=liquidity,
-        tick_lower=tick_lower,
-        tick_upper=tick_upper,
-        tx_index=tx_index,
-    )
-
-
 class UniswapV3LiquiditySnapshot:
     """
     Retrieve and maintain liquidity positions for Uniswap V3 pools.
@@ -120,6 +97,26 @@ class UniswapV3LiquiditySnapshot:
         to_block: int,
         span: int = 1000,
     ) -> None:
+        def _process_log() -> Tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
+            decoded_event = get_event_data(brownie.web3.codec, event_abi, log)
+
+            pool_address = Web3.toChecksumAddress(decoded_event["address"])
+            tx_index = decoded_event["transactionIndex"]
+            liquidity_block = decoded_event["blockNumber"]
+            liquidity = decoded_event["args"]["amount"] * (
+                -1 if decoded_event["event"] == "Burn" else 1
+            )
+            tick_lower = decoded_event["args"]["tickLower"]
+            tick_upper = decoded_event["args"]["tickUpper"]
+
+            return pool_address, UniswapV3LiquidityEvent(
+                block_number=liquidity_block,
+                liquidity=liquidity,
+                tick_lower=tick_lower,
+                tick_upper=tick_upper,
+                tx_index=tx_index,
+            )
+
         logger.info(
             f"Updating snapshot from block {self.newest_block} to {to_block}"
         )
@@ -144,9 +141,7 @@ class UniswapV3LiquiditySnapshot:
                 event_logs = brownie.web3.eth.get_logs(event_filter_params)
 
                 for log in event_logs:
-                    pool_address, liquidity_event = _process_log(
-                        log, event_abi
-                    )
+                    pool_address, liquidity_event = _process_log()
 
                     # skip zero liquidity events
                     if liquidity_event.liquidity == 0:
