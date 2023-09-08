@@ -344,8 +344,8 @@ class V3LiquidityPool(PoolHelper):
             raise NotImplementedError
 
     # Some objects cannot be pickled, so set those references to None and return the state
-    def __getstate__(self):
-        keys_to_remove = [
+    def __getstate__(self) -> dict:
+        keys_to_remove = (
             "_brownie_contract",
             "_liquidity_lock",
             "_slot0_lock",
