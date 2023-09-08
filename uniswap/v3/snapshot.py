@@ -37,6 +37,7 @@ class UniswapV3LiquiditySnapshot:
         self, file: Union[TextIO, str], chain_id: Optional[int] = None
     ):
         _file: TextIOWrapper
+        json_liquidity_snapshot: dict
 
         try:
             if isinstance(file, TextIOWrapper):
