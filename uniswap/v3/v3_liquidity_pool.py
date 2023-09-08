@@ -608,7 +608,7 @@ class V3LiquidityPool(PoolHelper):
                         zeroForOne,
                     )
                 except BitmapWordUnavailableError as e:
-                    missing_word = e.args[-1]
+                    missing_word = e.args[1]
                     if self.sparse_bitmap:
                         logger.debug(
                             f"(swap) {self.name} fetching word {missing_word}"
