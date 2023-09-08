@@ -87,6 +87,32 @@ class UniswapV3PoolSimulationResult:
     future_state: UniswapV3PoolState = dataclasses.field(compare=False)
 
 
+@dataclasses.dataclass(slots=True, eq=False)
+class SwapCache:
+    liquidityStart: int
+    tickCumulative: int
+
+
+@dataclasses.dataclass(slots=True, eq=False)
+class SwapState:
+    amountSpecifiedRemaining: int
+    amountCalculated: int
+    sqrtPriceX96: int
+    tick: int
+    liquidity: int
+
+
+@dataclasses.dataclass(slots=True, eq=False)
+class StepComputations:
+    sqrtPriceStartX96: int = 0
+    tickNext: int = 0
+    initialized: bool = False
+    sqrtPriceNextX96: int = 0
+    amountIn: int = 0
+    amountOut: int = 0
+    feeAmount: int = 0
+
+
 class V3LiquidityPool(PoolHelper):
     # Holds a reference to a TickLens contract object. This is a singleton
     # contract so there is no need to create separate references for each pool.
@@ -514,29 +540,6 @@ class V3LiquidityPool(PoolHelper):
         It is called by the `calculate_tokens_in_from_tokens_out` and `calculate_tokens_out_from_tokens_in` methods to calculate
         swap amounts, ticks crossed, liquidity changes at various ticks, etc.
         """
-
-        @dataclasses.dataclass(slots=True)
-        class SwapCache:
-            liquidityStart: int
-            tickCumulative: int
-
-        @dataclasses.dataclass(slots=True)
-        class SwapState:
-            amountSpecifiedRemaining: int
-            amountCalculated: int
-            sqrtPriceX96: int
-            tick: int
-            liquidity: int
-
-        @dataclasses.dataclass(slots=True)
-        class StepComputations:
-            sqrtPriceStartX96: int = 0
-            tickNext: int = 0
-            initialized: bool = False
-            sqrtPriceNextX96: int = 0
-            amountIn: int = 0
-            amountOut: int = 0
-            feeAmount: int = 0
 
         if amount_specified == 0:
             raise EVMRevertError("AS")
