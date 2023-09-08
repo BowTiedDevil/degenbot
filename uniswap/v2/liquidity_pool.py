@@ -40,6 +40,9 @@ class LiquidityPool(PoolHelper):
     """
     Represents a Uniswap V2 liquidity pool
     """
+
+    uniswap_version = 2
+
     __slots__: Tuple[str, ...] = (
         "_brownie_contract",
         "_ratio_token0_in",
@@ -135,8 +138,6 @@ class LiquidityPool(PoolHelper):
             Fetch initial state values from the chain at a particular block
             height. Defaults to the latest block if omitted.
         """
-
-        self.uniswap_version = 2
 
         self.address: ChecksumAddress = Web3.toChecksumAddress(address)
 
