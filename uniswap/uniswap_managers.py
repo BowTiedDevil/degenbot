@@ -1,10 +1,11 @@
 from threading import Lock
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
-from brownie import Contract, chain  # type: ignore
+from brownie import web3 as brownie_web3  # type: ignore[import]
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
+from degenbot.config import get_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import (
     Erc20TokenError,
@@ -73,6 +74,31 @@ class UniswapLiquidityPoolManager(HelperManager):
 
     _state: Dict[int, Dict] = dict()
 
+    def __init__(
+        self,
+        factory_address: str,
+        chain_id: int,
+    ):
+        """
+        Initialize the specific state dictionary for the given chain id and
+        factory address
+        """
+
+        # the internal state data for all child objects is held in a nested
+        # class-level dictionary, keyed by chain ID and factory address
+        try:
+            self._state[chain_id]
+        except KeyError:
+            self._state[chain_id] = {}
+            self._state[chain_id][
+                "erc20token_manager"
+            ] = Erc20TokenHelperManager(chain_id)
+
+        try:
+            self._state[chain_id][factory_address]
+        except KeyError:
+            self._state[chain_id][factory_address] = {}
+
     @classmethod
     def add_chain(cls, chain_id: int) -> None:
         """
@@ -108,31 +134,6 @@ class UniswapLiquidityPoolManager(HelperManager):
         if not _FACTORIES[chain_id][factory_address].get("init_hash"):
             _FACTORIES[chain_id][factory_address]["init_hash"] = pool_init_hash
 
-    def __init__(
-        self,
-        factory_address: str,
-        chain_id: int,
-    ):
-        """
-        Initialize the specific state dictionary for the given chain id and
-        factory address
-        """
-
-        # the internal state data for all child objects is held in a nested
-        # class-level dictionary, keyed by chain ID and factory address
-        try:
-            self._state[chain_id]
-        except KeyError:
-            self._state[chain_id] = {}
-            self._state[chain_id][
-                "erc20token_manager"
-            ] = Erc20TokenHelperManager(chain_id)
-
-        try:
-            self._state[chain_id][factory_address]
-        except KeyError:
-            self._state[chain_id][factory_address] = {}
-
 
 class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
     """
@@ -147,8 +148,18 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         factory_address: Union[ChecksumAddress, str],
         chain_id: Optional[int] = None,
     ):
-        if chain_id is None:
-            chain_id = chain.id
+        _web3 = get_web3()
+        if _web3 is not None and _web3.isConnected():
+            pass
+        elif brownie_web3.isConnected():
+            _web3 = brownie_web3
+        else:
+            raise ValueError("No connected web3 object provided.")
+
+        if TYPE_CHECKING:
+            assert isinstance(_web3, Web3)
+
+        chain_id = chain_id or _web3.eth.chain_id
 
         factory_address = Web3.toChecksumAddress(factory_address)
 
@@ -159,15 +170,12 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         self.__dict__ = self._state[chain_id][factory_address]
 
-        if not self.__dict__:
-            # initialize internal attributes
+        if self.__dict__ == {}:
+            self._w3 = _web3
             self.chain_id = chain_id
             self._factory_address = factory_address
-            self._brownie_factory_contract = Contract.from_abi(
-                name="Uniswap V2: Factory",
-                address=factory_address,
-                abi=UNISWAP_V2_FACTORY_ABI,
-                persist=False,
+            self._w3_contract = self._w3.eth.contract(
+                address=factory_address, abi=UNISWAP_V2_FACTORY_ABI
             )
             self._lock = Lock()
             self._pools_by_address: Dict[
@@ -216,18 +224,29 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             else:
                 return pool_helper
 
+            # Check if the AllPools collection already has this pool
+            pool_helper = AllPools(self.chain_id).get(pool_address)
+            if pool_helper:
+                self._add_pool(pool_helper)
+                return pool_helper
+
+            # WIP: add factory-specific options to LiquidityPool constructor
             try:
                 pool_helper = LiquidityPool(
                     address=pool_address,
                     silent=silent,
                     state_block=state_block,
+                    factory_address=self._factory_address,
+                    factory_init_hash=self._factory_init_hash,
+                    update_method=update_method,
                 )
             except Exception as e:
                 raise ManagerError(
                     f"Could not build V2 pool {pool_address}: {e}"
                 )
-
-            self._add_pool(pool_helper)
+            else:
+                self._add_pool(pool_helper)
+                return pool_helper
 
         elif token_addresses is not None:
             if len(token_addresses) != 2:
@@ -239,9 +258,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 erc20token_helpers: List[Erc20Token] = [
                     self._token_manager.get_erc20token(
                         address=token_address,
-                        min_abi=True,
                         silent=silent,
-                        unload_brownie_contract_after_init=True,
                     )
                     for token_address in token_addresses
                 ]
@@ -253,7 +270,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             tokens_key: Tuple[str, str]
             tokens_key = tuple(
                 [token.address for token in sorted(erc20token_helpers)]
-            )  # type: ignore [assignment]
+            )  # type: ignore[assignment]
 
             try:
                 return self._pools_by_tokens[tokens_key]
@@ -261,19 +278,19 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 pass
 
             if (
-                pool_address := self._brownie_factory_contract.getPair(
+                pool_address := self._w3_contract.functions.getPair(
                     *tokens_key
-                )
+                ).call()
             ) == ZERO_ADDRESS:
                 raise ManagerError("No V2 LP available")
 
-            # check if the AllPools collection already has this pool
-            pool_helper = AllPools(chain.id).get(pool_address)
+            # Check if the AllPools collection already has this pool
+            pool_helper = AllPools(self.chain_id).get(pool_address)
             if pool_helper:
                 self._add_pool(pool_helper)
                 return pool_helper
 
-            # the pool is new, so build it
+            # The pool is new, so build it
             try:
                 pool_helper = LiquidityPool(
                     address=pool_address,
@@ -290,8 +307,11 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 )
             else:
                 self._add_pool(pool_helper)
+                return pool_helper
 
-        return pool_helper
+        raise ManagerError(
+            f"Pool helper could not be built for {pool_address}"
+        )
 
 
 class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
@@ -308,8 +328,18 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         chain_id: Optional[int] = None,
         snapshot: Optional[UniswapV3LiquiditySnapshot] = None,
     ):
-        if chain_id is None:
-            chain_id = chain.id
+        _web3 = get_web3()
+        if _web3 is not None and _web3.isConnected():
+            pass
+        elif brownie_web3.isConnected():
+            _web3 = brownie_web3
+        else:
+            raise ValueError("No connected web3 object provided.")
+
+        if TYPE_CHECKING:
+            assert isinstance(_web3, Web3)
+
+        chain_id = chain_id or _web3.eth.chain_id
 
         factory_address = Web3.toChecksumAddress(factory_address)
 
@@ -321,15 +351,9 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         self.__dict__ = self._state[chain_id][factory_address]
 
         if self.__dict__ == {}:
-            # initialize internal attributes
+            self._w3 = _web3
             self.chain_id = chain_id
             self._factory_address = Web3.toChecksumAddress(factory_address)
-            self._brownie_factory_contract = Contract.from_abi(
-                name="Uniswap V3: Factory",
-                address=factory_address,
-                abi=UNISWAP_V3_FACTORY_ABI,
-                persist=False,
-            )
             self._lens = TickLens(self._factory_address)
             self._lock = Lock()
             self._tracked_pools: Dict[
@@ -381,7 +405,9 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 assert isinstance(v3liquiditypool_kwargs, dict)
 
             # Check if the AllPools collection already has this pool
-            pool_helper: V3LiquidityPool = AllPools(chain.id).get(pool_address)
+            pool_helper: V3LiquidityPool = AllPools(self.chain_id).get(
+                pool_address
+            )
             if pool_helper:
                 if pool_helper.factory == self._factory_address:
                     self._store_pool(pool_helper)
@@ -455,9 +481,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 erc20token_helpers: List[Erc20Token] = [
                     self._token_manager.get_erc20token(
                         address=token_address,
-                        min_abi=True,
                         silent=silent,
-                        unload_brownie_contract_after_init=True,
                     )
                     for token_address in token_addresses
                 ]

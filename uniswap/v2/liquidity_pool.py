@@ -1,13 +1,14 @@
 import dataclasses
 from decimal import Decimal
 from fractions import Fraction
-from typing import List, Optional, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 from warnings import warn
 
-from brownie import Contract, Wei, chain  # type: ignore
+from brownie import web3 as brownie_web3  # type: ignore[import]
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
+from degenbot.config import get_web3
 from degenbot.exceptions import (
     DeprecationError,
     ExternalUpdateError,
@@ -15,6 +16,7 @@ from degenbot.exceptions import (
     ZeroSwapError,
 )
 from degenbot.logging import logger
+from degenbot.manager import AllPools
 from degenbot.token import Erc20Token
 from degenbot.types import PoolHelper
 from degenbot.uniswap.abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
@@ -44,10 +46,11 @@ class LiquidityPool(PoolHelper):
     uniswap_version = 2
 
     __slots__: Tuple[str, ...] = (
-        "_brownie_contract",
         "_ratio_token0_in",
         "_ratio_token1_in",
         "_update_method",
+        "_w3",
+        "_w3_contract",
         "abi",
         "address",
         "factory",
@@ -83,7 +86,7 @@ class LiquidityPool(PoolHelper):
         fee_token1: Optional[Fraction] = None,
         silent: bool = False,
         update_reserves_on_start: bool = True,
-        unload_brownie_contract_after_init: bool = False,
+        unload_brownie_contract_after_init: bool = False,  # deprecated
         state_block: Optional[int] = None,
         unmanaged: bool = False,
     ) -> None:
@@ -130,16 +133,26 @@ class LiquidityPool(PoolHelper):
             Suppress status output.
         update_reserves_on_start : bool
             Update the reserves during instantiation.
-        unload_brownie_contract_after_init : bool
-            Remove the Brownie contract helper before completion. Saves
-            memory for objects that are externally-updated, and do not
-            need to perform calls to the chain after creation.
         state_block: int, optional
             Fetch initial state values from the chain at a particular block
             height. Defaults to the latest block if omitted.
         """
 
         self.address: ChecksumAddress = Web3.toChecksumAddress(address)
+        self.abi = abi or UNISWAP_V2_POOL_ABI
+
+        _web3 = get_web3()
+        if _web3 is not None and _web3.isConnected():
+            self._w3 = _web3
+        elif brownie_web3.isConnected():
+            self._w3 = brownie_web3
+        else:
+            raise ValueError("No connected web3 object provided.")
+
+        self._w3_contract = self._w3.eth.contract(
+            address=self.address,
+            abi=self.abi,
+        )
 
         if router:
             self.router = router
@@ -176,47 +189,40 @@ class LiquidityPool(PoolHelper):
         self.token0_max_swap = 0
         self.token1_max_swap = 0
         self.new_reserves = False
-        self.update_block = state_block if state_block else chain.height
-
-        if abi is None:
-            abi = UNISWAP_V2_POOL_ABI
-
-        self._brownie_contract = Contract.from_abi(
-            name=f"{self.address}",
-            abi=abi,
-            address=self.address,
-            persist=False,
+        self.update_block = (
+            state_block if state_block else self._w3.eth.get_block_number()
         )
-        self.abi = abi
 
-        self.factory = Web3.toChecksumAddress(self._brownie_contract.factory())
+        self.factory = self._w3_contract.functions.factory().call()
 
         # if a token pair was provided, check and set pointers for token0 and token1
         if tokens is not None:
             if len(tokens) != 2:
                 raise ValueError(f"Expected 2 tokens, found {len(tokens)}")
             for token in tokens:
-                if token.address == self._brownie_contract.token0():
+                if (
+                    token.address
+                    == self._w3_contract.functions.token0().call()
+                ):
                     self.token0 = token
-                elif token.address == self._brownie_contract.token1():
+                elif (
+                    token.address
+                    == self._w3_contract.functions.token1().call()
+                ):
                     self.token1 = token
                 else:
                     raise ValueError(f"{token} not found in pool {self}")
         else:
             from degenbot.manager import Erc20TokenHelperManager
 
-            _token_manager = Erc20TokenHelperManager(chain.id)
+            _token_manager = Erc20TokenHelperManager(self._w3.eth.chain_id)
             self.token0 = _token_manager.get_erc20token(
-                address=self._brownie_contract.token0(),
-                min_abi=True,
+                address=self._w3_contract.functions.token0().call(),
                 silent=silent,
-                unload_brownie_contract_after_init=True,
             )
             self.token1 = _token_manager.get_erc20token(
-                address=self._brownie_contract.token1(),
-                min_abi=True,
+                address=self._w3_contract.functions.token1().call(),
                 silent=silent,
-                unload_brownie_contract_after_init=True,
             )
 
         if factory_address is not None and factory_init_hash is not None:
@@ -252,10 +258,10 @@ class LiquidityPool(PoolHelper):
                 self.reserves_token0,
                 self.reserves_token1,
                 *_,
-            ) = self._brownie_contract.getReserves(
+            ) = self._w3_contract.functions.getReserves().call(
                 block_identifier=self.update_block
             )[
-                0:2
+                :2
             ]
         else:
             self.reserves_token0 = self.reserves_token1 = 0
@@ -265,22 +271,14 @@ class LiquidityPool(PoolHelper):
                 "The 'event' update method is inaccurate and unsupported, please update your bot to use the default 'polling' method"
             )
 
-        if (
-            self._update_method == "external"
-            and unload_brownie_contract_after_init
-        ):
-            self._brownie_contract = None
-
         self.state = UniswapV2PoolState(
             pool=self,
             reserves_token0=self.reserves_token0,
             reserves_token1=self.reserves_token1,
         )
 
-        from degenbot.manager import AllPools
-
         if not unmanaged:
-            AllPools(chain.id)[self.address] = self
+            AllPools(self._w3.eth.chain_id)[self.address] = self
 
         if not silent:
             logger.info(self.name)
@@ -301,7 +299,7 @@ class LiquidityPool(PoolHelper):
 
     # The Brownie contract object cannot be pickled, so remove it and return the state
     def __getstate__(self) -> dict:
-        keys_to_remove = ("_brownie_contract",)
+        keys_to_remove = ("_w3", "_w3_contract")
 
         try:
             self.__slots__
@@ -721,7 +719,7 @@ class LiquidityPool(PoolHelper):
 
         # get the chain height from Brownie if a specific update_block is not provided
         if update_block is None:
-            update_block = chain.height
+            update_block = self._w3.eth.get_block_number()
 
         # discard stale updates, but allow updating the same pool multiple times per block (necessary if sending sync events individually)
         if update_block < self.update_block:
@@ -736,7 +734,11 @@ class LiquidityPool(PoolHelper):
             or override_update_method == "polling"
         ):
             try:
-                reserves0, reserves1, *_ = self._brownie_contract.getReserves(
+                (
+                    reserves0,
+                    reserves1,
+                    *_,
+                ) = self._w3_contract.functions.getReserves().call(
                     block_identifier=self.update_block
                 )
                 if (self.reserves_token0, self.reserves_token1) != (
@@ -963,24 +965,36 @@ class CamelotLiquidityPool(LiquidityPool):
         abi: Optional[list] = None,
         silent: bool = False,
         update_reserves_on_start: bool = True,
-        unload_brownie_contract_after_init: bool = False,
+        unload_brownie_contract_after_init: bool = False,  # deprecated
     ) -> None:
-        if abi is None:
-            abi = CAMELOT_POOL_ABI
+        # TODO: add deprecation warnings for Brownie contract unload argument
+
+        _web3 = get_web3()
+        if _web3 is not None and _web3.isConnected():
+            _web3 = _web3
+        elif brownie_web3.isConnected():
+            _web3 = brownie_web3
+        else:
+            raise ValueError("No connected web3 object provided.")
+
+        if TYPE_CHECKING:
+            assert isinstance(_web3, Web3)
 
         address = Web3.toChecksumAddress(address)
 
-        _contract = Contract.from_abi(
-            name=f"CamelotV2 pool: {address}",
-            abi=abi,
-            address=address,
-            persist=False,
+        _w3_contract = _web3.eth.contract(
+            address=address, abi=abi or CAMELOT_POOL_ABI
         )
 
-        stable_pool: bool = _contract.stableSwap()
+        stable_pool: bool = _w3_contract.functions.stableSwap().call()
 
-        _, _, fee_token0, fee_token1 = _contract.getReserves()
-        fee_denominator = _contract.FEE_DENOMINATOR()
+        (
+            _,
+            _,
+            fee_token0,
+            fee_token1,
+        ) = _w3_contract.functions.getReserves().call()
+        fee_denominator = _w3_contract.functions.FEE_DENOMINATOR().call()
         fee_token0 = Fraction(fee_token0, fee_denominator)
         fee_token1 = Fraction(fee_token1, fee_denominator)
 
@@ -995,7 +1009,6 @@ class CamelotLiquidityPool(LiquidityPool):
             fee_token1=fee_token1,
             silent=silent,
             update_reserves_on_start=update_reserves_on_start,
-            unload_brownie_contract_after_init=unload_brownie_contract_after_init,
         )
 
         if stable_pool:

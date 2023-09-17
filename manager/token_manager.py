@@ -1,9 +1,10 @@
 from threading import Lock
 from typing import Dict, Optional
 
-from brownie import chain  # type: ignore
+from brownie import web3 as brownie_web3  # type: ignore[import]
 from web3 import Web3
 
+from degenbot.config import get_web3
 from degenbot.exceptions import ManagerError
 from degenbot.token import Erc20Token
 from degenbot.types import HelperManager, TokenHelper
@@ -57,8 +58,15 @@ class Erc20TokenHelperManager(HelperManager):
     _state: dict = {}
 
     def __init__(self, chain_id: Optional[int] = None):
-        if chain_id is None:
-            chain_id = chain.id
+        _web3 = get_web3()
+        if _web3 is not None and _web3.isConnected():
+            self._w3 = _web3
+        elif brownie_web3.isConnected():
+            self._w3 = brownie_web3
+        else:
+            raise ValueError("No connected web3 object provided.")
+
+        chain_id = chain_id or self._w3.eth.chain_id
 
         # the internal state data for this object is held in the
         # class-level _state dictionary, keyed by the chain ID

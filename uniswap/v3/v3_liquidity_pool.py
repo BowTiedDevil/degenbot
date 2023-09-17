@@ -4,11 +4,11 @@ from decimal import Decimal
 from threading import Lock
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
-from brownie import Contract, chain, multicall, network  # type:ignore
+from brownie import Contract, multicall as brownie_multicall, web3 as brownie_web3  # type: ignore[import]
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
-from degenbot.constants import MAX_INT16, MIN_INT16
+from degenbot.config import get_web3
 from degenbot.exceptions import (
     BitmapWordUnavailableError,
     BlockUnavailableError,
@@ -115,11 +115,12 @@ class StepComputations:
 
 class V3LiquidityPool(PoolHelper):
     __slots__: Tuple[str, ...] = (
-        "_brownie_contract",
         "_liquidity_lock",
         "_slot0_lock",
         "_update_log",
         "_update_method",
+        "_w3_contract",
+        "_w3",
         "abi",
         "address",
         "extra_words",
@@ -173,6 +174,20 @@ class V3LiquidityPool(PoolHelper):
         state_block: Optional[int] = None,
     ):
         self.address = Web3.toChecksumAddress(address)
+        self.abi = abi or UNISWAP_V3_POOL_ABI
+
+        _web3 = get_web3()
+        if _web3 is not None and _web3.isConnected():
+            self._w3 = _web3
+        elif brownie_web3.isConnected():
+            self._w3 = brownie_web3
+        else:
+            raise ValueError("No connected web3 object provided.")
+
+        self._w3_contract = self._w3.eth.contract(
+            address=self.address,
+            abi=self.abi,
+        )
 
         # held by methods that manipulate liquidity data
         self._liquidity_lock = Lock()
@@ -180,26 +195,16 @@ class V3LiquidityPool(PoolHelper):
         # held by methods that manipulate state data held by slot0
         self._slot0_lock = Lock()
 
-        self.update_block = state_block if state_block else chain.height
-        self.liquidity_update_block = 0
-
-        if abi is not None:
-            self.abi = abi
-        else:
-            self.abi = UNISWAP_V3_POOL_ABI
-
-        self._brownie_contract = Contract.from_abi(
-            name="Uniswap V3 Pool",
-            address=address,
-            abi=self.abi,
-            persist=False,
+        self.update_block = (
+            state_block if state_block else self._w3.eth.get_block_number()
         )
+        self.liquidity_update_block = 0
 
         if factory_address:
             self.factory = Web3.toChecksumAddress(factory_address)
         else:
             self.factory = Web3.toChecksumAddress(
-                self._brownie_contract.factory()
+                self._w3_contract.functions.factory().call()
             )
 
         if lens:
@@ -207,16 +212,20 @@ class V3LiquidityPool(PoolHelper):
         else:
             # Use the singleton TickLens helper if available
             try:
-                self.lens = self._lens_contracts[(chain.id, self.factory)]
+                self.lens = self._lens_contracts[
+                    (self._w3.eth.chain_id, self.factory)
+                ]
             except KeyError:
                 self.lens = TickLens(factory_address=self.factory)
-                self._lens_contracts[(chain.id, self.factory)] = self.lens
+                self._lens_contracts[
+                    (self._w3.eth.chain_id, self.factory)
+                ] = self.lens
 
         token0_address: ChecksumAddress = Web3.toChecksumAddress(
-            self._brownie_contract.token0()
+            self._w3_contract.functions.token0().call()
         )
         token1_address: ChecksumAddress = Web3.toChecksumAddress(
-            self._brownie_contract.token1()
+            self._w3_contract.functions.token1().call()
         )
 
         if tokens is not None:
@@ -235,23 +244,17 @@ class V3LiquidityPool(PoolHelper):
                     "Token addresses do not match tokens recorded at contract"
                 )
         else:
-            _token_manager = Erc20TokenHelperManager(chain.id)
+            _token_manager = Erc20TokenHelperManager(self._w3.eth.chain_id)
             self.token0 = _token_manager.get_erc20token(
                 address=token0_address,
-                min_abi=True,
                 silent=silent,
-                unload_brownie_contract_after_init=True,
             )
             self.token1 = _token_manager.get_erc20token(
                 address=token1_address,
-                min_abi=True,
                 silent=silent,
-                unload_brownie_contract_after_init=True,
             )
 
-        if fee is None:
-            fee = self._brownie_contract.fee()
-        self.fee: int = fee
+        self.fee: int = fee or self._w3_contract.functions.fee().call()
         self.tick_spacing = self._TICKSPACING_BY_FEE[self.fee]  # immutable
 
         if factory_address is not None and factory_init_hash is not None:
@@ -273,15 +276,17 @@ class V3LiquidityPool(PoolHelper):
                 f"{self.token0}-{self.token1} (V3, {self.fee/10000:.2f}%)"
             )
 
-        self.liquidity = self._brownie_contract.liquidity(
+        self.liquidity = self._w3_contract.functions.liquidity().call(
             block_identifier=self.update_block
         )
 
-        slot0 = self._brownie_contract.slot0(
+        (
+            self.sqrt_price_x96,
+            self.tick,
+            *_,
+        ) = self._w3_contract.functions.slot0().call(
             block_identifier=self.update_block
         )
-        self.sqrt_price_x96 = slot0[0]
-        self.tick = slot0[1]
 
         if update_method is not None:
             warnings.warn(
@@ -351,7 +356,7 @@ class V3LiquidityPool(PoolHelper):
             tick=self.tick,
         )
 
-        AllPools(chain.id)[self.address] = self
+        AllPools(self._w3.eth.chain_id)[self.address] = self
 
         if not silent:
             logger.info(self.name)
@@ -373,9 +378,10 @@ class V3LiquidityPool(PoolHelper):
     # Some objects cannot be pickled, so set those references to None and return the state
     def __getstate__(self) -> dict:
         keys_to_remove = (
-            "_brownie_contract",
             "_liquidity_lock",
             "_slot0_lock",
+            "_w3",
+            "_w3_contract",
             "lens",
         )
 
@@ -469,71 +475,78 @@ class V3LiquidityPool(PoolHelper):
             logger.debug(self.tick_bitmap[word_position])
             return
 
+        if block_number is None:
+            block_number = self._w3.eth.get_block_number()
+
         with self._liquidity_lock:
-            if block_number is None:
-                block_number = chain.height
+            if False:
+                pass
 
-            # fetch multiple words if multicall is available for the connected network
-            # and single_word mode is not active
-            if (
-                network.main.CONFIG.active_network.get("multicall2")
-                and not single_word
-            ):
-                # limit word values to int16 range
-                words = set(
-                    range(
-                        max(MIN_INT16, word_position - self.extra_words // 2),
-                        min(MAX_INT16, word_position + self.extra_words // 2),
-                    )
-                ) - set(self.tick_bitmap)
+            # TODO: re-implement multicall without Brownie
+            # # fetch multiple words if multicall is available for the connected network
+            # # and single_word mode is not active
+            # if (
+            #     network.main.CONFIG.active_network.get("multicall2")
+            #     and not single_word
+            # ):
 
-                logger.debug(f"fetching words: {words}")
+            #     # limit word values to int16 range
+            #     words = set(
+            #         range(
+            #             max(MIN_INT16, word_position - self.extra_words // 2),
+            #             min(MAX_INT16, word_position + self.extra_words // 2),
+            #         )
+            #     ) - set(self.tick_bitmap)
 
-                # fetch the tick bitmaps for the range
-                try:
-                    with multicall(block_identifier=block_number):
-                        multicall_tick_bitmaps = {
-                            word: UniswapV3BitmapAtWord(
-                                bitmap=self._brownie_contract.tickBitmap(word),
-                                block=block_number,
-                            )
-                            for word in words
-                        }
-                    with multicall(block_identifier=block_number):
-                        multicall_tick_data = {
-                            tick: UniswapV3LiquidityAtTick(
-                                liquidityNet=liquidity_net,
-                                liquidityGross=liquidity_gross,
-                                block=block_number,
-                            )
-                            for word_position, bitmap in multicall_tick_bitmaps.items()
-                            for tick, liquidity_net, liquidity_gross in self.lens._brownie_contract.getPopulatedTicksInWord(
-                                self.address,
-                                word_position,
-                            )
-                            if bitmap
-                        }
-                except Exception as e:
-                    print(
-                        f"(V3LiquidityPool (_update_tick_data_at_word) (multicall): {e}"
-                    )
-                    print(type(e))
-                    raise
-                else:
-                    self.tick_bitmap.update(multicall_tick_bitmaps)
-                    self.tick_data.update(multicall_tick_data)
-                    self.liquidity_update_block = block_number
+            #     logger.debug(f"fetching words: {words}")
+
+            #     # fetch the tick bitmaps for the range
+            #     try:
+            #         with brownie_multicall(block_identifier=block_number):
+            #             multicall_tick_bitmaps = {
+            #                 word: UniswapV3BitmapAtWord(
+            #                     bitmap=self._brownie_contract.tickBitmap(word),
+            #                     block=block_number,
+            #                 )
+            #                 for word in words
+            #             }
+            #         with brownie_multicall(block_identifier=block_number):
+            #             multicall_tick_data = {
+            #                 tick: UniswapV3LiquidityAtTick(
+            #                     liquidityNet=liquidity_net,
+            #                     liquidityGross=liquidity_gross,
+            #                     block=block_number,
+            #                 )
+            #                 for word_position, bitmap in multicall_tick_bitmaps.items()
+            #                 for tick, liquidity_net, liquidity_gross in self.lens._brownie_contract.getPopulatedTicksInWord(
+            #                     self.address,
+            #                     word_position,
+            #                 )
+            #                 if bitmap
+            #             }
+            #     except Exception as e:
+            #         print(
+            #             f"(V3LiquidityPool (_update_tick_data_at_word) (multicall): {e}"
+            #         )
+            #         print(type(e))
+            #         raise
+            #     else:
+            #         self.tick_bitmap.update(multicall_tick_bitmaps)
+            #         self.tick_data.update(multicall_tick_data)
+            #         self.liquidity_update_block = block_number
 
             # fetch words one by one (single_tick = True)
             else:
                 try:
-                    if single_tick_bitmap := self._brownie_contract.tickBitmap(
-                        word_position,
+                    if single_tick_bitmap := self._w3_contract.functions.tickBitmap(
+                        word_position
+                    ).call(
                         block_identifier=block_number,
                     ):
-                        single_tick_data = self.lens._brownie_contract.getPopulatedTicksInWord(
-                            self.address,
-                            word_position,
+                        # TODO: convert Lens helper to web3
+                        single_tick_data = self.lens._w3_contract.functions.getPopulatedTicksInWord(
+                            self.address, word_position
+                        ).call(
                             block_identifier=block_number,
                         )
                 except Exception as e:
@@ -791,17 +804,21 @@ class V3LiquidityPool(PoolHelper):
 
             # use the block_number if provided, otherwise pull from Brownie
             if block_number is None:
-                block_number = chain.height
+                block_number = self._w3.eth.get_block_number()
 
             if block_number < self.update_block:
                 raise ExternalUpdateError(
                     f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
                 )
 
-            _sqrt_price_x96, _tick, *_ = self._brownie_contract.slot0(
+            (
+                _sqrt_price_x96,
+                _tick,
+                *_,
+            ) = self._w3_contract.functions.slot0().call(
                 block_identifier=block_number,
             )
-            _liquidity = self._brownie_contract.liquidity(
+            _liquidity = self._w3_contract.functions.liquidity().call(
                 block_identifier=block_number
             )
 
@@ -1079,7 +1096,7 @@ class V3LiquidityPool(PoolHelper):
             if update is not None:
                 block_number = update.block_number
             else:
-                block_number = chain.height
+                block_number = self._w3.eth.get_block_number()
                 warnings.warn(
                     f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
                 )

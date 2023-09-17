@@ -1,9 +1,10 @@
 from typing import Dict, Optional, Union
 
-from brownie import Contract, chain  # type: ignore
+from brownie import web3 as brownie_web3  # type: ignore[import]
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
+from degenbot.config import get_web3
 from degenbot.uniswap.abi import UNISWAP_V3_TICKLENS_ABI
 
 _CONTRACT_ADDRESSES: Dict[
@@ -41,20 +42,23 @@ class TickLens:
         address: Optional[Union[str, ChecksumAddress]] = None,
         abi: Optional[list] = None,
     ):
+        _web3 = get_web3()
+        if _web3 is not None and _web3.isConnected():
+            self._w3 = _web3
+        elif brownie_web3.isConnected():
+            self._w3 = brownie_web3
+        else:
+            raise ValueError("No connected web3 object provided.")
+
         if address is None:
             factory_address = Web3.toChecksumAddress(factory_address)
             address = Web3.toChecksumAddress(
-                _CONTRACT_ADDRESSES[chain.id][factory_address]
+                _CONTRACT_ADDRESSES[self._w3.eth.chain_id][factory_address]
             )
 
         self.address = Web3.toChecksumAddress(address)
 
-        if abi is None:
-            abi = UNISWAP_V3_TICKLENS_ABI
-
-        self._brownie_contract = Contract.from_abi(
-            name="TickLens",
-            address=address,
-            abi=abi,
-            persist=False,
+        self._w3_contract = self._w3.eth.contract(
+            address=self.address,
+            abi=abi or UNISWAP_V3_TICKLENS_ABI,
         )

@@ -7,14 +7,12 @@ from degenbot.arbitrage import (
     UniswapLpCycle,
 )
 from degenbot.chainlink import ChainlinkPriceContract
+from degenbot.config import set_web3, get_web3
 from degenbot.functions import next_base_fee
 from degenbot.logging import logger
 
 # from degenbot.manager import ArbitrageHelperManager # not ready for release
 from degenbot.manager import AllPools, AllTokens, Erc20TokenHelperManager
-from degenbot.token import (
-    MIN_ERC20_ABI as ERC20,
-)  # backward compatibility for old scripts
 from degenbot.token import Erc20Token
 from degenbot.transaction import UniswapTransaction
 from degenbot.uniswap.abi import (
