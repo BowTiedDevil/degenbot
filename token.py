@@ -6,6 +6,7 @@ from eth_utils import to_checksum_address
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
+from web3.exceptions import ContractLogicError, BadFunctionCallOutput
 
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.config import get_web3
@@ -109,23 +110,29 @@ class Erc20Token:
             )
 
         try:
+            self.name: str
             self.name = self._w3_contract.functions.name().call()
-        except:
+        except (ContractLogicError, OverflowError, BadFunctionCallOutput):
             # Workaround for non-ERC20 compliant tokens
             for func in ("name", "NAME"):
                 try:
-                    self.name = self._w3.eth.call(
-                        {
-                            "to": self.address,
-                            "data": Web3.keccak(text=f"{func}()"),
-                        }
-                    )
+                    self.name = (
+                        self._w3.eth.call(
+                            {
+                                "to": self.address,
+                                "data": Web3.keccak(text=f"{func}()"),
+                            }
+                        )
+                    ).decode("utf-8", errors="ignore")
                 except:
                     continue
                 else:
-                    if isinstance(self.name, HexBytes):
-                        self.name = self.name.decode("utf-8", errors="ignore")
                     break
+            if not self._w3.eth.get_code(self.address):
+                raise ValueError("No contract deployed at this address")
+        except Exception as e:
+            print(f"(token) {type(e)}: {e}")
+            raise
 
         try:
             self.name
@@ -133,28 +140,32 @@ class Erc20Token:
             warn(
                 f"Token contract at {address} does not implement a 'name' function."
             )
-            self.name = f"UNKNOWN TOKEN @ {self.address}"
+            self.name = f"Unknown @ {self.address}"
 
         try:
+            self.symbol: str
             self.symbol = self._w3_contract.functions.symbol().call()
-        except:
+        except (ContractLogicError, OverflowError, BadFunctionCallOutput):
             for func in ("symbol", "SYMBOL"):
                 # Workaround for non-ERC20 compliant tokens
                 try:
-                    self.symbol = self._w3.eth.call(
-                        {
-                            "to": self.address,
-                            "data": Web3.keccak(text=f"{func}()"),
-                        }
-                    )
+                    self.symbol = (
+                        self._w3.eth.call(
+                            {
+                                "to": self.address,
+                                "data": Web3.keccak(text=f"{func}()"),
+                            }
+                        )
+                    ).decode("utf-8", errors="ignore")
                 except:
                     continue
                 else:
-                    if isinstance(self.symbol, HexBytes):
-                        self.symbol = self.symbol.decode(
-                            "utf-8", errors="ignore"
-                        )
                     break
+            if not self._w3.eth.get_code(self.address):
+                raise ValueError("No contract deployed at this address")
+        except Exception as e:
+            print(f"(token) {type(e)}: {e}")
+            raise
 
         try:
             self.symbol
@@ -162,14 +173,13 @@ class Erc20Token:
             warn(
                 f"Token contract at {address} does not implement a 'symbol' function."
             )
-            self.symbol = f"UNKNOWN"
-
-        self.decimals: int
+            self.symbol = "UNKNOWN"
 
         try:
+            self.decimals: int
             self.decimals = self._w3_contract.functions.decimals().call()
-        except:
-            for func in ("DECIMALS",):
+        except (ContractLogicError, OverflowError, BadFunctionCallOutput):
+            for func in ("decimals", "DECIMALS"):
                 try:
                     # Workaround for non-ERC20 compliant tokens
                     self.decimals = int(
@@ -185,6 +195,11 @@ class Erc20Token:
                     continue
                 else:
                     break
+            if not self._w3.eth.get_code(self.address):
+                raise ValueError("No contract deployed at this address")
+        except Exception as e:
+            print(f"(token) {type(e)}: {e}")
+            raise
 
         try:
             self.decimals
