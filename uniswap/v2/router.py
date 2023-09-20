@@ -2,9 +2,6 @@ import time
 from decimal import Decimal
 from typing import Optional
 
-from brownie import Contract  # type: ignore
-from brownie.network.account import LocalAccount  # type: ignore
-
 from degenbot.logging import logger
 
 
@@ -17,9 +14,11 @@ class Router:
         self,
         address: str,
         name: str,
-        user: Optional[LocalAccount] = None,
+        user: Optional["LocalAccount"] = None,
         abi: Optional[list] = None,
     ) -> None:
+        from brownie import Contract  # type: ignore[import]
+
         self.address = address
 
         try:

@@ -2,7 +2,6 @@ from typing import Dict, Optional, Union
 
 from eth_utils import to_checksum_address
 from eth_typing import ChecksumAddress
-from web3 import Web3
 
 from degenbot.config import get_web3
 from degenbot.uniswap.abi import UNISWAP_V3_TICKLENS_ABI

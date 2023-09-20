@@ -19,7 +19,6 @@ from degenbot.manager import AllPools
 from degenbot.token import Erc20Token
 from degenbot.types import PoolHelper
 from degenbot.uniswap.abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
-from degenbot.uniswap.v2.router import Router
 
 
 @dataclasses.dataclass(slots=True)
@@ -75,7 +74,7 @@ class LiquidityPool(PoolHelper):
         tokens: Optional[List[Erc20Token]] = None,
         name: Optional[str] = None,
         update_method: str = "polling",
-        router: Optional[Router] = None,
+        router: Optional["Router"] = None,
         abi: Optional[list] = None,
         factory_address: Optional[str] = None,
         factory_init_hash: Optional[str] = None,
@@ -157,7 +156,9 @@ class LiquidityPool(PoolHelper):
         )
 
         if router:
-            self.router = router
+            from degenbot.uniswap.v2.router import Router
+
+            self.router: Router = router
 
         if isinstance(fee, Decimal):
             warn(
@@ -559,9 +560,9 @@ class LiquidityPool(PoolHelper):
     def set_swap_target(
         self,
         token_in: Erc20Token,
-        token_in_qty: Union[Wei, int],
+        token_in_qty: int,
         token_out: Erc20Token,
-        token_out_qty: Union[Wei, int],
+        token_out_qty: int,
         silent: bool = False,
     ) -> None:
         if not (
@@ -963,7 +964,7 @@ class CamelotLiquidityPool(LiquidityPool):
         tokens: Optional[List[Erc20Token]] = None,
         name: Optional[str] = None,
         update_method: str = "polling",
-        router: Optional[Router] = None,
+        router: Optional["Router"] = None,
         abi: Optional[list] = None,
         silent: bool = False,
         update_reserves_on_start: bool = True,

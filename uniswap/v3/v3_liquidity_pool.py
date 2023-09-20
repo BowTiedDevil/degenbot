@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 from eth_utils import to_checksum_address
 from eth_typing import ChecksumAddress
-from web3 import Web3
 
 from degenbot.config import get_web3
 from degenbot.exceptions import (
@@ -160,7 +159,7 @@ class V3LiquidityPool(PoolHelper):
         self,
         address: str,
         fee: Optional[int] = None,
-        lens: Optional[Contract] = None,
+        lens: Optional[TickLens] = None,
         tokens: Optional[List[Erc20Token]] = None,
         name: str = "",
         update_method: Optional[str] = None,
@@ -546,7 +545,6 @@ class V3LiquidityPool(PoolHelper):
                     ).call(
                         block_identifier=block_number,
                     ):
-                        # TODO: convert Lens helper to web3
                         single_tick_data = self.lens._w3_contract.functions.getPopulatedTicksInWord(
                             self.address, word_position
                         ).call(

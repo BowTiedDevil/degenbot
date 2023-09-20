@@ -1,3 +1,4 @@
+import itertools
 from typing import Iterable, List, Union
 
 import eth_abi.packed
@@ -41,8 +42,6 @@ def get_v2_pools_from_token_path(
     tx_path: Iterable[Union[str, ChecksumAddress]],
     pool_manager: UniswapV2LiquidityPoolManager,
 ) -> List[LiquidityPool]:
-    import itertools
-
     return [
         pool_manager.get_pool(
             token_addresses=token_addresses,
