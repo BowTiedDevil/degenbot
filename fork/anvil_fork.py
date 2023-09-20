@@ -1,9 +1,9 @@
 import os
 import socket
 import subprocess
-from typing import Optional
+from typing import Any, Dict, Optional
 
-import ujson
+import ujson  # type: ignore
 from web3 import IPCProvider, Web3
 
 
@@ -92,7 +92,7 @@ class AnvilFork:
         fork_url: Optional[str] = None,
         block_number: Optional[int] = None,
     ):
-        forking_params = dict()
+        forking_params: Dict[str, Any] = dict()
         if fork_url is not None:
             forking_params["jsonRpcUrl"] = fork_url
         if block_number is not None:
