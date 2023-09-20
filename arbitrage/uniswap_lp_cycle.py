@@ -3,11 +3,11 @@ import dataclasses
 from typing import (
     TYPE_CHECKING,
     Dict,
+    Iterable,
     List,
     Optional,
     Sequence,
     Tuple,
-    TypeAlias,
     Union,
 )
 from warnings import warn
@@ -39,14 +39,6 @@ from degenbot.uniswap.v3.v3_liquidity_pool import (
     UniswapV3PoolState,
 )
 
-StateOverrideTypes: TypeAlias = Sequence[
-    Union[
-        Tuple[LiquidityPool, UniswapV2PoolState],
-        Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-        Tuple[V3LiquidityPool, UniswapV3PoolState],
-        Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-    ]
-]
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -82,7 +74,7 @@ class UniswapLpCycle(ArbitrageHelper):
     def __init__(
         self,
         input_token: Erc20Token,
-        swap_pools: List[Union[LiquidityPool, V3LiquidityPool]],
+        swap_pools: Iterable[Union[LiquidityPool, V3LiquidityPool]],
         id: str,
         max_input: Optional[int] = None,
     ):
@@ -172,7 +164,16 @@ class UniswapLpCycle(ArbitrageHelper):
 
     def _sort_overrides(
         self,
-        overrides: Optional[StateOverrideTypes],
+        overrides: Optional[
+            Sequence[
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolState],
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolState],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
+                ]
+            ]
+        ],
     ) -> Dict[ChecksumAddress, Union[UniswapV2PoolState, UniswapV3PoolState]]:
         """
         Validate the overrides, extract and insert the resulting pool states
@@ -410,7 +411,16 @@ class UniswapLpCycle(ArbitrageHelper):
 
     def _calculate(
         self,
-        override_state: Optional[StateOverrideTypes] = None,
+        override_state: Optional[
+            Sequence[
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolState],
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolState],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
+                ]
+            ]
+        ] = None,
     ) -> ArbitrageCalculationResult:
         _overrides = self._sort_overrides(override_state)
 
@@ -543,7 +553,16 @@ class UniswapLpCycle(ArbitrageHelper):
 
     def calculate(
         self,
-        override_state: Optional[StateOverrideTypes] = None,
+        override_state: Optional[
+            Sequence[
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolState],
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolState],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
+                ]
+            ]
+        ] = None,
     ) -> ArbitrageCalculationResult:
         """
         Stateless calculation that does not use `self.best`
@@ -556,7 +575,16 @@ class UniswapLpCycle(ArbitrageHelper):
     async def calculate_with_pool(
         self,
         executor,
-        override_state: Optional[StateOverrideTypes] = None,
+        override_state: Optional[
+            Sequence[
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolState],
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolState],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
+                ]
+            ]
+        ] = None,
     ) -> asyncio.Future:
         """
         Wrap the arbitrage calculation into an asyncio task using the specified executor.
@@ -595,7 +623,16 @@ class UniswapLpCycle(ArbitrageHelper):
 
     def calculate_arbitrage_return_best(
         self,
-        override_state: Optional[StateOverrideTypes] = None,
+        override_state: Optional[
+            Sequence[
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolState],
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolState],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
+                ]
+            ]
+        ] = None,
     ):
         """
         A wrapper over `calculate_arbitrage`, useful for sending the
@@ -608,7 +645,16 @@ class UniswapLpCycle(ArbitrageHelper):
 
     def calculate_arbitrage(
         self,
-        override_state: Optional[StateOverrideTypes] = None,
+        override_state: Optional[
+            Sequence[
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolState],
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolState],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
+                ]
+            ]
+        ] = None,
     ) -> Tuple[bool, Tuple[int, int]]:
         """
         TBD
@@ -642,7 +688,7 @@ class UniswapLpCycle(ArbitrageHelper):
     def from_addresses(
         cls,
         input_token_address: str,
-        swap_pool_addresses: List[Tuple[str, str]],
+        swap_pool_addresses: Iterable[Tuple[str, str]],
         id: str,
         max_input: Optional[int] = None,
     ) -> "UniswapLpCycle":
@@ -653,8 +699,8 @@ class UniswapLpCycle(ArbitrageHelper):
         ---------
         input_token_address : str
             A address for the input_token
-        swap_pool_addresses : List[str]
-            An ordered list of tuples, representing the address for each pool in the swap path, and a string specifying the Uniswap version for that pool (either "V2" or "V3")
+        swap_pool_addresses : Iterable[str,str]
+            An iterable of tuples representing the address for each pool in the swap path, and a string specifying the Uniswap version for that pool (either "V2" or "V3")
 
             e.g. swap_pool_addresses = [
                 ("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD","V3"),
@@ -702,7 +748,12 @@ class UniswapLpCycle(ArbitrageHelper):
         from_address: Union[str, ChecksumAddress],
         swap_amount: Optional[int] = None,
         pool_swap_amounts: Optional[
-            List[Union[UniswapV2PoolSwapAmounts, UniswapV3PoolSwapAmounts]]
+            Sequence[
+                Union[
+                    UniswapV2PoolSwapAmounts,
+                    UniswapV3PoolSwapAmounts,
+                ]
+            ]
         ] = None,
     ) -> List[Tuple[ChecksumAddress, bytes, int]]:
         """
@@ -722,7 +773,7 @@ class UniswapLpCycle(ArbitrageHelper):
             If this argument is `None`, amount will be retrieved from
             `self.best`.
 
-        pool_swap_amounts: list, optional
+        pool_swap_amounts: Iterable[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts], optional
             An iterable of swap amounts to be encoded. If this argument is
             `None`, amounts will be retrieved from `self.best`.
 
