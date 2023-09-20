@@ -4,7 +4,7 @@ from decimal import Decimal
 from threading import Lock
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
-from brownie import Contract, multicall as brownie_multicall, web3 as brownie_web3  # type: ignore[import]
+from eth_utils import to_checksum_address
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
@@ -173,7 +173,7 @@ class V3LiquidityPool(PoolHelper):
         tick_bitmap: Optional[dict] = None,
         state_block: Optional[int] = None,
     ):
-        self.address = Web3.toChecksumAddress(address)
+        self.address = to_checksum_address(address)
         self.abi = abi or UNISWAP_V3_POOL_ABI
 
         _web3 = get_web3()
@@ -201,9 +201,9 @@ class V3LiquidityPool(PoolHelper):
         self.liquidity_update_block = 0
 
         if factory_address:
-            self.factory = Web3.toChecksumAddress(factory_address)
+            self.factory = to_checksum_address(factory_address)
         else:
-            self.factory = Web3.toChecksumAddress(
+            self.factory = to_checksum_address(
                 self._w3_contract.functions.factory().call()
             )
 

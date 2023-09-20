@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 from brownie import web3 as brownie_web3  # type: ignore[import]
 from eth_typing import ChecksumAddress
+from eth_utils import to_checksum_address
 from web3 import Web3
 
 from degenbot.config import get_web3
@@ -114,7 +115,7 @@ class UniswapLiquidityPoolManager(HelperManager):
         """
         cls.add_chain(chain_id=chain_id)
 
-        factory_address = Web3.toChecksumAddress(factory_address)
+        factory_address = to_checksum_address(factory_address)
 
         if not _FACTORIES[chain_id].get(factory_address):
             _FACTORIES[chain_id][factory_address] = {}
@@ -127,7 +128,7 @@ class UniswapLiquidityPoolManager(HelperManager):
         Add a pool_init_hash for a factory at a given chain ID.
         """
 
-        factory_address = Web3.toChecksumAddress(factory_address)
+        factory_address = to_checksum_address(factory_address)
 
         cls.add_factory(chain_id=chain_id, factory_address=factory_address)
 
@@ -161,7 +162,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         chain_id = chain_id or _web3.eth.chain_id
 
-        factory_address = Web3.toChecksumAddress(factory_address)
+        factory_address = to_checksum_address(factory_address)
 
         super().__init__(
             factory_address=factory_address,
@@ -341,7 +342,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         chain_id = chain_id or _web3.eth.chain_id
 
-        factory_address = Web3.toChecksumAddress(factory_address)
+        factory_address = to_checksum_address(factory_address)
 
         super().__init__(
             factory_address=factory_address,
@@ -353,7 +354,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         if self.__dict__ == {}:
             self._w3 = _web3
             self.chain_id = chain_id
-            self._factory_address = Web3.toChecksumAddress(factory_address)
+            self._factory_address = to_checksum_address(factory_address)
             self._lens = TickLens(self._factory_address)
             self._lock = Lock()
             self._tracked_pools: Dict[
@@ -471,7 +472,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 raise ValueError(
                     f"Conflicting arguments provided. Pass address OR tokens+fee"
                 )
-            pool_address = Web3.toChecksumAddress(pool_address)
+            pool_address = to_checksum_address(pool_address)
         elif token_addresses is not None and pool_fee is not None:
             if len(token_addresses) != 2:
                 raise ValueError(

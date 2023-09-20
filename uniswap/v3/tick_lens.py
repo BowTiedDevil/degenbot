@@ -1,6 +1,6 @@
 from typing import Dict, Optional, Union
 
-from brownie import web3 as brownie_web3  # type: ignore[import]
+from eth_utils import to_checksum_address
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
@@ -51,12 +51,12 @@ class TickLens:
             raise ValueError("No connected web3 object provided.")
 
         if address is None:
-            factory_address = Web3.toChecksumAddress(factory_address)
-            address = Web3.toChecksumAddress(
+            factory_address = to_checksum_address(factory_address)
+            address = to_checksum_address(
                 _CONTRACT_ADDRESSES[self._w3.eth.chain_id][factory_address]
             )
 
-        self.address = Web3.toChecksumAddress(address)
+        self.address = to_checksum_address(address)
 
         self._w3_contract = self._w3.eth.contract(
             address=self.address,

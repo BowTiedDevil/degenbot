@@ -1,7 +1,7 @@
 from fractions import Fraction
 
 import pytest
-import web3
+from eth_utils import to_checksum_address
 
 from degenbot import Erc20Token, LiquidityPool
 from degenbot.exceptions import ZeroSwapError
@@ -30,7 +30,7 @@ class MockLiquidityPool(LiquidityPool):
 
 
 token0 = MockErc20Token()
-token0.address = web3.Web3.toChecksumAddress(
+token0.address = to_checksum_address(
     "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 )
 token0.decimals = 8
@@ -38,7 +38,7 @@ token0.name = "Wrapped BTC"
 token0.symbol = "WBTC"
 
 token1 = MockErc20Token()
-token1.address = web3.Web3.toChecksumAddress(
+token1.address = to_checksum_address(
     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 )
 token1.decimals = 18
@@ -47,12 +47,8 @@ token1.symbol = "WETH"
 
 lp = MockLiquidityPool()
 lp.name = "WBTC-WETH (V2, 0.30%)"
-lp.address = web3.Web3.toChecksumAddress(
-    "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
-)
-lp.factory = web3.Web3.toChecksumAddress(
-    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-)
+lp.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
+lp.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
 lp.fee = None
 lp.fee_token0 = Fraction(3, 1000)
 lp.fee_token1 = Fraction(3, 1000)
@@ -172,7 +168,7 @@ def test_comparisons():
 
     other_lp = MockLiquidityPool()
     other_lp.name = "WBTC-WETH (V2, 0.30%)"
-    other_lp.address = web3.Web3.toChecksumAddress(
+    other_lp.address = to_checksum_address(
         "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
     )
 

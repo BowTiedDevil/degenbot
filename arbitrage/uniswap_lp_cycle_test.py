@@ -1,5 +1,6 @@
 from fractions import Fraction
 from typing import Sequence, Tuple, Union
+from eth_utils import to_checksum_address
 
 import web3
 
@@ -33,7 +34,7 @@ class MockV3LiquidityPool(V3LiquidityPool):
 
 
 wbtc = MockErc20Token()
-wbtc.address = web3.Web3.toChecksumAddress(
+wbtc.address = to_checksum_address(
     "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 )
 wbtc.decimals = 8
@@ -41,7 +42,7 @@ wbtc.name = "Wrapped BTC"
 wbtc.symbol = "WBTC"
 
 weth = MockErc20Token()
-weth.address = web3.Web3.toChecksumAddress(
+weth.address = to_checksum_address(
     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 )
 weth.decimals = 18
@@ -51,10 +52,10 @@ weth.symbol = "WETH"
 
 v2_lp = MockLiquidityPool()
 v2_lp.name = "WBTC-WETH (V2, 0.30%)"
-v2_lp.address = web3.Web3.toChecksumAddress(
+v2_lp.address = to_checksum_address(
     "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
 )
-v2_lp.factory = web3.Web3.toChecksumAddress(
+v2_lp.factory = to_checksum_address(
     "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
 )
 v2_lp.fee = None
@@ -68,10 +69,10 @@ v2_lp._update_pool_state()
 
 v3_lp = MockV3LiquidityPool()
 v3_lp.name = "WBTC-WETH (V3, 0.30%)"
-v3_lp.address = web3.Web3.toChecksumAddress(
+v3_lp.address = to_checksum_address(
     "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 )
-v3_lp.factory = web3.Web3.toChecksumAddress(
+v3_lp.factory = to_checksum_address(
     "0x1F98431c8aD98523631AE4a59f267346ea31F984"
 )
 v3_lp.fee = 3000
@@ -2152,11 +2153,11 @@ def test_arbitrage_with_overrides():
 
     # Irrelevant V2 and V3 mocked pools, only the address is changed.
     irrelevant_v2_pool = MockLiquidityPool()
-    irrelevant_v2_pool.address = web3.Web3.toChecksumAddress(
+    irrelevant_v2_pool.address = to_checksum_address(
         "0x0000000000000000000000000000000000000069"
     )
     irrelevant_v2_pool.name = "WBTC-WETH (V2, 0.30%)"
-    irrelevant_v2_pool.factory = web3.Web3.toChecksumAddress(
+    irrelevant_v2_pool.factory = to_checksum_address(
         "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
     )
     irrelevant_v2_pool.fee = None
@@ -2168,11 +2169,11 @@ def test_arbitrage_with_overrides():
     irrelevant_v2_pool.token1 = weth
 
     irrelevant_v3_pool = MockV3LiquidityPool()
-    irrelevant_v3_pool.address = web3.Web3.toChecksumAddress(
+    irrelevant_v3_pool.address = to_checksum_address(
         "0x0000000000000000000000000000000000000420"
     )
     irrelevant_v3_pool.name = "WBTC-WETH (V3, 0.30%)"
-    irrelevant_v3_pool.factory = web3.Web3.toChecksumAddress(
+    irrelevant_v3_pool.factory = to_checksum_address(
         "0x1F98431c8aD98523631AE4a59f267346ea31F984"
     )
     irrelevant_v3_pool.fee = 3000

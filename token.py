@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, Optional, Tuple
 from warnings import warn
 
-from brownie import web3 as brownie_web3  # type: ignore[import]
+from eth_utils import to_checksum_address
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
@@ -68,7 +68,7 @@ class Erc20Token:
         min_abi: bool = False,  # deprecated
         user: Optional[Any] = None,  # deprecated
     ) -> None:
-        self.address: ChecksumAddress = Web3.toChecksumAddress(address)
+        self.address: ChecksumAddress = to_checksum_address(address)
         self.abi = abi or ERC20_ABI_MINIMAL
 
         _web3 = get_web3()
@@ -264,8 +264,8 @@ class Erc20Token:
 
     def get_approval(self, owner: str, spender: str) -> int:
         return self._w3_contract.functions.allowance(
-            Web3.toChecksumAddress(owner),
-            Web3.toChecksumAddress(spender),
+            to_checksum_address(owner),
+            to_checksum_address(spender),
         ).call()
 
     # def set_approval(self, owner: str, spender: str, value: Union[int, str]):
@@ -293,8 +293,8 @@ class Erc20Token:
 
     #     try:
     #         self._w3_contract.functions["approve"](
-    #             Web3.toChecksumAddress(owner),
-    #             Web3.toChecksumAddress(spender),
+    #             to_checksum_address(owner),
+    #             to_checksum_address(spender),
     #             value,
     #         )
     #         # self._brownie_contract.approve(
@@ -308,7 +308,7 @@ class Erc20Token:
 
     def get_balance(self, address: str) -> int:
         return self._w3_contract.functions.balanceOf(
-            Web3.toChecksumAddress(address)
+            to_checksum_address(address)
         ).call()
 
     # def update_balance(self):

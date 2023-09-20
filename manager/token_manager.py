@@ -1,8 +1,7 @@
 from threading import Lock
 from typing import Dict, Optional
 
-from brownie import web3 as brownie_web3  # type: ignore[import]
-from web3 import Web3
+from eth_utils import to_checksum_address
 
 from degenbot.config import get_web3
 from degenbot.exceptions import ManagerError
@@ -91,7 +90,7 @@ class Erc20TokenHelperManager(HelperManager):
         Get the token object from its address
         """
 
-        address = Web3.toChecksumAddress(address)
+        address = to_checksum_address(address)
 
         if token_helper := self._erc20tokens.get(address):
             return token_helper

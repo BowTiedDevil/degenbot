@@ -1,7 +1,6 @@
 import json
 
-from brownie import web3 as brownie_web3  # type: ignore[import]
-from web3 import Web3
+from eth_utils import to_checksum_address
 
 from degenbot.config import get_web3
 
@@ -29,7 +28,7 @@ class ChainlinkPriceContract:
         else:
             raise ValueError("No connected web3 object provided.")
 
-        self.address = Web3.toChecksumAddress(address)
+        self.address = to_checksum_address(address)
         self._w3_contract = _w3.eth.contract(
             address=self.address,
             abi=CHAINLINK_PRICE_FEED_ABI,

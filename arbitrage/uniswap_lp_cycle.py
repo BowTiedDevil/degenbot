@@ -14,7 +14,7 @@ from warnings import warn
 
 import eth_abi
 from eth_typing import ChecksumAddress
-from scipy.optimize import minimize_scalar  # type: ignore
+from eth_utils import to_checksum_address
 from web3 import Web3
 
 from degenbot.exceptions import (
@@ -738,7 +738,7 @@ class UniswapLpCycle(ArbitrageHelper):
             if the generated payloads would revert on-chain, or if the inputs were invalid
         """
 
-        from_address = Web3.toChecksumAddress(from_address)
+        from_address = to_checksum_address(from_address)
 
         if swap_amount is None:
             swap_amount = self.best["swap_amount"]

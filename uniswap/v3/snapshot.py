@@ -3,7 +3,7 @@ import json
 from io import TextIOWrapper
 from typing import Dict, List, Optional, TextIO, Tuple, Union
 
-from brownie import web3 as brownie_web3  # type: ignore
+from eth_utils import to_checksum_address
 from eth_typing import ChecksumAddress
 from web3 import Web3
 from web3._utils.events import get_event_data
@@ -73,7 +73,7 @@ class UniswapV3LiquiditySnapshot:
             pool_address,
             pool_liquidity_snapshot,
         ) in json_liquidity_snapshot.items():
-            self._liquidity_snapshot[Web3.toChecksumAddress(pool_address)] = {
+            self._liquidity_snapshot[to_checksum_address(pool_address)] = {
                 "tick_bitmap": {
                     int(k): UniswapV3BitmapAtWord(**v)
                     for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
@@ -111,7 +111,7 @@ class UniswapV3LiquiditySnapshot:
         def _process_log() -> Tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
             decoded_event = get_event_data(self._w3.codec, event_abi, log)
 
-            pool_address = Web3.toChecksumAddress(decoded_event["address"])
+            pool_address = to_checksum_address(decoded_event["address"])
             tx_index = decoded_event["transactionIndex"]
             liquidity_block = decoded_event["blockNumber"]
             liquidity = decoded_event["args"]["amount"] * (
@@ -208,7 +208,7 @@ class UniswapV3LiquiditySnapshot:
         if isinstance(pool, V3LiquidityPool):
             pool_address = pool.address
         elif isinstance(pool, str):
-            pool_address = Web3.toChecksumAddress(pool)
+            pool_address = to_checksum_address(pool)
         else:
             raise ValueError(f"Unexpected input for pool: {type(pool)}")
 
@@ -223,7 +223,7 @@ class UniswapV3LiquiditySnapshot:
         if isinstance(pool, V3LiquidityPool):
             pool_address = pool.address
         elif isinstance(pool, str):
-            pool_address = Web3.toChecksumAddress(pool)
+            pool_address = to_checksum_address(pool)
         else:
             raise ValueError(f"Unexpected input for pool: {type(pool)}")
 
@@ -241,7 +241,7 @@ class UniswapV3LiquiditySnapshot:
         if isinstance(pool, V3LiquidityPool):
             pool_address = pool.address
         elif isinstance(pool, str):
-            pool_address = Web3.toChecksumAddress(pool)
+            pool_address = to_checksum_address(pool)
         else:
             raise ValueError(f"Unexpected input for pool: {type(pool)}")
 

@@ -1,7 +1,7 @@
 from typing import Dict, Union
 
 from eth_typing import ChecksumAddress
-from web3 import Web3
+from eth_utils import to_checksum_address
 
 from degenbot.exceptions import PoolAlreadyExistsError
 from degenbot.types import PoolHelper
@@ -25,11 +25,11 @@ class AllPools:
             self.pools = _all_pools[chain_id]
 
     def __delitem__(self, pool_address: Union[ChecksumAddress, str]):
-        _pool_address = Web3.toChecksumAddress(pool_address)
+        _pool_address = to_checksum_address(pool_address)
         del self.pools[_pool_address]
 
     def __getitem__(self, pool_address: Union[ChecksumAddress, str]):
-        _pool_address = Web3.toChecksumAddress(pool_address)
+        _pool_address = to_checksum_address(pool_address)
         return self.pools[_pool_address]
 
     def __setitem__(
@@ -37,7 +37,7 @@ class AllPools:
         pool_address: Union[ChecksumAddress, str],
         pool_helper: PoolHelper,
     ):
-        _pool_address = Web3.toChecksumAddress(pool_address)
+        _pool_address = to_checksum_address(pool_address)
 
         if self.pools.get(_pool_address):
             raise PoolAlreadyExistsError(
@@ -50,5 +50,5 @@ class AllPools:
         return len(self.pools)
 
     def get(self, pool_address: Union[ChecksumAddress, str]):
-        _pool_address = Web3.toChecksumAddress(pool_address)
+        _pool_address = to_checksum_address(pool_address)
         return self.pools.get(_pool_address)

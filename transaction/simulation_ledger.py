@@ -1,7 +1,7 @@
 from typing import Dict, Union
 
 from eth_typing import ChecksumAddress
-from web3 import Web3
+from eth_utils import to_checksum_address
 
 from degenbot.logging import logger
 from degenbot.token import Erc20Token
@@ -61,7 +61,7 @@ class SimulationLedger:
         if isinstance(token, Erc20Token):
             _token_address = token.address
         elif isinstance(token, str):
-            _token_address = Web3.toChecksumAddress(token)
+            _token_address = to_checksum_address(token)
         elif isinstance(token, ChecksumAddress):
             _token_address = token
         else:
@@ -69,7 +69,7 @@ class SimulationLedger:
                 f"Token may be type Erc20Token, str, or ChecksumAddress. Was {type(token)}"
             )
 
-        _address = Web3.toChecksumAddress(address)
+        _address = to_checksum_address(address)
 
         address_balance: Dict[ChecksumAddress, int]
         try:
@@ -121,12 +121,12 @@ class SimulationLedger:
             If inputs did not match the expected types.
         """
 
-        _address = Web3.toChecksumAddress(address)
+        _address = to_checksum_address(address)
 
         if isinstance(token, Erc20Token):
             _token_address = token.address
         elif isinstance(token, str):
-            _token_address = Web3.toChecksumAddress(token)
+            _token_address = to_checksum_address(token)
         elif isinstance(token, ChecksumAddress):
             _token_address = token
         else:
@@ -178,7 +178,7 @@ class SimulationLedger:
         if isinstance(token, Erc20Token):
             _token_address = token.address
         elif isinstance(token, str):
-            _token_address = Web3.toChecksumAddress(token)
+            _token_address = to_checksum_address(token)
         elif isinstance(token, ChecksumAddress):
             _token_address = token
         else:

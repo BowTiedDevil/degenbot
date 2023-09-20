@@ -3,6 +3,7 @@ from typing import Iterable, List, Union
 
 import eth_abi
 from eth_typing import ChecksumAddress
+from eth_utils import to_checksum_address
 from web3 import Web3
 
 
@@ -19,7 +20,7 @@ def decode_v3_path(path: bytes) -> List[Union[ChecksumAddress, int]]:
     # store each address (hex string) and fee (int)
     for byte_length in cycle((20, 3)):
         if byte_length == 20:
-            address = Web3.toChecksumAddress(
+            address = to_checksum_address(
                 path[path_pos : path_pos + byte_length].hex()
             )
             decoded_path.append(address)
@@ -52,7 +53,7 @@ def generate_v3_pool_address(
 
     token_addresses = sorted([address.lower() for address in token_addresses])
 
-    return Web3.toChecksumAddress(
+    return to_checksum_address(
         Web3.keccak(
             hexstr="0xff"
             + factory_address[2:]

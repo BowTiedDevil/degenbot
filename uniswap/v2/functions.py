@@ -2,6 +2,7 @@ from typing import Iterable, List, Union
 
 import eth_abi.packed
 from eth_typing import ChecksumAddress
+from eth_utils import to_checksum_address
 from web3 import Web3
 
 from degenbot.uniswap.uniswap_managers import UniswapV2LiquidityPoolManager
@@ -21,7 +22,7 @@ def generate_v2_pool_address(
 
     token_addresses = sorted([address.lower() for address in token_addresses])
 
-    return Web3.toChecksumAddress(
+    return to_checksum_address(
         Web3.keccak(
             hexstr="0xff"
             + factory_address[2:]

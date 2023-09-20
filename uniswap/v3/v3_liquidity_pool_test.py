@@ -1,5 +1,5 @@
 import pytest
-import web3
+from eth_utils import to_checksum_address
 
 from degenbot import Erc20Token
 from degenbot.exceptions import LiquidityPoolError, ExternalUpdateError
@@ -33,7 +33,7 @@ class MockV3LiquidityPool(V3LiquidityPool):
 # Reserve values taken at block height 17,600,000
 
 token0 = MockErc20Token()
-token0.address = web3.Web3.toChecksumAddress(
+token0.address = to_checksum_address(
     "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 )
 token0.decimals = 8
@@ -41,7 +41,7 @@ token0.name = "Wrapped BTC"
 token0.symbol = "WBTC"
 
 token1 = MockErc20Token()
-token1.address = web3.Web3.toChecksumAddress(
+token1.address = to_checksum_address(
     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 )
 token1.decimals = 18
@@ -52,10 +52,10 @@ lp = MockV3LiquidityPool()
 lp.name = "WBTC-WETH (V3, 0.30%)"
 lp._slot0_lock = Lock()
 lp._liquidity_lock = Lock()
-lp.address = web3.Web3.toChecksumAddress(
+lp.address = to_checksum_address(
     "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 )
-lp.factory = web3.Web3.toChecksumAddress(
+lp.factory = to_checksum_address(
     "0x1F98431c8aD98523631AE4a59f267346ea31F984"
 )
 lp.fee = 3000

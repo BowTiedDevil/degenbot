@@ -3,8 +3,7 @@ from decimal import Decimal
 from fractions import Fraction
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 from warnings import warn
-
-from brownie import web3 as brownie_web3  # type: ignore[import]
+from eth_utils import to_checksum_address
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
@@ -138,7 +137,7 @@ class LiquidityPool(PoolHelper):
             height. Defaults to the latest block if omitted.
         """
 
-        self.address: ChecksumAddress = Web3.toChecksumAddress(address)
+        self.address: ChecksumAddress = to_checksum_address(address)
         self.abi = abi or UNISWAP_V2_POOL_ABI
 
         _web3 = get_web3()
@@ -980,7 +979,7 @@ class CamelotLiquidityPool(LiquidityPool):
         if TYPE_CHECKING:
             assert isinstance(_web3, Web3)
 
-        address = Web3.toChecksumAddress(address)
+        address = to_checksum_address(address)
 
         _w3_contract = _web3.eth.contract(
             address=address, abi=abi or CAMELOT_POOL_ABI

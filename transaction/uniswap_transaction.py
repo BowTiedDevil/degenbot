@@ -4,6 +4,7 @@ import itertools
 import pprint
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
+from eth_utils import to_checksum_address
 import eth_abi
 from brownie import chain  # type: ignore
 from eth_typing import ChecksumAddress
@@ -184,7 +185,7 @@ class UniswapTransaction(TransactionHelper):
                 }
             }
         """
-        router_address = Web3.toChecksumAddress(router_address)
+        router_address = to_checksum_address(router_address)
 
         for key in [
             "name",
@@ -208,7 +209,7 @@ class UniswapTransaction(TransactionHelper):
         The method checksums the token address.
         """
 
-        _token_address = Web3.toChecksumAddress(token_address)
+        _token_address = to_checksum_address(token_address)
 
         try:
             WRAPPED_NATIVE_TOKENS[chain_id]
@@ -261,10 +262,10 @@ class UniswapTransaction(TransactionHelper):
             int(chain_id, 16) if isinstance(chain_id, str) else chain_id
         )
         self.routers = _ROUTERS[self.chain_id]
-        self.sender = Web3.toChecksumAddress(tx_sender)
+        self.sender = to_checksum_address(tx_sender)
         self.to: Set[ChecksumAddress] = set()
 
-        router_address = Web3.toChecksumAddress(router_address)
+        router_address = to_checksum_address(router_address)
         if router_address not in self.routers:
             raise ValueError(f"Router address {router_address} unknown!")
 
@@ -382,7 +383,7 @@ class UniswapTransaction(TransactionHelper):
         )
 
         if last_swap:
-            self.to.add(Web3.toChecksumAddress(recipient))
+            self.to.add(to_checksum_address(recipient))
 
         if (
             last_swap
@@ -453,7 +454,7 @@ class UniswapTransaction(TransactionHelper):
             else:
                 _recipient = self.sender
         else:
-            _recipient = Web3.toChecksumAddress(recipient)
+            _recipient = to_checksum_address(recipient)
 
         # process the swap
         self.ledger.adjust(pool.address, token_in.address, -_amount_in)
@@ -497,7 +498,7 @@ class UniswapTransaction(TransactionHelper):
 
         silent = self.silent
 
-        self.to.add(Web3.toChecksumAddress(recipient))
+        self.to.add(to_checksum_address(recipient))
 
         if token_in not in [pool.token0, pool.token1]:
             raise ValueError
@@ -592,7 +593,7 @@ class UniswapTransaction(TransactionHelper):
 
         silent = self.silent
 
-        self.to.add(Web3.toChecksumAddress(recipient))
+        self.to.add(to_checksum_address(recipient))
 
         if token_in not in [pool.token0, pool.token1]:
             raise ValueError
@@ -678,7 +679,7 @@ class UniswapTransaction(TransactionHelper):
             ]:
                 _recipient = self.router_address
             else:
-                _recipient = Web3.toChecksumAddress(recipient)
+                _recipient = to_checksum_address(recipient)
                 self.to.add(_recipient)
 
             self.ledger.transfer(
@@ -944,7 +945,7 @@ class UniswapTransaction(TransactionHelper):
                         self.router_address,
                         _pay_portion_recipient,
                     )
-                    self.to.add(Web3.toChecksumAddress(_pay_portion_recipient))
+                    self.to.add(to_checksum_address(_pay_portion_recipient))
 
             elif command == "SWEEP":
                 """
