@@ -1019,4 +1019,4 @@ class CamelotLiquidityPool(LiquidityPool):
 
         if stable_pool:
             # replace the calculate_tokens_out_from_tokens_in method for stable-only pools
-            self.calculate_tokens_out_from_tokens_in = self._calculate_tokens_out_from_tokens_in_stable_swap  # type: ignore
+            self.calculate_tokens_out_from_tokens_in = self._calculate_tokens_out_from_tokens_in_stable_swap  # type: ignore[assignment]
