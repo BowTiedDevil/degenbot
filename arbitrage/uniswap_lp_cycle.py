@@ -438,41 +438,61 @@ class UniswapLpCycle(ArbitrageHelper):
     ) -> ArbitrageCalculationResult:
         _overrides = self._sort_overrides(override_state)
 
-        # check the pools for zero liquidity in the direction of the trade
+        # Check the pool state liquidity in the direction of the trade
         for i, pool in enumerate(self.swap_pools):
+            # WIP: use overrides if provided
+            pool_state = _overrides.get(pool.address) or pool.state
+
             if isinstance(pool, LiquidityPool):
+                if TYPE_CHECKING:
+                    assert isinstance(pool_state, UniswapV2PoolState)
+
                 if (
-                    pool.reserves_token1 <= 1
+                    pool_state.reserves_token0 == 0
+                    or pool_state.reserves_token1 == 0
+                ):
+                    raise ZeroLiquidityError(
+                        f"V2 pool {pool.address} has no liquidity"
+                    )
+
+                if (
+                    pool_state.reserves_token1 == 1
                     and self._swap_vectors[i].zero_for_one
                 ):
                     raise ZeroLiquidityError(
                         f"V2 pool {pool.address} has no liquidity for a 0 -> 1 swap"
                     )
                 elif (
-                    pool.reserves_token0 <= 1
+                    pool_state.reserves_token0 == 1
                     and not self._swap_vectors[i].zero_for_one
                 ):
                     raise ZeroLiquidityError(
                         f"V2 pool {pool.address} has no liquidity for a 1 -> 0 swap"
                     )
 
-            if isinstance(pool, V3LiquidityPool) and pool.state.liquidity == 0:
-                # check if the swap is 0 -> 1 and cannot swap any more token0 for token1
-                if (
-                    pool.state.sqrt_price_x96 == TickMath.MIN_SQRT_RATIO + 1
-                    and self._swap_vectors[i].zero_for_one
-                ):
-                    raise ZeroLiquidityError(
-                        f"V3 pool {pool.address} has no liquidity for a 0 -> 1 swap"
-                    )
-                # check if the swap is 1 -> 0 (zeroForOne=False) and cannot swap any more token1 for token0
-                elif (
-                    pool.state.sqrt_price_x96 == TickMath.MAX_SQRT_RATIO - 1
-                    and not self._swap_vectors[i].zero_for_one
-                ):
-                    raise ZeroLiquidityError(
-                        f"V3 pool {pool.address} has no liquidity for a 1 -> 0 swap"
-                    )
+            if isinstance(pool, V3LiquidityPool):
+                if TYPE_CHECKING:
+                    assert isinstance(pool_state, UniswapV3PoolState)
+
+                if pool_state.liquidity == 0:
+                    # Check if the swap is 0 -> 1 and cannot swap any more token0 for token1
+                    if (
+                        pool_state.sqrt_price_x96
+                        == TickMath.MIN_SQRT_RATIO + 1
+                        and self._swap_vectors[i].zero_for_one
+                    ):
+                        raise ZeroLiquidityError(
+                            f"V3 pool {pool.address} has no liquidity for a 0 -> 1 swap"
+                        )
+                    # Check if the swap is 1 -> 0 (zeroForOne=False) and cannot swap any more token1 for token0
+                    elif (
+                        pool_state.sqrt_price_x96
+                        == TickMath.MAX_SQRT_RATIO - 1
+                        and not self._swap_vectors[i].zero_for_one
+                    ):
+                        raise ZeroLiquidityError(
+                            f"V3 pool {pool.address} has no liquidity for a 1 -> 0 swap"
+                        )
 
         # bound the amount to be swapped
         bounds: Tuple[float, float] = (
