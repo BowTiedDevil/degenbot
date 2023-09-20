@@ -177,12 +177,15 @@ class V3LiquidityPool(PoolHelper):
         self.abi = abi or UNISWAP_V3_POOL_ABI
 
         _web3 = get_web3()
-        if _web3 is not None and _web3.isConnected():
+        if _web3 is not None:
             self._w3 = _web3
-        elif brownie_web3.isConnected():
-            self._w3 = brownie_web3
         else:
-            raise ValueError("No connected web3 object provided.")
+            from brownie import Contract, multicall as brownie_multicall, web3 as brownie_web3  # type: ignore[import]
+
+            if brownie_web3.isConnected():
+                self._w3 = brownie_web3
+            else:
+                raise ValueError("No connected web3 object provided.")
 
         self._w3_contract = self._w3.eth.contract(
             address=self.address,
@@ -221,10 +224,10 @@ class V3LiquidityPool(PoolHelper):
                     (self._w3.eth.chain_id, self.factory)
                 ] = self.lens
 
-        token0_address: ChecksumAddress = Web3.toChecksumAddress(
+        token0_address: ChecksumAddress = to_checksum_address(
             self._w3_contract.functions.token0().call()
         )
-        token1_address: ChecksumAddress = Web3.toChecksumAddress(
+        token1_address: ChecksumAddress = to_checksum_address(
             self._w3_contract.functions.token1().call()
         )
 

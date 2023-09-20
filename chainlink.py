@@ -21,12 +21,15 @@ class ChainlinkPriceContract:
         address: str,
     ) -> None:
         _web3 = get_web3()
-        if _web3 is not None and _web3.isConnected():
+        if _web3 is not None:
             _w3 = _web3
-        elif brownie_web3.isConnected():
-            _w3 = brownie_web3
         else:
-            raise ValueError("No connected web3 object provided.")
+            from brownie import web3 as brownie_web3  # type: ignore[import]
+
+            if brownie_web3.isConnected():
+                _w3 = brownie_web3
+            else:
+                raise ValueError("No connected web3 object provided.")
 
         self.address = to_checksum_address(address)
         self._w3_contract = _w3.eth.contract(

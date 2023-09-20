@@ -10,6 +10,7 @@ from brownie import chain  # type: ignore
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
+from degenbot.config import get_web3
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
 from degenbot.exceptions import (
     DegenbotError,
@@ -242,6 +243,17 @@ class UniswapTransaction(TransactionHelper):
             - 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45 (Uniswap V3 Router 2)
             - 0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B (Uniswap Universal Router)
         """
+
+        _web3 = get_web3()
+        if _web3 is not None:
+            self._w3 = _web3
+        else:
+            from brownie import web3 as brownie_web3  # type: ignore[import]
+
+            if brownie_web3.isConnected():
+                self._w3 = brownie_web3
+            else:
+                raise ValueError("No connected web3 object provided.")
 
         # @dev The `self.ledger` is used to track token balances for all
         # addresses involved in the swap. A positive balance represents

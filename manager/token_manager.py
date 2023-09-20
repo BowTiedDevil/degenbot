@@ -58,12 +58,15 @@ class Erc20TokenHelperManager(HelperManager):
 
     def __init__(self, chain_id: Optional[int] = None):
         _web3 = get_web3()
-        if _web3 is not None and _web3.isConnected():
+        if _web3 is not None:
             self._w3 = _web3
-        elif brownie_web3.isConnected():
-            self._w3 = brownie_web3
         else:
-            raise ValueError("No connected web3 object provided.")
+            from brownie import web3 as brownie_web3  # type: ignore[import]
+
+            if brownie_web3.isConnected():
+                self._w3 = brownie_web3
+            else:
+                raise ValueError("No connected web3 object provided.")
 
         chain_id = chain_id or self._w3.eth.chain_id
 

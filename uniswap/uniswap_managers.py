@@ -150,12 +150,15 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         chain_id: Optional[int] = None,
     ):
         _web3 = get_web3()
-        if _web3 is not None and _web3.isConnected():
+        if _web3 is not None:
             pass
-        elif brownie_web3.isConnected():
-            _web3 = brownie_web3
         else:
-            raise ValueError("No connected web3 object provided.")
+            from brownie import web3 as brownie_web3  # type: ignore[import]
+
+            if brownie_web3.isConnected():
+                _web3 = brownie_web3
+            else:
+                raise ValueError("No connected web3 object provided.")
 
         if TYPE_CHECKING:
             assert isinstance(_web3, Web3)
@@ -330,12 +333,15 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         snapshot: Optional[UniswapV3LiquiditySnapshot] = None,
     ):
         _web3 = get_web3()
-        if _web3 is not None and _web3.isConnected():
+        if _web3 is not None:
             pass
-        elif brownie_web3.isConnected():
-            _web3 = brownie_web3
         else:
-            raise ValueError("No connected web3 object provided.")
+            from brownie import web3 as brownie_web3  # type: ignore[import]
+
+            if brownie_web3.isConnected():
+                _web3 = brownie_web3
+            else:
+                raise ValueError("No connected web3 object provided.")
 
         if TYPE_CHECKING:
             assert isinstance(_web3, Web3)
