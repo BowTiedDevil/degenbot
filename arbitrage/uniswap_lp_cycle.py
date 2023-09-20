@@ -15,6 +15,7 @@ from warnings import warn
 import eth_abi
 from eth_typing import ChecksumAddress
 from eth_utils import to_checksum_address
+from scipy.optimize import minimize_scalar  # type: ignore[import]
 from web3 import Web3
 
 from degenbot.exceptions import (
@@ -38,7 +39,6 @@ from degenbot.uniswap.v3.v3_liquidity_pool import (
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
-
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -71,6 +71,18 @@ class UniswapV3PoolSwapAmounts:
 
 
 class UniswapLpCycle(ArbitrageHelper):
+    __slots__ = (
+        "_swap_vectors",
+        "best",
+        "id",
+        "input_token",
+        "gas_estimate",
+        "max_input",
+        "name",
+        "pool_states",
+        "swap_pools",
+    )
+
     def __init__(
         self,
         input_token: Erc20Token,
@@ -78,6 +90,13 @@ class UniswapLpCycle(ArbitrageHelper):
         id: str,
         max_input: Optional[int] = None,
     ):
+        for pool in swap_pools:
+            if not isinstance(pool, (LiquidityPool, V3LiquidityPool)):
+                raise ValueError(
+                    f"Could not identify Uniswap version for pool {pool}!"
+                )
+        self.swap_pools = tuple(swap_pools)
+
         self.id = id
         self.input_token = input_token
 
@@ -86,22 +105,16 @@ class UniswapLpCycle(ArbitrageHelper):
             max_input = 100 * 10**18
         self.max_input = max_input
 
-        self.gas_estimate = 0
+        self.gas_estimate: Optional[int] = None
 
-        for pool in swap_pools:
-            if not isinstance(pool, (LiquidityPool, V3LiquidityPool)):
-                raise ArbitrageError(
-                    f"Could not identify Uniswap version for pool {pool}!"
-                )
-        self.swap_pools = swap_pools
-        self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
-        self.swap_pool_tokens = [
-            [pool.token0, pool.token1] for pool in self.swap_pools
-        ]
+        # self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
+        # self.swap_pool_tokens = [
+        # [pool.token0, pool.token1] for pool in self.swap_pools
+        # ]
 
-        # set up a pre-determined list of "swap vectors", which allows the helper
+        # Set up pre-determined "swap vectors", which allows the helper
         # to identify the tokens and direction of each swap along the path
-        self._swap_vectors: List[UniswapPoolSwapVector] = []
+        _swap_vectors: List[UniswapPoolSwapVector] = []
         for i, pool in enumerate(self.swap_pools):
             if i == 0:
                 if self.input_token == pool.token0:
@@ -126,13 +139,14 @@ class UniswapLpCycle(ArbitrageHelper):
                     zero_for_one = False
                 else:
                     raise ValueError("Input token could not be identified!")
-            self._swap_vectors.append(
+            _swap_vectors.append(
                 UniswapPoolSwapVector(
                     token_in=token_in,
                     token_out=token_out,
                     zero_for_one=zero_for_one,
                 )
             )
+        self._swap_vectors = tuple(_swap_vectors)
 
         self.name = " -> ".join([pool.name for pool in self.swap_pools])
 
@@ -154,9 +168,9 @@ class UniswapLpCycle(ArbitrageHelper):
             "strategy": "cycle",
             "swap_amount": 0,
             "swap_pools": self.swap_pools,
-            "swap_pool_addresses": self.swap_pool_addresses,
+            # "swap_pool_addresses": self.swap_pool_addresses,
             "swap_pool_amounts": [],
-            "swap_pool_tokens": self.swap_pool_tokens,
+            # "swap_pool_tokens": self.swap_pool_tokens,
         }
 
     def __str__(self) -> str:
@@ -587,7 +601,7 @@ class UniswapLpCycle(ArbitrageHelper):
         ] = None,
     ) -> asyncio.Future:
         """
-        Wrap the arbitrage calculation into an asyncio task using the specified executor.
+        Wrap the arbitrage calculation into an asyncio future using the specified executor.
 
         Arguments
         ---------
