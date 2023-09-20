@@ -8,7 +8,6 @@ from web3 import Web3
 from degenbot.config import get_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import (
-    Erc20TokenError,
     ManagerError,
     PoolNotAssociated,
 )
@@ -16,7 +15,7 @@ from degenbot.logging import logger
 from degenbot.manager import AllPools, Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.types import HelperManager
-from degenbot.uniswap.abi import UNISWAP_V2_FACTORY_ABI, UNISWAP_V3_FACTORY_ABI
+from degenbot.uniswap.abi import UNISWAP_V2_FACTORY_ABI
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3.functions import generate_v3_pool_address
 from degenbot.uniswap.v3.snapshot import UniswapV3LiquiditySnapshot
@@ -224,7 +223,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                     )
                     for token_address in token_addresses
                 ]
-            except Erc20TokenError:
+            except:
                 raise ManagerError(f"Could not get both Erc20Token helpers")
 
             tokens_key: Tuple[ChecksumAddress, ChecksumAddress] = tuple(
@@ -243,6 +242,8 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 else:
                     self._pools_by_token[tokens_key] = pool_address
 
+        if TYPE_CHECKING:
+            assert pool_address is not None
         # Address is now known, check if the pool is already being tracked
         pool_address = to_checksum_address(pool_address)
 
@@ -485,12 +486,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                     )
                     for token_address in token_addresses
                 ]
-            except Erc20TokenError:
+            except:
                 raise ManagerError(f"Could not build Erc20Token helper")
-            except Exception as e:
-                print(f"{type(e)}: {e}")
-                print(f"{token_addresses=}")
-                raise ZeroDivisionError
 
             # dictionary key pair is sorted by address
             erc20token_helpers = sorted(erc20token_helpers)

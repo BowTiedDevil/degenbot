@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
 from eth_utils import to_checksum_address
 import eth_abi
-from brownie import chain  # type: ignore
 from eth_typing import ChecksumAddress
 from web3 import Web3
 
@@ -32,9 +31,17 @@ from degenbot.uniswap.uniswap_managers import (
 )
 from degenbot.uniswap.v2 import LiquidityPool
 from degenbot.uniswap.v2.functions import get_v2_pools_from_token_path
-from degenbot.uniswap.v2.liquidity_pool import UniswapV2PoolSimulationResult
+from degenbot.uniswap.v2.liquidity_pool import (
+    UniswapV2PoolState,
+    UniswapV2PoolSimulationResult,
+)
 from degenbot.uniswap.v3 import V3LiquidityPool
 from degenbot.uniswap.v3.functions import decode_v3_path
+from degenbot.uniswap.v3.v3_liquidity_pool import (
+    UniswapV3PoolState,
+    UniswapV3PoolSimulationResult,
+)
+
 from degenbot.uniswap.v3.v3_liquidity_pool import UniswapV3PoolSimulationResult
 
 
@@ -101,67 +108,6 @@ _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG = (
 )
 _V3_ROUTER_CONTRACT_ADDRESS_FLAG = "0x0000000000000000000000000000000000000000"
 _V3_ROUTER2_CONTRACT_BALANCE_FLAG = 0
-
-
-def _raise_if_expired(deadline: int):
-    if chain.time() > deadline:
-        raise TransactionError("Deadline expired")
-
-
-def _show_v2_states(sim_result: UniswapV2PoolSimulationResult):
-    current_state = sim_result.current_state
-    future_state = sim_result.future_state
-    pool = current_state.pool
-
-    # amount out is negative
-    if sim_result.amount0_delta < sim_result.amount1_delta:
-        token_in = pool.token1
-        token_out = pool.token0
-        amount_in = sim_result.amount1_delta
-        amount_out = -sim_result.amount0_delta
-    else:
-        token_in = pool.token0
-        token_out = pool.token1
-        amount_in = sim_result.amount0_delta
-        amount_out = -sim_result.amount1_delta
-
-    logger.info(f"Simulating swap through pool: {pool}")
-    logger.info(f"\t{amount_in} {token_in} -> {amount_out} {token_out}")
-    logger.info("\t(CURRENT)")
-    logger.info(f"\t{pool.token0}: {current_state.reserves_token0}")
-    logger.info(f"\t{pool.token1}: {current_state.reserves_token1}")
-    logger.info(f"\t(FUTURE)")
-    logger.info(f"\t{pool.token0}: {future_state.reserves_token0}")
-    logger.info(f"\t{pool.token1}: {future_state.reserves_token1}")
-
-
-def _show_v3_states(sim_result: UniswapV3PoolSimulationResult):
-    current_state = sim_result.current_state
-    future_state = sim_result.future_state
-    pool = current_state.pool
-
-    # amount out is negative
-    if sim_result.amount0_delta < sim_result.amount1_delta:
-        token_in = pool.token1
-        token_out = pool.token0
-        amount_in = sim_result.amount1_delta
-        amount_out = -sim_result.amount0_delta
-    else:
-        token_in = pool.token0
-        token_out = pool.token1
-        amount_in = sim_result.amount0_delta
-        amount_out = -sim_result.amount1_delta
-
-    logger.info(f"Simulated output of swap through pool: {pool}")
-    logger.info(f"\t{amount_in} {token_in} -> {amount_out} {token_out}")
-    logger.info("\t(CURRENT)")
-    logger.info(f"\tprice={current_state.sqrt_price_x96}")
-    logger.info(f"\tliquidity={current_state.liquidity}")
-    logger.info(f"\ttick={current_state.tick}")
-    logger.info(f"\t(FUTURE)")
-    logger.info(f"\tprice={future_state.sqrt_price_x96}")
-    logger.info(f"\tliquidity={future_state.liquidity}")
-    logger.info(f"\ttick={future_state.tick}")
 
 
 class UniswapTransaction(TransactionHelper):
@@ -283,6 +229,9 @@ class UniswapTransaction(TransactionHelper):
 
         self.router_address = router_address
 
+        self.v2_pool_manager: Optional[UniswapV2LiquidityPoolManager] = None
+        self.v3_pool_manager: Optional[UniswapV3LiquidityPoolManager] = None
+
         try:
             self.v2_pool_manager = UniswapV2LiquidityPoolManager(
                 factory_address=self.routers[router_address][
@@ -315,6 +264,62 @@ class UniswapTransaction(TransactionHelper):
 
         self.silent = False
 
+    def _raise_if_expired(self, deadline: int):
+        if not isinstance(deadline, int):
+            raise ValueError(f"deadline not int! Was: {deadline}")
+        if self._w3.eth.get_block("latest")["timestamp"] > deadline:
+            raise TransactionError("Deadline expired")
+
+    def _show_pool_states(
+        self,
+        sim_result: Union[
+            UniswapV2PoolSimulationResult, UniswapV3PoolSimulationResult
+        ],
+    ):
+        current_state = sim_result.current_state
+        future_state = sim_result.future_state
+        pool = current_state.pool
+
+        # amount out is negative
+        if sim_result.amount0_delta < sim_result.amount1_delta:
+            token_in = pool.token1
+            token_out = pool.token0
+            amount_in = sim_result.amount1_delta
+            amount_out = -sim_result.amount0_delta
+        else:
+            token_in = pool.token0
+            token_out = pool.token1
+            amount_in = sim_result.amount0_delta
+            amount_out = -sim_result.amount1_delta
+
+        logger.info(f"Simulating swap through pool: {pool}")
+        logger.info(f"\t{amount_in} {token_in} -> {amount_out} {token_out}")
+        if isinstance(sim_result, UniswapV2PoolSimulationResult):
+            if TYPE_CHECKING:
+                assert isinstance(current_state, UniswapV2PoolState)
+                assert isinstance(future_state, UniswapV2PoolState)
+            logger.info("\t(CURRENT)")
+            logger.info(f"\t{pool.token0}: {current_state.reserves_token0}")
+            logger.info(f"\t{pool.token1}: {current_state.reserves_token1}")
+            logger.info(f"\t(FUTURE)")
+            logger.info(f"\t{pool.token0}: {future_state.reserves_token0}")
+            logger.info(f"\t{pool.token1}: {future_state.reserves_token1}")
+        elif isinstance(sim_result, UniswapV3PoolSimulationResult):
+            if TYPE_CHECKING:
+                assert isinstance(current_state, UniswapV3PoolState)
+                assert isinstance(future_state, UniswapV3PoolState)
+            logger.info(
+                f"\t{amount_in} {token_in} -> {amount_out} {token_out}"
+            )
+            logger.info("\t(CURRENT)")
+            logger.info(f"\tprice={current_state.sqrt_price_x96}")
+            logger.info(f"\tliquidity={current_state.liquidity}")
+            logger.info(f"\ttick={current_state.tick}")
+            logger.info(f"\t(FUTURE)")
+            logger.info(f"\tprice={future_state.sqrt_price_x96}")
+            logger.info(f"\tliquidity={future_state.liquidity}")
+            logger.info(f"\ttick={future_state.tick}")
+
     def _simulate_v2_swap_exact_in(
         self,
         pool: LiquidityPool,
@@ -328,6 +333,10 @@ class UniswapTransaction(TransactionHelper):
         """
         TBD
         """
+
+        assert isinstance(
+            pool, LiquidityPool
+        ), f"Called _simulate_v2_swap_exact_in on pool {pool}"
 
         silent = self.silent
 
@@ -407,7 +416,7 @@ class UniswapTransaction(TransactionHelper):
             )
 
         if not silent:
-            _show_v2_states(sim_result)
+            self._show_pool_states(sim_result)
 
         return pool, sim_result
 
@@ -424,6 +433,10 @@ class UniswapTransaction(TransactionHelper):
         """
         TBD
         """
+
+        assert isinstance(
+            pool, LiquidityPool
+        ), f"Called _simulate_v2_swap_exact_out on pool {pool}"
 
         silent = self.silent
 
@@ -490,7 +503,7 @@ class UniswapTransaction(TransactionHelper):
             )
 
         if not silent:
-            _show_v2_states(sim_result)
+            self._show_pool_states(sim_result)
 
         return pool, sim_result
 
@@ -507,6 +520,10 @@ class UniswapTransaction(TransactionHelper):
         """
         TBD
         """
+
+        assert isinstance(
+            pool, V3LiquidityPool
+        ), f"Called _simulate_v3_swap_exact_in on pool {pool}"
 
         silent = self.silent
 
@@ -584,7 +601,7 @@ class UniswapTransaction(TransactionHelper):
             )
 
         if not silent:
-            _show_v3_states(_sim_result)
+            self._show_pool_states(_sim_result)
 
         return pool, _sim_result
 
@@ -602,6 +619,10 @@ class UniswapTransaction(TransactionHelper):
         """
         TBD
         """
+
+        assert isinstance(
+            pool, V3LiquidityPool
+        ), f"Called _simulate_v3_swap_exact_out on pool {pool}"
 
         silent = self.silent
 
@@ -702,7 +723,7 @@ class UniswapTransaction(TransactionHelper):
             )
 
         if not silent:
-            _show_v3_states(_sim_result)
+            self._show_pool_states(_sim_result)
 
         return pool, _sim_result
 
@@ -757,7 +778,7 @@ class UniswapTransaction(TransactionHelper):
             ]
         ] = []
 
-        V2_ROUTER_FUNCTIONS = {
+        V2_FUNCTIONS = {
             "swapExactTokensForETH",
             "swapExactTokensForETHSupportingFeeOnTransferTokens",
             "swapExactETHForTokens",
@@ -769,7 +790,7 @@ class UniswapTransaction(TransactionHelper):
             "swapETHForExactTokens",
         }
 
-        V3_ROUTER_FUNCTIONS = {
+        V3_FUNCTIONS = {
             "exactInputSingle",
             "exactInput",
             "exactOutputSingle",
@@ -1086,6 +1107,8 @@ class UniswapTransaction(TransactionHelper):
                     raise ValueError(f"Could not decode input for {command}")
 
                 try:
+                    if TYPE_CHECKING:
+                        assert self.v2_pool_manager is not None
                     pools = get_v2_pools_from_token_path(
                         tx_path, self.v2_pool_manager
                     )
@@ -1176,6 +1199,8 @@ class UniswapTransaction(TransactionHelper):
                     tx_recipient = self.sender
 
                 try:
+                    if TYPE_CHECKING:
+                        assert self.v2_pool_manager is not None
                     pools = get_v2_pools_from_token_path(
                         tx_path, self.v2_pool_manager
                     )
@@ -1286,6 +1311,8 @@ class UniswapTransaction(TransactionHelper):
                     first_swap = token_pos == 0
                     last_swap = token_pos == last_token_pos
 
+                    if TYPE_CHECKING:
+                        assert self.v3_pool_manager is not None
                     v3_pool = self.v3_pool_manager.get_pool(
                         token_addresses=(
                             tx_token_in_address,
@@ -1378,6 +1405,8 @@ class UniswapTransaction(TransactionHelper):
                     first_swap = token_pos == last_token_pos
                     last_swap = token_pos == 0
 
+                    if TYPE_CHECKING:
+                        assert self.v3_pool_manager is not None
                     v3_pool = self.v3_pool_manager.get_pool(
                         token_addresses=(
                             tx_token_in_address,
@@ -1542,7 +1571,7 @@ class UniswapTransaction(TransactionHelper):
 
             return _v3_multicall_future_pool_states
 
-        def _process_uniswap_v2_router_transaction() -> (
+        def _process_uniswap_v2_transaction() -> (
             List[
                 Tuple[
                     LiquidityPool,
@@ -1560,6 +1589,7 @@ class UniswapTransaction(TransactionHelper):
             if TYPE_CHECKING:
                 _amount_in: int
                 _amount_out: int
+                assert self.v2_pool_manager is not None
 
             try:
                 if func_name in (
@@ -1585,7 +1615,7 @@ class UniswapTransaction(TransactionHelper):
                     except KeyError:
                         pass
                     else:
-                        _raise_if_expired(tx_deadline)
+                        self._raise_if_expired(tx_deadline)
 
                     try:
                         pools = get_v2_pools_from_token_path(
@@ -1659,7 +1689,7 @@ class UniswapTransaction(TransactionHelper):
                     except KeyError:
                         pass
                     else:
-                        _raise_if_expired(tx_deadline)
+                        self._raise_if_expired(tx_deadline)
 
                     try:
                         pools = get_v2_pools_from_token_path(
@@ -1738,7 +1768,7 @@ class UniswapTransaction(TransactionHelper):
             else:
                 return _v2_router_future_pool_states
 
-        def _process_uniswap_v3_router_transaction() -> (
+        def _process_uniswap_v3_transaction() -> (
             List[
                 Union[
                     Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
@@ -1762,6 +1792,7 @@ class UniswapTransaction(TransactionHelper):
                     UniswapV2PoolSimulationResult,
                     UniswapV3PoolSimulationResult,
                 ]
+                assert self.v3_pool_manager is not None
 
             silent = self.silent
 
@@ -1788,7 +1819,7 @@ class UniswapTransaction(TransactionHelper):
                     except:
                         pass
                     else:
-                        _raise_if_expired(tx_deadline)
+                        self._raise_if_expired(tx_deadline)
 
                     # decode with Router2 ABI
                     # ref: https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
@@ -1852,7 +1883,7 @@ class UniswapTransaction(TransactionHelper):
                     except:
                         pass
                     else:
-                        _raise_if_expired(tx_deadline)
+                        self._raise_if_expired(tx_deadline)
 
                     # from IV3SwapRouter.sol
                     # ref: https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
@@ -1954,7 +1985,7 @@ class UniswapTransaction(TransactionHelper):
                     except:
                         pass
                     else:
-                        _raise_if_expired(tx_deadline)
+                        self._raise_if_expired(tx_deadline)
 
                     # decode with Router2 ABI
                     # https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
@@ -2023,7 +2054,7 @@ class UniswapTransaction(TransactionHelper):
                     except Exception as e:
                         pass
                     else:
-                        _raise_if_expired(tx_deadline)
+                        self._raise_if_expired(tx_deadline)
 
                     # Router2 ABI
                     try:
@@ -2269,7 +2300,7 @@ class UniswapTransaction(TransactionHelper):
                 except KeyError:
                     pass
                 else:
-                    _raise_if_expired(tx_deadline)
+                    self._raise_if_expired(tx_deadline)
 
                 tx_commands = func_params["commands"]
                 tx_inputs = func_params["inputs"]
@@ -2294,13 +2325,13 @@ class UniswapTransaction(TransactionHelper):
             else:
                 return _universal_router_future_pool_states
 
-        if func_name in V2_ROUTER_FUNCTIONS:
+        if func_name in V2_FUNCTIONS:
             all_future_pool_states.extend(
-                _process_uniswap_v2_router_transaction(),
+                _process_uniswap_v2_transaction(),
             )
-        elif func_name in V3_ROUTER_FUNCTIONS:
+        elif func_name in V3_FUNCTIONS:
             all_future_pool_states.extend(
-                _process_uniswap_v3_router_transaction(),
+                _process_uniswap_v3_transaction(),
             )
         elif func_name in UNIVERSAL_ROUTER_FUNCTIONS:
             all_future_pool_states.extend(
