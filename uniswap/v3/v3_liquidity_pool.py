@@ -51,7 +51,7 @@ class UniswapV3LiquidityAtTick:
         return dataclasses.asdict(self)
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, eq=False)
 class UniswapV3PoolExternalUpdate:
     block_number: int = dataclasses.field(compare=False)
     liquidity: Optional[int] = None
@@ -78,7 +78,7 @@ class UniswapV3PoolState:
     tick_data: Optional[Dict] = dataclasses.field(compare=False, default=None)
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV3PoolSimulationResult:
     amount0_delta: int
     amount1_delta: int

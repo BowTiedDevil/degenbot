@@ -21,14 +21,14 @@ from degenbot.types import PoolHelper
 from degenbot.uniswap.abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV2PoolState:
     pool: "LiquidityPool"
     reserves_token0: int
     reserves_token1: int
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV2PoolSimulationResult:
     amount0_delta: int
     amount1_delta: int
