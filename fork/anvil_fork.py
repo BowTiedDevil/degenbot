@@ -87,6 +87,25 @@ class AnvilFork:
         if os.path.exists(self.ipc_path):
             os.remove(self.ipc_path)
 
+    def create_access_list(self, transaction: Dict) -> list:
+        self.socket.sendall(
+            bytes(
+                ujson.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "eth_createAccessList",
+                        "params": [transaction],
+                    }
+                ),
+                encoding="utf-8",
+            ),
+        )
+        result: dict = ujson.loads(self.socket.recv(self._SOCKET_BUFFER_SIZE))
+        if result.get("error"):
+            raise Exception(f"Error creating access list! Response: {result}")
+        return result["result"]["accessList"]
+
     def reset(
         self,
         fork_url: Optional[str] = None,
