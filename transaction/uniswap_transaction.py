@@ -1837,7 +1837,7 @@ class UniswapTransaction(TransactionHelper):
 
                         # Decode with IV3SwapRouter ABI (aka Router2)
                         # ref: https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
-                        if len(func_params["params"]) == 7:
+                        elif len(func_params["params"]) == 7:
                             (
                                 tx_token_in_address,
                                 tx_token_out_address,
@@ -1899,7 +1899,6 @@ class UniswapTransaction(TransactionHelper):
                         tx_amount_out_minimum = func_params["params"][
                             "amountOutMinimum"
                         ]
-
                     # Extract parameters from the tuple results of web3py v5
                     elif isinstance(func_params["params"], tuple):
                         # Decode with ISwapRouter ABI
@@ -2041,7 +2040,7 @@ class UniswapTransaction(TransactionHelper):
 
                         # Decode with IV3SwapRouter ABI (aka Router2)
                         # https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
-                        if len(func_params["params"]) == 7:
+                        elif len(func_params["params"]) == 7:
                             (
                                 tx_token_in_address,
                                 tx_token_out_address,
@@ -2121,10 +2120,9 @@ class UniswapTransaction(TransactionHelper):
                                 tx_amount_out,
                                 tx_amount_in_max,
                             ) = func_params["params"]
-
                         # Decode with IV3SwapRouter ABI (aka Router2)
                         # https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
-                        if len(func_params["params"]) == 4:
+                        elif len(func_params["params"]) == 4:
                             (
                                 tx_path,
                                 tx_recipient,
