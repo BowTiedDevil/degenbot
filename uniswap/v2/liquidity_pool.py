@@ -74,7 +74,6 @@ class LiquidityPool(PoolHelper):
         tokens: Optional[List[Erc20Token]] = None,
         name: Optional[str] = None,
         update_method: str = "polling",
-        router: Optional["Router"] = None,
         abi: Optional[list] = None,
         factory_address: Optional[str] = None,
         factory_init_hash: Optional[str] = None,
@@ -105,9 +104,6 @@ class LiquidityPool(PoolHelper):
             Can be "polling", which fetches updates from the chain object
             using the contract object, or "external" which relies on updates
             being provided from outside the object.
-        router : Router, optional
-            A reference to a Router object, which can be used to execute swaps
-            using the attributes held within this object.
         abi : list, optional
             Contract ABI.
         factory_address : str, optional
@@ -154,11 +150,6 @@ class LiquidityPool(PoolHelper):
             address=self.address,
             abi=self.abi,
         )
-
-        if router:
-            from degenbot.uniswap.v2.router import Router
-
-            self.router: Router = router
 
         if isinstance(fee, Decimal):
             warn(
@@ -964,7 +955,6 @@ class CamelotLiquidityPool(LiquidityPool):
         tokens: Optional[List[Erc20Token]] = None,
         name: Optional[str] = None,
         update_method: str = "polling",
-        router: Optional["Router"] = None,
         abi: Optional[list] = None,
         silent: bool = False,
         update_reserves_on_start: bool = True,
@@ -1009,7 +999,6 @@ class CamelotLiquidityPool(LiquidityPool):
             tokens=tokens,
             name=name,
             update_method=update_method,
-            router=router,
             abi=abi,
             fee_token0=fee_token0,
             fee_token1=fee_token1,

@@ -27,5 +27,4 @@ from degenbot.uniswap.v2 import (
     LiquidityPool,
     MultiLiquidityPool,
 )
-from degenbot.uniswap.v2.router import Router
 from degenbot.uniswap.v3 import TickLens, V3LiquidityPool
