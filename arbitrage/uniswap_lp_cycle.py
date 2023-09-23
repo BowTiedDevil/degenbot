@@ -602,9 +602,7 @@ class UniswapLpCycle(ArbitrageHelper):
         Stateless calculation that does not use `self.best`
         """
 
-        result = self._calculate(override_state=override_state)
-
-        return result
+        return self._calculate(override_state=override_state)
 
     async def calculate_with_pool(
         self,
@@ -854,7 +852,7 @@ class UniswapLpCycle(ArbitrageHelper):
                         # address
                         self.input_token.address,
                         # bytes calldata
-                        Web3.keccak(text="transfer(address,uint256)")[0:4]
+                        Web3.keccak(text="transfer(address,uint256)")[:4]
                         + eth_abi.encode(
                             types=(
                                 "address",
@@ -910,7 +908,7 @@ class UniswapLpCycle(ArbitrageHelper):
                             # bytes calldata
                             Web3.keccak(
                                 text="swap(uint256,uint256,address,bytes)"
-                            )[0:4]
+                            )[:4]
                             + eth_abi.encode(
                                 types=(
                                     "uint256",
@@ -945,7 +943,7 @@ class UniswapLpCycle(ArbitrageHelper):
                             # bytes calldata
                             Web3.keccak(
                                 text="swap(address,bool,int256,uint160,bytes)"
-                            )[0:4]
+                            )[:4]
                             + eth_abi.encode(
                                 types=(
                                     "address",
