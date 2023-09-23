@@ -9,20 +9,20 @@ def get_web3() -> Optional[Web3]:
 
 
 def set_web3(w3: Web3):
-    method: Optional[Callable] = None
+    connected_method: Optional[Callable] = None
 
     for method_name in ("is_connected", "isConnected"):
         try:
-            method = getattr(w3, method_name)
+            connected_method = getattr(w3, method_name)
         except AttributeError:
             pass
         else:
             break
 
-    if method is None:
+    if connected_method is None:
         raise ValueError("Provided web3 object has no 'connected' method")
 
-    if not method():
+    if connected_method() == False:
         raise ValueError("Web3 object is not connected.")
 
     global _web3
