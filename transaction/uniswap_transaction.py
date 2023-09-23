@@ -1803,38 +1803,62 @@ class UniswapTransaction(TransactionHelper):
                     )
 
                 elif func_name == "exactInputSingle":
-                    # decode with Router ABI
-                    # ref: https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
-                    try:
-                        (
-                            tx_token_in_address,
-                            tx_token_out_address,
-                            tx_fee,
-                            tx_recipient,
-                            tx_deadline,
-                            tx_amount_in,
-                            tx_amount_out_min,
-                            sqrt_price_limit_x96,
-                        ) = func_params["params"]
-                    except:
-                        pass
-                    else:
-                        self._raise_if_expired(tx_deadline)
+                    # Extract parameters from the dict results of web3py v6
+                    if isinstance(func_params["params"], dict):
+                        tx_token_in_address = func_params["params"]["tokenIn"]
+                        tx_token_out_address = func_params["params"][
+                            "tokenOut"
+                        ]
+                        tx_fee = func_params["params"]["fee"]
+                        tx_recipient = func_params["params"]["recipient"]
+                        tx_amount_in = func_params["params"]["amountIn"]
+                        tx_amount_out_min = func_params["params"][
+                            "amountOutMinimum"
+                        ]
+                        tx_deadline = func_params["params"].get("deadline")
+                        tx_sqrt_price_limit_x96 = func_params["params"][
+                            "sqrtPriceLimitX96"
+                        ]
+                    # Extract parameters from the tuple results of web3py v5
+                    elif isinstance(func_params["params"], tuple):
+                        # Decode with ISwapRouter ABI
+                        # ref: https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
+                        if len(func_params["params"]) == 8:
+                            (
+                                tx_token_in_address,
+                                tx_token_out_address,
+                                tx_fee,
+                                tx_recipient,
+                                tx_deadline,
+                                tx_amount_in,
+                                tx_amount_out_min,
+                                tx_sqrt_price_limit_x96,
+                            ) = func_params["params"]
 
-                    # decode with Router2 ABI
-                    # ref: https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
-                    try:
-                        (
-                            tx_token_in_address,
-                            tx_token_out_address,
-                            tx_fee,
-                            tx_recipient,
-                            tx_amount_in,
-                            tx_amount_out_min,
-                            sqrt_price_limit_x96,
-                        ) = func_params["params"]
-                    except:
-                        pass
+                        # Decode with IV3SwapRouter ABI (aka Router2)
+                        # ref: https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
+                        if len(func_params["params"]) == 7:
+                            (
+                                tx_token_in_address,
+                                tx_token_out_address,
+                                tx_fee,
+                                tx_recipient,
+                                tx_amount_in,
+                                tx_amount_out_min,
+                                tx_sqrt_price_limit_x96,
+                            ) = func_params["params"]
+                            tx_deadline = None
+                        else:
+                            raise ValueError(
+                                f"Could not extract parameters for function {func_name} with parameters {func_params['params']}"
+                            )
+                    else:
+                        raise ValueError(
+                            f'Could not identify type for function params. Expected tuple or dict, got {type(func_params["params"])}'
+                        )
+
+                    if tx_deadline:
+                        self._raise_if_expired(tx_deadline)
 
                     v3_pool = self.v3_pool_manager.get_pool(
                         token_addresses=(
@@ -1866,36 +1890,50 @@ class UniswapTransaction(TransactionHelper):
                     )
 
                 elif func_name == "exactInput":
-                    """
-                    TBD
-                    """
+                    # Extract parameters from the dict results of web3py v6
+                    if isinstance(func_params["params"], dict):
+                        tx_path = func_params["params"]["path"]
+                        tx_recipient = func_params["params"]["recipient"]
+                        tx_deadline = func_params["params"].get("deadline")
+                        tx_amount_in = func_params["params"]["amountIn"]
+                        tx_amount_out_minimum = func_params["params"][
+                            "amountOutMinimum"
+                        ]
 
-                    # from ISwapRouter.sol
-                    # ref: https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
-                    try:
-                        (
-                            tx_path,
-                            tx_recipient,
-                            tx_deadline,
-                            tx_amount_in,
-                            tx_amount_out_minimum,
-                        ) = func_params["params"]
-                    except:
-                        pass
+                    # Extract parameters from the tuple results of web3py v5
+                    elif isinstance(func_params["params"], tuple):
+                        # Decode with ISwapRouter ABI
+                        # ref: https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
+                        if len(func_params["params"]) == 5:
+                            (
+                                tx_path,
+                                tx_recipient,
+                                tx_deadline,
+                                tx_amount_in,
+                                tx_amount_out_minimum,
+                            ) = func_params["params"]
+
+                        # Decode with IV3SwapRouter ABI (aka Router2)
+                        # ref: https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
+                        elif len(func_params["params"]) == 4:
+                            (
+                                tx_path,
+                                tx_recipient,
+                                tx_amount_in,
+                                tx_amount_out_minimum,
+                            ) = func_params["params"]
+                            tx_deadline = None
+                        else:
+                            raise ValueError(
+                                f"Could not extract parameters for function {func_name} with parameters {func_params['params']}"
+                            )
                     else:
-                        self._raise_if_expired(tx_deadline)
+                        raise ValueError(
+                            f'Could not identify type for function params. Expected tuple or dict, got {type(func_params["params"])}'
+                        )
 
-                    # from IV3SwapRouter.sol
-                    # ref: https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
-                    try:
-                        (
-                            tx_path,
-                            tx_recipient,
-                            tx_amount_in,
-                            tx_amount_out_minimum,
-                        ) = func_params["params"]
-                    except:
-                        pass
+                    if tx_deadline:
+                        self._raise_if_expired(tx_deadline)
 
                     tx_path_decoded = decode_v3_path(tx_path)
 
@@ -1969,38 +2007,62 @@ class UniswapTransaction(TransactionHelper):
                         )
 
                 elif func_name == "exactOutputSingle":
-                    # decode with Router ABI
-                    # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
-                    try:
-                        (
-                            tx_token_in_address,
-                            tx_token_out_address,
-                            tx_fee,
-                            tx_recipient,
-                            tx_deadline,
-                            tx_amount_out,
-                            tx_amount_in_max,
-                            tx_sqrt_price_limit_x96,
-                        ) = func_params["params"]
-                    except:
-                        pass
-                    else:
-                        self._raise_if_expired(tx_deadline)
+                    # Extract parameters from the dict results of web3py v6
+                    if isinstance(func_params["params"], dict):
+                        tx_token_in_address = func_params["params"]["tokenIn"]
+                        tx_token_out_address = func_params["params"][
+                            "tokenOut"
+                        ]
+                        tx_fee = func_params["params"]["fee"]
+                        tx_recipient = func_params["params"]["recipient"]
+                        tx_deadline = func_params["params"].get("deadline")
+                        tx_amount_out = func_params["params"]["amountOut"]
+                        tx_amount_in_max = func_params["params"][
+                            "amountInMaximum"
+                        ]
+                        tx_sqrt_price_limit_x96 = func_params["params"][
+                            "sqrtPriceLimitX96"
+                        ]
+                    # Extract parameters from the tuple results of web3py v5
+                    elif isinstance(func_params["params"], tuple):
+                        # Decode with ISwapRouter ABI
+                        # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
+                        if len(func_params["params"]) == 8:
+                            (
+                                tx_token_in_address,
+                                tx_token_out_address,
+                                tx_fee,
+                                tx_recipient,
+                                tx_deadline,
+                                tx_amount_out,
+                                tx_amount_in_max,
+                                tx_sqrt_price_limit_x96,
+                            ) = func_params["params"]
 
-                    # decode with Router2 ABI
-                    # https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
-                    try:
-                        (
-                            tx_token_in_address,
-                            tx_token_out_address,
-                            tx_fee,
-                            tx_recipient,
-                            tx_amount_out,
-                            tx_amount_in_max,
-                            tx_sqrt_price_limit_x96,
-                        ) = func_params["params"]
-                    except:
-                        pass
+                        # Decode with IV3SwapRouter ABI (aka Router2)
+                        # https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
+                        if len(func_params["params"]) == 7:
+                            (
+                                tx_token_in_address,
+                                tx_token_out_address,
+                                tx_fee,
+                                tx_recipient,
+                                tx_amount_out,
+                                tx_amount_in_max,
+                                tx_sqrt_price_limit_x96,
+                            ) = func_params["params"]
+                            tx_deadline = None
+                        else:
+                            raise ValueError(
+                                f"Could not extract parameters for function {func_name} with parameters {func_params['params']}"
+                            )
+                    else:
+                        raise ValueError(
+                            f'Could not identify type for function params. Expected tuple or dict, got {type(func_params["params"])}'
+                        )
+
+                    if tx_deadline:
+                        self._raise_if_expired(tx_deadline)
 
                     v3_pool = self.v3_pool_manager.get_pool(
                         token_addresses=(
@@ -2038,34 +2100,49 @@ class UniswapTransaction(TransactionHelper):
                         )
 
                 elif func_name == "exactOutput":
-                    """
-                    TBD
-                    """
+                    # Extract parameters from the dict results of web3py v6
+                    if isinstance(func_params["params"], dict):
+                        tx_path = func_params["params"]["path"]
+                        tx_recipient = func_params["params"]["recipient"]
+                        tx_deadline = func_params["params"].get("deadline")
+                        tx_amount_out = func_params["params"]["amountOut"]
+                        tx_amount_in_max = func_params["params"][
+                            "amountInMaximum"
+                        ]
+                    # Extract parameters from the tuple results of web3py v5
+                    elif isinstance(func_params["params"], tuple):
+                        # Decode with ISwapRouter ABI
+                        # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
+                        if len(func_params["params"]) == 5:
+                            (
+                                tx_path,
+                                tx_recipient,
+                                tx_deadline,
+                                tx_amount_out,
+                                tx_amount_in_max,
+                            ) = func_params["params"]
 
-                    # Router ABI
-                    try:
-                        (
-                            tx_path,
-                            tx_recipient,
-                            tx_deadline,
-                            tx_amount_out,
-                            tx_amount_in_max,
-                        ) = func_params["params"]
-                    except Exception as e:
-                        pass
+                        # Decode with IV3SwapRouter ABI (aka Router2)
+                        # https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
+                        if len(func_params["params"]) == 4:
+                            (
+                                tx_path,
+                                tx_recipient,
+                                tx_amount_out,
+                                tx_amount_in_max,
+                            ) = func_params["params"]
+                            tx_deadline = None
+                        else:
+                            raise ValueError(
+                                f"Could not extract parameters for function {func_name} with parameters {func_params['params']}"
+                            )
                     else:
-                        self._raise_if_expired(tx_deadline)
+                        raise ValueError(
+                            f'Could not identify type for function params. Expected tuple or dict, got {type(func_params["params"])}'
+                        )
 
-                    # Router2 ABI
-                    try:
-                        (
-                            tx_path,
-                            tx_recipient,
-                            tx_amount_out,
-                            tx_amount_in_max,
-                        ) = func_params["params"]
-                    except Exception as e:
-                        pass
+                    if tx_deadline:
+                        self._raise_if_expired(tx_deadline)
 
                     tx_path_decoded = decode_v3_path(tx_path)
 
