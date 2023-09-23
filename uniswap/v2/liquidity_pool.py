@@ -3,8 +3,9 @@ from decimal import Decimal
 from fractions import Fraction
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 from warnings import warn
-from eth_utils import to_checksum_address
+
 from eth_typing import ChecksumAddress
+from eth_utils import to_checksum_address
 from web3 import Web3
 
 from degenbot.config import get_web3
@@ -130,6 +131,13 @@ class LiquidityPool(PoolHelper):
             Fetch initial state values from the chain at a particular block
             height. Defaults to the latest block if omitted.
         """
+
+        if unload_brownie_contract_after_init:
+            warn(
+                "unload_brownie_contract_after_init is no longer needed and is "
+                "ignored. Remove constructor argument to stop seeing this "
+                "message."
+            )
 
         self.address: ChecksumAddress = to_checksum_address(address)
         self.abi = abi or UNISWAP_V2_POOL_ABI
@@ -956,7 +964,12 @@ class CamelotLiquidityPool(LiquidityPool):
         update_reserves_on_start: bool = True,
         unload_brownie_contract_after_init: bool = False,  # deprecated
     ) -> None:
-        # TODO: add deprecation warnings for Brownie contract unload argument
+        if unload_brownie_contract_after_init:
+            warn(
+                "unload_brownie_contract_after_init is no longer needed and is "
+                "ignored. Remove constructor argument to stop seeing this "
+                "message."
+            )
 
         _web3 = get_web3()
         if _web3 is not None:
