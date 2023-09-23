@@ -119,14 +119,6 @@ class TransactionEncodingError(TransactionError):
     """
 
 
-# 2nd level exceptions for AllPools class
-class PoolAlreadyExistsError(ManagerError):
-    """
-    Thrown by the AllPools class if a caller attempts to store a pool helper
-    at an already-known address.
-    """
-
-
 # 2nd level exceptions for Uniswap Manager classes
 class PoolNotAssociated(ManagerError):
     """

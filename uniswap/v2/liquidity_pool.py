@@ -85,7 +85,6 @@ class LiquidityPool(PoolHelper):
         update_reserves_on_start: bool = True,
         unload_brownie_contract_after_init: bool = False,  # deprecated
         state_block: Optional[int] = None,
-        unmanaged: bool = False,
     ) -> None:
         """
         Create a new `LiquidityPool` object for interaction with a Uniswap
@@ -270,9 +269,6 @@ class LiquidityPool(PoolHelper):
             reserves_token0=self.reserves_token0,
             reserves_token1=self.reserves_token1,
         )
-
-        if not unmanaged:
-            AllPools(self._w3.eth.chain_id)[self.address] = self
 
         if not silent:
             logger.info(self.name)
