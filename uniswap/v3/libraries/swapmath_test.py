@@ -1,9 +1,15 @@
-from decimal import Decimal, localcontext
+from decimal import Decimal, getcontext
 
 from degenbot.uniswap.v3.libraries import SqrtPriceMath, SwapMath
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/SwapMath.spec.ts
+
+
+# Change the rounding method to match the BigNumber unit test at https://github.com/Uniswap/v3-core/blob/main/test/shared/utilities.ts
+# which specifies .integerValue(3), the 'ROUND_FLOOR' rounding method per https://mikemcl.github.io/bignumber.js/#bignumber
+getcontext().prec = 256
+getcontext().rounding = "ROUND_FLOOR"
 
 
 def expandTo18Decimals(x: int):
@@ -14,13 +20,9 @@ def encodePriceSqrt(reserve1: int, reserve0: int):
     """
     Returns the sqrt price as a Q64.96 value
     """
-    with localcontext() as ctx:
-        # Change the rounding method to match the BigNumber unit test at https://github.com/Uniswap/v3-core/blob/main/test/shared/utilities.ts
-        # which specifies .integerValue(3), the 'ROUND_FLOOR' rounding method per https://mikemcl.github.io/bignumber.js/#bignumber
-        ctx.rounding = "ROUND_FLOOR"
-        return round(
-            (Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96)
-        )
+    return round(
+        (Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96)
+    )
 
 
 def test_computeSwapStep():

@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, getcontext
 from math import ceil, floor
 
 from degenbot.constants import MAX_UINT128
@@ -19,6 +19,11 @@ TICK_SPACINGS = {
     FEE_AMOUNT["HIGH"]: 200,
 }
 
+# Change the rounding method to match the BigNumber unit test at https://github.com/Uniswap/v3-core/blob/main/test/shared/utilities.ts
+# which specifies .integerValue(3), the 'ROUND_FLOOR' rounding method per https://mikemcl.github.io/bignumber.js/#bignumber
+getcontext().prec = 256
+getcontext().rounding = "ROUND_FLOOR"
+
 
 def getMaxLiquidityPerTick(tick_spacing):
     def getMinTick(tick_spacing):
@@ -28,11 +33,11 @@ def getMaxLiquidityPerTick(tick_spacing):
         return floor(Decimal(887272) / tick_spacing) * tick_spacing
 
     return round(
-        Decimal(2**128 - 1)
-        / Decimal(
+        (2**128 - 1)
+        // (
             1
             + (getMaxTick(tick_spacing) - getMinTick(tick_spacing))
-            / tick_spacing
+            // tick_spacing
         )
     )
 
