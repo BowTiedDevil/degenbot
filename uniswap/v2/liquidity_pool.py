@@ -278,6 +278,8 @@ class LiquidityPool(PoolHelper):
             reserves_token1=self.reserves_token1,
         )
 
+        AllPools(self._w3.eth.chain_id)[self.address] = self
+
         if not silent:
             logger.info(self.name)
             logger.info(
