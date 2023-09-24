@@ -1,6 +1,6 @@
 from fractions import Fraction
 
-import web3
+from eth_utils import to_checksum_address
 
 from degenbot import Erc20Token
 from degenbot.arbitrage import FlashBorrowToLpSwapNew
@@ -18,7 +18,7 @@ class MockLiquidityPool(LiquidityPool):
 
 
 wbtc = MockErc20Token()
-wbtc.address = web3.Web3.toChecksumAddress(
+wbtc.address = to_checksum_address(
     "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 )
 wbtc.decimals = 8
@@ -26,7 +26,7 @@ wbtc.name = "Wrapped BTC"
 wbtc.symbol = "WBTC"
 
 weth = MockErc20Token()
-weth.address = web3.Web3.toChecksumAddress(
+weth.address = to_checksum_address(
     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 )
 weth.decimals = 18
@@ -35,10 +35,10 @@ weth.symbol = "WETH"
 
 uni_v2_lp = MockLiquidityPool()
 uni_v2_lp.name = "WBTC-WETH (UniV2, 0.30%)"
-uni_v2_lp.address = web3.Web3.toChecksumAddress(
+uni_v2_lp.address = to_checksum_address(
     "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
 )
-uni_v2_lp.factory = web3.Web3.toChecksumAddress(
+uni_v2_lp.factory = to_checksum_address(
     "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
 )
 uni_v2_lp.fee = None
@@ -53,10 +53,10 @@ uni_v2_lp._update_pool_state()
 
 sushi_v2_lp = MockLiquidityPool()
 sushi_v2_lp.name = "WBTC-WETH (SushiV2, 0.30%)"
-sushi_v2_lp.address = web3.Web3.toChecksumAddress(
+sushi_v2_lp.address = to_checksum_address(
     "0xCEfF51756c56CeFFCA006cD410B03FFC46dd3a58"
 )
-sushi_v2_lp.factory = web3.Web3.toChecksumAddress(
+sushi_v2_lp.factory = to_checksum_address(
     "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"
 )
 sushi_v2_lp.fee = None
