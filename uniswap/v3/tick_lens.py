@@ -1,16 +1,16 @@
 from typing import Dict, Optional, Union
 
-from eth_utils import to_checksum_address
 from eth_typing import ChecksumAddress
+from eth_utils import to_checksum_address
 
 from degenbot.config import get_web3
 from degenbot.uniswap.abi import UNISWAP_V3_TICKLENS_ABI
 
-_CONTRACT_ADDRESSES: Dict[
+_TICKLENS_CONTRACT_ADDRESSES: Dict[
     int,  # Chain ID
     Dict[
-        Union[str, ChecksumAddress],  # Factory address
-        Union[str, ChecksumAddress],  # TickLens address
+        ChecksumAddress,  # Factory address
+        ChecksumAddress,  # TickLens address
     ],
 ] = {
     # Ethereum Mainnet
@@ -37,7 +37,7 @@ _CONTRACT_ADDRESSES: Dict[
 class TickLens:
     def __init__(
         self,
-        factory_address: ChecksumAddress,
+        factory_address: Union[str, ChecksumAddress],
         address: Optional[Union[str, ChecksumAddress]] = None,
         abi: Optional[list] = None,
     ):
@@ -52,11 +52,12 @@ class TickLens:
             else:
                 raise ValueError("No connected web3 object provided.")
 
+        factory_address = to_checksum_address(factory_address)
+
         if address is None:
-            factory_address = to_checksum_address(factory_address)
-            address = to_checksum_address(
-                _CONTRACT_ADDRESSES[self._w3.eth.chain_id][factory_address]
-            )
+            address = _TICKLENS_CONTRACT_ADDRESSES[self._w3.eth.chain_id][
+                factory_address
+            ]
 
         self.address = to_checksum_address(address)
 
