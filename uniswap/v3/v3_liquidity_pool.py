@@ -4,10 +4,11 @@ from decimal import Decimal
 from threading import Lock
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
-from eth_utils import to_checksum_address
 from eth_typing import ChecksumAddress
+from eth_utils import to_checksum_address
 
 from degenbot.config import get_web3
+from degenbot.dex.uniswap_v3 import TICKLENS_ADDRESSES
 from degenbot.exceptions import (
     BitmapWordUnavailableError,
     BlockUnavailableError,
@@ -218,7 +219,11 @@ class V3LiquidityPool(PoolHelper):
                     (self._w3.eth.chain_id, self.factory)
                 ]
             except KeyError:
-                self.lens = TickLens(factory_address=self.factory)
+                self.lens = TickLens(
+                    address=TICKLENS_ADDRESSES[self._w3.eth.chain_id][
+                        self.factory
+                    ]
+                )
                 self._lens_contracts[
                     (self._w3.eth.chain_id, self.factory)
                 ] = self.lens

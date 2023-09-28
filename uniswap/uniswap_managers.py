@@ -7,10 +7,8 @@ from web3 import Web3
 
 from degenbot.config import get_web3
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.exceptions import (
-    ManagerError,
-    PoolNotAssociated,
-)
+from degenbot.dex.uniswap_v3 import FACTORY_ADDRESSES, TICKLENS_ADDRESSES
+from degenbot.exceptions import ManagerError, PoolNotAssociated
 from degenbot.logging import logger
 from degenbot.manager import AllPools, Erc20TokenHelperManager
 from degenbot.token import Erc20Token
@@ -21,41 +19,6 @@ from degenbot.uniswap.v3.functions import generate_v3_pool_address
 from degenbot.uniswap.v3.snapshot import UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v3.tick_lens import TickLens
 from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
-
-_FACTORIES = {
-    1: {
-        # Uniswap (V2)
-        "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f": {
-            "init_hash": "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
-        },
-        # Uniswap (V3)
-        "0x1F98431c8aD98523631AE4a59f267346ea31F984": {
-            "init_hash": "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
-        },
-        # Sushiswap (V2)
-        "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac": {
-            "init_hash": "0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303"
-        },
-        # Sushiswap (V3)
-        "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F": {
-            "init_hash": "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
-        },
-    },
-    42161: {
-        # Uniswap (V3)
-        "0x1F98431c8aD98523631AE4a59f267346ea31F984": {
-            "init_hash": "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
-        },
-        # Sushiswap (V2)
-        "0xc35DADB65012eC5796536bD9864eD8773aBc74C4": {
-            "init_hash": "0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303"
-        },
-        # Sushiswap (V3)
-        "0x1af415a1EbA07a4986a52B6f2e7dE7003D82231e": {
-            "init_hash": "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
-        },
-    },
-}
 
 
 class UniswapLiquidityPoolManager(HelperManager):
@@ -95,8 +58,8 @@ class UniswapLiquidityPoolManager(HelperManager):
         """
         Add a new chain ID.
         """
-        if not _FACTORIES.get(chain_id):
-            _FACTORIES[chain_id] = {}
+        if not FACTORY_ADDRESSES.get(chain_id):
+            FACTORY_ADDRESSES[chain_id] = {}
 
     @classmethod
     def add_factory(cls, chain_id: int, factory_address: str) -> None:
@@ -107,8 +70,8 @@ class UniswapLiquidityPoolManager(HelperManager):
 
         factory_address = to_checksum_address(factory_address)
 
-        if not _FACTORIES[chain_id].get(factory_address):
-            _FACTORIES[chain_id][factory_address] = {}
+        if not FACTORY_ADDRESSES[chain_id].get(factory_address):
+            FACTORY_ADDRESSES[chain_id][factory_address] = {}
 
     @classmethod
     def add_pool_init_hash(
@@ -122,8 +85,10 @@ class UniswapLiquidityPoolManager(HelperManager):
 
         cls.add_factory(chain_id=chain_id, factory_address=factory_address)
 
-        if not _FACTORIES[chain_id][factory_address].get("init_hash"):
-            _FACTORIES[chain_id][factory_address]["init_hash"] = pool_init_hash
+        if not FACTORY_ADDRESSES[chain_id][factory_address].get("init_hash"):
+            FACTORY_ADDRESSES[chain_id][factory_address][
+                "init_hash"
+            ] = pool_init_hash
 
 
 class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
@@ -178,13 +143,10 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             self._token_manager: Erc20TokenHelperManager = self._state[
                 chain_id
             ]["erc20token_manager"]
-            self._factory_init_hash = _FACTORIES[chain_id][
+            self._factory_init_hash = FACTORY_ADDRESSES[chain_id][
                 self._factory_address
             ]["init_hash"]
             self._untracked_pools: Set[ChecksumAddress] = set()
-            self._pools_by_token: Dict[
-                Tuple[ChecksumAddress, ChecksumAddress], ChecksumAddress
-            ] = dict()
 
     def __repr__(self):
         return (
@@ -341,22 +303,30 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         self.__dict__ = self._state[chain_id][factory_address]
 
         if self.__dict__ == {}:
-            self._w3 = _web3
-            self.chain_id = chain_id
-            self._factory_address = to_checksum_address(factory_address)
-            self._lens = TickLens(self._factory_address)
-            self._lock = Lock()
-            self._tracked_pools: Dict[
-                ChecksumAddress, Union[V3LiquidityPool, object]
-            ] = {}
-            self._token_manager: Erc20TokenHelperManager = self._state[
-                chain_id
-            ]["erc20token_manager"]
-            self._factory_init_hash = _FACTORIES[chain_id][
-                self._factory_address
-            ]["init_hash"]
-            self._snapshot = snapshot
-            self._untracked_pools: Set[ChecksumAddress] = set()
+            try:
+                self._w3 = _web3
+                self.chain_id = chain_id
+                self._factory_address = to_checksum_address(factory_address)
+                self._lens = TickLens(
+                    address=TICKLENS_ADDRESSES[self._w3.eth.chain_id][
+                        self._factory_address
+                    ]
+                )
+                self._lock = Lock()
+                self._tracked_pools: Dict[
+                    ChecksumAddress, V3LiquidityPool
+                ] = {}
+                self._token_manager: Erc20TokenHelperManager = self._state[
+                    chain_id
+                ]["erc20token_manager"]
+                self._factory_init_hash = FACTORY_ADDRESSES[chain_id][
+                    self._factory_address
+                ]["init_hash"]
+                self._snapshot = snapshot
+                self._untracked_pools: Set[ChecksumAddress] = set()
+            except:
+                self._state[chain_id][factory_address] = {}
+                raise
 
     def __repr__(self):
         return (
