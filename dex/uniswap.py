@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Any, Dict
 
 from eth_typing import ChecksumAddress
 from eth_utils import to_checksum_address
@@ -8,7 +8,7 @@ FACTORY_ADDRESSES: Dict[
     int,  # Chain ID
     Dict[
         ChecksumAddress,  # Factory address
-        str,  # Pool initialization hash
+        Dict[str, Any],
     ],
 ] = {
     1: {

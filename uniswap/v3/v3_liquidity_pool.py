@@ -8,7 +8,7 @@ from eth_typing import ChecksumAddress
 from eth_utils import to_checksum_address
 
 from degenbot.config import get_web3
-from degenbot.dex.uniswap_v3 import TICKLENS_ADDRESSES
+from degenbot.dex.uniswap import TICKLENS_ADDRESSES
 from degenbot.exceptions import (
     BitmapWordUnavailableError,
     BlockUnavailableError,
@@ -180,7 +180,11 @@ class V3LiquidityPool(PoolHelper):
         if _web3 is not None:
             self._w3 = _web3
         else:
-            from brownie import Contract, multicall as brownie_multicall, web3 as brownie_web3  # type: ignore[import]
+            from brownie import Contract  # type: ignore[import]
+            from brownie import (
+                multicall as brownie_multicall,
+            )  # type: ignore[import]
+            from brownie import web3 as brownie_web3
 
             if brownie_web3.isConnected():
                 self._w3 = brownie_web3
@@ -1153,13 +1157,14 @@ class V3LiquidityPool(PoolHelper):
                     # `self.liquidity` into an inconsistent state
                     and is_valid_update_block(block_number)
                 ):
+                    liquidity_before = self.liquidity
                     self.liquidity += liquidity_delta
                     logger.debug(
-                        f"Adjusting in-range liquidity {block_number=}, {self.update_block=}, {self.tick=}, {self.address=}, {self.liquidity=}"
+                        f"Adjusting in-range liquidity @ block {block_number}, tick = {self.tick}, {self.address=}, current liquidity = {self.liquidity}"
                     )
                     assert (
                         self.liquidity >= 0
-                    ), f"{self.address=} {self.liquidity=} {update=} {block_number=} {self.tick=}"
+                    ), f"{self.address=}, {liquidity_before=}, {self.liquidity=}, {update=} {block_number=} {self.tick=}"
 
                 for i, tick in enumerate([lower_tick, upper_tick]):
                     tick_word, _ = self._get_tick_bitmap_position(tick)

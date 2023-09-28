@@ -7,7 +7,7 @@ from web3 import Web3
 
 from degenbot.config import get_web3
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.dex.uniswap_v3 import FACTORY_ADDRESSES, TICKLENS_ADDRESSES
+from degenbot.dex.uniswap import FACTORY_ADDRESSES, TICKLENS_ADDRESSES
 from degenbot.exceptions import ManagerError, PoolNotAssociated
 from degenbot.logging import logger
 from degenbot.manager import AllPools, Erc20TokenHelperManager
@@ -177,32 +177,28 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             if len(token_addresses) != 2:
                 raise ValueError(f"Provide exactly two token addresses")
 
+            token_addresses = tuple(
+                [
+                    to_checksum_address(token_address)
+                    for token_address in token_addresses
+                ]
+            )
+
             try:
-                erc20token_helpers: List[Erc20Token] = [
+                for token_address in token_addresses:
                     self._token_manager.get_erc20token(
                         address=token_address,
                         silent=silent,
                     )
-                    for token_address in token_addresses
-                ]
             except:
                 raise ManagerError(f"Could not get both Erc20Token helpers")
 
-            tokens_key: Tuple[ChecksumAddress, ChecksumAddress] = tuple(
-                [token.address for token in sorted(erc20token_helpers)]
-            )  # type: ignore[assignment]
+            pool_address = to_checksum_address(
+                self._w3_contract.functions.getPair(*token_addresses).call()
+            )
 
-            try:
-                pool_address = self._pools_by_token[tokens_key]
-            except KeyError:
-                pool_address = to_checksum_address(
-                    self._w3_contract.functions.getPair(*tokens_key).call()
-                )
-
-                if pool_address == ZERO_ADDRESS:
-                    raise ManagerError("No V2 LP available")
-                else:
-                    self._pools_by_token[tokens_key] = pool_address
+            if pool_address == ZERO_ADDRESS:
+                raise ManagerError("No V2 LP available")
 
         if TYPE_CHECKING:
             assert pool_address is not None
@@ -350,8 +346,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         state_block: Optional[int] = None,
     ) -> V3LiquidityPool:
         """
-        Get the pool object from its address, or a tuple of ordered token
-        addresses and fee
+        Get the pool object from its address, or a tuple of token addresses
+        and fee in bips (e.g. 100, 500, 3000, 10000)
         """
 
         def apply_liquidity_updates(pool: V3LiquidityPool):
@@ -438,12 +434,14 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             v3liquiditypool_kwargs = dict()
 
         if pool_address is not None:
+            # print(f"building V3 pool from address")
             if token_addresses is not None or pool_fee is not None:
                 raise ValueError(
                     f"Conflicting arguments provided. Pass address OR tokens+fee"
                 )
             pool_address = to_checksum_address(pool_address)
         elif token_addresses is not None and pool_fee is not None:
+            # print(f"building V3 pool from address and fee")
             if len(token_addresses) != 2:
                 raise ValueError(
                     f"Expected two tokens, found {len(token_addresses)}"
