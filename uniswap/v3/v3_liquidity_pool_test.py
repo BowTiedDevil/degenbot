@@ -52,12 +52,8 @@ lp = MockV3LiquidityPool()
 lp.name = "WBTC-WETH (V3, 0.30%)"
 lp._slot0_lock = Lock()
 lp._liquidity_lock = Lock()
-lp.address = to_checksum_address(
-    "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
-)
-lp.factory = to_checksum_address(
-    "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-)
+lp.address = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
+lp.factory = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
 lp.fee = 3000
 lp.token0 = token0
 lp.token1 = token1
