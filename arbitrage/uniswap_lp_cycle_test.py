@@ -1,11 +1,12 @@
 from fractions import Fraction
 from typing import Sequence, Tuple, Union
-from eth_utils import to_checksum_address
 
-import web3
+import pytest
+from eth_utils import to_checksum_address
 
 from degenbot import Erc20Token
 from degenbot.arbitrage import UniswapLpCycle
+from degenbot.exceptions import ArbitrageError
 from degenbot.uniswap.v2.liquidity_pool import (
     LiquidityPool,
     UniswapV2PoolState,
@@ -2126,20 +2127,16 @@ def test_arbitrage_with_overrides():
         (v3_lp, v3_pool_state_override),
     ]
 
-    assert arb.calculate_arbitrage(override_state=overrides) == (
-        False,
-        (20522764010327, -282198455271),
-    )
+    with pytest.raises(ArbitrageError):
+        arb.calculate_arbitrage(override_state=overrides)
 
     # Override V2 pool only
     overrides = [
         (v2_lp, v2_pool_state_override),
     ]
 
-    assert arb.calculate_arbitrage(override_state=overrides) == (
-        False,
-        (15636391570906, -572345612992),
-    )
+    with pytest.raises(ArbitrageError):
+        arb.calculate_arbitrage(override_state=overrides)
 
     # Override V3 pool only
     overrides = [
@@ -2205,11 +2202,14 @@ def test_arbitrage_with_overrides():
         (irrelevant_v3_pool, v3_pool_state_override),  # Should be ignored
     ]
 
-    # This should equal the result from the test with the V2 override only
-    assert arb.calculate_arbitrage(override_state=overrides) == (
-        False,
-        (15636391570906, -572345612992),
-    )
+    with pytest.raises(ArbitrageError):
+        arb.calculate_arbitrage(override_state=overrides)
+
+    # # This should equal the result from the test with the V2 override only
+    # assert arb.calculate_arbitrage(override_state=overrides) == (
+    #     False,
+    #     (15636391570906, -572345612992),
+    # )
 
     overrides = [
         (irrelevant_v2_pool, v2_pool_state_override),  # Should be ignored
@@ -2221,3 +2221,67 @@ def test_arbitrage_with_overrides():
         True,
         (20454968409226055680, 163028226755627520),
     )
+
+
+def test_pre_calc_check():
+    lp_1 = MockLiquidityPool()
+    lp_1.name = "WBTC-WETH (V2, 0.30%)"
+    lp_1.address = to_checksum_address(
+        "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
+    )
+    lp_1.factory = to_checksum_address(
+        "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+    )
+    lp_1.fee = None
+    lp_1.fee_token0 = Fraction(3, 1000)
+    lp_1.fee_token1 = Fraction(3, 1000)
+    lp_1.reserves_token0 = 16000000000
+    lp_1.reserves_token1 = 2500000000000000000000
+    lp_1.token0 = wbtc
+    lp_1.token1 = weth
+    lp_1._update_pool_state()
+
+    lp_2 = MockLiquidityPool()
+    lp_2.name = "WBTC-WETH (V2, 0.30%)"
+    lp_2.address = to_checksum_address(
+        "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
+    )
+    lp_2.factory = to_checksum_address(
+        "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+    )
+    lp_2.fee = None
+    lp_2.fee_token0 = Fraction(3, 1000)
+    lp_2.fee_token1 = Fraction(3, 1000)
+    lp_2.reserves_token0 = 15000000000
+    lp_2.reserves_token1 = 2500000000000000000000
+    lp_2.token0 = wbtc
+    lp_2.token1 = weth
+    lp_2._update_pool_state()
+
+    # lp_1 price = 2500000000000000000000/16000000000 ~= 156250000000.00
+    # lp_2 price = 2500000000000000000000/15000000000 ~= 166666666666.67
+
+    # This arb path should result in a profitable calculation, since token1
+    # price is higher in the second pool.
+    # i.e. sell overpriced token0 (WETH) in pool0 for token1 (WBTC),
+    # buy underpriced token0 (WETH) in pool1 with token1 (WBTC)
+    UniswapLpCycle(
+        id="test_arb",
+        input_token=weth,
+        swap_pools=[lp_1, lp_2],
+        max_input=100 * 10**18,
+    ).calculate_arbitrage()
+
+    # This arb path should result in an unprofitable calculation, since token1
+    # price is lower in the second pool.
+    # i.e. sell underpriced token0 (WETH) in pool0 for token1 (WBTC),
+    # buy overpriced token0 (WETH) in pool1 with token1 (WBTC)
+    with pytest.raises(
+        ArbitrageError, match="No profitable arbitrage at current prices."
+    ):
+        UniswapLpCycle(
+            id="test_arb",
+            input_token=weth,
+            swap_pools=[lp_2, lp_1],
+            max_input=100 * 10**18,
+        ).calculate_arbitrage()
