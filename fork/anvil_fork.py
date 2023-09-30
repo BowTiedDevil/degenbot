@@ -3,7 +3,7 @@ import socket
 import subprocess
 from typing import Any, Dict, Optional
 
-import ujson  # type: ignore
+import ujson  # type: ignore[import]
 from web3 import IPCProvider, Web3
 
 
@@ -78,7 +78,7 @@ class AnvilFork:
             else self.w3.eth.get_block(self.block)["baseFeePerGas"]
         )
         self.base_fee_next: Optional[int] = None
-        self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.socket = socket.socket(socket.AF_UNIX)
         self.socket.connect(self.ipc_path)
 
     def __del__(self):
@@ -110,7 +110,7 @@ class AnvilFork:
         self,
         fork_url: Optional[str] = None,
         block_number: Optional[int] = None,
-    ):
+    ) -> None:
         forking_params: Dict[str, Any] = dict()
         if fork_url is not None:
             forking_params["jsonRpcUrl"] = fork_url
@@ -183,7 +183,7 @@ class AnvilFork:
         else:
             self.base_fee_next = fee
 
-    def set_snapshot(self):
+    def set_snapshot(self) -> None:
         self.socket.sendall(
             bytes(
                 ujson.dumps(
