@@ -260,7 +260,6 @@ class UniswapLpCycle(ArbitrageHelper):
 
             try:
                 token_out_quantity: int
-                token_in_remainder: int
                 # calculate the swap output through the pool
                 if isinstance(pool, LiquidityPool):
                     pool_state_override = pool_state_overrides.get(
@@ -289,16 +288,14 @@ class UniswapLpCycle(ArbitrageHelper):
                             pool_state_override,
                             UniswapV3PoolState,
                         )
-                    (
-                        token_out_quantity,
-                        token_in_remainder,
-                    ) = pool.calculate_tokens_out_from_tokens_in(
-                        token_in=token_in,
-                        token_in_quantity=token_in_quantity
-                        if i == 0
-                        else token_out_quantity,
-                        override_state=pool_state_override,
-                        with_remainder=True,
+                    token_out_quantity = (
+                        pool.calculate_tokens_out_from_tokens_in(
+                            token_in=token_in,
+                            token_in_quantity=token_in_quantity
+                            if i == 0
+                            else token_out_quantity,
+                            override_state=pool_state_override,
+                        )
                     )
                 else:
                     raise ValueError(
@@ -313,10 +310,6 @@ class UniswapLpCycle(ArbitrageHelper):
                     raise ArbitrageError(
                         f"Zero-output swap through pool {pool} @ {pool.address}"
                     )
-                # if token_in_remainder:
-                #     print(
-                #         f"swap through {pool} resulted in remainder: {token_in_quantity=}, {token_in_remainder=}, {token_out_quantity=}"
-                #     )
 
             # determine the uniswap version for the pool and format the output appropriately
             if isinstance(pool, LiquidityPool):

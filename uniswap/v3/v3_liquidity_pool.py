@@ -863,8 +863,7 @@ class V3LiquidityPool(PoolHelper):
         token_in: Erc20Token,
         token_in_quantity: int,
         override_state: Optional[UniswapV3PoolState] = None,
-        with_remainder: bool = False,
-    ) -> Union[int, Tuple[int, int]]:
+    ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
         to calculate the number of tokens withdrawn (out) for a given number of tokens deposited (in).
@@ -880,10 +879,7 @@ class V3LiquidityPool(PoolHelper):
 
         Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset,
         thus the swap calculation will continue until the target amount is satisfied, regardless of
-        price impact
-
-        Some swaps will not consume the entire input amount, so call this function using `with_remainder=True`
-        to include that leftover value with the return and offset the input
+        price impact.
 
         Accepts a dictionary of state values (`override_state`) to allow calculations beginning from an
         arbitrary starting point. This dictionary must have one or more of the following keys:
@@ -933,25 +929,7 @@ class V3LiquidityPool(PoolHelper):
                 f"Simulated execution reverted: {e}"
             ) from e
         else:
-            # if zeroForOne:
-            #     if token_in_quantity != amount0_delta:
-            #         print(f"input not completely consumed!")
-            #         print(f"{token_in_quantity=}")
-            #         print(f"{amount0_delta=}")
-            # else:
-            #     if token_in_quantity != amount1_delta:
-            #         print(f"input not completely consumed!")
-            #         print(f"{token_in_quantity=}")
-            #         print(f"{amount1_delta=}")
-
-            if with_remainder:
-                return (
-                    (-amount1_delta, token_in_quantity - amount0_delta)
-                    if zeroForOne
-                    else (-amount0_delta, token_in_quantity - amount1_delta)
-                )
-            else:
-                return -amount1_delta if zeroForOne else -amount0_delta
+            return -amount1_delta if zeroForOne else -amount0_delta
 
     def calculate_tokens_in_from_tokens_out(
         self,
