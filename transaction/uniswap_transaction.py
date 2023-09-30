@@ -2,11 +2,11 @@
 
 import itertools
 import pprint
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
-from eth_utils import to_checksum_address
 import eth_abi
 from eth_typing import ChecksumAddress
+from eth_utils import to_checksum_address
 from web3 import Web3
 
 from degenbot.config import get_web3
@@ -32,14 +32,14 @@ from degenbot.uniswap.uniswap_managers import (
 from degenbot.uniswap.v2 import LiquidityPool
 from degenbot.uniswap.v2.functions import get_v2_pools_from_token_path
 from degenbot.uniswap.v2.liquidity_pool import (
-    UniswapV2PoolState,
     UniswapV2PoolSimulationResult,
+    UniswapV2PoolState,
 )
 from degenbot.uniswap.v3 import V3LiquidityPool
 from degenbot.uniswap.v3.functions import decode_v3_path
 from degenbot.uniswap.v3.v3_liquidity_pool import (
-    UniswapV3PoolState,
     UniswapV3PoolSimulationResult,
+    UniswapV3PoolState,
 )
 
 from degenbot.uniswap.v3.v3_liquidity_pool import UniswapV3PoolSimulationResult
@@ -47,51 +47,74 @@ from degenbot.uniswap.v3.v3_liquidity_pool import UniswapV3PoolSimulationResult
 
 # Internal dict of known router contracts by chain ID. Pre-populated with
 # mainnet addresses. New routers can be added by class method `add_router`
-_ROUTERS: Dict[int, Dict[str, Dict]] = {
+_ROUTERS: Dict[
+    int,  # chain ID
+    Dict[ChecksumAddress, Dict[str, Any]],
+] = {
     1: {
-        "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F": {
+        to_checksum_address("0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"): {
             "name": "Sushiswap: Router",
             "factory_address": {
-                2: "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"
+                2: to_checksum_address(
+                    "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"
+                )
             },
         },
-        "0xf164fC0Ec4E93095b804a4795bBe1e041497b92a": {
+        to_checksum_address("0xf164fC0Ec4E93095b804a4795bBe1e041497b92a"): {
             "name": "UniswapV2: Router",
             "factory_address": {
-                2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+                2: to_checksum_address(
+                    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+                )
             },
         },
-        "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D": {
+        to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"): {
             "name": "UniswapV2: Router 2",
             "factory_address": {
-                2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+                2: to_checksum_address(
+                    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+                )
             },
         },
-        "0xE592427A0AEce92De3Edee1F18E0157C05861564": {
+        to_checksum_address("0xE592427A0AEce92De3Edee1F18E0157C05861564"): {
             "name": "UniswapV3: Router",
             "factory_address": {
-                3: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+                3: to_checksum_address(
+                    "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+                )
             },
         },
-        "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45": {
+        to_checksum_address("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"): {
             "name": "UniswapV3: Router 2",
             "factory_address": {
-                2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-                3: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+                2: to_checksum_address(
+                    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+                ),
+                3: to_checksum_address(
+                    "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+                ),
             },
         },
-        "0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B": {
+        to_checksum_address("0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B"): {
             "name": "Uniswap Universal Router (Old)",
             "factory_address": {
-                2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-                3: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+                2: to_checksum_address(
+                    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+                ),
+                3: to_checksum_address(
+                    "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+                ),
             },
         },
-        "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD": {
+        to_checksum_address("0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"): {
             "name": "Universal Universal Router (New) ",
             "factory_address": {
-                2: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-                3: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+                2: to_checksum_address(
+                    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+                ),
+                3: to_checksum_address(
+                    "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+                ),
             },
         },
     }
@@ -428,7 +451,6 @@ class UniswapTransaction(TransactionHelper):
         amount_out: int,
         amount_in_max: Optional[int] = None,
         first_swap: bool = False,
-        last_swap: bool = False,
     ) -> Tuple[LiquidityPool, UniswapV2PoolSimulationResult,]:
         """
         TBD
@@ -470,17 +492,6 @@ class UniswapTransaction(TransactionHelper):
                 to_addr=pool.address,
             )
 
-        # TODO: handle recipient address handling within router-level logic
-        if last_swap:
-            if recipient in [
-                _V3_ROUTER_CONTRACT_ADDRESS_FLAG,
-            ]:
-                _recipient = self.router_address
-            else:
-                _recipient = self.sender
-        else:
-            _recipient = to_checksum_address(recipient)
-
         # process the swap
         self.ledger.adjust(pool.address, token_in.address, -_amount_in)
         self.ledger.adjust(pool.address, token_out.address, amount_out)
@@ -490,7 +501,7 @@ class UniswapTransaction(TransactionHelper):
             token=token_out.address,
             amount=amount_out,
             from_addr=pool.address,
-            to_addr=_recipient,
+            to_addr=recipient,
         )
 
         if (
@@ -1240,23 +1251,22 @@ class UniswapTransaction(TransactionHelper):
                         else pool.token1
                     )
 
-                    _, _sim_result = self._simulate_v2_swap_exact_out(
+                    _, _v2_sim_result = self._simulate_v2_swap_exact_out(
                         pool=pool,
                         recipient=_recipient,
                         token_in=_token_in,
                         amount_out=_amount_out,
                         amount_in_max=_amount_in_max,
                         first_swap=first_swap,
-                        last_swap=last_swap,
                     )
 
                     _amount_in = max(
-                        _sim_result.amount0_delta,
-                        _sim_result.amount1_delta,
+                        _v2_sim_result.amount0_delta,
+                        _v2_sim_result.amount1_delta,
                     )
 
                     _universal_router_command_future_pool_states.append(
-                        (pool, _sim_result)
+                        (pool, _v2_sim_result)
                     )
 
             elif command == "V3_SWAP_EXACT_IN":
@@ -1609,7 +1619,11 @@ class UniswapTransaction(TransactionHelper):
 
                     tx_amount_out_min = func_params["amountOutMin"]
                     tx_path = func_params["path"]
+
                     tx_recipient = func_params["to"]
+                    if tx_recipient == _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG:
+                        tx_recipient = self.router_address
+
                     try:
                         tx_deadline = func_params["deadline"]
                     except KeyError:
@@ -1683,7 +1697,13 @@ class UniswapTransaction(TransactionHelper):
                             self.value
                         )  # 'swapETHForExactTokens'
                     tx_path = func_params["path"]
+
                     tx_recipient = func_params["to"]
+                    if tx_recipient == _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG:
+                        tx_recipient = self.router_address
+                    else:
+                        self.to.add(tx_recipient)
+
                     try:
                         tx_deadline = func_params["deadline"]
                     except KeyError:
@@ -1742,13 +1762,19 @@ class UniswapTransaction(TransactionHelper):
                             amount_out=_amount_out,
                             amount_in_max=_amount_in_max,
                             first_swap=first_swap,
-                            last_swap=last_swap,
                         )
 
                         _amount_in = max(
                             _sim_result.amount0_delta,
                             _sim_result.amount1_delta,
                         )
+
+                        if first_swap:
+                            self.ledger.adjust(
+                                self.sender,
+                                WRAPPED_NATIVE_TOKENS[self.chain_id],
+                                _amount_in,
+                            )
 
                         _v2_router_future_pool_states.append(
                             (pool, _sim_result)
