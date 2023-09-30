@@ -429,12 +429,16 @@ class UniswapLpCycle(ArbitrageHelper):
             ]
         ] = None,
     ) -> ArbitrageCalculationResult:
-        _overrides = self._sort_overrides(override_state)
+        _state_overrides = self._sort_overrides(override_state)
+
+        # A scalar value representing the net amount of 1 input token across
+        # the complete path (excluding fees).
+        # e.g. profit_factor > 1.0 indicates a profitable trade.
+        profit_factor: float = 1.0
 
         # Check the pool state liquidity in the direction of the trade
-        for i, pool in enumerate(self.swap_pools):
-            # WIP: use overrides if provided
-            pool_state = _overrides.get(pool.address) or pool.state
+        for pool, vector in zip(self.swap_pools, self._swap_vectors):
+            pool_state = _state_overrides.get(pool.address) or pool.state
 
             if isinstance(pool, LiquidityPool):
                 if TYPE_CHECKING:
@@ -448,31 +452,34 @@ class UniswapLpCycle(ArbitrageHelper):
                         f"V2 pool {pool.address} has no liquidity"
                     )
 
-                if (
-                    pool_state.reserves_token1 == 1
-                    and self._swap_vectors[i].zero_for_one
-                ):
+                if pool_state.reserves_token1 == 1 and vector.zero_for_one:
                     raise ZeroLiquidityError(
                         f"V2 pool {pool.address} has no liquidity for a 0 -> 1 swap"
                     )
                 elif (
-                    pool_state.reserves_token0 == 1
-                    and not self._swap_vectors[i].zero_for_one
+                    pool_state.reserves_token0 == 1 and not vector.zero_for_one
                 ):
                     raise ZeroLiquidityError(
                         f"V2 pool {pool.address} has no liquidity for a 1 -> 0 swap"
                     )
 
-            if isinstance(pool, V3LiquidityPool):
+                price = pool_state.reserves_token1 / pool_state.reserves_token0
+
+            elif isinstance(pool, V3LiquidityPool):
                 if TYPE_CHECKING:
                     assert isinstance(pool_state, UniswapV3PoolState)
+
+                if pool_state.sqrt_price_x96 == 0:
+                    raise ZeroLiquidityError(
+                        f"V3 pool {pool.address} has no liquidity"
+                    )
 
                 if pool_state.liquidity == 0:
                     # Check if the swap is 0 -> 1 and cannot swap any more token0 for token1
                     if (
                         pool_state.sqrt_price_x96
                         == TickMath.MIN_SQRT_RATIO + 1
-                        and self._swap_vectors[i].zero_for_one
+                        and vector.zero_for_one
                     ):
                         raise ZeroLiquidityError(
                             f"V3 pool {pool.address} has no liquidity for a 0 -> 1 swap"
@@ -481,11 +488,19 @@ class UniswapLpCycle(ArbitrageHelper):
                     elif (
                         pool_state.sqrt_price_x96
                         == TickMath.MAX_SQRT_RATIO - 1
-                        and not self._swap_vectors[i].zero_for_one
+                        and not vector.zero_for_one
                     ):
                         raise ZeroLiquidityError(
                             f"V3 pool {pool.address} has no liquidity for a 1 -> 0 swap"
                         )
+
+                price = pool_state.sqrt_price_x96**2 / (2**192)
+
+            # TODO: include fees
+            profit_factor *= price if vector.zero_for_one else 1 / price
+
+        if profit_factor < 1.0:
+            raise ArbitrageError("No profitable arbitrage at current prices.")
 
         # bound the amount to be swapped
         bounds: Tuple[float, float] = (
@@ -508,7 +523,7 @@ class UniswapLpCycle(ArbitrageHelper):
                 token_out_quantity: int
 
             for i, pool in enumerate(self.swap_pools):
-                pool_override = _overrides.get(pool.address)
+                pool_override = _state_overrides.get(pool.address)
 
                 if TYPE_CHECKING:
                     assert isinstance(pool, LiquidityPool) and (
@@ -558,7 +573,7 @@ class UniswapLpCycle(ArbitrageHelper):
             best_amounts = self._build_amounts_out(
                 token_in=self.input_token,
                 token_in_quantity=swap_amount,
-                pool_state_overrides=_overrides,
+                pool_state_overrides=_state_overrides,
             )
         # except (EVMRevertError, LiquidityPoolError) as e:
         except ArbitrageError as e:
