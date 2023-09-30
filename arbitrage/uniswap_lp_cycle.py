@@ -323,9 +323,7 @@ class UniswapLpCycle(ArbitrageHelper):
             elif isinstance(pool, V3LiquidityPool):
                 pools_amounts_out.append(
                     UniswapV3PoolSwapAmounts(
-                        amount_specified=token_in_quantity
-                        if i == 0
-                        else -token_out_quantity,
+                        amount_specified=token_in_quantity,
                         zero_for_one=zero_for_one,
                         sqrt_price_limit_x96=TickMath.MIN_SQRT_RATIO + 1
                         if zero_for_one
