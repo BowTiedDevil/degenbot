@@ -177,7 +177,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             if len(token_addresses) != 2:
                 raise ValueError(f"Provide exactly two token addresses")
 
-            token_addresses = tuple(
+            checksummed_token_addresses = tuple(
                 [
                     to_checksum_address(token_address)
                     for token_address in token_addresses
@@ -185,7 +185,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             )
 
             try:
-                for token_address in token_addresses:
+                for token_address in checksummed_token_addresses:
                     self._token_manager.get_erc20token(
                         address=token_address,
                         silent=silent,
@@ -194,7 +194,9 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 raise ManagerError(f"Could not get both Erc20Token helpers")
 
             pool_address = to_checksum_address(
-                self._w3_contract.functions.getPair(*token_addresses).call()
+                self._w3_contract.functions.getPair(
+                    *checksummed_token_addresses
+                ).call()
             )
 
             if pool_address == ZERO_ADDRESS:
@@ -215,9 +217,6 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         except KeyError:
             pass
         else:
-            # print(
-            #     f"(get_pool) returning already-known pool helper: {pool_address}"
-            # )
             assert isinstance(
                 pool_helper, LiquidityPool
             ), f"{self} Attempted to return non-V2 pool {pool_helper}! {pool_address=}, {token_addresses=}"
