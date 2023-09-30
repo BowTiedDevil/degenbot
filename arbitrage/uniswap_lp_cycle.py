@@ -633,8 +633,8 @@ class UniswapLpCycle(ArbitrageHelper):
             An executor (from `concurrent.futures`) to process the calculation
             work. Both `ThreadPoolExecutor` and `ProcessPoolExecutor` are
             supported, but `ProcessPoolExecutor` is recommended.
-        override_state : List[Tuple[Union[LiquidityPool, V3LiquidityPool], dict]], optional
-            An ordered list of tuples, representing an ordered pair of helper
+        override_state : StateOverrideTypes, optional
+            An sequence of tuples, representing an ordered pair of helper
             objects for Uniswap V2 / V3 pools and their overridden states.
 
         Returns
