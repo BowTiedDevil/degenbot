@@ -127,7 +127,7 @@ class SimulationLedger:
             _token_address = token.address
         elif isinstance(token, str):
             _token_address = to_checksum_address(token)
-        elif isinstance(token, ChecksumAddress):
+        elif type(token) == ChecksumAddress:
             _token_address = token
         else:
             raise ValueError(
