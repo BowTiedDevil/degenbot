@@ -2271,7 +2271,7 @@ class UniswapTransaction(TransactionHelper):
 
                     # V3 Router enforces a maximum input
                     if first_swap:
-                        _, _sim_result = _v3_router_future_pool_states[0]
+                        _, _sim_result = _v3_router_future_pool_states[-1]
 
                         amount_deposited = max(
                             _sim_result.amount0_delta,
