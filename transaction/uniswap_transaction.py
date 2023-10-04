@@ -5,6 +5,7 @@ import pprint
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
 import eth_abi
+import time
 from eth_typing import ChecksumAddress
 from eth_utils import to_checksum_address
 from web3 import Web3
@@ -290,7 +291,7 @@ class UniswapTransaction(TransactionHelper):
     def _raise_if_expired(self, deadline: int):
         if not isinstance(deadline, int):
             raise ValueError(f"deadline not int! Was: {deadline}")
-        if self._w3.eth.get_block("latest")["timestamp"] > deadline:
+        if time.time() > deadline:
             raise TransactionError("Deadline expired")
 
     def _show_pool_states(
