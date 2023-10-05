@@ -371,8 +371,6 @@ class UniswapTransaction(TransactionHelper):
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
-        current_state = pool.state
-
         if (
             amount_in == _UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG
             or amount_in == _V3_ROUTER2_CONTRACT_BALANCE_FLAG
@@ -391,11 +389,6 @@ class UniswapTransaction(TransactionHelper):
             token_in=token_in,
             token_in_quantity=amount_in,
         )
-
-        future_state = sim_result.future_state
-
-        if TYPE_CHECKING:
-            assert future_state is not None
 
         _amount_out = -min(
             sim_result.amount0_delta,
@@ -466,7 +459,7 @@ class UniswapTransaction(TransactionHelper):
         amount_out: int,
         amount_in_max: Optional[int] = None,
         first_swap: bool = False,
-    ) -> Tuple[LiquidityPool, UniswapV2PoolSimulationResult,]:
+    ) -> Tuple[LiquidityPool, UniswapV2PoolSimulationResult]:
         """
         TBD
         """
@@ -486,12 +479,6 @@ class UniswapTransaction(TransactionHelper):
             token_out=token_out,
             token_out_quantity=amount_out,
         )
-
-        current_state = pool.state
-        future_state = sim_result.future_state
-
-        if TYPE_CHECKING:
-            assert future_state is not None
 
         _amount_in = max(
             sim_result.amount0_delta,
@@ -588,17 +575,10 @@ class UniswapTransaction(TransactionHelper):
         except EVMRevertError as e:
             raise TransactionError(f"V3 revert: {e}")
 
-        _current_pool_state = pool.state
-
         _amount_out = -min(
             _sim_result.amount0_delta,
             _sim_result.amount1_delta,
         )
-
-        _future_pool_state = _sim_result.future_state
-
-        if TYPE_CHECKING:
-            assert _future_pool_state is not None
 
         self.ledger.adjust(
             self.router_address,
@@ -670,13 +650,6 @@ class UniswapTransaction(TransactionHelper):
             )
         except EVMRevertError as e:
             raise TransactionError(f"V3 revert: {e}")
-
-        _current_pool_state = pool.state
-
-        _future_pool_state = _sim_result.future_state
-
-        if TYPE_CHECKING:
-            assert _future_pool_state is not None
 
         _amount_in = max(
             _sim_result.amount0_delta,
@@ -1881,12 +1854,11 @@ class UniswapTransaction(TransactionHelper):
                 else:
                     raise ValueError(f"Unknown function: {func_name}!")
 
-            # bugfix: prevents nested multicalls from spamming exception
-            # message. e.g. 'Simulation failed: Simulation failed: {error}'
             except TransactionError:
+                # Catch specific subclass exception to prevent nested
+                # multicalls from being recursively re-annotated
+                # e.g. 'Simulation failed: Simulation failed: {error}'
                 raise
-            # catch generic DegenbotError (non-fatal) and re-raise as
-            # TransactionError
             except DegenbotError as e:
                 raise TransactionError(f"Simulation failed: {e}") from e
             else:
