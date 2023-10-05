@@ -1,11 +1,10 @@
 # TODO: use tx_payer_is_user to simplify accounting
 
-import itertools
 import pprint
+import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
 import eth_abi
-import time
 from eth_typing import ChecksumAddress
 from eth_utils import to_checksum_address
 from web3 import Web3
@@ -36,15 +35,12 @@ from degenbot.uniswap.v2.liquidity_pool import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
-from degenbot.uniswap.v3 import V3LiquidityPool
 from degenbot.uniswap.v3.functions import decode_v3_path
 from degenbot.uniswap.v3.v3_liquidity_pool import (
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
+    V3LiquidityPool,
 )
-
-from degenbot.uniswap.v3.v3_liquidity_pool import UniswapV3PoolSimulationResult
-
 
 # Internal dict of known router contracts by chain ID. Pre-populated with
 # mainnet addresses. New routers can be added by class method `add_router`
