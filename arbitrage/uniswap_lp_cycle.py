@@ -414,7 +414,7 @@ class UniswapLpCycle(ArbitrageHelper):
 
         return found_updates
 
-    def _calculate(
+    def _pre_calculation_check(
         self,
         override_state: Optional[
             Sequence[
@@ -426,8 +426,8 @@ class UniswapLpCycle(ArbitrageHelper):
                 ]
             ]
         ] = None,
-    ) -> ArbitrageCalculationResult:
-        _state_overrides = self._sort_overrides(override_state)
+    ):
+        state_overrides = self._sort_overrides(override_state)
 
         # A scalar value representing the net amount of 1 input token across
         # the complete path (excluding fees).
@@ -436,7 +436,7 @@ class UniswapLpCycle(ArbitrageHelper):
 
         # Check the pool state liquidity in the direction of the trade
         for pool, vector in zip(self.swap_pools, self._swap_vectors):
-            pool_state = _state_overrides.get(pool.address) or pool.state
+            pool_state = state_overrides.get(pool.address) or pool.state
 
             if isinstance(pool, LiquidityPool):
                 if TYPE_CHECKING:
@@ -500,6 +500,23 @@ class UniswapLpCycle(ArbitrageHelper):
         if profit_factor < 1.0:
             raise ArbitrageError("No profitable arbitrage at current prices.")
 
+    def _calculate(
+        self,
+        override_state: Optional[
+            Sequence[
+                Union[
+                    Tuple[LiquidityPool, UniswapV2PoolState],
+                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
+                    Tuple[V3LiquidityPool, UniswapV3PoolState],
+                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
+                ]
+            ]
+        ] = None,
+    ) -> ArbitrageCalculationResult:
+        self._pre_calculation_check(override_state)
+
+        state_overrides = self._sort_overrides(override_state)
+
         # bound the amount to be swapped
         bounds: Tuple[float, float] = (
             1.0,
@@ -521,7 +538,7 @@ class UniswapLpCycle(ArbitrageHelper):
                 token_out_quantity: int
 
             for i, pool in enumerate(self.swap_pools):
-                pool_override = _state_overrides.get(pool.address)
+                pool_override = state_overrides.get(pool.address)
 
                 if TYPE_CHECKING:
                     assert isinstance(pool, LiquidityPool) and (
@@ -571,7 +588,7 @@ class UniswapLpCycle(ArbitrageHelper):
             best_amounts = self._build_amounts_out(
                 token_in=self.input_token,
                 token_in_quantity=swap_amount,
-                pool_state_overrides=_state_overrides,
+                pool_state_overrides=state_overrides,
             )
         # except (EVMRevertError, LiquidityPoolError) as e:
         except ArbitrageError as e:
@@ -607,6 +624,8 @@ class UniswapLpCycle(ArbitrageHelper):
         """
         Stateless calculation that does not use `self.best`
         """
+
+        self._pre_calculation_check(override_state)
 
         return self._calculate(override_state=override_state)
 
@@ -646,6 +665,8 @@ class UniswapLpCycle(ArbitrageHelper):
         -----
         This is an async function that must be called with the `await` keyword.
         """
+
+        self._pre_calculation_check(override_state)
 
         for pool in self.swap_pools:
             if isinstance(pool, V3LiquidityPool) and pool.sparse_bitmap:
