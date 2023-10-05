@@ -589,6 +589,70 @@ class LiquidityPool(PoolHelper):
 
         self.calculate_tokens_in_from_ratio_out()
 
+    def simulate_add_liquidity(
+        self,
+        added_reserves_token0: int,
+        added_reserves_token1: int,
+        override_state: Optional[UniswapV2PoolState] = None,
+    ) -> UniswapV2PoolSimulationResult:
+        if override_state:
+            logger.debug(f"State override: {override_state}")
+
+        reserves_token0 = (
+            override_state.reserves_token0
+            if override_state
+            else self.reserves_token0
+        )
+
+        reserves_token1 = (
+            override_state.reserves_token1
+            if override_state
+            else self.reserves_token1
+        )
+
+        return UniswapV2PoolSimulationResult(
+            amount0_delta=added_reserves_token0,
+            amount1_delta=added_reserves_token1,
+            current_state=self.state,
+            future_state=UniswapV2PoolState(
+                pool=self,
+                reserves_token0=reserves_token0 + added_reserves_token0,
+                reserves_token1=reserves_token1 + added_reserves_token1,
+            ),
+        )
+
+    def simulate_remove_liquidity(
+        self,
+        removed_reserves_token0: int,
+        removed_reserves_token1: int,
+        override_state: Optional[UniswapV2PoolState] = None,
+    ) -> UniswapV2PoolSimulationResult:
+        if override_state:
+            logger.debug(f"State override: {override_state}")
+
+        reserves_token0 = (
+            override_state.reserves_token0
+            if override_state
+            else self.reserves_token0
+        )
+
+        reserves_token1 = (
+            override_state.reserves_token1
+            if override_state
+            else self.reserves_token1
+        )
+
+        return UniswapV2PoolSimulationResult(
+            amount0_delta=-removed_reserves_token0,
+            amount1_delta=-removed_reserves_token1,
+            current_state=self.state,
+            future_state=UniswapV2PoolState(
+                pool=self,
+                reserves_token0=reserves_token0 - removed_reserves_token0,
+                reserves_token1=reserves_token1 - removed_reserves_token1,
+            ),
+        )
+
     def simulate_swap(
         self,
         token_in: Optional[Erc20Token] = None,
