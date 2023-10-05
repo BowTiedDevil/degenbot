@@ -21,6 +21,7 @@ from degenbot.exceptions import (
     TransactionError,
 )
 from degenbot.logging import logger
+from degenbot.manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.transaction.simulation_ledger import SimulationLedger
 from degenbot.types import TransactionHelper
@@ -30,7 +31,10 @@ from degenbot.uniswap.uniswap_managers import (
     UniswapV3LiquidityPoolManager,
 )
 from degenbot.uniswap.v2 import LiquidityPool
-from degenbot.uniswap.v2.functions import get_v2_pools_from_token_path
+from degenbot.uniswap.v2.functions import (
+    generate_v2_pool_address,
+    get_v2_pools_from_token_path,
+)
 from degenbot.uniswap.v2.liquidity_pool import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
@@ -249,6 +253,8 @@ class UniswapTransaction(TransactionHelper):
 
         self.router_address = router_address
 
+        self.token_manager = Erc20TokenHelperManager(self._w3.eth.chain_id)
+
         self.v2_pool_manager: Optional[UniswapV2LiquidityPoolManager] = None
         self.v3_pool_manager: Optional[UniswapV3LiquidityPoolManager] = None
 
@@ -439,6 +445,18 @@ class UniswapTransaction(TransactionHelper):
             self._show_pool_states(sim_result)
 
         return pool, sim_result
+
+    def _simulate_v2_add_liquidity(
+        self,
+        pool: LiquidityPool,
+        added_reserves_token0: int,
+        added_reserves_token1: int,
+    ) -> UniswapV2PoolSimulationResult:
+        sim_result = pool.simulate_add_liquidity(
+            added_reserves_token0=added_reserves_token0,
+            added_reserves_token1=added_reserves_token1,
+        )
+        return sim_result
 
     def _simulate_v2_swap_exact_out(
         self,
@@ -787,6 +805,8 @@ class UniswapTransaction(TransactionHelper):
         ] = []
 
         V2_FUNCTIONS = {
+            "addLiquidity",
+            "addLiquidityETH",
             "swapExactTokensForETH",
             "swapExactTokensForETHSupportingFeeOnTransferTokens",
             "swapExactETHForTokens",
@@ -816,8 +836,6 @@ class UniswapTransaction(TransactionHelper):
 
         # TODO: handle these
         UNHANDLED_FUNCTIONS = {
-            "addLiquidity",
-            "addLiquidityETH",
             "removeLiquidity",
             "removeLiquidityETH",
             "removeLiquidityETHWithPermit",
@@ -1776,6 +1794,89 @@ class UniswapTransaction(TransactionHelper):
                         _v2_router_future_pool_states.append(
                             (pool, _sim_result)
                         )
+
+                elif func_name in (
+                    "addLiquidity",
+                    "addLiquidityETH",
+                ):
+                    logger.debug(f"{func_name}: {self.hash}")
+
+                    if func_name == "addLiquidity":
+                        tx_token_a = to_checksum_address(func_params["tokenA"])
+                        tx_token_b = to_checksum_address(func_params["tokenB"])
+                        tx_token_amount_a = func_params["amountADesired"]
+                        tx_token_amount_b = func_params["amountBDesired"]
+                        tx_token_amount_a_min = func_params["amountAMin"]
+                        tx_token_amount_b_min = func_params["amountBMin"]
+                        token0_address, token1_address = (
+                            (tx_token_a, tx_token_b)
+                            if tx_token_a < tx_token_b
+                            else (tx_token_b, tx_token_a)
+                        )
+                        token0_amount, token1_amount = (
+                            (tx_token_amount_a, tx_token_amount_b)
+                            if tx_token_a < tx_token_b
+                            else (tx_token_amount_b, tx_token_amount_a)
+                        )
+                    elif func_name == "addLiquidityETH":
+                        tx_token = to_checksum_address(func_params["token"])
+                        tx_token_amount = func_params["amountTokenDesired"]
+                        tx_token_amount_min = func_params["amountTokenMin"]
+                        tx_eth_min = func_params["amountETHMin"]
+                        _wrapped_token_address = WRAPPED_NATIVE_TOKENS[
+                            self.chain_id
+                        ]
+                        token0_address, token1_address = (
+                            (_wrapped_token_address, tx_token)
+                            if _wrapped_token_address < tx_token
+                            else (tx_token, _wrapped_token_address)
+                        )
+                        token0_amount, token1_amount = (
+                            (tx_eth_min, tx_token_amount)
+                            if _wrapped_token_address < tx_token
+                            else (tx_token_amount, tx_eth_min)
+                        )
+
+                    tx_to = func_params["to"]
+                    tx_deadline = func_params["deadline"]
+                    self._raise_if_expired(tx_deadline)
+
+                    try:
+                        _pool = self.v2_pool_manager.get_pool(
+                            token_addresses=(_wrapped_token_address, tx_token)
+                        )
+                    except ManagerError:
+                        print("Creating empty pool")
+
+                        # TODO: support creation of empty LiquidityPool instead of using a mock
+
+                        class MockLiquidityPool(LiquidityPool):
+                            def __init__(self):
+                                pass
+
+                        _pool = MockLiquidityPool()
+                        _pool.reserves_token0 = 0
+                        _pool.reserves_token1 = 0
+                        _pool.token0 = self.token_manager.get_erc20token(
+                            token0_address
+                        )
+                        _pool.token1 = self.token_manager.get_erc20token(
+                            token1_address
+                        )
+                        _pool.address = generate_v2_pool_address(
+                            token_addresses=(token0_address, token1_address),
+                            factory_address=self.v2_pool_manager._factory_address,
+                            init_hash=self.v2_pool_manager._factory_init_hash,
+                        )
+                        _pool._update_pool_state()
+
+                    _sim_result = self._simulate_v2_add_liquidity(
+                        pool=_pool,
+                        added_reserves_token0=token0_amount,
+                        added_reserves_token1=token1_amount,
+                    )
+
+                    _v2_router_future_pool_states.append((_pool, _sim_result))
 
                 else:
                     raise ValueError(f"Unknown function: {func_name}!")
