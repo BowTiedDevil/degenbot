@@ -1813,7 +1813,8 @@ class UniswapTransaction(TransactionHelper):
 
                     try:
                         _pool = self.v2_pool_manager.get_pool(
-                            token_addresses=(token0_address, token1_address)
+                            token_addresses=(token0_address, token1_address),
+                            silent=self.silent,
                         )
                     except ManagerError:
                         print("Creating empty pool")
