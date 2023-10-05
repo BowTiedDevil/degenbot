@@ -21,7 +21,6 @@ from degenbot.exceptions import (
     TransactionError,
 )
 from degenbot.logging import logger
-from degenbot.manager import Erc20TokenHelperManager
 from degenbot.token import Erc20Token
 from degenbot.transaction.simulation_ledger import SimulationLedger
 from degenbot.types import TransactionHelper
@@ -252,8 +251,6 @@ class UniswapTransaction(TransactionHelper):
             raise ValueError(f"Router address {router_address} unknown!")
 
         self.router_address = router_address
-
-        self.token_manager = Erc20TokenHelperManager(self._w3.eth.chain_id)
 
         self.v2_pool_manager: Optional[UniswapV2LiquidityPoolManager] = None
         self.v3_pool_manager: Optional[UniswapV3LiquidityPoolManager] = None
@@ -1830,11 +1827,15 @@ class UniswapTransaction(TransactionHelper):
                         _pool = MockLiquidityPool()
                         _pool.reserves_token0 = 0
                         _pool.reserves_token1 = 0
-                        _pool.token0 = self.token_manager.get_erc20token(
-                            token0_address
+                        _pool.token0 = (
+                            self.v2_pool_manager._token_manager.get_erc20token(
+                                token0_address
+                            )
                         )
-                        _pool.token1 = self.token_manager.get_erc20token(
-                            token1_address
+                        _pool.token1 = (
+                            self.v2_pool_manager._token_manager.get_erc20token(
+                                token1_address
+                            )
                         )
                         _pool.address = generate_v2_pool_address(
                             token_addresses=(token0_address, token1_address),
