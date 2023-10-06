@@ -1,11 +1,15 @@
 from fractions import Fraction
-from typing import List, Optional
+from typing import List
 
-from brownie import Contract  # type: ignore
-from scipy import optimize  # type: ignore
+from eth_utils import to_checksum_address
+from scipy import optimize  # type: ignore[import]
 
+from degenbot.config import get_web3
+from degenbot.logging import logger
 from degenbot.token import Erc20Token
 from degenbot.types import ArbitrageHelper
+from degenbot.uniswap.uniswap_managers import UniswapV2LiquidityPoolManager
+from degenbot.uniswap.v2.functions import get_v2_pools_from_token_path
 from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
 
 
@@ -20,33 +24,35 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
         name: str = "",
         update_method="polling",
     ):
+        _web3 = get_web3()
+        if _web3 is not None:
+            self._w3 = _web3
+        else:
+            from brownie import web3 as brownie_web3  # type: ignore[import]
+
+            if brownie_web3.isConnected():
+                self._w3 = brownie_web3
+            else:
+                raise ValueError("No connected web3 object provided.")
+
         if borrow_token.address != swap_token_addresses[0]:
             raise ValueError(
                 "Token addresses must begin with the borrowed token"
             )
-        # assert (
-        #     borrow_token.address == swap_token_addresses[0]
-        # ), "Token addresses must begin with the borrowed token"
 
         if borrow_pool.token0 == borrow_token:
             if borrow_pool.token1.address != swap_token_addresses[-1]:
                 raise ValueError(
                     "Token addresses must end with the repaid token"
                 )
-            # assert (
-            #     borrow_pool.token1.address == swap_token_addresses[-1]
-            # ), "Token addresses must end with the repaid token"
         else:
             if borrow_pool.token0.address != swap_token_addresses[-1]:
                 raise ValueError(
                     "Token addresses must end with the repaid token"
                 )
-            # assert (
-            #     borrow_pool.token0.address == swap_token_addresses[-1]
-            # ), "Token addresses must end with the repaid token"
 
         # build a list of all tokens involved in this swapping path
-        self.tokens = []
+        self.tokens: List[Erc20Token] = []
         for address in swap_token_addresses:
             self.tokens.append(Erc20Token(address=address))
 
@@ -61,29 +67,18 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
         # Pool list length will be 1 less than the token path length, e.g. a token1->token2->token3
         # path will result in a pool list consisting of token1/token2 and token2/token3
         self.swap_pools = []
-        try:
-            _factory = Contract(swap_factory_address)
-        except Exception as e:
-            print(e)
-            _factory = Contract.from_explorer(swap_factory_address)
 
-        for i in range(len(self.token_path) - 1):
-            self.swap_pools.append(
-                LiquidityPool(
-                    address=_factory.getPair(
-                        self.token_path[i], self.token_path[i + 1]
-                    ),
-                    name=" - ".join(
-                        [self.tokens[i].symbol, self.tokens[i + 1].symbol]
-                    ),
-                    tokens=[self.tokens[i], self.tokens[i + 1]],
-                    update_method=update_method,
-                    fee=swap_router_fee,
-                )
-            )
-            print(
-                f"Loaded LP: {self.tokens[i].symbol} - {self.tokens[i+1].symbol}"
-            )
+        swap_factory_address = to_checksum_address(swap_factory_address)
+
+        self.swap_pools = get_v2_pools_from_token_path(
+            tx_path=self.token_path,
+            pool_manager=UniswapV2LiquidityPoolManager(
+                factory_address=swap_factory_address,
+                chain_id=self._w3.eth.chain_id,
+            ),
+        )
+        for pool in self.swap_pools:
+            logger.info(f"Loaded LP: {pool}")
 
         self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
 
