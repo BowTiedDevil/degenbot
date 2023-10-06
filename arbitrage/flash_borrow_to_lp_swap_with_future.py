@@ -1,7 +1,5 @@
 from typing import List, Optional, Tuple
-
-from brownie.convert.datatypes import Wei  # type: ignore
-from scipy import optimize  # type: ignore
+from scipy.optimize import minimize_scalar  # type: ignore[import]
 
 from degenbot.token import Erc20Token
 from degenbot.types import ArbitrageHelper
@@ -259,7 +257,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
             raise Exception
 
         try:
-            opt = optimize.minimize_scalar(
+            opt = minimize_scalar(
                 lambda x: -float(
                     self.calculate_multipool_tokens_out_from_tokens_in(
                         token_in=self.borrow_token,
@@ -502,20 +500,14 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
                 if len(override_reserves) != 2:
                     raise ValueError("Override length must be 2")
 
-                if type(override_reserves[0]) not in (
-                    int,
-                    Wei,
-                ):
+                if type(override_reserves[0]) != int:
                     raise TypeError(
-                        f"override for token0 must be int/Wei, is {type(override_reserves[0])}"
+                        f"override for token0 must be int, is {type(override_reserves[0])}"
                     )
 
-                if type(override_reserves[1]) not in (
-                    int,
-                    Wei,
-                ):
+                if type(override_reserves[1]) != int:
                     raise TypeError(
-                        f"override for token1 must be int/Wei, is {type(override_reserves[1])}"
+                        f"override for token1 must be int, is {type(override_reserves[1])}"
                     )
 
         # update the reserves tracked in self.reserves and flag the arb for recalculation if they did not match
