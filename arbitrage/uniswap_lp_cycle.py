@@ -1,5 +1,6 @@
 import asyncio
 import dataclasses
+from fractions import Fraction
 from typing import (
     TYPE_CHECKING,
     Dict,
@@ -494,11 +495,24 @@ class UniswapLpCycle(ArbitrageHelper):
 
                 price = pool_state.sqrt_price_x96**2 / (2**192)
 
-            # TODO: include fees
-            profit_factor *= price if vector.zero_for_one else 1 / price
+            if isinstance(pool, LiquidityPool):
+                # V2 fee is 0.3% by default, represented by 3/1000 = Fraction(3,1000)
+                fee = (
+                    pool.fee_token0 if vector.zero_for_one else pool.fee_token1
+                )
+            else:
+                # V3 fees are integer values representing hundredths of a bip (0.0001)
+                # e.g. fee=3000 represents 0.3%
+                fee = Fraction(pool.fee, 1000000)
+
+            profit_factor *= (price if vector.zero_for_one else 1 / price) * (
+                (fee.denominator - fee.numerator) / fee.denominator
+            )
 
         if profit_factor < 1.0:
-            raise ArbitrageError("No profitable arbitrage at current prices.")
+            raise ArbitrageError(
+                f"No profitable arbitrage at current prices. Profit factor: {profit_factor}"
+            )
 
     def _calculate(
         self,
