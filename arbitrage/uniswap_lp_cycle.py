@@ -256,12 +256,17 @@ class UniswapLpCycle(ArbitrageHelper):
             zip(self.swap_pools, self._swap_vectors)
         ):
             token_in = pool_vector.token_in
-            token_out = pool_vector.token_out
             zero_for_one = pool_vector.zero_for_one
 
+            _token_in_quantity: int
+            _token_out_quantity: int
+
+            if i == 0:
+                _token_in_quantity = token_in_quantity
+            else:
+                _token_in_quantity = _token_out_quantity
+
             try:
-                token_out_quantity: int
-                # calculate the swap output through the pool
                 if isinstance(pool, LiquidityPool):
                     pool_state_override = pool_state_overrides.get(
                         pool.address
@@ -271,12 +276,10 @@ class UniswapLpCycle(ArbitrageHelper):
                             pool_state_override,
                             UniswapV2PoolState,
                         )
-                    token_out_quantity = (
+                    _token_out_quantity = (
                         pool.calculate_tokens_out_from_tokens_in(
                             token_in=token_in,
-                            token_in_quantity=token_in_quantity
-                            if i == 0
-                            else token_out_quantity,
+                            token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
                     )
@@ -289,12 +292,10 @@ class UniswapLpCycle(ArbitrageHelper):
                             pool_state_override,
                             UniswapV3PoolState,
                         )
-                    token_out_quantity = (
+                    _token_out_quantity = (
                         pool.calculate_tokens_out_from_tokens_in(
                             token_in=token_in,
-                            token_in_quantity=token_in_quantity
-                            if i == 0
-                            else token_out_quantity,
+                            token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
                     )
@@ -307,24 +308,23 @@ class UniswapLpCycle(ArbitrageHelper):
                     f"(calculate_tokens_out_from_tokens_in): {e}"
                 )
             else:
-                if token_out_quantity == 0:
+                if _token_out_quantity == 0:
                     raise ArbitrageError(
                         f"Zero-output swap through pool {pool} @ {pool.address}"
                     )
 
-            # determine the uniswap version for the pool and format the output appropriately
             if isinstance(pool, LiquidityPool):
                 pools_amounts_out.append(
                     UniswapV2PoolSwapAmounts(
-                        amounts=(0, token_out_quantity)
+                        amounts=(0, _token_out_quantity)
                         if zero_for_one
-                        else (token_out_quantity, 0),
+                        else (_token_out_quantity, 0),
                     )
                 )
             elif isinstance(pool, V3LiquidityPool):
                 pools_amounts_out.append(
                     UniswapV3PoolSwapAmounts(
-                        amount_specified=token_in_quantity,
+                        amount_specified=_token_in_quantity,
                         zero_for_one=zero_for_one,
                         sqrt_price_limit_x96=TickMath.MIN_SQRT_RATIO + 1
                         if zero_for_one
