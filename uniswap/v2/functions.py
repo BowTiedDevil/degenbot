@@ -1,5 +1,5 @@
 import itertools
-from typing import Iterable, List, Union
+from typing import Iterable, List, Sequence, Union
 
 import eth_abi.packed
 from eth_typing import ChecksumAddress
@@ -11,10 +11,10 @@ from degenbot.uniswap.v2 import LiquidityPool
 
 
 def generate_v2_pool_address(
-    token_addresses: List[str],
-    factory_address: str,
+    token_addresses: Sequence[Union[str, ChecksumAddress]],
+    factory_address: Union[str, ChecksumAddress],
     init_hash: str,
-) -> str:
+) -> ChecksumAddress:
     """
     Generate the deterministic pool address from the token addresses.
 
