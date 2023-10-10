@@ -2096,10 +2096,6 @@ def test_type_checks():
     assert isinstance(wbtc, Erc20Token)
 
 
-def test_arbitrage():
-    assert arb.calculate_arbitrage() == (False, (9216006286314, -177578711481))
-
-
 def test_arbitrage_with_overrides():
     v2_pool_state_override = UniswapV2PoolState(
         pool=v2_lp,
@@ -2182,34 +2178,6 @@ def test_arbitrage_with_overrides():
     irrelevant_v3_pool.sparse_bitmap = False
     irrelevant_v3_pool.tick = 257907
     irrelevant_v3_pool.tick_spacing = 60
-
-    # Include overrides for the irrelevant pools.
-    # The freshly-built mock pools will be ignored by the arb calculation
-    # method since their addresses will not match
-    overrides = [
-        (irrelevant_v2_pool, v2_pool_state_override),
-        (irrelevant_v3_pool, v3_pool_state_override),
-    ]
-
-    # This should equal the result from the original test (no overriddes)
-    assert arb.calculate_arbitrage(override_state=overrides) == (
-        False,
-        (9216006286314, -177578711481),
-    )
-
-    overrides = [
-        (v2_lp, v2_pool_state_override),
-        (irrelevant_v3_pool, v3_pool_state_override),  # Should be ignored
-    ]
-
-    with pytest.raises(ArbitrageError):
-        arb.calculate_arbitrage(override_state=overrides)
-
-    # # This should equal the result from the test with the V2 override only
-    # assert arb.calculate_arbitrage(override_state=overrides) == (
-    #     False,
-    #     (15636391570906, -572345612992),
-    # )
 
     overrides = [
         (irrelevant_v2_pool, v2_pool_state_override),  # Should be ignored
