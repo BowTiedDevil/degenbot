@@ -45,6 +45,13 @@ from degenbot.uniswap.v3.v3_liquidity_pool import (
     V3LiquidityPool,
 )
 
+
+# TODO: support creation of empty LiquidityPool instead of using a mock
+class MockLiquidityPool(LiquidityPool):
+    def __init__(self):
+        pass
+
+
 # Internal dict of known router contracts by chain ID. Pre-populated with
 # mainnet addresses. New routers can be added by class method `add_router`
 _ROUTERS: Dict[
@@ -1818,12 +1825,6 @@ class UniswapTransaction(TransactionHelper):
                         )
                     except ManagerError:
                         print("Creating empty pool")
-
-                        # TODO: support creation of empty LiquidityPool instead of using a mock
-
-                        class MockLiquidityPool(LiquidityPool):
-                            def __init__(self):
-                                pass
 
                         _pool = MockLiquidityPool()
                         _pool.reserves_token0 = 0
