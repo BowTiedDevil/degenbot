@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from scipy.optimize import minimize_scalar  # type: ignore
+from scipy.optimize import minimize_scalar  # type: ignore[import]
 
 from degenbot.token import Erc20Token
 from degenbot.types import ArbitrageHelper
