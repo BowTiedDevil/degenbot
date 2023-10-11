@@ -1,5 +1,6 @@
 import dataclasses
 import warnings
+from bisect import bisect_left
 from decimal import Decimal
 from threading import Lock
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
@@ -367,6 +368,10 @@ class V3LiquidityPool(PoolHelper):
             tick=self.tick,
         )
 
+        self._pool_state_archive: Dict[int, UniswapV3PoolState] = {
+            self.update_block: self.state
+        }  # WIP
+
         AllPools(self._w3.eth.chain_id)[self.address] = self
 
         if not silent:
@@ -450,6 +455,8 @@ class V3LiquidityPool(PoolHelper):
             liquidity=self.liquidity,
             sqrt_price_x96=self.sqrt_price_x96,
             tick=self.tick,
+            tick_bitmap=self.tick_bitmap.copy(),
+            tick_data=self.tick_data.copy(),
         )
 
     def _update_tick_data_at_word(
@@ -846,6 +853,8 @@ class V3LiquidityPool(PoolHelper):
 
             if updated:
                 self._update_pool_state()
+                # WIP: maintain a dict of pool states by block to unwind updates that were removed by a re-org
+                self._pool_state_archive[block_number] = self.state
 
             if not silent:
                 logger.info(f"Liquidity: {self.liquidity}")
@@ -1005,6 +1014,55 @@ class V3LiquidityPool(PoolHelper):
             )
 
             return amountIn
+
+    def restore_state_before_block(
+        self,
+        block: int,
+    ) -> None:
+        """
+        Restore the last pool state recorded prior to a target block.
+
+        Use this method to maintain consistent state data following a chain
+        re-organization.
+        """
+
+        # Find the index for the most recent pool state PRIOR to the requested
+        # block number.
+        #
+        # e.g. Calling restore_state_before_block(block=104) for a pool with
+        # states at blocks 100, 101, 102, 103, 104. `bisect_left()` returns
+        # block_index=3, since block 104 is at index=4. The state held at
+        # index=3 is for block 103.
+        # block_index = self._pool_state_archive.bisect_left(block)
+
+        known_blocks = list(self._pool_state_archive.keys())
+        block_index = bisect_left(known_blocks, block)
+
+        if block_index == 0:
+            raise ValueError(f"No pool state known prior to block {block}")
+
+        # The last known state already meets the criterion, so return early
+        if block_index == len(known_blocks):
+            return
+
+        # Remove states at and after the specified block
+        for block in known_blocks[block_index:]:
+            del self._pool_state_archive[block]
+
+        restored_block, restored_state = list(
+            self._pool_state_archive.items()
+        )[-1]
+
+        # Set mutable values to match state
+        self.liquidity = restored_state.liquidity
+        self.sqrt_price_x96 = restored_state.sqrt_price_x96
+        self.tick = restored_state.tick
+        self.state = restored_state
+        self.update_block = restored_block
+        if restored_state.tick_bitmap:
+            self.tick_bitmap = restored_state.tick_bitmap
+        if restored_state.tick_data:
+            self.tick_data = restored_state.tick_data
 
     def external_update(
         self,
@@ -1238,6 +1296,8 @@ class V3LiquidityPool(PoolHelper):
 
             if updated_state:
                 self._update_pool_state()
+                self._pool_state_archive[block_number] = self.state
+
                 # if the update was forced, do not refresh the update block
                 if not force:
                     self.update_block = block_number

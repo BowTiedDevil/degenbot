@@ -1,17 +1,19 @@
+from threading import Lock
+from typing import Dict
+
 import pytest
 from eth_utils import to_checksum_address
 
 from degenbot import Erc20Token
-from degenbot.exceptions import LiquidityPoolError, ExternalUpdateError
+from degenbot.exceptions import ExternalUpdateError, LiquidityPoolError
 from degenbot.uniswap.v3.v3_liquidity_pool import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
+    UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
-    UniswapV3PoolExternalUpdate,
     V3LiquidityPool,
 )
-from threading import Lock
 
 
 class MockErc20Token(Erc20Token):
@@ -2057,6 +2059,45 @@ lp.tick_data = {
     ),
 }
 lp._update_pool_state()
+lp._pool_state_archive = {lp.update_block: lp.state}
+
+
+def test_reorg() -> None:
+    _START_BLOCK = 2
+    _END_BLOCK = 10
+
+    # Provide some dummy updates, then simulate a reorg back to the starting state
+    starting_state = lp.state
+    starting_liquidity = lp.liquidity
+
+    block_states: Dict[int, UniswapV3PoolState] = {1: lp.state}
+
+    for block_number in range(_START_BLOCK, _END_BLOCK + 1, 1):
+        lp.external_update(
+            update=UniswapV3PoolExternalUpdate(
+                block_number=block_number,
+                liquidity=starting_liquidity + 10_000 * block_number,
+            ),
+        )
+        block_states[block_number] = lp.state
+
+    last_block_state = lp.state
+
+    # Cannot restore to a pool state before the first
+    with pytest.raises(ValueError, match="No pool state known prior to block"):
+        lp.restore_state_before_block(1)
+
+    # Last state is at block 10, so this will do nothing
+    lp.restore_state_before_block(11)
+    assert lp.state == last_block_state
+
+    # Unwind the updates and compare to the stored states at previous blocks
+    for block_number in range(_END_BLOCK + 1, 1, -1):
+        lp.restore_state_before_block(block_number)
+        assert lp.state == block_states[block_number - 1]
+
+    # Verify the pool has been returned to the starting state
+    assert lp.state == starting_state
 
 
 def test_tick_bitmap_equality():
