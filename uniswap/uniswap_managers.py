@@ -148,6 +148,21 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             ]["init_hash"]
             self._untracked_pools: Set[ChecksumAddress] = set()
 
+    def __delitem__(
+        self, pool: Union[LiquidityPool, str, ChecksumAddress]
+    ) -> None:
+        pool_address: ChecksumAddress
+
+        if isinstance(pool, LiquidityPool):
+            pool_address = pool.address
+        else:
+            pool_address = to_checksum_address(pool)
+
+        try:
+            del self._tracked_pools[pool_address]
+        except KeyError:
+            pass
+
     def __repr__(self):
         return (
             f"UniswapV2LiquidityPoolManager(factory={self._factory_address})"
@@ -322,6 +337,21 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             except:
                 self._state[chain_id][factory_address] = {}
                 raise
+
+    def __delitem__(
+        self, pool: Union[V3LiquidityPool, str, ChecksumAddress]
+    ) -> None:
+        pool_address: ChecksumAddress
+
+        if isinstance(pool, V3LiquidityPool):
+            pool_address = pool.address
+        else:
+            pool_address = to_checksum_address(pool)
+
+        try:
+            del self._tracked_pools[pool_address]
+        except KeyError:
+            pass
 
     def __repr__(self):
         return (

@@ -23,8 +23,12 @@ class AllPools:
         finally:
             self.pools = _all_pools[chain_id]
 
-    def __delitem__(self, pool_address: Union[ChecksumAddress, str]):
-        _pool_address = to_checksum_address(pool_address)
+    def __delitem__(self, pool: Union[PoolHelper, ChecksumAddress, str]):
+        if isinstance(pool, PoolHelper):
+            _pool_address = pool.address
+        else:
+            _pool_address = to_checksum_address(pool)
+
         del self.pools[_pool_address]
 
     def __getitem__(self, pool_address: Union[ChecksumAddress, str]):
