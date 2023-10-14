@@ -5,7 +5,11 @@ import pytest
 from eth_utils import to_checksum_address
 
 from degenbot import Erc20Token
-from degenbot.exceptions import ExternalUpdateError, LiquidityPoolError
+from degenbot.exceptions import (
+    ExternalUpdateError,
+    LiquidityPoolError,
+    NoPoolStateAvailable,
+)
 from degenbot.uniswap.v3.v3_liquidity_pool import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
@@ -2084,7 +2088,7 @@ def test_reorg() -> None:
     last_block_state = lp.state
 
     # Cannot restore to a pool state before the first
-    with pytest.raises(ValueError, match="No pool state known prior to block"):
+    with pytest.raises(NoPoolStateAvailable):
         lp.restore_state_before_block(1)
 
     # Last state is at block 10, so this will do nothing

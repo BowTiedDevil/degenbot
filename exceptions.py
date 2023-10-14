@@ -100,6 +100,14 @@ class MissingTickWordError(LiquidityPoolError):
     """
 
 
+class NoPoolStateAvailable(LiquidityPoolError):
+    """
+    Thrown by the `restore_state_before_block` method when a previous pool
+    state is not available. This can occur, e.g. if a pool was created in a
+    block at or after a re-organization.
+    """
+
+
 class ZeroSwapError(LiquidityPoolError):
     """
     Thrown if a swap calculation resulted or would result in zero output

@@ -16,6 +16,7 @@ from degenbot.exceptions import (
     EVMRevertError,
     ExternalUpdateError,
     LiquidityPoolError,
+    NoPoolStateAvailable,
     ZeroSwapError,
 )
 from degenbot.logging import logger
@@ -1039,7 +1040,9 @@ class V3LiquidityPool(PoolHelper):
         block_index = bisect_left(known_blocks, block)
 
         if block_index == 0:
-            raise ValueError(f"No pool state known prior to block {block}")
+            raise NoPoolStateAvailable(
+                f"No pool state known prior to block {block}"
+            )
 
         # The last known state already meets the criterion, so return early
         if block_index == len(known_blocks):
