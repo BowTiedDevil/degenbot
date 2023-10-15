@@ -1,4 +1,5 @@
 import dataclasses
+from bisect import bisect_left
 from decimal import Decimal
 from fractions import Fraction
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
@@ -13,6 +14,7 @@ from degenbot.exceptions import (
     DeprecationError,
     ExternalUpdateError,
     LiquidityPoolError,
+    NoPoolStateAvailable,
     ZeroSwapError,
 )
 from degenbot.logging import logger
@@ -45,6 +47,7 @@ class LiquidityPool(PoolHelper):
     uniswap_version = 2
 
     __slots__: Tuple[str, ...] = (
+        "_pool_state_archive",
         "_ratio_token0_in",
         "_ratio_token1_in",
         "_update_method",
@@ -277,6 +280,9 @@ class LiquidityPool(PoolHelper):
             reserves_token0=self.reserves_token0,
             reserves_token1=self.reserves_token1,
         )
+        self._pool_state_archive: Dict[int, UniswapV2PoolState] = {
+            self.update_block: self.state
+        }  # WIP
 
         AllPools(self._w3.eth.chain_id)[self.address] = self
 
@@ -553,6 +559,52 @@ class LiquidityPool(PoolHelper):
         denominator = reserves_in * fee.denominator + amount_in_with_fee
 
         return numerator // denominator
+
+    def restore_state_before_block(
+        self,
+        block: int,
+    ) -> None:
+        """
+        Restore the last pool state recorded prior to a target block.
+
+        Use this method to maintain consistent state data following a chain
+        re-organization.
+        """
+
+        # Find the index for the most recent pool state PRIOR to the requested
+        # block number.
+        #
+        # e.g. Calling restore_state_before_block(block=104) for a pool with
+        # states at blocks 100, 101, 102, 103, 104. `bisect_left()` returns
+        # block_index=3, since block 104 is at index=4. The state held at
+        # index=3 is for block 103.
+        # block_index = self._pool_state_archive.bisect_left(block)
+
+        known_blocks = list(self._pool_state_archive.keys())
+        block_index = bisect_left(known_blocks, block)
+
+        if block_index == 0:
+            raise NoPoolStateAvailable(
+                f"No pool state known prior to block {block}"
+            )
+
+        # The last known state already meets the criterion, so return early
+        if block_index == len(known_blocks):
+            return
+
+        # Remove states at and after the specified block
+        for block in known_blocks[block_index:]:
+            del self._pool_state_archive[block]
+
+        restored_block, restored_state = list(
+            self._pool_state_archive.items()
+        )[-1]
+
+        # Set mutable values to match state
+        self.reserves_token0 = restored_state.reserves_token0
+        self.reserves_token1 = restored_state.reserves_token1
+        self.state = restored_state
+        self.update_block = restored_block
 
     def set_swap_target(
         self,
@@ -833,6 +885,7 @@ class LiquidityPool(PoolHelper):
                     # recalculate possible swaps using the new reserves
                     self.calculate_tokens_in_from_ratio_out()
                     self._update_pool_state()
+                    self._pool_state_archive[update_block] = self.state
                     success = True
                 else:
                     success = False
@@ -863,6 +916,7 @@ class LiquidityPool(PoolHelper):
                 self.reserves_token1 = external_token1_reserves
                 self.new_reserves = True
                 self._update_pool_state()
+                self._pool_state_archive[update_block] = self.state
 
             if not silent:
                 logger.info(f"[{self.name}]")

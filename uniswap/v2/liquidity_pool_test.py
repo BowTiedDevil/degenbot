@@ -1,10 +1,11 @@
 from fractions import Fraction
+from typing import Dict
 
 import pytest
 from eth_utils import to_checksum_address
 
 from degenbot import Erc20Token, LiquidityPool
-from degenbot.exceptions import ZeroSwapError
+from degenbot.exceptions import NoPoolStateAvailable, ZeroSwapError
 from degenbot.uniswap.v2.liquidity_pool import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
@@ -56,7 +57,12 @@ lp.reserves_token0 = 16231137593
 lp.reserves_token1 = 2571336301536722443178
 lp.token0 = token0
 lp.token1 = token1
+lp.update_block = 1
+lp._ratio_token0_in = None
+lp._ratio_token1_in = None
+lp._update_method = "external"
 lp._update_pool_state()
+lp._pool_state_archive = {lp.update_block: lp.state}
 
 
 def test_calculate_tokens_out_from_tokens_in():
@@ -181,6 +187,54 @@ def test_comparisons():
     set([lp, other_lp])
 
 
+def test_reorg() -> None:
+    _START_BLOCK = 2
+    _END_BLOCK = 10
+
+    # Provide some dummy updates, then simulate a reorg back to the starting state
+    starting_state = lp.state
+    starting_token0_reserves = starting_state.reserves_token0
+    starting_token1_reserves = starting_state.reserves_token1
+
+    block_states: Dict[int, UniswapV2PoolState] = {1: lp.state}
+
+    for block_number in range(_START_BLOCK, _END_BLOCK + 1, 1):
+        lp.update_reserves(
+            external_token0_reserves=starting_token0_reserves
+            + 10_000 * block_number,
+            external_token1_reserves=starting_token1_reserves
+            + 10_000 * block_number,
+            print_ratios=False,
+            print_reserves=False,
+            update_block=block_number,
+        )
+        # lp.external_update(
+        #     update=UniswapV2PoolExternalUpdate(
+        #         block_number=block_number,
+        #         liquidity=starting_liquidity + 10_000 * block_number,
+        #     ),
+        # )
+        block_states[block_number] = lp.state
+
+    last_block_state = lp.state
+
+    # Cannot restore to a pool state before the first
+    with pytest.raises(NoPoolStateAvailable):
+        lp.restore_state_before_block(1)
+
+    # Last state is at block 10, so this will do nothing
+    lp.restore_state_before_block(11)
+    assert lp.state == last_block_state
+
+    # Unwind the updates and compare to the stored states at previous blocks
+    for block_number in range(_END_BLOCK + 1, 1, -1):
+        lp.restore_state_before_block(block_number)
+        assert lp.state == block_states[block_number - 1]
+
+    # Verify the pool has been returned to the starting state
+    assert lp.state == starting_state
+
+
 def test_simulations():
     sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=8000000000,
@@ -285,6 +339,24 @@ def test_simulations_with_override():
     )
 
 
+def test_swap_for_all():
+    # The last token in a pool can never be swapped for
+    assert (
+        lp.calculate_tokens_out_from_tokens_in(
+            lp.token1,
+            2**256 - 1,
+        )
+        == lp.reserves_token0 - 1
+    )
+    assert (
+        lp.calculate_tokens_out_from_tokens_in(
+            lp.token0,
+            2**256 - 1,
+        )
+        == lp.reserves_token1 - 1
+    )
+
+
 def test_zero_swaps():
     with pytest.raises(ZeroSwapError):
         assert (
@@ -303,21 +375,3 @@ def test_zero_swaps():
             )
             == 0
         )
-
-
-def test_swap_for_all():
-    # The last token in a pool can never be swapped for
-    assert (
-        lp.calculate_tokens_out_from_tokens_in(
-            lp.token1,
-            2**256 - 1,
-        )
-        == lp.reserves_token0 - 1
-    )
-    assert (
-        lp.calculate_tokens_out_from_tokens_in(
-            lp.token0,
-            2**256 - 1,
-        )
-        == lp.reserves_token1 - 1
-    )
