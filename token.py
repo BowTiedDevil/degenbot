@@ -128,19 +128,19 @@ class Erc20Token:
                     continue
                 else:
                     break
-            if not self._w3.eth.get_code(self.address):
-                raise ValueError("No contract deployed at this address")
         except Exception as e:
-            print(f"(token) {type(e)}: {e}")
+            print(f"(token.name @ {self.address}) {type(e)}: {e}")
             raise
 
         try:
             self.name
         except AttributeError:
+            if not self._w3.eth.get_code(self.address):
+                raise ValueError("No contract deployed at this address")
+            self.name = f"Unknown @ {self.address}"
             warn(
                 f"Token contract at {address} does not implement a 'name' function."
             )
-            self.name = f"Unknown @ {self.address}"
 
         try:
             self.symbol: str
@@ -161,19 +161,19 @@ class Erc20Token:
                     continue
                 else:
                     break
-            if not self._w3.eth.get_code(self.address):
-                raise ValueError("No contract deployed at this address")
         except Exception as e:
-            print(f"(token) {type(e)}: {e}")
+            print(f"(token.symbol @ {self.address}) {type(e)}: {e}")
             raise
 
         try:
             self.symbol
         except AttributeError:
+            if not self._w3.eth.get_code(self.address):
+                raise ValueError("No contract deployed at this address")
+            self.symbol = "UNKNOWN"
             warn(
                 f"Token contract at {address} does not implement a 'symbol' function."
             )
-            self.symbol = "UNKNOWN"
 
         try:
             self.decimals: int
@@ -195,19 +195,19 @@ class Erc20Token:
                     continue
                 else:
                     break
-            if not self._w3.eth.get_code(self.address):
-                raise ValueError("No contract deployed at this address")
         except Exception as e:
-            print(f"(token) {type(e)}: {e}")
+            print(f"(token.decimals @ {self.address}) {type(e)}: {e}")
             raise
 
         try:
             self.decimals
         except:
+            if not self._w3.eth.get_code(self.address):
+                raise ValueError("No contract deployed at this address")
+            self.decimals = 0
             warn(
                 f"Token contract at {address} does not implement a 'decimals' function. Setting to 0."
             )
-            self.decimals = 0
 
         # if user:
         #     self.update_balance(user)
