@@ -1,6 +1,7 @@
 import asyncio
 import dataclasses
 from fractions import Fraction
+from threading import Lock
 from typing import (
     TYPE_CHECKING,
     Dict,
@@ -73,6 +74,7 @@ class UniswapV3PoolSwapAmounts:
 
 class UniswapLpCycle(ArbitrageHelper):
     __slots__ = (
+        "_lock",
         "_swap_vectors",
         "best",
         "id",
@@ -91,6 +93,8 @@ class UniswapLpCycle(ArbitrageHelper):
         id: str,
         max_input: Optional[int] = None,
     ):
+        self._lock = Lock()
+
         for pool in swap_pools:
             if not isinstance(pool, (LiquidityPool, V3LiquidityPool)):
                 raise ValueError(
@@ -173,6 +177,32 @@ class UniswapLpCycle(ArbitrageHelper):
             "swap_pool_amounts": [],
             # "swap_pool_tokens": self.swap_pool_tokens,
         }
+
+    def __getstate__(self) -> dict:
+        # Remove objects that cannot be pickled and are unnecessary to perform
+        # the calculation
+        keys_to_remove = ("_lock",)
+
+        try:
+            self.__slots__
+        except AttributeError:
+            pass
+        else:
+            return {
+                attr_name: getattr(self, attr_name, None)
+                for attr_name in self.__slots__
+                if attr_name not in keys_to_remove
+            }
+
+        return {
+            key: value
+            for key, value in self.__dict__.items()
+            if key not in keys_to_remove
+        }
+
+    def __setstate__(self, state: dict):
+        for key, value in state.items():
+            setattr(self, key, value)
 
     def __str__(self) -> str:
         return self.name
@@ -688,11 +718,12 @@ class UniswapLpCycle(ArbitrageHelper):
                     f"Cannot process arbitrage {self} with executor: {pool.address} has sparse bitmap"
                 )
 
-        return asyncio.get_running_loop().run_in_executor(
-            executor,
-            self.calculate,
-            override_state,
-        )
+        with self._lock:
+            return asyncio.get_running_loop().run_in_executor(
+                executor,
+                self.calculate,
+                override_state,
+            )
 
     def calculate_arbitrage_return_best(
         self,
