@@ -182,24 +182,23 @@ class UniswapLpCycle(ArbitrageHelper):
     def __getstate__(self) -> dict:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
-        keys_to_remove = ("_lock",)
+        dropped_attributes = ("_lock",)
 
-        try:
-            self.__slots__
-        except AttributeError:
-            pass
-        else:
-            return {
-                attr_name: getattr(self, attr_name, None)
-                for attr_name in self.__slots__
-                if attr_name not in keys_to_remove
-            }
-
-        return {
-            key: value
-            for key, value in self.__dict__.items()
-            if key not in keys_to_remove
-        }
+        with self._lock:
+            try:
+                self.__slots__
+            except AttributeError:
+                return {
+                    attribute: value
+                    for attribute, value in self.__dict__.items()
+                    if attribute not in dropped_attributes
+                }
+            else:
+                return {
+                    attribute: getattr(self, attribute, None)
+                    for attribute in self.__slots__
+                    if attribute not in dropped_attributes
+                }
 
     def __setstate__(self, state: dict):
         for key, value in state.items():
@@ -726,12 +725,11 @@ class UniswapLpCycle(ArbitrageHelper):
                     f"Cannot process arbitrage {self} with executor: {pool.address} has sparse bitmap"
                 )
 
-        with self._lock:
-            return asyncio.get_running_loop().run_in_executor(
-                executor,
-                self.calculate,
-                override_state,
-            )
+        return asyncio.get_running_loop().run_in_executor(
+            executor,
+            self.calculate,
+            override_state,
+        )
 
     def calculate_arbitrage_return_best(
         self,
