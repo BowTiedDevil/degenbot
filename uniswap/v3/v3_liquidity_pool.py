@@ -3,14 +3,14 @@ import warnings
 from bisect import bisect_left
 from decimal import Decimal
 from threading import Lock
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from eth_typing import ChecksumAddress
 from eth_utils import to_checksum_address
 
-from degenbot.config import get_web3
-from degenbot.dex.uniswap import TICKLENS_ADDRESSES
-from degenbot.exceptions import (
+from ...config import get_web3
+from ...dex.uniswap import TICKLENS_ADDRESSES
+from ...exceptions import (
     BitmapWordUnavailableError,
     BlockUnavailableError,
     EVMRevertError,
@@ -19,129 +19,49 @@ from degenbot.exceptions import (
     NoPoolStateAvailable,
     ZeroSwapError,
 )
-from degenbot.logging import logger
-from degenbot.manager import AllPools, Erc20TokenHelperManager
-from degenbot.token import Erc20Token
-from degenbot.types import PoolHelper
-from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
-from degenbot.uniswap.v3.functions import generate_v3_pool_address
-from degenbot.uniswap.v3.libraries import (
-    LiquidityMath,
-    SwapMath,
-    TickBitmap,
-    TickMath,
+from ...logging import logger
+from ...manager import AllPools, Erc20TokenHelperManager
+from ...token import Erc20Token
+from ...types import PoolHelper
+from ..abi import UNISWAP_V3_POOL_ABI
+from .functions import generate_v3_pool_address
+from .libraries import liquidity_math as LiquidityMath
+from .libraries import swap_math as SwapMath
+from .libraries import tick_bitmap as TickBitmap
+from .libraries import tick_math as TickMath
+from .libraries.functions import to_int256
+from .tick_lens import TickLens
+from .v3_dataclasses import (
+    UniswapV3BitmapAtWord,
+    UniswapV3LiquidityAtTick,
+    UniswapV3PoolExternalUpdate,
+    UniswapV3PoolSimulationResult,
+    UniswapV3PoolState,
 )
-from degenbot.uniswap.v3.libraries.functions import to_int256
-from degenbot.uniswap.v3.tick_lens import TickLens
-
-
-@dataclasses.dataclass(slots=True)
-class UniswapV3BitmapAtWord:
-    bitmap: int = 0
-    block: Optional[int] = dataclasses.field(compare=False, default=None)
-
-    def to_dict(self):
-        return dataclasses.asdict(self)
-
-
-@dataclasses.dataclass(slots=True)
-class UniswapV3LiquidityAtTick:
-    liquidityNet: int = 0
-    liquidityGross: int = 0
-    block: Optional[int] = dataclasses.field(compare=False, default=None)
-
-    def to_dict(self):
-        return dataclasses.asdict(self)
-
-
-@dataclasses.dataclass(slots=True, eq=False)
-class UniswapV3PoolExternalUpdate:
-    block_number: int = dataclasses.field(compare=False)
-    liquidity: Optional[int] = None
-    sqrt_price_x96: Optional[int] = None
-    tick: Optional[int] = None
-    liquidity_change: Optional[
-        Tuple[
-            int,  # Liquidity
-            int,  # TickLower
-            int,  # TickUpper
-        ]
-    ] = None
-
-
-@dataclasses.dataclass(slots=True)
-class UniswapV3PoolState:
-    pool: "V3LiquidityPool"
-    liquidity: int
-    sqrt_price_x96: int
-    tick: int
-    tick_bitmap: Optional[Dict] = dataclasses.field(
-        compare=False, default=None
-    )
-    tick_data: Optional[Dict] = dataclasses.field(compare=False, default=None)
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV3PoolSimulationResult:
-    amount0_delta: int
-    amount1_delta: int
-    current_state: UniswapV3PoolState = dataclasses.field(compare=False)
-    future_state: UniswapV3PoolState = dataclasses.field(compare=False)
-
-
-@dataclasses.dataclass(slots=True, eq=False)
-class SwapCache:
-    liquidityStart: int
-    tickCumulative: int
-
-
-@dataclasses.dataclass(slots=True, eq=False)
-class SwapState:
-    amountSpecifiedRemaining: int
-    amountCalculated: int
-    sqrtPriceX96: int
-    tick: int
-    liquidity: int
-
-
-@dataclasses.dataclass(slots=True, eq=False)
-class StepComputations:
-    sqrtPriceStartX96: int = 0
-    tickNext: int = 0
-    initialized: bool = False
-    sqrtPriceNextX96: int = 0
-    amountIn: int = 0
-    amountOut: int = 0
-    feeAmount: int = 0
 
 
 class V3LiquidityPool(PoolHelper):
     __slots__: Tuple[str, ...] = (
+        "_extra_words",
+        "_fee",
+        "_pool_state_archive",
         "_liquidity_lock",
         "_slot0_lock",
+        "_sparse_bitmap",
+        "_tick_spacing",
+        "_update_block",
         "_update_log",
         "_update_method",
         "_w3_contract",
         "_w3",
-        "abi",
         "address",
-        "extra_words",
         "factory",
-        "fee",
         "lens",
         "liquidity_update_block",
-        "liquidity",
         "name",
-        "sparse_bitmap",
-        "sqrt_price_x96",
         "state",
-        "tick_bitmap",
-        "tick_data",
-        "tick_spacing",
-        "tick",
         "token0",
         "token1",
-        "update_block",
     )
 
     # Holds a reference to a TickLens contract object. This is a singleton
@@ -176,16 +96,22 @@ class V3LiquidityPool(PoolHelper):
         state_block: Optional[int] = None,
     ):
         self.address = to_checksum_address(address)
-        self.abi = abi or UNISWAP_V3_POOL_ABI
+        abi = abi or UNISWAP_V3_POOL_ABI
+        self.state: UniswapV3PoolState = UniswapV3PoolState(
+            pool=self,
+            liquidity=0,
+            sqrt_price_x96=0,
+            tick=0,
+            tick_bitmap=dict(),
+            tick_data=dict(),
+        )
 
         _web3 = get_web3()
         if _web3 is not None:
             self._w3 = _web3
         else:
-            from brownie import Contract  # type: ignore[import]
-            from brownie import (
-                multicall as brownie_multicall,
-            )  # type: ignore[import]
+            from brownie import Contract  # type: ignore[import] # noqa: F401
+            from brownie import multicall as brownie_multicall  # noqa: F401
             from brownie import web3 as brownie_web3
 
             if brownie_web3.isConnected():
@@ -195,7 +121,7 @@ class V3LiquidityPool(PoolHelper):
 
         self._w3_contract = self._w3.eth.contract(
             address=self.address,
-            abi=self.abi,
+            abi=abi,
         )
 
         # held by methods that manipulate liquidity data
@@ -204,10 +130,9 @@ class V3LiquidityPool(PoolHelper):
         # held by methods that manipulate state data held by slot0
         self._slot0_lock = Lock()
 
-        self.update_block = (
+        self._update_block = (
             state_block if state_block else self._w3.eth.get_block_number()
         )
-        self.liquidity_update_block = 0
 
         if factory_address:
             self.factory = to_checksum_address(factory_address)
@@ -267,13 +192,13 @@ class V3LiquidityPool(PoolHelper):
                 silent=silent,
             )
 
-        self.fee: int = fee or self._w3_contract.functions.fee().call()
-        self.tick_spacing = self._TICKSPACING_BY_FEE[self.fee]  # immutable
+        self._fee: int = fee or self._w3_contract.functions.fee().call()
+        self._tick_spacing = self._TICKSPACING_BY_FEE[self._fee]  # immutable
 
         if factory_address is not None and factory_init_hash is not None:
             computed_pool_address = generate_v3_pool_address(
                 token_addresses=[self.token0.address, self.token1.address],
-                fee=self.fee,
+                fee=self._fee,
                 factory_address=factory_address,
                 init_hash=factory_init_hash,
             )
@@ -286,32 +211,18 @@ class V3LiquidityPool(PoolHelper):
             self.name = name
         else:
             self.name = (
-                f"{self.token0}-{self.token1} (V3, {self.fee/10000:.2f}%)"
+                f"{self.token0}-{self.token1} (V3, {self._fee/10000:.2f}%)"
             )
-
-        self.liquidity = self._w3_contract.functions.liquidity().call(
-            block_identifier=self.update_block
-        )
-
-        (
-            self.sqrt_price_x96,
-            self.tick,
-            *_,
-        ) = self._w3_contract.functions.slot0().call(
-            block_identifier=self.update_block
-        )
 
         if update_method is not None:
             warnings.warn(
                 "The `update_method` argument to `V3LiquidityPool()` is unused and otherwise ignored. Remove it to stop seeing this message."
             )
             self._update_method = update_method
-        self.extra_words = extra_words
+        self._extra_words = extra_words
 
         # default to an empty, sparse bitmap with no tick data
-        self.tick_data: Dict[int, UniswapV3LiquidityAtTick] = {}
-        self.tick_bitmap: Dict[int, UniswapV3BitmapAtWord] = {}
-        self.sparse_bitmap = True
+        self._sparse_bitmap = True
 
         if (tick_bitmap is not None) != (tick_data is not None):
             raise ValueError(
@@ -320,7 +231,7 @@ class V3LiquidityPool(PoolHelper):
 
         if tick_bitmap is not None and tick_data is not None:
             # if a snapshot was provided, assume it is complete
-            self.sparse_bitmap = False
+            self._sparse_bitmap = False
 
         if tick_bitmap is not None:
             # transform dict to UniswapV3BitmapAtWord
@@ -359,19 +270,26 @@ class V3LiquidityPool(PoolHelper):
             self._update_tick_data_at_word(
                 word_position,
                 single_word=True,
-                block_number=self.update_block,
+                block_number=self._update_block,
             )
 
-        self.state = UniswapV3PoolState(
-            pool=self,
-            liquidity=self.liquidity,
-            sqrt_price_x96=self.sqrt_price_x96,
-            tick=self.tick,
+        self.liquidity = self._w3_contract.functions.liquidity().call(
+            block_identifier=self._update_block
         )
 
+        (
+            self.sqrt_price_x96,
+            self.tick,
+            *_,
+        ) = self._w3_contract.functions.slot0().call(
+            block_identifier=self._update_block
+        )
+
+        self._update_pool_state()
+
         self._pool_state_archive: Dict[int, UniswapV3PoolState] = {
-            self.update_block: self.state
-        }  # WIP
+            self._update_block: self.state
+        }
 
         AllPools(self._w3.eth.chain_id)[self.address] = self
 
@@ -379,7 +297,7 @@ class V3LiquidityPool(PoolHelper):
             logger.info(self.name)
             logger.info(f"• Token 0: {self.token0}")
             logger.info(f"• Token 1: {self.token1}")
-            logger.info(f"• Fee: {self.fee}")
+            logger.info(f"• Fee: {self._fee}")
             logger.info(f"• Liquidity: {self.liquidity}")
             logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
             logger.info(f"• Tick: {self.tick}")
@@ -392,8 +310,9 @@ class V3LiquidityPool(PoolHelper):
         else:
             raise NotImplementedError
 
-    # Some objects cannot be pickled, so set those references to None and return the state
     def __getstate__(self) -> dict:
+        # Remove objects that cannot be pickled and are unnecessary to perform
+        # the calculation
         keys_to_remove = (
             "_liquidity_lock",
             "_slot0_lock",
@@ -423,7 +342,7 @@ class V3LiquidityPool(PoolHelper):
         return hash(self.address)
 
     def __repr__(self):
-        return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self.fee})"
+        return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self._fee})"
 
     def __setstate__(self, state: dict):
         for key, value in state.items():
@@ -448,7 +367,7 @@ class V3LiquidityPool(PoolHelper):
             0 = wordPosition (zero-indexed)
             10 = bitPosition (zero-indexed)
         """
-        return TickBitmap.position(int(Decimal(tick) // self.tick_spacing))
+        return TickBitmap.position(int(Decimal(tick) // self._tick_spacing))
 
     def _update_pool_state(self) -> None:
         self.state = UniswapV3PoolState(
@@ -589,7 +508,6 @@ class V3LiquidityPool(PoolHelper):
                                 liquidityGross=liquidity_gross,
                                 block=block_number,
                             )
-                    self.liquidity_update_block = block_number
 
     def _uniswap_v3_pool_swap(
         self,
@@ -599,9 +517,7 @@ class V3LiquidityPool(PoolHelper):
         override_start_liquidity: Optional[int] = None,
         override_start_sqrt_price_x96: Optional[int] = None,
         override_start_tick: Optional[int] = None,
-        # TODO: support tick data overrides
         override_tick_data: Optional[dict] = None,
-        # TODO: support tick bitmap overrides
         override_tick_bitmap: Optional[dict] = None,
     ) -> Tuple[int, int, int, int, int]:
         """
@@ -611,6 +527,29 @@ class V3LiquidityPool(PoolHelper):
         It is called by the `calculate_tokens_in_from_tokens_out` and `calculate_tokens_out_from_tokens_in` methods to calculate
         swap amounts, ticks crossed, liquidity changes at various ticks, etc.
         """
+
+        @dataclasses.dataclass(slots=True, eq=False)
+        class SwapCache:
+            liquidityStart: int
+            tickCumulative: int
+
+        @dataclasses.dataclass(slots=True, eq=False)
+        class SwapState:
+            amountSpecifiedRemaining: int
+            amountCalculated: int
+            sqrtPriceX96: int
+            tick: int
+            liquidity: int
+
+        @dataclasses.dataclass(slots=True, eq=False)
+        class StepComputations:
+            sqrtPriceStartX96: int = 0
+            tickNext: int = 0
+            initialized: bool = False
+            sqrtPriceNextX96: int = 0
+            amountIn: int = 0
+            amountOut: int = 0
+            feeAmount: int = 0
 
         if amount_specified == 0:
             raise EVMRevertError("AS")
@@ -630,6 +569,16 @@ class V3LiquidityPool(PoolHelper):
         else:
             tick = self.tick
 
+        if override_tick_bitmap is not None:
+            _tick_bitmap = override_tick_bitmap
+        else:
+            _tick_bitmap = self.tick_bitmap.copy()
+
+        if override_tick_data is not None:
+            _tick_data = override_tick_data
+        else:
+            _tick_data = self.tick_data.copy()
+
         if not (
             sqrt_price_limit_x96 < sqrt_price_x96
             and sqrt_price_limit_x96 > TickMath.MIN_SQRT_RATIO
@@ -637,7 +586,7 @@ class V3LiquidityPool(PoolHelper):
             else sqrt_price_limit_x96 > sqrt_price_x96
             and sqrt_price_limit_x96 < TickMath.MAX_SQRT_RATIO
         ):
-            raise EVMRevertError(f"SPL")
+            raise EVMRevertError("SPL")
 
         cache = SwapCache(
             liquidityStart=liquidity,
@@ -676,23 +625,22 @@ class V3LiquidityPool(PoolHelper):
                         step.tickNext,
                         step.initialized,
                     ) = TickBitmap.nextInitializedTickWithinOneWord(
-                        self.tick_bitmap,
+                        _tick_bitmap,
                         state.tick,
-                        self.tick_spacing,
+                        self._tick_spacing,
                         zeroForOne,
                     )
                 except BitmapWordUnavailableError as e:
                     missing_word = e.args[1]
-                    if self.sparse_bitmap:
+                    if self._sparse_bitmap:
                         logger.debug(
                             f"(swap) {self.name} fetching word {missing_word}"
                         )
                         self._update_tick_data_at_word(missing_word)
                     else:
                         # bitmap is complete, so mark the word as empty
-                        self.tick_bitmap[
-                            missing_word
-                        ] = UniswapV3BitmapAtWord()
+                        # self.tick_bitmap[missing_word] = UniswapV3BitmapAtWord()
+                        _tick_bitmap[missing_word] = UniswapV3BitmapAtWord()
                 else:
                     # nextInitializedTickWithinOneWord will search up to 256 ticks away, which may
                     # return a tick in an adjacent word if there are no initialized ticks in the current word.
@@ -705,8 +653,8 @@ class V3LiquidityPool(PoolHelper):
                     )
 
                     if (
-                        self.sparse_bitmap
-                        and tick_next_word not in self.tick_bitmap
+                        self._sparse_bitmap
+                        and tick_next_word not in _tick_bitmap
                     ):
                         logger.debug(
                             f"tickNext={step.tickNext} out of range! Fetching word={tick_next_word}"
@@ -744,7 +692,7 @@ class V3LiquidityPool(PoolHelper):
                 else step.sqrtPriceNextX96,
                 state.liquidity,
                 state.amountSpecifiedRemaining,
-                self.fee,
+                self._fee,
             )
 
             if exactInput:
@@ -765,7 +713,7 @@ class V3LiquidityPool(PoolHelper):
                 # if the tick is initialized, run the tick transition
                 if step.initialized:
                     tick_next = step.tickNext
-                    liquidityNet = self.tick_data[tick_next].liquidityNet
+                    liquidityNet = _tick_data[tick_next].liquidityNet
 
                     if zeroForOne:
                         liquidityNet = -liquidityNet
@@ -800,6 +748,85 @@ class V3LiquidityPool(PoolHelper):
             state.tick,
         )
 
+    @property
+    def liquidity(self) -> int:
+        return self.state.liquidity
+
+    @liquidity.setter
+    def liquidity(self, new_liquidity: int) -> None:
+        self.state = UniswapV3PoolState(
+            pool=self,
+            liquidity=new_liquidity,
+            sqrt_price_x96=self.sqrt_price_x96,
+            tick=self.tick,
+            tick_bitmap=self.tick_bitmap,
+            tick_data=self.tick_data,
+        )
+
+    @property
+    def sqrt_price_x96(self) -> int:
+        return self.state.sqrt_price_x96
+
+    @sqrt_price_x96.setter
+    def sqrt_price_x96(self, new_sqrt_price_x96: int) -> None:
+        self.state = UniswapV3PoolState(
+            pool=self,
+            liquidity=self.liquidity,
+            sqrt_price_x96=new_sqrt_price_x96,
+            tick=self.tick,
+            tick_bitmap=self.tick_bitmap,
+            tick_data=self.tick_data,
+        )
+
+    @property
+    def tick(self) -> int:
+        return self.state.tick
+
+    @tick.setter
+    def tick(self, new_tick: int) -> None:
+        self.state = UniswapV3PoolState(
+            pool=self,
+            liquidity=self.liquidity,
+            sqrt_price_x96=self.sqrt_price_x96,
+            tick=new_tick,
+            tick_bitmap=self.tick_bitmap,
+            tick_data=self.tick_data,
+        )
+
+    @property
+    def tick_bitmap(self) -> Dict[int, UniswapV3BitmapAtWord]:
+        if TYPE_CHECKING:
+            assert self.state.tick_bitmap is not None
+        return self.state.tick_bitmap
+
+    @tick_bitmap.setter
+    def tick_bitmap(self, new_tick_bitmap: dict) -> None:
+        self.state = UniswapV3PoolState(
+            pool=self,
+            liquidity=self.liquidity,
+            sqrt_price_x96=self.sqrt_price_x96,
+            tick=self.tick,
+            tick_bitmap=new_tick_bitmap,
+            tick_data=self.tick_data,
+        )
+
+    @property
+    def tick_data(self) -> Dict[int, UniswapV3LiquidityAtTick]:
+        if TYPE_CHECKING:
+            assert self.state.tick_data is not None
+        return self.state.tick_data
+
+    @tick_data.setter
+    def tick_data(self, new_tick_data: dict) -> None:
+        self.state = UniswapV3PoolState(
+            pool=self,
+            liquidity=self.liquidity,
+            sqrt_price_x96=self.sqrt_price_x96,
+            tick=self.tick,
+            tick_bitmap=self.tick_bitmap,
+            tick_data=new_tick_data,
+        )
+
     def auto_update(
         self,
         silent: bool = True,
@@ -820,13 +847,13 @@ class V3LiquidityPool(PoolHelper):
         with self._slot0_lock:
             updated = False
 
-            # use the block_number if provided, otherwise pull from Brownie
+            # use the block_number if provided, otherwise pull from web3
             if block_number is None:
                 block_number = self._w3.eth.get_block_number()
 
-            if block_number < self.update_block:
+            if block_number < self._update_block:
                 raise ExternalUpdateError(
-                    f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"
+                    f"Current state recorded at block {self._update_block}, received update for stale block {block_number}"
                 )
 
             (
@@ -864,7 +891,7 @@ class V3LiquidityPool(PoolHelper):
 
             # WORKAROUND: update the block even if there are no state changes
             # pools were being repeatedly caught by "stale pool" checks
-            self.update_block = block_number
+            self._update_block = block_number
 
         return updated, self.state
 
@@ -1016,6 +1043,229 @@ class V3LiquidityPool(PoolHelper):
 
             return amountIn
 
+    def external_update(
+        self,
+        update: Optional[UniswapV3PoolExternalUpdate] = None,
+        updates: Optional[dict] = None,
+        block_number: Optional[int] = None,
+        silent: bool = True,
+        fetch_missing: Optional[bool] = None,
+        force: bool = False,  # added primarily to support liquidity bootstrapping without excessive refactoring
+    ) -> bool:
+        """
+        Process a `UniswapV3PoolExternalUpdate` with one or more of the following update types:
+            - `tick`: int
+            - `liquidity`: int
+            - `sqrt_price_x96`: int
+            - `liquidity_change`: tuple of (liquidity_delta, lower_tick, upper_tick). The delta can be positive or negative to indicate added or removed liquidity.
+
+        `block_number` is validated against the most recently recorded block prior to recording any changes. If `force=True`, the block check is skipped.
+
+        If any update is processed, `self.state` and `self.update_block` are updated.
+
+        Returns a bool indicating whether any updated state value was recorded.
+
+        @dev This method uses a lock to guard state-modifying methods that might cause race conditions when used with threads.
+        """
+
+        def is_valid_update_block(block_number) -> bool:
+            """
+            Check if `block_number` is valid (matches or exceeds the last update block)
+
+            The `force` argument to `external_update` will trigger this to always return True
+            """
+            return True if force else block_number >= self._update_block
+
+        if fetch_missing is not None:
+            raise DeprecationWarning(
+                "The fetch_missing argument has been deprecated, to address this exception remove it from any calls to external_update"
+            )
+
+        # warnings.warn(
+        #     "\n"
+        #     + "The `updates` dict argument is deprecated and will be "
+        #     + "removed in the future. It has been converted in-place to a "
+        #     + "`UniswapV3PoolExternalUpdate` object. Pass this using the "
+        #     + "`update=` argument to remove this warning."
+        #     + "\n"
+        #     + "For the values you've provided, pass this data using "
+        #     + "the format: \n"
+        #     + "update=UniswapV3PoolExternalUpdate(\n"
+        #     + (
+        #         f"    liquidity={val}\n"
+        #         if (val := updates.get("liquidity")) is not None
+        #         else ""
+        #     )
+        #     + (
+        #         f"    sqrt_price_x96={val}\n"
+        #         if (val := updates.get("sqrt_price_x96")) is not None
+        #         else ""
+        #     )
+        #     + (
+        #         f"    tick={val}\n"
+        #         if (val := updates.get("tick")) is not None
+        #         else ""
+        #     )
+        #     + ")",
+        # )
+
+        if TYPE_CHECKING:
+            assert isinstance(update, UniswapV3PoolExternalUpdate)
+
+        # If a block number was not provided, pull from web3
+        if block_number is None:
+            if update is not None:
+                block_number = update.block_number
+            else:
+                block_number = self._w3.eth.get_block_number()
+                warnings.warn(
+                    f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
+                )
+
+        if not is_valid_update_block(block_number):
+            raise ExternalUpdateError(
+                f"Rejected update for block {block_number} in the past, current update block is {self._update_block}"
+            )
+
+        if updates and not update:
+            update = UniswapV3PoolExternalUpdate(
+                block_number=block_number,
+                liquidity=updates.get("liquidity"),
+                sqrt_price_x96=updates.get("sqrt_price_x96"),
+                tick=updates.get("tick"),
+                liquidity_change=updates.get("liquidity_change"),
+            )
+
+        with self._slot0_lock:
+            updated_state = False
+
+            for update_type in ("tick", "liquidity", "sqrt_price_x96"):
+                if (
+                    update_value := getattr(update, update_type, None)
+                ) and update_value != getattr(self, update_type):
+                    setattr(self, update_type, update_value)
+                    updated_state = True
+
+            if update.liquidity_change:
+                (
+                    liquidity_delta,
+                    lower_tick,
+                    upper_tick,
+                ) = update.liquidity_change
+
+                if liquidity_delta:
+                    updated_state = True
+
+                # adjust in-range liquidity if current tick is within the position's range
+                if lower_tick <= self.tick < upper_tick and not force:
+                    liquidity_before = self.liquidity
+                    self.liquidity += liquidity_delta
+                    logger.debug(
+                        f"Adjusting in-range liquidity, TX {update.tx}, tick range = [{lower_tick},{upper_tick}], current tick = {self.tick}, {self.address=}, previous liquidity = {liquidity_before}, liquidity change = {liquidity_delta}, current liquidity = {self.liquidity}"
+                    )
+                    assert (
+                        self.liquidity >= 0
+                    ), f"{self.address=}, {liquidity_before=}, {self.liquidity=}, {update=} {block_number=} {self.tick=}"
+
+                for i, tick in enumerate([lower_tick, upper_tick]):
+                    tick_word, _ = self._get_tick_bitmap_position(tick)
+
+                    if tick_word not in self.tick_bitmap:
+                        # the tick bitmap must be available for the word prior to flipping
+                        # the initialized status of any tick
+
+                        if self._sparse_bitmap:
+                            logger.debug(
+                                f"(external_update) {tick_word=} not found in tick_bitmap {self.tick_bitmap.keys()=}"
+                            )
+                            try:
+                                # fetch the single word
+                                self._update_tick_data_at_word(
+                                    word_position=tick_word,
+                                    single_word=True,
+                                    # Fetch the word using the previous block as a known "good" state snapshot
+                                    block_number=block_number - 1,
+                                )
+                            except ValueError as e:
+                                raise BlockUnavailableError(
+                                    f"Could not query chain at block {block_number - 1}"
+                                ) from e
+                        else:
+                            # The bitmap is complete (sparse=False), so mark this word as empty
+                            self.tick_bitmap[
+                                tick_word
+                            ] = UniswapV3BitmapAtWord()
+
+                    # Get the liquidity info for this tick
+                    try:
+                        tick_liquidity_net, tick_liquidity_gross = (
+                            self.tick_data[tick].liquidityNet,
+                            self.tick_data[tick].liquidityGross,
+                        )
+                    except (KeyError, AttributeError):
+                        # if it doesn't exist, initialize the tick and set the current values to zero
+                        tick_liquidity_net = 0
+                        tick_liquidity_gross = 0
+                        TickBitmap.flipTick(
+                            self.tick_bitmap,
+                            tick,
+                            self._tick_spacing,
+                            update_block=block_number,
+                        )
+
+                    # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
+                    # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
+                    # Same equation, but for BURN events the liquidity_delta value is negative
+                    new_liquidity_net = (
+                        tick_liquidity_net + liquidity_delta
+                        if i == 0
+                        else tick_liquidity_net - liquidity_delta
+                    )
+                    new_liquidity_gross = (
+                        tick_liquidity_gross + liquidity_delta
+                    )
+
+                    # Delete entirely if there is no liquidity referencing this tick, then flip it in the bitmap
+                    if new_liquidity_gross == 0:
+                        del self.tick_data[tick]
+                        TickBitmap.flipTick(
+                            self.tick_bitmap,
+                            tick,
+                            self._tick_spacing,
+                            update_block=block_number,
+                        )
+                    # otherwise record the new values
+                    else:
+                        self.tick_data[tick] = UniswapV3LiquidityAtTick(
+                            liquidityNet=new_liquidity_net,
+                            liquidityGross=new_liquidity_gross,
+                            block=block_number,
+                        )
+
+            if not silent:
+                logger.debug(f"Liquidity: {self.liquidity}")
+                logger.debug(f"SqrtPriceX96: {self.sqrt_price_x96}")
+                logger.debug(f"Tick: {self.tick}")
+                logger.debug(
+                    f"liquidity event: {liquidity_delta} in tick range [{lower_tick},{upper_tick}], pool: {self.name}"
+                    "\n"
+                    f"old liquidity: {tick_liquidity_net} net, {tick_liquidity_gross} gross"
+                    "\n"
+                    f"new liquidity: {new_liquidity_net} net, {new_liquidity_gross} gross"
+                )
+                logger.debug(
+                    f"update block: {block_number} (last={self._update_block})"
+                )
+
+            if updated_state:
+                self._update_pool_state()
+                self._pool_state_archive[block_number] = self.state
+
+                if not force:
+                    self._update_block = block_number
+
+            return updated_state
+
     def restore_state_before_block(
         self,
         block: int,
@@ -1056,256 +1306,8 @@ class V3LiquidityPool(PoolHelper):
             self._pool_state_archive.items()
         )[-1]
 
-        # Set mutable values to match state
-        self.liquidity = restored_state.liquidity
-        self.sqrt_price_x96 = restored_state.sqrt_price_x96
-        self.tick = restored_state.tick
         self.state = restored_state
-        self.update_block = restored_block
-        if restored_state.tick_bitmap:
-            self.tick_bitmap = restored_state.tick_bitmap
-        if restored_state.tick_data:
-            self.tick_data = restored_state.tick_data
-
-    def external_update(
-        self,
-        update: Optional[UniswapV3PoolExternalUpdate] = None,
-        updates: Optional[dict] = None,
-        block_number: Optional[int] = None,
-        silent: bool = True,
-        fetch_missing: Optional[bool] = None,
-        force: bool = False,  # added primarily to support liquidity bootstrapping without excessive refactoring
-    ) -> bool:
-        """
-        Process a `UniswapV3PoolExternalUpdate` with one or more of the following update types:
-            - `tick`: int
-            - `liquidity`: int
-            - `sqrt_price_x96`: int
-            - `liquidity_change`: tuple of (liquidity_delta, lower_tick, upper_tick). The delta can be positive or negative to indicate added or removed liquidity.
-
-        `block_number` is validated against the most recently recorded block prior to recording any changes. If `force=True`, the block check is skipped.
-
-        If any update is processed, `self.state` and `self.update_block` are updated.
-
-        Returns a bool indicating whether any updated state value was recorded.
-
-        @dev This method uses a lock to guard state-modifying methods that might cause race conditions when used with threads.
-        """
-
-        def is_valid_update_block(block_number) -> bool:
-            """
-            Check if `block_number` is valid (matches or exceeds the last update block)
-            """
-            return block_number >= self.update_block
-
-        def is_valid_liquidity_update_block(block_number) -> bool:
-            """
-            Check if `block_number` is valid (matches or exceeds the last liquidity update block)
-            """
-            return block_number >= self.liquidity_update_block
-
-        if fetch_missing is not None:
-            raise DeprecationWarning(
-                "The fetch_missing argument has been deprecated, to address this exception remove it from any calls to external_update"
-            )
-
-        # warnings.warn(
-        #     "\n"
-        #     + "The `updates` dict argument is deprecated and will be "
-        #     + "removed in the future. It has been converted in-place to a "
-        #     + "`UniswapV3PoolExternalUpdate` object. Pass this using the "
-        #     + "`update=` argument to remove this warning."
-        #     + "\n"
-        #     + "For the values you've provided, pass this data using "
-        #     + "the format: \n"
-        #     + "update=UniswapV3PoolExternalUpdate(\n"
-        #     + (
-        #         f"    liquidity={val}\n"
-        #         if (val := updates.get("liquidity")) is not None
-        #         else ""
-        #     )
-        #     + (
-        #         f"    sqrt_price_x96={val}\n"
-        #         if (val := updates.get("sqrt_price_x96")) is not None
-        #         else ""
-        #     )
-        #     + (
-        #         f"    tick={val}\n"
-        #         if (val := updates.get("tick")) is not None
-        #         else ""
-        #     )
-        #     + ")",
-        # )
-
-        if TYPE_CHECKING:
-            assert isinstance(update, UniswapV3PoolExternalUpdate)
-
-        # if block_number was not provided, pull from Brownie
-        if block_number is None:
-            if update is not None:
-                block_number = update.block_number
-            else:
-                block_number = self._w3.eth.get_block_number()
-                warnings.warn(
-                    f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
-                )
-
-        if updates and not update:
-            update = UniswapV3PoolExternalUpdate(
-                block_number=block_number,
-                liquidity=updates.get("liquidity"),
-                sqrt_price_x96=updates.get("sqrt_price_x96"),
-                tick=updates.get("tick"),
-                liquidity_change=updates.get("liquidity_change"),
-            )
-
-        if update.liquidity or update.sqrt_price_x96 or update.tick:
-            if not force and not is_valid_update_block(block_number):
-                raise ExternalUpdateError(
-                    f"Rejected update for block {block_number} in the past, current update block is {self.update_block}"
-                )
-
-        if update.liquidity_change:
-            if not force and not is_valid_liquidity_update_block(block_number):
-                raise ExternalUpdateError(
-                    f"Rejected liquidity update for past block {block_number}, current liquidity update block is {self.liquidity_update_block}"
-                )
-
-        with self._slot0_lock:
-            updated_state = False
-
-            for update_type in ["tick", "liquidity", "sqrt_price_x96"]:
-                if (
-                    update_value := getattr(update, update_type, None)
-                ) and update_value != getattr(self, update_type):
-                    setattr(self, update_type, update_value)
-                    updated_state = True
-
-            if update.liquidity_change:
-                (
-                    liquidity_delta,
-                    lower_tick,
-                    upper_tick,
-                ) = update.liquidity_change
-
-                # adjust in-range liquidity if current tick is within the position's range
-                if (
-                    lower_tick <= self.tick < upper_tick
-                    # bugfix: check the liquidity update timestamp  - fixes issue where
-                    # liquidity events were applied after a slot0 update, which put
-                    # `self.liquidity` into an inconsistent state
-                    and is_valid_update_block(block_number)
-                ):
-                    liquidity_before = self.liquidity
-                    self.liquidity += liquidity_delta
-                    logger.debug(
-                        f"Adjusting in-range liquidity @ block {block_number}, tick = {self.tick}, {self.address=}, current liquidity = {self.liquidity}"
-                    )
-                    assert (
-                        self.liquidity >= 0
-                    ), f"{self.address=}, {liquidity_before=}, {self.liquidity=}, {update=} {block_number=} {self.tick=}"
-
-                for i, tick in enumerate([lower_tick, upper_tick]):
-                    tick_word, _ = self._get_tick_bitmap_position(tick)
-
-                    if tick_word not in self.tick_bitmap:
-                        # the tick bitmap must be available for the word prior to flipping
-                        # the initialized status of any tick
-
-                        if self.sparse_bitmap:
-                            logger.debug(
-                                f"(external_update) {tick_word=} not found in tick_bitmap {self.tick_bitmap.keys()=}"
-                            )
-                            try:
-                                # fetch the single word
-                                self._update_tick_data_at_word(
-                                    word_position=tick_word,
-                                    single_word=True,
-                                    # Fetch the word using the previous block as a known "good" state snapshot
-                                    block_number=block_number - 1,
-                                )
-                            except ValueError as e:
-                                raise BlockUnavailableError(
-                                    f"Could not query chain at block {block_number - 1}"
-                                )
-                        else:
-                            # The bitmap is complete (sparse=False), so mark this word as empty
-                            self.tick_bitmap[
-                                tick_word
-                            ] = UniswapV3BitmapAtWord()
-
-                    # Get the liquidity info for this tick
-                    try:
-                        tick_liquidity_net, tick_liquidity_gross = (
-                            self.tick_data[tick].liquidityNet,
-                            self.tick_data[tick].liquidityGross,
-                        )
-                    except (KeyError, AttributeError) as e:
-                        # if it doesn't exist, initialize the tick and set the current values to zero
-                        tick_liquidity_net = 0
-                        tick_liquidity_gross = 0
-                        TickBitmap.flipTick(
-                            self.tick_bitmap,
-                            tick,
-                            self.tick_spacing,
-                            update_block=block_number,
-                        )
-
-                    # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
-                    # BURN: subtract liquidity at lower tick (i==0), add at upper tick (i==1)
-                    # Same equation, but for BURN events the liquidity_delta value is negative
-                    new_liquidity_net = (
-                        tick_liquidity_net + liquidity_delta
-                        if i == 0
-                        else tick_liquidity_net - liquidity_delta
-                    )
-                    new_liquidity_gross = (
-                        tick_liquidity_gross + liquidity_delta
-                    )
-
-                    # Delete entirely if there is no liquidity referencing this tick, then flip it in the bitmap
-                    if new_liquidity_gross == 0:
-                        del self.tick_data[tick]
-                        TickBitmap.flipTick(
-                            self.tick_bitmap,
-                            tick,
-                            self.tick_spacing,
-                            update_block=block_number,
-                        )
-                    # otherwise record the new values
-                    else:
-                        self.tick_data[tick] = UniswapV3LiquidityAtTick(
-                            liquidityNet=new_liquidity_net,
-                            liquidityGross=new_liquidity_gross,
-                            block=block_number,
-                        )
-
-                self.liquidity_update_block = block_number
-
-            if not silent:
-                logger.debug(f"Liquidity: {self.liquidity}")
-                logger.debug(f"SqrtPriceX96: {self.sqrt_price_x96}")
-                logger.debug(f"Tick: {self.tick}")
-                logger.debug(
-                    f"liquidity event: {liquidity_delta} in tick range [{lower_tick},{upper_tick}], pool: {self.name}"
-                    "\n"
-                    f"old liquidity: {tick_liquidity_net} net, {tick_liquidity_gross} gross"
-                    "\n"
-                    f"new liquidity: {new_liquidity_net} net, {new_liquidity_gross} gross"
-                )
-                logger.debug(
-                    f"update block: {block_number} (last={self.update_block})"
-                )
-
-            if updated_state:
-                self._update_pool_state()
-                self._pool_state_archive[block_number] = self.state
-
-                # if the update was forced, do not refresh the update block
-                if not force:
-                    self.update_block = block_number
-
-            return updated_state
+        self._update_block = restored_block
 
     def simulate_swap(
         self,

@@ -1,4 +1,3 @@
-import dataclasses
 from bisect import bisect_left
 from decimal import Decimal
 from fractions import Fraction
@@ -9,34 +8,23 @@ from eth_typing import ChecksumAddress
 from eth_utils import to_checksum_address
 from web3 import Web3
 
-from degenbot.config import get_web3
-from degenbot.exceptions import (
+from ...config import get_web3
+from ...exceptions import (
     DeprecationError,
     ExternalUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
     ZeroSwapError,
 )
-from degenbot.logging import logger
-from degenbot.manager import AllPools
-from degenbot.token import Erc20Token
-from degenbot.types import PoolHelper
-from degenbot.uniswap.abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
+from ...logging import logger
+from ...manager import AllPools, Erc20TokenHelperManager
 
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV2PoolState:
-    pool: "LiquidityPool"
-    reserves_token0: int
-    reserves_token1: int
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV2PoolSimulationResult:
-    amount0_delta: int
-    amount1_delta: int
-    current_state: UniswapV2PoolState
-    future_state: UniswapV2PoolState
+if TYPE_CHECKING:
+    from ...token import Erc20Token
+from ...types import PoolHelper
+from ..abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
+from .functions import generate_v2_pool_address
+from .v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
 
 
 class LiquidityPool(PoolHelper):
@@ -75,7 +63,7 @@ class LiquidityPool(PoolHelper):
     def __init__(
         self,
         address: str,
-        tokens: Optional[List[Erc20Token]] = None,
+        tokens: Optional[List["Erc20Token"]] = None,
         name: Optional[str] = None,
         update_method: str = "polling",
         abi: Optional[list] = None,
@@ -99,7 +87,7 @@ class LiquidityPool(PoolHelper):
         address : str
             Address for the deployed pool contract.
         tokens : List[Erc20Token], optional
-            Erc20Token objects for the tokens held by the deployed pool.
+            "Erc20Token" objects for the tokens held by the deployed pool.
         name : str, optional
             Name of the contract, e.g. "DAI-WETH".
         update_method : str
@@ -217,8 +205,6 @@ class LiquidityPool(PoolHelper):
                 else:
                     raise ValueError(f"{token} not found in pool {self}")
         else:
-            from degenbot.manager import Erc20TokenHelperManager
-
             _token_manager = Erc20TokenHelperManager(self._w3.eth.chain_id)
             self.token0 = _token_manager.get_erc20token(
                 address=self._w3_contract.functions.token0().call(),
@@ -230,8 +216,6 @@ class LiquidityPool(PoolHelper):
             )
 
         if factory_address is not None and factory_init_hash is not None:
-            from degenbot.uniswap.v2.functions import generate_v2_pool_address
-
             computed_pool_address = generate_v2_pool_address(
                 token_addresses=[self.token0.address, self.token1.address],
                 factory_address=factory_address,
@@ -374,8 +358,8 @@ class LiquidityPool(PoolHelper):
     def calculate_tokens_in_from_tokens_out(
         self,
         token_out_quantity: int,
-        token_in: Optional[Erc20Token] = None,
-        token_out: Optional[Erc20Token] = None,
+        token_in: Optional["Erc20Token"] = None,
+        token_out: Optional["Erc20Token"] = None,
         override_reserves_token0: Optional[int] = None,
         override_reserves_token1: Optional[int] = None,
         override_state: Optional[UniswapV2PoolState] = None,
@@ -489,7 +473,7 @@ class LiquidityPool(PoolHelper):
 
     def calculate_tokens_out_from_tokens_in(
         self,
-        token_in: Erc20Token,
+        token_in: "Erc20Token",
         token_in_quantity: int,
         override_reserves_token0: Optional[int] = None,
         override_reserves_token1: Optional[int] = None,
@@ -608,9 +592,9 @@ class LiquidityPool(PoolHelper):
 
     def set_swap_target(
         self,
-        token_in: Erc20Token,
+        token_in: "Erc20Token",
         token_in_qty: int,
-        token_out: Erc20Token,
+        token_out: "Erc20Token",
         token_out_qty: int,
         silent: bool = False,
     ) -> None:
@@ -707,9 +691,9 @@ class LiquidityPool(PoolHelper):
 
     def simulate_swap(
         self,
-        token_in: Optional[Erc20Token] = None,
+        token_in: Optional["Erc20Token"] = None,
         token_in_quantity: Optional[int] = None,
-        token_out: Optional[Erc20Token] = None,
+        token_out: Optional["Erc20Token"] = None,
         token_out_quantity: Optional[int] = None,
         override_state: Optional[UniswapV2PoolState] = None,
     ) -> UniswapV2PoolSimulationResult:
@@ -947,7 +931,7 @@ class CamelotLiquidityPool(LiquidityPool):
 
     def _calculate_tokens_out_from_tokens_in_stable_swap(
         self,
-        token_in: Erc20Token,
+        token_in: "Erc20Token",
         token_in_quantity: int,
         override_state: Optional[dict] = None,
     ) -> int:
@@ -1076,7 +1060,7 @@ class CamelotLiquidityPool(LiquidityPool):
     def __init__(
         self,
         address: str,
-        tokens: Optional[List[Erc20Token]] = None,
+        tokens: Optional[List["Erc20Token"]] = None,
         name: Optional[str] = None,
         update_method: str = "polling",
         abi: Optional[list] = None,

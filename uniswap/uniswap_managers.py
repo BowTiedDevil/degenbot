@@ -5,20 +5,20 @@ from eth_typing import ChecksumAddress
 from eth_utils import to_checksum_address
 from web3 import Web3
 
-from degenbot.config import get_web3
-from degenbot.constants import ZERO_ADDRESS
-from degenbot.dex.uniswap import FACTORY_ADDRESSES, TICKLENS_ADDRESSES
-from degenbot.exceptions import ManagerError, PoolNotAssociated
-from degenbot.logging import logger
-from degenbot.manager import AllPools, Erc20TokenHelperManager
-from degenbot.token import Erc20Token
-from degenbot.types import HelperManager
-from degenbot.uniswap.abi import UNISWAP_V2_FACTORY_ABI
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
-from degenbot.uniswap.v3.functions import generate_v3_pool_address
-from degenbot.uniswap.v3.snapshot import UniswapV3LiquiditySnapshot
-from degenbot.uniswap.v3.tick_lens import TickLens
-from degenbot.uniswap.v3.v3_liquidity_pool import V3LiquidityPool
+from ..config import get_web3
+from ..constants import ZERO_ADDRESS
+from ..dex.uniswap import FACTORY_ADDRESSES, TICKLENS_ADDRESSES
+from ..exceptions import ManagerError, PoolNotAssociated
+from ..logging import logger
+from ..manager import AllPools, Erc20TokenHelperManager
+from ..token import Erc20Token
+from ..types import HelperManager
+from .abi import UNISWAP_V2_FACTORY_ABI
+from .v2.liquidity_pool import LiquidityPool
+from .v3.functions import generate_v3_pool_address
+from .v3.snapshot import UniswapV3LiquiditySnapshot
+from .v3.tick_lens import TickLens
+from .v3.v3_liquidity_pool import V3LiquidityPool
 
 
 class UniswapLiquidityPoolManager(HelperManager):
@@ -137,9 +137,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 address=factory_address, abi=UNISWAP_V2_FACTORY_ABI
             )
             self._lock = Lock()
-            self._pools_by_address: Dict[
-                ChecksumAddress, LiquidityPool
-            ] = dict()
+            self._tracked_pools: Dict[ChecksumAddress, LiquidityPool] = dict()
             self._token_manager: Erc20TokenHelperManager = self._state[
                 chain_id
             ]["erc20token_manager"]
@@ -170,7 +168,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
 
     def _add_pool(self, pool_helper: LiquidityPool):
         with self._lock:
-            self._pools_by_address[pool_helper.address] = pool_helper
+            self._tracked_pools[pool_helper.address] = pool_helper
 
     def get_pool(
         self,
@@ -190,7 +188,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         if token_addresses is not None:
             if len(token_addresses) != 2:
-                raise ValueError(f"Provide exactly two token addresses")
+                raise ValueError("Provide exactly two token addresses")
 
             checksummed_token_addresses = tuple(
                 [
@@ -205,8 +203,8 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                         address=token_address,
                         silent=silent,
                     )
-            except:
-                raise ManagerError(f"Could not get both Erc20Token helpers")
+            except Exception:
+                raise ManagerError("Could not get both Erc20Token helpers")
 
             pool_address = to_checksum_address(
                 self._w3_contract.functions.getPair(
@@ -228,7 +226,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             )
 
         try:
-            pool_helper = self._pools_by_address[pool_address]
+            pool_helper = self._tracked_pools[pool_address]
         except KeyError:
             pass
         else:
@@ -242,10 +240,10 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         if pool_helper := AllPools(self.chain_id).get(pool_address):
             if pool_helper.factory == self._factory_address:
                 print(
-                    f"(get_pool) found pool in AllPools, factory address match"
+                    "(get_pool) found pool in AllPools, factory address match"
                 )
                 self._add_pool(pool_helper)
-                assert pool_helper.address in self._pools_by_address
+                assert pool_helper.address in self._tracked_pools
                 assert isinstance(
                     pool_helper, LiquidityPool
                 ), f"{self} Attempted to return non-V2 pool {pool_helper}! {pool_address=}, {token_addresses=}"
@@ -386,7 +384,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             for external_update in self._snapshot.get_pool_updates(
                 pool.address
             ):
-                pool.external_update(update=external_update)
+                pool.external_update(update=external_update, force=True)
 
         def find_or_build(
             pool_address: ChecksumAddress,
@@ -456,7 +454,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             token_addresses is None and pool_fee is None
         ):
             raise ValueError(
-                f"Insufficient arguments provided. Pass address OR tokens & fee"
+                "Insufficient arguments provided. Pass address OR tokens & fee"
             )
 
         if v3liquiditypool_kwargs is None:
@@ -466,7 +464,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             # print(f"building V3 pool from address")
             if token_addresses is not None or pool_fee is not None:
                 raise ValueError(
-                    f"Conflicting arguments provided. Pass address OR tokens+fee"
+                    "Conflicting arguments provided. Pass address OR tokens+fee"
                 )
             pool_address = to_checksum_address(pool_address)
         elif token_addresses is not None and pool_fee is not None:
@@ -483,8 +481,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                     )
                     for token_address in token_addresses
                 ]
-            except:
-                raise ManagerError(f"Could not build Erc20Token helper")
+            except Exception:
+                raise ManagerError("Could not build Erc20Token helper")
 
             # dictionary key pair is sorted by address
             erc20token_helpers = sorted(erc20token_helpers)

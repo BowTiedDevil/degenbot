@@ -1,32 +1,23 @@
-import dataclasses
-import json
 from io import TextIOWrapper
 from typing import Dict, List, Optional, TextIO, Tuple, Union
 
-from eth_utils import to_checksum_address
+import ujson  # type: ignore[import]
 from eth_typing import ChecksumAddress
+from eth_utils import to_checksum_address
 from web3 import Web3
 from web3._utils.events import get_event_data
 from web3._utils.filters import construct_event_filter_params
 
-from degenbot.config import get_web3
-from degenbot.logging import logger
-from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
-from degenbot.uniswap.v3.v3_liquidity_pool import (
+from ...config import get_web3
+from ...logging import logger
+from ...uniswap.abi import UNISWAP_V3_POOL_ABI
+from .v3_dataclasses import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
+    UniswapV3LiquidityEvent,
     UniswapV3PoolExternalUpdate,
-    V3LiquidityPool,
 )
-
-
-@dataclasses.dataclass(slots=True)
-class UniswapV3LiquidityEvent:
-    block_number: int
-    liquidity: int
-    tick_lower: int
-    tick_upper: int
-    tx_index: int
+from .v3_liquidity_pool import V3LiquidityPool
 
 
 class UniswapV3LiquiditySnapshot:
@@ -45,10 +36,10 @@ class UniswapV3LiquiditySnapshot:
         try:
             if isinstance(file, TextIOWrapper):
                 _file = file
-                json_liquidity_snapshot = json.load(file)
+                json_liquidity_snapshot = ujson.load(file)
             elif isinstance(file, str):
                 with open(file) as _file:
-                    json_liquidity_snapshot = json.load(_file)
+                    json_liquidity_snapshot = ujson.load(_file)
             else:
                 raise ValueError(f"GOT {type(file)}")
         except:

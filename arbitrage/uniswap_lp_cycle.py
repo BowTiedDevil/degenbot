@@ -1,6 +1,5 @@
 import asyncio
 import dataclasses
-from concurrent.futures import Executor
 from fractions import Fraction
 from threading import Lock
 from typing import (
@@ -13,6 +12,9 @@ from typing import (
     Tuple,
     Union,
 )
+
+if TYPE_CHECKING:
+    from concurrent.futures import Executor
 from warnings import warn
 
 import eth_abi
@@ -21,27 +23,26 @@ from eth_utils import to_checksum_address
 from scipy.optimize import minimize_scalar  # type: ignore[import]
 from web3 import Web3
 
-from degenbot.exceptions import (
+from ..exceptions import (
     ArbitrageError,
     EVMRevertError,
     LiquidityPoolError,
     ZeroLiquidityError,
 )
-from degenbot.logging import logger
-from degenbot.token import Erc20Token
-from degenbot.types import ArbitrageHelper
-from degenbot.uniswap.v2.liquidity_pool import (
-    CamelotLiquidityPool,
-    LiquidityPool,
+from ..logging import logger
+from ..token import Erc20Token
+from ..types import ArbitrageHelper
+from ..uniswap.v2.liquidity_pool import CamelotLiquidityPool, LiquidityPool
+from ..uniswap.v2.v2_dataclasses import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
-from degenbot.uniswap.v3 import V3LiquidityPool
-from degenbot.uniswap.v3.libraries import TickMath
-from degenbot.uniswap.v3.v3_liquidity_pool import (
+from ..uniswap.v3.libraries import TickMath
+from ..uniswap.v3.v3_dataclasses import (
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
+from ..uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -282,14 +283,14 @@ class UniswapLpCycle(ArbitrageHelper):
             Union[UniswapV2PoolSwapAmounts, UniswapV3PoolSwapAmounts]
         ] = []
 
+        _token_in_quantity: int = 0
+        _token_out_quantity: int = 0
+
         for i, (pool, pool_vector) in enumerate(
             zip(self.swap_pools, self._swap_vectors)
         ):
             token_in = pool_vector.token_in
             zero_for_one = pool_vector.zero_for_one
-
-            _token_in_quantity: int
-            _token_out_quantity: int
 
             if i == 0:
                 _token_in_quantity = token_in_quantity
@@ -580,9 +581,7 @@ class UniswapLpCycle(ArbitrageHelper):
 
         def arb_profit(x) -> float:
             token_in_quantity = int(x)  # round the input down
-
-            if TYPE_CHECKING:
-                token_out_quantity: int
+            token_out_quantity: int = 0
 
             for i, pool in enumerate(self.swap_pools):
                 pool_override = state_overrides.get(pool.address)
@@ -681,7 +680,7 @@ class UniswapLpCycle(ArbitrageHelper):
 
     async def calculate_with_pool(
         self,
-        executor: Executor,
+        executor: "Executor",
         override_state: Optional[
             Sequence[
                 Union[

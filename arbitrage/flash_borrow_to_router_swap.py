@@ -4,13 +4,13 @@ from typing import List
 from eth_utils import to_checksum_address
 from scipy import optimize  # type: ignore[import]
 
-from degenbot.types import ArbitrageHelper
-from degenbot.token import Erc20Token
-from degenbot.config import get_web3
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
-from degenbot.uniswap.v2.functions import get_v2_pools_from_token_path
-from degenbot.uniswap.uniswap_managers import UniswapV2LiquidityPoolManager
-from degenbot.logging import logger
+from ..types import ArbitrageHelper
+from ..token import Erc20Token
+from ..config import get_web3
+from ..uniswap.v2.liquidity_pool import LiquidityPool
+from ..uniswap.v2.functions import get_v2_pools_from_token_path
+from ..uniswap.uniswap_managers import UniswapV2LiquidityPoolManager
+from ..logging import logger
 
 
 class FlashBorrowToRouterSwap(ArbitrageHelper):
@@ -118,7 +118,7 @@ class FlashBorrowToRouterSwap(ArbitrageHelper):
         recalculate = False
 
         # calculate initial arbitrage after the object is instantiated, otherwise proceed with normal checks
-        if self.best["init"] == True:
+        if self.best["init"] is True:
             self.best["init"] = False
             recalculate = True
 

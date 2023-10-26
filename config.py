@@ -22,7 +22,7 @@ def set_web3(w3: Web3):
     if connected_method is None:
         raise ValueError("Provided web3 object has no 'connected' method")
 
-    if connected_method() == False:
+    if connected_method() is False:
         raise ValueError("Web3 object is not connected.")
 
     global _web3

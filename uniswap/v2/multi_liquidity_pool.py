@@ -1,6 +1,6 @@
 from typing import List
-from degenbot.token import Erc20Token
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
+from ...token import Erc20Token
+from ...uniswap.v2.liquidity_pool import LiquidityPool
 
 
 class MultiLiquidityPool:
@@ -25,18 +25,10 @@ class MultiLiquidityPool:
                 "Number of pool addresses and token pairs must match!"
             )
 
-        # assert len(pool_addresses) == len(
-        #     pool_tokens
-        # ), "Number of pool addresses and token pairs must match!"
-
         if not (len(pool_addresses) > 1):
             raise ValueError(
                 f"Expected 2 pool addresses, found {len(pool_addresses)}"
             )
-
-        # assert (
-        #     len(pool_addresses) > 1
-        # ), "Only one LP submitted, use LiquidityPool() instead"
 
         number_of_pools = len(pool_addresses)
 
@@ -61,10 +53,6 @@ class MultiLiquidityPool:
                 f"First LP does not contain the submitted token_in ({token_in})"
             )
 
-        # assert (token_in == self._pools[0].token0) or (
-        #     token_in == self._pools[0].token1
-        # ), f"First LP does not contain the submitted token_in ({token_in})"
-
         if not (
             (token_out == self._pools[-1].token0)
             or (token_out == self._pools[-1].token1)
@@ -72,10 +60,6 @@ class MultiLiquidityPool:
             raise ValueError(
                 f"Last LP does not contain the submitted token_out ({token_out})"
             )
-
-        # assert (token_out == self._pools[-1].token0) or (
-        #     token_out == self._pools[-1].token1
-        # ), f"Last LP does not contain the submitted token_out ({token_out})"
 
         # check that pools have a valid token path
         for i in range(number_of_pools - 1):
@@ -86,9 +70,6 @@ class MultiLiquidityPool:
                 raise ValueError(
                     f"LPs {self._pools[i]} and {self._pools[i+1]} do not share a common token!"
                 )
-            # assert (self._pools[i].token0 == self._pools[i + 1].token0) or (
-            #     self._pools[i].token1 == self._pools[i + 1].token1
-            # ), f"LPs {self._pools[i]} and {self._pools[i+1]} do not share a common token!"
 
         if name:
             self.name = name
@@ -106,7 +87,7 @@ class MultiLiquidityPool:
 
         recalculate = False
 
-        if self.init == True:
+        if self.init is True:
             self.init = False
             recalculate = True
 

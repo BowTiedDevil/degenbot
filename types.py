@@ -1,4 +1,5 @@
 from abc import ABC
+from eth_typing import ChecksumAddress
 
 
 class ArbitrageHelper(ABC):
@@ -14,7 +15,7 @@ class HelperManager(ABC):
 
 
 class PoolHelper(ABC):
-    pass
+    address: ChecksumAddress
 
 
 class TokenHelper(ABC):

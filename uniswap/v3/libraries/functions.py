@@ -1,11 +1,11 @@
-from degenbot.constants import (
+from ....constants import (
     MAX_INT128,
     MAX_INT256,
     MAX_UINT160,
     MIN_INT128,
     MIN_INT256,
 )
-from degenbot.exceptions import EVMRevertError
+from ....exceptions import EVMRevertError
 
 
 def mulmod(x, y, k):

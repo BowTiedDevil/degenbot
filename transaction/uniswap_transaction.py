@@ -9,9 +9,9 @@ from eth_typing import ChecksumAddress
 from eth_utils import to_checksum_address
 from web3 import Web3
 
-from degenbot.config import get_web3
-from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
-from degenbot.exceptions import (
+from ..config import get_web3
+from ..constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
+from ..exceptions import (
     DegenbotError,
     EVMRevertError,
     LedgerError,
@@ -20,30 +20,30 @@ from degenbot.exceptions import (
     TransactionEncodingError,
     TransactionError,
 )
-from degenbot.logging import logger
-from degenbot.token import Erc20Token
-from degenbot.transaction.simulation_ledger import SimulationLedger
-from degenbot.types import TransactionHelper
-from degenbot.uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
-from degenbot.uniswap.uniswap_managers import (
+from ..logging import logger
+from ..token import Erc20Token
+from ..types import TransactionHelper
+from ..uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
+from ..uniswap.uniswap_managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )
-from degenbot.uniswap.v2 import LiquidityPool
-from degenbot.uniswap.v2.functions import (
+from ..uniswap.v2.functions import (
     generate_v2_pool_address,
     get_v2_pools_from_token_path,
 )
-from degenbot.uniswap.v2.liquidity_pool import (
+from ..uniswap.v2.liquidity_pool import LiquidityPool
+from ..uniswap.v2.v2_dataclasses import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
-from degenbot.uniswap.v3.functions import decode_v3_path
-from degenbot.uniswap.v3.v3_liquidity_pool import (
+from ..uniswap.v3.functions import decode_v3_path
+from ..uniswap.v3.v3_dataclasses import (
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
-    V3LiquidityPool,
 )
+from ..uniswap.v3.v3_liquidity_pool import V3LiquidityPool
+from .simulation_ledger import SimulationLedger
 
 
 # TODO: support creation of empty LiquidityPool instead of using a mock
@@ -177,7 +177,7 @@ class UniswapTransaction(TransactionHelper):
 
         try:
             _ROUTERS[chain_id][router_address]
-        except:
+        except Exception:
             _ROUTERS[chain_id][router_address] = router_dict
         else:
             raise ValueError("Router address already known!")
@@ -272,7 +272,7 @@ class UniswapTransaction(TransactionHelper):
                     "factory_address"
                 ][2]
             )
-        except:
+        except Exception:
             pass
 
         try:
@@ -281,7 +281,7 @@ class UniswapTransaction(TransactionHelper):
                     "factory_address"
                 ][3]
             )
-        except:
+        except Exception:
             pass
 
         self.hash = tx_hash
@@ -335,7 +335,7 @@ class UniswapTransaction(TransactionHelper):
             logger.info("\t(CURRENT)")
             logger.info(f"\t{pool.token0}: {current_state.reserves_token0}")
             logger.info(f"\t{pool.token1}: {current_state.reserves_token1}")
-            logger.info(f"\t(FUTURE)")
+            logger.info("\t(FUTURE)")
             logger.info(f"\t{pool.token0}: {future_state.reserves_token0}")
             logger.info(f"\t{pool.token1}: {future_state.reserves_token1}")
         elif isinstance(sim_result, UniswapV3PoolSimulationResult):
@@ -349,7 +349,7 @@ class UniswapTransaction(TransactionHelper):
             logger.info(f"\tprice={current_state.sqrt_price_x96}")
             logger.info(f"\tliquidity={current_state.liquidity}")
             logger.info(f"\ttick={current_state.tick}")
-            logger.info(f"\t(FUTURE)")
+            logger.info("\t(FUTURE)")
             logger.info(f"\tprice={future_state.sqrt_price_x96}")
             logger.info(f"\tliquidity={future_state.liquidity}")
             logger.info(f"\ttick={future_state.tick}")
@@ -933,8 +933,8 @@ class UniswapTransaction(TransactionHelper):
             logger.debug(f"Processing Universal Router command: {command}")
 
             if TYPE_CHECKING:
-                _amount_in: int
-                _amount_out: int
+                _amount_in: int = 0
+                _amount_out: int = 0
                 _sim_result: Union[
                     UniswapV2PoolSimulationResult,
                     UniswapV3PoolSimulationResult,
@@ -965,7 +965,7 @@ class UniswapTransaction(TransactionHelper):
                         types=("address", "address", "uint256"),
                         data=inputs,
                     )
-                except:
+                except Exception:
                     raise ValueError(f"Could not decode input for {command}")
 
                 # shorthand for ETH
@@ -973,7 +973,7 @@ class UniswapTransaction(TransactionHelper):
                 # ref: https://github.com/Uniswap/universal-router/blob/main/contracts/libraries/Constants.sol
                 # TODO: refactor if ledger needs to support ETH balances
                 if _pay_portion_token_address == ZERO_ADDRESS:
-                    logger.debug(f"PAY_PORTION called with Constants.ETH")
+                    logger.info("PAY_PORTION called with Constants.ETH")
 
                 else:
                     sweep_token_balance = self.ledger.token_balance(
@@ -1002,7 +1002,7 @@ class UniswapTransaction(TransactionHelper):
                         types=("address", "address", "uint256"),
                         data=inputs,
                     )
-                except:
+                except Exception:
                     raise ValueError(f"Could not decode input for {command}")
 
                 if (
@@ -1039,7 +1039,7 @@ class UniswapTransaction(TransactionHelper):
                         types=("address", "uint256"),
                         data=inputs,
                     )
-                except:
+                except Exception:
                     raise ValueError(f"Could not decode input for {command}")
 
                 if tx_recipient == _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG:
@@ -1070,7 +1070,7 @@ class UniswapTransaction(TransactionHelper):
                         types=("address", "uint256"),
                         data=inputs,
                     )
-                except:
+                except Exception:
                     raise ValueError(f"Could not decode input for {command}")
 
                 _wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
@@ -1110,7 +1110,7 @@ class UniswapTransaction(TransactionHelper):
                         ),
                         data=inputs,
                     )
-                except:
+                except Exception:
                     raise ValueError(f"Could not decode input for {command}")
 
                 try:
@@ -1197,7 +1197,7 @@ class UniswapTransaction(TransactionHelper):
                         ),
                         data=inputs,
                     )
-                except:
+                except Exception:
                     raise ValueError(f"Could not decode input for {command}")
 
                 if tx_recipient == _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG:
@@ -1289,7 +1289,7 @@ class UniswapTransaction(TransactionHelper):
                         ),
                         data=inputs,
                     )
-                except:
+                except Exception:
                     raise ValueError(f"Could not decode input for {command}")
 
                 tx_path_decoded = decode_v3_path(tx_path)
@@ -1384,7 +1384,7 @@ class UniswapTransaction(TransactionHelper):
                         ),
                         data=inputs,
                     )
-                except:
+                except Exception:
                     raise ValueError(f"Could not decode input for {command}")
 
                 tx_path_decoded = decode_v3_path(tx_path)
@@ -1511,7 +1511,7 @@ class UniswapTransaction(TransactionHelper):
                         .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
                         .decode_function_input(payload)
                     )
-                except:
+                except Exception:
                     pass
 
                 try:
@@ -1521,7 +1521,7 @@ class UniswapTransaction(TransactionHelper):
                         .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
                         .decode_function_input(payload)
                     )
-                except:
+                except Exception:
                     pass
 
                 # special case to handle a multicall encoded within
@@ -1536,7 +1536,7 @@ class UniswapTransaction(TransactionHelper):
                                 .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
                                 .decode_function_input(payload)
                             )
-                        except:
+                        except Exception:
                             pass
 
                         try:
@@ -1545,7 +1545,7 @@ class UniswapTransaction(TransactionHelper):
                                 .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
                                 .decode_function_input(payload)
                             )
-                        except:
+                        except Exception:
                             pass
 
                         try:
@@ -1593,8 +1593,8 @@ class UniswapTransaction(TransactionHelper):
             ] = []
 
             if TYPE_CHECKING:
-                _amount_in: int
-                _amount_out: int
+                _amount_in: int = 0
+                _amount_out: int = 0
                 assert self.v2_pool_manager is not None
 
             try:
@@ -1787,8 +1787,10 @@ class UniswapTransaction(TransactionHelper):
                         tx_token_b = to_checksum_address(func_params["tokenB"])
                         tx_token_amount_a = func_params["amountADesired"]
                         tx_token_amount_b = func_params["amountBDesired"]
-                        tx_token_amount_a_min = func_params["amountAMin"]
-                        tx_token_amount_b_min = func_params["amountBMin"]
+                        # fmt: off
+                        tx_token_amount_a_min = func_params["amountAMin"]  # noqa: F841
+                        tx_token_amount_b_min = func_params["amountBMin"]  # noqa: F841
+                        # fmt: on
                         token0_address, token1_address = (
                             (tx_token_a, tx_token_b)
                             if tx_token_a < tx_token_b
@@ -1802,7 +1804,9 @@ class UniswapTransaction(TransactionHelper):
                     elif func_name == "addLiquidityETH":
                         tx_token = to_checksum_address(func_params["token"])
                         tx_token_amount = func_params["amountTokenDesired"]
-                        tx_token_amount_min = func_params["amountTokenMin"]
+                        # fmt: off
+                        tx_token_amount_min = func_params["amountTokenMin"]  # noqa: F841
+                        # fmt: on
                         tx_eth_min = func_params["amountETHMin"]
                         _wrapped_token_address = WRAPPED_NATIVE_TOKENS[
                             self.chain_id
@@ -1818,7 +1822,7 @@ class UniswapTransaction(TransactionHelper):
                             else (tx_token_amount, tx_eth_min)
                         )
 
-                    tx_to = func_params["to"]
+                    tx_to = func_params["to"]  # noqa: F841
                     tx_deadline = func_params["deadline"]
                     self._raise_if_expired(tx_deadline)
 
@@ -1889,8 +1893,8 @@ class UniswapTransaction(TransactionHelper):
             ] = []
 
             if TYPE_CHECKING:
-                _amount_in: int
-                _amount_out: int
+                _amount_in: int = 0
+                _amount_out: int = 0
                 _sim_result: Union[
                     UniswapV2PoolSimulationResult,
                     UniswapV3PoolSimulationResult,
@@ -2044,7 +2048,7 @@ class UniswapTransaction(TransactionHelper):
                         logger.info(f" • recipient = {tx_recipient}")
                         try:
                             tx_deadline
-                        except:
+                        except Exception:
                             pass
                         else:
                             logger.info(f" • deadline = {tx_deadline}")
@@ -2252,7 +2256,7 @@ class UniswapTransaction(TransactionHelper):
                         logger.info(f" • recipient = {tx_recipient}")
                         try:
                             tx_deadline
-                        except:
+                        except Exception:
                             pass
                         else:
                             logger.info(f" • deadline = {tx_deadline}")
@@ -2560,8 +2564,16 @@ class UniswapTransaction(TransactionHelper):
             raise TransactionEncodingError(e)
 
         if set(self.ledger._balances) - set([self.sender]) - self.to:
-            raise LedgerError(
-                f"UNACCOUNTED BALANCE FOUND!\n{pprint.pformat(self.ledger._balances)}"
-            )
+            # Ignore case where an excess wrapped token balance remains at the router
+            if self.ledger._balances[self.router_address][
+                WRAPPED_NATIVE_TOKENS[self.chain_id]
+            ]:
+                logger.info(
+                    "Simulation results in leftover wrapped token balance"
+                )
+            else:
+                raise LedgerError(
+                    f"UNACCOUNTED BALANCE FOUND!\n{pprint.pformat(self.ledger._balances)}"
+                )
 
         return results

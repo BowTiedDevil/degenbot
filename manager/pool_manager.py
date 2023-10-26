@@ -1,9 +1,10 @@
 from typing import Dict, Union
+from warnings import warn
 
 from eth_typing import ChecksumAddress
 from eth_utils import to_checksum_address
-from warnings import warn
-from degenbot.types import PoolHelper
+
+from ..types import PoolHelper
 
 # Internal state dictionary that maintains a keyed dictionary of all
 # pool helper objects. The top level dict is keyed by chain ID, and

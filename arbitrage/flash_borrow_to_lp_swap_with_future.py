@@ -1,9 +1,9 @@
 from typing import List, Optional, Tuple
 from scipy.optimize import minimize_scalar  # type: ignore[import]
 
-from degenbot.token import Erc20Token
-from degenbot.types import ArbitrageHelper
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
+from ..token import Erc20Token
+from ..types import ArbitrageHelper
+from ..uniswap.v2.liquidity_pool import LiquidityPool
 
 
 class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
@@ -33,7 +33,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
                 "Choose pool addresses or LiquidityPool objects, not both"
             )
 
-        if not update_method in [
+        if update_method not in [
             "polling",
             "external",
         ]:
@@ -82,13 +82,13 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
                 + " -> ".join([pool.name for pool in self.swap_pools])
             )
 
-        if not self.borrow_token.address in [
+        if self.borrow_token.address not in [
             self.swap_pools[0].token0.address,
             self.swap_pools[0].token1.address,
         ]:
             raise ValueError("Borrowed token not found in the first swap pool")
 
-        if not self.repay_token.address in [
+        if self.repay_token.address not in [
             self.swap_pools[-1].token0.address,
             self.swap_pools[-1].token1.address,
         ]:
@@ -461,7 +461,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
 
         if self._update_method != "external":
             # calculate initial arbitrage after the object is instantiated, otherwise proceed with normal checks
-            if self.best["init"] == True:
+            if self.best["init"] is True:
                 self.best["init"] = False
                 recalculate = True
 
@@ -500,12 +500,12 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
                 if len(override_reserves) != 2:
                     raise ValueError("Override length must be 2")
 
-                if type(override_reserves[0]) != int:
+                if not isinstance(override_reserves[0], int):
                     raise TypeError(
                         f"override for token0 must be int, is {type(override_reserves[0])}"
                     )
 
-                if type(override_reserves[1]) != int:
+                if not isinstance(override_reserves[1], int):
                     raise TypeError(
                         f"override for token1 must be int, is {type(override_reserves[1])}"
                     )

@@ -1,10 +1,10 @@
-from typing import Dict, Optional, Union
+from typing import Optional, Union
 
 from eth_typing import ChecksumAddress
 from eth_utils import to_checksum_address
 
-from degenbot.config import get_web3
-from degenbot.uniswap.abi import UNISWAP_V3_TICKLENS_ABI
+from ...config import get_web3
+from ..abi import UNISWAP_V3_TICKLENS_ABI
 
 
 class TickLens:

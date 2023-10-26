@@ -1,4 +1,4 @@
-from degenbot.types import ArbitrageHelper
+from ..types import ArbitrageHelper
 
 
 class LpSwapWithFuture(ArbitrageHelper):

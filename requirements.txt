@@ -2,7 +2,6 @@ eth-abi==4.2.1
 eth-typing==3.4.0
 eth-utils==2.2.1
 hexbytes==0.3.1
-mypy==1.5.1
 numpy==1.26.0
 pytest==7.4.2
 python-dotenv==1.0.0

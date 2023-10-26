@@ -1,20 +1,24 @@
 from threading import Lock
-from typing import Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
 from web3 import Web3
 
-from degenbot import Erc20TokenHelperManager
-from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
-from degenbot.constants import WRAPPED_NATIVE_TOKENS
-from degenbot.exceptions import ManagerError
-from degenbot.token import Erc20Token
-from degenbot.types import ArbitrageHelper, HelperManager
-from degenbot.uniswap.uniswap_managers import (
+from ..arbitrage.uniswap_lp_cycle import UniswapLpCycle
+from ..constants import WRAPPED_NATIVE_TOKENS
+from ..exceptions import ManagerError
+
+if TYPE_CHECKING:
+    from ..token import Erc20Token
+    from ..types import ArbitrageHelper
+    from ..uniswap.v2.liquidity_pool import LiquidityPool
+    from ..uniswap.v3.v3_liquidity_pool import V3LiquidityPool
+
+from ..types import HelperManager
+from ..uniswap.uniswap_managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )
-from degenbot.uniswap.v2 import LiquidityPool
-from degenbot.uniswap.v3 import V3LiquidityPool
+from .token_manager import Erc20TokenHelperManager
 
 
 class ArbitrageHelperManager(HelperManager):
@@ -81,7 +85,7 @@ class ArbitrageHelperManager(HelperManager):
             List[str],
         ],
         update_method: str = "polling",
-        input_token: Optional[Union[str, Erc20Token]] = None,
+        input_token: Optional[Union[str, "Erc20Token"]] = None,
     ) -> ArbitrageHelper:
         """
         Returns the arb helper
@@ -107,16 +111,16 @@ class ArbitrageHelperManager(HelperManager):
                 for v2_pool_manager in self._v2_pool_managers.values():
                     try:
                         pool_helper = v2_pool_manager.get_pool(pool)
-                    except:
+                    except Exception:
                         pass
                 for v3_pool_manager in self._v3_pool_managers.values():
                     try:
                         pool_helper = v3_pool_manager.get_pool(pool)
-                    except:
+                    except Exception:
                         pass
                 try:
                     pool_helper
-                except:
+                except Exception:
                     # will throw if the pool helper could not be found
                     raise ValueError(
                         f"Could not generate Uniswap LP helper for pool {pool}"
@@ -143,7 +147,7 @@ class ArbitrageHelperManager(HelperManager):
         except KeyError:
             pass
         else:
-            raise ValueError(f"Arbitrage helper already exists")
+            raise ValueError("Arbitrage helper already exists")
 
         arb_helper = UniswapLpCycle(
             input_token=input_token,
@@ -158,7 +162,7 @@ class ArbitrageHelperManager(HelperManager):
         arb_id: str,
         arb_type: str,
         chain_id: int,
-        input_token: Optional[Union[str, Erc20Token]] = None,
+        input_token: Optional[Union[str, "Erc20Token"]] = None,
         update_method: str = "polling",
     ) -> ArbitrageHelper:
         """
@@ -185,7 +189,7 @@ class ArbitrageHelperManager(HelperManager):
                     input_token = self._erc20tokenmanager.get_erc20token(
                         native_wrapped_token_address
                     )
-                elif not isinstance(input_token, Erc20Token):
+                elif not isinstance(input_token, "Erc20Token"):
                     input_token = self._erc20tokenmanager.get_erc20token(
                         input_token
                     )
@@ -197,7 +201,7 @@ class ArbitrageHelperManager(HelperManager):
                     update_method=update_method,
                     input_token=input_token,
                 )
-        except:
+        except Exception:
             raise ManagerError(f"Could not create Arbitrage helper: {arb_id=}")
         else:
             return arb_helper

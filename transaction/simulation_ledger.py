@@ -3,8 +3,8 @@ from typing import Dict, Union
 from eth_typing import ChecksumAddress
 from eth_utils import to_checksum_address
 
-from degenbot.logging import logger
-from degenbot.token import Erc20Token
+from ..logging import logger
+from ..token import Erc20Token
 
 
 class SimulationLedger:
@@ -15,7 +15,7 @@ class SimulationLedger:
     token contract address.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Entries are recorded as a dict-of-dicts, keyed by address, then by
         # token address
         self._balances: Dict[

@@ -1,16 +1,19 @@
 from threading import Lock
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
 from eth_utils import to_checksum_address
 
-from degenbot.config import get_web3
-from degenbot.exceptions import ManagerError
-from degenbot.token import Erc20Token
-from degenbot.types import HelperManager, TokenHelper
+from ..config import get_web3
+from ..exceptions import ManagerError
+from ..token import Erc20Token
+from ..types import HelperManager
+
+if TYPE_CHECKING:
+    from ..types import TokenHelper
 
 _all_tokens: Dict[
     int,
-    Dict[str, TokenHelper],
+    Dict[str, "TokenHelper"],
 ] = {}
 
 
@@ -32,7 +35,7 @@ class AllTokens:
     def __setitem__(
         self,
         token_address: str,
-        token_helper: TokenHelper,
+        token_helper: "TokenHelper",
     ):
         self.tokens[token_address] = token_helper
 
@@ -100,7 +103,7 @@ class Erc20TokenHelperManager(HelperManager):
 
         try:
             token_helper = Erc20Token(address=address, **kwargs)
-        except:
+        except Exception:
             raise ManagerError(
                 f"Could not create Erc20Token helper: {address=}"
             )

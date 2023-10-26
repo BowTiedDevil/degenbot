@@ -66,7 +66,7 @@ class AnvilFork:
                 break
         if is_connected_method is None:
             raise ValueError("Web3 provider cannot be tested")
-        while is_connected_method() == False:
+        while is_connected_method() is False:
             continue
 
         self.block = (

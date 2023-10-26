@@ -2,9 +2,9 @@ from typing import List, Optional
 
 from scipy.optimize import minimize_scalar  # type: ignore[import]
 
-from degenbot.token import Erc20Token
-from degenbot.types import ArbitrageHelper
-from degenbot.uniswap.v2.liquidity_pool import LiquidityPool
+from ..token import Erc20Token
+from ..types import ArbitrageHelper
+from ..uniswap.v2.liquidity_pool import LiquidityPool
 
 # TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
 
@@ -86,13 +86,13 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
                 + " -> ".join([pool.name for pool in self.swap_pools])
             )
 
-        if not self.borrow_token.address in [
+        if self.borrow_token.address not in [
             self.swap_pools[0].token0.address,
             self.swap_pools[0].token1.address,
         ]:
             raise ValueError("Borrowed token not found in the first swap pool")
 
-        if not self.repay_token.address in [
+        if self.repay_token.address not in [
             self.swap_pools[-1].token0.address,
             self.swap_pools[-1].token1.address,
         ]:
@@ -385,7 +385,7 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
 
         if self._update_method != "external":
             # calculate initial arbitrage after the object is instantiated, otherwise proceed with normal checks
-            if self.best["init"] == True:
+            if self.best["init"] is True:
                 self.best["init"] = False
                 recalculate = True
 

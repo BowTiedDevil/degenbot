@@ -1,5 +1,6 @@
-[tool.black]
-line-length = 79
+[project]
+requires-python = ">=3.10"
 
-[tool.isort]
-profile = "black"
+[tool.ruff]
+line-length = 79
+indent-width = 4
