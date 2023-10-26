@@ -6,19 +6,18 @@ from web3 import Web3
 from ..arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from ..constants import WRAPPED_NATIVE_TOKENS
 from ..exceptions import ManagerError
-
-if TYPE_CHECKING:
-    from ..token import Erc20Token
-    from ..types import ArbitrageHelper
-    from ..uniswap.v2.liquidity_pool import LiquidityPool
-    from ..uniswap.v3.v3_liquidity_pool import V3LiquidityPool
-
+from ..token import Erc20Token
 from ..types import HelperManager
 from ..uniswap.uniswap_managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )
 from .token_manager import Erc20TokenHelperManager
+
+if TYPE_CHECKING:
+    from ..types import ArbitrageHelper
+    from ..uniswap.v2.liquidity_pool import LiquidityPool
+    from ..uniswap.v3.v3_liquidity_pool import V3LiquidityPool
 
 
 class ArbitrageHelperManager(HelperManager):
@@ -85,7 +84,7 @@ class ArbitrageHelperManager(HelperManager):
             List[str],
         ],
         update_method: str = "polling",
-        input_token: Optional[Union[str, "Erc20Token"]] = None,
+        input_token: Optional[Union[str, Erc20Token]] = None,
     ) -> ArbitrageHelper:
         """
         Returns the arb helper
@@ -162,7 +161,7 @@ class ArbitrageHelperManager(HelperManager):
         arb_id: str,
         arb_type: str,
         chain_id: int,
-        input_token: Optional[Union[str, "Erc20Token"]] = None,
+        input_token: Optional[Union[str, Erc20Token]] = None,
         update_method: str = "polling",
     ) -> ArbitrageHelper:
         """
