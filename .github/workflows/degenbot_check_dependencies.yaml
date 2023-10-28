@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.8.16', '3.9.16', '3.10.11', '3.11.1', '3.11.2', '3.11.3']
+        python-version: ['3.8.18', '3.9.18', '3.10.13', '3.11.5']
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
@@ -29,17 +29,23 @@ jobs:
         - name: Install pip-tools
           run: pip install pip-tools
 
-        - name: Run pip-compile
-          run: if [ -f requirements.in ]; then pip-compile --resolver=backtracking; fi
+        - name: Cython fix for python 3.10+
+          run: echo "Cython<3" > cython_constraint.txt 
+
+        - name: Run pip-compile ${{ matrix.python-version }}
+          run: if [ -f requirements.in ]; then PIP_CONSTRAINT=cython_constraint.txt pip-compile; fi
 
         - name: Install dependencies
-          run: if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          run: if [ -f requirements.txt ]; then PIP_CONSTRAINT=cython_constraint.txt pip install -r requirements.txt; fi
 
         - name: Rename requirements.txt
           run: mv requirements.txt requirements_${{ matrix.os }}_${{ matrix.python-version }}.txt
 
         - name: Brownie version
           run: brownie --version
+        
+        - name: Update websockets
+          run: pip install websockets --upgrade
 
         - name: Upload requirements.txt
           uses: actions/upload-artifact@v3
