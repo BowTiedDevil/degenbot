@@ -1,10 +1,11 @@
 from fractions import Fraction
 
+from degenbot import Erc20Token
+from degenbot.arbitrage.flash_borrow_to_lp_swap_new import (
+    FlashBorrowToLpSwapNew,
+)
+from degenbot.uniswap import LiquidityPool
 from eth_utils import to_checksum_address
-
-from ...arbitrage.flash_borrow_to_lp_swap_new import FlashBorrowToLpSwapNew
-from ...token import Erc20Token
-from ...uniswap.v2.liquidity_pool import LiquidityPool
 
 
 class MockErc20Token(Erc20Token):

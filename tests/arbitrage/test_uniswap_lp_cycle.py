@@ -4,19 +4,19 @@ from typing import Sequence, Tuple, Union
 import pytest
 from eth_utils import to_checksum_address
 
-from ...arbitrage import UniswapLpCycle
-from ...exceptions import ArbitrageError
-from ...token import Erc20Token
-from ...uniswap.v2.liquidity_pool import (
+from degenbot.arbitrage import UniswapLpCycle
+from degenbot.exceptions import ArbitrageError
+from degenbot.erc20_token import Erc20Token
+from degenbot.uniswap.v2_liquidity_pool import (
     LiquidityPool,
     UniswapV2PoolState,
 )
-from ...uniswap.v3.v3_dataclasses import (
+from degenbot.uniswap.v3_dataclasses import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
 )
-from ...uniswap.v3.v3_liquidity_pool import V3LiquidityPool
+from degenbot.uniswap import V3LiquidityPool
 
 
 class MockErc20Token(Erc20Token):

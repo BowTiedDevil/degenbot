@@ -4,20 +4,20 @@ from typing import Dict
 import pytest
 from eth_utils import to_checksum_address
 
-from ....exceptions import (
+from degenbot.exceptions import (
     ExternalUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from ....token import Erc20Token
-from ....uniswap.v3.v3_dataclasses import (
+from degenbot import Erc20Token
+from degenbot import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
-from ....uniswap.v3.v3_liquidity_pool import V3LiquidityPool
+from degenbot import V3LiquidityPool
 
 
 class MockErc20Token(Erc20Token):

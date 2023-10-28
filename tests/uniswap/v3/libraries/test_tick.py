@@ -1,8 +1,8 @@
 from decimal import Decimal, getcontext
 from math import ceil, floor
 
-from .....constants import MAX_UINT128
-from .....uniswap.v3.libraries import Tick
+from degenbot.constants import MAX_UINT128
+from degenbot.uniswap.v3_libraries import Tick
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/Tick.spec.ts

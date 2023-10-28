@@ -4,9 +4,9 @@ from typing import Dict
 import pytest
 from eth_utils import to_checksum_address
 
-from ....token import Erc20Token
-from ....exceptions import NoPoolStateAvailable, ZeroSwapError
-from ....uniswap.v2.liquidity_pool import (
+from degenbot import Erc20Token
+from degenbot.exceptions import NoPoolStateAvailable, ZeroSwapError
+from degenbot.uniswap import (
     LiquidityPool,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,

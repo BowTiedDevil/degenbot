@@ -1,9 +1,9 @@
 import pytest
 import web3
 
-from ... import set_web3
-from ...exceptions import ManagerError
-from ...uniswap.uniswap_managers import (
+from degenbot import set_web3
+from degenbot.exceptions import ManagerError
+from degenbot.uniswap.managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )

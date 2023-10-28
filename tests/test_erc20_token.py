@@ -1,5 +1,5 @@
 from eth_utils import to_checksum_address
-from ..token import Erc20Token
+from degenbot.erc20_token import Erc20Token
 
 
 class MockErc20Token(Erc20Token):

@@ -1,6 +1,6 @@
 import pytest
-from .....exceptions import EVMRevertError
-from .....uniswap.v3.libraries import bit_math as BitMath
+from degenbot.exceptions import EVMRevertError
+from degenbot.uniswap.v3_libraries import bit_math as BitMath
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/BitMath.spec.ts

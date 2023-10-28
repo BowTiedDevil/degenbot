@@ -1,6 +1,6 @@
 from decimal import Decimal, getcontext
 
-from .....uniswap.v3.libraries import SqrtPriceMath, SwapMath
+from degenbot.uniswap.v3_libraries import SqrtPriceMath, SwapMath
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/SwapMath.spec.ts

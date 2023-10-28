@@ -1,6 +1,6 @@
 import pytest
 
-from ....uniswap.v3.functions import generate_v3_pool_address
+from degenbot.uniswap.v3_functions import generate_v3_pool_address
 
 
 def test_v3_address_generator() -> None:

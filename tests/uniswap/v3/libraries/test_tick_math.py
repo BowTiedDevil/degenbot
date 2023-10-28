@@ -3,8 +3,8 @@ from math import floor, log
 
 import pytest
 
-from .....exceptions import EVMRevertError
-from .....uniswap.v3.libraries import TickMath
+from degenbot.exceptions import EVMRevertError
+from degenbot.uniswap.v3_libraries import TickMath
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/TickMath.spec.ts

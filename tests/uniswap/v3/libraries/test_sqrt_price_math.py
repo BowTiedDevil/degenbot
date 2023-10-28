@@ -1,9 +1,9 @@
 from decimal import Decimal, getcontext
 
 import pytest
-from .....constants import MAX_UINT128, MAX_UINT256
-from .....exceptions import EVMRevertError
-from .....uniswap.v3.libraries import SqrtPriceMath
+from degenbot.constants import MAX_UINT128, MAX_UINT256
+from degenbot.exceptions import EVMRevertError
+from degenbot.uniswap.v3_libraries import SqrtPriceMath
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/SqrtPriceMath.spec.ts
