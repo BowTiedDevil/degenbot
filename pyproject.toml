@@ -1,6 +1,6 @@
 [project]
 name = "degenbot"
-version = "0.0.1"
+version = "0.0.2"
 authors = [
     { name="BowTiedDevil", email="devil@bowtieddevil.com" },
 ]
@@ -22,12 +22,16 @@ license = {text = "MIT"}
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",    
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Operating System :: POSIX",
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/bowtieddevil/degenbot"
-"Bug Tracker" = "https://github.com/BowTiedDevil/degenbot/issues"
+Repository = "https://github.com/bowtieddevil/degenbot"
+Tracker = "https://github.com/BowTiedDevil/degenbot/issues"
+Twitter = "https://twitter.com/BowTiedDevil"
 
 [build-system]
 requires = ["setuptools"]
