@@ -1,11 +1,11 @@
 [project]
 name = "degenbot"
-version = "0.0.2"
+version = "0.0.3"
 authors = [
     { name="BowTiedDevil", email="devil@bowtieddevil.com" },
 ]
 description = "Python classes to aid rapid development of Uniswap V2 & V3 arbitrage bots on EVM-compatible blockchains"
-#readme = "README.md"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     'eth-abi>=4.2.0,<5',
