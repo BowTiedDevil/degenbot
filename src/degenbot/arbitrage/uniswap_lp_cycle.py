@@ -649,9 +649,11 @@ class UniswapLpCycle(ArbitrageHelper):
                     f"Cannot process arbitrage {self} with executor: {pool.address} has sparse bitmap"
                 )
 
+        self._pre_calculation_check(override_state)
+
         return asyncio.get_running_loop().run_in_executor(
             executor,
-            self.calculate,
+            self._calculate,
             override_state,
         )
 
