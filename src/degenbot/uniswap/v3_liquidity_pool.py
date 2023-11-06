@@ -313,30 +313,28 @@ class V3LiquidityPool(PoolHelper):
     def __getstate__(self) -> dict:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
-        keys_to_remove = (
+        dropped_attributes = (
             "_liquidity_lock",
             "_slot0_lock",
+            "_state_lock",
             "_w3",
             "_w3_contract",
             "lens",
         )
 
-        try:
-            self.__slots__
-        except AttributeError:
-            pass
-        else:
-            return {
-                attr_name: getattr(self, attr_name, None)
-                for attr_name in self.__slots__
-                if attr_name not in keys_to_remove
-            }
-
-        return {
-            key: value
-            for key, value in self.__dict__.items()
-            if key not in keys_to_remove
-        }
+        with self._slot0_lock, self._liquidity_lock:
+            if getattr(self, "__slots__"):
+                return {
+                    attr_name: getattr(self, attr_name, None)
+                    for attr_name in self.__slots__
+                    if attr_name not in dropped_attributes
+                }
+            else:
+                return {
+                    attr_name: attr_value
+                    for attr_name, attr_value in self.__dict__.items()
+                    if attr_name not in dropped_attributes
+                }
 
     def __hash__(self):
         return hash(self.address)
@@ -345,8 +343,8 @@ class V3LiquidityPool(PoolHelper):
         return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self._fee})"
 
     def __setstate__(self, state: dict):
-        for key, value in state.items():
-            setattr(self, key, value)
+        for attr_name, attr_value in state.items():
+            setattr(self, attr_name, attr_value)
 
     def __str__(self):
         """

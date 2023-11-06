@@ -224,33 +224,30 @@ class Erc20Token:
         if not silent:
             logger.info(f"• {self.symbol} ({self.name})")
 
-    # Web3 objects and Brownie contracts cannot be pickled
     def __getstate__(self):
-        keys_to_remove = (
+        # Remove objects that cannot be pickled and are unnecessary to perform
+        # the calculation
+        dropped_attributes = (
             "_w3",
             "_w3_contract",
         )
 
-        try:
-            self.__slots__
-        except AttributeError:
-            pass
-        else:
+        if getattr(self, "__slots__"):
             return {
                 attr_name: getattr(self, attr_name, None)
                 for attr_name in self.__slots__
-                if attr_name not in keys_to_remove
+                if attr_name not in dropped_attributes
+            }
+        else:
+            return {
+                attr_name: attr_value
+                for attr_name, attr_value in self.__dict__.items()
+                if attr_name not in dropped_attributes
             }
 
-        return {
-            key: value
-            for key, value in self.__dict__.items()
-            if key not in keys_to_remove
-        }
-
     def __setstate__(self, state: Dict):
-        for key, value in state.items():
-            setattr(self, key, value)
+        for attr_name, attr_value in state.items():
+            setattr(self, attr_name, attr_value)
 
     def __eq__(self, other) -> bool:
         if isinstance(other, Erc20Token):

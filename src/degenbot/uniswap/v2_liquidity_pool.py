@@ -286,26 +286,24 @@ class LiquidityPool(PoolHelper):
         else:
             raise NotImplementedError
 
-    # The Brownie contract object cannot be pickled, so remove it and return the state
     def __getstate__(self) -> dict:
-        keys_to_remove = ("_w3", "_w3_contract")
+        # Remove objects that cannot be pickled and are unnecessary to perform
+        # the calculation
+        dropped_attributes = ("_w3", "_w3_contract", "_lock")
 
-        try:
-            self.__slots__
-        except AttributeError:
-            pass
-        else:
-            return {
-                attr_name: getattr(self, attr_name, None)
-                for attr_name in self.__slots__
-                if attr_name not in keys_to_remove
-            }
-
-        return {
-            key: value
-            for key, value in self.__dict__.items()
-            if key not in keys_to_remove
-        }
+        with self._lock:
+            if getattr(self, "__slots__"):
+                return {
+                    attr_name: getattr(self, attr_name, None)
+                    for attr_name in self.__slots__
+                    if attr_name not in dropped_attributes
+                }
+            else:
+                return {
+                    attr_name: attr_value
+                    for attr_name, attr_value in self.__dict__.items()
+                    if attr_name not in dropped_attributes
+                }
 
     def __hash__(self):
         return hash(self.address)
@@ -314,8 +312,8 @@ class LiquidityPool(PoolHelper):
         return f"LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1})"
 
     def __setstate__(self, state: Dict):
-        for key, value in state.items():
-            setattr(self, key, value)
+        for attr_name, attr_value in state.items():
+            setattr(self, attr_name, attr_value)
 
     def __str__(self):
         return self.name

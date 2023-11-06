@@ -160,24 +160,22 @@ class UniswapLpCycle(ArbitrageHelper):
         dropped_attributes = ("_lock",)
 
         with self._lock:
-            try:
-                self.__slots__
-            except AttributeError:
+            if getattr(self, "__slots__"):
                 return {
-                    attribute: value
-                    for attribute, value in self.__dict__.items()
-                    if attribute not in dropped_attributes
+                    attr_name: getattr(self, attr_name, None)
+                    for attr_name in self.__slots__
+                    if attr_name not in dropped_attributes
                 }
             else:
                 return {
-                    attribute: getattr(self, attribute, None)
-                    for attribute in self.__slots__
-                    if attribute not in dropped_attributes
+                    attr_name: attr_value
+                    for attr_name, attr_value in self.__dict__.items()
+                    if attr_name not in dropped_attributes
                 }
 
     def __setstate__(self, state: dict):
-        for key, value in state.items():
-            setattr(self, key, value)
+        for attr_name, attr_value in state.items():
+            setattr(self, attr_name, attr_value)
 
     def __str__(self) -> str:
         return self.name
