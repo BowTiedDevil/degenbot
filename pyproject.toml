@@ -1,6 +1,6 @@
 [project]
 name = "degenbot"
-version = "0.0.3"
+version = "0.0.4"
 authors = [
     { name="BowTiedDevil", email="devil@bowtieddevil.com" },
 ]
@@ -29,7 +29,8 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/bowtieddevil/degenbot"
+Homepage = "https://www.degencode.com"
+Repository = "https://github.com/BowTiedDevil/degenbot"
 Tracker = "https://github.com/BowTiedDevil/degenbot/issues"
 Twitter = "https://twitter.com/BowTiedDevil"
 
