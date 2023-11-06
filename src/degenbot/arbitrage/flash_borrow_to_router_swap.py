@@ -1,7 +1,7 @@
 from fractions import Fraction
 from typing import List
 
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 from scipy import optimize  # type: ignore[import]
 
 from ..baseclasses import ArbitrageHelper

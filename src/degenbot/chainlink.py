@@ -1,5 +1,5 @@
-import ujson  # type: ignore[import]
-from eth_utils import to_checksum_address
+import ujson
+from eth_utils.address import to_checksum_address
 
 from .config import get_web3
 

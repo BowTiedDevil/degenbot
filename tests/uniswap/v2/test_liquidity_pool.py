@@ -2,8 +2,7 @@ from fractions import Fraction
 from typing import Dict
 
 import pytest
-from eth_utils import to_checksum_address
-
+import degenbot
 from degenbot import Erc20Token
 from degenbot.exceptions import NoPoolStateAvailable, ZeroSwapError
 from degenbot.uniswap import (
@@ -11,6 +10,11 @@ from degenbot.uniswap import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
+import web3
+from eth_utils import to_checksum_address
+
+_w3 = web3.Web3(web3.HTTPProvider(("http://localhost:8545")))
+degenbot.set_web3(_w3)
 
 
 class MockErc20Token(Erc20Token):

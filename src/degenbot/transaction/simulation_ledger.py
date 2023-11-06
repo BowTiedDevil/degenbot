@@ -1,7 +1,7 @@
 from typing import Dict, Union
 
 from eth_typing import ChecksumAddress
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 
 from ..logging import logger
 from ..erc20_token import Erc20Token

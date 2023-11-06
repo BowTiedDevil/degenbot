@@ -3,12 +3,12 @@ from typing import TYPE_CHECKING, Iterable, List, Sequence, Union
 
 import eth_abi.packed
 from eth_typing import ChecksumAddress
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 from web3 import Web3
 
 if TYPE_CHECKING:
-    from managers import UniswapV2LiquidityPoolManager
-    from v2_liquidity_pool import LiquidityPool
+    from .managers import UniswapV2LiquidityPoolManager
+    from .v2_liquidity_pool import LiquidityPool
 
 
 def generate_v2_pool_address(

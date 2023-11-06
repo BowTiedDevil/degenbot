@@ -1,27 +1,26 @@
 import pytest
 import web3
-
+from eth_utils.address import to_checksum_address
 from degenbot import set_web3
-from degenbot.exceptions import ManagerError
-from degenbot.uniswap.managers import (
-    UniswapV2LiquidityPoolManager,
-    UniswapV3LiquidityPoolManager,
-)
+from degenbot.exceptions import ManagerError, PoolNotAssociated
+from degenbot.manager import AllPools
+from degenbot.uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
+from degenbot.fork import AnvilFork
 
 
-def test_create_managers():
-    UNISWAP_V2_FACTORY_ADDRESS = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-    UNISWAP_V3_FACTORY_ADDRESS = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+UNISWAP_V2_FACTORY_ADDRESS = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+UNISWAP_V3_FACTORY_ADDRESS = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
 
-    SUSHISWAP_V2_FACTORY_ADDRESS = "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"
+SUSHISWAP_V2_FACTORY_ADDRESS = to_checksum_address("0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac")
 
-    WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-    WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
+WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+WBTC_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 
-    UNISWAPV2_WETH_WBTC_ADDRESS = "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
-    UNISWAPV3_WETH_WBTC_ADDRESS = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
+SUSHISWAPV2_WETH_WBTC_ADDRESS = to_checksum_address("0xceff51756c56ceffca006cd410b03ffc46dd3a58")
+UNISWAPV2_WETH_WBTC_ADDRESS = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
+UNISWAPV3_WETH_WBTC_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
-    # Test with mainnet addresses
+
     w3 = web3.Web3(web3.HTTPProvider("https://rpc.ankr.com/eth"))
     set_web3(w3)
 

@@ -2,7 +2,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
 from eth_typing import ChecksumAddress
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 from web3 import Web3
 
 from ..config import get_web3

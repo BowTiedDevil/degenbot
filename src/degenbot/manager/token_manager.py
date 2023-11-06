@@ -1,7 +1,7 @@
 from threading import Lock
 from typing import TYPE_CHECKING, Dict, Optional
 
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 
 from ..config import get_web3
 from ..exceptions import ManagerError

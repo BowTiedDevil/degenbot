@@ -3,7 +3,7 @@ import socket
 import subprocess
 from typing import Any, Dict, Optional
 
-import ujson  # type: ignore[import]
+import ujson
 from web3 import IPCProvider, Web3
 
 

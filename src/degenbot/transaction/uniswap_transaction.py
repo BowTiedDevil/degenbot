@@ -6,11 +6,13 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
 import eth_abi
 from eth_typing import ChecksumAddress
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 from web3 import Web3
 
+from ..baseclasses import TransactionHelper
 from ..config import get_web3
 from ..constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
+from ..erc20_token import Erc20Token
 from ..exceptions import (
     DegenbotError,
     EVMRevertError,
@@ -21,27 +23,25 @@ from ..exceptions import (
     TransactionError,
 )
 from ..logging import logger
-from ..erc20_token import Erc20Token
-from ..baseclasses import TransactionHelper
 from ..uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from ..uniswap.managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
+)
+from ..uniswap.v2_dataclasses import (
+    UniswapV2PoolSimulationResult,
+    UniswapV2PoolState,
 )
 from ..uniswap.v2_functions import (
     generate_v2_pool_address,
     get_v2_pools_from_token_path,
 )
 from ..uniswap.v2_liquidity_pool import LiquidityPool
-from ..uniswap.v2_dataclasses import (
-    UniswapV2PoolSimulationResult,
-    UniswapV2PoolState,
-)
-from ..uniswap.v3_functions import decode_v3_path
 from ..uniswap.v3_dataclasses import (
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
+from ..uniswap.v3_functions import decode_v3_path
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
 from .simulation_ledger import SimulationLedger
 

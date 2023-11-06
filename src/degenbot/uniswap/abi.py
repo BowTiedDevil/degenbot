@@ -1,4 +1,4 @@
-import ujson  # type: ignore[import]
+import ujson
 
 CAMELOT_POOL_ABI = ujson.loads(
     """

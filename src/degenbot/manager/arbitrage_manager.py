@@ -12,7 +12,7 @@ from ..uniswap.managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,
 )
-from token_manager import Erc20TokenHelperManager
+from .token_manager import Erc20TokenHelperManager
 
 if TYPE_CHECKING:
     from ..baseclasses import ArbitrageHelper

@@ -1,7 +1,7 @@
 from typing import Optional, Union
 
 from eth_typing import ChecksumAddress
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 
 from ..config import get_web3
 from .abi import UNISWAP_V3_TICKLENS_ABI

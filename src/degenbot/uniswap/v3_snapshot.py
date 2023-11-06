@@ -1,9 +1,9 @@
 from io import TextIOWrapper
 from typing import Dict, List, Optional, TextIO, Tuple, Union
 
-import ujson  # type: ignore[import]
+import ujson
 from eth_typing import ChecksumAddress
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 from web3 import Web3
 from web3._utils.events import get_event_data
 from web3._utils.filters import construct_event_filter_params

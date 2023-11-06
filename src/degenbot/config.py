@@ -1,4 +1,5 @@
-from typing import Optional, Callable
+from typing import Callable, Optional
+
 from web3 import Web3
 
 _web3: Optional[Web3] = None

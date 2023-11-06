@@ -11,17 +11,19 @@ from typing import (
     Tuple,
     Union,
 )
+from warnings import warn
 
 if TYPE_CHECKING:
-    from concurrent.futures import Executor
-from warnings import warn
+    from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 import eth_abi
 from eth_typing import ChecksumAddress
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 from scipy.optimize import minimize_scalar  # type: ignore[import]
 from web3 import Web3
 
+from ..baseclasses import ArbitrageHelper
+from ..erc20_token import Erc20Token
 from ..exceptions import (
     ArbitrageError,
     EVMRevertError,
@@ -29,18 +31,16 @@ from ..exceptions import (
     ZeroLiquidityError,
 )
 from ..logging import logger
-from ..erc20_token import Erc20Token
-from ..baseclasses import ArbitrageHelper
-from ..uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
 from ..uniswap.v2_dataclasses import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
-from ..uniswap.v3_libraries import TickMath
+from ..uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
 from ..uniswap.v3_dataclasses import (
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
+from ..uniswap.v3_libraries import TickMath
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
 from .arbitrage_dataclasses import (
     ArbitrageCalculationResult,

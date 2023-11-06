@@ -1,12 +1,12 @@
 from fractions import Fraction
+from threading import Lock
 from typing import Sequence, Tuple, Union
 
 import pytest
-from eth_utils import to_checksum_address
-
 from degenbot.arbitrage import UniswapLpCycle
-from degenbot.exceptions import ArbitrageError
 from degenbot.erc20_token import Erc20Token
+from degenbot.exceptions import ArbitrageError
+from degenbot.uniswap import V3LiquidityPool
 from degenbot.uniswap.v2_liquidity_pool import (
     LiquidityPool,
     UniswapV2PoolState,
@@ -16,7 +16,7 @@ from degenbot.uniswap.v3_dataclasses import (
     UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
 )
-from degenbot.uniswap import V3LiquidityPool
+from eth_utils import to_checksum_address
 
 
 class MockErc20Token(Erc20Token):

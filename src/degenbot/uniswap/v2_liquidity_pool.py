@@ -1,13 +1,15 @@
 from bisect import bisect_left
 from decimal import Decimal
 from fractions import Fraction
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from threading import Lock
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 from warnings import warn
 
 from eth_typing import ChecksumAddress
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 from web3 import Web3
 
+from ..baseclasses import PoolHelper
 from ..config import get_web3
 from ..exceptions import (
     DeprecationError,
@@ -18,13 +20,13 @@ from ..exceptions import (
 )
 from ..logging import logger
 from ..manager import AllPools, Erc20TokenHelperManager
-from ..baseclasses import PoolHelper
 from .abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
 from .v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from .v2_functions import generate_v2_pool_address
 
 if TYPE_CHECKING:
     from ..erc20_token import Erc20Token
+
 
 class LiquidityPool(PoolHelper):
     """

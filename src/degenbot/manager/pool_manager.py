@@ -1,8 +1,8 @@
-from typing import Dict, Union
+from typing import Dict, Optional, Union
 from warnings import warn
 
 from eth_typing import ChecksumAddress
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 
 from ..baseclasses import PoolHelper
 

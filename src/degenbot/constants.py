@@ -1,6 +1,7 @@
 from typing import Dict
-from eth_utils import to_checksum_address
+
 from eth_typing import ChecksumAddress
+from eth_utils.address import to_checksum_address
 
 MIN_INT16: int = -(2 ** (16 - 1))
 MAX_INT16: int = (2 ** (16 - 1)) - 1
