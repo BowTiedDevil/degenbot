@@ -266,7 +266,13 @@ class V3LiquidityPool(PoolHelper):
         self._update_pool_state()
 
         self._pool_state_archive: Dict[int, UniswapV3PoolState] = {
-            self._update_block: self.state
+            0: UniswapV3PoolState(
+                pool=self,
+                liquidity=0,
+                sqrt_price_x96=0,
+                tick=0,
+            ),
+            self._update_block: self.state,
         }
 
         AllPools(self._w3.eth.chain_id)[self.address] = self
@@ -1205,28 +1211,25 @@ class V3LiquidityPool(PoolHelper):
         # index=3 is for block 103.
         # block_index = self._pool_state_archive.bisect_left(block)
 
-        known_blocks = list(self._pool_state_archive.keys())
-        block_index = bisect_left(known_blocks, block)
+        with self._slot0_lock, self._liquidity_lock:
+            known_blocks = list(self._pool_state_archive.keys())
+            block_index = bisect_left(known_blocks, block)
 
-        if block_index == 0:
-            raise NoPoolStateAvailable(
-                f"No pool state known prior to block {block}"
-            )
+            if block_index == 0:
+                raise NoPoolStateAvailable(f"No pool state known prior to block {block}")
 
-        # The last known state already meets the criterion, so return early
-        if block_index == len(known_blocks):
-            return
+            # The last known state already meets the criterion, so return early
+            if block_index == len(known_blocks):
+                return
 
-        # Remove states at and after the specified block
-        for block in known_blocks[block_index:]:
-            del self._pool_state_archive[block]
+            # Remove states at and after the specified block
+            for block in known_blocks[block_index:]:
+                del self._pool_state_archive[block]
 
-        restored_block, restored_state = list(
-            self._pool_state_archive.items()
-        )[-1]
+            restored_block, restored_state = list(self._pool_state_archive.items())[-1]
 
-        self.state = restored_state
-        self._update_block = restored_block
+            self.state = restored_state
+            self._update_block = restored_block
 
     def simulate_swap(
         self,
