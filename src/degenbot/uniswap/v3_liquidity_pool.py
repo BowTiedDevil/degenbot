@@ -130,34 +130,24 @@ class V3LiquidityPool(PoolHelper):
         # held by methods that manipulate state data held by slot0
         self._slot0_lock = Lock()
 
-        self._update_block = (
-            state_block if state_block else self._w3.eth.get_block_number()
-        )
+        self._update_block = state_block if state_block else self._w3.eth.get_block_number()
 
         if factory_address:
             self.factory = to_checksum_address(factory_address)
         else:
-            self.factory = to_checksum_address(
-                self._w3_contract.functions.factory().call()
-            )
+            self.factory = to_checksum_address(self._w3_contract.functions.factory().call())
 
         if lens:
             self.lens = lens
         else:
             # Use the singleton TickLens helper if available
             try:
-                self.lens = self._lens_contracts[
-                    (self._w3.eth.chain_id, self.factory)
-                ]
+                self.lens = self._lens_contracts[(self._w3.eth.chain_id, self.factory)]
             except KeyError:
                 self.lens = TickLens(
-                    address=TICKLENS_ADDRESSES[self._w3.eth.chain_id][
-                        self.factory
-                    ]
+                    address=TICKLENS_ADDRESSES[self._w3.eth.chain_id][self.factory]
                 )
-                self._lens_contracts[
-                    (self._w3.eth.chain_id, self.factory)
-                ] = self.lens
+                self._lens_contracts[(self._w3.eth.chain_id, self.factory)] = self.lens
 
         token0_address: ChecksumAddress = to_checksum_address(
             self._w3_contract.functions.token0().call()
@@ -210,9 +200,7 @@ class V3LiquidityPool(PoolHelper):
         if name:
             self.name = name
         else:
-            self.name = (
-                f"{self.token0}-{self.token1} (V3, {self._fee/10000:.2f}%)"
-            )
+            self.name = f"{self.token0}-{self.token1} (V3, {self._fee/10000:.2f}%)"
 
         if update_method is not None:
             warnings.warn(
@@ -262,9 +250,7 @@ class V3LiquidityPool(PoolHelper):
             }
 
         if tick_bitmap is None and tick_data is None:
-            logger.debug(
-                f"{self} @ {self.address} updating -> {tick_bitmap=}, {tick_data=}"
-            )
+            logger.debug(f"{self} @ {self.address} updating -> {tick_bitmap=}, {tick_data=}")
             word_position, _ = self._get_tick_bitmap_position(self.tick)
 
             self._update_tick_data_at_word(
@@ -281,9 +267,7 @@ class V3LiquidityPool(PoolHelper):
             self.sqrt_price_x96,
             self.tick,
             *_,
-        ) = self._w3_contract.functions.slot0().call(
-            block_identifier=self._update_block
-        )
+        ) = self._w3_contract.functions.slot0().call(block_identifier=self._update_block)
 
         self._update_pool_state()
 
@@ -316,7 +300,6 @@ class V3LiquidityPool(PoolHelper):
         dropped_attributes = (
             "_liquidity_lock",
             "_slot0_lock",
-            "_state_lock",
             "_w3",
             "_w3_contract",
             "lens",
@@ -474,13 +457,10 @@ class V3LiquidityPool(PoolHelper):
             # fetch words one by one (single_tick = True)
             else:
                 try:
-                    if (
-                        single_tick_bitmap
-                        := self._w3_contract.functions.tickBitmap(
-                            word_position
-                        ).call(
-                            block_identifier=block_number,
-                        )
+                    if single_tick_bitmap := self._w3_contract.functions.tickBitmap(
+                        word_position
+                    ).call(
+                        block_identifier=block_number,
                     ):
                         single_tick_data = self.lens._w3_contract.functions.getPopulatedTicksInWord(
                             self.address, word_position
@@ -488,9 +468,7 @@ class V3LiquidityPool(PoolHelper):
                             block_identifier=block_number,
                         )
                 except Exception as e:
-                    print(
-                        f"(V3LiquidityPool) (_update_tick_data_at_word) (single tick): {e}"
-                    )
+                    print(f"(V3LiquidityPool) (_update_tick_data_at_word) (single tick): {e}")
                     print(type(e))
                     raise
                 else:
@@ -581,8 +559,7 @@ class V3LiquidityPool(PoolHelper):
             _tick_data = self.tick_data
 
         if not (
-            sqrt_price_limit_x96 < sqrt_price_x96
-            and sqrt_price_limit_x96 > TickMath.MIN_SQRT_RATIO
+            sqrt_price_limit_x96 < sqrt_price_x96 and sqrt_price_limit_x96 > TickMath.MIN_SQRT_RATIO
             if zeroForOne
             else sqrt_price_limit_x96 > sqrt_price_x96
             and sqrt_price_limit_x96 < TickMath.MAX_SQRT_RATIO
@@ -612,10 +589,7 @@ class V3LiquidityPool(PoolHelper):
             #   - protocolFee
         )
 
-        while (
-            state.amountSpecifiedRemaining != 0
-            and state.sqrtPriceX96 != sqrt_price_limit_x96
-        ):
+        while state.amountSpecifiedRemaining != 0 and state.sqrtPriceX96 != sqrt_price_limit_x96:
             step = StepComputations()
 
             step.sqrtPriceStartX96 = state.sqrtPriceX96
@@ -634,9 +608,7 @@ class V3LiquidityPool(PoolHelper):
                 except BitmapWordUnavailableError as e:
                     missing_word = e.args[1]
                     if self._sparse_bitmap:
-                        logger.debug(
-                            f"(swap) {self.name} fetching word {missing_word}"
-                        )
+                        logger.debug(f"(swap) {self.name} fetching word {missing_word}")
                         self._update_tick_data_at_word(missing_word)
                     else:
                         # bitmap is complete, so mark the word as empty
@@ -646,17 +618,9 @@ class V3LiquidityPool(PoolHelper):
                     # nextInitializedTickWithinOneWord will search up to 256 ticks away, which may
                     # return a tick in an adjacent word if there are no initialized ticks in the current word.
                     # This word may not be known to the helper, so check and fetch the containing word for this tick
+                    tick_next_word, _ = self._get_tick_bitmap_position(step.tickNext)
 
-                    # BUGFIX: previously called position directly, which implies tickSpacing=1,
-                    # so the call returned an inaccurate word and short-circuited the optimization
-                    tick_next_word, _ = self._get_tick_bitmap_position(
-                        step.tickNext
-                    )
-
-                    if (
-                        self._sparse_bitmap
-                        and tick_next_word not in _tick_bitmap
-                    ):
+                    if self._sparse_bitmap and tick_next_word not in _tick_bitmap:
                         logger.debug(
                             f"tickNext={step.tickNext} out of range! Fetching word={tick_next_word}"
                             f"\n{self.name}"
@@ -697,12 +661,8 @@ class V3LiquidityPool(PoolHelper):
             )
 
             if exactInput:
-                state.amountSpecifiedRemaining -= to_int256(
-                    step.amountIn + step.feeAmount
-                )
-                state.amountCalculated = to_int256(
-                    state.amountCalculated - step.amountOut
-                )
+                state.amountSpecifiedRemaining -= to_int256(step.amountIn + step.feeAmount)
+                state.amountCalculated = to_int256(state.amountCalculated - step.amountOut)
             else:
                 state.amountSpecifiedRemaining += to_int256(step.amountOut)
                 state.amountCalculated = to_int256(
@@ -719,9 +679,7 @@ class V3LiquidityPool(PoolHelper):
                     if zeroForOne:
                         liquidityNet = -liquidityNet
 
-                    state.liquidity = LiquidityMath.addDelta(
-                        state.liquidity, liquidityNet
-                    )
+                    state.liquidity = LiquidityMath.addDelta(state.liquidity, liquidityNet)
 
                 state.tick = step.tickNext - 1 if zeroForOne else step.tickNext
 
@@ -864,9 +822,7 @@ class V3LiquidityPool(PoolHelper):
             ) = self._w3_contract.functions.slot0().call(
                 block_identifier=block_number,
             )
-            _liquidity = self._w3_contract.functions.liquidity().call(
-                block_identifier=block_number
-            )
+            _liquidity = self._w3_contract.functions.liquidity().call(block_identifier=block_number)
 
             if self.sqrt_price_x96 != _sqrt_price_x96:
                 updated = True
@@ -942,30 +898,18 @@ class V3LiquidityPool(PoolHelper):
                 zeroForOne=zeroForOne,
                 amount_specified=token_in_quantity,
                 sqrt_price_limit_x96=(
-                    TickMath.MIN_SQRT_RATIO + 1
-                    if zeroForOne
-                    else TickMath.MAX_SQRT_RATIO - 1
+                    TickMath.MIN_SQRT_RATIO + 1 if zeroForOne else TickMath.MAX_SQRT_RATIO - 1
                 ),
-                override_start_liquidity=override_state.liquidity
-                if override_state
-                else None,
+                override_start_liquidity=override_state.liquidity if override_state else None,
                 override_start_sqrt_price_x96=override_state.sqrt_price_x96
                 if override_state
                 else None,
-                override_start_tick=override_state.tick
-                if override_state
-                else None,
-                override_tick_bitmap=override_state.tick_bitmap
-                if override_state
-                else None,
-                override_tick_data=override_state.tick_data
-                if override_state
-                else None,
+                override_start_tick=override_state.tick if override_state else None,
+                override_tick_bitmap=override_state.tick_bitmap if override_state else None,
+                override_tick_data=override_state.tick_data if override_state else None,
             )
         except EVMRevertError as e:
-            raise LiquidityPoolError(
-                f"Simulated execution reverted: {e}"
-            ) from e
+            raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
         else:
             return -amount1_delta if zeroForOne else -amount0_delta
 
@@ -1011,35 +955,21 @@ class V3LiquidityPool(PoolHelper):
                 zeroForOne=zeroForOne,
                 amount_specified=-token_out_quantity,
                 sqrt_price_limit_x96=(
-                    TickMath.MIN_SQRT_RATIO + 1
-                    if zeroForOne
-                    else TickMath.MAX_SQRT_RATIO - 1
+                    TickMath.MIN_SQRT_RATIO + 1 if zeroForOne else TickMath.MAX_SQRT_RATIO - 1
                 ),
-                override_start_liquidity=override_state.liquidity
-                if override_state
-                else None,
+                override_start_liquidity=override_state.liquidity if override_state else None,
                 override_start_sqrt_price_x96=override_state.sqrt_price_x96
                 if override_state
                 else None,
-                override_start_tick=override_state.tick
-                if override_state
-                else None,
-                override_tick_bitmap=override_state.tick_bitmap
-                if override_state
-                else None,
-                override_tick_data=override_state.tick_data
-                if override_state
-                else None,
+                override_start_tick=override_state.tick if override_state else None,
+                override_tick_bitmap=override_state.tick_bitmap if override_state else None,
+                override_tick_data=override_state.tick_data if override_state else None,
             )
         except EVMRevertError as e:
-            raise LiquidityPoolError(
-                f"Simulated execution reverted: {e}"
-            ) from e
+            raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
         else:
             amountIn, amountOutReceived = (
-                (amount0_delta, -amount1_delta)
-                if zeroForOne
-                else (amount1_delta, -amount0_delta)
+                (amount0_delta, -amount1_delta) if zeroForOne else (amount1_delta, -amount0_delta)
             )
 
             return amountIn
@@ -1141,9 +1071,9 @@ class V3LiquidityPool(PoolHelper):
             updated_state = False
 
             for update_type in ("tick", "liquidity", "sqrt_price_x96"):
-                if (
-                    update_value := getattr(update, update_type, None)
-                ) and update_value != getattr(self, update_type):
+                if (update_value := getattr(update, update_type, None)) and update_value != getattr(
+                    self, update_type
+                ):
                     setattr(self, update_type, update_value)
                     updated_state = True
 
@@ -1193,9 +1123,7 @@ class V3LiquidityPool(PoolHelper):
                                 ) from e
                         else:
                             # The bitmap is complete (sparse=False), so mark this word as empty
-                            self.tick_bitmap[
-                                tick_word
-                            ] = UniswapV3BitmapAtWord()
+                            self.tick_bitmap[tick_word] = UniswapV3BitmapAtWord()
 
                     # Get the liquidity info for this tick
                     try:
@@ -1222,9 +1150,7 @@ class V3LiquidityPool(PoolHelper):
                         if i == 0
                         else tick_liquidity_net - liquidity_delta
                     )
-                    new_liquidity_gross = (
-                        tick_liquidity_gross + liquidity_delta
-                    )
+                    new_liquidity_gross = tick_liquidity_gross + liquidity_delta
 
                     # Delete entirely if there is no liquidity referencing this tick, then flip it in the bitmap
                     if new_liquidity_gross == 0:
@@ -1254,9 +1180,7 @@ class V3LiquidityPool(PoolHelper):
                     "\n"
                     f"new liquidity: {new_liquidity_net} net, {new_liquidity_gross} gross"
                 )
-                logger.debug(
-                    f"update block: {block_number} (last={self._update_block})"
-                )
+                logger.debug(f"update block: {block_number} (last={self._update_block})")
 
             if updated_state:
                 self._update_pool_state()
@@ -1327,9 +1251,7 @@ class V3LiquidityPool(PoolHelper):
             raise ValueError("token_in or token_out not provided")
 
         if token_in_quantity and token_out_quantity:
-            raise ValueError(
-                "Provide token_in_quantity or token_out_quantity, not both"
-            )
+            raise ValueError("Provide token_in_quantity or token_out_quantity, not both")
 
         if token_in is not None:
             if token_in_quantity is None:
@@ -1355,11 +1277,7 @@ class V3LiquidityPool(PoolHelper):
         _sqrt_price_limit = (
             sqrt_price_limit
             if sqrt_price_limit is not None
-            else (
-                TickMath.MIN_SQRT_RATIO + 1
-                if zeroForOne
-                else TickMath.MAX_SQRT_RATIO - 1
-            )
+            else (TickMath.MIN_SQRT_RATIO + 1 if zeroForOne else TickMath.MAX_SQRT_RATIO - 1)
         )
 
         if token_in_quantity is not None:
@@ -1378,26 +1296,16 @@ class V3LiquidityPool(PoolHelper):
                 zeroForOne=zeroForOne,
                 amount_specified=_amount_specified,
                 sqrt_price_limit_x96=_sqrt_price_limit,
-                override_start_liquidity=override_state.liquidity
-                if override_state
-                else None,
+                override_start_liquidity=override_state.liquidity if override_state else None,
                 override_start_sqrt_price_x96=override_state.sqrt_price_x96
                 if override_state
                 else None,
-                override_start_tick=override_state.tick
-                if override_state
-                else None,
-                override_tick_bitmap=override_state.tick_bitmap
-                if override_state
-                else None,
-                override_tick_data=override_state.tick_data
-                if override_state
-                else None,
+                override_start_tick=override_state.tick if override_state else None,
+                override_tick_bitmap=override_state.tick_bitmap if override_state else None,
+                override_tick_data=override_state.tick_data if override_state else None,
             )
         except EVMRevertError as e:
-            raise LiquidityPoolError(
-                f"Simulated execution reverted: {e}"
-            ) from e
+            raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
         else:
             return UniswapV3PoolSimulationResult(
                 amount0_delta=amount0_delta,

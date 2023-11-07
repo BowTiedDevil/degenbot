@@ -82,9 +82,7 @@ class UniswapV3LiquiditySnapshot:
             f"Loaded LP snapshot: {len(json_liquidity_snapshot)} pools @ block {self.newest_block}"
         )
 
-        self._liquidity_events: Dict[
-            ChecksumAddress, List[UniswapV3LiquidityEvent]
-        ] = dict()
+        self._liquidity_events: Dict[ChecksumAddress, List[UniswapV3LiquidityEvent]] = dict()
 
     def _add_pool_if_missing(self, pool_address: ChecksumAddress) -> None:
         try:
@@ -122,9 +120,7 @@ class UniswapV3LiquiditySnapshot:
                 tx_index=tx_index,
             )
 
-        logger.info(
-            f"Updating snapshot from block {self.newest_block} to {to_block}"
-        )
+        logger.info(f"Updating snapshot from block {self.newest_block} to {to_block}")
 
         v3pool = Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI)
 
@@ -153,9 +149,7 @@ class UniswapV3LiquiditySnapshot:
                         continue
 
                     self._add_pool_if_missing(pool_address)
-                    self._liquidity_events[pool_address].append(
-                        liquidity_event
-                    )
+                    self._liquidity_events[pool_address].append(liquidity_event)
 
                 if end_block == to_block:
                     break
@@ -165,9 +159,7 @@ class UniswapV3LiquiditySnapshot:
         logger.info(f"Updated snapshot to block {to_block}")
         self.newest_block = to_block
 
-    def get_pool_updates(
-        self, pool_address
-    ) -> List[UniswapV3PoolExternalUpdate]:
+    def get_pool_updates(self, pool_address) -> List[UniswapV3PoolExternalUpdate]:
         try:
             self._liquidity_events[pool_address]
         except KeyError:

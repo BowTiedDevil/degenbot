@@ -104,9 +104,7 @@ class Erc20TokenHelperManager(HelperManager):
         try:
             token_helper = Erc20Token(address=address, **kwargs)
         except Exception:
-            raise ManagerError(
-                f"Could not create Erc20Token helper: {address=}"
-            )
+            raise ManagerError(f"Could not create Erc20Token helper: {address=}")
 
         with self._lock:
             self._erc20tokens[address] = token_helper

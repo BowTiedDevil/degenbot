@@ -52,6 +52,6 @@ class AllPools:
     def __len__(self):
         return len(self.pools)
 
-    def get(self, pool_address: Union[ChecksumAddress, str]):
+    def get(self, pool_address: Union[ChecksumAddress, str]) -> Optional[PoolHelper]:
         _pool_address = to_checksum_address(pool_address)
         return self.pools.get(_pool_address)

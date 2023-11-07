@@ -20,9 +20,7 @@ def decode_v3_path(path: bytes) -> List[Union[ChecksumAddress, int]]:
     # store each address (hex string) and fee (int)
     for byte_length in cycle((20, 3)):
         if byte_length == 20:
-            address = to_checksum_address(
-                path[path_pos : path_pos + byte_length].hex()
-            )
+            address = to_checksum_address(path[path_pos : path_pos + byte_length].hex())
             decoded_path.append(address)
         elif byte_length == 3:
             fee = int(

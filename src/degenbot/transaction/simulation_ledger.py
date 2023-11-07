@@ -78,9 +78,7 @@ class SimulationLedger:
             address_balance = {}
             self._balances[_address] = address_balance
 
-        logger.debug(
-            f"BALANCE: {_address} {'+' if amount > 0 else ''}{amount} {_token_address}"
-        )
+        logger.debug(f"BALANCE: {_address} {'+' if amount > 0 else ''}{amount} {_token_address}")
 
         try:
             address_balance[_token_address]

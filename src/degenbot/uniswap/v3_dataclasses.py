@@ -56,18 +56,8 @@ class UniswapV3PoolState:
     liquidity: int
     sqrt_price_x96: int
     tick: int
-    tick_bitmap: Optional[
-        Dict[int, UniswapV3BitmapAtWord]
-    ] = dataclasses.field(
-        # compare=False,
-        default=None,
-    )
-    tick_data: Optional[
-        Dict[int, UniswapV3LiquidityAtTick]
-    ] = dataclasses.field(
-        # compare=False,
-        default=None,
-    )
+    tick_bitmap: Optional[Dict[int, UniswapV3BitmapAtWord]] = dataclasses.field(default=None)
+    tick_data: Optional[Dict[int, UniswapV3LiquidityAtTick]] = dataclasses.field(default=None)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

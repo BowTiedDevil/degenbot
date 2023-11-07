@@ -71,14 +71,8 @@ class AnvilFork:
         while is_connected_method() is False:
             continue
 
-        self.block = (
-            fork_block if fork_block else self.w3.eth.get_block_number()
-        )
-        self.base_fee = (
-            base_fee
-            if base_fee
-            else self.w3.eth.get_block(self.block)["baseFeePerGas"]
-        )
+        self.block = fork_block if fork_block else self.w3.eth.get_block_number()
+        self.base_fee = base_fee if base_fee else self.w3.eth.get_block(self.block)["baseFeePerGas"]
         self.base_fee_next: Optional[int] = None
         self.socket = socket.socket(socket.AF_UNIX)
         self.socket.connect(self.ipc_path)
@@ -159,9 +153,7 @@ class AnvilFork:
         )
         result: dict = ujson.loads(self.socket.recv(self._SOCKET_BUFFER_SIZE))
         if result.get("error"):
-            raise Exception(
-                f"Error reverting to previous snapshot! Response: {result}"
-            )
+            raise Exception(f"Error reverting to previous snapshot! Response: {result}")
 
     def set_next_base_fee(self, fee: int) -> None:
         self.socket.sendall(
@@ -179,9 +171,7 @@ class AnvilFork:
         )
         result: dict = ujson.loads(self.socket.recv(self._SOCKET_BUFFER_SIZE))
         if result.get("error"):
-            raise Exception(
-                f"Error setting next block base fee! Response: {result}"
-            )
+            raise Exception(f"Error setting next block base fee! Response: {result}")
         else:
             self.base_fee_next = fee
 
