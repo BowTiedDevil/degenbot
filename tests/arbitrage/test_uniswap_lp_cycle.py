@@ -35,30 +35,23 @@ class MockV3LiquidityPool(V3LiquidityPool):
 
 
 wbtc = MockErc20Token()
-wbtc.address = to_checksum_address(
-    "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
-)
+wbtc.address = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 wbtc.decimals = 8
 wbtc.name = "Wrapped BTC"
 wbtc.symbol = "WBTC"
 
 weth = MockErc20Token()
-weth.address = to_checksum_address(
-    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-)
+weth.address = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 weth.decimals = 18
 weth.name = "Wrapped Ether"
 weth.symbol = "WETH"
 
 
 v2_lp = MockLiquidityPool()
+v2_lp._lock = Lock()
 v2_lp.name = "WBTC-WETH (V2, 0.30%)"
-v2_lp.address = to_checksum_address(
-    "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
-)
-v2_lp.factory = to_checksum_address(
-    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-)
+v2_lp.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
+v2_lp.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
 v2_lp.fee = None
 v2_lp.fee_token0 = Fraction(3, 1000)
 v2_lp.fee_token1 = Fraction(3, 1000)
@@ -69,6 +62,7 @@ v2_lp.token1 = weth
 v2_lp._update_pool_state()
 
 v3_lp = MockV3LiquidityPool()
+v3_lp._state_lock = Lock()
 v3_lp.state = UniswapV3PoolState(
     pool=v3_lp,
     liquidity=0,
@@ -78,12 +72,8 @@ v3_lp.state = UniswapV3PoolState(
     tick_data={},
 )
 v3_lp.name = "WBTC-WETH (V3, 0.30%)"
-v3_lp.address = to_checksum_address(
-    "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
-)
-v3_lp.factory = to_checksum_address(
-    "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-)
+v3_lp.address = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
+v3_lp.factory = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
 v3_lp._fee = 3000
 v3_lp.token0 = wbtc
 v3_lp.token1 = weth
@@ -2153,13 +2143,9 @@ def test_arbitrage_with_overrides() -> None:
 
     # Irrelevant V2 and V3 mocked pools, only the address is changed.
     irrelevant_v2_pool = MockLiquidityPool()
-    irrelevant_v2_pool.address = to_checksum_address(
-        "0x0000000000000000000000000000000000000069"
-    )
+    irrelevant_v2_pool.address = to_checksum_address("0x0000000000000000000000000000000000000069")
     irrelevant_v2_pool.name = "WBTC-WETH (V2, 0.30%)"
-    irrelevant_v2_pool.factory = to_checksum_address(
-        "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-    )
+    irrelevant_v2_pool.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     irrelevant_v2_pool.fee = None
     irrelevant_v2_pool.fee_token0 = Fraction(3, 1000)
     irrelevant_v2_pool.fee_token1 = Fraction(3, 1000)
@@ -2169,6 +2155,7 @@ def test_arbitrage_with_overrides() -> None:
     irrelevant_v2_pool.token1 = weth
 
     irrelevant_v3_pool = MockV3LiquidityPool()
+    irrelevant_v3_pool._state_lock = Lock()
     irrelevant_v3_pool.state = UniswapV3PoolState(
         pool=irrelevant_v3_pool,
         liquidity=0,
@@ -2177,13 +2164,9 @@ def test_arbitrage_with_overrides() -> None:
         tick_bitmap={},
         tick_data={},
     )
-    irrelevant_v3_pool.address = to_checksum_address(
-        "0x0000000000000000000000000000000000000420"
-    )
+    irrelevant_v3_pool.address = to_checksum_address("0x0000000000000000000000000000000000000420")
     irrelevant_v3_pool.name = "WBTC-WETH (V3, 0.30%)"
-    irrelevant_v3_pool.factory = to_checksum_address(
-        "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-    )
+    irrelevant_v3_pool.factory = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
     irrelevant_v3_pool._fee = 3000
     irrelevant_v3_pool.token0 = wbtc
     irrelevant_v3_pool.token1 = weth
@@ -2207,13 +2190,10 @@ def test_arbitrage_with_overrides() -> None:
 
 def test_pre_calc_check() -> None:
     lp_1 = MockLiquidityPool()
+    lp_1._lock = Lock()
     lp_1.name = "WBTC-WETH (V2, 0.30%)"
-    lp_1.address = to_checksum_address(
-        "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
-    )
-    lp_1.factory = to_checksum_address(
-        "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-    )
+    lp_1.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
+    lp_1.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp_1.fee = None
     lp_1.fee_token0 = Fraction(3, 1000)
     lp_1.fee_token1 = Fraction(3, 1000)
@@ -2224,13 +2204,10 @@ def test_pre_calc_check() -> None:
     lp_1._update_pool_state()
 
     lp_2 = MockLiquidityPool()
+    lp_2._lock = Lock()
     lp_2.name = "WBTC-WETH (V2, 0.30%)"
-    lp_2.address = to_checksum_address(
-        "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
-    )
-    lp_2.factory = to_checksum_address(
-        "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-    )
+    lp_2.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
+    lp_2.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp_2.fee = None
     lp_2.fee_token0 = Fraction(3, 1000)
     lp_2.fee_token1 = Fraction(3, 1000)
@@ -2258,9 +2235,7 @@ def test_pre_calc_check() -> None:
     # price is lower in the second pool.
     # i.e. sell underpriced token0 (WETH) in pool0 for token1 (WBTC),
     # buy overpriced token0 (WETH) in pool1 with token1 (WBTC)
-    with pytest.raises(
-        ArbitrageError, match="No profitable arbitrage at current prices."
-    ):
+    with pytest.raises(ArbitrageError, match="No profitable arbitrage at current prices."):
         UniswapLpCycle(
             id="test_arb",
             input_token=weth,
