@@ -64,7 +64,7 @@ class LiquidityPool(PoolHelper):
 
     def __init__(
         self,
-        address: str,
+        address: Union[ChecksumAddress, str],
         tokens: Optional[List["Erc20Token"]] = None,
         name: Optional[str] = None,
         update_method: str = "polling",
@@ -76,9 +76,10 @@ class LiquidityPool(PoolHelper):
         fee_token0: Optional[Fraction] = None,
         fee_token1: Optional[Fraction] = None,
         silent: bool = False,
-        update_reserves_on_start: bool = True,
-        unload_brownie_contract_after_init: bool = False,  # deprecated
+        update_reserves_on_start: Optional[bool] = None,  # deprecated
+        unload_brownie_contract_after_init: Optional[bool] = None,  # deprecated
         state_block: Optional[int] = None,
+        empty: bool = False,
     ) -> None:
         """
         Create a new `LiquidityPool` object for interaction with a Uniswap
@@ -118,14 +119,22 @@ class LiquidityPool(PoolHelper):
             pools with different fees for each token.
         silent : bool
             Suppress status output.
-        update_reserves_on_start : bool
-            Update the reserves during instantiation.
         state_block: int, optional
             Fetch initial state values from the chain at a particular block
             height. Defaults to the latest block if omitted.
+        empty: bool
+            Set to `True` to initialize the pool without initial values
+            retrieved from chain, and skipping some validation. Useful for
+            simulating transactions through pools that do not exist.
+        """
 
         self._lock = Lock()
 
+        if unload_brownie_contract_after_init is not None:
+            warn("unload_brownie_contract_after_init has been deprecated and is ignored.")
+
+        if update_reserves_on_start is not None:
+            warn("update_reserves_on_start has been deprecated in favor of `empty` argument.")
 
         self.address: ChecksumAddress = to_checksum_address(address)
         self.abi = abi or UNISWAP_V2_POOL_ABI
@@ -179,10 +188,12 @@ class LiquidityPool(PoolHelper):
         self.token0_max_swap = 0
         self.token1_max_swap = 0
         self.new_reserves = False
-        self.update_block = (
-            state_block if state_block else self._w3.eth.get_block_number()
-        )
+        if empty:
+            self.update_block = 0
+        else:
+            self.update_block = state_block if state_block else self._w3.eth.get_block_number()
 
+        # self.factory = self._w3_contract.functions.factory().call()
 
         chain_id = 1 if empty else self._w3.eth.chain_id
 
@@ -190,29 +201,22 @@ class LiquidityPool(PoolHelper):
         if tokens is not None:
             if len(tokens) != 2:
                 raise ValueError(f"Expected 2 tokens, found {len(tokens)}")
-            for token in tokens:
-                if (
-                    token.address
-                    == self._w3_contract.functions.token0().call()
-                ):
-                    self.token0 = token
-                elif (
-                    token.address
-                    == self._w3_contract.functions.token1().call()
-                ):
-                    self.token1 = token
-                else:
-                    raise ValueError(f"{token} not found in pool {self}")
+            self.token0 = min(tokens)
+            self.token1 = max(tokens)
         else:
-            _token_manager = Erc20TokenHelperManager(self._w3.eth.chain_id)
-            self.token0 = _token_manager.get_erc20token(
-                address=self._w3_contract.functions.token0().call(),
-                silent=silent,
-            )
-            self.token1 = _token_manager.get_erc20token(
-                address=self._w3_contract.functions.token1().call(),
-                silent=silent,
-            )
+            if empty:
+                self.token0 = None
+                self.token1 = None
+            else:
+                _token_manager = Erc20TokenHelperManager(chain_id)
+                self.token0 = _token_manager.get_erc20token(
+                    address=self._w3_contract.functions.token0().call(),
+                    silent=silent,
+                )
+                self.token1 = _token_manager.get_erc20token(
+                    address=self._w3_contract.functions.token1().call(),
+                    silent=silent,
+                )
 
         if factory_address is not None and factory_init_hash is not None:
             computed_pool_address = generate_v2_pool_address(
@@ -238,7 +242,7 @@ class LiquidityPool(PoolHelper):
 
             self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
 
-        if update_reserves_on_start:
+        if not empty:
             (
                 self.reserves_token0,
                 self.reserves_token1,
@@ -260,10 +264,15 @@ class LiquidityPool(PoolHelper):
             reserves_token1=self.reserves_token1,
         )
         self._pool_state_archive: Dict[int, UniswapV2PoolState] = {
-            self.update_block: self.state
+            0: UniswapV2PoolState(
+                pool=self,
+                reserves_token0=0,
+                reserves_token1=0,
+            ),
+            self.update_block: self.state,
         }  # WIP
 
-        AllPools(self._w3.eth.chain_id)[self.address] = self
+        AllPools(chain_id)[self.address] = self
 
         if not silent:
             logger.info(self.name)
@@ -752,7 +761,7 @@ class LiquidityPool(PoolHelper):
 
         success = False
 
-        # get the chain height from Brownie if a specific update_block is not provided
+        # Fetch the chain height if a specific update_block is not provided
         if update_block is None:
             update_block = self._w3.eth.get_block_number()
 
@@ -978,15 +987,18 @@ class CamelotLiquidityPool(LiquidityPool):
         update_method: str = "polling",
         abi: Optional[list] = None,
         silent: bool = False,
-        update_reserves_on_start: bool = True,
-        unload_brownie_contract_after_init: bool = False,  # deprecated
+        update_reserves_on_start: Optional[bool] = None,  # deprecated
+        unload_brownie_contract_after_init: Optional[bool] = None,  # deprecated
     ) -> None:
-        if unload_brownie_contract_after_init:
+        if unload_brownie_contract_after_init is not None:
             warn(
                 "unload_brownie_contract_after_init is no longer needed and is "
                 "ignored. Remove constructor argument to stop seeing this "
                 "message."
             )
+
+        if update_reserves_on_start is not None:
+            warn("update_reserves_on_start has been deprecated.")
 
         _web3 = get_web3()
         if _web3 is not None:
@@ -1027,7 +1039,6 @@ class CamelotLiquidityPool(LiquidityPool):
             fee_token0=fee_token0,
             fee_token1=fee_token1,
             silent=silent,
-            update_reserves_on_start=update_reserves_on_start,
         )
 
         if stable_pool:
