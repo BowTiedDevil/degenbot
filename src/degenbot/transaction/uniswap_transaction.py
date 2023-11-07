@@ -55,66 +55,46 @@ _ROUTERS: Dict[
         to_checksum_address("0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"): {
             "name": "Sushiswap: Router",
             "factory_address": {
-                2: to_checksum_address(
-                    "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"
-                )
+                2: to_checksum_address("0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac")
             },
         },
         to_checksum_address("0xf164fC0Ec4E93095b804a4795bBe1e041497b92a"): {
             "name": "UniswapV2: Router",
             "factory_address": {
-                2: to_checksum_address(
-                    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-                )
+                2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
             },
         },
         to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"): {
             "name": "UniswapV2: Router 2",
             "factory_address": {
-                2: to_checksum_address(
-                    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-                )
+                2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
             },
         },
         to_checksum_address("0xE592427A0AEce92De3Edee1F18E0157C05861564"): {
             "name": "UniswapV3: Router",
             "factory_address": {
-                3: to_checksum_address(
-                    "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-                )
+                3: to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
             },
         },
         to_checksum_address("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"): {
             "name": "UniswapV3: Router 2",
             "factory_address": {
-                2: to_checksum_address(
-                    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-                ),
-                3: to_checksum_address(
-                    "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-                ),
+                2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
+                3: to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
             },
         },
         to_checksum_address("0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B"): {
             "name": "Uniswap Universal Router (Old)",
             "factory_address": {
-                2: to_checksum_address(
-                    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-                ),
-                3: to_checksum_address(
-                    "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-                ),
+                2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
+                3: to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
             },
         },
         to_checksum_address("0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"): {
             "name": "Universal Universal Router (New) ",
             "factory_address": {
-                2: to_checksum_address(
-                    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-                ),
-                3: to_checksum_address(
-                    "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-                ),
+                2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
+                3: to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
             },
         },
     }
@@ -124,16 +104,10 @@ _ROUTERS: Dict[
 # see https://github.com/Uniswap/universal-router/blob/deployed-commit/contracts/libraries/Constants.sol
 _UNIVERSAL_ROUTER_CONTRACT_ALREADY_PAID_FLAG = 0
 _UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG = 1 << 255
-_UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG = (
-    "0x0000000000000000000000000000000000000002"
-)
-_UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG = (
-    "0x0000000000000000000000000000000000000001"
-)
+_UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG = "0x0000000000000000000000000000000000000002"
+_UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG = "0x0000000000000000000000000000000000000001"
 _V3_ROUTER_CONTRACT_ADDRESS_FLAG = "0x0000000000000000000000000000000000000000"
-_V3_ROUTER2_CONTRACT_ADDRESS_FLAG = (
-    "0x0000000000000000000000000000000000000002"
-)
+_V3_ROUTER2_CONTRACT_ADDRESS_FLAG = "0x0000000000000000000000000000000000000002"
 _V3_ROUTER2_CONTRACT_BALANCE_FLAG = 0
 
 
@@ -243,9 +217,7 @@ class UniswapTransaction(TransactionHelper):
 
         self.ledger = SimulationLedger()
 
-        self.chain_id = (
-            int(chain_id, 16) if isinstance(chain_id, str) else chain_id
-        )
+        self.chain_id = int(chain_id, 16) if isinstance(chain_id, str) else chain_id
         self.routers = _ROUTERS[self.chain_id]
         self.sender = to_checksum_address(tx_sender)
         self.to: Set[ChecksumAddress] = set()
@@ -261,29 +233,21 @@ class UniswapTransaction(TransactionHelper):
 
         try:
             self.v2_pool_manager = UniswapV2LiquidityPoolManager(
-                factory_address=self.routers[router_address][
-                    "factory_address"
-                ][2]
+                factory_address=self.routers[router_address]["factory_address"][2]
             )
         except Exception:
             pass
 
         try:
             self.v3_pool_manager = UniswapV3LiquidityPoolManager(
-                factory_address=self.routers[router_address][
-                    "factory_address"
-                ][3]
+                factory_address=self.routers[router_address]["factory_address"][3]
             )
         except Exception:
             pass
 
         self.hash = tx_hash
-        self.nonce = (
-            int(tx_nonce, 16) if isinstance(tx_nonce, str) else tx_nonce
-        )
-        self.value = (
-            int(tx_value, 16) if isinstance(tx_value, str) else tx_value
-        )
+        self.nonce = int(tx_nonce, 16) if isinstance(tx_nonce, str) else tx_nonce
+        self.value = int(tx_value, 16) if isinstance(tx_value, str) else tx_value
         self.func_name = func_name
         self.func_params = func_params
         if previous_block_hash := self.func_params.get("previousBlockhash"):
@@ -299,9 +263,7 @@ class UniswapTransaction(TransactionHelper):
 
     def _show_pool_states(
         self,
-        sim_result: Union[
-            UniswapV2PoolSimulationResult, UniswapV3PoolSimulationResult
-        ],
+        sim_result: Union[UniswapV2PoolSimulationResult, UniswapV3PoolSimulationResult],
     ):
         current_state = sim_result.current_state
         future_state = sim_result.future_state
@@ -335,9 +297,7 @@ class UniswapTransaction(TransactionHelper):
             if TYPE_CHECKING:
                 assert isinstance(current_state, UniswapV3PoolState)
                 assert isinstance(future_state, UniswapV3PoolState)
-            logger.info(
-                f"\t{amount_in} {token_in} -> {amount_out} {token_out}"
-            )
+            logger.info(f"\t{amount_in} {token_in} -> {amount_out} {token_out}")
             logger.info("\t(CURRENT)")
             logger.info(f"\tprice={current_state.sqrt_price_x96}")
             logger.info(f"\tliquidity={current_state.liquidity}")
@@ -364,9 +324,7 @@ class UniswapTransaction(TransactionHelper):
         TBD
         """
 
-        assert isinstance(
-            pool, LiquidityPool
-        ), f"Called _simulate_v2_swap_exact_in on pool {pool}"
+        assert isinstance(pool, LiquidityPool), f"Called _simulate_v2_swap_exact_in on pool {pool}"
 
         silent = self.silent
 
@@ -399,14 +357,10 @@ class UniswapTransaction(TransactionHelper):
             sim_result.amount1_delta,
         )
 
-        if first_swap and not self.ledger.token_balance(
-            pool.address, token_in
-        ):
+        if first_swap and not self.ledger.token_balance(pool.address, token_in):
             # credit the router if there is a zero balance
             if not self.ledger.token_balance(self.router_address, token_in):
-                self.ledger.adjust(
-                    self.router_address, token_in.address, amount_in
-                )
+                self.ledger.adjust(self.router_address, token_in.address, amount_in)
             self.ledger.transfer(
                 token_in,
                 amount=amount_in,
@@ -429,11 +383,7 @@ class UniswapTransaction(TransactionHelper):
         if last_swap:
             self.to.add(to_checksum_address(recipient))
 
-        if (
-            last_swap
-            and amount_out_min is not None
-            and _amount_out < amount_out_min
-        ):
+        if last_swap and amount_out_min is not None and _amount_out < amount_out_min:
             raise TransactionError(
                 f"Insufficient output for swap! {_amount_out} {token_out} received, {amount_out_min} required"
             )
@@ -468,9 +418,7 @@ class UniswapTransaction(TransactionHelper):
         TBD
         """
 
-        assert isinstance(
-            pool, LiquidityPool
-        ), f"Called _simulate_v2_swap_exact_out on pool {pool}"
+        assert isinstance(pool, LiquidityPool), f"Called _simulate_v2_swap_exact_out on pool {pool}"
 
         silent = self.silent
 
@@ -510,14 +458,8 @@ class UniswapTransaction(TransactionHelper):
             to_addr=recipient,
         )
 
-        if (
-            first_swap
-            and amount_in_max is not None
-            and _amount_in > amount_in_max
-        ):
-            raise TransactionError(
-                f"Required input {_amount_in} exceeds maximum {amount_in_max}"
-            )
+        if first_swap and amount_in_max is not None and _amount_in > amount_in_max:
+            raise TransactionError(f"Required input {_amount_in} exceeds maximum {amount_in_max}")
 
         if not silent:
             self._show_pool_states(sim_result)
@@ -558,15 +500,11 @@ class UniswapTransaction(TransactionHelper):
             amount_in == _UNIVERSAL_ROUTER_CONTRACT_BALANCE_FLAG
             or amount_in == _V3_ROUTER2_CONTRACT_BALANCE_FLAG
         ):
-            amount_in = self.ledger.token_balance(
-                self.router_address, token_in.address
-            )
+            amount_in = self.ledger.token_balance(self.router_address, token_in.address)
 
         # the swap may occur after wrapping ETH, in which case amountIn will
         # be already set. If not, credit the router (user transfers the input)
-        if first_swap and not self.ledger.token_balance(
-            self.router_address, token_in.address
-        ):
+        if first_swap and not self.ledger.token_balance(self.router_address, token_in.address):
             self.ledger.adjust(
                 self.router_address,
                 token_in.address,
@@ -688,9 +626,7 @@ class UniswapTransaction(TransactionHelper):
             # which must be accounted for.
 
             # logger.debug(f"FIRST SWAP")
-            router_input_token_balance = self.ledger.token_balance(
-                self.router_address, token_in
-            )
+            router_input_token_balance = self.ledger.token_balance(self.router_address, token_in)
             # logger.debug(f"{router_input_token_balance=}")
 
             # Check for a balance:
@@ -739,9 +675,7 @@ class UniswapTransaction(TransactionHelper):
     def _simulate_unwrap(self, wrapped_token: str):
         logger.debug(f"Unwrapping {wrapped_token}")
 
-        wrapped_token_balance = self.ledger.token_balance(
-            self.router_address, wrapped_token
-        )
+        wrapped_token_balance = self.ledger.token_balance(self.router_address, wrapped_token)
 
         self.ledger.adjust(
             self.router_address,
@@ -928,9 +862,7 @@ class UniswapTransaction(TransactionHelper):
             }
 
             COMMAND_TYPE_MASK = 0x3F
-            command = UNIVERSAL_ROUTER_COMMAND_VALUES[
-                command_type & COMMAND_TYPE_MASK
-            ]
+            command = UNIVERSAL_ROUTER_COMMAND_VALUES[command_type & COMMAND_TYPE_MASK]
 
             logger.debug(f"Processing Universal Router command: {command}")
 
@@ -1007,10 +939,7 @@ class UniswapTransaction(TransactionHelper):
                 except Exception:
                     raise ValueError(f"Could not decode input for {command}")
 
-                if (
-                    sweep_recipient
-                    == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG
-                ):
+                if sweep_recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
                     sweep_recipient = self.sender
 
                 sweep_token_balance = self.ledger.token_balance(
@@ -1118,9 +1047,7 @@ class UniswapTransaction(TransactionHelper):
                 try:
                     if TYPE_CHECKING:
                         assert self.v2_pool_manager is not None
-                    pools = get_v2_pools_from_token_path(
-                        tx_path, self.v2_pool_manager
-                    )
+                    pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
                 except (LiquidityPoolError, ManagerError):
                     raise TransactionError(
                         f"LiquidityPool could not be built for all steps in path {tx_path}"
@@ -1132,19 +1059,11 @@ class UniswapTransaction(TransactionHelper):
                     first_swap = pool_pos == 0
                     last_swap = pool_pos == last_pool_pos
 
-                    token_in = (
-                        pool.token0
-                        if tx_path[pool_pos] == pool.token0
-                        else pool.token1
-                    )
+                    token_in = pool.token0 if tx_path[pool_pos] == pool.token0 else pool.token1
 
                     _amount_in = tx_amount_in if first_swap else _amount_out
 
-                    _recipient = (
-                        tx_recipient
-                        if last_swap
-                        else pools[pool_pos + 1].address
-                    )
+                    _recipient = tx_recipient if last_swap else pools[pool_pos + 1].address
 
                     if _recipient == _UNIVERSAL_ROUTER_MSG_SENDER_ADDRESS_FLAG:
                         _recipient = self.sender
@@ -1159,20 +1078,14 @@ class UniswapTransaction(TransactionHelper):
                         recipient=_recipient,
                         token_in=token_in,
                         amount_in=_amount_in,
-                        amount_out_min=tx_amount_out_min
-                        if last_swap
-                        else None,
+                        amount_out_min=tx_amount_out_min if last_swap else None,
                         first_swap=first_swap,
                         last_swap=last_swap,
                     )
 
-                    _amount_out = -min(
-                        _sim_result.amount0_delta, _sim_result.amount1_delta
-                    )
+                    _amount_out = -min(_sim_result.amount0_delta, _sim_result.amount1_delta)
 
-                    _universal_router_command_future_pool_states.append(
-                        (pool, _sim_result)
-                    )
+                    _universal_router_command_future_pool_states.append((pool, _sim_result))
 
             elif command == "V2_SWAP_EXACT_OUT":
                 """
@@ -1210,9 +1123,7 @@ class UniswapTransaction(TransactionHelper):
                 try:
                     if TYPE_CHECKING:
                         assert self.v2_pool_manager is not None
-                    pools = get_v2_pools_from_token_path(
-                        tx_path, self.v2_pool_manager
-                    )
+                    pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
                 except (LiquidityPoolError, ManagerError):
                     raise TransactionError(
                         f"LiquidityPool could not be built for all steps in path {tx_path}"
@@ -1227,11 +1138,7 @@ class UniswapTransaction(TransactionHelper):
                     _amount_out = tx_amount_out if last_swap else _amount_in
                     _amount_in_max = tx_amount_in_max if first_swap else None
 
-                    _recipient = (
-                        tx_recipient
-                        if last_swap
-                        else pools[::-1][pool_pos - 1].address
-                    )
+                    _recipient = tx_recipient if last_swap else pools[::-1][pool_pos - 1].address
 
                     # get the input token by proceeding backwards from
                     # the 2nd to last position,
@@ -1244,9 +1151,7 @@ class UniswapTransaction(TransactionHelper):
                     # - the first swap (pool_pos = 2) will have input token
                     #   in the four to last position (index -4, token0)
                     _token_in = (
-                        pool.token0
-                        if pool.token0 == tx_path[-2 - pool_pos]
-                        else pool.token1
+                        pool.token0 if pool.token0 == tx_path[-2 - pool_pos] else pool.token1
                     )
 
                     _, _v2_sim_result = self._simulate_v2_swap_exact_out(
@@ -1263,9 +1168,7 @@ class UniswapTransaction(TransactionHelper):
                         _v2_sim_result.amount1_delta,
                     )
 
-                    _universal_router_command_future_pool_states.append(
-                        (pool, _v2_sim_result)
-                    )
+                    _universal_router_command_future_pool_states.append((pool, _v2_sim_result))
 
             elif command == "V3_SWAP_EXACT_IN":
                 """
@@ -1331,9 +1234,7 @@ class UniswapTransaction(TransactionHelper):
                     )
 
                     _recipient = (
-                        tx_recipient
-                        if last_swap
-                        else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG
+                        tx_recipient if last_swap else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG
                     )
                     _token_in = (
                         v3_pool.token0
@@ -1357,9 +1258,7 @@ class UniswapTransaction(TransactionHelper):
                         _sim_result.amount1_delta,
                     )
 
-                    _universal_router_command_future_pool_states.append(
-                        (v3_pool, _sim_result)
-                    )
+                    _universal_router_command_future_pool_states.append((v3_pool, _sim_result))
 
             elif command == "V3_SWAP_EXACT_OUT":
                 """
@@ -1425,9 +1324,7 @@ class UniswapTransaction(TransactionHelper):
                     )
 
                     _recipient = (
-                        tx_recipient
-                        if last_swap
-                        else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG
+                        tx_recipient if last_swap else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG
                     )
                     _token_in = (
                         v3_pool.token0
@@ -1463,9 +1360,7 @@ class UniswapTransaction(TransactionHelper):
                         ) = _universal_router_command_future_pool_states[-1]
 
                         if TYPE_CHECKING:
-                            assert isinstance(
-                                _last_sim_result, UniswapV3PoolSimulationResult
-                            )
+                            assert isinstance(_last_sim_result, UniswapV3PoolSimulationResult)
 
                         _last_amount_in = max(
                             _last_sim_result.amount1_delta,
@@ -1477,9 +1372,7 @@ class UniswapTransaction(TransactionHelper):
                                 f"Insufficient swap amount through requested pool {v3_pool}. Needed {_last_amount_in}, received {_amount_out}"
                             )
 
-                    _universal_router_command_future_pool_states.append(
-                        (v3_pool, _sim_result)
-                    )
+                    _universal_router_command_future_pool_states.append((v3_pool, _sim_result))
 
             else:
                 raise ValueError(f"Invalid command {command}")
@@ -1558,9 +1451,7 @@ class UniswapTransaction(TransactionHelper):
                                 )
                             )
                         except Exception as e:
-                            raise ValueError(
-                                f"Could not decode nested multicall: {e}"
-                            ) from e
+                            raise ValueError(f"Could not decode nested multicall: {e}") from e
                 else:
                     try:
                         _v3_multicall_future_pool_states.extend(
@@ -1630,9 +1521,7 @@ class UniswapTransaction(TransactionHelper):
                         self._raise_if_expired(tx_deadline)
 
                     try:
-                        pools = get_v2_pools_from_token_path(
-                            tx_path, self.v2_pool_manager
-                        )
+                        pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
                     except (LiquidityPoolError, ManagerError):
                         raise TransactionError(
                             f"LiquidityPool could not be built for all steps in path {tx_path}"
@@ -1644,41 +1533,25 @@ class UniswapTransaction(TransactionHelper):
                         first_swap = pool_pos == 0
                         last_swap = pool_pos == last_pool_pos
 
-                        _token_in = (
-                            pool.token0
-                            if tx_path[pool_pos] == pool.token0
-                            else pool.token1
-                        )
+                        _token_in = pool.token0 if tx_path[pool_pos] == pool.token0 else pool.token1
 
-                        _amount_in = (
-                            tx_amount_in if first_swap else _amount_out
-                        )
+                        _amount_in = tx_amount_in if first_swap else _amount_out
 
-                        _recipient = (
-                            tx_recipient
-                            if last_swap
-                            else pools[pool_pos + 1].address
-                        )
+                        _recipient = tx_recipient if last_swap else pools[pool_pos + 1].address
 
                         _, sim_result = self._simulate_v2_swap_exact_in(
                             pool=pool,
                             recipient=_recipient,
                             token_in=_token_in,
                             amount_in=_amount_in,
-                            amount_out_min=tx_amount_out_min
-                            if last_swap
-                            else None,
+                            amount_out_min=tx_amount_out_min if last_swap else None,
                             first_swap=first_swap,
                             last_swap=last_swap,
                         )
 
-                        _amount_out = -min(
-                            sim_result.amount0_delta, sim_result.amount1_delta
-                        )
+                        _amount_out = -min(sim_result.amount0_delta, sim_result.amount1_delta)
 
-                        _v2_router_future_pool_states.append(
-                            (pool, sim_result)
-                        )
+                        _v2_router_future_pool_states.append((pool, sim_result))
 
                 elif func_name in (
                     "swapTokensForExactETH",
@@ -1691,9 +1564,7 @@ class UniswapTransaction(TransactionHelper):
                     try:
                         tx_amount_in_max = func_params["amountInMax"]
                     except KeyError:
-                        tx_amount_in_max = (
-                            self.value
-                        )  # 'swapETHForExactTokens'
+                        tx_amount_in_max = self.value  # 'swapETHForExactTokens'
                     tx_path = func_params["path"]
 
                     tx_recipient = func_params["to"]
@@ -1710,9 +1581,7 @@ class UniswapTransaction(TransactionHelper):
                         self._raise_if_expired(tx_deadline)
 
                     try:
-                        pools = get_v2_pools_from_token_path(
-                            tx_path, self.v2_pool_manager
-                        )
+                        pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
                     except (LiquidityPoolError, ManagerError):
                         raise TransactionError(
                             f"LiquidityPool could not be built for all steps in path {tx_path}"
@@ -1724,17 +1593,11 @@ class UniswapTransaction(TransactionHelper):
                         first_swap = pool_pos == last_pool_pos
                         last_swap = pool_pos == 0
 
-                        _amount_out = (
-                            tx_amount_out if last_swap else _amount_in
-                        )
-                        _amount_in_max = (
-                            tx_amount_in_max if first_swap else None
-                        )
+                        _amount_out = tx_amount_out if last_swap else _amount_in
+                        _amount_in_max = tx_amount_in_max if first_swap else None
 
                         _recipient = (
-                            tx_recipient
-                            if last_swap
-                            else pools[::-1][pool_pos - 1].address
+                            tx_recipient if last_swap else pools[::-1][pool_pos - 1].address
                         )
 
                         # get the input token by proceeding backwards from
@@ -1748,9 +1611,7 @@ class UniswapTransaction(TransactionHelper):
                         # - the first swap (pool_pos = 2) will have input token
                         #   in the four to last position (index -4, token0)
                         _token_in = (
-                            pool.token0
-                            if pool.token0 == tx_path[-2 - pool_pos]
-                            else pool.token1
+                            pool.token0 if pool.token0 == tx_path[-2 - pool_pos] else pool.token1
                         )
 
                         _, _sim_result = self._simulate_v2_swap_exact_out(
@@ -1774,9 +1635,7 @@ class UniswapTransaction(TransactionHelper):
                                 _amount_in,
                             )
 
-                        _v2_router_future_pool_states.append(
-                            (pool, _sim_result)
-                        )
+                        _v2_router_future_pool_states.append((pool, _sim_result))
 
                 elif func_name in (
                     "addLiquidity",
@@ -1810,9 +1669,7 @@ class UniswapTransaction(TransactionHelper):
                         tx_token_amount_min = func_params["amountTokenMin"]  # noqa: F841
                         # fmt: on
                         tx_eth_min = func_params["amountETHMin"]
-                        _wrapped_token_address = WRAPPED_NATIVE_TOKENS[
-                            self.chain_id
-                        ]
+                        _wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
                         token0_address, token1_address = (
                             (_wrapped_token_address, tx_token)
                             if _wrapped_token_address < tx_token
@@ -1903,27 +1760,19 @@ class UniswapTransaction(TransactionHelper):
 
             try:
                 if func_name == "multicall":
-                    _v3_router_future_pool_states.extend(
-                        _process_v3_multicall(params=func_params)
-                    )
+                    _v3_router_future_pool_states.extend(_process_v3_multicall(params=func_params))
 
                 elif func_name == "exactInputSingle":
                     # Extract parameters from the dict results of web3py v6
                     if isinstance(func_params["params"], dict):
                         tx_token_in_address = func_params["params"]["tokenIn"]
-                        tx_token_out_address = func_params["params"][
-                            "tokenOut"
-                        ]
+                        tx_token_out_address = func_params["params"]["tokenOut"]
                         tx_fee = func_params["params"]["fee"]
                         tx_recipient = func_params["params"]["recipient"]
                         tx_amount_in = func_params["params"]["amountIn"]
-                        tx_amount_out_min = func_params["params"][
-                            "amountOutMinimum"
-                        ]
+                        tx_amount_out_min = func_params["params"]["amountOutMinimum"]
                         tx_deadline = func_params["params"].get("deadline")
-                        tx_sqrt_price_limit_x96 = func_params["params"][
-                            "sqrtPriceLimitX96"
-                        ]
+                        tx_sqrt_price_limit_x96 = func_params["params"]["sqrtPriceLimitX96"]
                     # Extract parameters from the tuple results of web3py v5
                     elif isinstance(func_params["params"], tuple):
                         # Decode with ISwapRouter ABI
@@ -1985,9 +1834,7 @@ class UniswapTransaction(TransactionHelper):
                         first_swap=True,
                     )
 
-                    _v3_router_future_pool_states.append(
-                        (v3_pool, _sim_result)
-                    )
+                    _v3_router_future_pool_states.append((v3_pool, _sim_result))
 
                     token_out_quantity = -min(
                         _sim_result.amount1_delta,
@@ -2001,9 +1848,7 @@ class UniswapTransaction(TransactionHelper):
                         tx_recipient = func_params["params"]["recipient"]
                         tx_deadline = func_params["params"].get("deadline")
                         tx_amount_in = func_params["params"]["amountIn"]
-                        tx_amount_out_minimum = func_params["params"][
-                            "amountOutMinimum"
-                        ]
+                        tx_amount_out_minimum = func_params["params"]["amountOutMinimum"]
                     # Extract parameters from the tuple results of web3py v5
                     elif isinstance(func_params["params"], tuple):
                         # Decode with ISwapRouter ABI
@@ -2051,9 +1896,7 @@ class UniswapTransaction(TransactionHelper):
                         else:
                             logger.info(f" • deadline = {tx_deadline}")
                         logger.info(f" • amountIn = {tx_amount_in}")
-                        logger.info(
-                            f" • amountOutMinimum = {tx_amount_out_minimum}"
-                        )
+                        logger.info(f" • amountOutMinimum = {tx_amount_out_minimum}")
 
                     last_token_pos = len(tx_path_decoded) - 3
 
@@ -2091,19 +1934,13 @@ class UniswapTransaction(TransactionHelper):
                             token_in=v3_pool.token0
                             if v3_pool.token0.address == tx_token_in_address
                             else v3_pool.token1,
-                            amount_in=tx_amount_in
-                            if token_pos == 0
-                            else token_out_quantity,
+                            amount_in=tx_amount_in if token_pos == 0 else token_out_quantity,
                             # only apply minimum output to the last swap
-                            amount_out_min=tx_amount_out_minimum
-                            if last_swap
-                            else None,
+                            amount_out_min=tx_amount_out_minimum if last_swap else None,
                             first_swap=first_swap,
                         )
 
-                        _v3_router_future_pool_states.append(
-                            (v3_pool, _sim_result)
-                        )
+                        _v3_router_future_pool_states.append((v3_pool, _sim_result))
 
                         token_out_quantity = -min(
                             _sim_result.amount0_delta,
@@ -2114,19 +1951,13 @@ class UniswapTransaction(TransactionHelper):
                     # Extract parameters from the dict results of web3py v6
                     if isinstance(func_params["params"], dict):
                         tx_token_in_address = func_params["params"]["tokenIn"]
-                        tx_token_out_address = func_params["params"][
-                            "tokenOut"
-                        ]
+                        tx_token_out_address = func_params["params"]["tokenOut"]
                         tx_fee = func_params["params"]["fee"]
                         tx_recipient = func_params["params"]["recipient"]
                         tx_deadline = func_params["params"].get("deadline")
                         tx_amount_out = func_params["params"]["amountOut"]
-                        tx_amount_in_max = func_params["params"][
-                            "amountInMaximum"
-                        ]
-                        tx_sqrt_price_limit_x96 = func_params["params"][
-                            "sqrtPriceLimitX96"
-                        ]
+                        tx_amount_in_max = func_params["params"]["amountInMaximum"]
+                        tx_sqrt_price_limit_x96 = func_params["params"]["sqrtPriceLimitX96"]
                     # Extract parameters from the tuple results of web3py v5
                     elif isinstance(func_params["params"], tuple):
                         # Decode with ISwapRouter ABI
@@ -2189,9 +2020,7 @@ class UniswapTransaction(TransactionHelper):
                         last_swap=True,
                     )
 
-                    _v3_router_future_pool_states.append(
-                        (v3_pool, _sim_result)
-                    )
+                    _v3_router_future_pool_states.append((v3_pool, _sim_result))
 
                     amount_deposited = max(
                         _sim_result.amount0_delta,
@@ -2210,9 +2039,7 @@ class UniswapTransaction(TransactionHelper):
                         tx_recipient = func_params["params"]["recipient"]
                         tx_deadline = func_params["params"].get("deadline")
                         tx_amount_out = func_params["params"]["amountOut"]
-                        tx_amount_in_max = func_params["params"][
-                            "amountInMaximum"
-                        ]
+                        tx_amount_in_max = func_params["params"]["amountInMaximum"]
                     # Extract parameters from the tuple results of web3py v5
                     elif isinstance(func_params["params"], tuple):
                         # Decode with ISwapRouter ABI
@@ -2288,21 +2115,15 @@ class UniswapTransaction(TransactionHelper):
                         )
 
                         _recipient = (
-                            tx_recipient
-                            if last_swap
-                            else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG
+                            tx_recipient if last_swap else _UNIVERSAL_ROUTER_CONTRACT_ADDRESS_FLAG
                         )
                         _token_in = (
                             v3_pool.token0
                             if v3_pool.token0.address == tx_token_in_address
                             else v3_pool.token1
                         )
-                        _amount_out = (
-                            tx_amount_out if last_swap else _amount_in
-                        )
-                        _amount_in_max = (
-                            tx_amount_in_max if first_swap else None
-                        )
+                        _amount_out = tx_amount_out if last_swap else _amount_in
+                        _amount_in_max = tx_amount_in_max if first_swap else None
 
                         _, _sim_result = self._simulate_v3_swap_exact_out(
                             pool=v3_pool,
@@ -2344,9 +2165,7 @@ class UniswapTransaction(TransactionHelper):
                                     f"Insufficient swap amount through requested pool {v3_pool}. Needed {_last_amount_in}, received {_amount_out}"
                                 )
 
-                        _v3_router_future_pool_states.append(
-                            (v3_pool, _sim_result)
-                        )
+                        _v3_router_future_pool_states.append((v3_pool, _sim_result))
 
                     # V3 Router enforces a maximum input
                     if first_swap:
@@ -2366,9 +2185,7 @@ class UniswapTransaction(TransactionHelper):
                     # TODO: if ETH balances are ever needed, handle the
                     # ETH transfer resulting from this function
                     amountMin = func_params["amountMinimum"]
-                    wrapped_token_address = WRAPPED_NATIVE_TOKENS[
-                        self.chain_id
-                    ]
+                    wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
                     wrapped_token_balance = self.ledger.token_balance(
                         self.router_address, wrapped_token_address
                     )
@@ -2387,9 +2204,7 @@ class UniswapTransaction(TransactionHelper):
                     _fee_bips = func_params["feeBips"]
                     _fee_recipient = func_params["feeRecipient"]
 
-                    wrapped_token_address = WRAPPED_NATIVE_TOKENS[
-                        self.chain_id
-                    ]
+                    wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
                     wrapped_token_balance = self.ledger.token_balance(
                         self.router_address, wrapped_token_address
                     )
@@ -2418,9 +2233,7 @@ class UniswapTransaction(TransactionHelper):
                         if tx_recipient is None:
                             tx_recipient = self.sender
 
-                    _balance = self.ledger.token_balance(
-                        self.router_address, tx_token_address
-                    )
+                    _balance = self.ledger.token_balance(self.router_address, tx_token_address)
 
                     if _balance < tx_amount_out_minimum:
                         raise TransactionError(
@@ -2431,9 +2244,7 @@ class UniswapTransaction(TransactionHelper):
 
                 elif func_name == "wrapETH":
                     _wrapped_token_amount = func_params["value"]
-                    _wrapped_token_address = WRAPPED_NATIVE_TOKENS[
-                        self.chain_id
-                    ]
+                    _wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
                     self.ledger.adjust(
                         self.router_address,
                         _wrapped_token_address,
@@ -2470,9 +2281,7 @@ class UniswapTransaction(TransactionHelper):
             logger.debug(f"{func_name}: {self.hash}")
 
             if func_name != "execute":
-                raise ValueError(
-                    f"UNHANDLED UNIVERSAL ROUTER FUNCTION: {func_name}"
-                )
+                raise ValueError(f"UNHANDLED UNIVERSAL ROUTER FUNCTION: {func_name}")
 
             try:
                 try:
@@ -2563,12 +2372,8 @@ class UniswapTransaction(TransactionHelper):
 
         if set(self.ledger._balances) - set([self.sender]) - self.to:
             # Ignore case where an excess wrapped token balance remains at the router
-            if self.ledger._balances[self.router_address][
-                WRAPPED_NATIVE_TOKENS[self.chain_id]
-            ]:
-                logger.info(
-                    "Simulation results in leftover wrapped token balance"
-                )
+            if self.ledger._balances[self.router_address][WRAPPED_NATIVE_TOKENS[self.chain_id]]:
+                logger.info("Simulation results in leftover wrapped token balance")
             else:
                 raise LedgerError(
                     f"UNACCOUNTED BALANCE FOUND!\n{pprint.pformat(self.ledger._balances)}"

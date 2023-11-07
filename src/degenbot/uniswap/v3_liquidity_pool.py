@@ -158,19 +158,13 @@ class V3LiquidityPool(PoolHelper):
 
         if tokens is not None:
             if len(tokens) != 2:
-                raise ValueError(
-                    f"Expected exactly two tokens, found {len(tokens)}"
-                )
+                raise ValueError(f"Expected exactly two tokens, found {len(tokens)}")
 
             self.token0 = min(tokens)
             self.token1 = max(tokens)
 
-            if not (
-                self.token0 == token0_address and self.token1 == token1_address
-            ):
-                raise ValueError(
-                    "Token addresses do not match tokens recorded at contract"
-                )
+            if not (self.token0 == token0_address and self.token1 == token1_address):
+                raise ValueError("Token addresses do not match tokens recorded at contract")
         else:
             _token_manager = Erc20TokenHelperManager(self._w3.eth.chain_id)
             self.token0 = _token_manager.get_erc20token(

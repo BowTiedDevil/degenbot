@@ -157,9 +157,10 @@ class LiquidityPool(PoolHelper):
             fee = Fraction(fee)
 
         if factory_address is None != factory_init_hash is None:
-            raise ValueError(
-                f"Init hash not provided for factory {factory_address}"
-            )
+            raise ValueError(f"Init hash not provided for factory {factory_address}")
+
+        if factory_address:
+            self.factory = to_checksum_address(factory_address)
 
         if not isinstance(fee, Fraction):
             raise TypeError(
@@ -186,7 +187,8 @@ class LiquidityPool(PoolHelper):
             state_block if state_block else self._w3.eth.get_block_number()
         )
 
-        self.factory = self._w3_contract.functions.factory().call()
+
+        chain_id = 1 if empty else self._w3.eth.chain_id
 
         # if a token pair was provided, check and set pointers for token0 and token1
         if tokens is not None:
@@ -231,9 +233,7 @@ class LiquidityPool(PoolHelper):
             self.name = name
         else:
             if self.fee is not None:
-                fee_string = (
-                    f"{100*self.fee.numerator/self.fee.denominator:.2f}"
-                )
+                fee_string = f"{100*self.fee.numerator/self.fee.denominator:.2f}"
             elif self.fee_token0 is not None and self.fee_token1 is not None:
                 if self.fee_token0 != self.fee_token1:
                     fee_string = f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
@@ -247,9 +247,7 @@ class LiquidityPool(PoolHelper):
                 self.reserves_token0,
                 self.reserves_token1,
                 *_,
-            ) = self._w3_contract.functions.getReserves().call(
-                block_identifier=self.update_block
-            )[
+            ) = self._w3_contract.functions.getReserves().call(block_identifier=self.update_block)[
                 :2
             ]
         else:
@@ -273,12 +271,8 @@ class LiquidityPool(PoolHelper):
 
         if not silent:
             logger.info(self.name)
-            logger.info(
-                f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}"
-            )
-            logger.info(
-                f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}"
-            )
+            logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
+            logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
 
     def __eq__(self, other) -> bool:
         if issubclass(type(other), PoolHelper):
@@ -386,9 +380,7 @@ class LiquidityPool(PoolHelper):
         if (override_reserves_token0 and not override_reserves_token1) or (
             not override_reserves_token0 and override_reserves_token1
         ):
-            raise ValueError(
-                "Must provide reserve override values for both tokens"
-            )
+            raise ValueError("Must provide reserve override values for both tokens")
 
         if override_reserves_token0 and override_reserves_token1:
             logger.debug("Reserve overrides applied:")
@@ -465,9 +457,7 @@ class LiquidityPool(PoolHelper):
             )
 
         numerator = reserves_in * token_out_quantity * fee.denominator
-        denominator = (reserves_out - token_out_quantity) * (
-            fee.denominator - fee.numerator
-        )
+        denominator = (reserves_out - token_out_quantity) * (fee.denominator - fee.numerator)
         return numerator // denominator + 1
 
     def calculate_tokens_out_from_tokens_in(
@@ -497,9 +487,7 @@ class LiquidityPool(PoolHelper):
         if (override_reserves_token0 and not override_reserves_token1) or (
             not override_reserves_token0 and override_reserves_token1
         ):
-            raise ValueError(
-                "Must provide reserve override values for both tokens"
-            )
+            raise ValueError("Must provide reserve override values for both tokens")
 
         if override_reserves_token0 and override_reserves_token1:
             logger.debug("Reserve overrides applied:")
@@ -535,9 +523,7 @@ class LiquidityPool(PoolHelper):
                 f"Could not identify token_in: {token_in}! Pool holds: {self.token0} {self.token1}"
             )
 
-        amount_in_with_fee = token_in_quantity * (
-            fee.denominator - fee.numerator
-        )
+        amount_in_with_fee = token_in_quantity * (fee.denominator - fee.numerator)
         numerator = amount_in_with_fee * reserves_out
         denominator = reserves_in * fee.denominator + amount_in_with_fee
 
@@ -601,9 +587,7 @@ class LiquidityPool(PoolHelper):
             (token_in == self.token0 and token_out == self.token1)
             or (token_in == self.token1 and token_out == self.token0)
         ):
-            raise ValueError(
-                "Tokens must match the two tokens held by this pool!"
-            )
+            raise ValueError("Tokens must match the two tokens held by this pool!")
 
         if not silent:
             logger.info(
@@ -612,15 +596,15 @@ class LiquidityPool(PoolHelper):
 
         if token_in == self.token0:
             # calculate the ratio of token0/token1 for swap of token0 -> token1
-            self._ratio_token0_in = Decimal(
-                (token_in_qty * 10**token_in.decimals)
-            ) / Decimal(token_out_qty * 10**token_out.decimals)
+            self._ratio_token0_in = Decimal((token_in_qty * 10**token_in.decimals)) / Decimal(
+                token_out_qty * 10**token_out.decimals
+            )
 
         if token_in == self.token1:
             # calculate the ratio of token1/token0 for swap of token1 -> token0
-            self._ratio_token1_in = Decimal(
-                (token_in_qty * 10**token_in.decimals)
-            ) / Decimal(token_out_qty * 10**token_out.decimals)
+            self._ratio_token1_in = Decimal((token_in_qty * 10**token_in.decimals)) / Decimal(
+                token_out_qty * 10**token_out.decimals
+            )
 
         self.calculate_tokens_in_from_ratio_out()
 
@@ -633,17 +617,9 @@ class LiquidityPool(PoolHelper):
         if override_state:
             logger.debug(f"State override: {override_state}")
 
-        reserves_token0 = (
-            override_state.reserves_token0
-            if override_state
-            else self.reserves_token0
-        )
+        reserves_token0 = override_state.reserves_token0 if override_state else self.reserves_token0
 
-        reserves_token1 = (
-            override_state.reserves_token1
-            if override_state
-            else self.reserves_token1
-        )
+        reserves_token1 = override_state.reserves_token1 if override_state else self.reserves_token1
 
         return UniswapV2PoolSimulationResult(
             amount0_delta=added_reserves_token0,
@@ -665,17 +641,9 @@ class LiquidityPool(PoolHelper):
         if override_state:
             logger.debug(f"State override: {override_state}")
 
-        reserves_token0 = (
-            override_state.reserves_token0
-            if override_state
-            else self.reserves_token0
-        )
+        reserves_token0 = override_state.reserves_token0 if override_state else self.reserves_token0
 
-        reserves_token1 = (
-            override_state.reserves_token1
-            if override_state
-            else self.reserves_token1
-        )
+        reserves_token1 = override_state.reserves_token1 if override_state else self.reserves_token1
 
         return UniswapV2PoolSimulationResult(
             amount0_delta=-removed_reserves_token0,
@@ -704,9 +672,7 @@ class LiquidityPool(PoolHelper):
             raise ValueError("No quantity was provided")
 
         if token_in_quantity is not None and token_out_quantity is not None:
-            raise ValueError(
-                "Provide token_in_quantity or token_out_quantity, not both"
-            )
+            raise ValueError("Provide token_in_quantity or token_out_quantity, not both")
 
         if token_in and token_out and token_in == token_out:
             raise ValueError("Both tokens are the same!")
@@ -741,24 +707,12 @@ class LiquidityPool(PoolHelper):
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
                 # TODO: consolidate into single override_state arg
-                override_reserves_token0=override_state.reserves_token0
-                if override_state
-                else None,
-                override_reserves_token1=override_state.reserves_token1
-                if override_state
-                else None,
+                override_reserves_token0=override_state.reserves_token0 if override_state else None,
+                override_reserves_token1=override_state.reserves_token1 if override_state else None,
             )
 
-            token0_delta = (
-                -token_out_quantity
-                if token_in is self.token1
-                else token_in_quantity
-            )
-            token1_delta = (
-                -token_out_quantity
-                if token_in is self.token0
-                else token_in_quantity
-            )
+            token0_delta = -token_out_quantity if token_in is self.token1 else token_in_quantity
+            token1_delta = -token_out_quantity if token_in is self.token0 else token_in_quantity
 
         # bugfix: (changed check `token_out_quantity is not None`)
         # swaps with zero amounts (a stupid value, but valid) were falling through
@@ -769,24 +723,12 @@ class LiquidityPool(PoolHelper):
                 token_out=token_out,
                 token_out_quantity=token_out_quantity,
                 # TODO: consolidate into single override_state arg
-                override_reserves_token0=override_state.reserves_token0
-                if override_state
-                else None,
-                override_reserves_token1=override_state.reserves_token1
-                if override_state
-                else None,
+                override_reserves_token0=override_state.reserves_token0 if override_state else None,
+                override_reserves_token1=override_state.reserves_token1 if override_state else None,
             )
 
-            token0_delta = (
-                token_in_quantity
-                if token_in == self.token0
-                else -token_out_quantity
-            )
-            token1_delta = (
-                token_in_quantity
-                if token_in == self.token1
-                else -token_out_quantity
-            )
+            token0_delta = token_in_quantity if token_in == self.token0 else -token_out_quantity
+            token1_delta = token_in_quantity if token_in == self.token1 else -token_out_quantity
 
         return UniswapV2PoolSimulationResult(
             amount0_delta=token0_delta,
@@ -828,10 +770,7 @@ class LiquidityPool(PoolHelper):
         else:
             self.update_block = update_block
 
-        if (
-            self._update_method == "polling"
-            or override_update_method == "polling"
-        ):
+        if self._update_method == "polling" or override_update_method == "polling":
             try:
                 (
                     reserves0,
@@ -851,12 +790,8 @@ class LiquidityPool(PoolHelper):
                     if not silent:
                         logger.info(f"[{self.name}]")
                         if print_reserves:
-                            logger.info(
-                                f"{self.token0}: {self.reserves_token0}"
-                            )
-                            logger.info(
-                                f"{self.token1}: {self.reserves_token1}"
-                            )
+                            logger.info(f"{self.token0}: {self.reserves_token0}")
+                            logger.info(f"{self.token1}: {self.reserves_token1}")
                         if print_ratios:
                             logger.info(
                                 f"{self.token0}/{self.token1}: {(self.reserves_token0/10**self.token0.decimals) / (self.reserves_token1/10**self.token1.decimals)}"
@@ -873,16 +808,9 @@ class LiquidityPool(PoolHelper):
                 else:
                     success = False
             except Exception as e:
-                print(
-                    f"LiquidityPool: Exception in update_reserves (polling): {e}"
-                )
+                print(f"LiquidityPool: Exception in update_reserves (polling): {e}")
         elif self._update_method == "external":
-            if not (
-                (
-                    external_token0_reserves is not None
-                    and external_token1_reserves is not None
-                )
-            ):
+            if not (external_token0_reserves is not None and external_token1_reserves is not None):
                 raise ValueError(
                     "Called update_reserves without providing reserve values for both tokens!"
                 )
@@ -997,9 +925,7 @@ class CamelotLiquidityPool(LiquidityPool):
             )
 
         def _d(x_0: int, y: int) -> int:
-            return 3 * x_0 * (y * y // 10**18) // 10**18 + (
-                x_0 * x_0 // 10**18 * x_0 // 10**18
-            )
+            return 3 * x_0 * (y * y // 10**18) // 10**18 + (x_0 * x_0 // 10**18 * x_0 // 10**18)
 
         # fee_percent is stored as a uint16 in the contract, but as a Fraction
         # in this helper, so must be converted.
@@ -1024,16 +950,10 @@ class CamelotLiquidityPool(LiquidityPool):
         )
 
         # remove fee from amount received
-        token_in_quantity -= (
-            token_in_quantity * fee_percent // self.FEE_DENOMINATOR
-        )
+        token_in_quantity -= token_in_quantity * fee_percent // self.FEE_DENOMINATOR
         xy = _k(reserves_token0, reserves_token1)
-        reserves_token0 = (
-            reserves_token0 * 10**18 // precision_multiplier_token0
-        )
-        reserves_token1 = (
-            reserves_token1 * 10**18 // precision_multiplier_token1
-        )
+        reserves_token0 = reserves_token0 * 10**18 // precision_multiplier_token0
+        reserves_token1 = reserves_token1 * 10**18 // precision_multiplier_token1
         reserve_a, reserve_b = (
             (reserves_token0, reserves_token1)
             if token_in is self.token0
@@ -1090,9 +1010,7 @@ class CamelotLiquidityPool(LiquidityPool):
 
         address = to_checksum_address(address)
 
-        _w3_contract = _web3.eth.contract(
-            address=address, abi=abi or CAMELOT_POOL_ABI
-        )
+        _w3_contract = _web3.eth.contract(address=address, abi=abi or CAMELOT_POOL_ABI)
 
         stable_pool: bool = _w3_contract.functions.stableSwap().call()
 
@@ -1120,4 +1038,6 @@ class CamelotLiquidityPool(LiquidityPool):
 
         if stable_pool:
             # replace the calculate_tokens_out_from_tokens_in method for stable-only pools
-            self.calculate_tokens_out_from_tokens_in = self._calculate_tokens_out_from_tokens_in_stable_swap  # type: ignore[assignment]
+            self.calculate_tokens_out_from_tokens_in = (
+                self._calculate_tokens_out_from_tokens_in_stable_swap
+            )  # type: ignore[assignment]
