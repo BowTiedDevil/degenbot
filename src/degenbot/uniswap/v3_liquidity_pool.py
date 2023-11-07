@@ -573,12 +573,12 @@ class V3LiquidityPool(PoolHelper):
         if override_tick_bitmap is not None:
             _tick_bitmap = override_tick_bitmap
         else:
-            _tick_bitmap = self.tick_bitmap.copy()
+            _tick_bitmap = self.tick_bitmap
 
         if override_tick_data is not None:
             _tick_data = override_tick_data
         else:
-            _tick_data = self.tick_data.copy()
+            _tick_data = self.tick_data
 
         if not (
             sqrt_price_limit_x96 < sqrt_price_x96
