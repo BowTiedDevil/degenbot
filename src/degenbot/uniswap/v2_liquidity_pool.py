@@ -36,6 +36,7 @@ class LiquidityPool(PoolHelper):
     uniswap_version = 2
 
     __slots__: Tuple[str, ...] = (
+        "_lock",
         "_pool_state_archive",
         "_ratio_token0_in",
         "_ratio_token1_in",
@@ -122,14 +123,9 @@ class LiquidityPool(PoolHelper):
         state_block: int, optional
             Fetch initial state values from the chain at a particular block
             height. Defaults to the latest block if omitted.
-        """
 
-        if unload_brownie_contract_after_init:
-            warn(
-                "unload_brownie_contract_after_init is no longer needed and is "
-                "ignored. Remove constructor argument to stop seeing this "
-                "message."
-            )
+        self._lock = Lock()
+
 
         self.address: ChecksumAddress = to_checksum_address(address)
         self.abi = abi or UNISWAP_V2_POOL_ABI
@@ -315,11 +311,12 @@ class LiquidityPool(PoolHelper):
         return self.name
 
     def _update_pool_state(self):
-        self.state = UniswapV2PoolState(
-            pool=self,
-            reserves_token0=self.reserves_token0,
-            reserves_token1=self.reserves_token1,
-        )
+        with self._lock:
+            self.state = UniswapV2PoolState(
+                pool=self,
+                reserves_token0=self.reserves_token0,
+                reserves_token1=self.reserves_token1,
+            )
 
     def calculate_tokens_in_from_ratio_out(self) -> None:
         """
@@ -549,31 +546,28 @@ class LiquidityPool(PoolHelper):
         # index=3 is for block 103.
         # block_index = self._pool_state_archive.bisect_left(block)
 
-        known_blocks = list(self._pool_state_archive.keys())
-        block_index = bisect_left(known_blocks, block)
+        with self._lock:
+            known_blocks = list(self._pool_state_archive.keys())
+            block_index = bisect_left(known_blocks, block)
 
-        if block_index == 0:
-            raise NoPoolStateAvailable(
-                f"No pool state known prior to block {block}"
-            )
+            if block_index == 0:
+                raise NoPoolStateAvailable(f"No pool state known prior to block {block}")
 
-        # The last known state already meets the criterion, so return early
-        if block_index == len(known_blocks):
-            return
+            # The last known state already meets the criterion, so return early
+            if block_index == len(known_blocks):
+                return
 
-        # Remove states at and after the specified block
-        for block in known_blocks[block_index:]:
-            del self._pool_state_archive[block]
+            # Remove states at and after the specified block
+            for block in known_blocks[block_index:]:
+                del self._pool_state_archive[block]
 
-        restored_block, restored_state = list(
-            self._pool_state_archive.items()
-        )[-1]
+            restored_block, restored_state = list(self._pool_state_archive.items())[-1]
 
-        # Set mutable values to match state
-        self.reserves_token0 = restored_state.reserves_token0
-        self.reserves_token1 = restored_state.reserves_token1
-        self.state = restored_state
-        self.update_block = restored_block
+            # Set mutable values to match state
+            self.reserves_token0 = restored_state.reserves_token0
+            self.reserves_token1 = restored_state.reserves_token1
+            self.state = restored_state
+            self.update_block = restored_block
 
     def set_swap_target(
         self,
