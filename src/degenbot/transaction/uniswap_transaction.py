@@ -45,13 +45,6 @@ from ..uniswap.v3_functions import decode_v3_path
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
 from .simulation_ledger import SimulationLedger
 
-
-# TODO: support creation of empty LiquidityPool instead of using a mock
-class MockLiquidityPool(LiquidityPool):
-    def __init__(self):
-        pass
-
-
 # Internal dict of known router contracts by chain ID. Pre-populated with
 # mainnet addresses. New routers can be added by class method `add_router`
 _ROUTERS: Dict[
@@ -1841,27 +1834,23 @@ class UniswapTransaction(TransactionHelper):
                             silent=self.silent,
                         )
                     except ManagerError:
-                        print("Creating empty pool")
-
-                        _pool = MockLiquidityPool()
-                        _pool.reserves_token0 = 0
-                        _pool.reserves_token1 = 0
-                        _pool.token0 = (
-                            self.v2_pool_manager._token_manager.get_erc20token(
-                                token0_address
-                            )
-                        )
-                        _pool.token1 = (
-                            self.v2_pool_manager._token_manager.get_erc20token(
-                                token1_address
-                            )
-                        )
-                        _pool.address = generate_v2_pool_address(
-                            token_addresses=(token0_address, token1_address),
+                        _pool = LiquidityPool(
+                            address=generate_v2_pool_address(
+                                token_addresses=(
+                                    token0_address,
+                                    token1_address,
+                                ),
+                                factory_address=self.v2_pool_manager._factory_address,
+                                init_hash=self.v2_pool_manager._factory_init_hash,
+                            ),
+                            tokens=[
+                                self.v2_pool_manager._token_manager.get_erc20token(token0_address),
+                                self.v2_pool_manager._token_manager.get_erc20token(token1_address),
+                            ],
                             factory_address=self.v2_pool_manager._factory_address,
-                            init_hash=self.v2_pool_manager._factory_init_hash,
+                            factory_init_hash=self.v2_pool_manager._factory_init_hash,
+                            empty=True,
                         )
-                        _pool._update_pool_state()
 
                     _sim_result = self._simulate_v2_add_liquidity(
                         pool=_pool,
