@@ -138,7 +138,7 @@ class Erc20Token:
                 raise ValueError("No contract deployed at this address")
             self.name = f"Unknown @ {self.address}"
             warn(
-                f"Token contract at {address} does not implement a 'name' function."
+                f"Token contract at {self.address} does not implement a 'name' function. Setting to '{self.name}'"
             )
 
         try:
@@ -169,9 +169,9 @@ class Erc20Token:
         except AttributeError:
             if not self._w3.eth.get_code(self.address):
                 raise ValueError("No contract deployed at this address")
-            self.symbol = "UNKNOWN"
+            self.symbol = "UNKN"
             warn(
-                f"Token contract at {address} does not implement a 'symbol' function."
+                f"Token contract at {self.address} does not implement a 'symbol' function. Setting to {self.symbol}"
             )
 
         try:
@@ -205,7 +205,7 @@ class Erc20Token:
                 raise ValueError("No contract deployed at this address")
             self.decimals = 0
             warn(
-                f"Token contract at {address} does not implement a 'decimals' function. Setting to 0."
+                f"Token contract at {self.address} does not implement a 'decimals' function. Setting to 0."
             )
 
         # if user:
@@ -225,7 +225,7 @@ class Erc20Token:
             logger.info(f"• {self.symbol} ({self.name})")
 
     def __repr__(self) -> str:
-        return f"Erc20Token(address={self.address}, symbol={self.symbol}, name={self.name}, decimals={self.decimals})"
+        return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"
 
     def __getstate__(self):
         # Remove objects that cannot be pickled and are unnecessary to perform
@@ -324,9 +324,7 @@ class Erc20Token:
     #         raise
 
     def get_balance(self, address: str) -> int:
-        return self._w3_contract.functions.balanceOf(
-            to_checksum_address(address)
-        ).call()
+        return self._w3_contract.functions.balanceOf(to_checksum_address(address)).call()
 
     # def update_balance(self):
     #     self.balance = self.get_balance(self._user)
