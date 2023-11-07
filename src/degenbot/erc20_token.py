@@ -224,6 +224,9 @@ class Erc20Token:
         if not silent:
             logger.info(f"• {self.symbol} ({self.name})")
 
+    def __repr__(self) -> str:
+        return f"Erc20Token(address={self.address}, symbol={self.symbol}, name={self.name}, decimals={self.decimals})"
+
     def __getstate__(self):
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
