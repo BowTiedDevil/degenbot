@@ -603,7 +603,7 @@ class UniswapLpCycle(ArbitrageHelper):
 
     async def calculate_with_pool(
         self,
-        executor: "Executor",
+        executor: Union["ProcessPoolExecutor", "ThreadPoolExecutor"],
         override_state: Optional[
             Sequence[
                 Union[
@@ -639,13 +639,12 @@ class UniswapLpCycle(ArbitrageHelper):
         This is an async function that must be called with the `await` keyword.
         """
 
-        self._pre_calculation_check(override_state)
-
-        for pool in self.swap_pools:
-            if isinstance(pool, V3LiquidityPool) and pool._sparse_bitmap:
-                raise ValueError(
-                    f"Cannot process arbitrage {self} with executor: {pool.address} has sparse bitmap"
-                )
+        if any(
+            [pool._sparse_bitmap for pool in self.swap_pools if isinstance(pool, V3LiquidityPool)]
+        ):
+            raise ValueError(
+                f"Cannot calculate {self} with executor. One or more V3 pools has a sparse bitmap."
+            )
 
         self._pre_calculation_check(override_state)
 
@@ -842,9 +841,7 @@ class UniswapLpCycle(ArbitrageHelper):
             raise ArbitrageError("Pool amounts empty, abandoning payload generation.")
 
         payloads = []
-        msg_value: int = (
-            0  # This arbitrage does not require a `msg.value` payment
-        )
+        msg_value: int = 0  # This arbitrage does not require a `msg.value` payment
 
         first_pool = self.swap_pools[0]
         last_pool = self.swap_pools[-1]
