@@ -163,7 +163,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         )
 
         with self._lock:
-            if getattr(self, "__slots__"):
+            if hasattr(self, "__slots__"):
                 return {
                     attr_name: getattr(self, attr_name, None)
                     for attr_name in self.__slots__
