@@ -2,7 +2,7 @@ from bisect import bisect_left
 from decimal import Decimal
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 from warnings import warn
 
 from eth_typing import ChecksumAddress
@@ -21,6 +21,7 @@ from ..exceptions import (
 from ..logging import logger
 from ..manager import AllPools, Erc20TokenHelperManager
 from .abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
+from .mixins import Subscriber, SubscriptionMixin
 from .v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from .v2_functions import generate_v2_pool_address
 
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
     from ..erc20_token import Erc20Token
 
 
-class LiquidityPool(PoolHelper):
+class LiquidityPool(SubscriptionMixin, PoolHelper):
     """
     Represents a Uniswap V2 liquidity pool
     """
@@ -36,10 +37,11 @@ class LiquidityPool(PoolHelper):
     uniswap_version = 2
 
     __slots__: Tuple[str, ...] = (
-        "_lock",
+        "_state_lock",
         "_pool_state_archive",
         "_ratio_token0_in",
         "_ratio_token1_in",
+        "_subscribers",
         "_update_method",
         "_w3",
         "_w3_contract",
@@ -128,7 +130,12 @@ class LiquidityPool(PoolHelper):
             simulating transactions through pools that do not exist.
         """
 
-        self._lock = Lock()
+        if empty and any([address is None, factory_address is None, tokens is None]):
+            raise ValueError(
+                "Empty LiquidityPool cannot be created without pool, factory, and token addresses"
+            )
+
+        self._state_lock = Lock()
 
         if unload_brownie_contract_after_init is not None:
             warn("unload_brownie_contract_after_init has been deprecated and is ignored.")
@@ -188,12 +195,12 @@ class LiquidityPool(PoolHelper):
         self.token0_max_swap = 0
         self.token1_max_swap = 0
         self.new_reserves = False
+
         if empty:
             self.update_block = 0
         else:
             self.update_block = state_block if state_block else self._w3.eth.get_block_number()
-
-        # self.factory = self._w3_contract.functions.factory().call()
+            self.factory = self._w3_contract.functions.factory().call()
 
         chain_id = 1 if empty else self._w3.eth.chain_id
 
@@ -204,19 +211,15 @@ class LiquidityPool(PoolHelper):
             self.token0 = min(tokens)
             self.token1 = max(tokens)
         else:
-            if empty:
-                self.token0 = None
-                self.token1 = None
-            else:
-                _token_manager = Erc20TokenHelperManager(chain_id)
-                self.token0 = _token_manager.get_erc20token(
-                    address=self._w3_contract.functions.token0().call(),
-                    silent=silent,
-                )
-                self.token1 = _token_manager.get_erc20token(
-                    address=self._w3_contract.functions.token1().call(),
-                    silent=silent,
-                )
+            _token_manager = Erc20TokenHelperManager(chain_id)
+            self.token0 = _token_manager.get_erc20token(
+                address=self._w3_contract.functions.token0().call(),
+                silent=silent,
+            )
+            self.token1 = _token_manager.get_erc20token(
+                address=self._w3_contract.functions.token1().call(),
+                silent=silent,
+            )
 
         if factory_address is not None and factory_init_hash is not None:
             computed_pool_address = generate_v2_pool_address(
@@ -274,6 +277,8 @@ class LiquidityPool(PoolHelper):
 
         AllPools(chain_id)[self.address] = self
 
+        self._subscribers: Set[Subscriber] = set()
+
         if not silent:
             logger.info(self.name)
             logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
@@ -290,10 +295,15 @@ class LiquidityPool(PoolHelper):
     def __getstate__(self) -> dict:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
-        dropped_attributes = ("_w3", "_w3_contract", "_lock")
+        dropped_attributes = (
+            "_state_lock",
+            "_subscribers",
+            "_w3_contract",
+            "_w3",
+        )
 
-        with self._lock:
-            if getattr(self, "__slots__"):
+        with self._state_lock:
+            if hasattr(self, "__slots__"):
                 return {
                     attr_name: getattr(self, attr_name, None)
                     for attr_name in self.__slots__
@@ -320,12 +330,13 @@ class LiquidityPool(PoolHelper):
         return self.name
 
     def _update_pool_state(self):
-        with self._lock:
+        with self._state_lock:
             self.state = UniswapV2PoolState(
                 pool=self,
                 reserves_token0=self.reserves_token0,
                 reserves_token1=self.reserves_token1,
             )
+        self._notify_subscribers()
 
     def calculate_tokens_in_from_ratio_out(self) -> None:
         """
@@ -555,7 +566,7 @@ class LiquidityPool(PoolHelper):
         # index=3 is for block 103.
         # block_index = self._pool_state_archive.bisect_left(block)
 
-        with self._lock:
+        with self._state_lock:
             known_blocks = list(self._pool_state_archive.keys())
             block_index = bisect_left(known_blocks, block)
 
@@ -577,6 +588,8 @@ class LiquidityPool(PoolHelper):
             self.reserves_token1 = restored_state.reserves_token1
             self.state = restored_state
             self.update_block = restored_block
+
+        self._update_pool_state()
 
     def set_swap_target(
         self,

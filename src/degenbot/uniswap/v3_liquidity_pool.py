@@ -6,13 +6,15 @@ import warnings
 from bisect import bisect_left
 from decimal import Decimal
 from threading import Lock
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
+from ..baseclasses import PoolHelper
 from ..config import get_web3
 from ..dex.uniswap import TICKLENS_ADDRESSES
+from ..erc20_token import Erc20Token
 from ..exceptions import (
     BitmapWordUnavailableError,
     BlockUnavailableError,
@@ -24,13 +26,8 @@ from ..exceptions import (
 )
 from ..logging import logger
 from ..manager import AllPools, Erc20TokenHelperManager
-from ..erc20_token import Erc20Token
-from ..baseclasses import PoolHelper
 from .abi import UNISWAP_V3_POOL_ABI
-from .v3_functions import generate_v3_pool_address
-from .v3_libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
-from .v3_libraries.functions import to_int256
-from .v3_tick_lens import TickLens
+from .mixins import Subscriber, SubscriptionMixin
 from .v3_dataclasses import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
@@ -38,9 +35,13 @@ from .v3_dataclasses import (
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
+from .v3_functions import generate_v3_pool_address
+from .v3_libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
+from .v3_libraries.functions import to_int256
+from .v3_tick_lens import TickLens
 
 
-class V3LiquidityPool(PoolHelper):
+class V3LiquidityPool(SubscriptionMixin, PoolHelper):
     __slots__: Tuple[str, ...] = (
         "_extra_words",
         "_fee",
@@ -48,6 +49,8 @@ class V3LiquidityPool(PoolHelper):
         "_liquidity_lock",
         "_slot0_lock",
         "_sparse_bitmap",
+        "_state_lock",
+        "_subscribers",
         "_tick_spacing",
         "_update_block",
         "_update_log",
@@ -124,11 +127,14 @@ class V3LiquidityPool(PoolHelper):
             abi=abi,
         )
 
-        # held by methods that manipulate liquidity data
-        self._liquidity_lock = Lock()
+        # held for operations that manipulate state data
+        self._state_lock = Lock()
 
-        # held by methods that manipulate state data held by slot0
-        self._slot0_lock = Lock()
+        # # held by methods that manipulate liquidity data
+        # self._liquidity_lock = Lock()
+
+        # # held by methods that manipulate state data held by slot0
+        # self._slot0_lock = Lock()
 
         self._update_block = state_block if state_block else self._w3.eth.get_block_number()
 
@@ -277,6 +283,8 @@ class V3LiquidityPool(PoolHelper):
 
         AllPools(self._w3.eth.chain_id)[self.address] = self
 
+        self._subscribers: Set[Subscriber] = set()
+
         if not silent:
             logger.info(self.name)
             logger.info(f"• Token 0: {self.token0}")
@@ -300,13 +308,16 @@ class V3LiquidityPool(PoolHelper):
         dropped_attributes = (
             "_liquidity_lock",
             "_slot0_lock",
-            "_w3",
+            "_state_lock",
+            "_subscribers",
             "_w3_contract",
+            "_w3",
             "lens",
         )
 
-        with self._slot0_lock, self._liquidity_lock:
-            if getattr(self, "__slots__"):
+        # with self._slot0_lock, self._liquidity_lock:
+        with self._state_lock:
+            if hasattr(self, "__slots__"):
                 return {
                     attr_name: getattr(self, attr_name, None)
                     for attr_name in self.__slots__
@@ -397,7 +408,8 @@ class V3LiquidityPool(PoolHelper):
         if block_number is None:
             block_number = self._w3.eth.get_block_number()
 
-        with self._liquidity_lock:
+        # with self._liquidity_lock:
+        with self._state_lock:
             if False:
                 pass
 
@@ -803,7 +815,8 @@ class V3LiquidityPool(PoolHelper):
         when used with threads.
         """
 
-        with self._slot0_lock:
+        # with self._slot0_lock:
+        with self._state_lock:
             updated = False
 
             # use the block_number if provided, otherwise pull from web3
@@ -838,6 +851,7 @@ class V3LiquidityPool(PoolHelper):
 
             if updated:
                 self._update_pool_state()
+                self._notify_subscribers()
                 # WIP: maintain a dict of pool states by block to unwind updates that were removed by a re-org
                 self._pool_state_archive[block_number] = self.state
 
@@ -1067,7 +1081,8 @@ class V3LiquidityPool(PoolHelper):
                 liquidity_change=updates.get("liquidity_change"),
             )
 
-        with self._slot0_lock:
+        # with self._slot0_lock:
+        with self._state_lock:
             updated_state = False
 
             for update_type in ("tick", "liquidity", "sqrt_price_x96"):
@@ -1185,6 +1200,7 @@ class V3LiquidityPool(PoolHelper):
             if updated_state:
                 self._update_pool_state()
                 self._pool_state_archive[block_number] = self.state
+                self._notify_subscribers()
 
                 if not force:
                     self._update_block = block_number
@@ -1211,7 +1227,8 @@ class V3LiquidityPool(PoolHelper):
         # index=3 is for block 103.
         # block_index = self._pool_state_archive.bisect_left(block)
 
-        with self._slot0_lock, self._liquidity_lock:
+        # with self._slot0_lock, self._liquidity_lock:
+        with self._state_lock:
             known_blocks = list(self._pool_state_archive.keys())
             block_index = bisect_left(known_blocks, block)
 
@@ -1230,6 +1247,8 @@ class V3LiquidityPool(PoolHelper):
 
             self.state = restored_state
             self._update_block = restored_block
+
+        self._notify_subscribers()
 
     def simulate_swap(
         self,

@@ -31,10 +31,8 @@ from ..exceptions import (
     ZeroLiquidityError,
 )
 from ..logging import logger
-from ..uniswap.v2_dataclasses import (
-    UniswapV2PoolSimulationResult,
-    UniswapV2PoolState,
-)
+from ..uniswap.mixins import Publisher, Subscriber
+from ..uniswap.v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from ..uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
 from ..uniswap.v3_dataclasses import (
     UniswapV3PoolSimulationResult,
@@ -50,7 +48,7 @@ from .arbitrage_dataclasses import (
 )
 
 
-class UniswapLpCycle(ArbitrageHelper):
+class UniswapLpCycle(Subscriber, ArbitrageHelper):
     __slots__ = (
         "_lock",
         "_swap_vectors",
@@ -77,6 +75,10 @@ class UniswapLpCycle(ArbitrageHelper):
             if not isinstance(pool, (LiquidityPool, V3LiquidityPool)):
                 raise ValueError(f"Could not identify Uniswap version for pool {pool}!")
         self.swap_pools = tuple(swap_pools)
+        self.name = "→".join([pool.name for pool in self.swap_pools])
+
+        for pool in swap_pools:
+            pool.subscribe(self)
 
         self.id = id
         self.input_token = input_token
@@ -129,8 +131,6 @@ class UniswapLpCycle(ArbitrageHelper):
             )
         self._swap_vectors = tuple(_swap_vectors)
 
-        self.name = " -> ".join([pool.name for pool in self.swap_pools])
-
         self.pool_states: Dict[
             ChecksumAddress,
             Optional[
@@ -157,7 +157,10 @@ class UniswapLpCycle(ArbitrageHelper):
     def __getstate__(self) -> dict:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
-        dropped_attributes = ("_lock",)
+        dropped_attributes = (
+            "_lock",
+            "_subscribers",
+        )
 
         with self._lock:
             if getattr(self, "__slots__"):
@@ -315,12 +318,11 @@ class UniswapLpCycle(ArbitrageHelper):
 
         return pools_amounts_out
 
-    def _update_pool_states(self) -> None:
+    def _update_pool_states(self, pools: Iterable[Union[LiquidityPool, V3LiquidityPool]]) -> None:
         """
-        Update `self.pool_states` by retrieving `pool.state` from all helpers
-        in `self.swap_pools`
+        Update `self.pool_states` with state values from the `pools` iterable
         """
-        self.pool_states = {pool.address: pool.state for pool in self.swap_pools}
+        self.pool_states.update({pool.address: pool.state for pool in pools})
 
     def auto_update(
         self,
@@ -336,7 +338,7 @@ class UniswapLpCycle(ArbitrageHelper):
 
         if None in self.pool_states.values():
             found_updates = True
-            self._update_pool_states()
+            self._update_pool_states(self.swap_pools)
             self.clear_best()
 
             return found_updates
@@ -360,6 +362,7 @@ class UniswapLpCycle(ArbitrageHelper):
 
                 if pool_updated:
                     logger.debug(f"(UniswapLpCycle) found update for pool {pool}")
+                    self._update_pool_states((pool,))
                     found_updates = True
                     break
 
@@ -371,13 +374,13 @@ class UniswapLpCycle(ArbitrageHelper):
 
                 if pool_updated:
                     logger.debug(f"(UniswapLpCycle) found update for pool {pool}")
+                    self._update_pool_states((pool,))
                     found_updates = True
                     break
             else:
                 raise ValueError(f"Could not identify pool {pool}!")
 
         if found_updates:
-            self._update_pool_states()
             self.clear_best()
 
         return found_updates
@@ -961,3 +964,8 @@ class UniswapLpCycle(ArbitrageHelper):
             raise ArbitrageError(f"generate_payloads (catch-all)): {e}") from e
 
         return payloads
+
+    def notify(self, publisher: Publisher) -> None:
+        # On receipt of a notification from a publishing pool, update the pool state
+        if isinstance(publisher, (LiquidityPool, V3LiquidityPool)):
+            self._update_pool_states((publisher,))
