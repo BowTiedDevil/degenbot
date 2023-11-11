@@ -45,10 +45,16 @@ Fraction(3, 1000)
 Fraction(3, 1000)
 
 # Predict the input and output values for swaps through the pool, accounting for fees
->>> lp.calculate_tokens_out_from_tokens_in(token_in=lp.token1, token_in_quantity=1*10**18)
+>>> lp.calculate_tokens_out_from_tokens_in(
+    token_in=lp.token1, 
+    token_in_quantity=1*10**18
+)
 5199789
 
->>> lp.calculate_tokens_in_from_tokens_out(token_out=lp.token0, token_out_quantity=5199789)
+>>> lp.calculate_tokens_in_from_tokens_out(
+    token_out=lp.token0, 
+    token_out_quantity=5199789
+)
 999999992817074189
 
 # Update the current reserves from the live blockchain (`True` if updated reserves found, `False` otherwise)
@@ -79,25 +85,32 @@ WBTC-WETH (V3, 0.30%)
 • Tick: 259432
 
 # Calculate inputs and outputs
->>> lp.calculate_tokens_out_from_tokens_in(token_in=lp.token1, token_in_quantity=1*10**18)
+>>> lp.calculate_tokens_out_from_tokens_in(
+    token_in=lp.token1, 
+    token_in_quantity=1*10**18
+)
 5398169
 
->>> lp.calculate_tokens_in_from_tokens_out(token_out=lp.token0, token_out_quantity=5398169)
+>>> lp.calculate_tokens_in_from_tokens_out(
+    token_out=lp.token0, 
+    token_out_quantity=5398169
+)
 999999871563434214
 
-# Inspect the known liquidity positions (defaults to a sparse)
+# Inspect the known liquidity positions
 >>> lp.tick_bitmap
 {
     0: UniswapV3BitmapAtWord(
-        bitmap=1, 
+        bitmap=1,
         block=18517665
-        ), 
+        ),
     16: UniswapV3BitmapAtWord(
-        bitmap=115792089237316195423570985008687907853268655437644779123584680198630541352072, block=18517670
+        bitmap=115792089237316195423570985008687907853268655437644779123584680198630541352072,block=18517670
         )
 }
 
-# NOTE: the V3 liquidity pool helper is optimized for fast instantiation, and will lazy-load liquidity data for positions outside of the current range as needed.
+# NOTE: the V3 liquidity pool helper is optimized for fast instantiation, and will 
+lazy-load liquidity data for positions outside of the current range as needed.
 
 >>> lp.tick_data
 {

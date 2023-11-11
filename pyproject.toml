@@ -1,6 +1,6 @@
 [project]
 name = "degenbot"
-version = "0.0.4"
+version = "0.0.5"
 authors = [
     { name="BowTiedDevil", email="devil@bowtieddevil.com" },
 ]
