@@ -71,9 +71,9 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
     ):
         self._lock = Lock()
 
-        for pool in swap_pools:
-            if not isinstance(pool, (LiquidityPool, V3LiquidityPool)):
-                raise ValueError(f"Could not identify Uniswap version for pool {pool}!")
+        if any([not isinstance(pool, (LiquidityPool, V3LiquidityPool)) for pool in swap_pools]):
+            raise ValueError("Must provide only Uniswap liquidity pools.")
+
         self.swap_pools = tuple(swap_pools)
         self.name = "→".join([pool.name for pool in self.swap_pools])
 
