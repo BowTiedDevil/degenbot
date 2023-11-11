@@ -185,10 +185,6 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         Get the pool object from its address, or a tuple of token addresses
         """
 
-        # WIP: re-work to avoid storing pools by token, convert to address first
-
-        pool_helper: LiquidityPool
-
         if token_addresses is not None:
             if len(token_addresses) != 2:
                 raise ValueError("Provide exactly two token addresses")
@@ -224,14 +220,15 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             )
 
         try:
-            pool_helper = self._tracked_pools[pool_address]
+            return self._tracked_pools[pool_address]
         except KeyError:
             pass
-        else:
-            return pool_helper
 
         # Check if the AllPools collection already has this pool
-        if pool_helper := AllPools(self.chain_id).get(pool_address):
+        pool_helper = AllPools(self.chain_id).get(pool_address)
+        if pool_helper:
+            if TYPE_CHECKING:
+                assert isinstance(pool_helper, LiquidityPool)
             if pool_helper.factory == self._factory_address:
                 self._add_pool(pool_helper)
                 return pool_helper
@@ -377,13 +374,12 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 assert isinstance(v3liquiditypool_kwargs, dict)
 
             # Check if the AllPools collection already has this pool
-            pool_helper: V3LiquidityPool = AllPools(self.chain_id).get(pool_address)
+            pool_helper = AllPools(self.chain_id).get(pool_address)
             if pool_helper:
+                if TYPE_CHECKING:
+                    assert isinstance(pool_helper, V3LiquidityPool)
                 if pool_helper.factory == self._factory_address:
                     self._add_pool(pool_helper)
-                    assert isinstance(
-                        pool_helper, V3LiquidityPool
-                    ), f"{self} Attempted to return non-V3 pool {pool_helper}! {pool_address=}, {token_addresses=}, {pool_fee=}"
                     return pool_helper
                 else:
                     self._untracked_pools.add(pool_address)
