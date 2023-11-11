@@ -11,12 +11,14 @@ from eth_utils import to_checksum_address
 
 class MockErc20Token(Erc20Token):
     def __init__(self):
-        pass
+        self._lock = Lock()
+        self._subscribers = set()
 
 
 class MockLiquidityPool(LiquidityPool):
     def __init__(self):
-        pass
+        self._state_lock = Lock()
+        self._subscribers = set()
 
 
 wbtc = MockErc20Token()
@@ -32,7 +34,6 @@ weth.name = "Wrapped Ether"
 weth.symbol = "WETH"
 
 uni_v2_lp = MockLiquidityPool()
-uni_v2_lp._lock = Lock()
 uni_v2_lp.name = "WBTC-WETH (UniV2, 0.30%)"
 uni_v2_lp.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
 uni_v2_lp.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
@@ -47,7 +48,6 @@ uni_v2_lp.new_reserves = True
 uni_v2_lp._update_pool_state()
 
 sushi_v2_lp = MockLiquidityPool()
-sushi_v2_lp._lock = Lock()
 sushi_v2_lp.name = "WBTC-WETH (SushiV2, 0.30%)"
 sushi_v2_lp.address = to_checksum_address("0xCEfF51756c56CeFFCA006cD410B03FFC46dd3a58")
 sushi_v2_lp.factory = to_checksum_address("0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac")

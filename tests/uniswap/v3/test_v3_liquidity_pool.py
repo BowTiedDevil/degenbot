@@ -1,23 +1,23 @@
+import pickle
 from threading import Lock
 from typing import Dict
 
 import pytest
-from eth_utils import to_checksum_address
-
-from degenbot.exceptions import (
-    ExternalUpdateError,
-    LiquidityPoolError,
-    NoPoolStateAvailable,
-)
-from degenbot import Erc20Token
 from degenbot import (
+    Erc20Token,
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
+    V3LiquidityPool,
 )
-from degenbot import V3LiquidityPool
+from degenbot.exceptions import (
+    ExternalUpdateError,
+    LiquidityPoolError,
+    NoPoolStateAvailable,
+)
+from eth_utils import to_checksum_address
 
 
 class MockErc20Token(Erc20Token):
@@ -27,7 +27,10 @@ class MockErc20Token(Erc20Token):
 
 class MockV3LiquidityPool(V3LiquidityPool):
     def __init__(self):
-        pass
+        self._subscribers = set()
+        self._state_lock = Lock()
+        # self._slot0_lock = Lock()
+        # self._liquidity_lock = Lock()
 
 
 # Test is based on the WBTC-WETH Uniswap V3 pool on Ethereum mainnet,
@@ -63,16 +66,12 @@ def mocked_wbtc_weth_v3liquiditypool():
         tick_bitmap={},
         tick_data={},
     )
-    lp._liquidity_lock = Lock()
-    lp._slot0_lock = Lock()
-    lp._state_lock = Lock()
     lp.address = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
     lp.factory = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
     lp._fee = 3000
     lp.token0 = token0
     lp.token1 = token1
     lp.liquidity = 1612978974357835825
-    # lp.liquidity_update_block = 1
     lp._update_block = 1
     lp.sqrt_price_x96 = 31549217861118002279483878013792428
     lp._sparse_bitmap = False
@@ -2131,6 +2130,10 @@ def test_tick_bitmap_equality() -> None:
     # `block` field is set with `compare=False`, so that only the bitmap is
     # considered by equality checks
     assert UniswapV3BitmapAtWord(bitmap=1, block=1) == UniswapV3BitmapAtWord(bitmap=1, block=2)
+
+
+def test_pickle_pool(mocked_wbtc_weth_v3liquiditypool):
+    pickle.dumps(mocked_wbtc_weth_v3liquiditypool)
 
 
 def test_tick_data_equality() -> None:

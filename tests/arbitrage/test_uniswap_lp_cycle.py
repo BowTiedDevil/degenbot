@@ -1,16 +1,20 @@
+import asyncio
+import concurrent.futures
+import multiprocessing
 from fractions import Fraction
 from threading import Lock
 from typing import Sequence, Tuple, Union
 
 import pytest
-from degenbot.arbitrage import UniswapLpCycle
+from degenbot.arbitrage import ArbitrageCalculationResult, UniswapLpCycle
+from degenbot.arbitrage.arbitrage_dataclasses import (
+    UniswapV2PoolSwapAmounts,
+    UniswapV3PoolSwapAmounts,
+)
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError
 from degenbot.uniswap import V3LiquidityPool
-from degenbot.uniswap.v2_liquidity_pool import (
-    LiquidityPool,
-    UniswapV2PoolState,
-)
+from degenbot.uniswap.v2_liquidity_pool import LiquidityPool, UniswapV2PoolState
 from degenbot.uniswap.v3_dataclasses import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
@@ -26,12 +30,16 @@ class MockErc20Token(Erc20Token):
 
 class MockLiquidityPool(LiquidityPool):
     def __init__(self):
-        pass
+        self._state_lock = Lock()
+        self._subscribers = set()
 
 
 class MockV3LiquidityPool(V3LiquidityPool):
     def __init__(self):
-        pass
+        # self._liquidity_lock = Lock()
+        # self._slot0_lock = Lock()
+        self._state_lock = Lock()
+        self._subscribers = set()
 
 
 wbtc = MockErc20Token()
@@ -48,7 +56,6 @@ weth.symbol = "WETH"
 
 
 v2_lp = MockLiquidityPool()
-v2_lp._lock = Lock()
 v2_lp.name = "WBTC-WETH (V2, 0.30%)"
 v2_lp.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
 v2_lp.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
@@ -62,7 +69,6 @@ v2_lp.token1 = weth
 v2_lp._update_pool_state()
 
 v3_lp = MockV3LiquidityPool()
-v3_lp._state_lock = Lock()
 v3_lp.state = UniswapV3PoolState(
     pool=v3_lp,
     liquidity=0,
@@ -2155,7 +2161,6 @@ def test_arbitrage_with_overrides() -> None:
     irrelevant_v2_pool.token1 = weth
 
     irrelevant_v3_pool = MockV3LiquidityPool()
-    irrelevant_v3_pool._state_lock = Lock()
     irrelevant_v3_pool.state = UniswapV3PoolState(
         pool=irrelevant_v3_pool,
         liquidity=0,
@@ -2188,9 +2193,63 @@ def test_arbitrage_with_overrides() -> None:
     )
 
 
+async def test_process_pool_calculation() -> None:
+    v3_pool_state_override = UniswapV3PoolState(
+        pool=v3_lp,
+        liquidity=1533143241938066251,
+        sqrt_price_x96=31881290961944305252140777263703426,
+        tick=258116,
+    )
+
+    overrides = [
+        (v3_lp, v3_pool_state_override),
+    ]
+
+    with concurrent.futures.ProcessPoolExecutor(
+        mp_context=multiprocessing.get_context("spawn"),
+    ) as executor:
+        with pytest.raises(ArbitrageError):
+            await arb.calculate_with_pool(executor=executor)
+
+        assert await (
+            await arb.calculate_with_pool(
+                executor=executor,
+                override_state=overrides,
+            )
+        ) == ArbitrageCalculationResult(
+            id="test_arb",
+            input_token=weth,
+            profit_token=weth,
+            input_amount=20454968409226055680,
+            profit_amount=163028226755627520,
+            swap_amounts=[
+                UniswapV2PoolSwapAmounts(
+                    amounts=(127718318, 0),
+                ),
+                UniswapV3PoolSwapAmounts(
+                    amount_specified=127718318,
+                    zero_for_one=True,
+                    sqrt_price_limit_x96=4295128740,
+                ),
+            ],
+        )
+
+        # Test with a saturated process pool
+        calculation_futures = []
+        for _ in range(512):
+            calculation_futures.append(
+                await arb.calculate_with_pool(
+                    executor=executor,
+                    override_state=overrides,
+                )
+            )
+
+        for task in asyncio.as_completed(calculation_futures):
+            await task
+
+
 def test_pre_calc_check() -> None:
     lp_1 = MockLiquidityPool()
-    lp_1._lock = Lock()
     lp_1.name = "WBTC-WETH (V2, 0.30%)"
     lp_1.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
     lp_1.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
@@ -2204,7 +2263,6 @@ def test_pre_calc_check() -> None:
     lp_1._update_pool_state()
 
     lp_2 = MockLiquidityPool()
-    lp_2._lock = Lock()
     lp_2.name = "WBTC-WETH (V2, 0.30%)"
     lp_2.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
     lp_2.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
