@@ -251,9 +251,9 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         _token_in_quantity: int = 0
         _token_out_quantity: int = 0
 
-        for i, (pool, pool_vector) in enumerate(zip(self.swap_pools, self._swap_vectors)):
-            token_in = pool_vector.token_in
-            zero_for_one = pool_vector.zero_for_one
+        for i, (pool, swap_vector) in enumerate(zip(self.swap_pools, self._swap_vectors)):
+            token_in = swap_vector.token_in
+            zero_for_one = swap_vector.zero_for_one
 
             if i == 0:
                 _token_in_quantity = token_in_quantity
@@ -515,7 +515,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
             token_in_quantity = int(x)  # round the input down
             token_out_quantity: int = 0
 
-            for i, pool in enumerate(self.swap_pools):
+            for i, (pool, swap_vector) in enumerate(zip(self.swap_pools, self._swap_vectors)):
                 pool_override = state_overrides.get(pool.address)
 
                 if TYPE_CHECKING:
@@ -527,9 +527,8 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
                     )
 
                 try:
-                    token_in = self._swap_vectors[i].token_in
                     token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
-                        token_in=token_in,
+                        token_in=swap_vector.token_in,
                         token_in_quantity=token_in_quantity if i == 0 else token_out_quantity,
                         override_state=pool_override,
                     )
