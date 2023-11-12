@@ -1,4 +1,3 @@
-
 import pytest
 import web3
 from eth_utils.address import to_checksum_address
@@ -187,10 +186,12 @@ def test_pool_remove_and_recreate(ankr_archive_web3):
     assert super_new_v2_weth_wbtc_lp is not v2_weth_wbtc_lp
 
 
-def test_same_block():
+def test_same_block(load_env):
+    ANKR_API_KEY = load_env["ANKR_API_KEY"]
+
     _BLOCK = 18493777
     fork = AnvilFork(
-        fork_url="https://rpc.ankr.com/eth/2dc3b531134c739c457c56cd680753317432c6fe550e94a71dc33cc52d67f069",
+        fork_url=f"https://rpc.ankr.com/eth/{ANKR_API_KEY}",
         fork_block=_BLOCK,
     )
     set_web3(fork.w3)
