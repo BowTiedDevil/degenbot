@@ -1707,6 +1707,7 @@ class UniswapTransaction(TransactionHelper):
                             factory_address=self.v2_pool_manager._factory_address,
                             factory_init_hash=self.v2_pool_manager._factory_init_hash,
                             empty=True,
+                            silent=self.silent,
                         )
 
                     _sim_result = self._simulate_v2_add_liquidity(
