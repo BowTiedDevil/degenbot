@@ -1,4 +1,5 @@
-from typing import Protocol, Set
+from typing import Protocol, Set, Iterator
+from ..baseclasses import ArbitrageHelper
 
 
 class Subscriber(Protocol):
@@ -12,13 +13,20 @@ class Subscriber(Protocol):
 
 class Publisher(Protocol):
     """
-    Can accept subscriptions
+    Can publish updates and accept subscriptions
     """
 
     _subscribers: Set[Subscriber]
 
 
 class SubscriptionMixin:
+    def get_arbitrage_helpers(self: Publisher) -> Iterator[ArbitrageHelper]:
+        return (
+            subscriber
+            for subscriber in self._subscribers
+            if isinstance(subscriber, (ArbitrageHelper))
+        )
+
     def subscribe(self: Publisher, subscriber) -> None:
         self._subscribers.add(subscriber)
 
