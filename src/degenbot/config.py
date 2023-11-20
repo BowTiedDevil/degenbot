@@ -12,7 +12,7 @@ def get_web3() -> Optional[Web3]:
 def set_web3(w3: Web3):
     connected_method: Optional[Callable] = None
 
-    for method_name in ("is_connected", "isConnected"):
+    for method_name in ("is_connected", "isConnected"):  # pragma: no cover
         try:
             connected_method = getattr(w3, method_name)
         except AttributeError:
@@ -20,10 +20,10 @@ def set_web3(w3: Web3):
         else:
             break
 
-    if connected_method is None:
+    if connected_method is None:  # pragma: no cover
         raise ValueError("Provided web3 object has no 'connected' method")
 
-    if connected_method() is False:
+    if connected_method() is False:  # pragma: no cover
         raise ValueError("Web3 object is not connected.")
 
     global _web3

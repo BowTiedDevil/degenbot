@@ -20,9 +20,7 @@ def encodePriceSqrt(reserve1: int, reserve0: int):
     """
     Returns the sqrt price as a Q64.96 value
     """
-    return round(
-        (Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96)
-    )
+    return round((Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96))
 
 
 def test_computeSwapStep():
@@ -91,10 +89,8 @@ def test_computeSwapStep():
     assert amountOut == 666399946655997866
     assert amountIn + feeAmount == amount
 
-    priceAfterWholeInputAmountLessFee = (
-        SqrtPriceMath.getNextSqrtPriceFromInput(
-            price, liquidity, amount - feeAmount, zeroForOne
-        )
+    priceAfterWholeInputAmountLessFee = SqrtPriceMath.getNextSqrtPriceFromInput(
+        price, liquidity, amount - feeAmount, zeroForOne
     )
 
     assert sqrtQ < priceTarget

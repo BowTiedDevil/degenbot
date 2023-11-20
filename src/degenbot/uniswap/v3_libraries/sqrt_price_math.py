@@ -5,12 +5,7 @@ from ...exceptions import EVMRevertError
 from . import full_math as FullMath
 from . import unsafe_math as UnsafeMath
 from .constants import Q96, Q96_RESOLUTION
-from .functions import (
-    to_int256,
-    to_uint160,
-    uint128,
-    uint256,
-)
+from .functions import to_int256, to_uint160
 
 
 def getAmount0Delta(
@@ -23,7 +18,7 @@ def getAmount0Delta(
         if sqrtRatioAX96 > sqrtRatioBX96:
             (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96)
 
-        numerator1 = uint256(liquidity) << Q96_RESOLUTION
+        numerator1 = liquidity << Q96_RESOLUTION
         numerator2 = sqrtRatioBX96 - sqrtRatioAX96
 
         if not (sqrtRatioAX96 > 0):
@@ -31,26 +26,17 @@ def getAmount0Delta(
 
         return (
             UnsafeMath.divRoundingUp(
-                FullMath.mulDivRoundingUp(
-                    numerator1, numerator2, sqrtRatioBX96
-                ),
+                FullMath.mulDivRoundingUp(numerator1, numerator2, sqrtRatioBX96),
                 sqrtRatioAX96,
             )
             if roundUp
-            else (FullMath.mulDiv(numerator1, numerator2, sqrtRatioBX96))
-            // sqrtRatioAX96
+            else (FullMath.mulDiv(numerator1, numerator2, sqrtRatioBX96)) // sqrtRatioAX96
         )
     else:
         return to_int256(
-            -getAmount0Delta(
-                sqrtRatioAX96, sqrtRatioBX96, uint128(-liquidity), False
-            )
+            -getAmount0Delta(sqrtRatioAX96, sqrtRatioBX96, -liquidity, False)
             if liquidity < 0
-            else to_int256(
-                getAmount0Delta(
-                    sqrtRatioAX96, sqrtRatioBX96, uint128(liquidity), True
-                )
-            )
+            else to_int256(getAmount0Delta(sqrtRatioAX96, sqrtRatioBX96, liquidity, True))
         )
 
 
@@ -65,23 +51,15 @@ def getAmount1Delta(
             sqrtRatioAX96, sqrtRatioBX96 = sqrtRatioBX96, sqrtRatioAX96
 
         return (
-            FullMath.mulDivRoundingUp(
-                liquidity, sqrtRatioBX96 - sqrtRatioAX96, Q96
-            )
+            FullMath.mulDivRoundingUp(liquidity, sqrtRatioBX96 - sqrtRatioAX96, Q96)
             if roundUp
             else FullMath.mulDiv(liquidity, sqrtRatioBX96 - sqrtRatioAX96, Q96)
         )
     else:
         return to_int256(
-            -getAmount1Delta(
-                sqrtRatioAX96, sqrtRatioBX96, uint128(-liquidity), False
-            )
+            -getAmount1Delta(sqrtRatioAX96, sqrtRatioBX96, -liquidity, False)
             if liquidity < 0
-            else to_int256(
-                getAmount1Delta(
-                    sqrtRatioAX96, sqrtRatioBX96, uint128(liquidity), True
-                )
-            )
+            else to_int256(getAmount1Delta(sqrtRatioAX96, sqrtRatioBX96, liquidity, True))
         )
 
 
@@ -95,7 +73,7 @@ def getNextSqrtPriceFromAmount0RoundingUp(
     if amount == 0:
         return sqrtPX96
 
-    numerator1 = uint256(liquidity) << Q96_RESOLUTION
+    numerator1 = liquidity << Q96_RESOLUTION
 
     if add:
         product = amount * sqrtPX96
@@ -103,27 +81,19 @@ def getNextSqrtPriceFromAmount0RoundingUp(
             denominator = numerator1 + product
             if denominator >= numerator1:
                 # always fits in 160 bits
-                return FullMath.mulDivRoundingUp(
-                    numerator1, sqrtPX96, denominator
-                )
-
-        return UnsafeMath.divRoundingUp(
-            numerator1, numerator1 // sqrtPX96 + amount
-        )
+                return FullMath.mulDivRoundingUp(numerator1, sqrtPX96, denominator)
+        else:
+            return UnsafeMath.divRoundingUp(numerator1, numerator1 // sqrtPX96 + amount)
     else:
         product = amount * sqrtPX96
         # if the product overflows, we know the denominator underflows
         # in addition, we must check that the denominator does not underflow
 
         if not (product // amount == sqrtPX96 and numerator1 > product):
-            raise EVMRevertError(
-                "product / amount == sqrtPX96 && numerator1 > product"
-            )
+            raise EVMRevertError("product / amount == sqrtPX96 && numerator1 > product")
 
         denominator = numerator1 - product
-        return to_uint160(
-            FullMath.mulDivRoundingUp(numerator1, sqrtPX96, denominator)
-        )
+        return to_uint160(FullMath.mulDivRoundingUp(numerator1, sqrtPX96, denominator))
 
 
 def getNextSqrtPriceFromAmount1RoundingDown(
@@ -138,7 +108,7 @@ def getNextSqrtPriceFromAmount1RoundingDown(
             if amount <= 2**160 - 1
             else FullMath.mulDiv(amount, Q96, liquidity)
         )
-        return to_uint160(uint256(sqrtPX96) + quotient)
+        return to_uint160(sqrtPX96 + quotient)
     else:
         quotient = (
             UnsafeMath.divRoundingUp(amount << Q96_RESOLUTION, liquidity)
@@ -167,13 +137,9 @@ def getNextSqrtPriceFromInput(
 
     # round to make sure that we don't pass the target price
     return (
-        getNextSqrtPriceFromAmount0RoundingUp(
-            sqrtPX96, liquidity, amountIn, True
-        )
+        getNextSqrtPriceFromAmount0RoundingUp(sqrtPX96, liquidity, amountIn, True)
         if zeroForOne
-        else getNextSqrtPriceFromAmount1RoundingDown(
-            sqrtPX96, liquidity, amountIn, True
-        )
+        else getNextSqrtPriceFromAmount1RoundingDown(sqrtPX96, liquidity, amountIn, True)
     )
 
 
@@ -191,11 +157,7 @@ def getNextSqrtPriceFromOutput(
 
     # round to make sure that we pass the target price
     return (
-        getNextSqrtPriceFromAmount1RoundingDown(
-            sqrtPX96, liquidity, amountOut, False
-        )
+        getNextSqrtPriceFromAmount1RoundingDown(sqrtPX96, liquidity, amountOut, False)
         if zeroForOne
-        else getNextSqrtPriceFromAmount0RoundingUp(
-            sqrtPX96, liquidity, amountOut, False
-        )
+        else getNextSqrtPriceFromAmount0RoundingUp(sqrtPX96, liquidity, amountOut, False)
     )

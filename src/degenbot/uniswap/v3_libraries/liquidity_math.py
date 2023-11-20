@@ -1,5 +1,5 @@
+from ...constants import MAX_INT128, MAX_UINT128, MIN_INT128, MIN_UINT128
 from ...exceptions import EVMRevertError
-from .functions import uint128
 
 
 def addDelta(x: int, y: int) -> int:
@@ -9,20 +9,16 @@ def addDelta(x: int, y: int) -> int:
     built-in casting as implemented at https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/LiquidityMath.sol
     """
 
-    if not (0 <= x <= 2**128 - 1):
+    if not (MIN_UINT128 <= x <= MAX_UINT128):
         raise EVMRevertError("x not a valid uint128")
-
-    if not (-(2**127) <= y <= 2**127 - 1):
+    if not (MIN_INT128 <= y <= MAX_INT128):
         raise EVMRevertError("y not a valid int128")
 
-    if y < 0:
-        z = x - uint128(-y)
-        if not (0 <= z <= 2**128 - 1):
-            raise EVMRevertError("LS")
+    z = x + y
 
-    else:
-        z = x + uint128(y)
-        if not (0 <= z <= 2**128 - 1):
-            raise EVMRevertError("LA")
+    if y < 0 and not (MIN_UINT128 <= z <= MAX_UINT128):
+        raise EVMRevertError("LS")
+    elif not (MIN_UINT128 <= z <= MAX_UINT128):
+        raise EVMRevertError("LA")
 
     return z

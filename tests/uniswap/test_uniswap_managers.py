@@ -1,12 +1,11 @@
 import pytest
-import web3
-from eth_utils.address import to_checksum_address
 from degenbot import set_web3
 from degenbot.exceptions import ManagerError, PoolNotAssociated
+from degenbot.fork import AnvilFork
 from degenbot.manager import AllPools
 from degenbot.uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
-from degenbot.fork import AnvilFork
-
+from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
+from eth_utils.address import to_checksum_address
 
 UNISWAP_V2_FACTORY_ADDRESS = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
 UNISWAP_V3_FACTORY_ADDRESS = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
@@ -19,13 +18,6 @@ WBTC_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 SUSHISWAPV2_WETH_WBTC_ADDRESS = to_checksum_address("0xceff51756c56ceffca006cd410b03ffc46dd3a58")
 UNISWAPV2_WETH_WBTC_ADDRESS = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
 UNISWAPV3_WETH_WBTC_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
-
-
-# Set up a web3 connection to Ankr endpoint
-@pytest.fixture
-def ankr_archive_web3() -> web3.Web3:
-    w3 = web3.Web3(web3.HTTPProvider("https://rpc.ankr.com/eth"))
-    return w3
 
 
 def test_create_managers(ankr_archive_web3):
@@ -186,6 +178,19 @@ def test_pool_remove_and_recreate(ankr_archive_web3):
     assert super_new_v2_weth_wbtc_lp is not v2_weth_wbtc_lp
 
 
+def test_pools_from_token_path() -> None:
+    uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
+        factory_address=UNISWAP_V2_FACTORY_ADDRESS
+    )
+
+    assert get_v2_pools_from_token_path(
+        tx_path=[WBTC_ADDRESS, WETH_ADDRESS],
+        pool_manager=uniswap_v2_pool_manager,
+    ) == [
+        uniswap_v2_pool_manager.get_pool(token_addresses=[WBTC_ADDRESS, WETH_ADDRESS]),
+    ]
+
+
 def test_same_block(load_env):
     ANKR_API_KEY = load_env["ANKR_API_KEY"]
 
@@ -214,3 +219,4 @@ def test_same_block(load_env):
     )
 
     assert v2_heyjoe_weth_lp is not new_v2_heyjoe_weth_lp
+    del fork

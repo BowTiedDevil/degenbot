@@ -11,6 +11,7 @@ from degenbot import (
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
     V3LiquidityPool,
+    set_web3,
 )
 from degenbot.exceptions import (
     ExternalUpdateError,
@@ -2079,6 +2080,69 @@ def mocked_wbtc_weth_v3liquiditypool():
     return lp
 
 
+def test_creation(ankr_archive_web3) -> None:
+    set_web3(ankr_archive_web3)
+    V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
+    V3LiquidityPool(
+        address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
+        factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+    )
+    V3LiquidityPool(
+        address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
+        tokens=[
+            Erc20Token("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"),
+            Erc20Token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+        ],
+    )
+    V3LiquidityPool(
+        address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
+        factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        factory_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
+    )
+    assert (
+        V3LiquidityPool(
+            address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD", tick_bitmap={}, tick_data={}
+        )._sparse_bitmap
+        is False
+    )
+
+    with pytest.raises(ValueError, match="does not match deterministic address"):
+        V3LiquidityPool(
+            address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
+            factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+            factory_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b53",  # <--- Bad hash (last byte changed)
+        )
+
+    with pytest.raises(ValueError, match="Expected exactly two tokens"):
+        V3LiquidityPool(
+            address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
+            tokens=[
+                Erc20Token("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"),
+                Erc20Token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                Erc20Token(
+                    "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+                ),  # <---- extra address (DAI)
+            ],
+        )
+
+    with pytest.raises(
+        ValueError, match="Token addresses do not match tokens recorded at contract"
+    ):
+        V3LiquidityPool(
+            address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
+            tokens=[
+                Erc20Token("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"),
+                Erc20Token("0x6B175474E89094C44Da98b954EedeAC495271d0F"),  # <---- bad address (DAI)
+            ],
+        )
+
+    with pytest.raises(ValueError):
+        V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD", tick_bitmap={1: None})
+
+    with pytest.raises(ValueError):
+        V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD", tick_data={1: None})
+
+
 def test_reorg(mocked_wbtc_weth_v3liquiditypool) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
 
@@ -2134,6 +2198,8 @@ def test_tick_bitmap_equality() -> None:
 
 def test_pickle_pool(mocked_wbtc_weth_v3liquiditypool):
     pickle.dumps(mocked_wbtc_weth_v3liquiditypool)
+    state = mocked_wbtc_weth_v3liquiditypool.__getstate__()
+    mocked_wbtc_weth_v3liquiditypool.__setstate__(state)
 
 
 def test_tick_data_equality() -> None:
@@ -2362,6 +2428,33 @@ def test_simulations(mocked_wbtc_weth_v3liquiditypool) -> None:
     )
     assert wbtc_amount_in == simulated_state.amount0_delta
 
+    mocked_dai = MockErc20Token()
+    mocked_dai.address = to_checksum_address("0x6B175474E89094C44Da98b954EedeAC495271d0F")
+    mocked_dai.decimals = 18
+    mocked_dai.symbol = "DAI"
+
+    # Test the input validation
+    with pytest.raises(ValueError, match="Neither token_in nor token_out were provided."):
+        lp.simulate_swap()
+    with pytest.raises(ValueError, match="token_in is unknown!"):
+        lp.simulate_swap(
+            token_in=mocked_dai,
+        )
+    with pytest.raises(ValueError, match="token_out is unknown!"):
+        lp.simulate_swap(
+            token_out=mocked_dai,
+        )
+    with pytest.raises(ValueError, match="token_in_quantity not provided."):
+        lp.simulate_swap(token_in=lp.token0)
+    with pytest.raises(ValueError, match="token_out_quantity not provided."):
+        lp.simulate_swap(token_out=lp.token0)
+    with pytest.raises(ValueError, match="Provide token_in or token_out, not both."):
+        lp.simulate_swap(token_in=lp.token0, token_out=lp.token1)
+    with pytest.raises(ValueError, match="Zero input/output swap requested."):
+        lp.simulate_swap(token_in=lp.token0, token_in_quantity=0)
+    with pytest.raises(ValueError, match="Zero input/output swap requested."):
+        lp.simulate_swap(token_out=lp.token1, token_out_quantity=0)
+
 
 def test_simulations_with_override(mocked_wbtc_weth_v3liquiditypool) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
@@ -2452,7 +2545,7 @@ def test_swap_for_all(mocked_wbtc_weth_v3liquiditypool) -> None:
     )
 
 
-def test_external_updates(mocked_wbtc_weth_v3liquiditypool) -> None:
+def test_external_update(mocked_wbtc_weth_v3liquiditypool) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
     lp.external_update(
         update=UniswapV3PoolExternalUpdate(
@@ -2508,3 +2601,9 @@ def test_external_updates(mocked_wbtc_weth_v3liquiditypool) -> None:
         ),
     )
     assert lp.liquidity == 69_420_000 + 1
+
+
+def test_auto_update(ankr_archive_web3) -> None:
+    set_web3(ankr_archive_web3)
+    lp = V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
+    lp.auto_update()

@@ -67,7 +67,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
             raise ValueError("Must provide only Uniswap liquidity pools.")
 
         self.swap_pools = tuple(swap_pools)
-        self.name = "→".join([pool.name for pool in self.swap_pools])
+        self.name = " → ".join([pool.name for pool in self.swap_pools])
 
         for pool in swap_pools:
             pool.subscribe(self)

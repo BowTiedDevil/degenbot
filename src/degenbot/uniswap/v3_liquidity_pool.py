@@ -112,7 +112,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         _web3 = get_web3()
         if _web3 is not None:
             self._w3 = _web3
-        else:
+        else:  # pragma: no cover
             from brownie import Contract  # type: ignore[import] # noqa: F401
             from brownie import multicall as brownie_multicall  # noqa: F401
             from brownie import web3 as brownie_web3
@@ -197,12 +197,12 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                     f"Pool address {self.address} does not match deterministic address {computed_pool_address} from factory"
                 )
 
-        if name:
+        if name:  # pragma: no cover
             self.name = name
         else:
             self.name = f"{self.token0}-{self.token1} (V3, {self._fee/10000:.2f}%)"
 
-        if update_method is not None:
+        if update_method is not None:  # pragma: no cover
             warnings.warn(
                 "The `update_method` argument to `V3LiquidityPool()` is unused and otherwise ignored. Remove it to stop seeing this message."
             )
@@ -362,14 +362,18 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         return TickBitmap.position(int(Decimal(tick) // self._tick_spacing))
 
     def _update_pool_state(self) -> None:
-        self.state = UniswapV3PoolState(
-            pool=self,
-            liquidity=self.liquidity,
-            sqrt_price_x96=self.sqrt_price_x96,
-            tick=self.tick,
-            tick_bitmap=self.tick_bitmap.copy(),
-            tick_data=self.tick_data.copy(),
-        )
+        try:
+            self.state = UniswapV3PoolState(
+                pool=self,
+                liquidity=self.liquidity,
+                sqrt_price_x96=self.sqrt_price_x96,
+                tick=self.tick,
+                tick_bitmap=self.tick_bitmap.copy(),
+                tick_data=self.tick_data.copy(),
+            )
+        except AttributeError as e:
+            print(f"{type(e)}: {e}")
+            print(self)
 
     def _update_tick_data_at_word(
         self,
@@ -1263,26 +1267,23 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         [TBD]
         """
 
+        if token_in is not None and token_in not in (self.token0, self.token1):
+            raise ValueError("token_in is unknown!")
+        if token_out is not None and token_out not in (self.token0, self.token1):
+            raise ValueError("token_out is unknown!")
+
         if token_in is None and token_out is None:
-            raise ValueError("token_in or token_out not provided")
+            raise ValueError("Neither token_in nor token_out were provided.")
+        elif token_in is not None and token_out is not None:
+            raise ValueError("Provide token_in or token_out, not both.")
 
-        if token_in_quantity and token_out_quantity:
-            raise ValueError("Provide token_in_quantity or token_out_quantity, not both")
-
-        if token_in is not None:
-            if token_in_quantity is None:
-                raise ValueError("token_in_quantity not provided")
-            if token_in not in (self.token0, self.token1):
-                raise ValueError("token_in not provided")
-
-        if token_out is not None:
-            if token_out_quantity is None:
-                raise ValueError("token_out_quantity not provided")
-            if token_out not in (self.token0, self.token1):
-                raise ValueError("token_out not provided")
+        if token_in is not None and token_in_quantity is None:
+            raise ValueError("token_in_quantity not provided.")
+        if token_out is not None and token_out_quantity is None:
+            raise ValueError("token_out_quantity not provided.")
 
         if 0 in (token_in_quantity, token_out_quantity):
-            raise ZeroSwapError("Zero input/output swap requested")
+            raise ValueError("Zero input/output swap requested.")
 
         # determine whether the swap is token0 -> token1
         if token_in is not None:

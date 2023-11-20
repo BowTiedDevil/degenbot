@@ -1,7 +1,7 @@
 from ...constants import MAX_UINT256
 from ...exceptions import EVMRevertError
 from . import yul_operations as yul
-from .functions import int24, int256, uint160, uint256
+
 
 MIN_TICK = -887272
 MAX_TICK = -MIN_TICK
@@ -10,8 +10,8 @@ MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342
 
 
 def getSqrtRatioAtTick(tick: int) -> int:
-    abs_tick = uint256(-int256(tick)) if tick < 0 else uint256(int256(tick))
-    if not (0 <= abs_tick <= uint256(MAX_TICK)):
+    abs_tick = abs(tick)
+    if not (0 <= abs_tick <= MAX_TICK):
         raise EVMRevertError("T")
 
     ratio = (
@@ -65,7 +65,7 @@ def getSqrtRatioAtTick(tick: int) -> int:
     # this divides by 1<<32 rounding up to go from a Q128.128 to a Q128.96
     # we then downcast because we know the result always fits within 160 bits due to our tick input constraint
     # we round up in the division so getTickAtSqrtRatio of the output price is always consistent
-    return uint160((ratio >> 32) + (0 if (ratio % (1 << 32) == 0) else 1))
+    return (ratio >> 32) + (0 if (ratio % (1 << 32) == 0) else 1)
 
 
 def getTickAtSqrtRatio(sqrt_price_x96: int) -> int:
@@ -73,12 +73,10 @@ def getTickAtSqrtRatio(sqrt_price_x96: int) -> int:
         raise EVMRevertError("not a valid uint160")
 
     # second inequality must be < because the price can never reach the price at the max tick
-    if not (
-        sqrt_price_x96 >= MIN_SQRT_RATIO and sqrt_price_x96 < MAX_SQRT_RATIO
-    ):
+    if not (sqrt_price_x96 >= MIN_SQRT_RATIO and sqrt_price_x96 < MAX_SQRT_RATIO):
         raise EVMRevertError("R")
 
-    ratio = uint256(sqrt_price_x96) << 32
+    ratio = sqrt_price_x96 << 32
 
     r: int = ratio
     msb: int = 0
@@ -196,21 +194,13 @@ def getTickAtSqrtRatio(sqrt_price_x96: int) -> int:
 
     log_sqrt10001 = log_2 * 255738958999603826347141  # 128.128 number
 
-    tick_low = int24(
-        (log_sqrt10001 - 3402992956809132418596140100660247210) >> 128
-    )
-    tick_high = int24(
-        (log_sqrt10001 + 291339464771989622907027621153398088495) >> 128
-    )
+    tick_low = (log_sqrt10001 - 3402992956809132418596140100660247210) >> 128
+    tick_high = (log_sqrt10001 + 291339464771989622907027621153398088495) >> 128
 
     tick = (
         tick_low
         if (tick_low == tick_high)
-        else (
-            tick_high
-            if getSqrtRatioAtTick(tick_high) <= sqrt_price_x96
-            else tick_low
-        )
+        else (tick_high if getSqrtRatioAtTick(tick_high) <= sqrt_price_x96 else tick_low)
     )
 
     return tick

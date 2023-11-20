@@ -57,26 +57,26 @@ TICKLENS_ADDRESSES: Dict[
     1: {
         # Uniswap V3
         # ref: https://docs.uniswap.org/contracts/v3/reference/deployments
-        to_checksum_address(
-            "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-        ): to_checksum_address("0xbfd8137f7d1516D3ea5cA83523914859ec47F573"),
+        to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"): to_checksum_address(
+            "0xbfd8137f7d1516D3ea5cA83523914859ec47F573"
+        ),
         # Sushiswap V3
         # ref: https://docs.sushi.com/docs/Products/V3%20AMM/Periphery/Deployment%20Addresses
-        to_checksum_address(
-            "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F"
-        ): to_checksum_address("0xFB70AD5a200d784E7901230E6875d91d5Fa6B68c"),
+        to_checksum_address("0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F"): to_checksum_address(
+            "0xFB70AD5a200d784E7901230E6875d91d5Fa6B68c"
+        ),
     },
     # Arbitrum
     42161: {
         # Uniswap V3
         # ref: https://docs.uniswap.org/contracts/v3/reference/deployments
-        to_checksum_address(
-            "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-        ): to_checksum_address("0xbfd8137f7d1516D3ea5cA83523914859ec47F573"),
+        to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"): to_checksum_address(
+            "0xbfd8137f7d1516D3ea5cA83523914859ec47F573"
+        ),
         # Sushiswap V3
         # ref: https://docs.sushi.com/docs/Products/V3%20AMM/Periphery/Deployment%20Addresses
-        to_checksum_address(
-            "0x1af415a1EbA07a4986a52B6f2e7dE7003D82231e"
-        ): to_checksum_address("0x8516944E89f296eb6473d79aED1Ba12088016c9e"),
+        to_checksum_address("0x1af415a1EbA07a4986a52B6f2e7dE7003D82231e"): to_checksum_address(
+            "0x8516944E89f296eb6473d79aED1Ba12088016c9e"
+        ),
     },
 }

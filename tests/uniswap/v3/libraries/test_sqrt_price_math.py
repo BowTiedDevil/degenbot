@@ -1,7 +1,7 @@
 from decimal import Decimal, getcontext
 
 import pytest
-from degenbot.constants import MAX_UINT128, MAX_UINT256
+from degenbot.constants import MIN_UINT128, MAX_UINT128, MAX_UINT256
 from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3_libraries import SqrtPriceMath
 
@@ -23,25 +23,19 @@ def encodePriceSqrt(reserve1: int, reserve0: int):
     """
     Returns the sqrt price as a Q64.96 value
     """
-    return round(
-        (Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96)
-    )
+    return round((Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96))
 
 
 def test_getNextSqrtPriceFromInput():
     # fails if price is zero
     with pytest.raises(EVMRevertError):
         # this test should fail
-        SqrtPriceMath.getNextSqrtPriceFromInput(
-            0, 0, expandTo18Decimals(1) // 10, False
-        )
+        SqrtPriceMath.getNextSqrtPriceFromInput(0, 0, expandTo18Decimals(1) // 10, False)
 
     # fails if liquidity is zero
     with pytest.raises(EVMRevertError):
         # this test should fail
-        SqrtPriceMath.getNextSqrtPriceFromInput(
-            1, 0, expandTo18Decimals(1) // 10, True
-        )
+        SqrtPriceMath.getNextSqrtPriceFromInput(1, 0, expandTo18Decimals(1) // 10, True)
 
     # fails if input amount overflows the price
     price = 2**160 - 1
@@ -49,36 +43,25 @@ def test_getNextSqrtPriceFromInput():
     amountIn = 1024
     with pytest.raises(EVMRevertError):
         # this test should fail
-        SqrtPriceMath.getNextSqrtPriceFromInput(
-            price, liquidity, amountIn, False
-        )
+        SqrtPriceMath.getNextSqrtPriceFromInput(price, liquidity, amountIn, False)
 
     # any input amount cannot underflow the price
     price = 1
     liquidity = 1
     amountIn = 2**255
-    assert (
-        SqrtPriceMath.getNextSqrtPriceFromInput(
-            price, liquidity, amountIn, True
-        )
-        == 1
-    )
+    assert SqrtPriceMath.getNextSqrtPriceFromInput(price, liquidity, amountIn, True) == 1
 
     # returns input price if amount in is zero and zeroForOne = true
     price = encodePriceSqrt(1, 1)
     assert (
-        SqrtPriceMath.getNextSqrtPriceFromInput(
-            price, expandTo18Decimals(1) // 10, 0, True
-        )
+        SqrtPriceMath.getNextSqrtPriceFromInput(price, expandTo18Decimals(1) // 10, 0, True)
         == price
     )
 
     # returns input price if amount in is zero and zeroForOne = false
     price = encodePriceSqrt(1, 1)
     assert (
-        SqrtPriceMath.getNextSqrtPriceFromInput(
-            price, expandTo18Decimals(1) // 10, 0, False
-        )
+        SqrtPriceMath.getNextSqrtPriceFromInput(price, expandTo18Decimals(1) // 10, 0, False)
         == price
     )
 
@@ -86,12 +69,7 @@ def test_getNextSqrtPriceFromInput():
     sqrtP = 2**160 - 1
     liquidity = MAX_UINT128
     maxAmountNoOverflow = MAX_UINT256 - ((liquidity << 96) // sqrtP)
-    assert (
-        SqrtPriceMath.getNextSqrtPriceFromInput(
-            sqrtP, liquidity, maxAmountNoOverflow, True
-        )
-        == 1
-    )
+    assert SqrtPriceMath.getNextSqrtPriceFromInput(sqrtP, liquidity, maxAmountNoOverflow, True) == 1
 
     # input amount of 0.1 token1
     sqrtQ = SqrtPriceMath.getNextSqrtPriceFromInput(
@@ -122,9 +100,7 @@ def test_getNextSqrtPriceFromInput():
 
     # can return 1 with enough amountIn and zeroForOne = true
     assert (
-        SqrtPriceMath.getNextSqrtPriceFromInput(
-            encodePriceSqrt(1, 1), 1, MAX_UINT256 // 2, True
-        )
+        SqrtPriceMath.getNextSqrtPriceFromInput(encodePriceSqrt(1, 1), 1, MAX_UINT256 // 2, True)
         == 1
     )
 
@@ -132,58 +108,44 @@ def test_getNextSqrtPriceFromInput():
 def test_getNextSqrtPriceFromOutput():
     with pytest.raises(EVMRevertError):
         # this test should fail
-        SqrtPriceMath.getNextSqrtPriceFromOutput(
-            0, 0, expandTo18Decimals(1) // 10, False
-        )
+        SqrtPriceMath.getNextSqrtPriceFromOutput(0, 0, expandTo18Decimals(1) // 10, False)
 
     with pytest.raises(EVMRevertError):
         # this test should fail
-        SqrtPriceMath.getNextSqrtPriceFromOutput(
-            1, 0, expandTo18Decimals(1) // 10, True
-        )
+        SqrtPriceMath.getNextSqrtPriceFromOutput(1, 0, expandTo18Decimals(1) // 10, True)
 
     price = 20282409603651670423947251286016
     liquidity = 1024
     amountOut = 4
     with pytest.raises(EVMRevertError):
         # this test should fail
-        SqrtPriceMath.getNextSqrtPriceFromOutput(
-            price, liquidity, amountOut, False
-        )
+        SqrtPriceMath.getNextSqrtPriceFromOutput(price, liquidity, amountOut, False)
 
     price = 20282409603651670423947251286016
     liquidity = 1024
     amountOut = 5
     with pytest.raises(EVMRevertError):
         # this test should fail
-        assert SqrtPriceMath.getNextSqrtPriceFromOutput(
-            price, liquidity, amountOut, False
-        )
+        assert SqrtPriceMath.getNextSqrtPriceFromOutput(price, liquidity, amountOut, False)
 
     price = 20282409603651670423947251286016
     liquidity = 1024
     amountOut = 262145
     with pytest.raises(EVMRevertError):
         # this test should fail
-        SqrtPriceMath.getNextSqrtPriceFromOutput(
-            price, liquidity, amountOut, True
-        )
+        SqrtPriceMath.getNextSqrtPriceFromOutput(price, liquidity, amountOut, True)
 
     price = 20282409603651670423947251286016
     liquidity = 1024
     amountOut = 262144
     with pytest.raises(EVMRevertError):
         # this test should fail
-        SqrtPriceMath.getNextSqrtPriceFromOutput(
-            price, liquidity, amountOut, True
-        )
+        SqrtPriceMath.getNextSqrtPriceFromOutput(price, liquidity, amountOut, True)
 
     price = 20282409603651670423947251286016
     liquidity = 1024
     amountOut = 262143
-    sqrtQ = SqrtPriceMath.getNextSqrtPriceFromOutput(
-        price, liquidity, amountOut, True
-    )
+    sqrtQ = SqrtPriceMath.getNextSqrtPriceFromOutput(price, liquidity, amountOut, True)
     assert sqrtQ == 77371252455336267181195264
 
     price = 20282409603651670423947251286016
@@ -192,23 +154,17 @@ def test_getNextSqrtPriceFromOutput():
 
     with pytest.raises(EVMRevertError):
         # this test should fail
-        SqrtPriceMath.getNextSqrtPriceFromOutput(
-            price, liquidity, amountOut, False
-        )
+        SqrtPriceMath.getNextSqrtPriceFromOutput(price, liquidity, amountOut, False)
 
     price = encodePriceSqrt(1, 1)
     assert (
-        SqrtPriceMath.getNextSqrtPriceFromOutput(
-            price, expandTo18Decimals(1) // 10, 0, True
-        )
+        SqrtPriceMath.getNextSqrtPriceFromOutput(price, expandTo18Decimals(1) // 10, 0, True)
         == price
     )
 
     price = encodePriceSqrt(1, 1)
     assert (
-        SqrtPriceMath.getNextSqrtPriceFromOutput(
-            price, expandTo18Decimals(1) // 10, 0, False
-        )
+        SqrtPriceMath.getNextSqrtPriceFromOutput(price, expandTo18Decimals(1) // 10, 0, False)
         == price
     )
 
@@ -230,26 +186,27 @@ def test_getNextSqrtPriceFromOutput():
 
     with pytest.raises(EVMRevertError):
         # this test should fail
-        SqrtPriceMath.getNextSqrtPriceFromOutput(
-            encodePriceSqrt(1, 1), 1, MAX_UINT256, True
-        )
+        SqrtPriceMath.getNextSqrtPriceFromOutput(encodePriceSqrt(1, 1), 1, MAX_UINT256, True)
 
     with pytest.raises(EVMRevertError):
         # this test should fail
-        SqrtPriceMath.getNextSqrtPriceFromOutput(
-            encodePriceSqrt(1, 1), 1, MAX_UINT256, False
-        )
+        SqrtPriceMath.getNextSqrtPriceFromOutput(encodePriceSqrt(1, 1), 1, MAX_UINT256, False)
 
 
 def test_getAmount0Delta():
-    amount0 = SqrtPriceMath.getAmount0Delta(
-        encodePriceSqrt(1, 1), encodePriceSqrt(2, 1), 0, True
-    )
+    with pytest.raises(EVMRevertError):
+        SqrtPriceMath.getAmount0Delta(0, 0, 0, True)
+
+    with pytest.raises(EVMRevertError):
+        SqrtPriceMath.getAmount0Delta(1, 0, 0, True)
+
+    with pytest.raises(EVMRevertError):
+        SqrtPriceMath.getAmount0Delta(1, 0, MAX_UINT128 + 1)
+
+    amount0 = SqrtPriceMath.getAmount0Delta(encodePriceSqrt(1, 1), encodePriceSqrt(2, 1), 0, True)
     assert amount0 == 0
 
-    amount0 = SqrtPriceMath.getAmount0Delta(
-        encodePriceSqrt(1, 1), encodePriceSqrt(1, 1), 0, True
-    )
+    amount0 = SqrtPriceMath.getAmount0Delta(encodePriceSqrt(1, 1), encodePriceSqrt(1, 1), 0, True)
     assert amount0 == 0
 
     amount0 = SqrtPriceMath.getAmount0Delta(
@@ -284,14 +241,18 @@ def test_getAmount0Delta():
 
 
 def test_getAmount1Delta():
-    amount1 = SqrtPriceMath.getAmount1Delta(
-        encodePriceSqrt(1, 1), encodePriceSqrt(2, 1), 0, True
-    )
+    SqrtPriceMath.getAmount1Delta(0, 1, MAX_UINT128 - 1, False)
+    SqrtPriceMath.getAmount1Delta(1, 0, MAX_UINT128 - 1, False)
+    SqrtPriceMath.getAmount1Delta(0, 1, MAX_UINT128 - 1, True)
+    SqrtPriceMath.getAmount1Delta(1, 0, MAX_UINT128 - 1, True)
+
+    SqrtPriceMath.getAmount1Delta(0, 0, MIN_UINT128 - 1)
+    SqrtPriceMath.getAmount1Delta(0, 0, MIN_UINT128 - 1)
+
+    amount1 = SqrtPriceMath.getAmount1Delta(encodePriceSqrt(1, 1), encodePriceSqrt(2, 1), 0, True)
     assert amount1 == 0
 
-    amount1 = SqrtPriceMath.getAmount0Delta(
-        encodePriceSqrt(1, 1), encodePriceSqrt(1, 1), 0, True
-    )
+    amount1 = SqrtPriceMath.getAmount0Delta(encodePriceSqrt(1, 1), encodePriceSqrt(1, 1), 0, True)
     assert amount1 == 0
 
     # returns 0.1 amount1 for price of 1 to 1.21
@@ -320,9 +281,7 @@ def test_swap_computation():
     zeroForOne = True
     amountIn = 406
 
-    sqrtQ = SqrtPriceMath.getNextSqrtPriceFromInput(
-        sqrtP, liquidity, amountIn, zeroForOne
-    )
+    sqrtQ = SqrtPriceMath.getNextSqrtPriceFromInput(sqrtP, liquidity, amountIn, zeroForOne)
     assert sqrtQ == 1025574284609383582644711336373707553698163132913
 
     amount0Delta = SqrtPriceMath.getAmount0Delta(sqrtQ, sqrtP, liquidity, True)

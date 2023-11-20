@@ -101,7 +101,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         _web3 = get_web3()
         if _web3 is not None:
             pass
-        else:
+        else:  # pragma: no cover
             from brownie import web3 as brownie_web3  # type: ignore[import]
 
             if brownie_web3.isConnected():
@@ -273,7 +273,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         _web3 = get_web3()
         if _web3 is not None:
             pass
-        else:
+        else:  # pragma: no cover
             from brownie import web3 as brownie_web3  # type: ignore[import]
 
             if brownie_web3.isConnected():

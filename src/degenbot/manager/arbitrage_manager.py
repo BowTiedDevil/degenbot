@@ -57,22 +57,13 @@ class ArbitrageHelperManager(HelperManager):
         Create a Uniswap pool manager from the factory contract address and version, store in the internal dictionary of pool managers
         """
 
-        if (
-            factory_address in self._v2_pool_managers
-            or factory_address in self._v3_pool_managers
-        ):
-            raise ValueError(
-                f"Pool manager for factory={factory_address} already exists"
-            )
+        if factory_address in self._v2_pool_managers or factory_address in self._v3_pool_managers:
+            raise ValueError(f"Pool manager for factory={factory_address} already exists")
 
         if uniswap_version == 2:
-            self._v2_pool_managers[
-                factory_address
-            ] = UniswapV2LiquidityPoolManager(factory_address)
+            self._v2_pool_managers[factory_address] = UniswapV2LiquidityPoolManager(factory_address)
         elif uniswap_version == 3:
-            self._v3_pool_managers[
-                factory_address
-            ] = UniswapV3LiquidityPoolManager(factory_address)
+            self._v3_pool_managers[factory_address] = UniswapV3LiquidityPoolManager(factory_address)
         else:
             raise ValueError
 
@@ -94,9 +85,7 @@ class ArbitrageHelperManager(HelperManager):
 
         print(native_wrapped_token_address)
 
-        input_token = self._erc20tokenmanager.get_erc20token(
-            native_wrapped_token_address
-        )
+        input_token = self._erc20tokenmanager.get_erc20token(native_wrapped_token_address)
 
         _swap_pools: List[Union[LiquidityPool, V3LiquidityPool]] = []
 
@@ -121,9 +110,7 @@ class ArbitrageHelperManager(HelperManager):
                     pool_helper
                 except Exception:
                     # will throw if the pool helper could not be found
-                    raise ValueError(
-                        f"Could not generate Uniswap LP helper for pool {pool}"
-                    )
+                    raise ValueError(f"Could not generate Uniswap LP helper for pool {pool}")
                 else:
                     print(pool_helper)
             elif isinstance(pool, (LiquidityPool, V3LiquidityPool)):
@@ -136,9 +123,7 @@ class ArbitrageHelperManager(HelperManager):
 
             _swap_pools[i] = pool_helper
 
-        arb_id = Web3.keccak(
-            hexstr="".join([pool.address[2:] for pool in _swap_pools])
-        ).hex()
+        arb_id = Web3.keccak(hexstr="".join([pool.address[2:] for pool in _swap_pools])).hex()
 
         # check if the helper is already known, throw exception if so
         try:
@@ -182,16 +167,12 @@ class ArbitrageHelperManager(HelperManager):
         try:
             if arb_type == "cycle":
                 if input_token is None:
-                    native_wrapped_token_address = WRAPPED_NATIVE_TOKENS[
-                        chain_id
-                    ]
+                    native_wrapped_token_address = WRAPPED_NATIVE_TOKENS[chain_id]
                     input_token = self._erc20tokenmanager.get_erc20token(
                         native_wrapped_token_address
                     )
-                elif not isinstance(input_token, "Erc20Token"):
-                    input_token = self._erc20tokenmanager.get_erc20token(
-                        input_token
-                    )
+                elif not isinstance(input_token, Erc20Token):
+                    input_token = self._erc20tokenmanager.get_erc20token(input_token)
                 # arb_helper = UniswapLpCycle(input_token=input_token)
                 arb_helper = self.build(
                     arb_type=arb_type,

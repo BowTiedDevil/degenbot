@@ -2,7 +2,7 @@ from bisect import bisect_left
 from decimal import Decimal
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Tuple, Union
 from warnings import warn
 
 from eth_typing import ChecksumAddress
@@ -74,9 +74,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         factory_address: Optional[str] = None,
         factory_init_hash: Optional[str] = None,
         # default fee for most UniswapV2 AMMs is 0.3%
-        fee: Fraction = Fraction(3, 1000),
-        fee_token0: Optional[Fraction] = None,
-        fee_token1: Optional[Fraction] = None,
+        fee: Union[Fraction, Iterable[Fraction]] = Fraction(3, 1000),
         silent: bool = False,
         update_reserves_on_start: Optional[bool] = None,  # deprecated
         unload_brownie_contract_after_init: Optional[bool] = None,  # deprecated
@@ -110,15 +108,11 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         factory_init_hash : str, optional
             The init hash for the factory contract. The default assumes a
             mainnet Uniswap V2 factory contract.
-        fee : Fraction
+        fee : Fraction | (Fraction, Fraction)
             The swap fee imposed by the pool. Defaults to `Fraction(3,1000)`
-            which is equivalent to 0.3%.
-        fee_token0 : Fraction, optional
-            Swap fee for token0. Same purpose as `fee` except useful for
-            pools with different fees for each token.
-        fee_token1 : Fraction, optional
-            Swap fee for token1. Same purpose as `fee` except useful for
-            pools with different fees for each token.
+            which is equivalent to 0.3%. For split-fee pools of unequal value,
+            provide a tuple or list with the token0 fee in the first position,
+            and the token1 fee in the second.
         silent : bool
             Suppress status output.
         state_block: int, optional
@@ -137,10 +131,10 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
         self._state_lock = Lock()
 
-        if unload_brownie_contract_after_init is not None:
+        if unload_brownie_contract_after_init is not None:  # pragma: no cover
             warn("unload_brownie_contract_after_init has been deprecated and is ignored.")
 
-        if update_reserves_on_start is not None:
+        if update_reserves_on_start is not None:  # pragma: no cover
             warn("update_reserves_on_start has been deprecated in favor of `empty` argument.")
 
         self.address: ChecksumAddress = to_checksum_address(address)
@@ -149,7 +143,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         _web3 = get_web3()
         if _web3 is not None:
             self._w3 = _web3
-        else:
+        else:  # pragma: no cover
             from brownie import web3 as brownie_web3  # type: ignore[import]
 
             if brownie_web3.isConnected():
@@ -162,32 +156,31 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             abi=self.abi,
         )
 
-        if isinstance(fee, Decimal):
-            warn(
-                f"WARNING: fee set as a Decimal value instead of Fraction. The fee has been converted inside the LP helper from {repr(fee)} to {repr(Fraction(fee))}, please adjust your code to specify a Fraction to remove this warning. e.g. Fraction(3,1000) is equivalent to Decimal('0.003')."
-            )
-            fee = Fraction(fee)
-
-        if factory_address is None != factory_init_hash is None:
+        if factory_address is not None and factory_init_hash is None:
             raise ValueError(f"Init hash not provided for factory {factory_address}")
 
         if factory_address:
             self.factory = to_checksum_address(factory_address)
 
-        if not isinstance(fee, Fraction):
-            raise TypeError(
-                f"LP fee was not correctly passed! "
-                f"Expected '{Fraction().__class__.__name__}', "
-                f"was '{fee.__class__.__name__}'"
-            )
-
-        self.fee_token0 = fee_token0 if fee_token0 is not None else fee
-        self.fee_token1 = fee_token1 if fee_token1 is not None else fee
-
-        if self.fee_token0 and self.fee_token1:
-            self.fee = None
+        if isinstance(fee, Iterable):
+            self.fee_token0, self.fee_token1 = fee
+            if not isinstance(self.fee_token0, Fraction) or not isinstance(
+                self.fee_token1, Fraction
+            ):
+                raise TypeError(
+                    f"LP fee was not correctly passed! "
+                    f"Expected '{Fraction().__class__.__name__}', "
+                    f"was '{self.fee_token0.__class__.__name__}' and '{self.fee_token1.__class__.__name__}'"
+                )
         else:
-            self.fee = fee
+            self.fee_token0 = fee
+            self.fee_token1 = fee
+            if not isinstance(fee, Fraction):
+                raise TypeError(
+                    f"LP fee was not correctly passed! "
+                    f"Expected '{Fraction().__class__.__name__}', "
+                    f"was '{fee.__class__.__name__}'"
+                )
 
         self._update_method = update_method
         self._ratio_token0_in: Optional[Decimal] = None
@@ -235,13 +228,13 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         if name is not None:
             self.name = name
         else:
-            if self.fee is not None:
-                fee_string = f"{100*self.fee.numerator/self.fee.denominator:.2f}"
-            elif self.fee_token0 is not None and self.fee_token1 is not None:
-                if self.fee_token0 != self.fee_token1:
-                    fee_string = f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
-                elif self.fee_token0 == self.fee_token1:
-                    fee_string = f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
+            # if self.fee is not None:
+            # fee_string = f"{100*self.fee.numerator/self.fee.denominator:.2f}"
+            # if self.fee_token0 is not None and self.fee_token1 is not None:
+            if self.fee_token0 != self.fee_token1:
+                fee_string = f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
+            elif self.fee_token0 == self.fee_token1:
+                fee_string = f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
 
             self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
 
@@ -256,7 +249,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         else:
             self.reserves_token0 = self.reserves_token1 = 0
 
-        if self._update_method == "event":
+        if self._update_method == "event":  # pragma: no cover
             raise ValueError(
                 "The 'event' update method is inaccurate and unsupported, please update your bot to use the default 'polling' method"
             )
@@ -303,18 +296,11 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         )
 
         with self._state_lock:
-            if hasattr(self, "__slots__"):
-                return {
-                    attr_name: getattr(self, attr_name, None)
-                    for attr_name in self.__slots__
-                    if attr_name not in dropped_attributes
-                }
-            else:
-                return {
-                    attr_name: attr_value
-                    for attr_name, attr_value in self.__dict__.items()
-                    if attr_name not in dropped_attributes
-                }
+            return {
+                attr_name: getattr(self, attr_name, None)
+                for attr_name in self.__slots__
+                if attr_name not in dropped_attributes
+            }
 
     def __hash__(self):
         return hash(self.address)
@@ -340,7 +326,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
     def calculate_tokens_in_from_ratio_out(self) -> None:
         """
-        Calculates the maximum token inputs for the target output ratios at current pool reserves
+        Calculates the maximum token input for the target output ratio at current pool reserves
         """
 
         # token0 in, token1 out
@@ -368,8 +354,8 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
     def calculate_tokens_in_from_tokens_out(
         self,
         token_out_quantity: int,
+        token_out: "Erc20Token",
         token_in: Optional["Erc20Token"] = None,
-        token_out: Optional["Erc20Token"] = None,
         override_reserves_token0: Optional[int] = None,
         override_reserves_token1: Optional[int] = None,
         override_state: Optional[UniswapV2PoolState] = None,
@@ -386,86 +372,96 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         and will be deprecated in the future.
         """
 
-        if override_state:
-            if override_reserves_token0 or override_reserves_token1:
-                raise ValueError(
-                    "Provide a single override via `override_state` or individual reserves."
+        if token_in is not None:
+            warn(
+                "The use of token_in is deprecated and will be removed in the future. Please modify your calling code to specify token_out instead."
+            )
+
+        if override_reserves_token0 or override_reserves_token1:
+            if override_state is None:
+                override_state = UniswapV2PoolState(
+                    pool=self,
+                    reserves_token0=override_reserves_token0,
+                    reserves_token1=override_reserves_token1,
                 )
+                warn(
+                    "Overriding individual reserves is deprecated in favor of a single state override via override_state. The individual overrides have been transformed in-place, but this will be removed in a future release."
+                )
+
+        if override_state:
+            # if override_reserves_token0 or override_reserves_token1:
+            #     raise ValueError(
+            #         "Provide a single override via `override_state` or individual reserves."
+            #     )
             override_reserves_token0 = override_state.reserves_token0
             override_reserves_token1 = override_state.reserves_token1
-
-        if (override_reserves_token0 and not override_reserves_token1) or (
-            not override_reserves_token0 and override_reserves_token1
-        ):
-            raise ValueError("Must provide reserve override values for both tokens")
-
-        if override_reserves_token0 and override_reserves_token1:
             logger.debug("Reserve overrides applied:")
             logger.debug(f"token0: {override_reserves_token0}")
             logger.debug(f"token1: {override_reserves_token1}")
 
-        if token_in is not None:
-            if token_in not in [self.token0, self.token1]:
-                raise ValueError(
-                    f"Could not identify token_in: {token_in}! This pool holds: {self.token0} {self.token1}"
-                )
-            if token_in == self.token0:
-                reserves_in = (
-                    override_reserves_token0
-                    if override_reserves_token0 is not None
-                    else self.reserves_token0
-                )
-                fee = self.fee_token0
-                reserves_out = (
-                    override_reserves_token1
-                    if override_reserves_token1 is not None
-                    else self.reserves_token1
-                )
-            elif token_in == self.token1:
-                reserves_in = (
-                    override_reserves_token1
-                    if override_reserves_token1 is not None
-                    else self.reserves_token1
-                )
-                reserves_out = (
-                    override_reserves_token0
-                    if override_reserves_token0 is not None
-                    else self.reserves_token0
-                )
-                fee = self.fee_token1
-            else:
-                raise ValueError("wtf happened here? (token_in)")
-        elif token_out is not None:
-            if token_out not in [self.token0, self.token1]:
-                raise ValueError(
-                    f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"
-                )
-            if token_out == self.token1:
-                reserves_in = (
-                    override_reserves_token0
-                    if override_reserves_token0 is not None
-                    else self.reserves_token0
-                )
-                reserves_out = (
-                    override_reserves_token1
-                    if override_reserves_token1 is not None
-                    else self.reserves_token1
-                )
-                fee = self.fee_token0
-            elif token_out == self.token0:
-                reserves_in = (
-                    override_reserves_token1
-                    if override_reserves_token1 is not None
-                    else self.reserves_token1
-                )
-                reserves_out = (
-                    override_reserves_token0
-                    if override_reserves_token0 is not None
-                    else self.reserves_token0
-                )
-                fee = self.fee_token1
-            else:
-                raise ValueError("wtf happened here? (token_in)")
+            # if (override_reserves_token0 and not override_reserves_token1) or (
+            #     not override_reserves_token0 and override_reserves_token1
+            # ):
+            #     raise ValueError("Must provide reserve override values for both tokens")
+
+        # if token_in is not None:
+        #     if token_in == self.token0:
+        #         reserves_in = (
+        #             override_reserves_token0
+        #             if override_reserves_token0 is not None
+        #             else self.reserves_token0
+        #         )
+        #         fee = self.fee_token0
+        #         reserves_out = (
+        #             override_reserves_token1
+        #             if override_reserves_token1 is not None
+        #             else self.reserves_token1
+        #         )
+        #     elif token_in == self.token1:
+        #         reserves_in = (
+        #             override_reserves_token1
+        #             if override_reserves_token1 is not None
+        #             else self.reserves_token1
+        #         )
+        #         reserves_out = (
+        #             override_reserves_token0
+        #             if override_reserves_token0 is not None
+        #             else self.reserves_token0
+        #         )
+        #         fee = self.fee_token1
+        #     else:
+        #         raise ValueError(
+        #             f"Could not identify token_in: {token_in}! This pool holds: {self.token0} {self.token1}"
+        #         )
+        # elif token_out is not None:
+        if token_out == self.token1:
+            reserves_in = (
+                override_reserves_token0
+                if override_reserves_token0 is not None
+                else self.reserves_token0
+            )
+            reserves_out = (
+                override_reserves_token1
+                if override_reserves_token1 is not None
+                else self.reserves_token1
+            )
+            fee = self.fee_token0
+        elif token_out == self.token0:
+            reserves_in = (
+                override_reserves_token1
+                if override_reserves_token1 is not None
+                else self.reserves_token1
+            )
+            reserves_out = (
+                override_reserves_token0
+                if override_reserves_token0 is not None
+                else self.reserves_token0
+            )
+            fee = self.fee_token1
+        else:
+            raise ValueError(
+                f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"
+            )
 
         # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
         if token_out_quantity > reserves_out - 1:
@@ -493,20 +489,20 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         if token_in_quantity <= 0:
             raise ZeroSwapError("token_in_quantity must be positive")
 
-        if override_state:
-            if override_reserves_token0 or override_reserves_token1:
-                raise ValueError(
-                    "Provide a single override via `override_state` or individual reserves."
+        if override_reserves_token0 or override_reserves_token1:
+            warn(
+                "Overriding individual reserves is deprecated in favor of a single state override via override_state. The individual overrides have been transformed in-place, but this will be removed in a future release."
+            )
+            if override_state is None:
+                override_state = UniswapV2PoolState(
+                    pool=self,
+                    reserves_token0=override_reserves_token0,
+                    reserves_token1=override_reserves_token1,
                 )
+
+        if override_state:
             override_reserves_token0 = override_state.reserves_token0
             override_reserves_token1 = override_state.reserves_token1
-
-        if (override_reserves_token0 and not override_reserves_token1) or (
-            not override_reserves_token0 and override_reserves_token1
-        ):
-            raise ValueError("Must provide reserve override values for both tokens")
-
-        if override_reserves_token0 and override_reserves_token1:
             logger.debug("Reserve overrides applied:")
             logger.debug(f"token0: {override_reserves_token0}")
             logger.debug(f"token1: {override_reserves_token1}")
@@ -722,11 +718,9 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             token_out_quantity = self.calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
-                # TODO: consolidate into single override_state arg
-                override_reserves_token0=override_state.reserves_token0 if override_state else None,
-                override_reserves_token1=override_state.reserves_token1 if override_state else None,
+                # wip: consolidate into single override_state arg
+                override_state=override_state,
             )
-
             token0_delta = -token_out_quantity if token_in is self.token1 else token_in_quantity
             token1_delta = -token_out_quantity if token_in is self.token0 else token_in_quantity
 
@@ -738,11 +732,9 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 token_in=token_in,
                 token_out=token_out,
                 token_out_quantity=token_out_quantity,
-                # TODO: consolidate into single override_state arg
-                override_reserves_token0=override_state.reserves_token0 if override_state else None,
-                override_reserves_token1=override_state.reserves_token1 if override_state else None,
+                # WIP: consolidate into single override_state arg
+                override_state=override_state,
             )
-
             token0_delta = token_in_quantity if token_in == self.token0 else -token_out_quantity
             token1_delta = token_in_quantity if token_in == self.token1 else -token_out_quantity
 
@@ -772,7 +764,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         if set to "external" assumes that provided reserves are valid
         """
 
-        success = False
+        updates = False
 
         # Fetch the chain height if a specific update_block is not provided
         if update_block is None:
@@ -820,9 +812,9 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                     self.calculate_tokens_in_from_ratio_out()
                     self._update_pool_state()
                     self._pool_state_archive[update_block] = self.state
-                    success = True
+                    updates = True
                 else:
-                    success = False
+                    updates = False
             except Exception as e:
                 print(f"LiquidityPool: Exception in update_reserves (polling): {e}")
         elif self._update_method == "external":
@@ -831,19 +823,20 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                     "Called update_reserves without providing reserve values for both tokens!"
                 )
 
-            # skip follow-up processing if the LP object already has the latest reserves, or if no reserves were provided
+            # Skip follow-up processing if no updated values were found
             if (
                 external_token0_reserves == self.reserves_token0
                 and external_token1_reserves == self.reserves_token1
             ):
                 self.new_reserves = False
-                success = False
+                updates = False
             else:
                 self.reserves_token0 = external_token0_reserves
                 self.reserves_token1 = external_token1_reserves
                 self.new_reserves = True
                 self._update_pool_state()
                 self._pool_state_archive[update_block] = self.state
+                self.calculate_tokens_in_from_ratio_out()
 
             if not silent:
                 logger.info(f"[{self.name}]")
@@ -857,16 +850,14 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                     logger.info(
                         f"{self.token1}/{self.token0}: {self.reserves_token1 / self.reserves_token0}"
                     )
-            self.calculate_tokens_in_from_ratio_out()
-            success = True
-        elif self._update_method == "event":
+        elif self._update_method == "event":  # pragma: no cover
             raise DeprecationError(
                 "The 'event' update method is deprecated. Please update your bot to use the default 'polling' method"
             )
         else:
-            success = False
+            updates = False
 
-        return success
+        return updates
 
 
 class CamelotLiquidityPool(LiquidityPool):
@@ -1003,20 +994,20 @@ class CamelotLiquidityPool(LiquidityPool):
         update_reserves_on_start: Optional[bool] = None,  # deprecated
         unload_brownie_contract_after_init: Optional[bool] = None,  # deprecated
     ) -> None:
-        if unload_brownie_contract_after_init is not None:
+        if unload_brownie_contract_after_init is not None:  # pragma: no cover
             warn(
                 "unload_brownie_contract_after_init is no longer needed and is "
                 "ignored. Remove constructor argument to stop seeing this "
                 "message."
             )
 
-        if update_reserves_on_start is not None:
+        if update_reserves_on_start is not None:  # pragma: no cover
             warn("update_reserves_on_start has been deprecated.")
 
         _web3 = get_web3()
         if _web3 is not None:
             _web3 = _web3
-        else:
+        else:  # pragma: no cover
             from brownie import web3 as brownie_web3  # type: ignore[import]
 
             if brownie_web3.isConnected():
@@ -1049,8 +1040,7 @@ class CamelotLiquidityPool(LiquidityPool):
             name=name,
             update_method=update_method,
             abi=abi,
-            fee_token0=fee_token0,
-            fee_token1=fee_token1,
+            fee=(fee_token0, fee_token1),
             silent=silent,
         )
 

@@ -2,7 +2,6 @@ from typing import Tuple
 
 from . import full_math as FullMath
 from . import sqrt_price_math as SqrtPriceMath
-from .functions import uint256
 
 
 def computeSwapStep(
@@ -16,13 +15,9 @@ def computeSwapStep(
     exactIn: bool = amountRemaining >= 0
 
     if exactIn:
-        amountRemainingLessFee: int = FullMath.mulDiv(
-            uint256(amountRemaining), 10**6 - feePips, 10**6
-        )
+        amountRemainingLessFee: int = FullMath.mulDiv(amountRemaining, 10**6 - feePips, 10**6)
         amountIn = (
-            SqrtPriceMath.getAmount0Delta(
-                sqrtRatioTargetX96, sqrtRatioCurrentX96, liquidity, True
-            )
+            SqrtPriceMath.getAmount0Delta(sqrtRatioTargetX96, sqrtRatioCurrentX96, liquidity, True)
             if zeroForOne
             else SqrtPriceMath.getAmount1Delta(
                 sqrtRatioCurrentX96, sqrtRatioTargetX96, liquidity, True
@@ -39,21 +34,19 @@ def computeSwapStep(
             )
     else:
         amountOut = (
-            SqrtPriceMath.getAmount1Delta(
-                sqrtRatioTargetX96, sqrtRatioCurrentX96, liquidity, False
-            )
+            SqrtPriceMath.getAmount1Delta(sqrtRatioTargetX96, sqrtRatioCurrentX96, liquidity, False)
             if zeroForOne
             else SqrtPriceMath.getAmount0Delta(
                 sqrtRatioCurrentX96, sqrtRatioTargetX96, liquidity, False
             )
         )
-        if uint256(-amountRemaining) >= amountOut:
+        if -amountRemaining >= amountOut:
             sqrtRatioNextX96 = sqrtRatioTargetX96
         else:
             sqrtRatioNextX96 = SqrtPriceMath.getNextSqrtPriceFromOutput(
                 sqrtRatioCurrentX96,
                 liquidity,
-                uint256(-amountRemaining),
+                -amountRemaining,
                 zeroForOne,
             )
 
@@ -91,16 +84,14 @@ def computeSwapStep(
         )
 
     # cap the output amount to not exceed the remaining output amount
-    if not exactIn and (amountOut > uint256(-amountRemaining)):
-        amountOut = uint256(-amountRemaining)
+    if not exactIn and (amountOut > -amountRemaining):
+        amountOut = -amountRemaining
 
     if exactIn and (sqrtRatioNextX96 != sqrtRatioTargetX96):
         # we didn't reach the target, so take the remainder of the maximum input as fee
-        feeAmount = uint256(amountRemaining) - amountIn
+        feeAmount = amountRemaining - amountIn
     else:
-        feeAmount = FullMath.mulDivRoundingUp(
-            amountIn, feePips, 10**6 - feePips
-        )
+        feeAmount = FullMath.mulDivRoundingUp(amountIn, feePips, 10**6 - feePips)
 
     return (
         sqrtRatioNextX96,

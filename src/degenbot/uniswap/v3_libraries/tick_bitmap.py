@@ -9,11 +9,6 @@ from ...exceptions import (
 )
 from ...logging import logger
 from . import bit_math as BitMath
-from .functions import (
-    int16,
-    int24,
-    uint8,
-)
 
 if TYPE_CHECKING:
     from ..v3_dataclasses import UniswapV3BitmapAtWord
@@ -36,16 +31,14 @@ def flipTick(
         tick_bitmap[word_pos].bitmap ^= mask
         tick_bitmap[word_pos].block = update_block
     except KeyError:
-        raise MissingTickWordError(
-            f"Called flipTick on missing word={word_pos}"
-        )
+        raise MissingTickWordError(f"Called flipTick on missing word={word_pos}")
     else:
         logger.debug(f"Flipped {tick=} @ {word_pos=}, {bit_pos=}")
 
 
 def position(tick: int) -> Tuple[int, int]:
-    word_pos: int = int16(tick >> 8)
-    bit_pos: int = uint8(tick % 256)
+    word_pos: int = tick >> 8
+    bit_pos: int = tick % 256
     return (word_pos, bit_pos)
 
 
@@ -67,9 +60,7 @@ def nextInitializedTickWithinOneWord(
         try:
             bitmap_at_word = tick_bitmap[word_pos].bitmap
         except KeyError:
-            raise BitmapWordUnavailableError(
-                f"Bitmap at word {word_pos} unavailable.", word_pos
-            )
+            raise BitmapWordUnavailableError(f"Bitmap at word {word_pos} unavailable.", word_pos)
 
         # all the 1s at or to the right of the current bitPos
         mask = 2 * (1 << bit_pos) - 1
@@ -79,10 +70,9 @@ def nextInitializedTickWithinOneWord(
         initialized_status = masked != 0
         # overflow/underflow is possible, but prevented externally by limiting both tickSpacing and tick
         next_tick = (
-            (compressed - int24(bit_pos - BitMath.mostSignificantBit(masked)))
-            * tick_spacing
+            (compressed - (bit_pos - BitMath.mostSignificantBit(masked))) * tick_spacing
             if initialized_status
-            else (compressed - int24(bit_pos)) * tick_spacing
+            else (compressed - (bit_pos)) * tick_spacing
         )
     else:
         # start from the word of the next tick, since the current tick state doesn't matter
@@ -91,9 +81,7 @@ def nextInitializedTickWithinOneWord(
         try:
             bitmap_at_word = tick_bitmap[word_pos].bitmap
         except KeyError:
-            raise BitmapWordUnavailableError(
-                f"Bitmap at word {word_pos} unavailable.", word_pos
-            )
+            raise BitmapWordUnavailableError(f"Bitmap at word {word_pos} unavailable.", word_pos)
 
         # all the 1s at or to the left of the bitPos
         mask = ~((1 << bit_pos) - 1)
@@ -103,14 +91,9 @@ def nextInitializedTickWithinOneWord(
         initialized_status = masked != 0
         # overflow/underflow is possible, but prevented externally by limiting both tickSpacing and tick
         next_tick = (
-            (
-                compressed
-                + 1
-                + int24(BitMath.leastSignificantBit(masked) - bit_pos)
-            )
-            * tick_spacing
+            (compressed + 1 + (BitMath.leastSignificantBit(masked) - bit_pos)) * tick_spacing
             if initialized_status
-            else (compressed + 1 + int24(MAX_UINT8 - bit_pos)) * tick_spacing
+            else (compressed + 1 + (MAX_UINT8 - bit_pos)) * tick_spacing
         )
 
     return next_tick, initialized_status

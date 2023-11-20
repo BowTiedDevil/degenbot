@@ -19,9 +19,7 @@ def encodePriceSqrt(reserve1: int, reserve0: int) -> int:
     """
     Returns the sqrt price as a Q64.96 value
     """
-    return round(
-        (Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96)
-    )
+    return round((Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96))
 
 
 def test_getSqrtRatioAtTick() -> None:
@@ -40,13 +38,9 @@ def test_getSqrtRatioAtTick() -> None:
         == 1461373636630004318706518188784493106690254656249
     )
 
-    assert TickMath.getSqrtRatioAtTick(TickMath.MIN_TICK) < (
-        encodePriceSqrt(1, 2**127)
-    )
+    assert TickMath.getSqrtRatioAtTick(TickMath.MIN_TICK) < (encodePriceSqrt(1, 2**127))
 
-    assert TickMath.getSqrtRatioAtTick(TickMath.MAX_TICK) > encodePriceSqrt(
-        2**127, 1
-    )
+    assert TickMath.getSqrtRatioAtTick(TickMath.MAX_TICK) > encodePriceSqrt(2**127, 1)
 
     assert (
         TickMath.getSqrtRatioAtTick(TickMath.MAX_TICK)
@@ -71,19 +65,13 @@ def test_getTickAtSqrtRatio() -> None:
     with pytest.raises(EVMRevertError, match="R"):
         TickMath.getTickAtSqrtRatio(TickMath.MAX_SQRT_RATIO)
 
-    assert (TickMath.getTickAtSqrtRatio(TickMath.MIN_SQRT_RATIO)) == (
-        TickMath.MIN_TICK
-    )
+    assert (TickMath.getTickAtSqrtRatio(TickMath.MIN_SQRT_RATIO)) == (TickMath.MIN_TICK)
     assert (TickMath.getTickAtSqrtRatio(4295343490)) == (TickMath.MIN_TICK + 1)
 
-    assert (
-        TickMath.getTickAtSqrtRatio(
-            1461373636630004318706518188784493106690254656249
-        )
-    ) == (TickMath.MAX_TICK - 1)
-    assert (
-        TickMath.getTickAtSqrtRatio(TickMath.MAX_SQRT_RATIO - 1)
-    ) == TickMath.MAX_TICK - 1
+    assert (TickMath.getTickAtSqrtRatio(1461373636630004318706518188784493106690254656249)) == (
+        TickMath.MAX_TICK - 1
+    )
+    assert (TickMath.getTickAtSqrtRatio(TickMath.MAX_SQRT_RATIO - 1)) == TickMath.MAX_TICK - 1
 
     for ratio in [
         TickMath.MIN_SQRT_RATIO,

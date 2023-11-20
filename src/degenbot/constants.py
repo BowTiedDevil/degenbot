@@ -24,9 +24,7 @@ MAX_UINT160: int = 2**160 - 1
 MIN_UINT256: int = 0
 MAX_UINT256: int = 2**256 - 1
 
-ZERO_ADDRESS: ChecksumAddress = to_checksum_address(
-    "0x0000000000000000000000000000000000000000"
-)
+ZERO_ADDRESS: ChecksumAddress = to_checksum_address("0x0000000000000000000000000000000000000000")
 
 
 # Contract addresses for the native blockchain token, keyed by chain ID

@@ -22,7 +22,7 @@ class ChainlinkPriceContract:
         _web3 = get_web3()
         if _web3 is not None:
             _w3 = _web3
-        else:
+        else:  # pragma: no cover
             from brownie import web3 as brownie_web3  # type: ignore[import]
 
             if brownie_web3.isConnected():
@@ -41,8 +41,8 @@ class ChainlinkPriceContract:
 
     def update_price(
         self,
-    ) -> None:
-        self.price: float = (
-            self._w3_contract.functions.latestRoundData().call()[1]
-            / (10**self._decimals)
+    ) -> float:
+        self.price: float = self._w3_contract.functions.latestRoundData().call()[1] / (
+            10**self._decimals
         )
+        return self.price

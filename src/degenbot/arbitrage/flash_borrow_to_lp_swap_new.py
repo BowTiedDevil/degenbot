@@ -4,7 +4,7 @@ from scipy.optimize import minimize_scalar  # type: ignore[import]
 
 from ..erc20_token import Erc20Token
 from ..baseclasses import ArbitrageHelper
-from ..uniswap.v2_liquidity_pool import LiquidityPool
+from ..uniswap.v2_liquidity_pool import LiquidityPool, UniswapV2PoolState
 
 # TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
 
@@ -21,9 +21,7 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
         update_method="polling",
     ):
         if swap_pools is None and swap_pool_addresses is None:
-            raise TypeError(
-                "Provide a list of LiquidityPool objects or a list of pool addresses."
-            )
+            raise TypeError("Provide a list of LiquidityPool objects or a list of pool addresses.")
 
         if not (swap_pools is not None) ^ (swap_pool_addresses is not None):
             # NOTE: ^ is the exclusive-or operator, which allows us to check that only one condition is True, but not both and not neither
@@ -69,13 +67,9 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
                 )
 
         self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
-        self.swap_pool_tokens = [
-            [pool.token0, pool.token1] for pool in self.swap_pools
-        ]
+        self.swap_pool_tokens = [[pool.token0, pool.token1] for pool in self.swap_pools]
 
-        self.all_pool_addresses = [
-            pool.address for pool in self.swap_pools + [self.borrow_pool]
-        ]
+        self.all_pool_addresses = [pool.address for pool in self.swap_pools + [self.borrow_pool]]
 
         if name:
             self.name = name
@@ -110,9 +104,7 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
             elif pool.token1.address == token_in_address:
                 forward_token_address = pool.token0.address
             else:
-                raise Exception(
-                    "Swap pools are invalid, no swap route possible!"
-                )
+                raise Exception("Swap pools are invalid, no swap route possible!")
 
         self.best = {
             "init": True,
@@ -166,9 +158,7 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
                 raise ValueError(f"Could not identify token_in {token_in}")
 
             # calculate the swap output through pool[i]
-            token_out_quantity = self.swap_pools[
-                i
-            ].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
             )
@@ -198,9 +188,7 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
                 override_future_borrow_pool_reserves_token0 is None
                 or override_future_borrow_pool_reserves_token1 is None
             ):
-                raise ValueError(
-                    "Must override reserves for token0 and token1"
-                )
+                raise ValueError("Must override reserves for token0 and token1")
             reserves_token0 = override_future_borrow_pool_reserves_token0
             reserves_token1 = override_future_borrow_pool_reserves_token1
         else:
@@ -234,9 +222,7 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
                 0.01 * reserves_token1,
             )
         else:
-            raise ValueError(
-                f"Could not identify borrow token {self.borrow_token}"
-            )
+            raise ValueError(f"Could not identify borrow token {self.borrow_token}")
 
         # TODO: extend calculate_multipool_tokens_out_from_tokens_in() to support overriding token reserves for an arbitrary pool,
         # currently only supports overriding the borrow pool reserves
@@ -247,10 +233,17 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
                     token_in_quantity=x,
                 )
                 - self.borrow_pool.calculate_tokens_in_from_tokens_out(
-                    token_in=self.repay_token,
+                    token_out=(
+                        self.borrow_pool.token0
+                        if self.repay_token is self.borrow_pool.token1
+                        else self.borrow_pool.token1
+                    ),
                     token_out_quantity=x,
-                    override_reserves_token0=override_future_borrow_pool_reserves_token0,
-                    override_reserves_token1=override_future_borrow_pool_reserves_token1,
+                    override_state=UniswapV2PoolState(
+                        pool=self.borrow_pool,
+                        reserves_token0=override_future_borrow_pool_reserves_token0,
+                        reserves_token1=override_future_borrow_pool_reserves_token1,
+                    ),
                 )
             ),
             method="bounded",
@@ -266,15 +259,20 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
         elif self.borrow_token == self.borrow_pool.token1:
             borrow_amounts = [0, best_borrow]
         else:
-            raise ValueError(
-                f"Could not identify borrow token {self.borrow_token}"
-            )
+            raise ValueError(f"Could not identify borrow token {self.borrow_token}")
 
         best_repay = self.borrow_pool.calculate_tokens_in_from_tokens_out(
-            token_in=self.repay_token,
+            token_out=(
+                self.borrow_pool.token0
+                if self.repay_token is self.borrow_pool.token1
+                else self.borrow_pool.token1
+            ),
             token_out_quantity=best_borrow,
-            override_reserves_token0=override_future_borrow_pool_reserves_token0,
-            override_reserves_token1=override_future_borrow_pool_reserves_token1,
+            override_state=UniswapV2PoolState(
+                pool=self.borrow_pool,
+                reserves_token0=override_future_borrow_pool_reserves_token0,
+                reserves_token1=override_future_borrow_pool_reserves_token1,
+            ),
         )
         best_profit = -int(opt.fun)
 
@@ -352,9 +350,7 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
                 raise ValueError(f"Could not identify token_in {token_in}")
 
             # calculate the swap output through pool[i]
-            token_out_quantity = self.swap_pools[
-                i
-            ].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
             )
@@ -412,9 +408,7 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
                 override_future_borrow_pool_reserves_token0 is None
                 or override_future_borrow_pool_reserves_token1 is None
             ):
-                raise ValueError(
-                    "Must override reserves for token0 and token1"
-                )
+                raise ValueError("Must override reserves for token0 and token1")
         else:
             if (
                 override_future_borrow_pool_reserves_token0 is not None

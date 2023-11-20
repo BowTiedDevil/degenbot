@@ -27,20 +27,14 @@ def next_base_fee(
     elif parent_gas_used > last_gas_target:
         gas_used_delta = parent_gas_used - last_gas_target
         base_fee_delta = max(
-            parent_base_fee
-            * gas_used_delta
-            // last_gas_target
-            // base_fee_max_change_denominator,
+            parent_base_fee * gas_used_delta // last_gas_target // base_fee_max_change_denominator,
             1,
         )
         next_base_fee = parent_base_fee + base_fee_delta
     else:
         gas_used_delta = last_gas_target - parent_gas_used
         base_fee_delta = (
-            parent_base_fee
-            * gas_used_delta
-            // last_gas_target
-            // base_fee_max_change_denominator
+            parent_base_fee * gas_used_delta // last_gas_target // base_fee_max_change_denominator
         )
         next_base_fee = parent_base_fee - base_fee_delta
 

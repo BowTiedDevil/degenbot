@@ -22,7 +22,4 @@ def test_v2_address_generator():
 
     # address generator returns a checksum address, so check against the lowered string
     with pytest.raises(AssertionError):
-        assert (
-            wbtc_weth_address
-            == "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940".lower()
-        )
+        assert wbtc_weth_address == "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940".lower()

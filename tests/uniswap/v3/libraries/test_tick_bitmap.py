@@ -7,15 +7,11 @@ from degenbot.uniswap.v3_dataclasses import UniswapV3BitmapAtWord
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/TickBitmap.spec.ts
 
 
-def is_initialized(
-    tick_bitmap: Dict[int, UniswapV3BitmapAtWord], tick: int
-) -> bool:
+def is_initialized(tick_bitmap: Dict[int, UniswapV3BitmapAtWord], tick: int) -> bool:
     # Adapted from Uniswap test contract
     # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/test/TickBitmapTest.sol
 
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
-        tick_bitmap, tick, 1, True
-    )
+    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(tick_bitmap, tick, 1, True)
     return next == tick if initialized else False
 
 

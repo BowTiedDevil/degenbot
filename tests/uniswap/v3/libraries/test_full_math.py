@@ -32,9 +32,7 @@ def test_mulDiv():
         # this test should fail
         FullMath.mulDiv(MAX_UINT256, MAX_UINT256, MAX_UINT256 - 1)
 
-    assert (
-        FullMath.mulDiv(MAX_UINT256, MAX_UINT256, MAX_UINT256) == MAX_UINT256
-    )
+    assert FullMath.mulDiv(MAX_UINT256, MAX_UINT256, MAX_UINT256) == MAX_UINT256
 
     assert (
         FullMath.mulDiv(
@@ -56,26 +54,27 @@ def test_mulDiv():
         == Q128 // 3
     )
 
+    with pytest.raises(EVMRevertError):
+        FullMath.mulDiv(-1, Q128, Q128)
+
+    with pytest.raises(EVMRevertError):
+        FullMath.mulDiv(Q128, -1, Q128)
+
 
 def test_mulDivRoundingUp():
     with pytest.raises(EVMRevertError):
-        # this test should fail
         FullMath.mulDivRoundingUp(Q128, 5, 0)
 
     with pytest.raises(EVMRevertError):
-        # this test should fail
         FullMath.mulDivRoundingUp(Q128, Q128, 0)
 
     with pytest.raises(EVMRevertError):
-        # this test should fail
         FullMath.mulDivRoundingUp(Q128, Q128, 1)
 
     with pytest.raises(EVMRevertError):
-        # this test should fail
         FullMath.mulDivRoundingUp(MAX_UINT256, MAX_UINT256, MAX_UINT256 - 1)
 
     with pytest.raises(EVMRevertError):
-        # this test should fail
         FullMath.mulDivRoundingUp(
             535006138814359,
             432862656469423142931042426214547535783388063929571229938474969,
@@ -83,7 +82,6 @@ def test_mulDivRoundingUp():
         )
 
     with pytest.raises(EVMRevertError):
-        # this test should fail
         FullMath.mulDivRoundingUp(
             115792089237316195423570985008687907853269984659341747863450311749907997002549,
             115792089237316195423570985008687907853269984659341747863450311749907997002550,
@@ -91,10 +89,7 @@ def test_mulDivRoundingUp():
         )
 
     # all max inputs
-    assert (
-        FullMath.mulDivRoundingUp(MAX_UINT256, MAX_UINT256, MAX_UINT256)
-        == MAX_UINT256
-    )
+    assert FullMath.mulDivRoundingUp(MAX_UINT256, MAX_UINT256, MAX_UINT256) == MAX_UINT256
 
     # accurate without phantom overflow
     assert (
@@ -107,10 +102,7 @@ def test_mulDivRoundingUp():
     )
 
     # accurate with phantom overflow
-    assert (
-        FullMath.mulDivRoundingUp(Q128, 35 * Q128, 8 * Q128)
-        == 4375 * Q128 // 1000
-    )
+    assert FullMath.mulDivRoundingUp(Q128, 35 * Q128, 8 * Q128) == 4375 * Q128 // 1000
 
     # accurate with phantom overflow and repeating decimal
     assert (
@@ -131,9 +123,10 @@ def test_mulDivRoundingUp():
     def ceiled(x, y, d):
         return FullMath.mulDivRoundingUp(x, y, d)
 
-    for _ in range(1000):
-        x = pseudoRandomBigNumber()
-        y = pseudoRandomBigNumber()
+    for i in range(1000):
+        # override x, y for first two runs to cover the x == 0 and y == 0 cases
+        x = pseudoRandomBigNumber() if i != 0 else 0
+        y = pseudoRandomBigNumber() if i != 1 else 0
         d = pseudoRandomBigNumber()
 
         if x == 0 or y == 0:
@@ -148,6 +141,4 @@ def test_mulDivRoundingUp():
                 ceiled(x, y, d)
         else:
             assert floored(x, y, d) == x * y // d
-            assert ceiled(x, y, d) == x * y // d + (
-                1 if (x * y % d > 0) else 0
-            )
+            assert ceiled(x, y, d) == x * y // d + (1 if (x * y % d > 0) else 0)

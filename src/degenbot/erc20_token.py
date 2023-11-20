@@ -74,7 +74,7 @@ class Erc20Token:
         _web3 = get_web3()
         if _web3 is not None:
             self._w3 = _web3
-        else:
+        else:  # pragma: no cover
             from brownie import web3 as brownie_web3  # type: ignore[import]
 
             if brownie_web3.isConnected():
@@ -87,7 +87,7 @@ class Erc20Token:
             abi=self.abi,
         )
 
-        if user:
+        if user:  # pragma: no cover
             warn(
                 "Instantiating with a single user is deprecated. You may use "
                 "the get_balance() method to retrieve token balances for a "
@@ -95,13 +95,13 @@ class Erc20Token:
             )
             # self._user = user
 
-        if min_abi:
+        if min_abi:  # pragma: no cover
             warn(
                 "Using a minimal ABI is now the default behavior. Remove "
                 "min_abi constructor argument to stop seeing this message."
             )
 
-        if unload_brownie_contract_after_init:
+        if unload_brownie_contract_after_init:  # pragma: no cover
             warn(
                 "unload_brownie_contract_after_init is no longer needed and is "
                 "ignored. Remove constructor argument to stop seeing this "
@@ -133,7 +133,7 @@ class Erc20Token:
 
         try:
             self.name
-        except AttributeError:
+        except AttributeError:  # pragma: no cover
             if not self._w3.eth.get_code(self.address):
                 raise ValueError("No contract deployed at this address")
             self.name = f"Unknown @ {self.address}"
@@ -167,7 +167,7 @@ class Erc20Token:
         try:
             self.symbol
         except AttributeError:
-            if not self._w3.eth.get_code(self.address):
+            if not self._w3.eth.get_code(self.address):  # pragma: no cover
                 raise ValueError("No contract deployed at this address")
             self.symbol = "UNKN"
             warn(
@@ -201,7 +201,7 @@ class Erc20Token:
         try:
             self.decimals
         except Exception:
-            if not self._w3.eth.get_code(self.address):
+            if not self._w3.eth.get_code(self.address):  # pragma: no cover
                 raise ValueError("No contract deployed at this address")
             self.decimals = 0
             warn(
@@ -235,18 +235,11 @@ class Erc20Token:
             "_w3_contract",
         )
 
-        if getattr(self, "__slots__"):
-            return {
-                attr_name: getattr(self, attr_name, None)
-                for attr_name in self.__slots__
-                if attr_name not in dropped_attributes
-            }
-        else:
-            return {
-                attr_name: attr_value
-                for attr_name, attr_value in self.__dict__.items()
-                if attr_name not in dropped_attributes
-            }
+        return {
+            attr_name: getattr(self, attr_name, None)
+            for attr_name in self.__slots__
+            if attr_name not in dropped_attributes
+        }
 
     def __setstate__(self, state: Dict):
         for attr_name, attr_value in state.items():

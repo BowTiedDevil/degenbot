@@ -7,7 +7,7 @@ class Subscriber(Protocol):
     Can be notified
     """
 
-    def notify(self, subscriber) -> None:
+    def notify(self, subscriber) -> None:  # pragma: no cover
         ...
 
 

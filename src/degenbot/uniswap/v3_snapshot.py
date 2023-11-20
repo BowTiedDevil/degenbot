@@ -50,7 +50,7 @@ class UniswapV3LiquiditySnapshot:
         _web3 = get_web3()
         if _web3 is not None:
             self._w3 = _web3
-        else:
+        else:  # pragma: no cover
             from brownie import web3 as brownie_web3  # type: ignore[import]
 
             if brownie_web3.isConnected():

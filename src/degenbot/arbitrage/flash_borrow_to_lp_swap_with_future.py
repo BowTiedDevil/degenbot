@@ -24,14 +24,10 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
             swap_pool_addresses = []
 
         if not (swap_pools or swap_pool_addresses):
-            raise ValueError(
-                "At least one pool address or LiquidityPool object must be provided"
-            )
+            raise ValueError("At least one pool address or LiquidityPool object must be provided")
 
         if swap_pool_addresses and swap_pools:
-            raise ValueError(
-                "Choose pool addresses or LiquidityPool objects, not both"
-            )
+            raise ValueError("Choose pool addresses or LiquidityPool objects, not both")
 
         if update_method not in [
             "polling",
@@ -40,9 +36,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
             raise ValueError("update_method must be 'polling' or 'external'")
 
         if update_method == "external" and swap_pool_addresses:
-            raise ValueError(
-                "swap pools by address must be updated with the 'polling' method"
-            )
+            raise ValueError("swap pools by address must be updated with the 'polling' method")
 
         self.borrow_pool = borrow_pool
         self.borrow_token = borrow_token
@@ -65,13 +59,9 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
                 )
 
         self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
-        self.swap_pool_tokens = [
-            [pool.token0, pool.token1] for pool in self.swap_pools
-        ]
+        self.swap_pool_tokens = [[pool.token0, pool.token1] for pool in self.swap_pools]
 
-        self.all_pool_addresses = [
-            pool.address for pool in self.swap_pools + [self.borrow_pool]
-        ]
+        self.all_pool_addresses = [pool.address for pool in self.swap_pools + [self.borrow_pool]]
 
         if name:
             self.name = name
@@ -106,9 +96,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
             elif pool.token1.address == token_in_address:
                 forward_token_address = pool.token0.address
             else:
-                raise Exception(
-                    "Swap pools are invalid, no swap route possible!"
-                )
+                raise Exception("Swap pools are invalid, no swap route possible!")
 
         self.best = {
             "init": True,
@@ -153,9 +141,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_overrides: Optional[
-            List[Tuple[LiquidityPool, Tuple[int, int]]]
-        ] = None,
+        pool_overrides: Optional[List[Tuple[LiquidityPool, Tuple[int, int]]]] = None,
     ) -> List[List[int]]:
         number_of_pools = len(self.swap_pools)
 
@@ -187,9 +173,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
                     ) = override[1]
 
             # calculate the swap output through pool[i]
-            token_out_quantity = self.swap_pools[
-                i
-            ].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
                 override_reserves_token0=override_reserves_token0,
@@ -213,9 +197,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
     def _calculate_arbitrage(
         self,
         override_future: bool = False,
-        pool_overrides: Optional[
-            List[Tuple[LiquidityPool, Tuple[int, int]]]
-        ] = None,
+        pool_overrides: Optional[List[Tuple[LiquidityPool, Tuple[int, int]]]] = None,
     ):
         if pool_overrides is None:
             pool_overrides = []
@@ -361,9 +343,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_overrides: Optional[
-            List[Tuple[LiquidityPool, Tuple[int, int]]]
-        ] = None,
+        pool_overrides: Optional[List[Tuple[LiquidityPool, Tuple[int, int]]]] = None,
     ) -> int:
         """
         Calculates the expected token OUTPUT from the last pool for a given token INPUT to the first pool
@@ -399,9 +379,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
                     break
 
             # calculate the swap output through pool[i]
-            token_out_quantity = self.swap_pools[
-                i
-            ].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
                 override_reserves_token0=override_reserves_token0,
@@ -445,9 +423,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
         print_reserves: bool = True,
         print_ratios: bool = True,
         override_future: bool = False,
-        pool_overrides: Optional[
-            List[Tuple[LiquidityPool, Tuple[int, int]]]
-        ] = None,
+        pool_overrides: Optional[List[Tuple[LiquidityPool, Tuple[int, int]]]] = None,
     ) -> bool:
         """
         Updates reserve values for one or more liquidity pools by calling update_reserves(), which returns False if the reserves have not changed.
@@ -490,9 +466,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
 
             for override_pool, override_reserves in pool_overrides:
                 if type(override_pool) is not LiquidityPool:
-                    raise TypeError(
-                        "Override does not include a LiquidityPool object!"
-                    )
+                    raise TypeError("Override does not include a LiquidityPool object!")
 
                 if type(override_reserves) is not tuple:
                     raise TypeError("Overrides not formatted as a tuple")

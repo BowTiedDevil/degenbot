@@ -5,12 +5,14 @@ import eth_abi
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from web3 import Web3
+from hexbytes import HexBytes
 
 
 def decode_v3_path(path: bytes) -> List[Union[ChecksumAddress, int]]:
     """
     Decode the `path` byte string used by the Uniswap V3 Router/Router2 contracts.
-    `path` is a close-packed encoding of pool addresses and fees.
+    `path` is a close-packed encoding of pool addresses (20 bytes) and fees
+    (3 bytes).
     """
 
     path_pos = 0
@@ -18,16 +20,14 @@ def decode_v3_path(path: bytes) -> List[Union[ChecksumAddress, int]]:
 
     # read alternating 20 and 3 byte chunks from the encoded path,
     # store each address (hex string) and fee (int)
-    for byte_length in cycle((20, 3)):
-        if byte_length == 20:
-            address = to_checksum_address(path[path_pos : path_pos + byte_length].hex())
-            decoded_path.append(address)
-        elif byte_length == 3:
-            fee = int(
-                path[path_pos : path_pos + byte_length].hex(),
-                16,
-            )
-            decoded_path.append(fee)
+    for byte_length, extraction_func in cycle(
+        (
+            (20, lambda chunk: to_checksum_address(chunk)),
+            (3, lambda chunk: int.from_bytes(chunk)),
+        ),
+    ):
+        chunk = HexBytes(path[path_pos : path_pos + byte_length])
+        decoded_path.append(extraction_func(chunk))
 
         path_pos += byte_length
 

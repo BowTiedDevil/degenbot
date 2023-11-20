@@ -27,7 +27,7 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
         _web3 = get_web3()
         if _web3 is not None:
             self._w3 = _web3
-        else:
+        else:  # pragma: no cover
             from brownie import web3 as brownie_web3  # type: ignore[import]
 
             if brownie_web3.isConnected():
@@ -36,20 +36,14 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
                 raise ValueError("No connected web3 object provided.")
 
         if borrow_token.address != swap_token_addresses[0]:
-            raise ValueError(
-                "Token addresses must begin with the borrowed token"
-            )
+            raise ValueError("Token addresses must begin with the borrowed token")
 
         if borrow_pool.token0 == borrow_token:
             if borrow_pool.token1.address != swap_token_addresses[-1]:
-                raise ValueError(
-                    "Token addresses must end with the repaid token"
-                )
+                raise ValueError("Token addresses must end with the repaid token")
         else:
             if borrow_pool.token0.address != swap_token_addresses[-1]:
-                raise ValueError(
-                    "Token addresses must end with the repaid token"
-                )
+                raise ValueError("Token addresses must end with the repaid token")
 
         # build a list of all tokens involved in this swapping path
         self.tokens: List[Erc20Token] = []
@@ -248,9 +242,7 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
                 raise Exception
 
             # calculate the swap output through pool[i]
-            token_out_quantity = self.swap_pools[
-                i
-            ].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
             )
@@ -285,9 +277,7 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
                 raise Exception
 
             # calculate the swap output through pool[i]
-            token_out_quantity = self.swap_pools[
-                i
-            ].calculate_tokens_out_from_tokens_in(
+            token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
             )
