@@ -23,7 +23,7 @@ def decode_v3_path(path: bytes) -> List[Union[ChecksumAddress, int]]:
     for byte_length, extraction_func in cycle(
         (
             (20, lambda chunk: to_checksum_address(chunk)),
-            (3, lambda chunk: int.from_bytes(chunk)),
+            (3, lambda chunk: int.from_bytes(chunk, byteorder="big")),
         ),
     ):
         chunk = HexBytes(path[path_pos : path_pos + byte_length])
