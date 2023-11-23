@@ -66,7 +66,7 @@ class AnvilFork:
         for method_name in ("isConnected", "is_connected"):
             if is_connected_method := getattr(self.w3, method_name, None):
                 break
-        if is_connected_method is None:
+        if is_connected_method is None:  # pragma: no cover
             raise ValueError("Web3 provider cannot be tested")
         while is_connected_method() is False:
             continue
@@ -84,6 +84,19 @@ class AnvilFork:
             os.remove(self.ipc_path)
 
     def create_access_list(self, transaction: Dict) -> list:
+        # Exclude transaction values that are irrelevant for the JSON-RPC method
+        # ref: https://docs.infura.io/networks/ethereum/json-rpc-methods/eth_createaccesslist
+        keys_to_drop = ("gasPrice", "maxFeePerGas", "maxPriorityFeePerGas", "gas", "chainId")
+        sanitized_tx = {k: v for k, v in transaction.items() if k not in keys_to_drop}
+
+        # Apply int->hex conversion to some transaction values
+        # ref: https://docs.infura.io/networks/ethereum/json-rpc-methods/eth_createaccesslist
+        keys_to_hexify = ("value", "nonce")
+        for key in keys_to_hexify:
+            if key in sanitized_tx:
+                if isinstance(sanitized_tx[key], int):
+                    sanitized_tx[key] = hex(sanitized_tx[key])
+
         self.socket.sendall(
             bytes(
                 ujson.dumps(
@@ -91,14 +104,14 @@ class AnvilFork:
                         "jsonrpc": "2.0",
                         "id": 1,
                         "method": "eth_createAccessList",
-                        "params": [transaction],
+                        "params": [sanitized_tx],
                     }
                 ),
                 encoding="utf-8",
             ),
         )
         result: dict = ujson.loads(self.socket.recv(self._SOCKET_BUFFER_SIZE))
-        if result.get("error"):
+        if result.get("error"):  # pragma: no cover
             raise Exception(f"Error creating access list! Response: {result}")
         return result["result"]["accessList"]
 
@@ -131,13 +144,13 @@ class AnvilFork:
             ),
         )
         result: dict = ujson.loads(self.socket.recv(self._SOCKET_BUFFER_SIZE))
-        if result.get("error"):
+        if result.get("error"):  # pragma: no cover
             raise Exception(f"Error: {result}")
         else:
             if block_number:
                 self.block = block_number
 
-    def return_to_snapshot(self, id: str) -> None:
+    def return_to_snapshot(self, id: str) -> bool:
         self.socket.sendall(
             bytes(
                 ujson.dumps(
@@ -151,9 +164,11 @@ class AnvilFork:
                 encoding="utf-8",
             ),
         )
-        result: dict = ujson.loads(self.socket.recv(self._SOCKET_BUFFER_SIZE))
-        if result.get("error"):
-            raise Exception(f"Error reverting to previous snapshot! Response: {result}")
+        response: dict = ujson.loads(self.socket.recv(self._SOCKET_BUFFER_SIZE))
+        if response.get("error"):
+            raise Exception(f"Error reverting to previous snapshot! Response: {response}")
+
+        return response["result"]
 
     def set_next_base_fee(self, fee: int) -> None:
         self.socket.sendall(
@@ -175,7 +190,7 @@ class AnvilFork:
         else:
             self.base_fee_next = fee
 
-    def set_snapshot(self) -> None:
+    def set_snapshot(self) -> int:
         self.socket.sendall(
             bytes(
                 ujson.dumps(
@@ -190,5 +205,8 @@ class AnvilFork:
             ),
         )
         result: dict = ujson.loads(self.socket.recv(self._SOCKET_BUFFER_SIZE))
-        if result.get("error"):
+
+        if result.get("error"):  # pragma: no cover
             raise Exception(f"Error setting snapshot! Response: {result}")
+
+        return int(result["result"], 16)

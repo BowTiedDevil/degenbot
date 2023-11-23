@@ -30,7 +30,15 @@ def test_v3_address_generator() -> None:
 def test_v3_decode_path() -> None:
     path = (
         HexBytes(WBTC_ADDRESS)
-        + HexBytes((WBTC_WETH_LP_FEE).to_bytes(3))  # pad to 3 bytes
+        + HexBytes((WBTC_WETH_LP_FEE).to_bytes(length=3, byteorder="big"))  # pad to 3 bytes
         + HexBytes(WETH_ADDRESS)
     )
     assert decode_v3_path(path) == [WBTC_ADDRESS, WBTC_WETH_LP_FEE, WETH_ADDRESS]
+
+    for fee in (100, 500, 3000, 10000):
+        path = (
+            HexBytes(WBTC_ADDRESS)
+            + HexBytes((fee).to_bytes(length=3, byteorder="big"))  # pad to 3 bytes
+            + HexBytes(WETH_ADDRESS)
+        )
+    assert decode_v3_path(path) == [WBTC_ADDRESS, fee, WETH_ADDRESS]

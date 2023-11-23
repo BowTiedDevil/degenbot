@@ -165,7 +165,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         self._untracked_pools.discard(pool_address)
         assert pool_address not in self._untracked_pools
 
-    def __repr__(self):
+    def __repr__(self):  # pragma: no cover
         return f"UniswapV2LiquidityPoolManager(factory={self._factory_address})"
 
     def _add_pool(self, pool_helper: LiquidityPool):
@@ -335,7 +335,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         self._untracked_pools.discard(pool_address)
 
-    def __repr__(self):
+    def __repr__(self):  # pragma: no cover
         return f"UniswapV3LiquidityPoolManager(factory={self._factory_address})"
 
     def _add_pool(self, pool_helper: V3LiquidityPool):

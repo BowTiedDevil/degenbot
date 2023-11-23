@@ -2,8 +2,8 @@ from degenbot import ChainlinkPriceContract, set_web3
 from eth_utils import to_checksum_address
 
 
-def test_chainlink_feed(ankr_archive_web3):
-    set_web3(ankr_archive_web3)
+def test_chainlink_feed(local_web3):
+    set_web3(local_web3)
 
     # Load WETH price feed
     # ref: https://data.chain.link/ethereum/mainnet/crypto-usd/eth-usd

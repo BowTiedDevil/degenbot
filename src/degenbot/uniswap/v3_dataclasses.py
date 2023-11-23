@@ -1,5 +1,5 @@
-from typing import Optional, Dict, Tuple, TYPE_CHECKING
 import dataclasses
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 if TYPE_CHECKING:
     # only necessary for the type hint

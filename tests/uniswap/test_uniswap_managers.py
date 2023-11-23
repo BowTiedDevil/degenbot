@@ -1,4 +1,5 @@
 import pytest
+
 from degenbot import set_web3
 from degenbot.exceptions import ManagerError, PoolNotAssociated
 from degenbot.fork import AnvilFork
@@ -20,8 +21,8 @@ UNISWAPV2_WETH_WBTC_ADDRESS = to_checksum_address("0xBb2b8038a1640196FbE3e38816F
 UNISWAPV3_WETH_WBTC_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
 
-def test_create_managers(ankr_archive_web3):
-    set_web3(ankr_archive_web3)
+def test_create_managers(local_web3):
+    set_web3(local_web3)
 
     uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
         factory_address=UNISWAP_V2_FACTORY_ADDRESS
@@ -134,8 +135,8 @@ def test_create_managers(ankr_archive_web3):
     assert uniswap_v2_lp.address not in uniswap_v2_pool_manager._untracked_pools
 
 
-def test_pool_remove_and_recreate(ankr_archive_web3):
-    set_web3(ankr_archive_web3)
+def test_pool_remove_and_recreate(local_web3):
+    set_web3(local_web3)
 
     uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
         factory_address=UNISWAP_V2_FACTORY_ADDRESS
@@ -178,7 +179,9 @@ def test_pool_remove_and_recreate(ankr_archive_web3):
     assert super_new_v2_weth_wbtc_lp is not v2_weth_wbtc_lp
 
 
-def test_pools_from_token_path() -> None:
+def test_pools_from_token_path(local_web3) -> None:
+    set_web3(local_web3)
+
     uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
         factory_address=UNISWAP_V2_FACTORY_ADDRESS
     )

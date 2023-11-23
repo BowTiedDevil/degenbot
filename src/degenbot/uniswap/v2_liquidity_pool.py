@@ -305,7 +305,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
     def __hash__(self):
         return hash(self.address)
 
-    def __repr__(self):
+    def __repr__(self):  # pragma: no cover
         return f"LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1})"
 
     def __setstate__(self, state: Dict):

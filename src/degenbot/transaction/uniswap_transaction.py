@@ -114,6 +114,13 @@ _V3_ROUTER2_CONTRACT_BALANCE_FLAG = 0
 
 class UniswapTransaction(TransactionHelper):
     @classmethod
+    def add_chain(cls, chain_id: int):
+        try:
+            _ROUTERS[chain_id]
+        except Exception:
+            _ROUTERS[chain_id] = {}
+
+    @classmethod
     def add_router(cls, chain_id: int, router_address: str, router_dict: dict):
         """
         Add a new router address for a given chain ID.

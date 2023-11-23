@@ -224,7 +224,7 @@ class Erc20Token:
         if not silent:
             logger.info(f"• {self.symbol} ({self.name})")
 
-    def __repr__(self) -> str:
+    def __repr__(self):  # pragma: no cover
         return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"
 
     def __getstate__(self):

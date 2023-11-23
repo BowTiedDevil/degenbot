@@ -74,8 +74,8 @@ def wbtc_weth_liquiditypool() -> LiquidityPool:
     return lp
 
 
-def test_create_pool(ankr_archive_web3) -> None:
-    degenbot.set_web3(ankr_archive_web3)
+def test_create_pool(local_web3) -> None:
+    degenbot.set_web3(local_web3)
 
     token0 = MockErc20Token()
     token0.address = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
