@@ -165,14 +165,14 @@ class Erc20Token:
             for func in ("decimals", "DECIMALS"):
                 try:
                     # Workaround for non-ERC20 compliant tokens
-                    self.decimals = int(
-                        _w3.eth.call(
+                    self.decimals = int.from_bytes(
+                        bytes=_w3.eth.call(
                             {
                                 "to": self.address,
                                 "data": Web3.keccak(text=f"{func}()"),
                             }
-                        ).hex(),
-                        16,
+                        ),
+                        byteorder="big",
                     )
                 except Exception:
                     continue
