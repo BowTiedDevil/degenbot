@@ -4,8 +4,8 @@ from typing import Iterable, List, Union
 import eth_abi
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from web3 import Web3
 from hexbytes import HexBytes
+from web3 import Web3
 
 
 def decode_v3_path(path: bytes) -> List[Union[ChecksumAddress, int]]:
@@ -58,14 +58,14 @@ def generate_v3_pool_address(
 
     return to_checksum_address(
         Web3.keccak(
-            hexstr="0xff"
-            + factory_address[2:]
+            HexBytes(0xFF)
+            + HexBytes(factory_address)
             + Web3.keccak(
                 eth_abi.encode(
                     types=("address", "address", "uint24"),
                     args=(*token_addresses, fee),
                 )
-            ).hex()[2:]
-            + init_hash[2:]
-        )[12:]
+            )
+            + HexBytes(init_hash)
+        )[-20:]  # last 20 bytes of the keccak hash becomes the pool address
     )

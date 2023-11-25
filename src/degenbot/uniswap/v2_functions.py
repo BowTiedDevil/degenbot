@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Iterable, List, Sequence, Union
 import eth_abi.packed
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
+from hexbytes import HexBytes
 from web3 import Web3
 
 if TYPE_CHECKING:
@@ -26,16 +27,16 @@ def generate_v2_pool_address(
 
     return to_checksum_address(
         Web3.keccak(
-            hexstr="0xff"
-            + factory_address[2:]
+            HexBytes(0xFF)
+            + HexBytes(factory_address)
             + Web3.keccak(
                 eth_abi.packed.encode_packed(
                     ["address", "address"],
                     [*token_addresses],
                 )
-            ).hex()[2:]
-            + init_hash[2:]
-        )[12:]
+            )
+            + HexBytes(init_hash)
+        )[-20:]
     )
 
 
