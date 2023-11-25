@@ -155,18 +155,11 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         )
 
         with self._lock:
-            if hasattr(self, "__slots__"):
-                return {
-                    attr_name: getattr(self, attr_name, None)
-                    for attr_name in self.__slots__
-                    if attr_name not in dropped_attributes
-                }
-            else:
-                return {
-                    attr_name: attr_value
-                    for attr_name, attr_value in self.__dict__.items()
-                    if attr_name not in dropped_attributes
-                }
+            return {
+                attr_name: getattr(self, attr_name, None)
+                for attr_name in self.__slots__
+                if attr_name not in dropped_attributes
+            }
 
     def __setstate__(self, state: dict):
         for attr_name, attr_value in state.items():
