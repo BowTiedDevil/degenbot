@@ -45,6 +45,11 @@ check_untyped_defs = true
 line-length = 100
 indent-width = 4
 
+[tool.coverage.run]
+omit = [
+    'conftest.py'
+]
+
 [tool.coverage.report]
 exclude_also = [
     "if TYPE_CHECKING:", # exclude type checking imports and checks

@@ -6,14 +6,16 @@ import degenbot
 import pytest
 from degenbot import Erc20Token
 from degenbot.exceptions import (
+    ExternalUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
     ZeroSwapError,
-    ExternalUpdateError,
 )
+from degenbot.fork import AnvilFork
 from degenbot.uniswap import LiquidityPool, UniswapV2PoolSimulationResult, UniswapV2PoolState
 from degenbot.uniswap.v2_liquidity_pool import CamelotLiquidityPool
 from eth_utils import to_checksum_address
+from web3 import Web3
 
 
 class MockErc20Token(Erc20Token):
@@ -41,7 +43,9 @@ WBTC_CONTRACT_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 
 
 @pytest.fixture(scope="function")
-def wbtc_weth_liquiditypool() -> LiquidityPool:
+def wbtc_weth_liquiditypool(local_web3: Web3) -> LiquidityPool:
+    degenbot.set_web3(local_web3)
+
     token0 = MockErc20Token()
     token0.address = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
     token0.decimals = 8
@@ -75,7 +79,7 @@ def wbtc_weth_liquiditypool() -> LiquidityPool:
     return lp
 
 
-def test_create_pool(local_web3) -> None:
+def test_create_pool(local_web3: Web3) -> None:
     degenbot.set_web3(local_web3)
 
     token0 = MockErc20Token()
@@ -128,10 +132,13 @@ def test_create_pool(local_web3) -> None:
 
 def test_create_camelot_v2_stable_pool(load_env: dict) -> None:
     CAMELOT_MIM_USDC_LP_ADDRESS = "0x68A0859de50B4Dfc6EFEbE981cA906D38Cdb0D1F"
+    FORK_BLOCK = 153_759_000
     fork = AnvilFork(
         f"https://rpc.ankr.com/arbitrum/{load_env['ANKR_API_KEY']}",
-        fork_block=153_700_000,
+        fork_block=FORK_BLOCK,
     )
+    assert fork.block == FORK_BLOCK
+    assert fork.w3.eth.block_number == FORK_BLOCK
     degenbot.set_web3(fork.w3)
 
     lp = CamelotLiquidityPool(address=CAMELOT_MIM_USDC_LP_ADDRESS)
@@ -150,10 +157,13 @@ def test_create_camelot_v2_stable_pool(load_env: dict) -> None:
     )
     current_reserves = lp.reserves_token0, lp.reserves_token1
 
-    # Rewind the fork 100,000 blocks and confirm the chain state is different
-    fork.reset(block_number=fork.w3.eth.block_number - 100_000)
+    # Rewind the fork
+    rewind_length = 500_000
+    fork.reset(block_number=fork.w3.eth.block_number - rewind_length)
+    assert fork.block == FORK_BLOCK - rewind_length
+    assert fork.w3.eth.block_number == FORK_BLOCK - rewind_length
 
-    # Recreate the pool and verify the calculation at historical reserves
+    # Recreate the pool at the rewound block state
     lp = CamelotLiquidityPool(address=CAMELOT_MIM_USDC_LP_ADDRESS)
     assert lp._w3_contract.functions.getAmountOut(
         amountIn=amount_in, tokenIn=token_in.address
@@ -668,9 +678,12 @@ def test_zero_swaps(wbtc_weth_liquiditypool: LiquidityPool) -> None:
         )
 
 
-def test_polling_update(wbtc_weth_liquiditypool: LiquidityPool) -> None:
+def test_polling_update(wbtc_weth_liquiditypool: LiquidityPool, load_env: dict) -> None:
+    fork = AnvilFork(f"https://rpc.ankr.com/eth/{load_env['ANKR_API_KEY']}", fork_block=18_000_000)
+    degenbot.set_web3(fork.w3)
     wbtc_weth_liquiditypool._update_method = "polling"
-    wbtc_weth_liquiditypool.update_reserves()
+    assert wbtc_weth_liquiditypool.update_reserves() is True
+    assert wbtc_weth_liquiditypool.update_reserves() is False
 
 
 def test_late_update(wbtc_weth_liquiditypool: LiquidityPool) -> None:

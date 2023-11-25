@@ -1,3 +1,5 @@
+# pragma: no cover
+
 import pytest
 import dotenv
 import web3
@@ -11,8 +13,13 @@ def load_env() -> dict:
 
 # Set up a web3 connection to Ankr endpoint
 @pytest.fixture(scope="session")
-def ankr_archive_web3() -> web3.Web3:
-    w3 = web3.Web3(web3.HTTPProvider("https://rpc.ankr.com/eth"))
+def ankr_archive_web3(load_env) -> web3.Web3:
+    try:
+        ANKR_URL = f"https://rpc.ankr.com/eth/{load_env['ANKR_API_KEY']}"
+    except KeyError:
+        ANKR_URL = "https://rpc.ankr.com/eth/"
+
+    w3 = web3.Web3(web3.HTTPProvider(ANKR_URL))
     return w3
 
 
@@ -29,11 +36,3 @@ def setup_degenbot_web3(local_web3: web3.Web3) -> None:
     import degenbot
 
     degenbot.set_web3(local_web3)
-
-
-# @pytest.fixture()
-# def reimport_degenbot() -> None:
-#     import importlib
-#     import degenbot
-
-#     importlib.reload(degenbot)
