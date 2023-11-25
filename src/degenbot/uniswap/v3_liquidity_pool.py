@@ -1,4 +1,3 @@
-# TODO: investigate combining update blocks (is a separate liquidity update block necessary?)
 # TODO: compare blocks in bitmaps, ticks, etc.
 
 import dataclasses
@@ -46,8 +45,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         "_extra_words",
         "_fee",
         "_pool_state_archive",
-        "_liquidity_lock",
-        "_slot0_lock",
         "_sparse_bitmap",
         "_state_lock",
         "_subscribers",
@@ -113,12 +110,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
 
         # held for operations that manipulate state data
         self._state_lock = Lock()
-
-        # # held by methods that manipulate liquidity data
-        # self._liquidity_lock = Lock()
-
-        # # held by methods that manipulate state data held by slot0
-        # self._slot0_lock = Lock()
 
         self._update_block = state_block if state_block else _w3.eth.get_block_number()
 
@@ -288,27 +279,17 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
         dropped_attributes = (
-            "_liquidity_lock",
-            "_slot0_lock",
             "_state_lock",
             "_subscribers",
             "lens",
         )
 
-        # with self._slot0_lock, self._liquidity_lock:
         with self._state_lock:
-            if hasattr(self, "__slots__"):
-                return {
-                    attr_name: getattr(self, attr_name, None)
-                    for attr_name in self.__slots__
-                    if attr_name not in dropped_attributes
-                }
-            else:
-                return {
-                    attr_name: attr_value
-                    for attr_name, attr_value in self.__dict__.items()
-                    if attr_name not in dropped_attributes
-                }
+            return {
+                attr_name: getattr(self, attr_name, None)
+                for attr_name in self.__slots__
+                if attr_name not in dropped_attributes
+            }
 
     def __hash__(self):
         return hash(self.address)
@@ -808,7 +789,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
 
         _w3_contract = self._w3_contract
 
-        # with self._slot0_lock:
         with self._state_lock:
             updated = False
 
@@ -1074,7 +1054,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 liquidity_change=updates.get("liquidity_change"),
             )
 
-        # with self._slot0_lock:
         with self._state_lock:
             updated_state = False
 
@@ -1220,7 +1199,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         # index=3 is for block 103.
         # block_index = self._pool_state_archive.bisect_left(block)
 
-        # with self._slot0_lock, self._liquidity_lock:
         with self._state_lock:
             known_blocks = list(self._pool_state_archive.keys())
             block_index = bisect_left(known_blocks, block)
