@@ -1,9 +1,10 @@
 import pytest
+from web3 import Web3
 
 from degenbot import set_web3
 from degenbot.exceptions import ManagerError, PoolNotAssociated
 from degenbot.fork import AnvilFork
-from degenbot.manager import AllPools
+from degenbot.registry import AllPools
 from degenbot.uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
 from eth_utils.address import to_checksum_address
@@ -21,8 +22,8 @@ UNISWAPV2_WETH_WBTC_ADDRESS = to_checksum_address("0xBb2b8038a1640196FbE3e38816F
 UNISWAPV3_WETH_WBTC_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
 
-def test_create_managers(local_web3):
-    set_web3(local_web3)
+def test_create_managers(local_web3_ethereum_full: Web3):
+    set_web3(local_web3_ethereum_full)
 
     uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
         factory_address=UNISWAP_V2_FACTORY_ADDRESS
@@ -135,8 +136,8 @@ def test_create_managers(local_web3):
     assert uniswap_v2_lp.address not in uniswap_v2_pool_manager._untracked_pools
 
 
-def test_pool_remove_and_recreate(local_web3):
-    set_web3(local_web3)
+def test_pool_remove_and_recreate(local_web3_ethereum_full: Web3):
+    set_web3(local_web3_ethereum_full)
 
     uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
         factory_address=UNISWAP_V2_FACTORY_ADDRESS
@@ -149,7 +150,8 @@ def test_pool_remove_and_recreate(local_web3):
         )
     )
 
-    assert AllPools(chain_id=1).get(v2_weth_wbtc_lp.address) is v2_weth_wbtc_lp
+    # Redundant but provides test coverage of the __setitem__ method warning if a pool is recreated
+    AllPools(chain_id=1)[v2_weth_wbtc_lp.address] = v2_weth_wbtc_lp
 
     # Remove the pool from the manager
     del uniswap_v2_pool_manager[v2_weth_wbtc_lp]
@@ -178,9 +180,14 @@ def test_pool_remove_and_recreate(local_web3):
     assert super_new_v2_weth_wbtc_lp is not new_v2_weth_wbtc_lp
     assert super_new_v2_weth_wbtc_lp is not v2_weth_wbtc_lp
 
+    assert AllPools(chain_id=1).get(v2_weth_wbtc_lp.address) is super_new_v2_weth_wbtc_lp
+    len(AllPools(chain_id=1))
+    AllPools(chain_id=1)[super_new_v2_weth_wbtc_lp.address]
+    del AllPools(chain_id=1)[super_new_v2_weth_wbtc_lp.address]
 
-def test_pools_from_token_path(local_web3) -> None:
-    set_web3(local_web3)
+
+def test_pools_from_token_path(local_web3_ethereum_full: Web3) -> None:
+    set_web3(local_web3_ethereum_full)
 
     uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
         factory_address=UNISWAP_V2_FACTORY_ADDRESS
@@ -194,7 +201,7 @@ def test_pools_from_token_path(local_web3) -> None:
     ]
 
 
-def test_same_block(load_env):
+def test_same_block(load_env: dict):
     ANKR_API_KEY = load_env["ANKR_API_KEY"]
 
     _BLOCK = 18493777
