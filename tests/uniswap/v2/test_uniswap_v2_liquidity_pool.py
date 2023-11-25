@@ -1,7 +1,6 @@
 import pickle
 from fractions import Fraction
 from typing import Dict
-
 import degenbot
 import pytest
 from degenbot import Erc20Token
@@ -43,20 +42,20 @@ WBTC_CONTRACT_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 
 
 @pytest.fixture(scope="function")
-def wbtc_weth_liquiditypool(local_web3: Web3) -> LiquidityPool:
-    degenbot.set_web3(local_web3)
+def wbtc_weth_liquiditypool(local_web3_ethereum_archive: Web3) -> LiquidityPool:
+    degenbot.set_web3(local_web3_ethereum_archive)
 
-    token0 = MockErc20Token()
-    token0.address = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
-    token0.decimals = 8
-    token0.name = "Wrapped BTC"
-    token0.symbol = "WBTC"
+    # token0 = MockErc20Token()
+    # token0.address = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
+    # token0.decimals = 8
+    # token0.name = "Wrapped BTC"
+    # token0.symbol = "WBTC"
 
-    token1 = MockErc20Token()
-    token1.address = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-    token1.decimals = 18
-    token1.name = "Wrapped Ether"
-    token1.symbol = "WETH"
+    # token1 = MockErc20Token()
+    # token1.address = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+    # token1.decimals = 18
+    # token1.name = "Wrapped Ether"
+    # token1.symbol = "WETH"
 
     if UNISWAP_V2_WBTC_WETH_POOL_ADDRESS in degenbot.AllPools(chain_id=1).pools:
         del degenbot.AllPools(chain_id=1)[UNISWAP_V2_WBTC_WETH_POOL_ADDRESS]
@@ -64,23 +63,26 @@ def wbtc_weth_liquiditypool(local_web3: Web3) -> LiquidityPool:
     lp = LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
         update_method="external",
-        tokens=[token0, token1],
-        name="WBTC-WETH (V2, 0.30%)",
+        # tokens=[token0, token1],
+        # name="WBTC-WETH (V2, 0.30%)",
         factory_address=UNISWAPV2_FACTORY_ADDRESS,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
-        empty=True,
+        # empty=True,
+        state_block=17_600_000,
     )
-    lp.update_reserves(
-        external_token0_reserves=16231137593,
-        external_token1_reserves=2571336301536722443178,
-        update_block=1,
-    )
+
+    # # Reserve values for taken at block height 17,600,000
+    # lp.update_reserves(
+    #     external_token0_reserves=16231137593,
+    #     external_token1_reserves=2571336301536722443178,
+    #     update_block=1,
+    # )
 
     return lp
 
 
-def test_create_pool(local_web3: Web3) -> None:
-    degenbot.set_web3(local_web3)
+def test_create_pool(local_web3_ethereum_full: Web3) -> None:
+    degenbot.set_web3(local_web3_ethereum_full)
 
     token0 = MockErc20Token()
     token0.address = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
@@ -157,23 +159,23 @@ def test_create_camelot_v2_stable_pool(load_env: dict) -> None:
     )
     current_reserves = lp.reserves_token0, lp.reserves_token1
 
-    # Rewind the fork
-    rewind_length = 500_000
-    fork.reset(block_number=fork.w3.eth.block_number - rewind_length)
-    assert fork.block == FORK_BLOCK - rewind_length
-    assert fork.w3.eth.block_number == FORK_BLOCK - rewind_length
-
-    # Recreate the pool at the rewound block state
-    lp = CamelotLiquidityPool(address=CAMELOT_MIM_USDC_LP_ADDRESS)
-    assert lp._w3_contract.functions.getAmountOut(
+    rewind_block_length = 500_000
+    contract_amount_old = lp._w3_contract.functions.getAmountOut(
         amountIn=amount_in, tokenIn=token_in.address
-    ).call() == lp.calculate_tokens_out_from_tokens_in(
+    ).call(block_identifier=FORK_BLOCK - rewind_block_length)
+
+    assert contract_amount != contract_amount_old
+
+    old_reserves = lp._w3_contract.functions.getReserves().call(
+        block_identifier=FORK_BLOCK - rewind_block_length
+    )
+
+    lp.reserves_token0 = old_reserves[0]
+    lp.reserves_token1 = old_reserves[1]
+    assert contract_amount_old == lp.calculate_tokens_out_from_tokens_in(
         token_in=token_in,
         token_in_quantity=amount_in,
     )
-    historical_reserves = lp.reserves_token0, lp.reserves_token1
-
-    assert current_reserves != historical_reserves
 
     # Override the state and verify the overridden amounts match the first test
     assert contract_amount == lp.calculate_tokens_out_from_tokens_in(
@@ -205,8 +207,12 @@ def test_create_camelot_v2_pool(load_env: dict) -> None:
     )
 
 
-def test_create_empty_pool(wbtc_weth_liquiditypool: LiquidityPool) -> None:
+def test_create_empty_pool(
+    wbtc_weth_liquiditypool: LiquidityPool, local_web3_ethereum_full: Web3
+) -> None:
     _pool: LiquidityPool = wbtc_weth_liquiditypool
+
+    degenbot.set_web3(local_web3_ethereum_full)
 
     LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
@@ -335,9 +341,57 @@ def test_pickle_pool(wbtc_weth_liquiditypool: LiquidityPool) -> None:
     wbtc_weth_liquiditypool.__setstate__(state)
 
 
-def test_calculate_tokens_out_from_tokens_in(wbtc_weth_liquiditypool: LiquidityPool) -> None:
-    # Reserve values for this test are taken at block height 17,600,000
+def test_calculate_tokens_out_from_ratio_out(load_env: dict) -> None:
+    fork = AnvilFork(f"https://rpc.ankr.com/eth/{load_env['ANKR_API_KEY']}", fork_block=17_600_000)
+    degenbot.set_web3(fork.w3)
 
+    router_contract = fork.w3.eth.contract(
+        address="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+        abi=degenbot.uniswap.abi.UNISWAP_V2_ROUTER_ABI,
+    )
+
+    lp = LiquidityPool("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
+
+    for wbtc_amount_in in [
+        int(0.1 * 10**8),
+        1 * 10**8,
+        10 * 10**8,
+    ]:
+        token_in = lp.token0  # WBTC
+        token_out = lp.token1  # WETH
+
+        weth_amount_out = router_contract.functions.getAmountsOut(
+            wbtc_amount_in,
+            [token_in.address, token_out.address],
+        ).call()[-1]
+
+        ratio = Fraction(weth_amount_out, wbtc_amount_in)
+
+        calculated_input = lp.calculate_tokens_in_from_ratio_out(
+            token_in=token_in,
+            ratio_absolute=ratio,
+        )
+        assert pytest.approx(calculated_input / wbtc_amount_in, rel=1e-3) == 1
+
+    for weth_amount_in in [1 * 10**18, 10 * 10**18, 100 * 10**18]:
+        token_in = lp.token1  # WETH
+        token_out = lp.token0  # WBTC
+
+        wbtc_amount_out = router_contract.functions.getAmountsOut(
+            weth_amount_in,
+            [token_in.address, token_out.address],
+        ).call()[-1]
+
+        ratio = Fraction(wbtc_amount_out, weth_amount_in)
+
+        calculated_input = lp.calculate_tokens_in_from_ratio_out(
+            token_in=token_in,
+            ratio_absolute=ratio,
+        )
+        assert pytest.approx(calculated_input / weth_amount_in, rel=1e-3) == 1
+
+
+def test_calculate_tokens_out_from_tokens_in(wbtc_weth_liquiditypool: LiquidityPool) -> None:
     assert (
         wbtc_weth_liquiditypool.calculate_tokens_out_from_tokens_in(
             wbtc_weth_liquiditypool.token0,
@@ -475,15 +529,17 @@ def test_comparisons(wbtc_weth_liquiditypool: LiquidityPool) -> None:
 
 
 def test_reorg(wbtc_weth_liquiditypool: LiquidityPool) -> None:
-    _START_BLOCK = 2
-    _END_BLOCK = 10
+    _START_BLOCK = wbtc_weth_liquiditypool.update_block + 1
+    _END_BLOCK = wbtc_weth_liquiditypool.update_block + 10
 
     # Provide some dummy updates, then simulate a reorg back to the starting state
     starting_state = wbtc_weth_liquiditypool.state
     starting_token0_reserves = starting_state.reserves_token0
     starting_token1_reserves = starting_state.reserves_token1
 
-    block_states: Dict[int, UniswapV2PoolState] = {1: wbtc_weth_liquiditypool.state}
+    block_states: Dict[int, UniswapV2PoolState] = {
+        wbtc_weth_liquiditypool.update_block: wbtc_weth_liquiditypool.state
+    }
 
     for block_number in range(_START_BLOCK, _END_BLOCK + 1, 1):
         wbtc_weth_liquiditypool.update_reserves(
@@ -493,26 +549,22 @@ def test_reorg(wbtc_weth_liquiditypool: LiquidityPool) -> None:
             print_reserves=False,
             update_block=block_number,
         )
-        # lp.external_update(
-        #     update=UniswapV2PoolExternalUpdate(
-        #         block_number=block_number,
-        #         liquidity=starting_liquidity + 10_000 * block_number,
-        #     ),
-        # )
         block_states[block_number] = wbtc_weth_liquiditypool.state
 
+    print(f"{block_states=}")
     last_block_state = wbtc_weth_liquiditypool.state
 
     # Cannot restore to a pool state before the first
     with pytest.raises(NoPoolStateAvailable):
         wbtc_weth_liquiditypool.restore_state_before_block(0)
 
-    # Last state is at block 10, so this will succedd but have no effect on the current state
-    wbtc_weth_liquiditypool.restore_state_before_block(11)
+    # Last state is before this block, so this will succeed but have no effect on the current state
+    wbtc_weth_liquiditypool.restore_state_before_block(_END_BLOCK + 1)
     assert wbtc_weth_liquiditypool.state == last_block_state
 
     # Unwind the updates and compare to the stored states at previous blocks
-    for block_number in range(_END_BLOCK + 1, 1, -1):
+    for block_number in range(_END_BLOCK + 1, _START_BLOCK - 1, -1):
+        print(f"Restoring block before {block_number}")
         wbtc_weth_liquiditypool.restore_state_before_block(block_number)
         assert wbtc_weth_liquiditypool.state == block_states[block_number - 1]
 
@@ -577,6 +629,34 @@ def test_simulations(wbtc_weth_liquiditypool: LiquidityPool) -> None:
             token_in_quantity=1200000000000000000000,
         )
         == sim_result
+    )
+
+    ADDED_LIQUIDITY = 10_000_000
+    assert wbtc_weth_liquiditypool.simulate_add_liquidity(
+        added_reserves_token0=ADDED_LIQUIDITY, added_reserves_token1=ADDED_LIQUIDITY
+    ) == UniswapV2PoolSimulationResult(
+        amount0_delta=ADDED_LIQUIDITY,
+        amount1_delta=ADDED_LIQUIDITY,
+        current_state=wbtc_weth_liquiditypool.state,
+        future_state=UniswapV2PoolState(
+            pool=wbtc_weth_liquiditypool,
+            reserves_token0=wbtc_weth_liquiditypool.reserves_token0 + ADDED_LIQUIDITY,
+            reserves_token1=wbtc_weth_liquiditypool.reserves_token1 + ADDED_LIQUIDITY,
+        ),
+    )
+
+    REMOVED_LIQUIDITY = 10_000_000
+    assert wbtc_weth_liquiditypool.simulate_remove_liquidity(
+        removed_reserves_token0=REMOVED_LIQUIDITY, removed_reserves_token1=REMOVED_LIQUIDITY
+    ) == UniswapV2PoolSimulationResult(
+        amount0_delta=-REMOVED_LIQUIDITY,
+        amount1_delta=-REMOVED_LIQUIDITY,
+        current_state=wbtc_weth_liquiditypool.state,
+        future_state=UniswapV2PoolState(
+            pool=wbtc_weth_liquiditypool,
+            reserves_token0=wbtc_weth_liquiditypool.reserves_token0 - REMOVED_LIQUIDITY,
+            reserves_token1=wbtc_weth_liquiditypool.reserves_token1 - REMOVED_LIQUIDITY,
+        ),
     )
 
 

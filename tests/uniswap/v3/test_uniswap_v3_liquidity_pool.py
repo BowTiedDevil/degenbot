@@ -2080,8 +2080,8 @@ def mocked_wbtc_weth_v3liquiditypool():
     return lp
 
 
-def test_creation(local_web3) -> None:
-    set_web3(local_web3)
+def test_creation(local_web3_ethereum_full) -> None:
+    set_web3(local_web3_ethereum_full)
     V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
     V3LiquidityPool(
         address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
@@ -2603,7 +2603,7 @@ def test_external_update(mocked_wbtc_weth_v3liquiditypool) -> None:
     assert lp.liquidity == 69_420_000 + 1
 
 
-def test_auto_update(local_web3) -> None:
-    set_web3(local_web3)
+def test_auto_update(local_web3_ethereum_full) -> None:
+    set_web3(local_web3_ethereum_full)
     lp = V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
     lp.auto_update()
