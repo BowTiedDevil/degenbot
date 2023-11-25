@@ -35,14 +35,12 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
     uniswap_version = 2
 
     __slots__: Tuple[str, ...] = (
-        "_state_lock",
         "_pool_state_archive",
         "_ratio_token0_in",
         "_ratio_token1_in",
+        "_state_lock",
         "_subscribers",
         "_update_method",
-        "_w3",
-        "_w3_contract",
         "abi",
         "address",
         "factory",
