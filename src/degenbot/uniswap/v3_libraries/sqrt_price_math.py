@@ -82,8 +82,7 @@ def getNextSqrtPriceFromAmount0RoundingUp(
             if denominator >= numerator1:
                 # always fits in 160 bits
                 return FullMath.mulDivRoundingUp(numerator1, sqrtPX96, denominator)
-        else:
-            return UnsafeMath.divRoundingUp(numerator1, numerator1 // sqrtPX96 + amount)
+        return UnsafeMath.divRoundingUp(numerator1, numerator1 // sqrtPX96 + amount)
     else:
         product = amount * sqrtPX96
         # if the product overflows, we know the denominator underflows
