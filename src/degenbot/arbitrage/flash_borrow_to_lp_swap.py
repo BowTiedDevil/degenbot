@@ -4,7 +4,7 @@ from typing import List
 from eth_utils.address import to_checksum_address
 from scipy import optimize  # type: ignore[import]
 
-from ..config import get_web3
+from .. import config
 from ..logging import logger
 from ..erc20_token import Erc20Token
 from ..baseclasses import ArbitrageHelper
@@ -68,7 +68,7 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
             tx_path=self.token_path,
             pool_manager=UniswapV2LiquidityPoolManager(
                 factory_address=swap_factory_address,
-                chain_id=self._w3.eth.chain_id,
+                chain_id=config.get_web3().eth.chain_id,
             ),
         )
         for pool in self.swap_pools:

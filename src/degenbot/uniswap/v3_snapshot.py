@@ -8,7 +8,7 @@ from web3 import Web3
 from web3._utils.events import get_event_data
 from web3._utils.filters import construct_event_filter_params
 
-from ..config import get_web3
+from .. import config
 from ..logging import logger
 from .abi import UNISWAP_V3_POOL_ABI
 from .v3_dataclasses import (
@@ -47,18 +47,7 @@ class UniswapV3LiquiditySnapshot:
         finally:
             _file.close()
 
-        _web3 = get_web3()
-        if _web3 is not None:
-            self._w3 = _web3
-        else:  # pragma: no cover
-            from brownie import web3 as brownie_web3  # type: ignore[import]
-
-            if brownie_web3.isConnected():
-                self._w3 = brownie_web3
-            else:
-                raise ValueError("No connected web3 object provided.")
-
-        self._chain_id = chain_id or self._w3.eth.chain_id
+        self._chain_id = chain_id or config.get_web3().eth.chain_id
 
         self.newest_block = json_liquidity_snapshot.pop("snapshot_block")
 
@@ -101,7 +90,7 @@ class UniswapV3LiquiditySnapshot:
         span: int = 1000,
     ) -> None:
         def _process_log() -> Tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
-            decoded_event = get_event_data(self._w3.codec, event_abi, log)
+            decoded_event = get_event_data(config.get_web3().codec, event_abi, log)
 
             pool_address = to_checksum_address(decoded_event["address"])
             tx_index = decoded_event["transactionIndex"]
@@ -134,12 +123,12 @@ class UniswapV3LiquiditySnapshot:
 
                 _, event_filter_params = construct_event_filter_params(
                     event_abi=event_abi,
-                    abi_codec=self._w3.codec,
+                    abi_codec=config.get_web3().codec,
                     fromBlock=start_block,
                     toBlock=end_block,
                 )
 
-                event_logs = self._w3.eth.get_logs(event_filter_params)
+                event_logs = config.get_web3().eth.get_logs(event_filter_params)
 
                 for log in event_logs:
                     pool_address, liquidity_event = _process_log()

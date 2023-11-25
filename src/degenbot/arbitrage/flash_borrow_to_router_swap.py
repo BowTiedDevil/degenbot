@@ -6,7 +6,7 @@ from scipy import optimize  # type: ignore[import]
 
 from ..baseclasses import ArbitrageHelper
 from ..erc20_token import Erc20Token
-from ..config import get_web3
+from .. import config
 from ..uniswap.v2_liquidity_pool import LiquidityPool
 from ..uniswap.v2_functions import get_v2_pools_from_token_path
 from ..uniswap.managers import UniswapV2LiquidityPoolManager
@@ -25,17 +25,6 @@ class FlashBorrowToRouterSwap(ArbitrageHelper):
         name: str = "",
         update_method="polling",
     ):
-        _web3 = get_web3()
-        if _web3 is not None:
-            self._w3 = _web3
-        else:  # pragma: no cover
-            from brownie import web3 as brownie_web3  # type: ignore[import]
-
-            if brownie_web3.isConnected():
-                self._w3 = brownie_web3
-            else:
-                raise ValueError("No connected web3 object provided.")
-
         if borrow_token.address != swap_token_addresses[0]:
             raise ValueError("Token addresses must begin with the borrowed token")
 
@@ -72,7 +61,7 @@ class FlashBorrowToRouterSwap(ArbitrageHelper):
             tx_path=self.token_path,
             pool_manager=UniswapV2LiquidityPoolManager(
                 factory_address=swap_factory_address,
-                chain_id=self._w3.eth.chain_id,
+                chain_id=config.get_web3().eth.chain_id,
             ),
         )
         for pool in self.swap_pools:

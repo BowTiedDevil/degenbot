@@ -11,7 +11,7 @@ from eth_utils.address import to_checksum_address
 from web3 import Web3
 
 from ..baseclasses import TransactionHelper
-from ..config import get_web3
+from .. import config
 from ..constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
@@ -199,17 +199,6 @@ class UniswapTransaction(TransactionHelper):
             - 0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B (Uniswap Universal Router)
         """
 
-        _web3 = get_web3()
-        if _web3 is not None:
-            self._w3 = _web3
-        else:  # pragma: no cover
-            from brownie import web3 as brownie_web3  # type: ignore[import]
-
-            if brownie_web3.isConnected():
-                self._w3 = brownie_web3
-            else:
-                raise ValueError("No connected web3 object provided.")
-
         # @dev The `self.ledger` is used to track token balances for all
         # addresses involved in the swap. A positive balance represents
         # a pre-swap deposit, a negative balance represents an outstanding
@@ -266,7 +255,10 @@ class UniswapTransaction(TransactionHelper):
     def _raise_if_expired(self, deadline: int):
         if not isinstance(deadline, int):
             raise ValueError(f"deadline not int! Was: {deadline}")
-        if time.time() > deadline:
+        if (
+            self.state_block is not None
+            and config.get_web3().eth.get_block(self.state_block)["timestamp"] > deadline
+        ):
             raise TransactionError("Deadline expired")
 
     def _show_pool_states(

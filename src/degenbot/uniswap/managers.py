@@ -3,10 +3,10 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from web3 import Web3
+from web3.contract import Contract
 
+from .. import config
 from ..baseclasses import HelperManager
-from ..config import get_web3
 from ..constants import ZERO_ADDRESS
 from ..dex.uniswap import FACTORY_ADDRESSES, TICKLENS_ADDRESSES
 from ..erc20_token import Erc20Token
@@ -98,21 +98,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         factory_address: Union[ChecksumAddress, str],
         chain_id: Optional[int] = None,
     ):
-        _web3 = get_web3()
-        if _web3 is not None:
-            pass
-        else:  # pragma: no cover
-            from brownie import web3 as brownie_web3  # type: ignore[import]
-
-            if brownie_web3.isConnected():
-                _web3 = brownie_web3
-            else:
-                raise ValueError("No connected web3 object provided.")
-
-        if TYPE_CHECKING:
-            assert isinstance(_web3, Web3)
-
-        chain_id = chain_id or _web3.eth.chain_id
+        chain_id = chain_id or config.get_web3().eth.chain_id
 
         factory_address = to_checksum_address(factory_address)
 
@@ -130,12 +116,8 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         if self.__dict__ == {}:
             try:
-                self._w3 = _web3
                 self.chain_id = chain_id
                 self._factory_address = factory_address
-                self._w3_contract = self._w3.eth.contract(
-                    address=factory_address, abi=UNISWAP_V2_FACTORY_ABI
-                )
                 self._lock = Lock()
                 self._tracked_pools: Dict[ChecksumAddress, LiquidityPool] = dict()
                 self._token_manager: Erc20TokenHelperManager = self._state[chain_id][
@@ -167,6 +149,13 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
 
     def __repr__(self):  # pragma: no cover
         return f"UniswapV2LiquidityPoolManager(factory={self._factory_address})"
+
+    @property
+    def _w3_contract(self) -> Contract:
+        return config.get_web3().eth.contract(
+            address=self._factory_address,
+            abi=UNISWAP_V2_FACTORY_ABI,
+        )
 
     def _add_pool(self, pool_helper: LiquidityPool):
         with self._lock:
@@ -270,21 +259,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         chain_id: Optional[int] = None,
         snapshot: Optional[UniswapV3LiquiditySnapshot] = None,
     ):
-        _web3 = get_web3()
-        if _web3 is not None:
-            pass
-        else:  # pragma: no cover
-            from brownie import web3 as brownie_web3  # type: ignore[import]
-
-            if brownie_web3.isConnected():
-                _web3 = brownie_web3
-            else:
-                raise ValueError("No connected web3 object provided.")
-
-        if TYPE_CHECKING:
-            assert isinstance(_web3, Web3)
-
-        chain_id = chain_id or _web3.eth.chain_id
+        chain_id = chain_id or config.get_web3().eth.chain_id
 
         factory_address = to_checksum_address(factory_address)
 
@@ -302,7 +277,6 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         if self.__dict__ == {}:
             try:
-                self._w3 = _web3
                 self.chain_id = chain_id
                 self._factory_address = to_checksum_address(factory_address)
                 self._lens = TickLens(address=TICKLENS_ADDRESSES[chain_id][factory_address])

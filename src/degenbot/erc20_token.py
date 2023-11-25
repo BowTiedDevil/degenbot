@@ -5,10 +5,11 @@ import ujson
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from web3 import Web3
+from web3.contract import Contract
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError
 
+from . import config
 from .chainlink import ChainlinkPriceContract
-from .config import get_web3
 from .logging import logger
 
 # Taken from OpenZeppelin's ERC-20 implementation
@@ -47,15 +48,13 @@ class Erc20Token:
     """
 
     __slots__: Tuple[str, ...] = (
-        "address",
-        "abi",
         "_price_oracle",
-        "_w3",
-        "_w3_contract",
-        "name",
-        "symbol",
+        "abi",
+        "address",
         "decimals",
+        "name",
         "price",
+        "symbol",
     )
 
     def __init__(
@@ -71,21 +70,8 @@ class Erc20Token:
         self.address: ChecksumAddress = to_checksum_address(address)
         self.abi = abi or ERC20_ABI_MINIMAL
 
-        _web3 = get_web3()
-        if _web3 is not None:
-            self._w3 = _web3
-        else:  # pragma: no cover
-            from brownie import web3 as brownie_web3  # type: ignore[import]
-
-            if brownie_web3.isConnected():
-                self._w3 = brownie_web3
-            else:
-                raise ValueError("No connected web3 object provided.")
-
-        self._w3_contract = self._w3.eth.contract(
-            address=self.address,
-            abi=self.abi,
-        )
+        _w3 = config.get_web3()
+        _w3_contract = self._w3_contract
 
         if user:  # pragma: no cover
             warn(
@@ -93,7 +79,6 @@ class Erc20Token:
                 "the get_balance() method to retrieve token balances for a "
                 "particular address."
             )
-            # self._user = user
 
         if min_abi:  # pragma: no cover
             warn(
@@ -103,20 +88,19 @@ class Erc20Token:
 
         if unload_brownie_contract_after_init:  # pragma: no cover
             warn(
-                "unload_brownie_contract_after_init is no longer needed and is "
-                "ignored. Remove constructor argument to stop seeing this "
-                "message."
+                "unload_brownie_contract_after_init is deprecated. Remove "
+                "constructor argument to stop seeing this message."
             )
 
         try:
             self.name: str
-            self.name = self._w3_contract.functions.name().call()
+            self.name = _w3_contract.functions.name().call()
         except (ContractLogicError, OverflowError, BadFunctionCallOutput):
             # Workaround for non-ERC20 compliant tokens
             for func in ("name", "NAME"):
                 try:
                     self.name = (
-                        self._w3.eth.call(
+                        _w3.eth.call(
                             {
                                 "to": self.address,
                                 "data": Web3.keccak(text=f"{func}()"),
@@ -134,7 +118,7 @@ class Erc20Token:
         try:
             self.name
         except AttributeError:  # pragma: no cover
-            if not self._w3.eth.get_code(self.address):
+            if not _w3.eth.get_code(self.address):
                 raise ValueError("No contract deployed at this address")
             self.name = f"Unknown @ {self.address}"
             warn(
@@ -143,13 +127,13 @@ class Erc20Token:
 
         try:
             self.symbol: str
-            self.symbol = self._w3_contract.functions.symbol().call()
+            self.symbol = _w3_contract.functions.symbol().call()
         except (ContractLogicError, OverflowError, BadFunctionCallOutput):
             for func in ("symbol", "SYMBOL"):
                 # Workaround for non-ERC20 compliant tokens
                 try:
                     self.symbol = (
-                        self._w3.eth.call(
+                        _w3.eth.call(
                             {
                                 "to": self.address,
                                 "data": Web3.keccak(text=f"{func}()"),
@@ -167,7 +151,7 @@ class Erc20Token:
         try:
             self.symbol
         except AttributeError:
-            if not self._w3.eth.get_code(self.address):  # pragma: no cover
+            if not _w3.eth.get_code(self.address):  # pragma: no cover
                 raise ValueError("No contract deployed at this address")
             self.symbol = "UNKN"
             warn(
@@ -176,13 +160,13 @@ class Erc20Token:
 
         try:
             self.decimals: int
-            self.decimals = self._w3_contract.functions.decimals().call()
+            self.decimals = _w3_contract.functions.decimals().call()
         except (ContractLogicError, OverflowError, BadFunctionCallOutput):
             for func in ("decimals", "DECIMALS"):
                 try:
                     # Workaround for non-ERC20 compliant tokens
                     self.decimals = int(
-                        self._w3.eth.call(
+                        _w3.eth.call(
                             {
                                 "to": self.address,
                                 "data": Web3.keccak(text=f"{func}()"),
@@ -201,20 +185,14 @@ class Erc20Token:
         try:
             self.decimals
         except Exception:
-            if not self._w3.eth.get_code(self.address):  # pragma: no cover
+            if not _w3.eth.get_code(self.address):  # pragma: no cover
                 raise ValueError("No contract deployed at this address")
             self.decimals = 0
             warn(
                 f"Token contract at {self.address} does not implement a 'decimals' function. Setting to 0."
             )
 
-        # if user:
-        #     self.update_balance(user)
-        #     # self.balance = self._brownie_contract.balanceOf(self._user)
-        #     self.balance = self.get_balance(self.address)
-        #     self.normalized_balance = self.balance / (10**self.decimals)
-
-        self.price: Optional[float]
+        self.price: Optional[float] = None
         if oracle_address:
             self._price_oracle = ChainlinkPriceContract(address=oracle_address)
             self.price = self._price_oracle.price
@@ -230,10 +208,7 @@ class Erc20Token:
     def __getstate__(self):
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
-        dropped_attributes = (
-            "_w3",
-            "_w3_contract",
-        )
+        dropped_attributes = ()
 
         return {
             attr_name: getattr(self, attr_name, None)
@@ -271,6 +246,13 @@ class Erc20Token:
 
     def __str__(self):
         return self.symbol
+
+    @property
+    def _w3_contract(self) -> Contract:
+        return config.get_web3().eth.contract(
+            address=self.address,
+            abi=self.abi,
+        )
 
     def get_approval(self, owner: str, spender: str) -> int:
         return self._w3_contract.functions.allowance(

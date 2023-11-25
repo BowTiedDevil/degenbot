@@ -7,10 +7,11 @@ from warnings import warn
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from web3 import Web3
+from web3.contract import Contract
 
+from .. import config
 from ..baseclasses import PoolHelper
-from ..config import get_web3
+from ..erc20_token import Erc20Token
 from ..exceptions import (
     DeprecationError,
     ExternalUpdateError,
@@ -24,9 +25,6 @@ from .abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
 from .mixins import CamelotStablePoolMixin, Subscriber, SubscriptionMixin
 from .v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from .v2_functions import generate_v2_pool_address
-
-if TYPE_CHECKING:
-    from ..erc20_token import Erc20Token
 
 
 class LiquidityPool(SubscriptionMixin, PoolHelper):
@@ -140,21 +138,8 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         self.address: ChecksumAddress = to_checksum_address(address)
         self.abi = abi or UNISWAP_V2_POOL_ABI
 
-        _web3 = get_web3()
-        if _web3 is not None:
-            self._w3 = _web3
-        else:  # pragma: no cover
-            from brownie import web3 as brownie_web3  # type: ignore[import]
-
-            if brownie_web3.isConnected():
-                self._w3 = brownie_web3
-            else:
-                raise ValueError("No connected web3 object provided.")
-
-        self._w3_contract = self._w3.eth.contract(
-            address=self.address,
-            abi=self.abi,
-        )
+        _w3 = config.get_web3()
+        _w3_contract = self._w3_contract
 
         if factory_address is not None and factory_init_hash is None:
             raise ValueError(f"Init hash not provided for factory {factory_address}")
@@ -192,10 +177,10 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         if empty:
             self.update_block = 0
         else:
-            self.update_block = state_block if state_block else self._w3.eth.get_block_number()
-            self.factory = self._w3_contract.functions.factory().call()
+            self.update_block = state_block if state_block else _w3.eth.get_block_number()
+            self.factory = _w3_contract.functions.factory().call()
 
-        chain_id = 1 if empty else self._w3.eth.chain_id
+        chain_id = 1 if empty else _w3.eth.chain_id
 
         # if a token pair was provided, check and set pointers for token0 and token1
         if tokens is not None:
@@ -206,11 +191,11 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         else:
             _token_manager = Erc20TokenHelperManager(chain_id)
             self.token0 = _token_manager.get_erc20token(
-                address=self._w3_contract.functions.token0().call(),
+                address=_w3_contract.functions.token0().call(),
                 silent=silent,
             )
             self.token1 = _token_manager.get_erc20token(
-                address=self._w3_contract.functions.token1().call(),
+                address=_w3_contract.functions.token1().call(),
                 silent=silent,
             )
 
@@ -291,8 +276,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         dropped_attributes = (
             "_state_lock",
             "_subscribers",
-            "_w3_contract",
-            "_w3",
         )
 
         with self._state_lock:
@@ -314,6 +297,13 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
     def __str__(self):
         return self.name
+
+    @property
+    def _w3_contract(self) -> Contract:
+        return config.get_web3().eth.contract(
+            address=self.address,
+            abi=self.abi,
+        )
 
     def _update_pool_state(self):
         with self._state_lock:
@@ -764,11 +754,13 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         if set to "external" assumes that provided reserves are valid
         """
 
+        _w3_contract = self._w3_contract
+
         updates = False
 
         # Fetch the chain height if a specific update_block is not provided
         if update_block is None:
-            update_block = self._w3.eth.get_block_number()
+            update_block = config.get_web3().eth.get_block_number()
 
         # discard stale updates, but allow updating the same pool multiple times per block (necessary if sending sync events individually)
         if update_block < self.update_block:
@@ -784,9 +776,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                     reserves0,
                     reserves1,
                     *_,
-                ) = self._w3_contract.functions.getReserves().call(
-                    block_identifier=self.update_block
-                )
+                ) = _w3_contract.functions.getReserves().call(block_identifier=self.update_block)
                 if (self.reserves_token0, self.reserves_token1) != (
                     reserves0,
                     reserves1,

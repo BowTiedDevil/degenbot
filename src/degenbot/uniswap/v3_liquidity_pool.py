@@ -10,9 +10,10 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
+from web3.contract import Contract
 
+from .. import config
 from ..baseclasses import PoolHelper
-from ..config import get_web3
 from ..dex.uniswap import TICKLENS_ADDRESSES
 from ..erc20_token import Erc20Token
 from ..exceptions import (
@@ -22,7 +23,6 @@ from ..exceptions import (
     ExternalUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
-    ZeroSwapError,
 )
 from ..logging import logger
 from ..manager import AllPools, Erc20TokenHelperManager
@@ -55,8 +55,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         "_update_block",
         "_update_log",
         "_update_method",
-        "_w3_contract",
-        "_w3",
         "address",
         "factory",
         "lens",
@@ -99,7 +97,11 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         state_block: Optional[int] = None,
     ):
         self.address = to_checksum_address(address)
-        abi = abi or UNISWAP_V3_POOL_ABI
+        self.abi = abi or UNISWAP_V3_POOL_ABI
+
+        _w3 = config.get_web3()
+        _w3_contract = self._w3_contract
+
         self.state: UniswapV3PoolState = UniswapV3PoolState(
             pool=self,
             liquidity=0,
@@ -107,24 +109,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             tick=0,
             tick_bitmap=dict(),
             tick_data=dict(),
-        )
-
-        _web3 = get_web3()
-        if _web3 is not None:
-            self._w3 = _web3
-        else:  # pragma: no cover
-            from brownie import Contract  # type: ignore[import] # noqa: F401
-            from brownie import multicall as brownie_multicall  # noqa: F401
-            from brownie import web3 as brownie_web3
-
-            if brownie_web3.isConnected():
-                self._w3 = brownie_web3
-            else:
-                raise ValueError("No connected web3 object provided.")
-
-        self._w3_contract = self._w3.eth.contract(
-            address=self.address,
-            abi=abi,
         )
 
         # held for operations that manipulate state data
@@ -136,30 +120,28 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         # # held by methods that manipulate state data held by slot0
         # self._slot0_lock = Lock()
 
-        self._update_block = state_block if state_block else self._w3.eth.get_block_number()
+        self._update_block = state_block if state_block else _w3.eth.get_block_number()
 
         if factory_address:
             self.factory = to_checksum_address(factory_address)
         else:
-            self.factory = to_checksum_address(self._w3_contract.functions.factory().call())
+            self.factory = to_checksum_address(_w3_contract.functions.factory().call())
 
         if lens:
             self.lens = lens
         else:
             # Use the singleton TickLens helper if available
             try:
-                self.lens = self._lens_contracts[(self._w3.eth.chain_id, self.factory)]
+                self.lens = self._lens_contracts[(_w3.eth.chain_id, self.factory)]
             except KeyError:
-                self.lens = TickLens(
-                    address=TICKLENS_ADDRESSES[self._w3.eth.chain_id][self.factory]
-                )
-                self._lens_contracts[(self._w3.eth.chain_id, self.factory)] = self.lens
+                self.lens = TickLens(address=TICKLENS_ADDRESSES[_w3.eth.chain_id][self.factory])
+                self._lens_contracts[(_w3.eth.chain_id, self.factory)] = self.lens
 
         token0_address: ChecksumAddress = to_checksum_address(
-            self._w3_contract.functions.token0().call()
+            _w3_contract.functions.token0().call()
         )
         token1_address: ChecksumAddress = to_checksum_address(
-            self._w3_contract.functions.token1().call()
+            _w3_contract.functions.token1().call()
         )
 
         if tokens is not None:
@@ -172,7 +154,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             if not (self.token0 == token0_address and self.token1 == token1_address):
                 raise ValueError("Token addresses do not match tokens recorded at contract")
         else:
-            _token_manager = Erc20TokenHelperManager(self._w3.eth.chain_id)
+            _token_manager = Erc20TokenHelperManager(_w3.eth.chain_id)
             self.token0 = _token_manager.get_erc20token(
                 address=token0_address,
                 silent=silent,
@@ -182,7 +164,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 silent=silent,
             )
 
-        self._fee: int = fee or self._w3_contract.functions.fee().call()
+        self._fee: int = fee or _w3_contract.functions.fee().call()
         self._tick_spacing = self._TICKSPACING_BY_FEE[self._fee]  # immutable
 
         if factory_address is not None and factory_init_hash is not None:
@@ -259,7 +241,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 block_number=self._update_block,
             )
 
-        self.liquidity = self._w3_contract.functions.liquidity().call(
+        self.liquidity = _w3_contract.functions.liquidity().call(
             block_identifier=self._update_block
         )
 
@@ -267,7 +249,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             self.sqrt_price_x96,
             self.tick,
             *_,
-        ) = self._w3_contract.functions.slot0().call(block_identifier=self._update_block)
+        ) = _w3_contract.functions.slot0().call(block_identifier=self._update_block)
 
         self._update_pool_state()
 
@@ -281,7 +263,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             self._update_block: self.state,
         }
 
-        AllPools(self._w3.eth.chain_id)[self.address] = self
+        AllPools(_w3.eth.chain_id)[self.address] = self
 
         self._subscribers: Set[Subscriber] = set()
 
@@ -310,8 +292,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             "_slot0_lock",
             "_state_lock",
             "_subscribers",
-            "_w3_contract",
-            "_w3",
             "lens",
         )
 
@@ -409,8 +389,10 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             logger.debug(self.tick_bitmap[word_position])
             return
 
+        _w3_contract = self._w3_contract
+
         if block_number is None:
-            block_number = self._w3.eth.get_block_number()
+            block_number = config.get_web3().eth.get_block_number()
 
         # with self._liquidity_lock:
         with self._state_lock:
@@ -473,9 +455,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             # fetch words one by one (single_tick = True)
             else:
                 try:
-                    if single_tick_bitmap := self._w3_contract.functions.tickBitmap(
-                        word_position
-                    ).call(
+                    if single_tick_bitmap := _w3_contract.functions.tickBitmap(word_position).call(
                         block_identifier=block_number,
                     ):
                         single_tick_data = self.lens._w3_contract.functions.getPopulatedTicksInWord(
@@ -802,6 +782,13 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             tick_data=new_tick_data,
         )
 
+    @property
+    def _w3_contract(self) -> Contract:
+        return config.get_web3().eth.contract(
+            address=self.address,
+            abi=self.abi,
+        )
+
     def auto_update(
         self,
         silent: bool = True,
@@ -819,13 +806,15 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         when used with threads.
         """
 
+        _w3_contract = self._w3_contract
+
         # with self._slot0_lock:
         with self._state_lock:
             updated = False
 
             # use the block_number if provided, otherwise pull from web3
             if block_number is None:
-                block_number = self._w3.eth.get_block_number()
+                block_number = config.get_web3().eth.get_block_number()
 
             if block_number < self._update_block:
                 raise ExternalUpdateError(
@@ -836,10 +825,10 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 _sqrt_price_x96,
                 _tick,
                 *_,
-            ) = self._w3_contract.functions.slot0().call(
+            ) = _w3_contract.functions.slot0().call(
                 block_identifier=block_number,
             )
-            _liquidity = self._w3_contract.functions.liquidity().call(block_identifier=block_number)
+            _liquidity = _w3_contract.functions.liquidity().call(block_identifier=block_number)
 
             if self.sqrt_price_x96 != _sqrt_price_x96:
                 updated = True
@@ -1066,7 +1055,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             if update is not None:
                 block_number = update.block_number
             else:
-                block_number = self._w3.eth.get_block_number()
+                block_number = config.get_web3().eth.get_block_number()
                 warnings.warn(
                     f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
                 )
