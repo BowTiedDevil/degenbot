@@ -1,51 +1,12 @@
 from threading import Lock
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import Optional
 
 from eth_utils.address import to_checksum_address
+
 from .. import config
 from ..baseclasses import HelperManager
 from ..erc20_token import Erc20Token
 from ..exceptions import ManagerError
-
-if TYPE_CHECKING:
-    from ..baseclasses import TokenHelper
-
-_all_tokens: Dict[
-    int,
-    Dict[str, "TokenHelper"],
-] = {}
-
-
-class AllTokens:
-    def __init__(self, chain_id):
-        try:
-            _all_tokens[chain_id]
-        except KeyError:
-            _all_tokens[chain_id] = {}
-        finally:
-            self.tokens = _all_tokens[chain_id]
-
-    def __delitem__(self, token_address: str):
-        del self.tokens[token_address]
-
-    def __getitem__(self, token_address: str):
-        return self.tokens[token_address]
-
-    def __setitem__(
-        self,
-        token_address: str,
-        token_helper: "TokenHelper",
-    ):
-        self.tokens[token_address] = token_helper
-
-    def __len__(self):
-        return len(self.tokens)
-
-    def get(self, token_address: str):
-        try:
-            return self.tokens[token_address]
-        except KeyError:
-            return None
 
 
 class Erc20TokenHelperManager(HelperManager):

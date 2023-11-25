@@ -9,8 +9,10 @@ from web3.contract import Contract
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError
 
 from . import config
+from .baseclasses import TokenHelper
 from .chainlink import ChainlinkPriceContract
 from .logging import logger
+from .registry import AllTokens
 
 # Taken from OpenZeppelin's ERC-20 implementation
 # ref: https://www.npmjs.com/package/@openzeppelin/contracts?activeTab=code
@@ -19,7 +21,7 @@ ERC20_ABI_MINIMAL = ujson.loads(
 )
 
 
-class Erc20Token:
+class Erc20Token(TokenHelper):
     """
     An ERC-20 token contract.
 
@@ -198,6 +200,8 @@ class Erc20Token:
             self.price = self._price_oracle.price
         else:
             self.price = None
+
+        AllTokens(chain_id=_w3.eth.chain_id)[self.address] = self
 
         if not silent:
             logger.info(f"• {self.symbol} ({self.name})")
