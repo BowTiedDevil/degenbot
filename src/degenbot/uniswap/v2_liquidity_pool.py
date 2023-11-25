@@ -21,7 +21,7 @@ from ..exceptions import (
 from ..logging import logger
 from ..manager import AllPools, Erc20TokenHelperManager
 from .abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
-from .mixins import Subscriber, SubscriptionMixin
+from .mixins import CamelotStablePoolMixin, Subscriber, SubscriptionMixin
 from .v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from .v2_functions import generate_v2_pool_address
 
@@ -860,129 +860,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         return updates
 
 
-class CamelotLiquidityPool(LiquidityPool):
-    FEE_DENOMINATOR = 100_000
-
-    def _calculate_tokens_out_from_tokens_in_stable_swap(
-        self,
-        token_in: "Erc20Token",
-        token_in_quantity: int,
-        override_state: Optional[dict] = None,
-    ) -> int:
-        """
-        Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
-        Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
-        """
-
-        override_reserves_token0: Optional[int] = None
-        override_reserves_token1: Optional[int] = None
-
-        if override_state is not None:
-            try:
-                override_reserves_token0 = override_state["reserves_token0"]
-            except KeyError:
-                pass
-            else:
-                logger.debug(f"{override_reserves_token0=}")
-
-            try:
-                override_reserves_token1 = override_state["reserves_token1"]
-            except KeyError:
-                pass
-            else:
-                logger.debug(f"{override_reserves_token1=}")
-
-        if token_in_quantity <= 0:
-            raise ZeroSwapError("token_in_quantity must be positive")
-
-        precision_multiplier_token0 = 10**self.token0.decimals
-        precision_multiplier_token1 = 10**self.token1.decimals
-
-        def _k(balance_0, balance_1) -> int:
-            _x: int = balance_0 * 10**18 // precision_multiplier_token0
-            _y: int = balance_1 * 10**18 // precision_multiplier_token1
-            _a: int = _x * _y // 10**18
-            _b: int = (_x * _x // 10**18) + (_y * _y // 10**18)
-            return _a * _b // 10**18  # x^3*y+y^3*x >= k
-
-        def _get_y(x_0: int, xy: int, y: int) -> int:
-            for _ in range(255):
-                y_prev = y
-                k = _f(x_0, y)
-                if k < xy:
-                    dy = (xy - k) * 10**18 // _d(x_0, y)
-                    y = y + dy
-                else:
-                    dy = (k - xy) * 10**18 // _d(x_0, y)
-                    y = y - dy
-
-                if y > y_prev:
-                    if y - y_prev <= 1:
-                        return y
-                else:
-                    if y_prev - y <= 1:
-                        return y
-
-            return y
-
-        def _f(x_0: int, y: int) -> int:
-            return (
-                x_0 * (y * y // 10**18 * y // 10**18) // 10**18
-                + (x_0 * x_0 // 10**18 * x_0 // 10**18) * y // 10**18
-            )
-
-        def _d(x_0: int, y: int) -> int:
-            return 3 * x_0 * (y * y // 10**18) // 10**18 + (x_0 * x_0 // 10**18 * x_0 // 10**18)
-
-        # fee_percent is stored as a uint16 in the contract, but as a Fraction
-        # in this helper, so must be converted.
-        #
-        # e.g. 0.04% fee = Fraction(1,2500) in the helper, fee = 40 in the
-        # contract. To convert, multiply the fraction by the `FEE_DENOMINATOR`,
-        # so fee_percent = 1/2500 * 100000 = 40
-
-        fee_percent = (
-            self.fee_token0 if token_in is self.token0 else self.fee_token1
-        ) * self.FEE_DENOMINATOR
-
-        reserves_token0 = (
-            override_reserves_token0
-            if override_reserves_token0 is not None
-            else self.reserves_token0
-        )
-        reserves_token1 = (
-            override_reserves_token1
-            if override_reserves_token1 is not None
-            else self.reserves_token1
-        )
-
-        # remove fee from amount received
-        token_in_quantity -= token_in_quantity * fee_percent // self.FEE_DENOMINATOR
-        xy = _k(reserves_token0, reserves_token1)
-        reserves_token0 = reserves_token0 * 10**18 // precision_multiplier_token0
-        reserves_token1 = reserves_token1 * 10**18 // precision_multiplier_token1
-        reserve_a, reserve_b = (
-            (reserves_token0, reserves_token1)
-            if token_in is self.token0
-            else (reserves_token1, reserves_token0)
-        )
-        token_in_quantity = (
-            token_in_quantity * 10**18 // precision_multiplier_token0
-            if token_in is self.token0
-            else token_in_quantity * 10**18 // precision_multiplier_token1
-        )
-        y = reserve_b - _get_y(token_in_quantity + reserve_a, xy, reserve_b)
-
-        return (
-            y
-            * (
-                precision_multiplier_token1
-                if token_in is self.token0
-                else precision_multiplier_token0
-            )
-            // 10**18
-        )
-
+class CamelotLiquidityPool(CamelotStablePoolMixin, LiquidityPool):
     def __init__(
         self,
         address: str,
@@ -1004,25 +882,12 @@ class CamelotLiquidityPool(LiquidityPool):
         if update_reserves_on_start is not None:  # pragma: no cover
             warn("update_reserves_on_start has been deprecated.")
 
-        _web3 = get_web3()
-        if _web3 is not None:
-            _web3 = _web3
-        else:  # pragma: no cover
-            from brownie import web3 as brownie_web3  # type: ignore[import]
-
-            if brownie_web3.isConnected():
-                _web3 = brownie_web3
-            else:
-                raise ValueError("No connected web3 object provided.")
-
-        if TYPE_CHECKING:
-            assert isinstance(_web3, Web3)
-
         address = to_checksum_address(address)
 
-        _w3_contract = _web3.eth.contract(address=address, abi=abi or CAMELOT_POOL_ABI)
+        if abi is None:
+            abi = CAMELOT_POOL_ABI
 
-        stable_pool: bool = _w3_contract.functions.stableSwap().call()
+        _w3_contract = config.get_web3().eth.contract(address=address, abi=abi)
 
         (
             _,
@@ -1030,9 +895,9 @@ class CamelotLiquidityPool(LiquidityPool):
             fee_token0,
             fee_token1,
         ) = _w3_contract.functions.getReserves().call()
-        fee_denominator = _w3_contract.functions.FEE_DENOMINATOR().call()
-        fee_token0 = Fraction(fee_token0, fee_denominator)
-        fee_token1 = Fraction(fee_token1, fee_denominator)
+        self.fee_denominator = _w3_contract.functions.FEE_DENOMINATOR().call()
+        fee_token0 = Fraction(fee_token0, self.fee_denominator)
+        fee_token1 = Fraction(fee_token1, self.fee_denominator)
 
         super().__init__(
             address=address,
@@ -1044,8 +909,25 @@ class CamelotLiquidityPool(LiquidityPool):
             silent=silent,
         )
 
-        if stable_pool:
-            # replace the calculate_tokens_out_from_tokens_in method for stable-only pools
-            self.calculate_tokens_out_from_tokens_in = (
-                self._calculate_tokens_out_from_tokens_in_stable_swap
-            )  # type: ignore[assignment]
+        self.stable_swap: bool = _w3_contract.functions.stableSwap().call()
+
+    def calculate_tokens_out_from_tokens_in(
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        override_reserves_token0: Optional[int] = None,  # TODO: drop after removing in superclass
+        override_reserves_token1: Optional[int] = None,  # TODO: drop after removing in superclass
+        override_state: Optional[UniswapV2PoolState] = None,
+    ) -> int:
+        if self.stable_swap:
+            return self._calculate_tokens_out_from_tokens_in_stable_swap(
+                token_in=token_in,
+                token_in_quantity=token_in_quantity,
+                override_state=override_state,
+            )
+        else:
+            return super().calculate_tokens_out_from_tokens_in(
+                token_in=token_in,
+                token_in_quantity=token_in_quantity,
+                override_state=override_state,
+            )

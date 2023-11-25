@@ -12,6 +12,7 @@ from degenbot.exceptions import (
     ExternalUpdateError,
 )
 from degenbot.uniswap import LiquidityPool, UniswapV2PoolSimulationResult, UniswapV2PoolState
+from degenbot.uniswap.v2_liquidity_pool import CamelotLiquidityPool
 from eth_utils import to_checksum_address
 
 
@@ -123,6 +124,75 @@ def test_create_pool(local_web3) -> None:
             factory_address=UNISWAPV2_FACTORY_ADDRESS,
             factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
         )
+
+
+def test_create_camelot_v2_stable_pool(load_env: dict) -> None:
+    CAMELOT_MIM_USDC_LP_ADDRESS = "0x68A0859de50B4Dfc6EFEbE981cA906D38Cdb0D1F"
+    fork = AnvilFork(
+        f"https://rpc.ankr.com/arbitrum/{load_env['ANKR_API_KEY']}",
+        fork_block=153_700_000,
+    )
+    degenbot.set_web3(fork.w3)
+
+    lp = CamelotLiquidityPool(address=CAMELOT_MIM_USDC_LP_ADDRESS)
+    assert lp.stable_swap is True
+
+    token_in = lp.token0  # MIM token
+    amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
+
+    # Test that the swap output from the pool contract matches the off-chain calculation
+    contract_amount = lp._w3_contract.functions.getAmountOut(
+        amountIn=amount_in, tokenIn=token_in.address
+    ).call()
+    assert contract_amount == lp.calculate_tokens_out_from_tokens_in(
+        token_in=token_in,
+        token_in_quantity=amount_in,
+    )
+    current_reserves = lp.reserves_token0, lp.reserves_token1
+
+    # Rewind the fork 100,000 blocks and confirm the chain state is different
+    fork.reset(block_number=fork.w3.eth.block_number - 100_000)
+
+    # Recreate the pool and verify the calculation at historical reserves
+    lp = CamelotLiquidityPool(address=CAMELOT_MIM_USDC_LP_ADDRESS)
+    assert lp._w3_contract.functions.getAmountOut(
+        amountIn=amount_in, tokenIn=token_in.address
+    ).call() == lp.calculate_tokens_out_from_tokens_in(
+        token_in=token_in,
+        token_in_quantity=amount_in,
+    )
+    historical_reserves = lp.reserves_token0, lp.reserves_token1
+
+    assert current_reserves != historical_reserves
+
+    # Override the state and verify the overridden amounts match the first test
+    assert contract_amount == lp.calculate_tokens_out_from_tokens_in(
+        token_in=token_in,
+        token_in_quantity=amount_in,
+        override_state=UniswapV2PoolState(
+            pool=lp,
+            reserves_token0=current_reserves[0],
+            reserves_token1=current_reserves[1],
+        ),
+    )
+
+
+def test_create_camelot_v2_pool(load_env: dict) -> None:
+    CAMELOT_WETH_USDC_LP_ADDRESS = "0x84652bb2539513BAf36e225c930Fdd8eaa63CE27"
+    fork = AnvilFork(f"https://rpc.ankr.com/arbitrum/{load_env['ANKR_API_KEY']}")
+    degenbot.set_web3(fork.w3)
+    lp = CamelotLiquidityPool(address=CAMELOT_WETH_USDC_LP_ADDRESS)
+    assert lp.stable_swap is False
+
+    token_in = lp.token1
+    amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
+
+    assert lp._w3_contract.functions.getAmountOut(
+        amountIn=amount_in, tokenIn=token_in.address
+    ).call() == lp.calculate_tokens_out_from_tokens_in(
+        token_in=token_in,
+        token_in_quantity=amount_in,
+    )
 
 
 def test_create_empty_pool(wbtc_weth_liquiditypool: LiquidityPool) -> None:
