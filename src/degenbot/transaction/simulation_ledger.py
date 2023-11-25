@@ -60,14 +60,8 @@ class SimulationLedger:
         _token_address: ChecksumAddress
         if isinstance(token, Erc20Token):
             _token_address = token.address
-        elif isinstance(token, str):
-            _token_address = to_checksum_address(token)
-        elif isinstance(token, ChecksumAddress):
-            _token_address = token
         else:
-            raise ValueError(
-                f"Token may be type Erc20Token, str, or ChecksumAddress. Was {type(token)}"
-            )
+            _token_address = to_checksum_address(token)
 
         _address = to_checksum_address(address)
 
@@ -123,14 +117,8 @@ class SimulationLedger:
 
         if isinstance(token, Erc20Token):
             _token_address = token.address
-        elif isinstance(token, str):
-            _token_address = to_checksum_address(token)
-        elif type(token) == ChecksumAddress:
-            _token_address = token
         else:
-            raise ValueError(
-                f"Expected token type Erc20Token, str, or ChecksumAddress. Was {type(token)}"
-            )
+            _token_address = to_checksum_address(token)
 
         address_balances: Dict[ChecksumAddress, int]
         try:
@@ -175,14 +163,8 @@ class SimulationLedger:
 
         if isinstance(token, Erc20Token):
             _token_address = token.address
-        elif isinstance(token, str):
-            _token_address = to_checksum_address(token)
-        elif isinstance(token, ChecksumAddress):
-            _token_address = token
         else:
-            raise ValueError(
-                f"Expected token type Erc20Token, str, or ChecksumAddress. Was {type(token)}"
-            )
+            _token_address = to_checksum_address(token)
 
         self.adjust(
             address=from_addr,
