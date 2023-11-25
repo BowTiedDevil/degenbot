@@ -1,5 +1,4 @@
 from bisect import bisect_left
-from decimal import Decimal
 from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Tuple, Union
@@ -36,8 +35,8 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
     __slots__: Tuple[str, ...] = (
         "_pool_state_archive",
-        "_ratio_token0_in",
-        "_ratio_token1_in",
+        # "_ratio_token0_in",
+        # "_ratio_token1_in",
         "_state_lock",
         "_subscribers",
         "_update_method",
@@ -53,10 +52,10 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         "reserves_token1",
         "router",
         "state",
-        "token0_max_swap",
         "token0",
-        "token1_max_swap",
         "token1",
+        # "token0_max_swap",
+        # "token1_max_swap",
         "update_block",
     )
 
@@ -166,10 +165,10 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 )
 
         self._update_method = update_method
-        self._ratio_token0_in: Optional[Decimal] = None
-        self._ratio_token1_in: Optional[Decimal] = None
-        self.token0_max_swap = 0
-        self.token1_max_swap = 0
+        # self._ratio_token0_in: Optional[Decimal] = None
+        # self._ratio_token1_in: Optional[Decimal] = None
+        # self.token0_max_swap = 0
+        # self.token1_max_swap = 0
         self.new_reserves = False
 
         if empty:
@@ -312,32 +311,40 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             )
         self._notify_subscribers()
 
-    def calculate_tokens_in_from_ratio_out(self) -> None:
+    def calculate_tokens_in_from_ratio_out(
+        self,
+        token_in: Erc20Token,
+        ratio_absolute: Fraction,
+    ) -> int:
         """
-        Calculates the maximum token input for the target output ratio at current pool reserves
+        Calculates the maximum token input for the target output ratio after
+        fees, defined as (quantity out / quantity in), at current pool
+        reserves. The ratio must be passed as an absolute value reflecting the
+        decimal amounts specified by the ERC-20 token contract
+        (e.g. 10 * 10 ** (18-8) ETH/BTC).
         """
 
-        # token0 in, token1 out
-        # formula: dx = y0*C - x0/(1-FEE), where C = token0/token1
-        if self._ratio_token0_in:
-            self.token0_max_swap = max(
-                0,
-                int(self.reserves_token1 * self._ratio_token0_in)
-                - int(self.reserves_token0 / (1 - self.fee_token0)),
-            )
-        else:
-            self.token0_max_swap = 0
+        if token_in not in (self.token0, self.token1):
+            raise ValueError(f"Token in {token_in} not held by this pool.")
 
-        # token1 in, token0 out
-        # formula: dy = x0*C - y0(1/FEE), where C = token1/token0
-        if self._ratio_token1_in:
-            self.token1_max_swap = max(
+        if token_in == self.token0:
+            # formula: dx = y0/C - x0/(1-FEE), where C = token1/token0
+            return max(
                 0,
-                int(self.reserves_token0 * self._ratio_token1_in)
-                - int(self.reserves_token1 / (1 - self.fee_token1)),
+                int(
+                    self.reserves_token1 / ratio_absolute
+                    - self.reserves_token0 / (1 - self.fee_token0)
+                ),
             )
         else:
-            self.token1_max_swap = 0
+            # formula: dy = x0/C - y0/(1-FEE), where C = token0/token1
+            return max(
+                0,
+                int(
+                    self.reserves_token0 / ratio_absolute
+                    - self.reserves_token1 / (1 - self.fee_token1)
+                ),
+            )
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -575,38 +582,10 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
         self._update_pool_state()
 
-    def set_swap_target(
-        self,
-        token_in: "Erc20Token",
-        token_in_qty: int,
-        token_out: "Erc20Token",
-        token_out_qty: int,
-        silent: bool = False,
-    ) -> None:
-        if not (
-            (token_in == self.token0 and token_out == self.token1)
-            or (token_in == self.token1 and token_out == self.token0)
-        ):
-            raise ValueError("Tokens must match the two tokens held by this pool!")
-
-        if not silent:
-            logger.info(
-                f"{token_in} -> {token_out} @ ({token_in_qty} {token_in} = {token_out_qty} {token_out})"
-            )
-
-        if token_in == self.token0:
-            # calculate the ratio of token0/token1 for swap of token0 -> token1
-            self._ratio_token0_in = Decimal((token_in_qty * 10**token_in.decimals)) / Decimal(
-                token_out_qty * 10**token_out.decimals
-            )
-
-        if token_in == self.token1:
-            # calculate the ratio of token1/token0 for swap of token1 -> token0
-            self._ratio_token1_in = Decimal((token_in_qty * 10**token_in.decimals)) / Decimal(
-                token_out_qty * 10**token_out.decimals
-            )
-
-        self.calculate_tokens_in_from_ratio_out()
+    def set_swap_target(self, *args, **kwargs):
+        warn(
+            "set_swap_target has been deprecated. Please convert your code to use the calculate_tokens_in_from_ratio_out method directly."
+        )
 
     def simulate_add_liquidity(
         self,
@@ -796,8 +775,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                                 f"{self.token1}/{self.token0}: {(self.reserves_token1/10**self.token1.decimals) / (self.reserves_token0/10**self.token0.decimals)}"
                             )
 
-                    # recalculate possible swaps using the new reserves
-                    self.calculate_tokens_in_from_ratio_out()
                     self._update_pool_state()
                     self._pool_state_archive[update_block] = self.state
                     updates = True
@@ -824,7 +801,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 self.new_reserves = True
                 self._update_pool_state()
                 self._pool_state_archive[update_block] = self.state
-                self.calculate_tokens_in_from_ratio_out()
 
             if not silent:
                 logger.info(f"[{self.name}]")
