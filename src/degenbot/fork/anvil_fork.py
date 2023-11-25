@@ -55,7 +55,7 @@ class AnvilFork:
             command.append(f"--base-fee={base_fee}")
 
         self._process = subprocess.Popen(command)
-
+        self.fork_url = fork_url
         self.http_url = f"http://localhost:{self.port}"
         self.ws_url = f"ws://localhost:{self.port}"
         self.ipc_path = ipc_path
@@ -149,6 +149,8 @@ class AnvilFork:
         else:
             if block_number:
                 self.block = block_number
+            if fork_url:
+                self.fork_url = fork_url
 
     def return_to_snapshot(self, id: str) -> bool:
         self.socket.sendall(
