@@ -851,15 +851,20 @@ class CamelotLiquidityPool(CamelotStablePoolMixin, LiquidityPool):
         if abi is None:
             abi = CAMELOT_POOL_ABI
 
+        _w3 = config.get_web3()
         _w3_contract = config.get_web3().eth.contract(address=address, abi=abi)
+
+        state_block = _w3.eth.block_number
 
         (
             _,
             _,
             fee_token0,
             fee_token1,
-        ) = _w3_contract.functions.getReserves().call()
-        self.fee_denominator = _w3_contract.functions.FEE_DENOMINATOR().call()
+        ) = _w3_contract.functions.getReserves().call(block_identifier=state_block)
+        self.fee_denominator = _w3_contract.functions.FEE_DENOMINATOR().call(
+            block_identifier=state_block
+        )
         fee_token0 = Fraction(fee_token0, self.fee_denominator)
         fee_token1 = Fraction(fee_token1, self.fee_denominator)
 
@@ -871,6 +876,7 @@ class CamelotLiquidityPool(CamelotStablePoolMixin, LiquidityPool):
             abi=abi,
             fee=(fee_token0, fee_token1),
             silent=silent,
+            state_block=state_block,
         )
 
         self.stable_swap: bool = _w3_contract.functions.stableSwap().call()
