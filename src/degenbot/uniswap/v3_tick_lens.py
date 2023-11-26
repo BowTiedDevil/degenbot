@@ -15,7 +15,7 @@ class TickLens:
         abi: Optional[list] = None,
     ):
         self.address = to_checksum_address(address)
-        self.abi = abi or UNISWAP_V3_TICKLENS_ABI
+        self.abi = abi if abi is not None else UNISWAP_V3_TICKLENS_ABI
 
     @property
     def _w3_contract(self) -> Contract:

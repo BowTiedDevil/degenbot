@@ -71,8 +71,10 @@ class AnvilFork:
         while is_connected_method() is False:
             continue
 
-        self.block = fork_block if fork_block else self.w3.eth.get_block_number()
-        self.base_fee = base_fee if base_fee else self.w3.eth.get_block(self.block)["baseFeePerGas"]
+        self.block = fork_block if fork_block is not None else self.w3.eth.get_block_number()
+        self.base_fee = (
+            base_fee if base_fee is not None else self.w3.eth.get_block(self.block)["baseFeePerGas"]
+        )
         self.base_fee_next: Optional[int] = None
         self.socket = socket.socket(socket.AF_UNIX)
         self.socket.connect(self.ipc_path)
@@ -121,8 +123,7 @@ class AnvilFork:
         block_number: Optional[int] = None,
     ) -> None:
         forking_params: Dict[str, Any] = dict()
-        if fork_url is not None:
-            forking_params["jsonRpcUrl"] = fork_url
+        forking_params["jsonRpcUrl"] = fork_url if fork_url is not None else self.fork_url
         if block_number is not None:
             forking_params["blockNumber"] = block_number
 

@@ -94,7 +94,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         state_block: Optional[int] = None,
     ):
         self.address = to_checksum_address(address)
-        self.abi = abi or UNISWAP_V3_POOL_ABI
+        self.abi = abi if abi is not None else UNISWAP_V3_POOL_ABI
 
         _w3 = config.get_web3()
         _w3_contract = self._w3_contract
@@ -155,7 +155,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 silent=silent,
             )
 
-        self._fee: int = fee or _w3_contract.functions.fee().call()
+        self._fee: int = fee if fee is not None else _w3_contract.functions.fee().call()
         self._tick_spacing = self._TICKSPACING_BY_FEE[self._fee]  # immutable
 
         if factory_address is not None and factory_init_hash is not None:

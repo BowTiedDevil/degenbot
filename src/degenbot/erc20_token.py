@@ -70,7 +70,7 @@ class Erc20Token(TokenHelper):
         user: Optional[Any] = None,  # deprecated
     ) -> None:
         self.address: ChecksumAddress = to_checksum_address(address)
-        self.abi = abi or ERC20_ABI_MINIMAL
+        self.abi = abi if abi is not None else ERC20_ABI_MINIMAL
 
         _w3 = config.get_web3()
         _w3_contract = self._w3_contract

@@ -133,7 +133,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             warn("update_reserves_on_start has been deprecated in favor of `empty` argument.")
 
         self.address: ChecksumAddress = to_checksum_address(address)
-        self.abi = abi or UNISWAP_V2_POOL_ABI
+        self.abi = abi if abi is not None else UNISWAP_V2_POOL_ABI
 
         _w3 = config.get_web3()
         _w3_contract = self._w3_contract

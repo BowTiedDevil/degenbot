@@ -47,7 +47,7 @@ class UniswapV3LiquiditySnapshot:
         finally:
             _file.close()
 
-        self._chain_id = chain_id or config.get_web3().eth.chain_id
+        self._chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
 
         self.newest_block = json_liquidity_snapshot.pop("snapshot_block")
 

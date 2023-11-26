@@ -20,7 +20,7 @@ class Erc20TokenHelperManager(HelperManager):
     _state: dict = {}
 
     def __init__(self, chain_id: Optional[int] = None):
-        chain_id = chain_id or config.get_web3().eth.chain_id
+        chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
 
         # the internal state data for this object is held in the
         # class-level _state dictionary, keyed by the chain ID

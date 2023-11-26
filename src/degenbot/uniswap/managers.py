@@ -98,7 +98,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         factory_address: Union[ChecksumAddress, str],
         chain_id: Optional[int] = None,
     ):
-        chain_id = chain_id or config.get_web3().eth.chain_id
+        chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
 
         factory_address = to_checksum_address(factory_address)
 
@@ -259,7 +259,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         chain_id: Optional[int] = None,
         snapshot: Optional[UniswapV3LiquiditySnapshot] = None,
     ):
-        chain_id = chain_id or config.get_web3().eth.chain_id
+        chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
 
         factory_address = to_checksum_address(factory_address)
 
