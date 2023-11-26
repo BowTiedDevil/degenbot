@@ -16,6 +16,7 @@ dependencies = [
     'pytest-asyncio >=0.21',
     'python-dotenv',
     'scipy >=1.11.3, <1.12',
+    'setuptools >= 69.0',
     'ujson >=5.8.0',
     'web3 >=6.11.0, <7',
     'websockets >=11.0.3, <13.0',
