@@ -294,7 +294,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
     def __hash__(self):
         return hash(self.address)
 
-    def __repr__(self):
+    def __repr__(self):  # pragma: no cover
         return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self._fee})"
 
     def __setstate__(self, state: dict):
@@ -381,6 +381,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 pass
 
             # TODO: re-implement multicall without Brownie
+
             # # fetch multiple words if multicall is available for the connected network
             # # and single_word mode is not active
             # if (

@@ -1,8 +1,8 @@
 # TODO: use tx_payer_is_user to simplify accounting
 # TODO: implement "blank" V3 pools and incorporate try/except for all V3 pool manager get_pool calls
+# TODO: add state block argument for pool simulation calls
 
 import pprint
-import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
 import eth_abi
@@ -10,8 +10,8 @@ from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from web3 import Web3
 
-from ..baseclasses import TransactionHelper
 from .. import config
+from ..baseclasses import TransactionHelper
 from ..constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
@@ -25,23 +25,11 @@ from ..exceptions import (
 )
 from ..logging import logger
 from ..uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
-from ..uniswap.managers import (
-    UniswapV2LiquidityPoolManager,
-    UniswapV3LiquidityPoolManager,
-)
-from ..uniswap.v2_dataclasses import (
-    UniswapV2PoolSimulationResult,
-    UniswapV2PoolState,
-)
-from ..uniswap.v2_functions import (
-    generate_v2_pool_address,
-    get_v2_pools_from_token_path,
-)
+from ..uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
+from ..uniswap.v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
+from ..uniswap.v2_functions import generate_v2_pool_address, get_v2_pools_from_token_path
 from ..uniswap.v2_liquidity_pool import LiquidityPool
-from ..uniswap.v3_dataclasses import (
-    UniswapV3PoolSimulationResult,
-    UniswapV3PoolState,
-)
+from ..uniswap.v3_dataclasses import UniswapV3PoolSimulationResult, UniswapV3PoolState
 from ..uniswap.v3_functions import decode_v3_path
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
 from .simulation_ledger import SimulationLedger
@@ -154,8 +142,6 @@ class UniswapTransaction(TransactionHelper):
             _ROUTERS[chain_id][router_address]
         except Exception:
             _ROUTERS[chain_id][router_address] = router_dict
-        else:
-            raise ValueError("Router address already known!")
 
     @classmethod
     def add_wrapped_token(cls, chain_id: int, token_address: str):
@@ -171,10 +157,6 @@ class UniswapTransaction(TransactionHelper):
             WRAPPED_NATIVE_TOKENS[chain_id]
         except KeyError:
             WRAPPED_NATIVE_TOKENS[chain_id] = _token_address
-        else:
-            raise ValueError(
-                f"Token address {WRAPPED_NATIVE_TOKENS[chain_id]} already set for chain ID {chain_id}!"
-            )
 
     def __init__(
         self,
@@ -2344,6 +2326,7 @@ class UniswapTransaction(TransactionHelper):
     def simulate(
         self,
         silent: bool = False,
+        state_block: Optional[int] = None,
     ) -> List[
         Union[
             Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
@@ -2362,6 +2345,7 @@ class UniswapTransaction(TransactionHelper):
         """
 
         self.silent = silent
+        self.state_block = state_block
 
         try:
             results = self._simulate(
