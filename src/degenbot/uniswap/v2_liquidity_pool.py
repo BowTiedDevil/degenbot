@@ -275,11 +275,12 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             raise NotImplementedError
 
     def __getstate__(self) -> dict:
-        # Remove objects that cannot be pickled and are unnecessary to perform
+        # Remove objects that either cannot be pickled or are unnecessary to perform
         # the calculation
         dropped_attributes = (
             "_state_lock",
             "_subscribers",
+            "_pool_state_archive",
         )
 
         with self._state_lock:
@@ -293,7 +294,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         return hash(self.address)
 
     def __repr__(self):  # pragma: no cover
-        return f"LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1})"
+        return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1})"
 
     def __setstate__(self, state: Dict):
         for attr_name, attr_value in state.items():
