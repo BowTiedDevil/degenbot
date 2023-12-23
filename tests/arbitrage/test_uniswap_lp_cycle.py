@@ -4,6 +4,7 @@ import multiprocessing
 from fractions import Fraction
 from threading import Lock
 from typing import Sequence, Tuple, Union
+import pickle
 
 import pytest
 from degenbot.arbitrage import ArbitrageCalculationResult, UniswapLpCycle
@@ -11,15 +12,22 @@ from degenbot.arbitrage.arbitrage_dataclasses import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
+import web3
+from degenbot.config import set_web3
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError
 from degenbot.uniswap import V3LiquidityPool
-from degenbot.uniswap.v2_liquidity_pool import LiquidityPool, UniswapV2PoolState
+from degenbot.uniswap.v2_liquidity_pool import (
+    LiquidityPool,
+    UniswapV2PoolState,
+    CamelotLiquidityPool,
+)
 from degenbot.uniswap.v3_dataclasses import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
 )
+
 from eth_utils import to_checksum_address
 
 
@@ -66,6 +74,7 @@ v2_lp.reserves_token0 = 16231137593
 v2_lp.reserves_token1 = 2571336301536722443178
 v2_lp.token0 = wbtc
 v2_lp.token1 = weth
+v2_lp._update_method = "external"
 v2_lp._update_pool_state()
 
 v3_lp = MockV3LiquidityPool()
@@ -2080,6 +2089,7 @@ v3_lp.tick_data = {
         liquidityGross=3974353998848,
     ),
 }
+v3_lp._update_method = "external"
 v3_lp._update_pool_state()
 
 arb = UniswapLpCycle(
@@ -2193,6 +2203,59 @@ def test_arbitrage_with_overrides() -> None:
     )
 
 
+async def test_pickle_uniswap_lp_cycle() -> None:
+    # test must be done on Arbitrum
+
+    _WETH_ADDRESS = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"
+    _WBTC_ADDRESS = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+
+    _CAMELOT_WETH_WBTC_LP_ADDRESS = "0x96059759C6492fb4e8a9777b65f307F2C811a34F"
+    _SUSHI_V2_WETH_WBTC_LP_ADDRESS = "0x515e252b2b5c22b4b2b6Df66c2eBeeA871AA4d69"
+
+    w3 = web3.Web3(web3.HTTPProvider("http://localhost:8547"))
+    set_web3(w3)
+
+    _weth = Erc20Token(_WETH_ADDRESS)
+
+    camelot_lp = CamelotLiquidityPool(address=_CAMELOT_WETH_WBTC_LP_ADDRESS)
+    sushi_lp = LiquidityPool(address=_SUSHI_V2_WETH_WBTC_LP_ADDRESS)
+
+    for arb in [
+        UniswapLpCycle(
+            id="test_arb",
+            input_token=_weth,
+            swap_pools=[camelot_lp, sushi_lp],
+            max_input=100 * 10**18,
+        ),
+    ]:
+        pickle.dumps(arb)
+
+    loop = asyncio.get_running_loop()
+
+    with concurrent.futures.ProcessPoolExecutor(
+        mp_context=multiprocessing.get_context("spawn"),
+    ) as executor:
+        _tasks = []
+        for _ in range(8):
+            _tasks.append(
+                loop.run_in_executor(
+                    executor,
+                    arb.calculate_arbitrage_return_best,
+                )
+            )
+
+        for task in asyncio.as_completed(_tasks):
+            try:
+                await task
+            except ArbitrageError:
+                pass
+
+    try:
+        arb.calculate_arbitrage_return_best()
+    except ArbitrageError:
+        pass
+
+
 async def test_process_pool_calculation() -> None:
     v3_pool_state_override = UniswapV3PoolState(
         pool=v3_lp,
@@ -2246,6 +2309,39 @@ async def test_process_pool_calculation() -> None:
 
         for task in asyncio.as_completed(calculation_futures):
             await task
+
+
+async def test_process_pool_calculation_with_return_best() -> None:
+    v3_pool_state_override = UniswapV3PoolState(
+        pool=v3_lp,
+        liquidity=1533143241938066251,
+        sqrt_price_x96=31881290961944305252140777263703426,
+        tick=258116,
+    )
+
+    overrides = [
+        (v3_lp, v3_pool_state_override),
+    ]
+
+    with concurrent.futures.ProcessPoolExecutor(
+        mp_context=multiprocessing.get_context("spawn"),
+    ) as executor:
+        arb.calculate_arbitrage_return_best(override_state=overrides)
+
+        loop = asyncio.get_running_loop()
+
+        _tasks = []
+        for _ in range(8):
+            _tasks.append(
+                loop.run_in_executor(
+                    executor,
+                    arb.calculate_arbitrage_return_best,
+                    overrides,
+                )
+            )
+
+        # for task in asyncio.as_completed(_tasks):
+        #     print(await task)
 
 
 def test_pre_calc_check() -> None:

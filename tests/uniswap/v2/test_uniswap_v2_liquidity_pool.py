@@ -207,6 +207,15 @@ def test_create_camelot_v2_pool(load_env: dict) -> None:
     )
 
 
+def test_pickle_camelot_v2_pool(load_env: dict) -> None:
+    CAMELOT_WETH_USDC_LP_ADDRESS = "0x84652bb2539513BAf36e225c930Fdd8eaa63CE27"
+    fork = AnvilFork(f"https://rpc.ankr.com/arbitrum/{load_env['ANKR_API_KEY']}")
+    degenbot.set_web3(fork.w3)
+    lp = CamelotLiquidityPool(address=CAMELOT_WETH_USDC_LP_ADDRESS)
+
+    pickle.dumps(lp)
+
+
 def test_create_empty_pool(
     wbtc_weth_liquiditypool: LiquidityPool, local_web3_ethereum_full: Web3
 ) -> None:
