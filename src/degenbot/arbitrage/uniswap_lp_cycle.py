@@ -140,7 +140,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
             "profit_token": self.input_token,
             "strategy": "cycle",
             "swap_amount": 0,
-            "swap_pools": self.swap_pools,
+            # "swap_pools": self.swap_pools,
             # "swap_pool_addresses": self.swap_pool_addresses,
             "swap_pool_amounts": [],
             # "swap_pool_tokens": self.swap_pool_tokens,
