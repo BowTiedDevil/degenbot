@@ -75,6 +75,11 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         self.id = id
         self.input_token = input_token
 
+        if max_input == 0:
+            warn(
+                "The maximum input is set to zero! Set maximum input to a positive real number, otherwise calculation methods will throw exceptions about lower and upper bounds."
+            )
+
         if max_input is None:
             warn("No maximum input provided, setting to 100 WETH")
             max_input = 100 * 10**18
