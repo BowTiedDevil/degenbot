@@ -34,19 +34,19 @@ def set_web3(w3: Web3):
     global _web3
     _web3 = w3
 
-
-if "brownie" in sys.modules:  # pragma: no cover
-    logger.info("Brownie detected. Degenbot will attempt to use its Web3 object...")
-    from brownie import web3 as brownie_web3  # type: ignore[import]
-
-    set_web3(brownie_web3)
-
-else:
-    logger.info("Attempting to use Web3 AutoProvider")
-    try:
-        set_web3(Web3())
-    except Exception as e:
-        logger.error(e)
-        logger.info(
-            "Could not establish Web3 connection using AutoProvider. Provide a Web3 instance to set_web3() before use"
-        )
+if not _web3:
+    if "brownie" in sys.modules:  # pragma: no cover
+        logger.info("Brownie detected. Degenbot will attempt to use its Web3 object...")
+        from brownie import web3 as brownie_web3  # type: ignore[import]
+    
+        set_web3(brownie_web3)
+    
+    else:
+        logger.info("Attempting to use Web3 AutoProvider")
+        try:
+            set_web3(Web3())
+        except Exception as e:
+            logger.error(e)
+            logger.info(
+                "Could not establish Web3 connection using AutoProvider. Provide a Web3 instance to set_web3() before use"
+            )
