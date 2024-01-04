@@ -785,7 +785,7 @@ class UniswapTransaction(TransactionHelper):
                 ]
             ]
         ]:
-            # ref: https://docs.uniswap.org/contracts/universal-router/technical-reference
+            # ref: https://github.com/Uniswap/universal-router/blob/main/contracts/libraries/Commands.sol
 
             UNIVERSAL_ROUTER_COMMAND_VALUES = {
                 0x00: "V3_SWAP_EXACT_IN",
@@ -801,14 +801,14 @@ class UniswapTransaction(TransactionHelper):
                 0x0A: "PERMIT2_PERMIT",
                 0x0B: "WRAP_ETH",
                 0x0C: "UNWRAP_WETH",
-                0x0D: "ERMIT2_TRANSFER_FROM_BATCH",
+                0x0D: "PERMIT2_TRANSFER_FROM_BATCH",
                 0x0E: "BALANCE_CHECK_ERC20",
                 0x0F: None,  # COMMAND_PLACEHOLDER
-                0x10: "SEAPORT",
-                0x11: "LOOKS_RARE_721",
+                0x10: "SEAPORT_V1_5",
+                0x11: "LOOKS_RARE_V2",
                 0x12: "NFTX",
                 0x13: "CRYPTOPUNKS",
-                0x14: "LOOKS_RARE_1155",
+                0x14: "LOOKS_RARE_1155",  # dropped in V1_3
                 0x15: "OWNER_CHECK_721",
                 0x16: "OWNER_CHECK_1155",
                 0x17: "SWEEP_ERC721",
@@ -820,34 +820,67 @@ class UniswapTransaction(TransactionHelper):
                 0x1D: "SWEEP_ERC1155",
                 0x1E: "ELEMENT_MARKET",
                 0x1F: None,  # COMMAND_PLACEHOLDER
-                0x20: "EXECUTE_SUB_PLAN",
-                0x21: "SEAPORT_V2",
+                0x20: "SEAPORT_V1_4",
+                0x21: "EXECUTE_SUB_PLAN",
+                0x22: "APPROVE_ERC20",
+                0x23: "WRAP_STETH",
+                0x24: "UNWRAP_STETH",
+                0x25: None,  # COMMAND_PLACEHOLDER
+                0x26: None,  # COMMAND_PLACEHOLDER
+                0x27: None,  # COMMAND_PLACEHOLDER
+                0x28: None,  # COMMAND_PLACEHOLDER
+                0x29: None,  # COMMAND_PLACEHOLDER
+                0x2A: None,  # COMMAND_PLACEHOLDER
+                0x2B: None,  # COMMAND_PLACEHOLDER
+                0x2C: None,  # COMMAND_PLACEHOLDER
+                0x2D: None,  # COMMAND_PLACEHOLDER
+                0x2E: None,  # COMMAND_PLACEHOLDER
+                0x2F: None,  # COMMAND_PLACEHOLDER
+                0x30: None,  # COMMAND_PLACEHOLDER
+                0x31: None,  # COMMAND_PLACEHOLDER
+                0x32: None,  # COMMAND_PLACEHOLDER
+                0x33: None,  # COMMAND_PLACEHOLDER
+                0x34: None,  # COMMAND_PLACEHOLDER
+                0x35: None,  # COMMAND_PLACEHOLDER
+                0x36: None,  # COMMAND_PLACEHOLDER
+                0x37: None,  # COMMAND_PLACEHOLDER
+                0x38: None,  # COMMAND_PLACEHOLDER
+                0x39: None,  # COMMAND_PLACEHOLDER
+                0x3A: None,  # COMMAND_PLACEHOLDER
+                0x3B: None,  # COMMAND_PLACEHOLDER
+                0x3C: None,  # COMMAND_PLACEHOLDER
+                0x3D: None,  # COMMAND_PLACEHOLDER
+                0x3E: None,  # COMMAND_PLACEHOLDER
+                0x3F: None,  # COMMAND_PLACEHOLDER
             }
 
             UNIMPLEMENTED_UNIVERAL_ROUTER_COMMANDS = {
-                "PERMIT2_TRANSFER_FROM",
-                "PERMIT2_PERMIT_BATCH",
-                "TRANSFER",
-                "PERMIT2_PERMIT",
-                "PERMIT2_TRANSFER_FROM_BATCH",
+                "APPROVE_ERC20",
                 "BALANCE_CHECK_ERC20",
-                "SEAPORT",
-                "LOOKS_RARE_721",
-                "NFTX",
                 "CRYPTOPUNKS",
-                "LOOKS_RARE_1155",
-                "OWNER_CHECK_721",
-                "OWNER_CHECK_1155",
-                "SWEEP_ERC721",
-                "X2Y2_721",
-                "SUDOSWAP",
-                "NFT20",
-                "X2Y2_1155",
-                "FOUNDATION",
-                "SWEEP_ERC1155",
                 "ELEMENT_MARKET",
                 "EXECUTE_SUB_PLAN",
+                "FOUNDATION",
+                "LOOKS_RARE_1155",
+                "LOOKS_RARE_721",
+                "NFT20",
+                "NFTX",
+                "OWNER_CHECK_1155",
+                "OWNER_CHECK_721",
+                "PERMIT2_PERMIT_BATCH",
+                "PERMIT2_PERMIT",
+                "PERMIT2_TRANSFER_FROM_BATCH",
+                "PERMIT2_TRANSFER_FROM",
                 "SEAPORT_V2",
+                "SEAPORT",
+                "SUDOSWAP",
+                "SWEEP_ERC1155",
+                "SWEEP_ERC721",
+                "TRANSFER",
+                "UNWRAP_STETH",
+                "WRAP_STETH",
+                "X2Y2_1155",
+                "X2Y2_721",
             }
 
             COMMAND_TYPE_MASK = 0x3F
