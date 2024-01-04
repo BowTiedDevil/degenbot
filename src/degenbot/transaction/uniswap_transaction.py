@@ -73,14 +73,21 @@ _ROUTERS: Dict[
             },
         },
         to_checksum_address("0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B"): {
-            "name": "Uniswap Universal Router (Old)",
+            "name": "Uniswap Universal Router",
             "factory_address": {
                 2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
                 3: to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
             },
         },
         to_checksum_address("0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"): {
-            "name": "Universal Universal Router (New) ",
+            "name": "Universal Universal Router (V1_2)",
+            "factory_address": {
+                2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
+                3: to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
+            },
+        },
+        to_checksum_address("0x3F6328669a86bef431Dc6F9201A5B90F7975a023"): {
+            "name": "Universal Universal Router (V1_3)",
             "factory_address": {
                 2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
                 3: to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
