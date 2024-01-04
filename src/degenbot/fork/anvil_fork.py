@@ -1,4 +1,5 @@
 import os
+import shutil
 import socket
 import subprocess
 from typing import Any, Dict, Optional
@@ -27,6 +28,9 @@ class AnvilFork:
         ipc_path: Optional[str] = None,
         mnemonic: str = "patient rude simple dog close planet oval animal hunt sketch suspect slim",
     ):
+        if shutil.which("anvil") is None:
+            raise Exception("Anvil is not installed or not accessible in the current path.")
+
         if not port:
             with socket.socket() as sock:
                 sock.bind(("", 0))
