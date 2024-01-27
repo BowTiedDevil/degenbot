@@ -35,7 +35,7 @@ class AnvilFork:
             with socket.socket() as sock:
                 sock.bind(("", 0))
                 _, port = sock.getsockname()
-            self.port = port
+        self.port = port
 
         if not ipc_path:
             ipc_path = f"/tmp/anvil-{self.port}.ipc"
