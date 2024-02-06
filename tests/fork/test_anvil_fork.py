@@ -2,6 +2,8 @@ import pytest
 import ujson
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.fork import AnvilFork
+from degenbot.config import set_web3
+import web3.middleware
 
 from ..conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_FULL_NODE_HTTP_URI
 
@@ -76,3 +78,14 @@ def test_rpc_methods(fork_mainnet_archive: AnvilFork):
         fork_mainnet_archive.set_balance(VITALIK_ADDRESS, MIN_UINT256 - 1)
     with pytest.raises(ValueError):
         fork_mainnet_archive.set_balance(VITALIK_ADDRESS, MAX_UINT256 + 1)
+
+
+def test_injecting_middleware():
+    fork = AnvilFork(
+        fork_url="https://rpc.ankr.com/polygon",
+        fork_block=53178474 - 1,
+        middlewares=[
+            (web3.middleware.geth_poa_middleware, 0),
+        ],
+    )
+    set_web3(fork.w3)
