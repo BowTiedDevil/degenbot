@@ -2,8 +2,8 @@ from typing import List, Optional
 
 from scipy.optimize import minimize_scalar  # type: ignore[import]
 
-from ..erc20_token import Erc20Token
 from ..baseclasses import ArbitrageHelper
+from ..erc20_token import Erc20Token
 from ..uniswap.v2_liquidity_pool import LiquidityPool, UniswapV2PoolState
 
 # TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
@@ -241,8 +241,8 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
                     token_out_quantity=x,
                     override_state=UniswapV2PoolState(
                         pool=self.borrow_pool,
-                        reserves_token0=override_future_borrow_pool_reserves_token0,
-                        reserves_token1=override_future_borrow_pool_reserves_token1,
+                        reserves_token0=reserves_token0,
+                        reserves_token1=reserves_token1,
                     ),
                 )
             ),
@@ -270,8 +270,8 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
             token_out_quantity=best_borrow,
             override_state=UniswapV2PoolState(
                 pool=self.borrow_pool,
-                reserves_token0=override_future_borrow_pool_reserves_token0,
-                reserves_token1=override_future_borrow_pool_reserves_token1,
+                reserves_token0=reserves_token0,
+                reserves_token1=reserves_token1,
             ),
         )
         best_profit = -int(opt.fun)

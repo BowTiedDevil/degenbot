@@ -1,5 +1,3 @@
-# TODO: compare blocks in bitmaps, ticks, etc.
-
 import dataclasses
 import warnings
 from bisect import bisect_left
@@ -25,8 +23,8 @@ from ..exceptions import (
 )
 from ..logging import logger
 from ..manager import AllPools, Erc20TokenHelperManager
+from ..subscription_mixins import Subscriber, SubscriptionMixin
 from .abi import UNISWAP_V3_POOL_ABI
-from .mixins import Subscriber, SubscriptionMixin
 from .v3_dataclasses import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
@@ -154,6 +152,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 address=token1_address,
                 silent=silent,
             )
+        self.tokens = [self.token0, self.token1]
 
         self._fee: int = fee if fee is not None else _w3_contract.functions.fee().call()
         self._tick_spacing = self._TICKSPACING_BY_FEE[self._fee]  # immutable
@@ -267,14 +266,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
             logger.info(f"• Tick: {self.tick}")
 
-    def __eq__(self, other) -> bool:
-        if issubclass(type(other), PoolHelper):
-            return self.address == other.address
-        elif isinstance(other, str):
-            return self.address.lower() == other.lower()
-        else:
-            raise NotImplementedError
-
     def __getstate__(self) -> dict:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
@@ -290,9 +281,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 for attr_name in self.__slots__
                 if attr_name not in dropped_attributes
             }
-
-    def __hash__(self):
-        return hash(self.address)
 
     def __repr__(self):  # pragma: no cover
         return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self._fee})"
@@ -773,8 +761,8 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
 
     def auto_update(
         self,
-        silent: bool = True,
         block_number: Optional[int] = None,
+        silent: bool = True,
     ) -> Tuple[bool, UniswapV3PoolState]:
         """
         Retrieves the current slot0 and liquidity values from the LP, stores any that have changed,
@@ -1065,15 +1053,14 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                     setattr(self, update_type, update_value)
                     updated_state = True
 
-            if update.liquidity_change:
+            if update.liquidity_change and update.liquidity_change[0] != 0:
                 (
                     liquidity_delta,
                     lower_tick,
                     upper_tick,
                 ) = update.liquidity_change
 
-                if liquidity_delta:
-                    updated_state = True
+                updated_state = True
 
                 # adjust in-range liquidity if current tick is within the position's range
                 if lower_tick <= self.tick < upper_tick and not force:
@@ -1295,7 +1282,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             return UniswapV3PoolSimulationResult(
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
-                current_state=self.state,
+                current_state=self.state.copy(),
                 future_state=UniswapV3PoolState(
                     pool=self,
                     liquidity=end_liquidity,

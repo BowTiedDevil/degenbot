@@ -247,7 +247,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
                         pool_overrides=pool_overrides,
                     )
                     - self.borrow_pool.calculate_tokens_in_from_tokens_out(
-                        token_in=self.repay_token,
+                        token_out=self.borrow_token,
                         token_out_quantity=x,
                         override_reserves_token0=borrow_pool_reserves_token0,
                         override_reserves_token1=borrow_pool_reserves_token1,
@@ -278,7 +278,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
             raise Exception
 
         best_repay = self.borrow_pool.calculate_tokens_in_from_tokens_out(
-            token_in=self.repay_token,
+            token_out=self.borrow_token,
             token_out_quantity=best_borrow,
             override_reserves_token0=borrow_pool_reserves_token0,
             override_reserves_token1=borrow_pool_reserves_token1,

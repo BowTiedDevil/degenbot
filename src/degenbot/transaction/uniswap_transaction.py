@@ -6,7 +6,7 @@ import pprint
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
 import eth_abi
-from eth_typing import ChecksumAddress
+from eth_typing import ChainId, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from web3 import Web3
 
@@ -40,7 +40,7 @@ _ROUTERS: Dict[
     int,  # chain ID
     Dict[ChecksumAddress, Dict[str, Any]],
 ] = {
-    1: {
+    ChainId.ETH: {
         to_checksum_address("0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"): {
             "name": "Sushiswap: Router",
             "factory_address": {
@@ -221,14 +221,14 @@ class UniswapTransaction(TransactionHelper):
             self.v2_pool_manager = UniswapV2LiquidityPoolManager(
                 factory_address=self.routers[router_address]["factory_address"][2]
             )
-        except Exception:
+        except KeyError:
             pass
 
         try:
             self.v3_pool_manager = UniswapV3LiquidityPoolManager(
                 factory_address=self.routers[router_address]["factory_address"][3]
             )
-        except Exception:
+        except KeyError:
             pass
 
         self.hash = tx_hash

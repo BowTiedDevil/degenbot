@@ -26,7 +26,7 @@ from ..baseclasses import ArbitrageHelper
 from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
-from ..uniswap.mixins import Publisher, Subscriber
+from ..subscription_mixins import Publisher, Subscriber
 from ..uniswap.v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from ..uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
 from ..uniswap.v3_dataclasses import UniswapV3PoolSimulationResult, UniswapV3PoolState
@@ -84,8 +84,6 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
             warn("No maximum input provided, setting to 100 WETH")
             max_input = 100 * 10**18
         self.max_input = max_input
-
-        self.gas_estimate: Optional[int] = None
 
         # self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
         # self.swap_pool_tokens = [
@@ -391,8 +389,8 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         state_overrides = self._sort_overrides(override_state)
 
         # A scalar value representing the net amount of 1 input token across
-        # the complete path (excluding fees).
-        # e.g. profit_factor > 1.0 indicates a profitable trade.
+        # the complete path (including fees).
+        # profit_factor > 1.0 indicates a profitable trade.
         profit_factor: float = 1.0
 
         # Check the pool state liquidity in the direction of the trade

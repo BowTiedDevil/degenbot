@@ -3,26 +3,46 @@ from typing import Dict
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
-MIN_INT16: int = -(2 ** (16 - 1))
-MAX_INT16: int = (2 ** (16 - 1)) - 1
 
-MIN_INT128: int = -(2 ** (128 - 1))
-MAX_INT128: int = (2 ** (128 - 1)) - 1
+def _min_uint(bits: int):
+    return 0
 
-MIN_INT256: int = -(2 ** (256 - 1))
-MAX_INT256: int = (2 ** (256 - 1)) - 1
 
-MIN_UINT8: int = 0
-MAX_UINT8: int = 2**8 - 1
+def _max_uint(bits: int):
+    return 2**bits - 1
 
-MIN_UINT128: int = 0
-MAX_UINT128: int = 2**128 - 1
 
-MIN_UINT160: int = 0
-MAX_UINT160: int = 2**160 - 1
+def _min_int(bits: int):
+    return -(2 ** (bits - 1))
 
-MIN_UINT256: int = 0
-MAX_UINT256: int = 2**256 - 1
+
+def _max_int(bits: int):
+    return (2 ** (bits - 1)) - 1
+
+
+MIN_INT16 = _min_int(16)
+MAX_INT16 = _max_int(16)
+
+MIN_INT24 = _min_int(24)
+MAX_INT24 = _max_int(24)
+
+MIN_INT128 = _min_int(128)
+MAX_INT128 = _max_int(128)
+
+MIN_INT256 = _min_int(256)
+MAX_INT256 = _max_int(256)
+
+MIN_UINT8 = _min_uint(8)
+MAX_UINT8 = _max_uint(8)
+
+MIN_UINT128 = _min_uint(128)
+MAX_UINT128 = _max_uint(128)
+
+MIN_UINT160 = _min_uint(160)
+MAX_UINT160 = _max_uint(160)
+
+MIN_UINT256 = _min_uint(256)
+MAX_UINT256 = _max_uint(256)
 
 ZERO_ADDRESS: ChecksumAddress = to_checksum_address("0x0000000000000000000000000000000000000000")
 

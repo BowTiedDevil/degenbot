@@ -1,5 +1,29 @@
 from typing import Optional
 
+from web3.types import BlockIdentifier
+
+from . import config
+from .constants import MAX_UINT256
+
+
+def get_number_for_block_identifier(identifier: Optional[BlockIdentifier]) -> int:
+    match identifier:
+        case None:
+            return config.get_web3().eth.block_number
+        case int() if 1 <= identifier <= MAX_UINT256:
+            return identifier
+        case bytes():
+            return int.from_bytes(identifier)
+        case str() if isinstance(identifier, str) and identifier[:2] == "0x" and len(
+            identifier
+        ) == 66:
+            return int(identifier, 16)
+        case "latest" | "earliest" | "pending" | "safe" | "finalized":
+            # These tags vary with each new block, so translate to a fixed block number
+            return config.get_web3().eth.get_block(identifier)["number"]
+        case _:
+            raise ValueError(f"Invalid block identifier {identifier!r}")
+
 
 def next_base_fee(
     parent_base_fee: int,

@@ -1,47 +1,46 @@
-from degenbot.fork import AnvilFork
 import pytest
 import ujson
+from degenbot.constants import MAX_UINT256
+from degenbot.fork import AnvilFork
+
+from ..conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_FULL_NODE_HTTP_URI
 
 VITALIK_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 
-def test_anvil_forks(load_env):
-    ANKR_URL = f"https://rpc.ankr.com/eth/{load_env['ANKR_API_KEY']}"
-
+def test_anvil_forks():
     # Basic constructor
-    AnvilFork(fork_url=ANKR_URL)
+    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
 
     # Test optional arguments
-    AnvilFork(fork_url=ANKR_URL, chain_id=1)
-    AnvilFork(fork_url=ANKR_URL, fork_block=18_000_000)
-    AnvilFork(fork_url=ANKR_URL, base_fee=10 * 10**9)
+    AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI, fork_block=18_000_000)
+    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, chain_id=1)
+    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, base_fee=10 * 10**9)
 
 
-def test_rpc_methods(load_env):
-    ANKR_URL = f"https://rpc.ankr.com/eth/{load_env['ANKR_API_KEY']}"
-
-    fork = AnvilFork(fork_url=ANKR_URL)
-
-    fork.set_next_base_fee(11 * 10**9)
-    with pytest.raises(Exception, match="Error setting next block base fee!"):
-        fork.set_next_base_fee(-1)
+def test_rpc_methods(fork_mainnet_archive: AnvilFork):
+    with pytest.raises(ValueError, match="Fee outside valid range"):
+        fork_mainnet_archive.set_next_base_fee(-1)
+    with pytest.raises(ValueError, match="Fee outside valid range"):
+        fork_mainnet_archive.set_next_base_fee(MAX_UINT256 + 1)
+    fork_mainnet_archive.set_next_base_fee(11 * 10**9)
 
     # Set several snapshot IDs and return to them
     snapshot_ids = []
     for _ in range(10):
-        snapshot_ids.append(fork.set_snapshot())
+        snapshot_ids.append(fork_mainnet_archive.set_snapshot())
     for id in snapshot_ids:
-        assert fork.return_to_snapshot(id) is True
+        assert fork_mainnet_archive.return_to_snapshot(id) is True
     # No snapshot ID with this value
-    assert fork.return_to_snapshot(100) is False
+    assert fork_mainnet_archive.return_to_snapshot(100) is False
 
     # Negative IDs are not allowed
-    with pytest.raises(Exception, match="Error reverting to previous snapshot!"):
-        fork.return_to_snapshot(-1)
+    with pytest.raises(ValueError, match="ID cannot be negative"):
+        fork_mainnet_archive.return_to_snapshot(-1)
 
     # Generate a 1 wei WETH deposit transaction from Vitalik.eth
-    weth_contract = fork.w3.eth.contract(
+    weth_contract = fork_mainnet_archive.w3.eth.contract(
         address=WETH_ADDRESS,
         abi=ujson.loads(
             """
@@ -55,11 +54,21 @@ def test_rpc_methods(load_env):
             "value": 1,
         },
     )
-    access_list = fork.create_access_list(transaction=deposit_transaction)
+    access_list = fork_mainnet_archive.create_access_list(transaction=deposit_transaction)
     assert isinstance(access_list, list)
 
-    fork.reset(fork_url=ANKR_URL, block_number=18_500_000)
+    fork_mainnet_archive.reset(block_number=18_500_000)
     with pytest.raises(Exception):
-        fork.reset(
+        fork_mainnet_archive.reset(
             fork_url="http://google.com",  # <--- Bad RPC URI
         )
+
+    # switch between two different endpoints
+    for endpoint in (ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_FULL_NODE_HTTP_URI):
+        fork_mainnet_archive.reset(fork_url=endpoint)
+
+    current_balance = fork_mainnet_archive.w3.eth.get_balance(VITALIK_ADDRESS)
+    fork_mainnet_archive.set_balance(VITALIK_ADDRESS, 0)
+    assert fork_mainnet_archive.w3.eth.get_balance(VITALIK_ADDRESS) == 0
+    fork_mainnet_archive.set_balance(VITALIK_ADDRESS, current_balance)
+    assert fork_mainnet_archive.w3.eth.get_balance(VITALIK_ADDRESS) == current_balance

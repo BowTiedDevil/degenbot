@@ -59,6 +59,16 @@ class UniswapV3PoolState:
     tick_bitmap: Optional[Dict[int, UniswapV3BitmapAtWord]] = dataclasses.field(default=None)
     tick_data: Optional[Dict[int, UniswapV3LiquidityAtTick]] = dataclasses.field(default=None)
 
+    def copy(self):
+        return UniswapV3PoolState(
+            pool=self.pool,
+            liquidity=self.liquidity,
+            sqrt_price_x96=self.sqrt_price_x96,
+            tick=self.tick,
+            tick_bitmap=self.tick_bitmap.copy() if self.tick_bitmap is not None else None,
+            tick_data=self.tick_data.copy() if self.tick_data is not None else None,
+        )
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV3PoolSimulationResult:

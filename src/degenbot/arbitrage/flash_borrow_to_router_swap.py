@@ -156,7 +156,7 @@ class FlashBorrowToRouterSwap(ArbitrageHelper):
                     token_in_quantity=x,
                 )
                 - self.borrow_pool.calculate_tokens_in_from_tokens_out(
-                    token_in=self.repay_token,
+                    token_out=self.borrow_token,
                     token_out_quantity=x,
                 )
             ),

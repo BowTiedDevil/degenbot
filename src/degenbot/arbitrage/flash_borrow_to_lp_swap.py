@@ -5,9 +5,10 @@ from eth_utils.address import to_checksum_address
 from scipy import optimize  # type: ignore[import]
 
 from .. import config
-from ..logging import logger
-from ..erc20_token import Erc20Token
 from ..baseclasses import ArbitrageHelper
+from ..config import get_web3
+from ..erc20_token import Erc20Token
+from ..logging import logger
 from ..uniswap.managers import UniswapV2LiquidityPoolManager
 from ..uniswap.v2_functions import get_v2_pools_from_token_path
 from ..uniswap.v2_liquidity_pool import LiquidityPool
@@ -168,7 +169,7 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
                     token_in_quantity=x,
                 )
                 - self.borrow_pool.calculate_tokens_in_from_tokens_out(
-                    token_in=self.repay_token,
+                    token_out=self.borrow_token,
                     token_out_quantity=x,
                 )
             ),
@@ -188,7 +189,7 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
             raise Exception
 
         best_repay = self.borrow_pool.calculate_tokens_in_from_tokens_out(
-            token_in=self.repay_token,
+            token_out=self.borrow_token,
             token_out_quantity=best_borrow,
         )
         best_profit = -int(opt.fun)

@@ -15,6 +15,17 @@ class ArbitrageCalculationResult:
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
+class CurveStableSwapPoolSwapAmounts:
+    token_in: Erc20Token
+    token_in_index: int
+    token_out: Erc20Token
+    token_out_index: int
+    amount_in: int
+    min_amount_out: int
+    underlying: bool
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
 class UniswapPoolSwapVector:
     token_in: Erc20Token
     token_out: Erc20Token
@@ -31,3 +42,11 @@ class UniswapV3PoolSwapAmounts:
     amount_specified: int
     zero_for_one: bool
     sqrt_price_limit_x96: int
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class CurveStableSwapPoolVector:
+    token_in: Erc20Token
+    token_out: Erc20Token
+    token_in_index: int
+    token_out_index: int

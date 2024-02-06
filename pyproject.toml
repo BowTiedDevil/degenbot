@@ -43,6 +43,11 @@ build-backend = "setuptools.build_meta"
 
 [tool.mypy]
 check_untyped_defs = true
+disable_error_code = "method-assign"
+
+[[tool.mypy.overrides]]
+module='eth_abi.*'
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
@@ -50,7 +55,8 @@ indent-width = 4
 
 [tool.coverage.run]
 omit = [
-    'conftest.py'
+    'conftest.py',
+    'tests/*'
 ]
 
 [tool.coverage.report]

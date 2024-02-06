@@ -1,10 +1,11 @@
 import asyncio
 import concurrent.futures
 import multiprocessing
+import pickle
+import time
 from fractions import Fraction
 from threading import Lock
 from typing import Sequence, Tuple, Union
-import pickle
 
 import pytest
 from degenbot.arbitrage import ArbitrageCalculationResult, UniswapLpCycle
@@ -12,22 +13,21 @@ from degenbot.arbitrage.arbitrage_dataclasses import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
-import web3
 from degenbot.config import set_web3
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError
+from degenbot.fork import AnvilFork
 from degenbot.uniswap import V3LiquidityPool
 from degenbot.uniswap.v2_liquidity_pool import (
+    CamelotLiquidityPool,
     LiquidityPool,
     UniswapV2PoolState,
-    CamelotLiquidityPool,
 )
 from degenbot.uniswap.v3_dataclasses import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
 )
-
 from eth_utils import to_checksum_address
 
 
@@ -61,7 +61,6 @@ weth.address = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 weth.decimals = 18
 weth.name = "Wrapped Ether"
 weth.symbol = "WETH"
-
 
 v2_lp = MockLiquidityPool()
 v2_lp.name = "WBTC-WETH (V2, 0.30%)"
@@ -2203,17 +2202,19 @@ def test_arbitrage_with_overrides() -> None:
     )
 
 
-async def test_pickle_uniswap_lp_cycle() -> None:
-    # test must be done on Arbitrum
-
-    _WETH_ADDRESS = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"
-    _WBTC_ADDRESS = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+async def test_pickle_uniswap_lp_cycle(load_env: dict) -> None:
+    # test is specific to Arbitrum, so use appropriate token addresses
+    _WBTC_ADDRESS = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"
+    _WETH_ADDRESS = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
 
     _CAMELOT_WETH_WBTC_LP_ADDRESS = "0x96059759C6492fb4e8a9777b65f307F2C811a34F"
     _SUSHI_V2_WETH_WBTC_LP_ADDRESS = "0x515e252b2b5c22b4b2b6Df66c2eBeeA871AA4d69"
 
-    w3 = web3.Web3(web3.HTTPProvider("http://localhost:8547"))
-    set_web3(w3)
+    fork = AnvilFork(f"https://rpc.ankr.com/arbitrum/{load_env['ANKR_API_KEY']}")
+    set_web3(fork.w3)
+
+    # w3 = web3.Web3(web3.HTTPProvider("http://localhost:8547"))
+    # set_web3(w3)
 
     _weth = Erc20Token(_WETH_ADDRESS)
 
@@ -2257,6 +2258,8 @@ async def test_pickle_uniswap_lp_cycle() -> None:
 
 
 async def test_process_pool_calculation() -> None:
+    start = time.perf_counter()
+
     v3_pool_state_override = UniswapV3PoolState(
         pool=v3_lp,
         liquidity=1533143241938066251,
@@ -2274,12 +2277,12 @@ async def test_process_pool_calculation() -> None:
         with pytest.raises(ArbitrageError):
             await arb.calculate_with_pool(executor=executor)
 
-        assert await (
-            await arb.calculate_with_pool(
-                executor=executor,
-                override_state=overrides,
-            )
-        ) == ArbitrageCalculationResult(
+        future = await arb.calculate_with_pool(
+            executor=executor,
+            override_state=overrides,
+        )
+        result = await future
+        assert result == ArbitrageCalculationResult(
             id="test_arb",
             input_token=weth,
             profit_token=weth,
@@ -2297,9 +2300,11 @@ async def test_process_pool_calculation() -> None:
             ],
         )
 
-        # Test with a saturated process pool
+        # Saturate the process pool executor with multiple calculations.
+        # Should reveal cases of excessive latency.
+        _NUM_FUTURES = 512
         calculation_futures = []
-        for _ in range(512):
+        for _ in range(_NUM_FUTURES):
             calculation_futures.append(
                 await arb.calculate_with_pool(
                     executor=executor,
@@ -2307,8 +2312,11 @@ async def test_process_pool_calculation() -> None:
                 )
             )
 
-        for task in asyncio.as_completed(calculation_futures):
+        assert len(calculation_futures) == _NUM_FUTURES
+        for i, task in enumerate(asyncio.as_completed(calculation_futures)):
             await task
+            print(f"Completed process_pool calc #{i}, {time.perf_counter()-start:.2f}s since start")
+        print(f"Completed {_NUM_FUTURES} calculations in {time.perf_counter() - start:.1f}s")
 
 
 async def test_process_pool_calculation_with_return_best() -> None:
@@ -2339,9 +2347,6 @@ async def test_process_pool_calculation_with_return_best() -> None:
                     overrides,
                 )
             )
-
-        # for task in asyncio.as_completed(_tasks):
-        #     print(await task)
 
 
 def test_pre_calc_check() -> None:

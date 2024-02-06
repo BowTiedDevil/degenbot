@@ -2073,15 +2073,15 @@ def mocked_wbtc_weth_v3liquiditypool():
 
     lp._update_pool_state()
     lp._pool_state_archive = {
-        0: UniswapV3PoolState(lp, 0, 0, 0),
+        0: UniswapV3PoolState(pool=lp, liquidity=0, sqrt_price_x96=0, tick=0),
         lp._update_block: lp.state,
     }
 
     return lp
 
 
-def test_creation(local_web3_ethereum_full) -> None:
-    set_web3(local_web3_ethereum_full)
+def test_creation(ethereum_full_node_web3) -> None:
+    set_web3(ethereum_full_node_web3)
     V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
     V3LiquidityPool(
         address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
@@ -2184,7 +2184,7 @@ def test_reorg(mocked_wbtc_weth_v3liquiditypool) -> None:
 
     # Unwind all states
     lp.restore_state_before_block(1)
-    assert lp.state == UniswapV3PoolState(lp, 0, 0, 0)
+    assert lp.state == UniswapV3PoolState(pool=lp, liquidity=0, sqrt_price_x96=0, tick=0)
 
 
 def test_tick_bitmap_equality() -> None:
@@ -2603,7 +2603,7 @@ def test_external_update(mocked_wbtc_weth_v3liquiditypool) -> None:
     assert lp.liquidity == 69_420_000 + 1
 
 
-def test_auto_update(local_web3_ethereum_full) -> None:
-    set_web3(local_web3_ethereum_full)
+def test_auto_update(ethereum_full_node_web3) -> None:
+    set_web3(ethereum_full_node_web3)
     lp = V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
     lp.auto_update()

@@ -1,8 +1,12 @@
 # pragma: no cover
 
-import pytest
+import degenbot
 import dotenv
+import pytest
 import web3
+
+ETHEREUM_FULL_NODE_HTTP_URI = "http://localhost:8545"
+ETHEREUM_ARCHIVE_NODE_HTTP_URI = "http://localhost:8543"
 
 
 @pytest.fixture(scope="session")
@@ -11,35 +15,50 @@ def load_env() -> dict:
     return dotenv.dotenv_values(env_file)
 
 
-# Set up a web3 connection to Ankr endpoint
-@pytest.fixture(scope="session")
-def ankr_archive_web3(load_env) -> web3.Web3:
-    try:
-        ANKR_URL = f"https://rpc.ankr.com/eth/{load_env['ANKR_API_KEY']}"
-    except KeyError:
-        ANKR_URL = "https://rpc.ankr.com/eth/"
+env_file = dotenv.find_dotenv("tests.env")
+env_values = dotenv.dotenv_values(env_file)
+ARBITRUM_ARCHIVE_NODE_HTTP_URI = f"https://rpc.ankr.com/arbitrum/{env_values['ANKR_API_KEY']}"
+# ETHEREUM_ARCHIVE_NODE_HTTP_URI = f"https://rpc.ankr.com/eth/{env_values['ANKR_API_KEY']}"
+# ETHEREUM_ARCHIVE_NODE_HTTP_URI = "https://eth.merkle.io"
 
-    w3 = web3.Web3(web3.HTTPProvider(ANKR_URL))
+
+# Set up a web3 connection to an Ethereum archive node
+@pytest.fixture(scope="session")
+def ethereum_archive_node_web3() -> web3.Web3:
+    w3 = web3.Web3(web3.HTTPProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI))
     return w3
 
 
-# Set up a web3 connection to local geth node
+# Set up a web3 connection to an Ethereum full node
 @pytest.fixture(scope="session")
-def local_web3_ethereum_full() -> web3.Web3:
-    w3 = web3.Web3(web3.HTTPProvider("http://localhost:8545"))
+def ethereum_full_node_web3() -> web3.Web3:
+    w3 = web3.Web3(web3.HTTPProvider(ETHEREUM_FULL_NODE_HTTP_URI))
     return w3
 
 
-# Set up a web3 connection to local reth node
-@pytest.fixture(scope="session")
-def local_web3_ethereum_archive() -> web3.Web3:
-    w3 = web3.Web3(web3.HTTPProvider("http://localhost:8543"))
-    return w3
+# Before every test, reset the degenbot web3 object to use a default node
+@pytest.fixture(scope="function", autouse=True)
+def initialize_degenbot_with_default_node(ethereum_full_node_web3):
+    degenbot.set_web3(ethereum_full_node_web3)
 
 
-# Provide a default Web3 object for degenbot
-@pytest.fixture(scope="session", autouse=True)
-def setup_degenbot_web3(local_web3_ethereum_full: web3.Web3) -> None:
-    import degenbot
+@pytest.fixture(scope="function", autouse=True)
+def clear_degenbot_state() -> None:
+    # Clear shared state dictionaries prior to each new test (activated on every test by autouse=True).
+    # These dictionaries store module-level state, which will corrupt sequential tests if not reset
+    degenbot.registry.all_pools._all_pools.clear()
+    degenbot.registry.all_tokens._all_tokens.clear()
+    degenbot.uniswap.managers.UniswapLiquidityPoolManager._state.clear()
+    degenbot.uniswap.V3LiquidityPool._lens_contracts.clear()
 
-    degenbot.set_web3(local_web3_ethereum_full)
+
+@pytest.fixture(scope="function")
+def fork_mainnet_archive() -> degenbot.AnvilFork:
+    fork = degenbot.AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+    return fork
+
+
+@pytest.fixture(scope="function")
+def fork_mainnet() -> degenbot.AnvilFork:
+    fork = degenbot.AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
+    return fork

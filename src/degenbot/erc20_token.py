@@ -1,16 +1,19 @@
 from typing import Any, Dict, Optional, Tuple
 from warnings import warn
 
+import eth_abi
 import ujson
-from eth_typing import ChecksumAddress
+from eth_typing import AnyAddress, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from web3 import Web3
 from web3.contract import Contract
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError
+from web3.types import BlockIdentifier
 
 from . import config
 from .baseclasses import TokenHelper
 from .chainlink import ChainlinkPriceContract
+from .functions import get_number_for_block_identifier
 from .logging import logger
 from .registry import AllTokens
 
@@ -50,6 +53,9 @@ class Erc20Token(TokenHelper):
     """
 
     __slots__: Tuple[str, ...] = (
+        "_cached_approval",
+        "_cached_balance",
+        "_cached_total_supply",
         "_price_oracle",
         "abi",
         "address",
@@ -203,6 +209,10 @@ class Erc20Token(TokenHelper):
 
         AllTokens(chain_id=_w3.eth.chain_id)[self.address] = self
 
+        self._cached_approval: Dict[Tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
+        self._cached_balance: Dict[Tuple[int, ChecksumAddress], int] = {}
+        self._cached_total_supply: Dict[int, int] = {}
+
         if not silent:
             logger.info(f"• {self.symbol} ({self.name})")
 
@@ -248,6 +258,9 @@ class Erc20Token(TokenHelper):
         else:
             return NotImplemented
 
+    def __hash__(self):
+        return hash(self.address)
+
     def __str__(self):
         return self.symbol
 
@@ -258,57 +271,154 @@ class Erc20Token(TokenHelper):
             abi=self.abi,
         )
 
-    def get_approval(self, owner: str, spender: str) -> int:
-        return self._w3_contract.functions.allowance(
+    def _get_approval_cachable(
+        self,
+        owner: ChecksumAddress,
+        spender: ChecksumAddress,
+        block_number: int,
+    ) -> int:
+        try:
+            return self._cached_approval[block_number, owner, spender]
+        except KeyError:
+            pass
+
+        approval, *_ = eth_abi.decode(
+            types=["uint256"],
+            data=config.get_web3().eth.call(
+                transaction={
+                    "to": self.address,
+                    "data": Web3.keccak(text="allowance(address,address)")[:4]
+                    + eth_abi.encode(types=["address", "address"], args=[owner, spender]),
+                },
+                block_identifier=block_number,
+            ),
+        )
+        self._cached_approval[block_number, owner, spender] = approval
+        return approval
+
+    def get_approval(
+        self,
+        owner: AnyAddress,
+        spender: AnyAddress,
+        block_identifier: Optional[BlockIdentifier] = None,
+    ) -> int:
+        """
+        Retrieve the amount that can be spent by `spender` on behalf of `owner`.
+        """
+
+        return self._get_approval_cachable(
             to_checksum_address(owner),
             to_checksum_address(spender),
-        ).call()
+            block_number=get_number_for_block_identifier(block_identifier),
+        )
 
-    # def set_approval(self, owner: str, spender: str, value: Union[int, str]):
-    #     """
-    #     Sets the approval value for an external contract to transfer tokens
-    #     quantites up to the specified amount from this address. For unlimited
-    #     approval, set value to the string "UNLIMITED".
-    #     """
+    def _get_balance_cachable(
+        self,
+        address: ChecksumAddress,
+        block_number: int,
+    ):
+        try:
+            return self._cached_balance[block_number, address]
+        except KeyError:
+            pass
 
-    #     if isinstance(value, int):
-    #         if not (MIN_UINT256 <= value <= MAX_UINT256):
-    #             raise ValueError(
-    #                 f"Provide an integer value between 0 and 2**256-1"
-    #             )
-    #     elif isinstance(value, str):
-    #         if value != "UNLIMITED":
-    #             raise ValueError("Value must be 'UNLIMITED' or an integer")
-    #         else:
-    #             print("Setting unlimited approval!")
-    #             value = MAX_UINT256
-    #     else:
-    #         raise TypeError(
-    #             f"Value must be an integer or string! Was {type(value)}"
-    #         )
+        balance, *_ = eth_abi.decode(
+            types=["uint256"],
+            data=config.get_web3().eth.call(
+                transaction={
+                    "to": self.address,
+                    "data": Web3.keccak(text="balanceOf(address)")[:4]
+                    + eth_abi.encode(types=["address"], args=[address]),
+                },
+                block_identifier=block_number,
+            ),
+        )
+        self._cached_balance[block_number, address] = balance
+        return balance
 
-    #     try:
-    #         self._w3_contract.functions["approve"](
-    #             to_checksum_address(owner),
-    #             to_checksum_address(spender),
-    #             value,
-    #         )
-    #         # self._brownie_contract.approve(
-    #         #     external_address,
-    #         #     value,
-    #         #     {"from": self._user.address},
-    #         # )
-    #     except Exception as e:
-    #         print(f"Exception in token_approve: {e}")
-    #         raise
+    def get_balance(
+        self,
+        address: AnyAddress,
+        block_identifier: Optional[BlockIdentifier] = None,
+    ) -> int:
+        """
+        Retrieve the ERC-20 balance for the given address.
+        """
+        return self._get_balance_cachable(
+            address=to_checksum_address(address),
+            block_number=get_number_for_block_identifier(block_identifier),
+        )
 
-    def get_balance(self, address: str) -> int:
-        return self._w3_contract.functions.balanceOf(to_checksum_address(address)).call()
+    def _get_total_supply_cachable(self, block_number: int) -> int:
+        try:
+            return self._cached_total_supply[block_number]
+        except KeyError:
+            pass
 
-    # def update_balance(self):
-    #     self.balance = self.get_balance(self._user)
-    #     self.normalized_balance = self.balance / (10**self.decimals)
+        total_supply, *_ = eth_abi.decode(
+            types=["uint256"],
+            data=config.get_web3().eth.call(
+                transaction={"to": self.address, "data": Web3.keccak(text="totalSupply()")[:4]},
+                block_identifier=block_number,
+            ),
+        )
+        self._cached_total_supply[block_number] = total_supply
+        return total_supply
+
+    def get_total_supply(self, block_identifier: Optional[BlockIdentifier] = None) -> int:
+        """
+        Retrieve the total supply for this token.
+        """
+
+        if block_identifier is None:
+            block_identifier = config.get_web3().eth.block_number
+
+        return self._get_total_supply_cachable(
+            block_number=get_number_for_block_identifier(block_identifier)
+        )
 
     def update_price(self):
         self._price_oracle.update_price()
         self.price = self._price_oracle.price
+
+
+class EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE(Erc20Token):
+    """
+    An adapter for pools using the 'all Es' placeholder address to represent native Ether.
+    """
+
+    def __init__(
+        self,
+    ):
+        self.address = to_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
+        self.symbol = "ETH"
+        self.name = "Ether Placeholder"
+        self.decimals = 18
+        self._cached_balance: Dict[Tuple[int, ChecksumAddress], int] = {}
+
+    def _get_balance_cachable(
+        self,
+        address: ChecksumAddress,
+        block_number: int,
+    ) -> int:
+        try:
+            return self._cached_balance[block_number, address]
+        except KeyError:
+            pass
+
+        balance = config.get_web3().eth.get_balance(
+            address,
+            block_identifier=block_number,
+        )
+        self._cached_balance[block_number, address] = balance
+        return balance
+
+    def get_balance(
+        self,
+        address: AnyAddress,
+        block_identifier: Optional[BlockIdentifier] = None,
+    ) -> int:
+        return self._get_balance_cachable(
+            address=to_checksum_address(address),
+            block_number=get_number_for_block_identifier(block_identifier),
+        )

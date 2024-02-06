@@ -20,9 +20,14 @@ from ..exceptions import (
 )
 from ..logging import logger
 from ..manager import AllPools, Erc20TokenHelperManager
+from ..subscription_mixins import Subscriber, SubscriptionMixin
 from .abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
-from .mixins import CamelotStablePoolMixin, Subscriber, SubscriptionMixin
-from .v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
+from .mixins import CamelotStablePoolMixin
+from .v2_dataclasses import (
+    UniswapV2PoolSimulationResult,
+    UniswapV2PoolState,
+    UniswapV2PoolExternalUpdate,
+)
 from .v2_functions import generate_v2_pool_address
 
 
@@ -56,6 +61,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         "state",
         "token0",
         "token1",
+        "tokens",
         # "token0_max_swap",
         # "token1_max_swap",
         "update_block",
@@ -200,6 +206,8 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 silent=silent,
             )
 
+        self.tokens = [self.token0, self.token1]
+
         if factory_address is not None and factory_init_hash is not None:
             computed_pool_address = generate_v2_pool_address(
                 token_addresses=[self.token0.address, self.token1.address],
@@ -266,14 +274,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
             logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
 
-    def __eq__(self, other) -> bool:
-        if issubclass(type(other), PoolHelper):
-            return self.address == other.address
-        elif isinstance(other, str):
-            return self.address.lower() == other.lower()
-        else:
-            raise NotImplementedError
-
     def __getstate__(self) -> dict:
         # Remove objects that either cannot be pickled or are unnecessary to perform
         # the calculation
@@ -290,18 +290,12 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 if attr_name not in dropped_attributes
             }
 
-    def __hash__(self):
-        return hash(self.address)
-
     def __repr__(self):  # pragma: no cover
         return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1})"
 
     def __setstate__(self, state: Dict):
         for attr_name, attr_value in state.items():
             setattr(self, attr_name, attr_value)
-
-    def __str__(self):
-        return self.name
 
     @property
     def _w3_contract(self) -> Contract:
@@ -616,7 +610,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         return UniswapV2PoolSimulationResult(
             amount0_delta=added_reserves_token0,
             amount1_delta=added_reserves_token1,
-            current_state=self.state,
+            current_state=self.state.copy(),
             future_state=UniswapV2PoolState(
                 pool=self,
                 reserves_token0=reserves_token0 + added_reserves_token0,
@@ -639,7 +633,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         return UniswapV2PoolSimulationResult(
             amount0_delta=-removed_reserves_token0,
             amount1_delta=-removed_reserves_token1,
-            current_state=self.state,
+            current_state=self.state.copy(),
             future_state=UniswapV2PoolState(
                 pool=self,
                 reserves_token0=reserves_token0 - removed_reserves_token0,
@@ -713,12 +707,39 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         return UniswapV2PoolSimulationResult(
             amount0_delta=token0_delta,
             amount1_delta=token1_delta,
-            current_state=self.state,
+            current_state=self.state.copy(),
             future_state=UniswapV2PoolState(
                 pool=self,
                 reserves_token0=self.reserves_token0 + token0_delta,
                 reserves_token1=self.reserves_token1 + token1_delta,
             ),
+        )
+
+    def auto_update(
+        self,
+        block_number: Optional[int] = None,
+        silent: bool = True,
+    ) -> Tuple[bool, UniswapV2PoolState]:
+        found_updates: bool = self.update_reserves(
+            silent=silent,
+            print_ratios=not silent,
+            print_reserves=not silent,
+            update_block=block_number,
+            override_update_method="polling",
+        )
+        return found_updates, self.state
+
+    def external_update(
+        self,
+        update: UniswapV2PoolExternalUpdate,
+        silent: bool = True,
+    ) -> bool:
+        return self.update_reserves(
+            silent=silent,
+            external_token0_reserves=update.reserves_token0,
+            external_token1_reserves=update.reserves_token1,
+            print_reserves=not silent,
+            print_ratios=not silent,
         )
 
     def update_reserves(

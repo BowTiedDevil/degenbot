@@ -5,7 +5,7 @@ from eth_utils.address import to_checksum_address
 
 from .. import config
 from ..baseclasses import HelperManager
-from ..erc20_token import Erc20Token
+from ..erc20_token import Erc20Token, EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
 from ..exceptions import ManagerError
 
 
@@ -46,6 +46,10 @@ class Erc20TokenHelperManager(HelperManager):
         """
 
         address = to_checksum_address(address)
+
+        if address == "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE":
+            # TODO: find a more elegant way to handle this, it's so dumb
+            return EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE()
 
         if token_helper := self._erc20tokens.get(address):
             return token_helper

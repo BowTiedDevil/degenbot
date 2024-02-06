@@ -78,12 +78,18 @@ class ZeroLiquidityError(ArbitrageError):
     """
 
 
-# 2nd level exceptions for Uniswap Liquidity Pool classes
+# 2nd level exceptions for Liquidity Pool classes
 class BitmapWordUnavailableError(LiquidityPoolError):
     """
     Thrown by the ported V3 swap function when the bitmap word is not available.
     This should be caught by the helper to perform automatic fetching, and should
     not be raised to the calling function
+    """
+
+
+class BrokenPool(LiquidityPoolError):
+    """
+    Thrown when an pool cannot or should not be built.
     """
 
 
