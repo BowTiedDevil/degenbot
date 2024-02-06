@@ -1,6 +1,6 @@
 import pytest
 import ujson
-from degenbot.constants import MAX_UINT256
+from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.fork import AnvilFork
 
 from ..conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_FULL_NODE_HTTP_URI
@@ -67,8 +67,12 @@ def test_rpc_methods(fork_mainnet_archive: AnvilFork):
     for endpoint in (ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_FULL_NODE_HTTP_URI):
         fork_mainnet_archive.reset(fork_url=endpoint)
 
-    current_balance = fork_mainnet_archive.w3.eth.get_balance(VITALIK_ADDRESS)
-    fork_mainnet_archive.set_balance(VITALIK_ADDRESS, 0)
-    assert fork_mainnet_archive.w3.eth.get_balance(VITALIK_ADDRESS) == 0
-    fork_mainnet_archive.set_balance(VITALIK_ADDRESS, current_balance)
-    assert fork_mainnet_archive.w3.eth.get_balance(VITALIK_ADDRESS) == current_balance
+    for balance in [MIN_UINT256, MAX_UINT256]:
+        fork_mainnet_archive.set_balance(VITALIK_ADDRESS, balance)
+        assert fork_mainnet_archive.w3.eth.get_balance(VITALIK_ADDRESS) == balance
+
+    # Balances outside of uint256 should be rejected
+    with pytest.raises(ValueError):
+        fork_mainnet_archive.set_balance(VITALIK_ADDRESS, MIN_UINT256 - 1)
+    with pytest.raises(ValueError):
+        fork_mainnet_archive.set_balance(VITALIK_ADDRESS, MAX_UINT256 + 1)

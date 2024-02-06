@@ -181,8 +181,8 @@ class AnvilFork:
         return self._get_response()
 
     def set_balance(self, address: str, balance: int) -> None:
-        if balance < 0:
-            raise ValueError("Balance must be >= 0")
+        if not (0 <= balance <= MAX_UINT256):
+            raise ValueError("Invalid balance, must be within range: 0 <= balance <= 2**256 - 1")
         self._send_request(
             method="anvil_setBalance",
             params=[
@@ -190,6 +190,7 @@ class AnvilFork:
                 hex(balance),
             ],
         )
+        self._get_response()
 
     def set_next_base_fee(self, fee: int) -> None:
         if not (0 <= fee <= MAX_UINT256):
