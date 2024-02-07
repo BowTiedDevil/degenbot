@@ -1681,16 +1681,17 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                         return D
 
         elif self.address in (
+            "0x0AD66FeC8dB84F8A3365ADA04aB23ce607ac6E24",
             "0x1C5F80b6B68A9E1Ef25926EeE00b5255791b996B",
+            "0x1c899dED01954d0959E034b62a728e7fEbE593b0",
             "0x320B564Fb9CF36933eC507a846ce230008631fd3",
             "0x3F1B0278A9ee595635B61817630cC19DE792f506",
             "0x3Fb78e61784C9c637D560eDE23Ad57CA1294c14a",
             "0x42d7025938bEc20B69cBae5A77421082407f053A",
-            "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8",
-            "0x1c899dED01954d0959E034b62a728e7fEbE593b0",
-            "0x0AD66FeC8dB84F8A3365ADA04aB23ce607ac6E24",
-            "0x69ACcb968B19a53790f43e57558F5E443A91aF22",
             "0x453D92C7d4263201C69aACfaf589Ed14202d83a4",
+            "0x69ACcb968B19a53790f43e57558F5E443A91aF22",
+            "0x875DF0bA24ccD867f8217593ee27253280772A97",
+            "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8",
         ):
             for _ in range(255):
                 D_P = D * D // _xp[0] * D // _xp[1] // N_COINS**2
