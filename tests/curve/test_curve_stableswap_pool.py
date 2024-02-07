@@ -198,13 +198,13 @@ def test_A_ramping(fork_mainnet_archive: AnvilFork):
     assert tripool._A(timestamp=(INITIAL_A_TIME + FINAL_A_TIME) // 2) == (INITIAL_A + FINAL_A) // 2
 
 
-def test_base_registry_pools(ethereum_full_node_web3: Web3):
+def test_base_registry_pools(fork_mainnet: AnvilFork):
     """
     Test the custom pools deployed by Curve
     """
-    degenbot.set_web3(ethereum_full_node_web3)
+    degenbot.set_web3(fork_mainnet.w3)
 
-    registry: Contract = ethereum_full_node_web3.eth.contract(
+    registry: Contract = fork_mainnet.w3.eth.contract(
         address=CURVE_V1_REGISTRY_ADDRESS,
         abi=CURVE_V1_REGISTRY_ABI,
     )
