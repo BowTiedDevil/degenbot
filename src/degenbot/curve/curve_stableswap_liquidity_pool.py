@@ -481,11 +481,12 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         )
 
         with self._state_lock:
-            return {
-                attr_name: getattr(self, attr_name, None)
-                for attr_name in self.__dict__
-                if attr_name not in dropped_attributes
-            }
+            return {k: v for k, v in self.__dict__.items() if k not in dropped_attributes}
+            # return {
+            #     attr_name: getattr(self, attr_name, None)
+            #     for attr_name in self.__dict__
+            #     if attr_name not in dropped_attributes
+            # }
 
     def __setstate__(self, state: dict) -> None:
         for attr_name, attr_value in state.items():
@@ -900,10 +901,10 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             return dy
 
         elif self.address in (
+            "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
             "0x7fC77b5c7614E1533320Ea6DDc2Eb61fa00A9714",
             "0x93054188d876f558f4a66B2EF1d97d16eDf0895B",
             "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
-            "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
         ):
             rates = self.rate_multipliers
             xp = self._xp(rates=rates, balances=pool_balances)
@@ -955,16 +956,16 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             return (dy - fee) * self.PRECISION // rates[j]
 
         elif self.address in (
-            "0x48fF31bBbD8Ab553Ebe7cBD84e1eA3dBa8f54957",
+            "0x04c90C198b2eFF55716079bc06d7CCc4aa4d7512",
             "0x320B564Fb9CF36933eC507a846ce230008631fd3",
+            "0x48fF31bBbD8Ab553Ebe7cBD84e1eA3dBa8f54957",
+            "0x55A8a39bc9694714E2874c1ce77aa1E599461E18",
             "0x875DF0bA24ccD867f8217593ee27253280772A97",
             "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8",
-            "0x55A8a39bc9694714E2874c1ce77aa1E599461E18",
-            "0xf03bD3cfE85f00bF5819AC20f0870cE8a8d1F0D8",
-            "0x04c90C198b2eFF55716079bc06d7CCc4aa4d7512",
-            "0xFB9a265b5a1f52d97838Ec7274A0b1442efAcC87",
-            "0xDa5B670CcD418a187a3066674A8002Adc9356Ad1",
             "0xBaaa1F5DbA42C3389bDbc2c9D2dE134F5cD0Dc89",
+            "0xDa5B670CcD418a187a3066674A8002Adc9356Ad1",
+            "0xf03bD3cfE85f00bF5819AC20f0870cE8a8d1F0D8",
+            "0xFB9a265b5a1f52d97838Ec7274A0b1442efAcC87",
         ):
             xp = pool_balances
             x = xp[i] + dx
@@ -1001,9 +1002,9 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             return (dy - fee) * self.PRECISION // rates[j]
 
         elif self.address in (
+            "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
             "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
             "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
-            "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
         ):
             rates = self._stored_rates_from_ctokens(block_number=block_number)
             xp = self._xp(rates=rates, balances=pool_balances)
@@ -1032,8 +1033,8 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             return dy - fee
 
         elif self.address in (
-            "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
             "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
+            "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
         ):
             rates = self._stored_rates_from_ytokens(block_number=block_number)
             xp = self._xp(rates=rates, balances=pool_balances)
@@ -1642,12 +1643,12 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
 
         if self.address in (
             "0x06364f10B501e868329afBc005b3492902d6C763",
+            "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
             "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
+            "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
             "0x7fC77b5c7614E1533320Ea6DDc2Eb61fa00A9714",
             "0x93054188d876f558f4a66B2EF1d97d16eDf0895B",
             "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
-            "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
-            "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
         ):
             for _ in range(255):
                 D_P = D
@@ -1663,8 +1664,8 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                         return D
 
         elif self.address in (
-            "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
             "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
+            "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
             "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
         ):
             for _ in range(255):
@@ -2259,7 +2260,6 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         """
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
         """
-        # TODO: cleanup all input validation
 
         block_number = (
             config.get_web3().eth.block_number
