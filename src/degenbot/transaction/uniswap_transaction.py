@@ -317,7 +317,7 @@ class UniswapTransaction(TransactionHelper):
 
         silent = self.silent
 
-        if token_in not in [pool.token0, pool.token1]:
+        if token_in not in pool.tokens:
             raise ValueError(f"Token {token_in} not found in pool {pool}")
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
@@ -411,7 +411,7 @@ class UniswapTransaction(TransactionHelper):
 
         silent = self.silent
 
-        if token_in not in [pool.token0, pool.token1]:
+        if token_in not in pool.tokens:
             raise ValueError(f"Token {token_in} not found in pool {pool}")
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
@@ -480,7 +480,7 @@ class UniswapTransaction(TransactionHelper):
 
         self.to.add(to_checksum_address(recipient))
 
-        if token_in not in [pool.token0, pool.token1]:
+        if token_in not in pool.tokens:
             raise ValueError
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
@@ -571,7 +571,7 @@ class UniswapTransaction(TransactionHelper):
 
         self.to.add(to_checksum_address(recipient))
 
-        if token_in not in [pool.token0, pool.token1]:
+        if token_in not in pool.tokens:
             raise ValueError
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0

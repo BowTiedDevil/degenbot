@@ -131,7 +131,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 address=token1_address,
                 silent=silent,
             )
-        self.tokens = [self.token0, self.token1]
 
         self._fee: int = fee if fee is not None else _w3_contract.functions.fee().call()
         self._tick_spacing = self._TICKSPACING_BY_FEE[self._fee]  # immutable
@@ -614,6 +613,10 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         )
 
     @property
+    def tokens(self) -> Tuple[Erc20Token, Erc20Token]:
+        return (self.token0, self.token1)
+
+    @property
     def _w3_contract(self) -> Contract:
         return config.get_web3().eth.contract(
             address=self.address,
@@ -720,7 +723,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             - 'tick_bitmap'  (not yet implemented)
         """
 
-        if token_in not in (self.token0, self.token1):
+        if token_in not in self.tokens:
             raise ValueError("token_in not found!")
 
         if override_state:
@@ -785,7 +788,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             - 'tick_bitmap'  (not yet implemented)
         """
 
-        if token_out not in (self.token0, self.token1):
+        if token_out not in self.tokens:
             raise ValueError("token_out not found!")
 
         _is_zero_for_one = token_out == self.token1
@@ -1085,9 +1088,9 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         [TBD]
         """
 
-        if token_in is not None and token_in not in (self.token0, self.token1):
+        if token_in is not None and token_in not in self.tokens:
             raise ValueError("token_in is unknown!")
-        if token_out is not None and token_out not in (self.token0, self.token1):
+        if token_out is not None and token_out not in self.tokens:
             raise ValueError("token_out is unknown!")
 
         if token_in is None and token_out is None:

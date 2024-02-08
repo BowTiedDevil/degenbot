@@ -173,8 +173,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 silent=silent,
             )
 
-        self.tokens = [self.token0, self.token1]
-
         if factory_address is not None and factory_init_hash is not None:
             computed_pool_address = generate_v2_pool_address(
                 token_addresses=[self.token0.address, self.token1.address],
@@ -272,14 +270,10 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             abi=self.abi,
         )
 
-    def _update_pool_state(self):
-        with self._state_lock:
-            self.state = UniswapV2PoolState(
-                pool=self,
-                reserves_token0=self.reserves_token0,
-                reserves_token1=self.reserves_token1,
-            )
-        self._notify_subscribers()
+
+    @property
+    def tokens(self) -> Tuple[Erc20Token, Erc20Token]:
+        return (self.token0, self.token1)
 
     def calculate_tokens_in_from_ratio_out(
         self,
@@ -294,7 +288,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         (e.g. 10 * 10 ** (18-8) ETH/BTC).
         """
 
-        if token_in not in (self.token0, self.token1):
+        if token_in not in self.tokens:
             raise ValueError(f"Token in {token_in} not held by this pool.")
 
         if token_in == self.token0:
@@ -633,11 +627,11 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         if override_state:
             logger.debug(f"State override: {override_state}")
 
-        if token_in and token_in not in (self.token0, self.token1):
+        if token_in and token_in not in self.tokens:
             raise ValueError(
                 f"Token not found! token_in = {repr(token_in)}, pool holds {self.token0},{self.token1}"
             )
-        if token_out and token_out not in (self.token0, self.token1):
+        if token_out and token_out not in self.tokens:
             raise ValueError(
                 f"Token not found! token_out = {repr(token_out)}, pool holds {self.token0},{self.token1}"
             )
