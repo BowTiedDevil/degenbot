@@ -1,16 +1,6 @@
 import asyncio
 from fractions import Fraction
-from threading import Lock
-from typing import (
-    TYPE_CHECKING,
-    Dict,
-    Iterable,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
-)
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from warnings import warn
 
 if TYPE_CHECKING:
@@ -48,8 +38,6 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         id: str,
         max_input: Optional[int] = None,
     ):
-        self._lock = Lock()
-
         if any([not isinstance(pool, (LiquidityPool, V3LiquidityPool)) for pool in swap_pools]):
             raise ValueError("Must provide only Uniswap liquidity pools.")
 
@@ -71,11 +59,6 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
             warn("No maximum input provided, setting to 100 WETH")
             max_input = 100 * 10**18
         self.max_input = max_input
-
-        # self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
-        # self.swap_pool_tokens = [
-        # [pool.token0, pool.token1] for pool in self.swap_pools
-        # ]
 
         # Set up pre-determined "swap vectors", which allows the helper
         # to identify the tokens and direction of each swap along the path
@@ -130,10 +113,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
             "profit_token": self.input_token,
             "strategy": "cycle",
             "swap_amount": 0,
-            # "swap_pools": self.swap_pools,
-            # "swap_pool_addresses": self.swap_pool_addresses,
             "swap_pool_amounts": [],
-            # "swap_pool_tokens": self.swap_pool_tokens,
         }
 
     def __getstate__(self) -> dict:
