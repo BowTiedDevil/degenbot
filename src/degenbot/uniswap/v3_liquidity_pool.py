@@ -270,9 +270,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             setattr(self, attr_name, attr_value)
 
     def __str__(self):
-        """
-        Return the pool name when the object is included in a print statement, or cast as a string
-        """
         return self.name
 
     def _get_tick_bitmap_position(self, tick) -> Tuple[int, int]:
