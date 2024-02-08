@@ -336,8 +336,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 _tick_bitmap = _w3_contract.functions.tickBitmap(word_position).call(
                     block_identifier=block_number,
                 )
-                if _tick_bitmap == 0:
-                    return
                 _tick_data = self.lens._w3_contract.functions.getPopulatedTicksInWord(
                     self.address, word_position
                 ).call(block_identifier=block_number)
