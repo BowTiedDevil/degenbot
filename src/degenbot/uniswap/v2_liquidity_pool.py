@@ -144,10 +144,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 )
 
         self._update_method = update_method
-        # self._ratio_token0_in: Optional[Decimal] = None
-        # self._ratio_token1_in: Optional[Decimal] = None
-        # self.token0_max_swap = 0
-        # self.token1_max_swap = 0
         self.new_reserves = False
 
         if empty:
