@@ -266,7 +266,6 @@ def test_adding_new_router_and_chain():
     )
     assert QUICKSWAP_CHAIN in FACTORY_ADDRESSES
 
-    # simulate a real transaction
     tx = UniswapTransaction(
         chain_id=QUICKSWAP_CHAIN,
         tx_hash="0x997cf9f3ebc92f49dd005034220b2ea862d85d82b351bf3f1e4119220f2f9da2",
@@ -286,5 +285,4 @@ def test_adding_new_router_and_chain():
         },
         router_address=QUICKSWAP_ROUTER_ADDRESS,
     )
-    result = tx.simulate()
-    print(f"{result=}")
+    tx.simulate()
