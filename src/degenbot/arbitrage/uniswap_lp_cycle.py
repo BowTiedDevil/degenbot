@@ -1,10 +1,8 @@
 import asyncio
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Sequence, Tuple
 from warnings import warn
-
-if TYPE_CHECKING:
-    from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 import eth_abi
 from eth_typing import ChecksumAddress
@@ -34,7 +32,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
     def __init__(
         self,
         input_token: Erc20Token,
-        swap_pools: Iterable[Union[LiquidityPool, V3LiquidityPool]],
+        swap_pools: Iterable[LiquidityPool | V3LiquidityPool],
         id: str,
         max_input: Optional[int] = None,
     ):
@@ -98,12 +96,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
 
         self.pool_states: Dict[
             ChecksumAddress,
-            Optional[
-                Union[
-                    UniswapV2PoolState,
-                    UniswapV3PoolState,
-                ]
-            ],
+            Optional[UniswapV2PoolState | UniswapV3PoolState],
         ] = {pool.address: None for pool in self.swap_pools}
 
         self.best: dict = {
@@ -138,15 +131,13 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         self,
         overrides: Optional[
             Sequence[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolState],
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolState],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolState]
+                | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolState]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
         ],
-    ) -> Dict[ChecksumAddress, Union[UniswapV2PoolState, UniswapV3PoolState]]:
+    ) -> Dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState]:
         """
         Validate the overrides, extract and insert the resulting pool states
         into a dictionary.
@@ -155,7 +146,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         if overrides is None:
             return {}
 
-        sorted_overrides: Dict[ChecksumAddress, Union[UniswapV2PoolState, UniswapV3PoolState]] = {}
+        sorted_overrides: Dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState] = {}
 
         for pool, override in overrides:
             if isinstance(
@@ -186,9 +177,9 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         token_in: Erc20Token,
         token_in_quantity: int,
         pool_state_overrides: Optional[
-            Dict[ChecksumAddress, Union[UniswapV2PoolState, UniswapV3PoolState]]
+            Dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState]
         ] = None,
-    ) -> List[Union[UniswapV2PoolSwapAmounts, UniswapV3PoolSwapAmounts]]:
+    ) -> List[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts]:
         """
         Generate human-readable inputs for a complete swap along the arbitrage
         path, starting with `token_in_quantity` amount of `token_in`.
@@ -197,7 +188,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         if pool_state_overrides is None:
             pool_state_overrides = {}
 
-        pools_amounts_out: List[Union[UniswapV2PoolSwapAmounts, UniswapV3PoolSwapAmounts]] = []
+        pools_amounts_out: List[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts] = []
 
         _token_in_quantity: int = 0
         _token_out_quantity: int = 0
@@ -269,7 +260,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
 
         return pools_amounts_out
 
-    def _update_pool_states(self, pools: Iterable[Union[LiquidityPool, V3LiquidityPool]]) -> None:
+    def _update_pool_states(self, pools: Iterable[LiquidityPool | V3LiquidityPool]) -> None:
         """
         Update `self.pool_states` with state values from the `pools` iterable
         """
@@ -340,12 +331,10 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         self,
         override_state: Optional[
             Sequence[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolState],
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolState],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolState]
+                | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolState]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
         ] = None,
     ):
@@ -435,12 +424,10 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         self,
         override_state: Optional[
             Sequence[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolState],
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolState],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolState]
+                | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolState]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
         ] = None,
     ) -> ArbitrageCalculationResult:
@@ -537,12 +524,10 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         self,
         override_state: Optional[
             Sequence[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolState],
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolState],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolState]
+                | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolState]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
         ] = None,
     ) -> ArbitrageCalculationResult:
@@ -556,15 +541,13 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
 
     async def calculate_with_pool(
         self,
-        executor: Union["ProcessPoolExecutor", "ThreadPoolExecutor"],
+        executor: ProcessPoolExecutor | ThreadPoolExecutor,
         override_state: Optional[
             Sequence[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolState],
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolState],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolState]
+                | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolState]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
         ] = None,
     ) -> asyncio.Future:
@@ -611,12 +594,10 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         self,
         override_state: Optional[
             Sequence[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolState],
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolState],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolState]
+                | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolState]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
         ] = None,
     ):
@@ -633,12 +614,10 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         self,
         override_state: Optional[
             Sequence[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolState],
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolState],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolState]
+                | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolState]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
         ] = None,
     ) -> Tuple[bool, Tuple[int, int]]:
@@ -705,13 +684,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         token = Erc20Token(input_token_address)
 
         # create the pool objects
-        pool_objects: List[
-            Union[
-                LiquidityPool,
-                V3LiquidityPool,
-                CamelotLiquidityPool,
-            ]
-        ] = []
+        pool_objects: List[LiquidityPool | V3LiquidityPool | CamelotLiquidityPool] = []
         for pool_address, pool_type in swap_pool_addresses:
             if pool_type == "V2":
                 pool_objects.append(LiquidityPool(address=pool_address))
@@ -731,15 +704,10 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
 
     def generate_payloads(
         self,
-        from_address: Union[str, ChecksumAddress],
+        from_address: ChecksumAddress | str,
         swap_amount: Optional[int] = None,
         pool_swap_amounts: Optional[
-            Sequence[
-                Union[
-                    UniswapV2PoolSwapAmounts,
-                    UniswapV3PoolSwapAmounts,
-                ]
-            ]
+            Sequence[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts]
         ] = None,
     ) -> List[Tuple[ChecksumAddress, bytes, int]]:
         """

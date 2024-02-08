@@ -1,5 +1,5 @@
 from itertools import cycle
-from typing import Iterable, List, Union
+from typing import Iterable, List
 
 import eth_abi
 from eth_typing import ChecksumAddress
@@ -8,7 +8,7 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 
-def decode_v3_path(path: bytes) -> List[Union[ChecksumAddress, int]]:
+def decode_v3_path(path: bytes) -> List[ChecksumAddress | int]:
     """
     Decode the `path` byte string used by the Uniswap V3 Router/Router2 contracts.
     `path` is a close-packed encoding of pool addresses (20 bytes) and fees
@@ -22,7 +22,7 @@ def decode_v3_path(path: bytes) -> List[Union[ChecksumAddress, int]]:
         return int.from_bytes(chunk, byteorder="big")
 
     path_pos = 0
-    decoded_path: List[Union[ChecksumAddress, int]] = []
+    decoded_path: List[ChecksumAddress | int] = []
     # read alternating 20 and 3 byte chunks from the encoded path,
     # store each address (hex string) and fee (int)
     for byte_length, extraction_func in cycle(

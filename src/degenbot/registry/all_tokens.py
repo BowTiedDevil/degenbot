@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Union
+from typing import Dict, Optional
 from eth_utils.address import to_checksum_address
 from eth_typing import ChecksumAddress
 
@@ -28,7 +28,7 @@ class AllTokens:
 
     def __setitem__(
         self,
-        token_address: Union[ChecksumAddress, str],
+        token_address: ChecksumAddress | str,
         token_helper: TokenHelper,
     ):
         self.tokens[to_checksum_address(token_address)] = token_helper

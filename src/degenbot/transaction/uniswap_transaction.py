@@ -3,7 +3,7 @@
 # TODO: add state block argument for pool simulation calls
 
 import pprint
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 import eth_abi
 from eth_typing import ChainId, ChecksumAddress
@@ -167,10 +167,10 @@ class UniswapTransaction(TransactionHelper):
 
     def __init__(
         self,
-        chain_id: Union[int, str],
+        chain_id: int | str,
         tx_hash: str,
-        tx_nonce: Union[int, str],
-        tx_value: Union[int, str],
+        tx_nonce: int | str,
+        tx_value: int | str,
         tx_sender: str,
         func_name: str,
         func_params: dict,
@@ -252,7 +252,7 @@ class UniswapTransaction(TransactionHelper):
 
     def _show_pool_states(
         self,
-        sim_result: Union[UniswapV2PoolSimulationResult, UniswapV3PoolSimulationResult],
+        sim_result: UniswapV2PoolSimulationResult | UniswapV3PoolSimulationResult,
     ):
         current_state = sim_result.current_state
         future_state = sim_result.future_state
@@ -299,7 +299,7 @@ class UniswapTransaction(TransactionHelper):
     def _simulate_v2_swap_exact_in(
         self,
         pool: LiquidityPool,
-        recipient: Union[str, ChecksumAddress],
+        recipient: ChecksumAddress | str,
         token_in: Erc20Token,
         amount_in: int,
         amount_out_min: Optional[int] = None,
@@ -397,7 +397,7 @@ class UniswapTransaction(TransactionHelper):
     def _simulate_v2_swap_exact_out(
         self,
         pool: LiquidityPool,
-        recipient: Union[str, ChecksumAddress],
+        recipient: ChecksumAddress | str,
         token_in: Erc20Token,
         amount_out: int,
         amount_in_max: Optional[int] = None,
@@ -692,10 +692,8 @@ class UniswapTransaction(TransactionHelper):
         func_name: str,
         func_params: dict,
     ) -> List[
-        Union[
-            Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-            Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-        ]
+        Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+        | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
     ]:
         """
         Take a Uniswap V2 / V3 transaction (specified by name and a dictionary
@@ -704,10 +702,8 @@ class UniswapTransaction(TransactionHelper):
         """
 
         all_future_pool_states: List[
-            Union[
-                Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-            ]
+            Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+            | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ] = []
 
         V2_FUNCTIONS = {
@@ -779,10 +775,8 @@ class UniswapTransaction(TransactionHelper):
             inputs: bytes,
         ) -> Optional[
             List[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
         ]:
             # ref: https://github.com/Uniswap/universal-router/blob/main/contracts/libraries/Commands.sol
@@ -891,16 +885,11 @@ class UniswapTransaction(TransactionHelper):
             if TYPE_CHECKING:
                 _amount_in: int = 0
                 _amount_out: int = 0
-                _sim_result: Union[
-                    UniswapV2PoolSimulationResult,
-                    UniswapV3PoolSimulationResult,
-                ]
+                _sim_result: UniswapV2PoolSimulationResult | UniswapV3PoolSimulationResult
 
             _universal_router_command_future_pool_states: List[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ] = []
 
             if command in UNIMPLEMENTED_UNIVERAL_ROUTER_COMMANDS:
@@ -1404,20 +1393,16 @@ class UniswapTransaction(TransactionHelper):
         def _process_v3_multicall(
             params,
         ) -> List[
-            Union[
-                Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-            ]
+            Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+            | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ]:
             """
             TBD
             """
 
             _v3_multicall_future_pool_states: List[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ] = []
 
             for payload in params["data"]:
@@ -1755,28 +1740,21 @@ class UniswapTransaction(TransactionHelper):
 
         def _process_uniswap_v3_transaction() -> (
             List[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
         ):
             logger.debug(f"{func_name}: {self.hash}")
 
             _v3_router_future_pool_states: List[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ] = []
 
             if TYPE_CHECKING:
                 _amount_in: int = 0
                 _amount_out: int = 0
-                _sim_result: Union[
-                    UniswapV2PoolSimulationResult,
-                    UniswapV3PoolSimulationResult,
-                ]
+                _sim_result: UniswapV2PoolSimulationResult | UniswapV3PoolSimulationResult
                 assert self.v3_pool_manager is not None
 
             silent = self.silent
@@ -2288,17 +2266,13 @@ class UniswapTransaction(TransactionHelper):
 
         def _process_uniswap_universal_router_transaction() -> (
             List[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
         ):
             _universal_router_future_pool_states: List[
-                Union[
-                    Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-                    Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-                ]
+                Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+                | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ] = []
 
             logger.debug(f"{func_name}: {self.hash}")
@@ -2368,10 +2342,8 @@ class UniswapTransaction(TransactionHelper):
         silent: bool = False,
         state_block: Optional[int] = None,
     ) -> List[
-        Union[
-            Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-            Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-        ]
+        Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+        | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
     ]:
         """
         Execute a simulation of a transaction, using the attributes

@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -11,7 +11,7 @@ from .abi import UNISWAP_V3_TICKLENS_ABI
 class TickLens:
     def __init__(
         self,
-        address: Union[str, ChecksumAddress],
+        address: ChecksumAddress | str,
         abi: Optional[list] = None,
     ):
         self.address = to_checksum_address(address)

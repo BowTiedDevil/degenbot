@@ -5,7 +5,7 @@ import pickle
 import time
 from fractions import Fraction
 from threading import Lock
-from typing import Sequence, Tuple, Union
+from typing import Sequence, Tuple
 
 import pytest
 from degenbot.arbitrage import ArbitrageCalculationResult, UniswapLpCycle
@@ -2121,10 +2121,7 @@ def test_arbitrage_with_overrides() -> None:
     )
 
     overrides: Sequence[
-        Union[
-            Tuple[LiquidityPool, UniswapV2PoolState],
-            Tuple[V3LiquidityPool, UniswapV3PoolState],
-        ]
+        Tuple[LiquidityPool, UniswapV2PoolState] | Tuple[V3LiquidityPool, UniswapV3PoolState]
     ]
 
     # Override both pools

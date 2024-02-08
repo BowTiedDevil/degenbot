@@ -1,5 +1,5 @@
 from io import TextIOWrapper
-from typing import Dict, List, Optional, TextIO, Tuple, Union
+from typing import Dict, List, Optional, TextIO, Tuple
 
 import ujson
 from eth_typing import ChecksumAddress
@@ -27,7 +27,7 @@ class UniswapV3LiquiditySnapshot:
 
     def __init__(
         self,
-        file: Union[TextIO, str],
+        file: TextIO | str,
         chain_id: Optional[int] = None,
     ):
         _file: TextIOWrapper
@@ -178,7 +178,7 @@ class UniswapV3LiquiditySnapshot:
             ]
 
     def get_tick_bitmap(
-        self, pool: Union[ChecksumAddress, V3LiquidityPool]
+        self, pool: V3LiquidityPool | ChecksumAddress
     ) -> Dict[int, UniswapV3BitmapAtWord]:
         if isinstance(pool, V3LiquidityPool):
             pool_address = pool.address
@@ -193,7 +193,7 @@ class UniswapV3LiquiditySnapshot:
             return {}
 
     def get_tick_data(
-        self, pool: Union[ChecksumAddress, V3LiquidityPool]
+        self, pool: V3LiquidityPool | ChecksumAddress
     ) -> Dict[int, UniswapV3LiquidityAtTick]:
         if isinstance(pool, V3LiquidityPool):
             pool_address = pool.address
@@ -209,7 +209,7 @@ class UniswapV3LiquiditySnapshot:
 
     def update_snapshot(
         self,
-        pool: Union[V3LiquidityPool, ChecksumAddress],
+        pool: V3LiquidityPool | ChecksumAddress,
         tick_data: Dict[int, UniswapV3LiquidityAtTick],
         tick_bitmap: Dict[int, UniswapV3BitmapAtWord],
     ) -> None:

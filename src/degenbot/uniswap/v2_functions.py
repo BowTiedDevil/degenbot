@@ -1,5 +1,5 @@
 import itertools
-from typing import TYPE_CHECKING, Iterable, List, Sequence, Union
+from typing import TYPE_CHECKING, Iterable, List, Sequence
 
 import eth_abi.packed
 from eth_typing import ChecksumAddress
@@ -13,8 +13,8 @@ if TYPE_CHECKING:
 
 
 def generate_v2_pool_address(
-    token_addresses: Sequence[Union[str, ChecksumAddress]],
-    factory_address: Union[str, ChecksumAddress],
+    token_addresses: Sequence[ChecksumAddress | str],
+    factory_address: ChecksumAddress | str,
     init_hash: str,
 ) -> ChecksumAddress:
     """
@@ -41,7 +41,7 @@ def generate_v2_pool_address(
 
 
 def get_v2_pools_from_token_path(
-    tx_path: Iterable[Union[str, ChecksumAddress]],
+    tx_path: Iterable[ChecksumAddress | str],
     pool_manager: "UniswapV2LiquidityPoolManager",
 ) -> List["LiquidityPool"]:
     return [

@@ -1,5 +1,5 @@
 from threading import Lock
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -95,7 +95,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
 
     def __init__(
         self,
-        factory_address: Union[ChecksumAddress, str],
+        factory_address: ChecksumAddress | str,
         chain_id: Optional[int] = None,
     ):
         chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
@@ -131,7 +131,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._state[chain_id][factory_address] = {}
                 raise ManagerError(f"Could not initialize state for {factory_address}") from e
 
-    def __delitem__(self, pool: Union[LiquidityPool, str, ChecksumAddress]) -> None:
+    def __delitem__(self, pool: LiquidityPool | ChecksumAddress | str) -> None:
         pool_address: ChecksumAddress
 
         if isinstance(pool, LiquidityPool):
@@ -255,7 +255,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
     def __init__(
         self,
-        factory_address: Union[ChecksumAddress, str],
+        factory_address: ChecksumAddress | str,
         chain_id: Optional[int] = None,
         snapshot: Optional[UniswapV3LiquiditySnapshot] = None,
     ):
@@ -294,7 +294,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._state[chain_id][factory_address] = {}
                 raise ManagerError(f"Could not initialize state for {factory_address}") from e
 
-    def __delitem__(self, pool: Union[V3LiquidityPool, str, ChecksumAddress]) -> None:
+    def __delitem__(self, pool: V3LiquidityPool | ChecksumAddress | str) -> None:
         pool_address: ChecksumAddress
 
         if isinstance(pool, V3LiquidityPool):
@@ -318,10 +318,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
     def get_pool(
         self,
-        pool_address: Optional[Union[ChecksumAddress, str]] = None,
-        token_addresses: Optional[
-            Tuple[Union[str, ChecksumAddress], Union[str, ChecksumAddress]]
-        ] = None,
+        pool_address: Optional[ChecksumAddress | str] = None,
+        token_addresses: Optional[Tuple[ChecksumAddress | str, ChecksumAddress | str]] = None,
         pool_fee: Optional[int] = None,
         silent: bool = False,
         # keyword arguments passed to the `V3LiquidityPool` constructor

@@ -1,12 +1,10 @@
 # TODO: support arbitrage using LP tokens
 
 import asyncio
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Sequence, Tuple, TypeAlias, Union
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Sequence, Tuple, TypeAlias
 from warnings import warn
-
-if TYPE_CHECKING:
-    from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 import eth_abi
 from eth_typing import ChecksumAddress
@@ -37,21 +35,20 @@ from .arbitrage_dataclasses import (
     UniswapV3PoolSwapAmounts,
 )
 
-Pool: TypeAlias = Union[CurveStableswapPool, LiquidityPool, V3LiquidityPool]
-PoolState: TypeAlias = Union[CurveStableswapPoolState, UniswapV2PoolState, UniswapV3PoolState]
+Pool: TypeAlias = CurveStableswapPool | LiquidityPool | V3LiquidityPool
+PoolState: TypeAlias = CurveStableswapPoolState | UniswapV2PoolState | UniswapV3PoolState
 StateOverride: TypeAlias = Sequence[
-    Union[
-        Tuple[CurveStableswapPool, CurveStableswapPoolState],
-        # Tuple[CurveStableswapPool, CurveStableswapPoolSimulationResult], <---- todo
-        Tuple[LiquidityPool, UniswapV2PoolState],
-        Tuple[LiquidityPool, UniswapV2PoolSimulationResult],
-        Tuple[V3LiquidityPool, UniswapV3PoolState],
-        Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult],
-    ]
+    Tuple[CurveStableswapPool, CurveStableswapPoolState]
+    | Tuple[LiquidityPool, UniswapV2PoolState]
+    | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+    | Tuple[V3LiquidityPool, UniswapV3PoolState]
+    | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
+    # | Tuple[CurveStableswapPool, CurveStableswapPoolSimulationResult], <---- TODO
 ]
-SwapAmount: TypeAlias = Union[
-    CurveStableSwapPoolSwapAmounts, UniswapV2PoolSwapAmounts, UniswapV3PoolSwapAmounts
-]
+SwapAmount: TypeAlias = (
+    CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
+)
+
 
 _CURVE_V1_SLIPPAGE = 0.999
 
@@ -77,11 +74,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
         self.pool_states: Dict[
             ChecksumAddress,
-            Union[
-                CurveStableswapPoolState,
-                UniswapV2PoolState,
-                UniswapV3PoolState,
-            ],
+            CurveStableswapPoolState | UniswapV2PoolState | UniswapV3PoolState,
         ] = {}
         self._update_pool_states(self.swap_pools)
 
@@ -100,7 +93,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
         # Set up pre-determined "swap vectors", which allows the helper
         # to identify the tokens and direction of each swap along the path
-        _swap_vectors: List[Union[CurveStableSwapPoolVector, UniswapPoolSwapVector]] = []
+        _swap_vectors: List[CurveStableSwapPoolVector | UniswapPoolSwapVector] = []
         for i, pool in enumerate(self.swap_pools):
             match pool:
                 case LiquidityPool() | V3LiquidityPool():
@@ -594,7 +587,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
     async def calculate_with_pool(
         self,
-        executor: Union["ProcessPoolExecutor", "ThreadPoolExecutor"],
+        executor: ProcessPoolExecutor | ThreadPoolExecutor,
         override_state: Optional[StateOverride] = None,
     ) -> asyncio.Future:
         """
@@ -652,14 +645,10 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
     def generate_payloads(
         self,
-        from_address: Union[str, ChecksumAddress],
+        from_address: ChecksumAddress | str,
         swap_amount: int,
         pool_swap_amounts: Sequence[
-            Union[
-                CurveStableSwapPoolSwapAmounts,
-                UniswapV2PoolSwapAmounts,
-                UniswapV3PoolSwapAmounts,
-            ]
+            CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
         ],
         infinite_approval: bool = False,
     ) -> List[Tuple[ChecksumAddress, bytes, int]]:

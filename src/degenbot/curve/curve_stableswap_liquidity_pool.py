@@ -8,7 +8,7 @@
 
 
 from threading import Lock
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 import eth_abi
 import eth_abi.exceptions
@@ -56,7 +56,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
 
     def __init__(
         self,
-        address: Union[ChecksumAddress, str],
+        address: ChecksumAddress | str,
         abi: Optional[list] = None,
         silent: bool = False,
         state_block: Optional[int] = None,

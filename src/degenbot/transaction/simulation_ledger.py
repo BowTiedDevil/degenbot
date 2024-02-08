@@ -1,4 +1,4 @@
-from typing import Dict, Union
+from typing import Dict
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -28,8 +28,8 @@ class SimulationLedger:
 
     def adjust(
         self,
-        address: Union[str, ChecksumAddress],
-        token: Union[Erc20Token, str, ChecksumAddress],
+        address: ChecksumAddress | str,
+        token: Erc20Token | ChecksumAddress | str,
         amount: int,
     ) -> None:
         """
@@ -87,8 +87,8 @@ class SimulationLedger:
 
     def token_balance(
         self,
-        address: Union[str, ChecksumAddress],
-        token: Union[Erc20Token, str, ChecksumAddress],
+        address: ChecksumAddress | str,
+        token: Erc20Token | ChecksumAddress | str,
     ) -> int:
         """
         Get the balance for a given address and token.
@@ -130,10 +130,10 @@ class SimulationLedger:
 
     def transfer(
         self,
-        token: Union[Erc20Token, str, ChecksumAddress],
+        token: Erc20Token | ChecksumAddress | str,
         amount: int,
-        from_addr: Union[ChecksumAddress, str],
-        to_addr: Union[ChecksumAddress, str],
+        from_addr: ChecksumAddress | str,
+        to_addr: ChecksumAddress | str,
     ) -> None:
         """
         Transfer a balance between addresses.

@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Union
+from typing import Dict, Optional
 from warnings import warn
 
 from eth_typing import ChecksumAddress
@@ -24,7 +24,7 @@ class AllPools:
         finally:
             self.pools = _all_pools[chain_id]
 
-    def __delitem__(self, pool: Union[PoolHelper, ChecksumAddress, str]):
+    def __delitem__(self, pool: PoolHelper | ChecksumAddress | str):
         if isinstance(pool, PoolHelper):
             _pool_address = pool.address
         else:
@@ -32,13 +32,13 @@ class AllPools:
 
         del self.pools[_pool_address]
 
-    def __getitem__(self, pool_address: Union[ChecksumAddress, str]):
+    def __getitem__(self, pool_address: ChecksumAddress | str):
         _pool_address = to_checksum_address(pool_address)
         return self.pools[_pool_address]
 
     def __setitem__(
         self,
-        pool_address: Union[ChecksumAddress, str],
+        pool_address: ChecksumAddress | str,
         pool_helper: PoolHelper,
     ):
         _pool_address = to_checksum_address(pool_address)
@@ -52,6 +52,6 @@ class AllPools:
     def __len__(self):
         return len(self.pools)
 
-    def get(self, pool_address: Union[ChecksumAddress, str]) -> Optional[PoolHelper]:
+    def get(self, pool_address: ChecksumAddress | str) -> Optional[PoolHelper]:
         _pool_address = to_checksum_address(pool_address)
         return self.pools.get(_pool_address)
