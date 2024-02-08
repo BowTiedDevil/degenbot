@@ -383,95 +383,74 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
 
         @dataclasses.dataclass(slots=True, eq=False)
         class SwapCache:
-            liquidityStart: int
-            tickCumulative: int
+            liquidity_start: int
+            tick_cumulative: int
 
         @dataclasses.dataclass(slots=True, eq=False)
         class SwapState:
-            amountSpecifiedRemaining: int
-            amountCalculated: int
-            sqrtPriceX96: int
+            amount_specified_remaining: int
+            amount_calculated: int
+            sqrt_price_x96: int
             tick: int
             liquidity: int
 
         @dataclasses.dataclass(slots=True, eq=False)
         class StepComputations:
-            sqrtPriceStartX96: int = 0
-            tickNext: int = 0
+            sqrt_price_start_x96: int = 0
+            tick_next: int = 0
             initialized: bool = False
-            sqrtPriceNextX96: int = 0
-            amountIn: int = 0
-            amountOut: int = 0
-            feeAmount: int = 0
+            sqrt_price_next_x96: int = 0
+            amount_in: int = 0
+            amount_out: int = 0
+            fee_amount: int = 0
 
         if amount_specified == 0:
             raise EVMRevertError("AS")
 
-        if override_start_liquidity is not None:
-            liquidity = override_start_liquidity
-        else:
-            liquidity = self.liquidity
-
-        if override_start_sqrt_price_x96 is not None:
-            sqrt_price_x96 = override_start_sqrt_price_x96
-        else:
-            sqrt_price_x96 = self.sqrt_price_x96
-
-        if override_start_tick is not None:
-            tick = override_start_tick
-        else:
-            tick = self.tick
-
-        if override_tick_bitmap is not None:
-            _tick_bitmap = override_tick_bitmap
-        else:
-            _tick_bitmap = self.tick_bitmap
-
-        if override_tick_data is not None:
-            _tick_data = override_tick_data
-        else:
-            _tick_data = self.tick_data
+        _liquidity = (
+            override_start_liquidity if override_start_liquidity is not None else self.liquidity
+        )
+        _sqrt_price_x96 = (
+            override_start_sqrt_price_x96
+            if override_start_sqrt_price_x96 is not None
+            else self.sqrt_price_x96
+        )
+        _tick = override_start_tick if override_start_tick is not None else self.tick
+        _tick_bitmap = (
+            override_tick_bitmap if override_tick_bitmap is not None else self.tick_bitmap
+        )
+        _tick_data = override_tick_data if override_tick_data is not None else self.tick_data
 
         if not (
-            sqrt_price_limit_x96 < sqrt_price_x96 and sqrt_price_limit_x96 > TickMath.MIN_SQRT_RATIO
+            sqrt_price_limit_x96 < _sqrt_price_x96
+            and sqrt_price_limit_x96 > TickMath.MIN_SQRT_RATIO
             if zeroForOne
-            else sqrt_price_limit_x96 > sqrt_price_x96
+            else sqrt_price_limit_x96 > _sqrt_price_x96
             and sqrt_price_limit_x96 < TickMath.MAX_SQRT_RATIO
         ):
             raise EVMRevertError("SPL")
 
-        cache = SwapCache(
-            liquidityStart=liquidity,
-            tickCumulative=0,
-            # ignored attributes:
-            #   - blockTimestamp
-            #   - feeProtocol
-            #   - secondsPerLiquidityCumulativeX128
-            #   - computedLatestObservation
-        )
-
-        exactInput: bool = amount_specified > 0
-
+        exactInput = amount_specified > 0
+        cache = SwapCache(liquidity_start=_liquidity, tick_cumulative=0)
         state = SwapState(
-            amountSpecifiedRemaining=amount_specified,
-            amountCalculated=0,
-            sqrtPriceX96=sqrt_price_x96,
-            tick=tick,
-            liquidity=cache.liquidityStart,
-            # ignored attributes:
-            #   - feeGrowthGlobalX128
-            #   - protocolFee
+            amount_specified_remaining=amount_specified,
+            amount_calculated=0,
+            sqrt_price_x96=_sqrt_price_x96,
+            tick=_tick,
+            liquidity=cache.liquidity_start,
         )
 
-        while state.amountSpecifiedRemaining != 0 and state.sqrtPriceX96 != sqrt_price_limit_x96:
+        while (
+            state.amount_specified_remaining != 0 and state.sqrt_price_x96 != sqrt_price_limit_x96
+        ):
             step = StepComputations()
 
-            step.sqrtPriceStartX96 = state.sqrtPriceX96
+            step.sqrt_price_start_x96 = state.sqrt_price_x96
 
             while True:
                 try:
                     (
-                        step.tickNext,
+                        step.tick_next,
                         step.initialized,
                     ) = TickBitmap.nextInitializedTickWithinOneWord(
                         _tick_bitmap,
@@ -483,7 +462,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                     missing_word = e.args[1]
                     if self._sparse_bitmap:
                         logger.debug(f"(swap) {self.name} fetching word {missing_word}")
-                        self._update_tick_data_at_word(missing_word)
+                        self._update_tick_data_at_word(word_position=missing_word)
                     else:
                         # bitmap is complete, so mark the word as empty
                         # self.tick_bitmap[missing_word] = UniswapV3BitmapAtWord()
@@ -492,59 +471,59 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                     # nextInitializedTickWithinOneWord will search up to 256 ticks away, which may
                     # return a tick in an adjacent word if there are no initialized ticks in the current word.
                     # This word may not be known to the helper, so check and fetch the containing word for this tick
-                    tick_next_word, _ = self._get_tick_bitmap_position(step.tickNext)
+                    tick_next_word, _ = self._get_tick_bitmap_position(step.tick_next)
 
                     if self._sparse_bitmap and tick_next_word not in _tick_bitmap:
                         logger.debug(
-                            f"tickNext={step.tickNext} out of range! Fetching word={tick_next_word}"
+                            f"tickNext={step.tick_next} out of range! Fetching word={tick_next_word}"
                             f"\n{self.name}"
                         )
                         self._update_tick_data_at_word(word_position=tick_next_word)
                     break
 
             # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
-            if step.tickNext < TickMath.MIN_TICK:
-                step.tickNext = TickMath.MIN_TICK
-            elif step.tickNext > TickMath.MAX_TICK:
-                step.tickNext = TickMath.MAX_TICK
+            if step.tick_next < TickMath.MIN_TICK:
+                step.tick_next = TickMath.MIN_TICK
+            elif step.tick_next > TickMath.MAX_TICK:
+                step.tick_next = TickMath.MAX_TICK
 
             # get the price for the next tick
-            step.sqrtPriceNextX96 = TickMath.getSqrtRatioAtTick(step.tickNext)
+            step.sqrt_price_next_x96 = TickMath.getSqrtRatioAtTick(step.tick_next)
 
             # compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
             (
-                state.sqrtPriceX96,
-                step.amountIn,
-                step.amountOut,
-                step.feeAmount,
+                state.sqrt_price_x96,
+                step.amount_in,
+                step.amount_out,
+                step.fee_amount,
             ) = SwapMath.computeSwapStep(
-                state.sqrtPriceX96,
+                state.sqrt_price_x96,
                 sqrt_price_limit_x96
                 if (
-                    step.sqrtPriceNextX96 < sqrt_price_limit_x96
+                    step.sqrt_price_next_x96 < sqrt_price_limit_x96
                     if zeroForOne
-                    else step.sqrtPriceNextX96 > sqrt_price_limit_x96
+                    else step.sqrt_price_next_x96 > sqrt_price_limit_x96
                 )
-                else step.sqrtPriceNextX96,
+                else step.sqrt_price_next_x96,
                 state.liquidity,
-                state.amountSpecifiedRemaining,
+                state.amount_specified_remaining,
                 self._fee,
             )
 
             if exactInput:
-                state.amountSpecifiedRemaining -= to_int256(step.amountIn + step.feeAmount)
-                state.amountCalculated = to_int256(state.amountCalculated - step.amountOut)
+                state.amount_specified_remaining -= to_int256(step.amount_in + step.fee_amount)
+                state.amount_calculated = to_int256(state.amount_calculated - step.amount_out)
             else:
-                state.amountSpecifiedRemaining += to_int256(step.amountOut)
-                state.amountCalculated = to_int256(
-                    state.amountCalculated + step.amountIn + step.feeAmount
+                state.amount_specified_remaining += to_int256(step.amount_out)
+                state.amount_calculated = to_int256(
+                    state.amount_calculated + step.amount_in + step.fee_amount
                 )
 
             # shift tick if we reached the next price
-            if state.sqrtPriceX96 == step.sqrtPriceNextX96:
+            if state.sqrt_price_x96 == step.sqrt_price_next_x96:
                 # if the tick is initialized, run the tick transition
                 if step.initialized:
-                    tick_next = step.tickNext
+                    tick_next = step.tick_next
                     liquidityNet = _tick_data[tick_next].liquidityNet
 
                     if zeroForOne:
@@ -552,28 +531,28 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
 
                     state.liquidity = LiquidityMath.addDelta(state.liquidity, liquidityNet)
 
-                state.tick = step.tickNext - 1 if zeroForOne else step.tickNext
+                state.tick = step.tick_next - 1 if zeroForOne else step.tick_next
 
-            elif state.sqrtPriceX96 != step.sqrtPriceStartX96:
+            elif state.sqrt_price_x96 != step.sqrt_price_start_x96:
                 # recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
-                state.tick = TickMath.getTickAtSqrtRatio(state.sqrtPriceX96)
+                state.tick = TickMath.getTickAtSqrtRatio(state.sqrt_price_x96)
 
         amount0, amount1 = (
             (
-                amount_specified - state.amountSpecifiedRemaining,
-                state.amountCalculated,
+                amount_specified - state.amount_specified_remaining,
+                state.amount_calculated,
             )
             if zeroForOne == exactInput
             else (
-                state.amountCalculated,
-                amount_specified - state.amountSpecifiedRemaining,
+                state.amount_calculated,
+                amount_specified - state.amount_specified_remaining,
             )
         )
 
         return (
             amount0,
             amount1,
-            state.sqrtPriceX96,
+            state.sqrt_price_x96,
             state.liquidity,
             state.tick,
         )
@@ -770,28 +749,33 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         if override_state:
             logger.debug(f"V3 calc with overridden state: {override_state}")
 
-        # determine whether the swap is token0 -> token1
-        zeroForOne = True if token_in == self.token0 else False
+        _is_zero_for_one = token_in == self.token0
 
         try:
             amount0_delta, amount1_delta, *_ = self._uniswap_v3_pool_swap(
-                zeroForOne=zeroForOne,
+                zeroForOne=_is_zero_for_one,
                 amount_specified=token_in_quantity,
                 sqrt_price_limit_x96=(
-                    TickMath.MIN_SQRT_RATIO + 1 if zeroForOne else TickMath.MAX_SQRT_RATIO - 1
+                    TickMath.MIN_SQRT_RATIO + 1 if _is_zero_for_one else TickMath.MAX_SQRT_RATIO - 1
                 ),
-                override_start_liquidity=override_state.liquidity if override_state else None,
-                override_start_sqrt_price_x96=override_state.sqrt_price_x96
-                if override_state
-                else None,
-                override_start_tick=override_state.tick if override_state else None,
-                override_tick_bitmap=override_state.tick_bitmap if override_state else None,
-                override_tick_data=override_state.tick_data if override_state else None,
+                override_start_liquidity=(
+                    override_state.liquidity if override_state is not None else None
+                ),
+                override_start_sqrt_price_x96=(
+                    override_state.sqrt_price_x96 if override_state is not None else None
+                ),
+                override_start_tick=(override_state.tick if override_state is not None else None),
+                override_tick_bitmap=(
+                    override_state.tick_bitmap if override_state is not None else self.tick_bitmap
+                ),
+                override_tick_data=(
+                    override_state.tick_data if override_state is not None else self.tick_data
+                ),
             )
         except EVMRevertError as e:
             raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
         else:
-            return -amount1_delta if zeroForOne else -amount0_delta
+            return -amount1_delta if _is_zero_for_one else -amount0_delta
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -825,34 +809,35 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         """
 
         if token_out not in (self.token0, self.token1):
-            raise ValueError("token_in not found!")
+            raise ValueError("token_out not found!")
 
-        # determine whether the swap is token0 -> token1
-        zeroForOne = True if token_out == self.token1 else False
+        _is_zero_for_one = token_out == self.token1
 
         try:
             amount0_delta, amount1_delta, *_ = self._uniswap_v3_pool_swap(
-                zeroForOne=zeroForOne,
+                zeroForOne=_is_zero_for_one,
                 amount_specified=-token_out_quantity,
                 sqrt_price_limit_x96=(
-                    TickMath.MIN_SQRT_RATIO + 1 if zeroForOne else TickMath.MAX_SQRT_RATIO - 1
+                    TickMath.MIN_SQRT_RATIO + 1 if _is_zero_for_one else TickMath.MAX_SQRT_RATIO - 1
                 ),
-                override_start_liquidity=override_state.liquidity if override_state else None,
-                override_start_sqrt_price_x96=override_state.sqrt_price_x96
-                if override_state
-                else None,
-                override_start_tick=override_state.tick if override_state else None,
-                override_tick_bitmap=override_state.tick_bitmap if override_state else None,
-                override_tick_data=override_state.tick_data if override_state else None,
+                override_start_liquidity=(
+                    override_state.liquidity if override_state is not None else None
+                ),
+                override_start_sqrt_price_x96=(
+                    override_state.sqrt_price_x96 if override_state is not None else None
+                ),
+                override_start_tick=(override_state.tick if override_state is not None else None),
+                override_tick_bitmap=(
+                    override_state.tick_bitmap if override_state is not None else self.tick_bitmap
+                ),
+                override_tick_data=(
+                    override_state.tick_data if override_state is not None else self.tick_data
+                ),
             )
         except EVMRevertError as e:
             raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
         else:
-            amountIn, amountOutReceived = (
-                (amount0_delta, -amount1_delta) if zeroForOne else (amount1_delta, -amount0_delta)
-            )
-
-            return amountIn
+            return amount0_delta if _is_zero_for_one else amount1_delta
 
     def external_update(
         self,
