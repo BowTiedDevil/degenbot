@@ -52,19 +52,6 @@ class Erc20Token(TokenHelper):
         - Approval(owner, spender, value)
     """
 
-    __slots__: Tuple[str, ...] = (
-        "_cached_approval",
-        "_cached_balance",
-        "_cached_total_supply",
-        "_price_oracle",
-        "abi",
-        "address",
-        "decimals",
-        "name",
-        "price",
-        "symbol",
-    )
-
     def __init__(
         self,
         address: str,

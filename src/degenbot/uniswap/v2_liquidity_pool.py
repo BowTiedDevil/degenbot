@@ -38,35 +38,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
     uniswap_version = 2
 
-    __slots__: Tuple[str, ...] = (
-        "_pool_state_archive",
-        # "_ratio_token0_in",
-        # "_ratio_token1_in",
-        "_state_lock",
-        "_subscribers",
-        "_update_method",
-        "abi",
-        "address",
-        "factory",
-        "fee_token0",
-        "fee_token1",
-        "fee_denominator",
-        "fee",
-        "name",
-        "new_reserves",
-        "reserves_token0",
-        "reserves_token1",
-        "router",
-        "stable_swap",
-        "state",
-        "token0",
-        "token1",
-        "tokens",
-        # "token0_max_swap",
-        # "token1_max_swap",
-        "update_block",
-    )
-
     def __init__(
         self,
         address: Union[ChecksumAddress, str],
@@ -277,6 +248,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
     def __getstate__(self) -> dict:
         # Remove objects that either cannot be pickled or are unnecessary to perform
         # the calculation
+        copied_attributes = ()
         dropped_attributes = (
             "_state_lock",
             "_subscribers",
@@ -285,9 +257,9 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
         with self._state_lock:
             return {
-                attr_name: getattr(self, attr_name, None)
-                for attr_name in self.__slots__
-                if attr_name not in dropped_attributes
+                k: (v.copy() if k in copied_attributes else v)
+                for k, v in self.__dict__.items()
+                if k not in dropped_attributes
             }
 
     def __repr__(self):  # pragma: no cover

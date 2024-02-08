@@ -57,18 +57,6 @@ _CURVE_V1_SLIPPAGE = 0.999
 
 
 class UniswapCurveCycle(Subscriber, ArbitrageHelper):
-    # __slots__ = (
-    #     "_swap_vectors",
-    #     "gas_estimate",
-    #     "id",
-    #     "input_token",
-    #     "max_input",
-    #     "name",
-    #     "pool_states",
-    #     "swap_pools",
-    #     "_subscribers",
-    # )
-
     def __init__(
         self,
         input_token: Erc20Token,
@@ -185,7 +173,11 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
     def __getstate__(self) -> dict:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
-        dropped_attributes = ("_subscribers", "gas_estimate")
+        dropped_attributes = (
+            "_subscribers",
+            "gas_estimate",
+        )
+
         return {key: value for key, value in self.__dict__.items() if key not in dropped_attributes}
 
     def __str__(self) -> str:

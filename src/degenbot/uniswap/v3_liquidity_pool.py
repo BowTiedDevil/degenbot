@@ -39,27 +39,6 @@ from .v3_tick_lens import TickLens
 
 
 class V3LiquidityPool(SubscriptionMixin, PoolHelper):
-    __slots__: Tuple[str, ...] = (
-        "_extra_words",
-        "_fee",
-        "_pool_state_archive",
-        "_sparse_bitmap",
-        "_state_lock",
-        "_subscribers",
-        "_tick_spacing",
-        "_update_block",
-        "_update_log",
-        "_update_method",
-        "address",
-        "factory",
-        "lens",
-        "liquidity_update_block",
-        "name",
-        "state",
-        "token0",
-        "token1",
-    )
-
     # Holds a reference to a TickLens contract object. This is a singleton
     # contract so there is no need to create separate references for each pool.
     # Dict is keyed by a tuple of chain ID and factory address
@@ -266,6 +245,11 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
     def __getstate__(self) -> dict:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
+        copied_attributes = (
+            "tick_bitmap",
+            "tick_data",
+        )
+
         dropped_attributes = (
             "_state_lock",
             "_subscribers",
@@ -274,9 +258,9 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
 
         with self._state_lock:
             return {
-                attr_name: getattr(self, attr_name, None)
-                for attr_name in self.__slots__
-                if attr_name not in dropped_attributes
+                k: (v.copy() if k in copied_attributes else v)
+                for k, v in self.__dict__.items()
+                if k not in dropped_attributes
             }
 
     def __repr__(self):  # pragma: no cover

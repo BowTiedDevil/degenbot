@@ -41,19 +41,6 @@ from .arbitrage_dataclasses import (
 
 
 class UniswapLpCycle(Subscriber, ArbitrageHelper):
-    __slots__ = (
-        "_lock",
-        "_swap_vectors",
-        "best",
-        "gas_estimate",
-        "id",
-        "input_token",
-        "max_input",
-        "name",
-        "pool_states",
-        "swap_pools",
-    )
-
     def __init__(
         self,
         input_token: Erc20Token,
@@ -156,17 +143,13 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
             "_lock",
             "_subscribers",
         )
+        copied_attributes = ()
 
-        with self._lock:
-            return {
-                attr_name: getattr(self, attr_name, None)
-                for attr_name in self.__slots__
-                if attr_name not in dropped_attributes
-            }
-
-    def __setstate__(self, state: dict):
-        for attr_name, attr_value in state.items():
-            setattr(self, attr_name, attr_value)
+        return {
+            k: (v.copy() if k in copied_attributes else v)
+            for k, v in self.__dict__.items()
+            if k not in dropped_attributes
+        }
 
     def __str__(self) -> str:
         return self.name
