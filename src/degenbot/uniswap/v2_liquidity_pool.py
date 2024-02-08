@@ -24,9 +24,9 @@ from ..subscription_mixins import Subscriber, SubscriptionMixin
 from .abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
 from .mixins import CamelotStablePoolMixin
 from .v2_dataclasses import (
+    UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
-    UniswapV2PoolExternalUpdate,
 )
 from .v2_functions import generate_v2_pool_address
 
@@ -40,20 +40,19 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
     def __init__(
         self,
-        address: Union[ChecksumAddress, str],
+        address: ChecksumAddress | str,
         tokens: Optional[List["Erc20Token"]] = None,
         name: Optional[str] = None,
         update_method: str = "polling",
         abi: Optional[list] = None,
         factory_address: Optional[str] = None,
         factory_init_hash: Optional[str] = None,
-        # default fee for most UniswapV2 AMMs is 0.3%
-        fee: Union[Fraction, Iterable[Fraction]] = Fraction(3, 1000),
+        fee: Fraction | Iterable[Fraction] = Fraction(3, 1000),
         silent: bool = False,
-        update_reserves_on_start: Optional[bool] = None,  # deprecated
-        unload_brownie_contract_after_init: Optional[bool] = None,  # deprecated
         state_block: Optional[int] = None,
         empty: bool = False,
+        update_reserves_on_start: Optional[bool] = None,  # deprecated
+        unload_brownie_contract_after_init: Optional[bool] = None,  # deprecated
     ) -> None:
         """
         Create a new `LiquidityPool` object for interaction with a Uniswap
@@ -85,8 +84,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         fee : Fraction | (Fraction, Fraction)
             The swap fee imposed by the pool. Defaults to `Fraction(3,1000)`
             which is equivalent to 0.3%. For split-fee pools of unequal value,
-            provide a tuple or list with the token0 fee in the first position,
-            and the token1 fee in the second.
+            provide an iterable with `Fraction` fees in order of their position.
         silent : bool
             Suppress status output.
         state_block: int, optional
@@ -123,10 +121,9 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         _w3 = config.get_web3()
         _w3_contract = self._w3_contract
 
-        if factory_address is not None and factory_init_hash is None:
-            raise ValueError(f"Init hash not provided for factory {factory_address}")
-
         if factory_address:
+            if factory_init_hash is None:
+                raise ValueError(f"Init hash not provided for factory {factory_address}")
             self.factory = to_checksum_address(factory_address)
 
         if isinstance(fee, Iterable):
@@ -162,7 +159,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
         chain_id = 1 if empty else _w3.eth.chain_id
 
-        # if a token pair was provided, check and set pointers for token0 and token1
         if tokens is not None:
             if len(tokens) != 2:
                 raise ValueError(f"Expected 2 tokens, found {len(tokens)}")
@@ -193,9 +189,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         if name is not None:
             self.name = name
         else:
-            # if self.fee is not None:
-            # fee_string = f"{100*self.fee.numerator/self.fee.denominator:.2f}"
-            # if self.fee_token0 is not None and self.fee_token1 is not None:
             if self.fee_token0 != self.fee_token1:
                 fee_string = f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
             elif self.fee_token0 == self.fee_token1:
@@ -234,8 +227,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
 
     def __getstate__(self) -> dict:
-        # Remove objects that either cannot be pickled or are unnecessary to perform
-        # the calculation
+        # Remove objects that either cannot be pickled or are unnecessary to perform the calculation
         copied_attributes = ()
         dropped_attributes = (
             "_state_lock",
@@ -252,10 +244,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
     def __repr__(self):  # pragma: no cover
         return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1})"
-
-    def __setstate__(self, state: Dict):
-        for attr_name, attr_value in state.items():
-            setattr(self, attr_name, attr_value)
 
     @property
     def _w3_contract(self) -> Contract:
@@ -383,36 +371,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             # ):
             #     raise ValueError("Must provide reserve override values for both tokens")
 
-        # if token_in is not None:
-        #     if token_in == self.token0:
-        #         reserves_in = (
-        #             override_reserves_token0
-        #             if override_reserves_token0 is not None
-        #             else self.reserves_token0
-        #         )
-        #         fee = self.fee_token0
-        #         reserves_out = (
-        #             override_reserves_token1
-        #             if override_reserves_token1 is not None
-        #             else self.reserves_token1
-        #         )
-        #     elif token_in == self.token1:
-        #         reserves_in = (
-        #             override_reserves_token1
-        #             if override_reserves_token1 is not None
-        #             else self.reserves_token1
-        #         )
-        #         reserves_out = (
-        #             override_reserves_token0
-        #             if override_reserves_token0 is not None
-        #             else self.reserves_token0
-        #         )
-        #         fee = self.fee_token1
-        #     else:
-        #         raise ValueError(
-        #             f"Could not identify token_in: {token_in}! This pool holds: {self.token0} {self.token1}"
-        #         )
-        # elif token_out is not None:
         if token_out == self.token1:
             reserves_in = (
                 override_reserves_token0
@@ -542,7 +500,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         # states at blocks 100, 101, 102, 103, 104. `bisect_left()` returns
         # block_index=3, since block 104 is at index=4. The state held at
         # index=3 is for block 103.
-        # block_index = self._pool_state_archive.bisect_left(block)
 
         with self._state_lock:
             known_blocks = list(self._pool_state_archive.keys())
@@ -583,16 +540,17 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         reserves_token0 = override_state.reserves_token0 if override_state else self.reserves_token0
         reserves_token1 = override_state.reserves_token1 if override_state else self.reserves_token1
 
-        return UniswapV2PoolSimulationResult(
-            amount0_delta=added_reserves_token0,
-            amount1_delta=added_reserves_token1,
-            current_state=self.state.copy(),
-            future_state=UniswapV2PoolState(
-                pool=self,
-                reserves_token0=reserves_token0 + added_reserves_token0,
-                reserves_token1=reserves_token1 + added_reserves_token1,
-            ),
-        )
+        with self._state_lock:
+            return UniswapV2PoolSimulationResult(
+                amount0_delta=added_reserves_token0,
+                amount1_delta=added_reserves_token1,
+                current_state=self.state.copy(),
+                future_state=UniswapV2PoolState(
+                    pool=self,
+                    reserves_token0=reserves_token0 + added_reserves_token0,
+                    reserves_token1=reserves_token1 + added_reserves_token1,
+                ),
+            )
 
     def simulate_remove_liquidity(
         self,
@@ -606,16 +564,17 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         reserves_token0 = override_state.reserves_token0 if override_state else self.reserves_token0
         reserves_token1 = override_state.reserves_token1 if override_state else self.reserves_token1
 
-        return UniswapV2PoolSimulationResult(
-            amount0_delta=-removed_reserves_token0,
-            amount1_delta=-removed_reserves_token1,
-            current_state=self.state.copy(),
-            future_state=UniswapV2PoolState(
-                pool=self,
-                reserves_token0=reserves_token0 - removed_reserves_token0,
-                reserves_token1=reserves_token1 - removed_reserves_token1,
-            ),
-        )
+        with self._state_lock:
+            return UniswapV2PoolSimulationResult(
+                amount0_delta=-removed_reserves_token0,
+                amount1_delta=-removed_reserves_token1,
+                current_state=self.state.copy(),
+                future_state=UniswapV2PoolState(
+                    pool=self,
+                    reserves_token0=reserves_token0 - removed_reserves_token0,
+                    reserves_token1=reserves_token1 - removed_reserves_token1,
+                ),
+            )
 
     def simulate_swap(
         self,
@@ -625,10 +584,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         token_out_quantity: Optional[int] = None,
         override_state: Optional[UniswapV2PoolState] = None,
     ) -> UniswapV2PoolSimulationResult:
-        """
-        TODO
-        """
-
         if token_in_quantity is None and token_out_quantity is None:
             raise ValueError("No quantity was provided")
 
@@ -680,16 +635,17 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             token0_delta = token_in_quantity if token_in == self.token0 else -token_out_quantity
             token1_delta = token_in_quantity if token_in == self.token1 else -token_out_quantity
 
-        return UniswapV2PoolSimulationResult(
-            amount0_delta=token0_delta,
-            amount1_delta=token1_delta,
-            current_state=self.state.copy(),
-            future_state=UniswapV2PoolState(
-                pool=self,
-                reserves_token0=self.reserves_token0 + token0_delta,
-                reserves_token1=self.reserves_token1 + token1_delta,
-            ),
-        )
+        with self._state_lock:
+            return UniswapV2PoolSimulationResult(
+                amount0_delta=token0_delta,
+                amount1_delta=token1_delta,
+                current_state=self.state.copy(),
+                future_state=UniswapV2PoolState(
+                    pool=self,
+                    reserves_token0=self.reserves_token0 + token0_delta,
+                    reserves_token1=self.reserves_token1 + token1_delta,
+                ),
+            )
 
     def auto_update(
         self,
@@ -856,7 +812,7 @@ class CamelotLiquidityPool(CamelotStablePoolMixin, LiquidityPool):
         _w3 = config.get_web3()
         _w3_contract = config.get_web3().eth.contract(address=address, abi=abi)
 
-        state_block = _w3.eth.block_number
+        state_block = _w3.eth.get_block_number()
 
         (
             _,
