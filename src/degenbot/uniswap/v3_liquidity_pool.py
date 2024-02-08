@@ -333,34 +333,29 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
 
         with self._state_lock:
             try:
-                if single_tick_bitmap := _w3_contract.functions.tickBitmap(word_position).call(
+                _tick_bitmap = _w3_contract.functions.tickBitmap(word_position).call(
                     block_identifier=block_number,
-                ):
-                    single_tick_data = self.lens._w3_contract.functions.getPopulatedTicksInWord(
-                        self.address, word_position
-                    ).call(
-                        block_identifier=block_number,
-                    )
+                )
+                if _tick_bitmap == 0:
+                    return
+                _tick_data = self.lens._w3_contract.functions.getPopulatedTicksInWord(
+                    self.address, word_position
+                ).call(block_identifier=block_number)
             except Exception as e:
                 print(f"(V3LiquidityPool) (_update_tick_data_at_word) (single tick): {e}")
                 print(type(e))
                 raise
             else:
                 self.tick_bitmap[word_position] = UniswapV3BitmapAtWord(
-                    bitmap=single_tick_bitmap,
+                    bitmap=_tick_bitmap,
                     block=block_number,
                 )
-                if single_tick_bitmap:
-                    for (
-                        tick,
-                        liquidity_net,
-                        liquidity_gross,
-                    ) in single_tick_data:
-                        self.tick_data[tick] = UniswapV3LiquidityAtTick(
-                            liquidityNet=liquidity_net,
-                            liquidityGross=liquidity_gross,
-                            block=block_number,
-                        )
+                for tick, liquidity_net, liquidity_gross in _tick_data:
+                    self.tick_data[tick] = UniswapV3LiquidityAtTick(
+                        liquidityNet=liquidity_net,
+                        liquidityGross=liquidity_gross,
+                        block=block_number,
+                    )
 
     def _uniswap_v3_pool_swap(
         self,
