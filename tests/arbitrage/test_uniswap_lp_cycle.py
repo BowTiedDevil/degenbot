@@ -2089,7 +2089,6 @@ v3_lp.tick_data = {
     ),
 }
 v3_lp._update_method = "external"
-v3_lp._update_pool_state()
 
 arb = UniswapLpCycle(
     id="test_arb",

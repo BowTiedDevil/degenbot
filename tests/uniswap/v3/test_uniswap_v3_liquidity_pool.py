@@ -2071,7 +2071,6 @@ def mocked_wbtc_weth_v3liquiditypool():
         ),
     }
 
-    lp._update_pool_state()
     lp._pool_state_archive = {
         0: UniswapV3PoolState(pool=lp, liquidity=0, sqrt_price_x96=0, tick=0),
         lp._update_block: lp.state,
