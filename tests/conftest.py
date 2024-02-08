@@ -1,5 +1,7 @@
 # pragma: no cover
 
+import logging
+
 import degenbot
 import dotenv
 import pytest
@@ -40,6 +42,11 @@ def ethereum_full_node_web3() -> web3.Web3:
 @pytest.fixture(scope="function", autouse=True)
 def initialize_degenbot_with_default_node(ethereum_full_node_web3):
     degenbot.set_web3(ethereum_full_node_web3)
+
+
+@pytest.fixture(scope="function", autouse=True)
+def set_degenbot_logging():
+    degenbot.logger.setLevel(logging.DEBUG)
 
 
 @pytest.fixture(scope="function", autouse=True)
