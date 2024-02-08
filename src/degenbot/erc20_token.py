@@ -219,21 +219,6 @@ class Erc20Token(TokenHelper):
     def __repr__(self):  # pragma: no cover
         return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"
 
-    def __getstate__(self):
-        # Remove objects that cannot be pickled and are unnecessary to perform
-        # the calculation
-        dropped_attributes = ()
-
-        return {
-            attr_name: getattr(self, attr_name, None)
-            for attr_name in self.__slots__
-            if attr_name not in dropped_attributes
-        }
-
-    def __setstate__(self, state: Dict):
-        for attr_name, attr_value in state.items():
-            setattr(self, attr_name, attr_value)
-
     def __eq__(self, other) -> bool:
         if isinstance(other, Erc20Token):
             return self.address == other.address
