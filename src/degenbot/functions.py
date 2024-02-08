@@ -9,7 +9,7 @@ from .constants import MAX_UINT256
 def get_number_for_block_identifier(identifier: Optional[BlockIdentifier]) -> int:
     match identifier:
         case None:
-            return config.get_web3().eth.block_number
+            return config.get_web3().eth.get_block_number()
         case int() if 1 <= identifier <= MAX_UINT256:
             return identifier
         case bytes():

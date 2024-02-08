@@ -117,7 +117,7 @@ def test_create_camelot_v2_stable_pool(load_env: dict) -> None:
         fork_block=FORK_BLOCK,
     )
     assert fork.block == FORK_BLOCK
-    assert fork.w3.eth.block_number == FORK_BLOCK
+    assert fork.w3.eth.get_block_number() == FORK_BLOCK
     degenbot.set_web3(fork.w3)
 
     lp = CamelotLiquidityPool(address=CAMELOT_MIM_USDC_LP_ADDRESS)

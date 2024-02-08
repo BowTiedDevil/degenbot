@@ -258,7 +258,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
 
         _w3 = config.get_web3()
         if state_block is None:
-            state_block = _w3.eth.block_number
+            state_block = _w3.eth.get_block_number()
         self.update_block = state_block
         self._create_timestamp = _w3.eth.get_block("latest")["timestamp"]
         chain_id = _w3.eth.chain_id
@@ -610,7 +610,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             pool_balances = self.balances.copy()
 
         block_number = (
-            config.get_web3().eth.block_number
+            config.get_web3().eth.get_block_number()
             if block_identifier is None
             else get_number_for_block_identifier(block_identifier)
         )
@@ -1147,7 +1147,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             pool_balances = self.balances.copy()
 
         block_number = (
-            config.get_web3().eth.block_number
+            config.get_web3().eth.get_block_number()
             if block_identifier is None
             else get_number_for_block_identifier(block_identifier)
         )
@@ -1558,7 +1558,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             pool_balances = self.balances.copy()
 
         block_number = (
-            config.get_web3().eth.block_number
+            config.get_web3().eth.get_block_number()
             if block_identifier is None
             else get_number_for_block_identifier(block_identifier)
         )
@@ -1588,7 +1588,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         self, _token_amount: int, i: int, block_identifier: Optional[BlockIdentifier] = None
     ) -> Tuple[int, ...]:
         block_number = (
-            config.get_web3().eth.block_number
+            config.get_web3().eth.get_block_number()
             if block_identifier is None
             else get_number_for_block_identifier(block_identifier)
         )
@@ -2185,7 +2185,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
 
         _w3 = config.get_web3()
         if block_number is None:
-            block_number = _w3.eth.block_number
+            block_number = _w3.eth.get_block_number()
 
         found_updates = False
         token_balances = []
@@ -2262,7 +2262,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         """
 
         block_number = (
-            config.get_web3().eth.block_number
+            config.get_web3().eth.get_block_number()
             if block_identifier is None
             else get_number_for_block_identifier(block_identifier)
         )

@@ -125,14 +125,14 @@ def test_auto_update(fork_mainnet_archive: AnvilFork):
 
     _tripool = CurveStableswapPool(TRIPOOL_ADDRESS)
 
-    assert fork_mainnet_archive.w3.eth.block_number == _BLOCK_NUMBER
+    assert fork_mainnet_archive.w3.eth.get_block_number() == _BLOCK_NUMBER
     assert _tripool.update_block == _BLOCK_NUMBER
 
     _EXPECTED_BALANCES = [75010632422398781503259123, 76382820384826, 34653521595900]
     assert _tripool.balances == _EXPECTED_BALANCES
 
     fork_mainnet_archive.reset(block_number=_BLOCK_NUMBER + 1)
-    assert fork_mainnet_archive.w3.eth.block_number == _BLOCK_NUMBER + 1
+    assert fork_mainnet_archive.w3.eth.get_block_number() == _BLOCK_NUMBER + 1
     _tripool.auto_update()
     assert _tripool.update_block == _BLOCK_NUMBER + 1
     assert _tripool.balances == [
@@ -150,7 +150,7 @@ def test_external_update(fork_mainnet_archive: AnvilFork):
 
     _tripool = CurveStableswapPool(TRIPOOL_ADDRESS)
 
-    assert fork_mainnet_archive.w3.eth.block_number == _BLOCK_NUMBER
+    assert fork_mainnet_archive.w3.eth.get_block_number() == _BLOCK_NUMBER
     assert _tripool.update_block == _BLOCK_NUMBER
 
     _EXPECTED_BALANCES = [75010632422398781503259123, 76382820384826, 34653521595900]

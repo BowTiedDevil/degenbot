@@ -181,7 +181,7 @@ def test_v3_router_transactions(
     tx_dict,
 ) -> None:
     fork_mainnet_archive.reset(block_number=block_number)
-    assert fork_mainnet_archive.w3.eth.block_number == block_number
+    assert fork_mainnet_archive.w3.eth.get_block_number() == block_number
     set_web3(fork_mainnet_archive.w3)
     tx = UniswapTransaction(**tx_dict)
     tx.simulate()
@@ -219,7 +219,7 @@ def test_universal_router_transactions(
     fork_mainnet_archive: AnvilFork, block_number, tx_dict
 ) -> None:
     fork_mainnet_archive.reset(block_number=block_number)
-    assert fork_mainnet_archive.w3.eth.block_number == block_number
+    assert fork_mainnet_archive.w3.eth.get_block_number() == block_number
     fork_mainnet_archive.w3.provider.timeout = 600
     set_web3(fork_mainnet_archive.w3)
     tx = UniswapTransaction(**tx_dict)

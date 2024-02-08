@@ -371,7 +371,7 @@ class Erc20Token(TokenHelper):
         """
 
         if block_identifier is None:
-            block_identifier = config.get_web3().eth.block_number
+            block_identifier = config.get_web3().eth.get_block_number()
 
         return self._get_total_supply_cachable(
             block_number=get_number_for_block_identifier(block_identifier)

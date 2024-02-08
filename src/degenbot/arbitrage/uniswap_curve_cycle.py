@@ -644,7 +644,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
         curve_pool = self.swap_pools[1]
         if TYPE_CHECKING:
             assert isinstance(curve_pool, CurveStableswapPool)
-        block_number = get_web3().eth.block_number
+        block_number = get_web3().eth.get_block_number()
         curve_pool.calculate_tokens_out_from_tokens_in(
             token_in=self._swap_vectors[1].token_in,
             token_in_quantity=1,
