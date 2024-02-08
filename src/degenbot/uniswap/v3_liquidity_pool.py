@@ -227,7 +227,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
 
             self._update_tick_data_at_word(
                 word_position,
-                single_word=True,
                 block_number=self._update_block,
             )
 
@@ -311,7 +310,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
     def _update_tick_data_at_word(
         self,
         word_position: int,
-        single_word: bool = False,
         block_number: Optional[int] = None,
     ) -> None:
         """
@@ -319,14 +317,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         representing 256 ticks at the tickSpacing interval). Store
         the liquidity values in the `self.tick_data` dictionary using the tick
         as the key, and update the `self.tick_bitmap` dictionary.
-
-        This function attempts to use Brownie's built-in multicall for any network
-        with the 'multicall2' key set. If available, it will request extra words
-        in the direction of the requested position to fill in gaps in `self.tick_data`
-
-        If multicall is set but `self.tick_data` is empty, it will fall back to fetching
-        a single word only. This is a time-saving technique since this should only occur
-        inside the constructor when the pool helper is being created.
 
         Uses a lock to guard state-modifying methods that might cause race conditions
         when used with threads.
@@ -341,96 +331,36 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         if block_number is None:
             block_number = config.get_web3().eth.get_block_number()
 
-        # with self._liquidity_lock:
         with self._state_lock:
-            if False:
-                pass
-
-            # TODO: re-implement multicall without Brownie
-
-            # # fetch multiple words if multicall is available for the connected network
-            # # and single_word mode is not active
-            # if (
-            #     network.main.CONFIG.active_network.get("multicall2")
-            #     and not single_word
-            # ):
-
-            #     # limit word values to int16 range
-            #     words = set(
-            #         range(
-            #             max(MIN_INT16, word_position - self.extra_words // 2),
-            #             min(MAX_INT16, word_position + self.extra_words // 2),
-            #         )
-            #     ) - set(self.tick_bitmap)
-
-            #     logger.debug(f"fetching words: {words}")
-
-            #     # fetch the tick bitmaps for the range
-            #     try:
-            #         with brownie_multicall(block_identifier=block_number):
-            #             multicall_tick_bitmaps = {
-            #                 word: UniswapV3BitmapAtWord(
-            #                     bitmap=self._brownie_contract.tickBitmap(word),
-            #                     block=block_number,
-            #                 )
-            #                 for word in words
-            #             }
-            #         with brownie_multicall(block_identifier=block_number):
-            #             multicall_tick_data = {
-            #                 tick: UniswapV3LiquidityAtTick(
-            #                     liquidityNet=liquidity_net,
-            #                     liquidityGross=liquidity_gross,
-            #                     block=block_number,
-            #                 )
-            #                 for word_position, bitmap in multicall_tick_bitmaps.items()
-            #                 for tick, liquidity_net, liquidity_gross in self.lens._brownie_contract.getPopulatedTicksInWord(
-            #                     self.address,
-            #                     word_position,
-            #                 )
-            #                 if bitmap
-            #             }
-            #     except Exception as e:
-            #         print(
-            #             f"(V3LiquidityPool (_update_tick_data_at_word) (multicall): {e}"
-            #         )
-            #         print(type(e))
-            #         raise
-            #     else:
-            #         self.tick_bitmap.update(multicall_tick_bitmaps)
-            #         self.tick_data.update(multicall_tick_data)
-            #         self.liquidity_update_block = block_number
-
-            # fetch words one by one (single_tick = True)
-            else:
-                try:
-                    if single_tick_bitmap := _w3_contract.functions.tickBitmap(word_position).call(
+            try:
+                if single_tick_bitmap := _w3_contract.functions.tickBitmap(word_position).call(
+                    block_identifier=block_number,
+                ):
+                    single_tick_data = self.lens._w3_contract.functions.getPopulatedTicksInWord(
+                        self.address, word_position
+                    ).call(
                         block_identifier=block_number,
-                    ):
-                        single_tick_data = self.lens._w3_contract.functions.getPopulatedTicksInWord(
-                            self.address, word_position
-                        ).call(
-                            block_identifier=block_number,
-                        )
-                except Exception as e:
-                    print(f"(V3LiquidityPool) (_update_tick_data_at_word) (single tick): {e}")
-                    print(type(e))
-                    raise
-                else:
-                    self.tick_bitmap[word_position] = UniswapV3BitmapAtWord(
-                        bitmap=single_tick_bitmap,
-                        block=block_number,
                     )
-                    if single_tick_bitmap:
-                        for (
-                            tick,
-                            liquidity_net,
-                            liquidity_gross,
-                        ) in single_tick_data:
-                            self.tick_data[tick] = UniswapV3LiquidityAtTick(
-                                liquidityNet=liquidity_net,
-                                liquidityGross=liquidity_gross,
-                                block=block_number,
-                            )
+            except Exception as e:
+                print(f"(V3LiquidityPool) (_update_tick_data_at_word) (single tick): {e}")
+                print(type(e))
+                raise
+            else:
+                self.tick_bitmap[word_position] = UniswapV3BitmapAtWord(
+                    bitmap=single_tick_bitmap,
+                    block=block_number,
+                )
+                if single_tick_bitmap:
+                    for (
+                        tick,
+                        liquidity_net,
+                        liquidity_gross,
+                    ) in single_tick_data:
+                        self.tick_data[tick] = UniswapV3LiquidityAtTick(
+                            liquidityNet=liquidity_net,
+                            liquidityGross=liquidity_gross,
+                            block=block_number,
+                        )
 
     def _uniswap_v3_pool_swap(
         self,
@@ -569,10 +499,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                             f"tickNext={step.tickNext} out of range! Fetching word={tick_next_word}"
                             f"\n{self.name}"
                         )
-                        self._update_tick_data_at_word(
-                            tick_next_word,
-                            single_word=True,
-                        )
+                        self._update_tick_data_at_word(word_position=tick_next_word)
                     break
 
             # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
@@ -1062,10 +989,8 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                                 f"(external_update) {tick_word=} not found in tick_bitmap {self.tick_bitmap.keys()=}"
                             )
                             try:
-                                # fetch the single word
                                 self._update_tick_data_at_word(
                                     word_position=tick_word,
-                                    single_word=True,
                                     # Fetch the word using the previous block as a known "good" state snapshot
                                     block_number=block_number - 1,
                                 )
