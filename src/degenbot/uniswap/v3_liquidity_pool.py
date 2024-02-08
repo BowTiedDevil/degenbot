@@ -241,8 +241,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             *_,
         ) = _w3_contract.functions.slot0().call(block_identifier=self._update_block)
 
-        self._update_pool_state()
-
         self._pool_state_archive: Dict[int, UniswapV3PoolState] = {
             0: UniswapV3PoolState(
                 pool=self,
@@ -309,20 +307,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             10 = bitPosition (zero-indexed)
         """
         return TickBitmap.position(int(Decimal(tick) // self._tick_spacing))
-
-    def _update_pool_state(self) -> None:
-        try:
-            self.state = UniswapV3PoolState(
-                pool=self,
-                liquidity=self.liquidity,
-                sqrt_price_x96=self.sqrt_price_x96,
-                tick=self.tick,
-                tick_bitmap=self.tick_bitmap.copy(),
-                tick_data=self.tick_data.copy(),
-            )
-        except AttributeError as e:
-            print(f"{type(e)}: {e}")
-            print(self)
 
     def _update_tick_data_at_word(
         self,
@@ -812,7 +796,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 self.liquidity = _liquidity
 
             if updated:
-                self._update_pool_state()
                 self._notify_subscribers()
                 # WIP: maintain a dict of pool states by block to unwind updates that were removed by a re-org
                 self._pool_state_archive[block_number] = self.state
@@ -1158,7 +1141,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 logger.debug(f"update block: {block_number} (last={self._update_block})")
 
             if updated_state:
-                self._update_pool_state()
                 self._pool_state_archive[block_number] = self.state
                 self._notify_subscribers()
 
