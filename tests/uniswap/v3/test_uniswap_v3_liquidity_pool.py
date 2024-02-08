@@ -30,8 +30,6 @@ class MockV3LiquidityPool(V3LiquidityPool):
     def __init__(self):
         self._subscribers = set()
         self._state_lock = Lock()
-        # self._slot0_lock = Lock()
-        # self._liquidity_lock = Lock()
 
 
 # Test is based on the WBTC-WETH Uniswap V3 pool on Ethereum mainnet,
@@ -2197,8 +2195,6 @@ def test_tick_bitmap_equality() -> None:
 
 def test_pickle_pool(mocked_wbtc_weth_v3liquiditypool):
     pickle.dumps(mocked_wbtc_weth_v3liquiditypool)
-    state = mocked_wbtc_weth_v3liquiditypool.__getstate__()
-    mocked_wbtc_weth_v3liquiditypool.__setstate__(state)
 
 
 def test_tick_data_equality() -> None:

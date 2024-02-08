@@ -2,10 +2,8 @@ from fractions import Fraction
 from threading import Lock
 
 from degenbot import Erc20Token
-from degenbot.arbitrage.flash_borrow_to_lp_swap_new import (
-    FlashBorrowToLpSwapNew,
-)
-from degenbot.uniswap import LiquidityPool
+from degenbot.arbitrage.flash_borrow_to_lp_swap_new import FlashBorrowToLpSwapNew
+from degenbot.uniswap import LiquidityPool, UniswapV2PoolState
 from eth_utils import to_checksum_address
 
 
@@ -17,6 +15,7 @@ class MockErc20Token(Erc20Token):
 
 class MockLiquidityPool(LiquidityPool):
     def __init__(self):
+        self.state = UniswapV2PoolState(self, 0, 0)
         self._state_lock = Lock()
         self._subscribers = set()
 
@@ -45,7 +44,7 @@ uni_v2_lp.reserves_token1 = 3000000000000000000000
 uni_v2_lp.token0 = wbtc
 uni_v2_lp.token1 = weth
 uni_v2_lp.new_reserves = True
-uni_v2_lp._update_pool_state()
+
 
 sushi_v2_lp = MockLiquidityPool()
 sushi_v2_lp.name = "WBTC-WETH (SushiV2, 0.30%)"
@@ -59,7 +58,6 @@ sushi_v2_lp.reserves_token1 = 3000000000000000000000
 sushi_v2_lp.token0 = wbtc
 sushi_v2_lp.token1 = weth
 sushi_v2_lp.new_reserves = True
-sushi_v2_lp._update_pool_state()
 
 
 arb = FlashBorrowToLpSwapNew(

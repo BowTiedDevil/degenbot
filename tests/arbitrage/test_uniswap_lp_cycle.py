@@ -38,14 +38,13 @@ class MockErc20Token(Erc20Token):
 
 class MockLiquidityPool(LiquidityPool):
     def __init__(self):
+        self.state = UniswapV2PoolState(self, 0, 0)
         self._state_lock = Lock()
         self._subscribers = set()
 
 
 class MockV3LiquidityPool(V3LiquidityPool):
     def __init__(self):
-        # self._liquidity_lock = Lock()
-        # self._slot0_lock = Lock()
         self._state_lock = Lock()
         self._subscribers = set()
 
@@ -74,7 +73,7 @@ v2_lp.reserves_token1 = 2571336301536722443178
 v2_lp.token0 = wbtc
 v2_lp.token1 = weth
 v2_lp._update_method = "external"
-v2_lp._update_pool_state()
+
 
 v3_lp = MockV3LiquidityPool()
 v3_lp.state = UniswapV3PoolState(
@@ -2360,7 +2359,6 @@ def test_pre_calc_check() -> None:
     lp_1.reserves_token1 = 2500000000000000000000
     lp_1.token0 = wbtc
     lp_1.token1 = weth
-    lp_1._update_pool_state()
 
     lp_2 = MockLiquidityPool()
     lp_2.name = "WBTC-WETH (V2, 0.30%)"
@@ -2373,7 +2371,6 @@ def test_pre_calc_check() -> None:
     lp_2.reserves_token1 = 2500000000000000000000
     lp_2.token0 = wbtc
     lp_2.token1 = weth
-    lp_2._update_pool_state()
 
     # lp_1 price = 2500000000000000000000/16000000000 ~= 156250000000.00
     # lp_2 price = 2500000000000000000000/15000000000 ~= 166666666666.67

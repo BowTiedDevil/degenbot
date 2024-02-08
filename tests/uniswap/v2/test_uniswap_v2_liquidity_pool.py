@@ -322,8 +322,6 @@ def test_dunder_methods(ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPo
 
 def test_pickle_pool(ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool) -> None:
     pickle.dumps(ethereum_uniswap_v2_wbtc_weth_liquiditypool)
-    state = ethereum_uniswap_v2_wbtc_weth_liquiditypool.__getstate__()
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool.__setstate__(state)
 
 
 def test_calculate_tokens_out_from_ratio_out(fork_mainnet_archive: AnvilFork) -> None:
