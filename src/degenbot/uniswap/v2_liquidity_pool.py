@@ -1,7 +1,7 @@
 from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 from warnings import warn
 
 from eth_typing import ChecksumAddress
@@ -103,6 +103,12 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 "Empty LiquidityPool cannot be created without pool, factory, and token addresses"
             )
 
+        self.state = UniswapV2PoolState(
+            pool=self,
+            reserves_token0=0,
+            reserves_token1=0,
+        )
+
         self._state_lock = Lock()
 
         if unload_brownie_contract_after_init is not None:  # pragma: no cover
@@ -197,9 +203,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
             self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
 
-        self.reserves_token0: int = 0
-        self.reserves_token1: int = 0
-
         if not empty:
             (
                 self.reserves_token0,
@@ -207,20 +210,11 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 *_,
             ) = _w3_contract.functions.getReserves().call(block_identifier=self.update_block)
 
-        if TYPE_CHECKING:
-            assert isinstance(self.reserves_token0, int)
-            assert isinstance(self.reserves_token1, int)
-
         if self._update_method == "event":  # pragma: no cover
             raise ValueError(
                 "The 'event' update method is inaccurate and unsupported, please update your bot to use the default 'polling' method"
             )
 
-        self.state = UniswapV2PoolState(
-            pool=self,
-            reserves_token0=self.reserves_token0,
-            reserves_token1=self.reserves_token1,
-        )
         self._pool_state_archive: Dict[int, UniswapV2PoolState] = {
             0: UniswapV2PoolState(
                 pool=self,
@@ -228,7 +222,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 reserves_token1=0,
             ),
             self.update_block: self.state,
-        }  # WIP
+        }
 
         AllPools(chain_id)[self.address] = self
 
@@ -270,6 +264,29 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             abi=self.abi,
         )
 
+    @property
+    def reserves_token0(self) -> int:
+        return self.state.reserves_token0
+
+    @reserves_token0.setter
+    def reserves_token0(self, new_reserves: int) -> None:
+        self.state = UniswapV2PoolState(
+            pool=self,
+            reserves_token0=new_reserves,
+            reserves_token1=self.reserves_token1,
+        )
+
+    @property
+    def reserves_token1(self) -> int:
+        return self.state.reserves_token1
+
+    @reserves_token1.setter
+    def reserves_token1(self, new_reserves: int) -> None:
+        self.state = UniswapV2PoolState(
+            pool=self,
+            reserves_token0=self.reserves_token0,
+            reserves_token1=new_reserves,
+        )
 
     @property
     def tokens(self) -> Tuple[Erc20Token, Erc20Token]:
@@ -544,13 +561,10 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
             restored_block, restored_state = list(self._pool_state_archive.items())[-1]
 
-            # Set mutable values to match state
-            self.reserves_token0 = restored_state.reserves_token0
-            self.reserves_token1 = restored_state.reserves_token1
+            # Restore previous state and block
             self.state = restored_state
             self.update_block = restored_block
-
-        self._update_pool_state()
+            self._notify_subscribers()
 
     def set_swap_target(self, *args, **kwargs):
         warn(
@@ -750,6 +764,10 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                         reserves0,
                         reserves1,
                     )
+                    self._notify_subscribers()
+                    self._pool_state_archive[update_block] = self.state
+                    updates = True
+
                     if not silent:
                         logger.info(f"[{self.name}]")
                         if print_reserves:
@@ -762,10 +780,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                             logger.info(
                                 f"{self.token1}/{self.token0}: {(self.reserves_token1/10**self.token1.decimals) / (self.reserves_token0/10**self.token0.decimals)}"
                             )
-
-                    self._update_pool_state()
-                    self._pool_state_archive[update_block] = self.state
-                    updates = True
                 else:
                     updates = False
             except Exception as e:
@@ -787,8 +801,8 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 self.reserves_token0 = external_token0_reserves
                 self.reserves_token1 = external_token1_reserves
                 self.new_reserves = True
-                self._update_pool_state()
                 self._pool_state_archive[update_block] = self.state
+                self._notify_subscribers()
 
             if not silent:
                 logger.info(f"[{self.name}]")
