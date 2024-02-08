@@ -50,7 +50,7 @@ SwapAmount: TypeAlias = (
 )
 
 
-_CURVE_V1_SLIPPAGE = 0.999
+_CURVE_V1_SLIPPAGE = 0.9999
 
 
 class UniswapCurveCycle(Subscriber, ArbitrageHelper):
