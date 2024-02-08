@@ -332,14 +332,8 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         when used with threads.
         """
 
-        # Return immediately if requested word is already known.
-        # This can occur in threaded bots. The lock prevents race conditions,
-        # but this method might be running simultaneously across different threads.
-        # Used to throw an exception, now just returns early.
-
         if word_position in self.tick_bitmap:
-            logger.debug(f"returning early, {word_position=} found")
-            logger.debug(self.tick_bitmap[word_position])
+            logger.debug(f"Short-circuiting update, word position {word_position} already known.")
             return
 
         _w3_contract = self._w3_contract
