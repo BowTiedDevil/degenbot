@@ -7,12 +7,12 @@ from ..baseclasses import TokenHelper
 
 _all_tokens: Dict[
     int,
-    Dict[str, TokenHelper],
+    Dict[ChecksumAddress, TokenHelper],
 ] = {}
 
 
 class AllTokens:
-    def __init__(self, chain_id):
+    def __init__(self, chain_id: int) -> None:
         try:
             _all_tokens[chain_id]
         except KeyError:
@@ -20,21 +20,17 @@ class AllTokens:
         finally:
             self.tokens = _all_tokens[chain_id]
 
-    def __delitem__(self, token_address: str):
+    def __delitem__(self, token_address: str) -> None:
         del self.tokens[to_checksum_address(token_address)]
 
-    def __getitem__(self, token_address: str):
+    def __getitem__(self, token_address: str) -> TokenHelper:
         return self.tokens[to_checksum_address(token_address)]
 
-    def __setitem__(
-        self,
-        token_address: ChecksumAddress | str,
-        token_helper: TokenHelper,
-    ):
+    def __setitem__(self, token_address: str, token_helper: TokenHelper) -> None:
         self.tokens[to_checksum_address(token_address)] = token_helper
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.tokens)
 
     def get(self, token_address: str) -> Optional[TokenHelper]:
-        return self.tokens.get(token_address)
+        return self.tokens.get(to_checksum_address(token_address))

@@ -5,7 +5,7 @@ import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
 import ujson
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 from web3 import IPCProvider, Web3
 from web3.types import Middleware
 
@@ -88,7 +88,7 @@ class AnvilFork:
         self.socket = socket.socket(socket.AF_UNIX)
         self.socket.connect(self.ipc_path)
 
-    def __del__(self):
+    def __del__(self) -> None:
         self._process.terminate()
         self._process.wait()
         if os.path.exists(self.ipc_path):
@@ -130,7 +130,7 @@ class AnvilFork:
                     raise Exception(f"Error in response: {response}")
                 return response["result"]
 
-    def create_access_list(self, transaction: Dict) -> list:
+    def create_access_list(self, transaction: Dict[Any, Any]) -> Any:
         # Exclude transaction values that are irrelevant for the JSON-RPC method
         # ref: https://docs.infura.io/networks/ethereum/json-rpc-methods/eth_createaccesslist
         keys_to_drop = ("gasPrice", "maxFeePerGas", "maxPriorityFeePerGas", "gas", "chainId")
@@ -148,7 +148,7 @@ class AnvilFork:
             method="eth_createAccessList",
             params=[sanitized_tx],
         )
-        response: dict = self._get_response()
+        response: Dict[Any, Any] = self._get_response()
         return response["accessList"]
 
     def reset(
@@ -178,7 +178,7 @@ class AnvilFork:
             method="evm_revert",
             params=[id],
         )
-        return self._get_response()
+        return bool(self._get_response())
 
     def set_balance(self, address: str, balance: int) -> None:
         if not (0 <= balance <= MAX_UINT256):

@@ -1,16 +1,15 @@
-from fractions import Fraction
 from typing import List
 
 from eth_utils.address import to_checksum_address
-from scipy import optimize  # type: ignore[import]
+from scipy import optimize
 
+from .. import config
 from ..baseclasses import ArbitrageHelper
 from ..erc20_token import Erc20Token
-from .. import config
-from ..uniswap.v2_liquidity_pool import LiquidityPool
-from ..uniswap.v2_functions import get_v2_pools_from_token_path
-from ..uniswap.managers import UniswapV2LiquidityPoolManager
 from ..logging import logger
+from ..uniswap.managers import UniswapV2LiquidityPoolManager
+from ..uniswap.v2_functions import get_v2_pools_from_token_path
+from ..uniswap.v2_liquidity_pool import LiquidityPool
 
 
 class FlashBorrowToRouterSwap(ArbitrageHelper):
@@ -21,9 +20,7 @@ class FlashBorrowToRouterSwap(ArbitrageHelper):
         swap_factory_address: str,
         swap_router_address: str,
         swap_token_addresses: List[str],
-        swap_router_fee=Fraction(3, 1000),
         name: str = "",
-        update_method="polling",
     ):
         if borrow_token.address != swap_token_addresses[0]:
             raise ValueError("Token addresses must begin with the borrowed token")
@@ -85,7 +82,7 @@ class FlashBorrowToRouterSwap(ArbitrageHelper):
             "profit_token": self.repay_token,
         }
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name
 
     def update_reserves(
@@ -128,7 +125,7 @@ class FlashBorrowToRouterSwap(ArbitrageHelper):
         else:
             return False
 
-    def _calculate_arbitrage(self):
+    def _calculate_arbitrage(self) -> None:
         # set up the boundaries for the Brent optimizer based on which token is being borrowed
         if self.borrow_token.address == self.borrow_pool.token0.address:
             bounds = (

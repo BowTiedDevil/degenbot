@@ -1,5 +1,5 @@
 from io import TextIOWrapper
-from typing import Dict, List, Optional, TextIO, Tuple
+from typing import Any, Dict, List, Optional, TextIO, Tuple
 
 import ujson
 from eth_typing import ChecksumAddress
@@ -31,7 +31,7 @@ class UniswapV3LiquiditySnapshot:
         chain_id: Optional[int] = None,
     ):
         _file: TextIOWrapper
-        json_liquidity_snapshot: dict
+        json_liquidity_snapshot: Dict[str, Any]
 
         try:
             if isinstance(file, TextIOWrapper):
@@ -51,7 +51,7 @@ class UniswapV3LiquiditySnapshot:
 
         self.newest_block = json_liquidity_snapshot.pop("snapshot_block")
 
-        self._liquidity_snapshot: Dict[ChecksumAddress, Dict] = dict()
+        self._liquidity_snapshot: Dict[ChecksumAddress, Dict[str, Any]] = dict()
         for (
             pool_address,
             pool_liquidity_snapshot,
@@ -148,7 +148,9 @@ class UniswapV3LiquiditySnapshot:
         logger.info(f"Updated snapshot to block {to_block}")
         self.newest_block = to_block
 
-    def get_pool_updates(self, pool_address) -> List[UniswapV3PoolExternalUpdate]:
+    def get_pool_updates(self, pool_address: str) -> List[UniswapV3PoolExternalUpdate]:
+        pool_address = to_checksum_address(pool_address)
+
         try:
             self._liquidity_events[pool_address]
         except KeyError:
@@ -188,9 +190,12 @@ class UniswapV3LiquiditySnapshot:
             raise ValueError(f"Unexpected input for pool: {type(pool)}")
 
         try:
-            return self._liquidity_snapshot[pool_address]["tick_bitmap"]
+            tick_bitmap: Dict[int, UniswapV3BitmapAtWord] = self._liquidity_snapshot[pool_address][
+                "tick_bitmap"
+            ]
+            return tick_bitmap
         except KeyError:
-            return {}
+            return dict()
 
     def get_tick_data(
         self, pool: V3LiquidityPool | ChecksumAddress
@@ -203,7 +208,10 @@ class UniswapV3LiquiditySnapshot:
             raise ValueError(f"Unexpected input for pool: {type(pool)}")
 
         try:
-            return self._liquidity_snapshot[pool_address]["tick_data"]
+            tick_data: Dict[int, UniswapV3LiquidityAtTick] = self._liquidity_snapshot[pool_address][
+                "tick_data"
+            ]
+            return tick_data
         except KeyError:
             return {}
 

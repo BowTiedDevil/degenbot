@@ -1,12 +1,10 @@
-from fractions import Fraction
 from typing import List
 
 from eth_utils.address import to_checksum_address
-from scipy import optimize  # type: ignore[import]
+from scipy import optimize
 
 from .. import config
 from ..baseclasses import ArbitrageHelper
-from ..config import get_web3
 from ..erc20_token import Erc20Token
 from ..logging import logger
 from ..uniswap.managers import UniswapV2LiquidityPoolManager
@@ -21,21 +19,8 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
         borrow_token: Erc20Token,
         swap_factory_address: str,
         swap_token_addresses: List[str],
-        swap_router_fee=Fraction(3, 1000),
         name: str = "",
-        update_method="polling",
     ):
-        _web3 = get_web3()
-        if _web3 is not None:
-            self._w3 = _web3
-        else:  # pragma: no cover
-            from brownie import web3 as brownie_web3  # type: ignore[import]
-
-            if brownie_web3.isConnected():
-                self._w3 = brownie_web3
-            else:
-                raise ValueError("No connected web3 object provided.")
-
         if borrow_token.address != swap_token_addresses[0]:
             raise ValueError("Token addresses must begin with the borrowed token")
 
@@ -98,7 +83,7 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
             "swap_pool_amounts": [],
         }
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name
 
     def update_reserves(
@@ -141,7 +126,7 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
         else:
             return False
 
-    def _calculate_arbitrage(self):
+    def _calculate_arbitrage(self) -> None:
         # set up the boundaries for the Brent optimizer based on which token is being borrowed
         if self.borrow_token.address == self.borrow_pool.token0.address:
             bounds = (
@@ -261,21 +246,18 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        silent: bool = False,
-    ) -> List[list]:
+    ) -> List[List[int]]:
         number_of_pools = len(self.swap_pools)
 
         pools_amounts_out = []
 
         for i in range(number_of_pools):
-            # determine the output token for pool0
             if token_in.address == self.swap_pools[i].token0.address:
                 token_out = self.swap_pools[i].token1
             elif token_in.address == self.swap_pools[i].token1.address:
                 token_out = self.swap_pools[i].token0
             else:
-                print("wtf?")
-                raise Exception
+                raise ValueError(f"Token in {token_in} not found in swap pool {self.swap_pools[i]}")
 
             # calculate the swap output through pool[i]
             token_out_quantity = self.swap_pools[i].calculate_tokens_out_from_tokens_in(

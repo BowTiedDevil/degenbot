@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from warnings import warn
 
 import eth_abi
@@ -6,7 +6,7 @@ import ujson
 from eth_typing import AnyAddress, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from web3 import Web3
-from web3.contract import Contract
+from web3.contract.contract import Contract
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError
 from web3.types import BlockIdentifier
 
@@ -15,7 +15,7 @@ from .baseclasses import TokenHelper
 from .chainlink import ChainlinkPriceContract
 from .functions import get_number_for_block_identifier
 from .logging import logger
-from .registry import AllTokens
+from .registry.all_tokens import AllTokens
 
 # Taken from OpenZeppelin's ERC-20 implementation
 # ref: https://www.npmjs.com/package/@openzeppelin/contracts?activeTab=code
@@ -55,7 +55,7 @@ class Erc20Token(TokenHelper):
     def __init__(
         self,
         address: str,
-        abi: Optional[list] = None,
+        abi: Optional[List[Any]] = None,
         oracle_address: Optional[str] = None,
         silent: bool = False,
         unload_brownie_contract_after_init: bool = False,  # deprecated
@@ -203,10 +203,10 @@ class Erc20Token(TokenHelper):
         if not silent:
             logger.info(f"• {self.symbol} ({self.name})")
 
-    def __repr__(self):  # pragma: no cover
+    def __repr__(self) -> str:  # pragma: no cover
         return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: Any) -> bool:
         if isinstance(other, Erc20Token):
             return self.address == other.address
         elif isinstance(other, str):
@@ -214,7 +214,7 @@ class Erc20Token(TokenHelper):
         else:
             return NotImplemented
 
-    def __lt__(self, other) -> bool:
+    def __lt__(self, other: Any) -> bool:
         if isinstance(other, Erc20Token):
             return self.address < other.address
         elif isinstance(other, str):
@@ -222,7 +222,7 @@ class Erc20Token(TokenHelper):
         else:
             return NotImplemented
 
-    def __gt__(self, other) -> bool:
+    def __gt__(self, other: Any) -> bool:
         if isinstance(other, Erc20Token):
             return self.address > other.address
         elif isinstance(other, str):
@@ -230,10 +230,10 @@ class Erc20Token(TokenHelper):
         else:
             return NotImplemented
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.address)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.symbol
 
     @property
@@ -254,6 +254,7 @@ class Erc20Token(TokenHelper):
         except KeyError:
             pass
 
+        approval: int
         approval, *_ = eth_abi.decode(
             types=["uint256"],
             data=config.get_web3().eth.call(
@@ -288,12 +289,13 @@ class Erc20Token(TokenHelper):
         self,
         address: ChecksumAddress,
         block_number: int,
-    ):
+    ) -> int:
         try:
             return self._cached_balance[block_number, address]
         except KeyError:
             pass
 
+        balance: int
         balance, *_ = eth_abi.decode(
             types=["uint256"],
             data=config.get_web3().eth.call(
@@ -327,6 +329,7 @@ class Erc20Token(TokenHelper):
         except KeyError:
             pass
 
+        total_supply: int
         total_supply, *_ = eth_abi.decode(
             types=["uint256"],
             data=config.get_web3().eth.call(
@@ -349,7 +352,7 @@ class Erc20Token(TokenHelper):
             block_number=get_number_for_block_identifier(block_identifier)
         )
 
-    def update_price(self):
+    def update_price(self) -> None:
         self._price_oracle.update_price()
         self.price = self._price_oracle.price
 
@@ -359,9 +362,7 @@ class EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE(Erc20Token):
     An adapter for pools using the 'all Es' placeholder address to represent native Ether.
     """
 
-    def __init__(
-        self,
-    ):
+    def __init__(self) -> None:
         self.address = to_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
         self.symbol = "ETH"
         self.name = "Ether Placeholder"

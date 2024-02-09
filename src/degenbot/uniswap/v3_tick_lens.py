@@ -1,8 +1,8 @@
-from typing import Optional
+from typing import Any, List, Optional
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from web3.contract import Contract
+from web3.contract.contract import Contract
 
 from .. import config
 from .abi import UNISWAP_V3_TICKLENS_ABI
@@ -12,7 +12,7 @@ class TickLens:
     def __init__(
         self,
         address: ChecksumAddress | str,
-        abi: Optional[list] = None,
+        abi: Optional[List[Any]] = None,
     ):
         self.address = to_checksum_address(address)
         self.abi = abi if abi is not None else UNISWAP_V3_TICKLENS_ABI

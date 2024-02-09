@@ -19,7 +19,7 @@ def flipTick(
     tick: int,
     tick_spacing: int,
     update_block: Optional[int] = None,
-):
+) -> None:
     if not (tick % tick_spacing == 0):
         raise EVMRevertError("Tick not correctly spaced!")
 

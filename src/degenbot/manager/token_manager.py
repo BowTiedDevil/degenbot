@@ -1,11 +1,12 @@
 from threading import Lock
-from typing import Optional
+from typing import Any, Dict, Optional, Unpack
 
+from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
 from .. import config
 from ..baseclasses import HelperManager
-from ..erc20_token import Erc20Token, EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+from ..erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE, Erc20Token
 from ..exceptions import ManagerError
 
 
@@ -17,9 +18,9 @@ class Erc20TokenHelperManager(HelperManager):
     ensures that all instances of the class have access to the same state data
     """
 
-    _state: dict = {}
+    _state: Dict[int, Dict[str, Any]] = {}
 
-    def __init__(self, chain_id: Optional[int] = None):
+    def __init__(self, chain_id: Optional[int] = None) -> None:
         chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
 
         # the internal state data for this object is held in the
@@ -31,7 +32,7 @@ class Erc20TokenHelperManager(HelperManager):
             self.__dict__ = self._state[chain_id]
 
             # initialize internal attributes
-            self._erc20tokens: dict = {}
+            self._erc20tokens: Dict[ChecksumAddress, Erc20Token] = {}
             self._lock = Lock()
 
     def get_erc20token(
@@ -39,7 +40,7 @@ class Erc20TokenHelperManager(HelperManager):
         address: str,
         # accept any number of keyword arguments, which are
         # passed directly to Erc20Token without validation
-        **kwargs,
+        **kwargs: Any,
     ) -> Erc20Token:
         """
         Get the token object from its address

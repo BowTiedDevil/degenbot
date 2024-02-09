@@ -1,24 +1,24 @@
 # ruff: noqa: F401
 
 from . import exceptions, uniswap
-from .arbitrage import (
-    ArbitrageCalculationResult,
-    FlashBorrowToLpSwap,
-    FlashBorrowToLpSwapNew,
-    FlashBorrowToLpSwapWithFuture,
-    FlashBorrowToRouterSwap,
-    UniswapCurveCycle,
-    UniswapLpCycle,
-)
+from .arbitrage.flash_borrow_to_lp_swap import FlashBorrowToLpSwap
+from .arbitrage.flash_borrow_to_lp_swap_new import FlashBorrowToLpSwapNew
+from .arbitrage.flash_borrow_to_lp_swap_with_future import FlashBorrowToLpSwapWithFuture
+from .arbitrage.flash_borrow_to_router_swap import FlashBorrowToRouterSwap
+from .arbitrage.uniswap_curve_cycle import UniswapCurveCycle
+from .arbitrage.uniswap_lp_cycle import UniswapLpCycle
+from .arbitrage.arbitrage_dataclasses import ArbitrageCalculationResult
 from .chainlink import ChainlinkPriceContract
 from .config import get_web3, set_web3
 from .curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from .erc20_token import Erc20Token
-from .fork import AnvilFork
+from .fork.anvil_fork import AnvilFork
 from .functions import next_base_fee
 from .logging import logger
-from .manager import AllPools, AllTokens, Erc20TokenHelperManager
-from .transaction import UniswapTransaction
+from .manager.token_manager import Erc20TokenHelperManager
+from .registry.all_pools import AllPools
+from .registry.all_tokens import AllTokens
+from .transaction.uniswap_transaction import UniswapTransaction
 from .uniswap.managers import (
     UniswapV2LiquidityPoolManager,
     UniswapV3LiquidityPoolManager,

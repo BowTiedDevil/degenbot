@@ -7,7 +7,7 @@ def mulDiv(
     a: int,
     b: int,
     denominator: int,
-):
+) -> int:
     """
     The Solidity implementation is designed to calculate a * b / d without risk of overflowing
     the intermediate result (maximum of 2**256-1).
@@ -28,12 +28,12 @@ def mulDiv(
     result = (a * b) // denominator
 
     if not (MIN_UINT256 <= result <= MAX_UINT256):
-        raise EVMRevertError("invalid result, will not fit in uint256")
+        raise EVMRevertError("Invalid result, does not fit in uint256")
 
     return result
 
 
-def mulDivRoundingUp(a: int, b: int, denominator: int):
+def mulDivRoundingUp(a: int, b: int, denominator: int) -> int:
     result: int = mulDiv(a, b, denominator)
     if mulmod(a, b, denominator) > 0:
         # must be less than max uint256 since we're rounding up

@@ -5,10 +5,10 @@ from .baseclasses import ArbitrageHelper
 
 class Subscriber(Protocol):
     """
-    Can be notified
+    Can be notified via the `notify()` method
     """
 
-    def notify(self, subscriber) -> None:  # pragma: no cover
+    def notify(self, subscriber: "Publisher") -> None:  # pragma: no cover
         ...
 
 
@@ -28,12 +28,12 @@ class SubscriptionMixin:
             if isinstance(subscriber, (ArbitrageHelper))
         )
 
-    def subscribe(self: Publisher, subscriber) -> None:
+    def subscribe(self: Publisher, subscriber: Subscriber) -> None:
         self._subscribers.add(subscriber)
 
-    def unsubscribe(self: Publisher, subscriber) -> None:
+    def unsubscribe(self: Publisher, subscriber: Subscriber) -> None:
         self._subscribers.discard(subscriber)
 
-    def _notify_subscribers(self: Publisher):
+    def _notify_subscribers(self: Publisher) -> None:
         for subscriber in self._subscribers:
             subscriber.notify(self)

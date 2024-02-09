@@ -39,7 +39,7 @@ class CamelotStablePoolMixin:
         precision_multiplier_token0: int = 10**self.token0.decimals
         precision_multiplier_token1: int = 10**self.token1.decimals
 
-        def _k(balance_0, balance_1) -> int:
+        def _k(balance_0: int, balance_1: int) -> int:
             _x: int = balance_0 * 10**18 // precision_multiplier_token0
             _y: int = balance_1 * 10**18 // precision_multiplier_token1
             _a: int = _x * _y // 10**18

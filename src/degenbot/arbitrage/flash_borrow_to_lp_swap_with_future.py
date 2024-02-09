@@ -1,5 +1,6 @@
-from typing import List, Optional, Tuple
-from scipy.optimize import minimize_scalar  # type: ignore[import]
+from typing import Dict, List, Optional, Tuple
+from eth_typing import ChecksumAddress
+from scipy.optimize import minimize_scalar
 
 from ..erc20_token import Erc20Token
 from ..baseclasses import ArbitrageHelper
@@ -12,10 +13,10 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
         borrow_pool: LiquidityPool,
         borrow_token: Erc20Token,
         repay_token: Erc20Token,
-        swap_pool_addresses: Optional[List[str]] = None,
-        swap_pools: Optional[List[LiquidityPool]] = None,
+        swap_pool_addresses: List[str] | None = None,
+        swap_pools: List[LiquidityPool] | None = None,
         name: str = "",
-        update_method="polling",
+        update_method: str = "polling",
     ):
         if swap_pools is None:
             swap_pools = []
@@ -129,8 +130,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
             "swap_pool_tokens": self.swap_pool_tokens,
         }
 
-        # bugfix: maintain a record of the reserve state for associated LPs, used to avoid arb recalculation
-        self.reserves: dict = {}
+        self.reserves: Dict[ChecksumAddress, Tuple[int, int]] = {}
         if self._update_method != "external":
             self.update_reserves()
 
@@ -198,7 +198,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
         self,
         override_future: bool = False,
         pool_overrides: Optional[List[Tuple[LiquidityPool, Tuple[int, int]]]] = None,
-    ):
+    ) -> None:
         if pool_overrides is None:
             pool_overrides = []
 
@@ -395,7 +395,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
 
         return token_out_quantity
 
-    def clear_best(self):
+    def clear_best(self) -> None:
         self.best.update(
             {
                 "borrow_amount": 0,
@@ -406,7 +406,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
             }
         )
 
-    def clear_best_future(self):
+    def clear_best_future(self) -> None:
         self.best_future.update(
             {
                 "borrow_amount": 0,

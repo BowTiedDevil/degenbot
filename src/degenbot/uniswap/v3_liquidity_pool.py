@@ -1,13 +1,15 @@
+# TODO: add event prototype exporter method and handler for callbacks
+
 import dataclasses
 import warnings
 from bisect import bisect_left
 from decimal import Decimal
 from threading import Lock
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Any
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from web3.contract import Contract
+from web3.contract.contract import Contract
 
 from .. import config
 from ..baseclasses import PoolHelper
@@ -22,7 +24,8 @@ from ..exceptions import (
     NoPoolStateAvailable,
 )
 from ..logging import logger
-from ..manager import AllPools, Erc20TokenHelperManager
+from ..manager.token_manager import Erc20TokenHelperManager
+from ..registry.all_pools import AllPools
 from ..subscription_mixins import Subscriber, SubscriptionMixin
 from .abi import UNISWAP_V3_POOL_ABI
 from .v3_dataclasses import (
@@ -56,19 +59,19 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
     def __init__(
         self,
         address: str,
-        fee: Optional[int] = None,
-        lens: Optional[TickLens] = None,
-        tokens: Optional[List[Erc20Token]] = None,
+        fee: int | None = None,
+        lens: TickLens | None = None,
+        tokens: List[Erc20Token] | None = None,
         name: str = "",
-        update_method: Optional[str] = None,
-        abi: Optional[list] = None,
+        update_method: str | None = None,
+        abi: List[Any] | None = None,
         factory_address: Optional[str] = None,
         factory_init_hash: Optional[str] = None,
         extra_words: int = 10,
         silent: bool = False,
-        tick_data: Optional[dict] = None,
-        tick_bitmap: Optional[dict] = None,
-        state_block: Optional[int] = None,
+        tick_data: Dict[int, Dict[str, Any]] | None = None,
+        tick_bitmap: Dict[int, Dict[str, Any]] | None = None,
+        state_block: int | None = None,
     ):
         self.address = to_checksum_address(address)
         self.abi = abi if abi is not None else UNISWAP_V3_POOL_ABI
@@ -241,7 +244,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
             logger.info(f"• Tick: {self.tick}")
 
-    def __getstate__(self) -> dict:
+    def __getstate__(self) -> Dict[str, Any]:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
         copied_attributes = (
@@ -262,17 +265,13 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 if k not in dropped_attributes
             }
 
-    def __repr__(self):  # pragma: no cover
+    def __repr__(self) -> str:  # pragma: no cover
         return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self._fee})"
 
-    def __setstate__(self, state: dict):
-        for attr_name, attr_value in state.items():
-            setattr(self, attr_name, attr_value)
-
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name
 
-    def _get_tick_bitmap_position(self, tick) -> Tuple[int, int]:
+    def _get_tick_bitmap_position(self, tick: int) -> Tuple[int, int]:
         """
         Retrieves the wordPosition and bitPosition for the input tick
 
@@ -340,11 +339,11 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         zeroForOne: bool,
         amount_specified: int,
         sqrt_price_limit_x96: int,
-        override_start_liquidity: Optional[int] = None,
-        override_start_sqrt_price_x96: Optional[int] = None,
-        override_start_tick: Optional[int] = None,
-        override_tick_data: Optional[dict] = None,
-        override_tick_bitmap: Optional[dict] = None,
+        override_start_liquidity: int | None = None,
+        override_start_sqrt_price_x96: int | None = None,
+        override_start_tick: int | None = None,
+        override_tick_data: Dict[int, Any] | None = None,
+        override_tick_bitmap: Dict[int, Any] | None = None,
     ) -> Tuple[int, int, int, int, int]:
         """
         This function is ported and adapted from the UniswapV3Pool.sol contract
@@ -582,7 +581,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         return self.state.tick_bitmap
 
     @tick_bitmap.setter
-    def tick_bitmap(self, new_tick_bitmap: dict) -> None:
+    def tick_bitmap(self, new_tick_bitmap: Dict[int, UniswapV3BitmapAtWord]) -> None:
         self.state = UniswapV3PoolState(
             pool=self,
             liquidity=self.liquidity,
@@ -599,7 +598,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         return self.state.tick_data
 
     @tick_data.setter
-    def tick_data(self, new_tick_data: dict) -> None:
+    def tick_data(self, new_tick_data: Dict[int, UniswapV3LiquidityAtTick]) -> None:
         self.state = UniswapV3PoolState(
             pool=self,
             liquidity=self.liquidity,
@@ -818,11 +817,11 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
 
     def external_update(
         self,
-        update: Optional[UniswapV3PoolExternalUpdate] = None,
-        updates: Optional[dict] = None,
-        block_number: Optional[int] = None,
+        update: UniswapV3PoolExternalUpdate | None = None,
+        updates: Dict[str, Any] | None = None,
+        block_number: int | None = None,
         silent: bool = True,
-        fetch_missing: Optional[bool] = None,
+        fetch_missing: bool | None = None,
         force: bool = False,  # added primarily to support liquidity bootstrapping without excessive refactoring
     ) -> bool:
         """
@@ -841,7 +840,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         @dev This method uses a lock to guard state-modifying methods that might cause race conditions when used with threads.
         """
 
-        def is_valid_update_block(block_number) -> bool:
+        def is_valid_update_block(block_number: int) -> bool:
             """
             Check if `block_number` is valid (matches or exceeds the last update block)
 

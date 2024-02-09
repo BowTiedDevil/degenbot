@@ -1,5 +1,5 @@
 import dataclasses
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Any
 
 if TYPE_CHECKING:
     # only necessary for the type hint
@@ -11,7 +11,7 @@ class UniswapV3BitmapAtWord:
     bitmap: int = 0
     block: Optional[int] = dataclasses.field(compare=False, default=None)
 
-    def to_dict(self):
+    def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
 
 
@@ -21,7 +21,7 @@ class UniswapV3LiquidityAtTick:
     liquidityGross: int = 0
     block: Optional[int] = dataclasses.field(compare=False, default=None)
 
-    def to_dict(self):
+    def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
 
 
@@ -59,7 +59,7 @@ class UniswapV3PoolState:
     tick_bitmap: Optional[Dict[int, UniswapV3BitmapAtWord]] = dataclasses.field(default=None)
     tick_data: Optional[Dict[int, UniswapV3LiquidityAtTick]] = dataclasses.field(default=None)
 
-    def copy(self):
+    def copy(self) -> "UniswapV3PoolState":
         return UniswapV3PoolState(
             pool=self.pool,
             liquidity=self.liquidity,

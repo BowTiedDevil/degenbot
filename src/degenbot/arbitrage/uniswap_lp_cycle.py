@@ -1,13 +1,14 @@
 import asyncio
+import asyncio.futures
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Dict, Iterable, List, Optional, Sequence, Tuple
 from warnings import warn
 
 import eth_abi
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from scipy.optimize import minimize_scalar  # type: ignore[import]
+from scipy.optimize import minimize_scalar
 from web3 import Web3
 
 from ..baseclasses import ArbitrageHelper
@@ -99,7 +100,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
             Optional[UniswapV2PoolState | UniswapV3PoolState],
         ] = {pool.address: None for pool in self.swap_pools}
 
-        self.best: dict = {
+        self.best: Dict[str, Any] = {
             "input_token": self.input_token,
             "last_swap_amount": 0,
             "profit_amount": 0,
@@ -109,7 +110,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
             "swap_pool_amounts": [],
         }
 
-    def __getstate__(self) -> dict:
+    def __getstate__(self) -> Dict[str, Any]:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
         dropped_attributes = (
@@ -337,7 +338,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
                 | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
         ] = None,
-    ):
+    ) -> None:
         state_overrides = self._sort_overrides(override_state)
 
         # A scalar value representing the net amount of 1 input token across
@@ -449,27 +450,39 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
             0.55 * bracket_amount,
         )
 
-        def arb_profit(x) -> float:
+        def arb_profit(x: float) -> float:
             token_in_quantity = int(x)  # round the input down
             token_out_quantity: int = 0
 
             for i, (pool, swap_vector) in enumerate(zip(self.swap_pools, self._swap_vectors)):
                 pool_override = state_overrides.get(pool.address)
 
-                if TYPE_CHECKING:
-                    assert isinstance(pool, LiquidityPool) and (
-                        pool_override is None or isinstance(pool_override, UniswapV2PoolState)
-                    )
-                    assert isinstance(pool, V3LiquidityPool) and (
-                        pool_override is None or isinstance(pool_override, UniswapV3PoolState)
-                    )
-
                 try:
-                    token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
-                        token_in=swap_vector.token_in,
-                        token_in_quantity=token_in_quantity if i == 0 else token_out_quantity,
-                        override_state=pool_override,
-                    )
+                    match pool:
+                        case LiquidityPool():
+                            if TYPE_CHECKING:
+                                assert pool_override is None or isinstance(
+                                    pool_override, UniswapV2PoolState
+                                )
+                            token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
+                                token_in=swap_vector.token_in,
+                                token_in_quantity=token_in_quantity
+                                if i == 0
+                                else token_out_quantity,
+                                override_state=pool_override,
+                            )
+                        case V3LiquidityPool():
+                            if TYPE_CHECKING:
+                                assert pool_override is None or isinstance(
+                                    pool_override, UniswapV3PoolState
+                                )
+                            token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
+                                token_in=swap_vector.token_in,
+                                token_in_quantity=token_in_quantity
+                                if i == 0
+                                else token_out_quantity,
+                                override_state=pool_override,
+                            )
                 except (EVMRevertError, LiquidityPoolError):
                     # The optimizer might send invalid amounts into the swap
                     # calculation during iteration. We don't want it to stop,
@@ -512,7 +525,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
             raise ArbitrageError(f"No possible arbitrage: {e}") from e
 
         return ArbitrageCalculationResult(
-            id=self.id,
+            id_=self.id,
             input_token=self.input_token,
             profit_token=self.input_token,
             input_amount=swap_amount,
@@ -550,7 +563,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
                 | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
         ] = None,
-    ) -> asyncio.Future:
+    ) -> Awaitable[Any]:
         """
         Wrap the arbitrage calculation into an asyncio future using the
         specified executor.
@@ -600,7 +613,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
                 | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
         ] = None,
-    ):
+    ) -> Tuple[str, Dict[str, Any]]:
         """
         A wrapper over `calculate_arbitrage`, useful for sending the
         calculation into a process pool and retrieving the results after
@@ -640,7 +653,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
         profitable = result.profit_amount > 0
         return profitable, (result.input_amount, result.profit_amount)
 
-    def clear_best(self):
+    def clear_best(self) -> None:
         self.best.update(
             {
                 "profit_amount": 0,
@@ -815,10 +828,12 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
                 if isinstance(swap_pool, LiquidityPool):
                     if TYPE_CHECKING:
                         assert isinstance(_swap_amounts, UniswapV2PoolSwapAmounts)
+
                     logger.debug(f"PAYLOAD: building V2 swap at pool {i}")
                     logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
                     logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
                     logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
+
                     payloads.append(
                         (
                             # address
@@ -844,10 +859,12 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
                 elif isinstance(swap_pool, V3LiquidityPool):
                     if TYPE_CHECKING:
                         assert isinstance(_swap_amounts, UniswapV3PoolSwapAmounts)
+
                     logger.debug(f"PAYLOAD: building V3 swap at pool {i}")
                     logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
                     logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
                     logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
+
                     payloads.append(
                         (
                             # address

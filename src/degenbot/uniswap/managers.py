@@ -1,9 +1,9 @@
 from threading import Lock
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from web3.contract import Contract
+from web3.contract.contract import Contract
 
 from .. import config
 from ..baseclasses import HelperManager
@@ -12,7 +12,8 @@ from ..dex.uniswap import FACTORY_ADDRESSES, TICKLENS_ADDRESSES
 from ..erc20_token import Erc20Token
 from ..exceptions import ManagerError, PoolNotAssociated
 from ..logging import logger
-from ..manager import AllPools, Erc20TokenHelperManager
+from ..manager.token_manager import Erc20TokenHelperManager
+from ..registry.all_pools import AllPools
 from .abi import UNISWAP_V2_FACTORY_ABI
 from .v2_liquidity_pool import LiquidityPool
 from .v3_functions import generate_v3_pool_address
@@ -26,7 +27,7 @@ class UniswapLiquidityPoolManager(HelperManager):
     Single-concern base class to allow derived classes to share state
     """
 
-    _state: Dict[int, Dict] = dict()
+    _state: Dict[int, Dict[str, Any]] = dict()
 
     def __init__(
         self,
@@ -72,7 +73,7 @@ class UniswapLiquidityPoolManager(HelperManager):
             FACTORY_ADDRESSES[chain_id][factory_address] = {}
 
     @classmethod
-    def add_pool_init_hash(cls, chain_id: int, factory_address: str, pool_init_hash: str):
+    def add_pool_init_hash(cls, chain_id: int, factory_address: str, pool_init_hash: str) -> None:
         """
         Add a pool_init_hash for a factory at a given chain ID.
         """
@@ -147,7 +148,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         self._untracked_pools.discard(pool_address)
         assert pool_address not in self._untracked_pools
 
-    def __repr__(self):  # pragma: no cover
+    def __repr__(self) -> str:  # pragma: no cover
         return f"UniswapV2LiquidityPoolManager(factory={self._factory_address})"
 
     @property
@@ -157,18 +158,18 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             abi=UNISWAP_V2_FACTORY_ABI,
         )
 
-    def _add_pool(self, pool_helper: LiquidityPool):
+    def _add_pool(self, pool_helper: LiquidityPool) -> None:
         with self._lock:
             self._tracked_pools[pool_helper.address] = pool_helper
         assert pool_helper.address in self._tracked_pools
 
     def get_pool(
         self,
-        pool_address: Optional[str] = None,
-        token_addresses: Optional[Tuple[str, str]] = None,
+        pool_address: str | None = None,
+        token_addresses: Tuple[str, str] | None = None,
         silent: bool = False,
         update_method: str = "polling",
-        state_block: Optional[int] = None,
+        state_block: int | None = None,
     ) -> LiquidityPool:
         """
         Get the pool object from its address, or a tuple of token addresses
@@ -309,10 +310,10 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         self._untracked_pools.discard(pool_address)
 
-    def __repr__(self):  # pragma: no cover
+    def __repr__(self) -> str:  # pragma: no cover
         return f"UniswapV3LiquidityPoolManager(factory={self._factory_address})"
 
-    def _add_pool(self, pool_helper: V3LiquidityPool):
+    def _add_pool(self, pool_helper: V3LiquidityPool) -> None:
         with self._lock:
             self._tracked_pools[pool_helper.address] = pool_helper
 
@@ -323,15 +324,15 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         pool_fee: Optional[int] = None,
         silent: bool = False,
         # keyword arguments passed to the `V3LiquidityPool` constructor
-        v3liquiditypool_kwargs: Optional[dict] = None,
+        v3liquiditypool_kwargs: Optional[Dict[str, Any]] = None,
         state_block: Optional[int] = None,
     ) -> V3LiquidityPool:
         """
-        Get the pool object from its address, or a tuple of token addresses
+        Get a `V3LiquidityPool` from its address, or a tuple of token addresses
         and fee in bips (e.g. 100, 500, 3000, 10000)
         """
 
-        def apply_liquidity_updates(pool: V3LiquidityPool):
+        def apply_liquidity_updates(pool: V3LiquidityPool) -> None:
             logger.debug(f"Applying liquidity updates to {pool}")
             if not self._snapshot:
                 return

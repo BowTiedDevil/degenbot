@@ -2278,7 +2278,7 @@ async def test_process_pool_calculation() -> None:
         )
         result = await future
         assert result == ArbitrageCalculationResult(
-            id="test_arb",
+            id_="test_arb",
             input_token=weth,
             profit_token=weth,
             input_amount=20454968409226055680,

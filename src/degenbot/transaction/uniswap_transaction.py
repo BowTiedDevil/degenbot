@@ -109,14 +109,14 @@ _V3_ROUTER2_CONTRACT_BALANCE_FLAG = 0
 
 class UniswapTransaction(TransactionHelper):
     @classmethod
-    def add_chain(cls, chain_id: int):
+    def add_chain(cls, chain_id: int) -> None:
         try:
             _ROUTERS[chain_id]
         except Exception:
             _ROUTERS[chain_id] = {}
 
     @classmethod
-    def add_router(cls, chain_id: int, router_address: str, router_dict: dict):
+    def add_router(cls, chain_id: int, router_address: str, router_dict: Dict[Any, Any]) -> None:
         """
         Add a new router address for a given chain ID.
 
@@ -151,7 +151,7 @@ class UniswapTransaction(TransactionHelper):
             _ROUTERS[chain_id][router_address] = router_dict
 
     @classmethod
-    def add_wrapped_token(cls, chain_id: int, token_address: str):
+    def add_wrapped_token(cls, chain_id: int, token_address: str) -> None:
         """
         Add a wrapped token address for a given chain ID.
 
@@ -173,7 +173,7 @@ class UniswapTransaction(TransactionHelper):
         tx_value: int | str,
         tx_sender: str,
         func_name: str,
-        func_params: dict,
+        func_params: Dict[str, Any],
         router_address: str,
     ):
         """
@@ -241,7 +241,7 @@ class UniswapTransaction(TransactionHelper):
 
         self.silent = False
 
-    def _raise_if_expired(self, deadline: int):
+    def _raise_if_expired(self, deadline: int) -> None:
         if not isinstance(deadline, int):
             raise ValueError(f"deadline not int! Was: {deadline}")
         if (
@@ -253,7 +253,7 @@ class UniswapTransaction(TransactionHelper):
     def _show_pool_states(
         self,
         sim_result: UniswapV2PoolSimulationResult | UniswapV3PoolSimulationResult,
-    ):
+    ) -> None:
         current_state = sim_result.current_state
         future_state = sim_result.future_state
         pool = current_state.pool
@@ -661,7 +661,7 @@ class UniswapTransaction(TransactionHelper):
 
         return pool, _sim_result
 
-    def _simulate_unwrap(self, wrapped_token: str):
+    def _simulate_unwrap(self, wrapped_token: str) -> None:
         logger.debug(f"Unwrapping {wrapped_token}")
 
         wrapped_token_balance = self.ledger.token_balance(self.router_address, wrapped_token)
@@ -672,7 +672,7 @@ class UniswapTransaction(TransactionHelper):
             -wrapped_token_balance,
         )
 
-    def _simulate_sweep(self, token: str, recipient: str):
+    def _simulate_sweep(self, token: str, recipient: str) -> None:
         logger.debug(f"Sweeping {token} to {recipient}")
 
         token_balance = self.ledger.token_balance(self.router_address, token)
@@ -690,7 +690,7 @@ class UniswapTransaction(TransactionHelper):
     def _simulate(
         self,
         func_name: str,
-        func_params: dict,
+        func_params: Dict[str, Any],
     ) -> List[
         Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
         | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
@@ -1391,7 +1391,7 @@ class UniswapTransaction(TransactionHelper):
             return _universal_router_command_future_pool_states
 
         def _process_v3_multicall(
-            params,
+            params: Dict[str, Any],
         ) -> List[
             Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
             | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]

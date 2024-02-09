@@ -16,7 +16,7 @@ _all_pools: Dict[
 
 
 class AllPools:
-    def __init__(self, chain_id):
+    def __init__(self, chain_id: int) -> None:
         try:
             _all_pools[chain_id]
         except KeyError:
@@ -24,34 +24,26 @@ class AllPools:
         finally:
             self.pools = _all_pools[chain_id]
 
-    def __delitem__(self, pool: PoolHelper | ChecksumAddress | str):
+    def __delitem__(self, pool: PoolHelper | str) -> None:
         if isinstance(pool, PoolHelper):
             _pool_address = pool.address
         else:
             _pool_address = to_checksum_address(pool)
-
         del self.pools[_pool_address]
 
-    def __getitem__(self, pool_address: ChecksumAddress | str):
-        _pool_address = to_checksum_address(pool_address)
-        return self.pools[_pool_address]
+    def __getitem__(self, pool_address: str) -> PoolHelper:
+        return self.pools[to_checksum_address(pool_address)]
 
-    def __setitem__(
-        self,
-        pool_address: ChecksumAddress | str,
-        pool_helper: PoolHelper,
-    ):
+    def __setitem__(self, pool_address: str, pool_helper: PoolHelper) -> None:
         _pool_address = to_checksum_address(pool_address)
-
         if self.pools.get(_pool_address):
             warn(
                 f"A pool helper with address {_pool_address} already exists! It has been overwritten."
             )
         self.pools[_pool_address] = pool_helper
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.pools)
 
-    def get(self, pool_address: ChecksumAddress | str) -> Optional[PoolHelper]:
-        _pool_address = to_checksum_address(pool_address)
-        return self.pools.get(_pool_address)
+    def get(self, pool_address: str) -> Optional[PoolHelper]:
+        return self.pools.get(to_checksum_address(pool_address))

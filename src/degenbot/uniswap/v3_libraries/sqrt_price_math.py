@@ -147,7 +147,7 @@ def getNextSqrtPriceFromOutput(
     liquidity: int,
     amountOut: int,
     zeroForOne: bool,
-):
+) -> int:
     if not (sqrtPX96 > 0):
         raise EVMRevertError
 

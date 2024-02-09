@@ -4,20 +4,23 @@ from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
 
-def _min_uint(bits: int):
+def _min_uint(_: int) -> int:
     return 0
 
 
-def _max_uint(bits: int):
-    return 2**bits - 1
+def _max_uint(bits: int) -> int:
+    result: int = 2**bits - 1
+    return result
 
 
-def _min_int(bits: int):
-    return -(2 ** (bits - 1))
+def _min_int(bits: int) -> int:
+    result: int = -(2 ** (bits - 1))
+    return result
 
 
-def _max_int(bits: int):
-    return (2 ** (bits - 1)) - 1
+def _max_int(bits: int) -> int:
+    result: int = (2 ** (bits - 1)) - 1
+    return result
 
 
 MIN_INT16 = _min_int(16)

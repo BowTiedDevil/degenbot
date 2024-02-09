@@ -11,7 +11,7 @@ class UniswapV2PoolState:
     reserves_token0: int
     reserves_token1: int
 
-    def copy(self):
+    def copy(self) -> "UniswapV2PoolState":
         return UniswapV2PoolState(
             pool=self.pool,
             reserves_token0=self.reserves_token0,

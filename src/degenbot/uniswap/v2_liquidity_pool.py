@@ -1,12 +1,12 @@
 from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from warnings import warn
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from web3.contract import Contract
+from web3.contract.contract import Contract
 
 from .. import config
 from ..baseclasses import PoolHelper
@@ -19,7 +19,8 @@ from ..exceptions import (
     ZeroSwapError,
 )
 from ..logging import logger
-from ..manager import AllPools, Erc20TokenHelperManager
+from ..manager.token_manager import Erc20TokenHelperManager
+from ..registry.all_pools import AllPools
 from ..subscription_mixins import Subscriber, SubscriptionMixin
 from .abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
 from .mixins import CamelotStablePoolMixin
@@ -41,18 +42,18 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
     def __init__(
         self,
         address: ChecksumAddress | str,
-        tokens: Optional[List["Erc20Token"]] = None,
-        name: Optional[str] = None,
+        tokens: List["Erc20Token"] | None = None,
+        name: str | None = None,
         update_method: str = "polling",
-        abi: Optional[list] = None,
+        abi: List[Any] | None = None,
         factory_address: Optional[str] = None,
         factory_init_hash: Optional[str] = None,
         fee: Fraction | Iterable[Fraction] = Fraction(3, 1000),
         silent: bool = False,
-        state_block: Optional[int] = None,
+        state_block: int | None = None,
         empty: bool = False,
-        update_reserves_on_start: Optional[bool] = None,  # deprecated
-        unload_brownie_contract_after_init: Optional[bool] = None,  # deprecated
+        update_reserves_on_start: bool | None = None,  # deprecated
+        unload_brownie_contract_after_init: bool | None = None,  # deprecated
     ) -> None:
         """
         Create a new `LiquidityPool` object for interaction with a Uniswap
@@ -226,7 +227,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
             logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
 
-    def __getstate__(self) -> dict:
+    def __getstate__(self) -> Dict[str, Any]:
         # Remove objects that either cannot be pickled or are unnecessary to perform the calculation
         copied_attributes = ()
         dropped_attributes = (
@@ -242,7 +243,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 if k not in dropped_attributes
             }
 
-    def __repr__(self):  # pragma: no cover
+    def __repr__(self) -> str:  # pragma: no cover
         return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1})"
 
     @property
@@ -523,7 +524,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             self.update_block = restored_block
             self._notify_subscribers()
 
-    def set_swap_target(self, *args, **kwargs):
+    def set_swap_target(self, *args: Any, **kwargs: Any) -> None:
         warn(
             "set_swap_target has been deprecated. Please convert your code to use the calculate_tokens_in_from_ratio_out method directly."
         )
@@ -786,13 +787,13 @@ class CamelotLiquidityPool(CamelotStablePoolMixin, LiquidityPool):
     def __init__(
         self,
         address: str,
-        tokens: Optional[List["Erc20Token"]] = None,
-        name: Optional[str] = None,
+        tokens: List["Erc20Token"] | None = None,
+        name: str | None = None,
         update_method: str = "polling",
-        abi: Optional[list] = None,
+        abi: List[Any] | None = None,
         silent: bool = False,
-        update_reserves_on_start: Optional[bool] = None,  # deprecated
-        unload_brownie_contract_after_init: Optional[bool] = None,  # deprecated
+        update_reserves_on_start: bool | None = None,  # deprecated
+        unload_brownie_contract_after_init: bool | None = None,  # deprecated
     ) -> None:
         if unload_brownie_contract_after_init is not None:  # pragma: no cover
             warn(

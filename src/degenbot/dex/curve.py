@@ -1,7 +1,7 @@
-from typing import Dict
+from typing import Any, Dict
 
 from eth_typing import ChainId
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 
 CURVE_V1_REGISTRY_ADDRESS = to_checksum_address("0x90E00ACe148ca3b23Ac1bC8C240C2a7Dd9c2d7f5")
 CURVE_V1_FACTORY_ADDRESS = to_checksum_address("0x127db66E7F0b16470Bec194d0f496F9Fa065d0A9")
@@ -26,7 +26,7 @@ CACHED_CURVE_V1_POOL_ATTRIBUTES: Dict[
     int,  # Chain ID
     Dict[
         str,  # Pool address
-        dict,  # Parameter dict, passed into CurveStableswapPool constructor
+        Dict[str, Any],  # Parameter dict, passed into CurveStableswapPool constructor
     ],
 ] = {
     ChainId.ETH: {

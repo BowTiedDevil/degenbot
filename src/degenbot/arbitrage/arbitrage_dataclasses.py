@@ -1,17 +1,17 @@
 import dataclasses
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 from ..erc20_token import Erc20Token
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class ArbitrageCalculationResult:
-    id: str
+    id_: str
     input_token: Erc20Token
     profit_token: Erc20Token
     input_amount: int
     profit_amount: int
-    swap_amounts: List
+    swap_amounts: List[Any]
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

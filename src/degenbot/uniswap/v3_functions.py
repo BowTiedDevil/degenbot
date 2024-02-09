@@ -15,27 +15,26 @@ def decode_v3_path(path: bytes) -> List[ChecksumAddress | int]:
     (3 bytes).
     """
 
-    def _extract_address(chunk: bytes):
+    def _extract_address(chunk: bytes) -> ChecksumAddress:
         return to_checksum_address(chunk)
 
-    def _extract_fee(chunk: bytes):
+    def _extract_fee(chunk: bytes) -> int:
         return int.from_bytes(chunk, byteorder="big")
 
     path_pos = 0
     decoded_path: List[ChecksumAddress | int] = []
     # read alternating 20 and 3 byte chunks from the encoded path,
     # store each address (hex string) and fee (int)
-    for byte_length, extraction_func in cycle(
-        (
-            (20, _extract_address),
-            (3, _extract_fee),
-        ),
-    ):
+    for byte_length in cycle((20, 3)):
         chunk = HexBytes(path[path_pos : path_pos + byte_length])
-        decoded_path.append(extraction_func(chunk))
+
+        match byte_length:
+            case 3:
+                decoded_path.append(_extract_fee(chunk))
+            case 20:
+                decoded_path.append(_extract_address(chunk))
 
         path_pos += byte_length
-
         if path_pos == len(path):
             break
 

@@ -1,10 +1,11 @@
 from typing import List, Optional
 
-from scipy.optimize import minimize_scalar  # type: ignore[import]
+from scipy.optimize import minimize_scalar
 
 from ..baseclasses import ArbitrageHelper
 from ..erc20_token import Erc20Token
-from ..uniswap.v2_liquidity_pool import LiquidityPool, UniswapV2PoolState
+from ..uniswap.v2_dataclasses import UniswapV2PoolState
+from ..uniswap.v2_liquidity_pool import LiquidityPool
 
 # TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
 
@@ -15,10 +16,10 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
         borrow_pool: LiquidityPool,
         borrow_token: Erc20Token,
         repay_token: Erc20Token,
-        swap_pool_addresses: Optional[List[str]] = None,
-        swap_pools: Optional[List[LiquidityPool]] = None,
+        swap_pool_addresses: List[str] | None = None,
+        swap_pools: List[LiquidityPool] | None = None,
         name: str = "",
-        update_method="polling",
+        update_method: str = "polling",
     ):
         if swap_pools is None and swap_pool_addresses is None:
             raise TypeError("Provide a list of LiquidityPool objects or a list of pool addresses.")
@@ -182,7 +183,7 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
         override_future: bool = False,
         override_future_borrow_pool_reserves_token0: Optional[int] = None,
         override_future_borrow_pool_reserves_token1: Optional[int] = None,
-    ):
+    ) -> None:
         if override_future:
             if (
                 override_future_borrow_pool_reserves_token0 is None

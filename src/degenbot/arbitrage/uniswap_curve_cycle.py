@@ -3,13 +3,24 @@
 import asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Sequence, Tuple, TypeAlias
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeAlias,
+)
 from warnings import warn
 
 import eth_abi
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from scipy.optimize import minimize_scalar  # type: ignore[import]
+from scipy.optimize import minimize_scalar
 from web3 import Web3
 
 from ..baseclasses import ArbitrageHelper
@@ -163,7 +174,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
         self._swap_vectors = tuple(_swap_vectors)
 
-    def __getstate__(self) -> dict:
+    def __getstate__(self) -> Dict[str, Any]:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
         dropped_attributes = (
@@ -359,7 +370,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
     def _pre_calculation_check(
         self,
         override_state: Optional[StateOverride] = None,
-    ):
+    ) -> None:
         state_overrides = self._sort_overrides(override_state)
 
         # A scalar value representing the net amount of 1 input token across
@@ -475,7 +486,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
             0.55 * bracket_amount,
         )
 
-        def arb_profit(x) -> float:
+        def arb_profit(x: float) -> float:
             token_in_quantity = int(x)  # round the input down
             token_out_quantity: int = 0
 
@@ -565,7 +576,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
             raise ArbitrageError(f"No possible arbitrage: {e}") from e
 
         return ArbitrageCalculationResult(
-            id=self.id,
+            id_=self.id,
             input_token=self.input_token,
             profit_token=self.input_token,
             input_amount=swap_amount,
@@ -589,7 +600,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
         self,
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
         override_state: Optional[StateOverride] = None,
-    ) -> asyncio.Future:
+    ) -> Awaitable[Any]:
         """
         Wrap the arbitrage calculation into an asyncio future using the
         specified executor.

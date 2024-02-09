@@ -1,6 +1,6 @@
 import ujson
 from eth_utils.address import to_checksum_address
-from web3.contract import Contract
+from web3.contract.contract import Contract
 
 from . import config
 
