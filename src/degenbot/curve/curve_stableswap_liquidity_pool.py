@@ -10,8 +10,8 @@
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
 
-import eth_abi
-import eth_abi.exceptions
+import eth_abi.abi
+from eth_abi.exceptions import InsufficientDataBytes
 import web3.exceptions
 from eth_typing import AnyAddress, ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -88,19 +88,19 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             # Some contracts accept token_id as an int128, some accept uint256
             for _type in ["int128", "uint256"]:
                 try:
-                    eth_abi.decode(
+                    eth_abi.abi.decode(
                         types=["address"],
                         data=_w3.eth.call(
                             transaction={
                                 "to": self.address,
                                 "data": Web3.keccak(text=f"coins({_type})")[:4]
-                                + eth_abi.encode(types=[_type], args=[0]),
+                                + eth_abi.abi.encode(types=[_type], args=[0]),
                             },
                             block_identifier=state_block,
                         ),
                     )
                 except (
-                    eth_abi.exceptions.InsufficientDataBytes,
+                    InsufficientDataBytes,
                     web3.exceptions.ContractLogicError,
                 ):
                     continue
@@ -113,13 +113,15 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             token_addresses = []
             for token_id in range(self.MAX_COINS):
                 try:
-                    token_address, *_ = eth_abi.decode(
+                    token_address, *_ = eth_abi.abi.decode(
                         types=["address"],
                         data=_w3.eth.call(
                             transaction={
                                 "to": self.address,
                                 "data": Web3.keccak(text=f"coins({self._coin_index_type})")[:4]
-                                + eth_abi.encode(types=[self._coin_index_type], args=[token_id]),
+                                + eth_abi.abi.encode(
+                                    types=[self._coin_index_type], args=[token_id]
+                                ),
                             },
                             block_identifier=state_block,
                         ),
@@ -132,13 +134,13 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
 
         def _get_lp_token_address() -> ChecksumAddress:
             for contract in [_w3_registry_contract, _w3_factory_contract]:
-                lp_token_address, *_ = eth_abi.decode(
+                lp_token_address, *_ = eth_abi.abi.decode(
                     types=["address"],
                     data=_w3.eth.call(
                         transaction={
                             "to": contract.address,
                             "data": Web3.keccak(text="get_lp_token(address)")[:4]
-                            + eth_abi.encode(types=["address"], args=[self.address]),
+                            + eth_abi.abi.encode(types=["address"], args=[self.address]),
                         },
                         block_identifier=state_block,
                     ),
@@ -151,13 +153,13 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             )  # pragma: no cover
 
         def _get_pool_from_lp_token(token: AnyAddress) -> ChecksumAddress:
-            pool_address, *_ = eth_abi.decode(
+            pool_address, *_ = eth_abi.abi.decode(
                 types=["address"],
                 data=_w3.eth.call(
                     transaction={
                         "to": _w3_registry_contract.address,
                         "data": Web3.keccak(text="get_pool_from_lp_token(address)")[:4]
-                        + eth_abi.encode(
+                        + eth_abi.abi.encode(
                             types=["address"],
                             args=[to_checksum_address(token)],
                         ),
@@ -170,13 +172,13 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         def _is_metapool() -> bool:
             for contract in [_w3_factory_contract, _w3_registry_contract]:
                 try:
-                    is_meta, *_ = eth_abi.decode(
+                    is_meta, *_ = eth_abi.abi.decode(
                         types=["bool"],
                         data=_w3.eth.call(
                             transaction={
                                 "to": contract.address,
                                 "data": Web3.keccak(text="is_meta(address)")[:4]
-                                + eth_abi.encode(types=["address"], args=[self.address]),
+                                + eth_abi.abi.encode(types=["address"], args=[self.address]),
                             },
                             block_identifier=state_block,
                         ),
@@ -207,7 +209,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                 case "0xDeBF20617708857ebe4F679508E7b7863a8A8EeE":
                     self.precision_multipliers = [1, 10**12, 10**12]
                     self.offpeg_fee_multiplier: int
-                    self.offpeg_fee_multiplier, *_ = eth_abi.decode(
+                    self.offpeg_fee_multiplier, *_ = eth_abi.abi.decode(
                         types=["uint256"],
                         data=_w3.eth.call(
                             transaction={
@@ -231,7 +233,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                     "0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492"
                     | "0xBfAb6FA95E0091ed66058ad493189D2cB29385E6"
                 ):
-                    self.oracle_method, *_ = eth_abi.decode(
+                    self.oracle_method, *_ = eth_abi.abi.decode(
                         types=["uint256"],
                         data=_w3.eth.call(
                             transaction={
@@ -242,7 +244,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                         ),
                     )
                 case "0xEB16Ae0052ed37f479f7fe63849198Df1765a733":
-                    self.offpeg_fee_multiplier, *_ = eth_abi.decode(
+                    self.offpeg_fee_multiplier, *_ = eth_abi.abi.decode(
                         types=["uint256"],
                         data=_w3.eth.call(
                             transaction={
@@ -384,13 +386,13 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
 
         self.balances = []
         for token_id, _ in enumerate(self.tokens):
-            token_balance, *_ = eth_abi.decode(
+            token_balance, *_ = eth_abi.abi.decode(
                 types=[self._coin_index_type],
                 data=_w3.eth.call(
                     transaction={
                         "to": self.address,
                         "data": Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
-                        + eth_abi.encode(types=[self._coin_index_type], args=[token_id]),
+                        + eth_abi.abi.encode(types=[self._coin_index_type], args=[token_id]),
                     },
                     block_identifier=state_block,
                 ),
@@ -568,7 +570,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         _w3 = config.get_web3()
 
         snap_contract_address: str
-        snap_contract_address, *_ = eth_abi.decode(
+        snap_contract_address, *_ = eth_abi.abi.decode(
             types=["address"],
             data=_w3.eth.call(
                 transaction={
@@ -580,7 +582,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         )
 
         rate: int
-        rate, *_ = eth_abi.decode(
+        rate, *_ = eth_abi.abi.decode(
             types=["uint256"],
             data=_w3.eth.call(
                 transaction={
@@ -706,7 +708,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                 _w3 = config.get_web3()
 
                 D: int
-                D, *_ = eth_abi.decode(
+                D, *_ = eth_abi.abi.decode(
                     types=["uint256"],
                     data=_w3.eth.call(
                         transaction={
@@ -728,7 +730,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                 _w3 = config.get_web3()
 
                 gamma: int
-                gamma, *_ = eth_abi.decode(
+                gamma, *_ = eth_abi.abi.decode(
                     types=["uint256"],
                     data=_w3.eth.call(
                         transaction={
@@ -752,13 +754,13 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
 
                 price_scale = [0] * (N_COINS - 1)
                 for token_index in range(N_COINS - 1):
-                    price_scale[token_index], *_ = eth_abi.decode(
+                    price_scale[token_index], *_ = eth_abi.abi.decode(
                         types=["uint256"],
                         data=_w3.eth.call(
                             transaction={
                                 "to": self.address,
                                 "data": Web3.keccak(text="price_scale(uint256)")[:4]
-                                + eth_abi.encode(
+                                + eth_abi.abi.encode(
                                     types=["uint256"],
                                     args=[token_index],
                                 ),
@@ -1498,7 +1500,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             pass
 
         base_cache_updated: int
-        base_cache_updated, *_ = eth_abi.decode(
+        base_cache_updated, *_ = eth_abi.abi.decode(
             types=["uint256"],
             data=config.get_web3().eth.call(
                 transaction={
@@ -1518,7 +1520,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             pass
 
         base_virtual_price: int
-        base_virtual_price, *_ = eth_abi.decode(
+        base_virtual_price, *_ = eth_abi.abi.decode(
             types=["uint256"],
             data=config.get_web3().eth.call(
                 transaction={
@@ -1547,7 +1549,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             self.base_cache_updated is None
             or timestamp > self.base_cache_updated + BASE_CACHE_EXPIRES
         ):
-            base_virtual_price, *_ = eth_abi.decode(
+            base_virtual_price, *_ = eth_abi.abi.decode(
                 types=["uint256"],
                 data=_w3.eth.call(
                     transaction={
@@ -2001,7 +2003,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             if not use_lending:
                 rate = self.PRECISION
             else:
-                rate, *_ = eth_abi.decode(
+                rate, *_ = eth_abi.abi.decode(
                     types=["uint256"],
                     data=_w3.eth.call(
                         transaction={
@@ -2011,7 +2013,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                         block_identifier=block_number,
                     ),
                 )
-                supply_rate, *_ = eth_abi.decode(
+                supply_rate, *_ = eth_abi.abi.decode(
                     types=["uint256"],
                     data=_w3.eth.call(
                         transaction={
@@ -2021,7 +2023,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                         block_identifier=block_number,
                     ),
                 )
-                old_block, *_ = eth_abi.decode(
+                old_block, *_ = eth_abi.abi.decode(
                     types=["uint256"],
                     data=_w3.eth.call(
                         transaction={
@@ -2056,7 +2058,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             self.use_lending,
         ):
             if use_lending:
-                rate, *_ = eth_abi.decode(
+                rate, *_ = eth_abi.abi.decode(
                     types=["uint256"],
                     data=_w3.eth.call(
                         transaction={
@@ -2084,7 +2086,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
 
         result = []
         for token, precision_multiplier in zip(self.tokens, self.precision_multipliers):
-            rate, *_ = eth_abi.decode(
+            rate, *_ = eth_abi.abi.decode(
                 types=["uint256"],
                 data=(
                     _w3.eth.call(
@@ -2096,7 +2098,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                     )
                 ),
             )
-            supply_rate, *_ = eth_abi.decode(
+            supply_rate, *_ = eth_abi.abi.decode(
                 types=["uint256"],
                 data=_w3.eth.call(
                     transaction={
@@ -2106,7 +2108,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                     block_identifier=block_number,
                 ),
             )
-            old_block, *_ = eth_abi.decode(
+            old_block, *_ = eth_abi.abi.decode(
                 types=["uint256"],
                 data=_w3.eth.call(
                     transaction={
@@ -2132,7 +2134,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         _w3 = config.get_web3()
 
         # ref: https://etherscan.io/address/0xF9440930043eb3997fc70e1339dBb11F341de7A8#code
-        ratio, *_ = eth_abi.decode(
+        ratio, *_ = eth_abi.abi.decode(
             types=["uint256"],
             data=_w3.eth.call(
                 transaction={
@@ -2159,7 +2161,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         _w3 = config.get_web3()
 
         # ref: https://etherscan.io/address/0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2#code
-        ratio, *_ = eth_abi.decode(
+        ratio, *_ = eth_abi.abi.decode(
             types=["uint256"],
             data=_w3.eth.call(
                 transaction={
@@ -2190,7 +2192,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         oracle = self.oracle_method
 
         if oracle != 0:
-            oracle_rate, *_ = eth_abi.decode(
+            oracle_rate, *_ = eth_abi.abi.decode(
                 types=["uint256"],
                 data=_w3.eth.call(
                     transaction={
@@ -2221,13 +2223,13 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         token_balances = []
         coin_index_type = self._coin_index_type
         for token_id, _ in enumerate(self.tokens):
-            token_balance, *_ = eth_abi.decode(
+            token_balance, *_ = eth_abi.abi.decode(
                 types=[coin_index_type],
                 data=_w3.eth.call(
                     transaction={
                         "to": self.address,
                         "data": Web3.keccak(text=f"balances({coin_index_type})")[:4]
-                        + eth_abi.encode(types=[coin_index_type], args=[token_id]),
+                        + eth_abi.abi.encode(types=[coin_index_type], args=[token_id]),
                     },
                     block_identifier=block_number,
                 ),

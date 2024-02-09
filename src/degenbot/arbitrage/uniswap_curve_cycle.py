@@ -6,7 +6,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Awaitable, Dict, Iterable, List, Sequence, Tuple, TypeAlias
 from warnings import warn
 
-import eth_abi
+import eth_abi.abi
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from scipy.optimize import minimize_scalar
@@ -683,7 +683,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                         self.input_token.address,
                         # bytes calldata
                         Web3.keccak(text="transfer(address,uint256)")[:4]
-                        + eth_abi.encode(
+                        + eth_abi.abi.encode(
                             types=(
                                 "address",
                                 "uint256",
@@ -743,7 +743,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                             swap_pool.address,
                             # bytes calldata
                             Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
-                            + eth_abi.encode(
+                            + eth_abi.abi.encode(
                                 types=(
                                     "uint256",
                                     "uint256",
@@ -780,7 +780,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                             swap_pool.address,
                             # bytes calldata
                             Web3.keccak(text="swap(address,bool,int256,uint160,bytes)")[:4]
-                            + eth_abi.encode(
+                            + eth_abi.abi.encode(
                                 types=(
                                     "address",
                                     "bool",
@@ -828,7 +828,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                                 _swap_amounts.token_in.address,
                                 # bytes calldata
                                 Web3.keccak(text="approve(address,uint256)")[:4]
-                                + eth_abi.encode(
+                                + eth_abi.abi.encode(
                                     types=["address", "uint256"],
                                     args=[swap_pool.address, amount_to_approve],
                                 ),
@@ -848,7 +848,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                                 Web3.keccak(
                                     text="exchange_underlying(int128,int128,uint256,uint256)"
                                 )[:4]
-                                + eth_abi.encode(
+                                + eth_abi.abi.encode(
                                     types=["int128", "int128", "uint256", "uint256"],
                                     args=[
                                         _swap_amounts.token_in_index,
@@ -867,7 +867,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                                 swap_pool.address,
                                 # bytes calldata
                                 Web3.keccak(text="exchange(int128,int128,uint256,uint256)")[:4]
-                                + eth_abi.encode(
+                                + eth_abi.abi.encode(
                                     types=["int128", "int128", "uint256", "uint256"],
                                     args=[
                                         _swap_amounts.token_in_index,
@@ -892,7 +892,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                                 _swap_amounts.token_out.address,
                                 # bytes calldata
                                 Web3.keccak(text="transfer(address,uint256)")[:4]
-                                + eth_abi.encode(
+                                + eth_abi.abi.encode(
                                     types=(
                                         "address",
                                         "uint256",

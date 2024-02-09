@@ -5,7 +5,7 @@
 import pprint
 from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
 
-import eth_abi
+import eth_abi.abi
 from eth_typing import ChainId, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from web3 import Web3
@@ -907,7 +907,7 @@ class UniswapTransaction(TransactionHelper):
                         _pay_portion_token_address,
                         _pay_portion_recipient,
                         _pay_portion_bips,
-                    ) = eth_abi.decode(
+                    ) = eth_abi.abi.decode(
                         types=("address", "address", "uint256"),
                         data=inputs,
                     )
@@ -944,7 +944,7 @@ class UniswapTransaction(TransactionHelper):
                         sweep_token_address,
                         sweep_recipient,
                         sweep_amount_min,
-                    ) = eth_abi.decode(
+                    ) = eth_abi.abi.decode(
                         types=("address", "address", "uint256"),
                         data=inputs,
                     )
@@ -978,7 +978,7 @@ class UniswapTransaction(TransactionHelper):
                 """
 
                 try:
-                    tx_recipient, _wrap_amount_min = eth_abi.decode(
+                    tx_recipient, _wrap_amount_min = eth_abi.abi.decode(
                         types=("address", "uint256"),
                         data=inputs,
                     )
@@ -1009,7 +1009,7 @@ class UniswapTransaction(TransactionHelper):
                 # TODO: process ETH balance in ledger if needed
 
                 try:
-                    _unwrap_recipient, _unwrap_amount_min = eth_abi.decode(
+                    _unwrap_recipient, _unwrap_amount_min = eth_abi.abi.decode(
                         types=("address", "uint256"),
                         data=inputs,
                     )
@@ -1043,7 +1043,7 @@ class UniswapTransaction(TransactionHelper):
                         tx_amount_out_min,
                         tx_path,
                         tx_payer_is_user,
-                    ) = eth_abi.decode(
+                    ) = eth_abi.abi.decode(
                         types=(
                             "address",
                             "uint256",
@@ -1114,7 +1114,7 @@ class UniswapTransaction(TransactionHelper):
                         tx_amount_in_max,
                         tx_path,
                         tx_payer_is_user,
-                    ) = eth_abi.decode(
+                    ) = eth_abi.abi.decode(
                         types=(
                             "address",
                             "uint256",
@@ -1196,7 +1196,7 @@ class UniswapTransaction(TransactionHelper):
                         tx_amount_out_min,
                         tx_path,
                         tx_payer_is_user,
-                    ) = eth_abi.decode(
+                    ) = eth_abi.abi.decode(
                         types=(
                             "address",
                             "uint256",
@@ -1287,7 +1287,7 @@ class UniswapTransaction(TransactionHelper):
                         tx_amount_in_max,
                         tx_path,
                         tx_payer_is_user,
-                    ) = eth_abi.decode(
+                    ) = eth_abi.abi.decode(
                         types=(
                             "address",
                             "uint256",

@@ -1,7 +1,6 @@
 from typing import Any, Dict, List, Tuple
 from warnings import warn
 
-import eth_abi
 import ujson
 from eth_typing import AnyAddress, ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -10,6 +9,7 @@ from web3.contract.contract import Contract
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError
 from web3.types import BlockIdentifier
 
+import eth_abi.abi
 from . import config
 from .baseclasses import TokenHelper
 from .chainlink import ChainlinkPriceContract
@@ -255,13 +255,13 @@ class Erc20Token(TokenHelper):
             pass
 
         approval: int
-        approval, *_ = eth_abi.decode(
+        approval, *_ = eth_abi.abi.decode(
             types=["uint256"],
             data=config.get_web3().eth.call(
                 transaction={
                     "to": self.address,
                     "data": Web3.keccak(text="allowance(address,address)")[:4]
-                    + eth_abi.encode(types=["address", "address"], args=[owner, spender]),
+                    + eth_abi.abi.encode(types=["address", "address"], args=[owner, spender]),
                 },
                 block_identifier=block_number,
             ),
@@ -296,13 +296,13 @@ class Erc20Token(TokenHelper):
             pass
 
         balance: int
-        balance, *_ = eth_abi.decode(
+        balance, *_ = eth_abi.abi.decode(
             types=["uint256"],
             data=config.get_web3().eth.call(
                 transaction={
                     "to": self.address,
                     "data": Web3.keccak(text="balanceOf(address)")[:4]
-                    + eth_abi.encode(types=["address"], args=[address]),
+                    + eth_abi.abi.encode(types=["address"], args=[address]),
                 },
                 block_identifier=block_number,
             ),
@@ -330,7 +330,7 @@ class Erc20Token(TokenHelper):
             pass
 
         total_supply: int
-        total_supply, *_ = eth_abi.decode(
+        total_supply, *_ = eth_abi.abi.decode(
             types=["uint256"],
             data=config.get_web3().eth.call(
                 transaction={"to": self.address, "data": Web3.keccak(text="totalSupply()")[:4]},

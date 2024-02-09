@@ -2,8 +2,8 @@ import itertools
 from typing import cast
 
 import degenbot
-import eth_abi
 import pytest
+import eth_abi.abi
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_dataclasses import CurveStableswapPoolExternalUpdate
 from degenbot.curve.curve_stableswap_liquidity_pool import BrokenPool, CurveStableswapPool
@@ -50,12 +50,12 @@ def _test_calculations(lp: CurveStableswapPool):
                 tx = {
                     "to": lp.address,
                     "data": Web3.keccak(text="get_dy(uint256,uint256,uint256)")[:4]
-                    + eth_abi.encode(
+                    + eth_abi.abi.encode(
                         types=["uint256", "uint256", "uint256"],
                         args=[token_in_index, token_out_index, amount],
                     ),
                 }
-                contract_amount, *_ = eth_abi.decode(
+                contract_amount, *_ = eth_abi.abi.decode(
                     data=degenbot.get_web3().eth.call(
                         transaction=tx,
                         block_identifier=state_block,
@@ -288,13 +288,13 @@ def test_base_pool(fork_mainnet: AnvilFork):
                 _token_amount=token_in_amount, i=token_index
             )
 
-            amount_contract, *_ = eth_abi.decode(
+            amount_contract, *_ = eth_abi.abi.decode(
                 types=["uint256"],
                 data=fork_mainnet.w3.eth.call(
                     transaction={
                         "to": basepool.address,
                         "data": Web3.keccak(text="calc_withdraw_one_coin(uint256,int128)")[:4]
-                        + eth_abi.encode(
+                        + eth_abi.abi.encode(
                             types=["uint256", "int128"],
                             args=[token_in_amount, token_index],
                         ),
@@ -317,7 +317,7 @@ def test_base_pool(fork_mainnet: AnvilFork):
                 deposit=True,
             )
 
-            calc_token_amount_contract, *_ = eth_abi.decode(
+            calc_token_amount_contract, *_ = eth_abi.abi.decode(
                 types=["uint256"],
                 data=fork_mainnet.w3.eth.call(
                     transaction={
@@ -325,7 +325,7 @@ def test_base_pool(fork_mainnet: AnvilFork):
                         "data": Web3.keccak(
                             text=f"calc_token_amount(uint256[{len(basepool.tokens)}],bool)"
                         )[:4]
-                        + eth_abi.encode(
+                        + eth_abi.abi.encode(
                             types=[f"uint256[{len(basepool.tokens)}]", "bool"],
                             args=[amount_array, True],
                         ),

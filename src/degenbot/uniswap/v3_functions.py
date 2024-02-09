@@ -1,7 +1,7 @@
 from itertools import cycle
 from typing import Iterable, List
 
-import eth_abi
+import eth_abi.abi
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
@@ -60,7 +60,7 @@ def generate_v3_pool_address(
             HexBytes(0xFF)
             + HexBytes(factory_address)
             + Web3.keccak(
-                eth_abi.encode(
+                eth_abi.abi.encode(
                     types=("address", "address", "uint24"),
                     args=(*token_addresses, fee),
                 )
