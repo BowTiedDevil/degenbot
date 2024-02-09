@@ -1,5 +1,5 @@
 import dataclasses
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List
 
 from eth_typing import ChecksumAddress, HexAddress
 
@@ -14,7 +14,7 @@ class CurveStableswapPoolState:
     pool: "CurveStableswapPool"
     address: ChecksumAddress  # TODO: convert other states to reference address instead of object
     balances: List[int]
-    base: Optional["CurveStableswapPoolState"] = dataclasses.field(default=None)
+    base: "CurveStableswapPoolState | None" = dataclasses.field(default=None)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -32,8 +32,8 @@ class CurveStableswapPoolExternalUpdate(AbstractPoolUpdate):
     bought_id: int
     tokens_sold: int
     tokens_bought: int
-    buyer: Optional[str] = dataclasses.field(default=None)
-    tx: Optional[str] = dataclasses.field(compare=False, default=None)
+    buyer: str | None = dataclasses.field(default=None)
+    tx: str | None = dataclasses.field(compare=False, default=None)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -45,5 +45,5 @@ class CurveStableSwapPoolAttributes:
     fee: int
     admin_fee: int
     is_metapool: bool
-    underlying_coin_addresses: Optional[List[HexAddress]] = dataclasses.field(default=None)
-    base_pool_address: Optional[HexAddress] = dataclasses.field(default=None)
+    underlying_coin_addresses: List[HexAddress] | None = dataclasses.field(default=None)
+    base_pool_address: HexAddress | None = dataclasses.field(default=None)

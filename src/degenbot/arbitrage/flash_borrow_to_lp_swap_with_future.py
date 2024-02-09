@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from eth_typing import ChecksumAddress
 from scipy.optimize import minimize_scalar
 
@@ -141,7 +141,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_overrides: Optional[List[Tuple[LiquidityPool, Tuple[int, int]]]] = None,
+        pool_overrides: List[Tuple[LiquidityPool, Tuple[int, int]]] | None = None,
     ) -> List[List[int]]:
         number_of_pools = len(self.swap_pools)
 
@@ -197,7 +197,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
     def _calculate_arbitrage(
         self,
         override_future: bool = False,
-        pool_overrides: Optional[List[Tuple[LiquidityPool, Tuple[int, int]]]] = None,
+        pool_overrides: List[Tuple[LiquidityPool, Tuple[int, int]]] | None = None,
     ) -> None:
         if pool_overrides is None:
             pool_overrides = []
@@ -343,7 +343,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_overrides: Optional[List[Tuple[LiquidityPool, Tuple[int, int]]]] = None,
+        pool_overrides: List[Tuple[LiquidityPool, Tuple[int, int]]] | None = None,
     ) -> int:
         """
         Calculates the expected token OUTPUT from the last pool for a given token INPUT to the first pool
@@ -423,7 +423,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
         print_reserves: bool = True,
         print_ratios: bool = True,
         override_future: bool = False,
-        pool_overrides: Optional[List[Tuple[LiquidityPool, Tuple[int, int]]]] = None,
+        pool_overrides: List[Tuple[LiquidityPool, Tuple[int, int]]] | None = None,
     ) -> bool:
         """
         Updates reserve values for one or more liquidity pools by calling update_reserves(), which returns False if the reserves have not changed.

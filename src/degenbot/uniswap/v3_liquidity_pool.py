@@ -5,7 +5,7 @@ import warnings
 from bisect import bisect_left
 from decimal import Decimal
 from threading import Lock
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Any
+from typing import TYPE_CHECKING, Dict, List, Set, Tuple, Any
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -65,8 +65,8 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         name: str = "",
         update_method: str | None = None,
         abi: List[Any] | None = None,
-        factory_address: Optional[str] = None,
-        factory_init_hash: Optional[str] = None,
+        factory_address: str | None = None,
+        factory_init_hash: str | None = None,
         extra_words: int = 10,
         silent: bool = False,
         tick_data: Dict[int, Dict[str, Any]] | None = None,
@@ -289,7 +289,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
     def _update_tick_data_at_word(
         self,
         word_position: int,
-        block_number: Optional[int] = None,
+        block_number: int | None = None,
     ) -> None:
         """
         Update the initialized tick values at a specific word (a 32 byte number
@@ -621,7 +621,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
 
     def auto_update(
         self,
-        block_number: Optional[int] = None,
+        block_number: int | None = None,
         silent: bool = True,
     ) -> Tuple[bool, UniswapV3PoolState]:
         """
@@ -691,7 +691,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        override_state: Optional[UniswapV3PoolState] = None,
+        override_state: UniswapV3PoolState | None = None,
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
@@ -757,7 +757,7 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
         self,
         token_out: Erc20Token,
         token_out_quantity: int,
-        override_state: Optional[UniswapV3PoolState] = None,
+        override_state: UniswapV3PoolState | None = None,
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_in_from_tokens_out`
@@ -1073,12 +1073,12 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
 
     def simulate_swap(
         self,
-        token_in: Optional[Erc20Token] = None,
-        token_in_quantity: Optional[int] = None,
-        token_out: Optional[Erc20Token] = None,
-        token_out_quantity: Optional[int] = None,
-        sqrt_price_limit: Optional[int] = None,
-        override_state: Optional[UniswapV3PoolState] = None,
+        token_in: Erc20Token | None = None,
+        token_in_quantity: int | None = None,
+        token_out: Erc20Token | None = None,
+        token_out_quantity: int | None = None,
+        sqrt_price_limit: int | None = None,
+        override_state: UniswapV3PoolState | None = None,
     ) -> UniswapV3PoolSimulationResult:
         """
         [TBD]

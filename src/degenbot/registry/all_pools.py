@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict
 from warnings import warn
 
 from eth_typing import ChecksumAddress
@@ -45,5 +45,5 @@ class AllPools:
     def __len__(self) -> int:
         return len(self.pools)
 
-    def get(self, pool_address: str) -> Optional[PoolHelper]:
+    def get(self, pool_address: str) -> PoolHelper | None:
         return self.pools.get(to_checksum_address(pool_address))

@@ -1,5 +1,5 @@
 import dataclasses
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Any
+from typing import TYPE_CHECKING, Dict, Tuple, Any
 
 if TYPE_CHECKING:
     # only necessary for the type hint
@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 @dataclasses.dataclass(slots=True)
 class UniswapV3BitmapAtWord:
     bitmap: int = 0
-    block: Optional[int] = dataclasses.field(compare=False, default=None)
+    block: int | None = dataclasses.field(compare=False, default=None)
 
     def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
@@ -19,7 +19,7 @@ class UniswapV3BitmapAtWord:
 class UniswapV3LiquidityAtTick:
     liquidityNet: int = 0
     liquidityGross: int = 0
-    block: Optional[int] = dataclasses.field(compare=False, default=None)
+    block: int | None = dataclasses.field(compare=False, default=None)
 
     def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
@@ -37,17 +37,15 @@ class UniswapV3LiquidityEvent:
 @dataclasses.dataclass(slots=True, eq=False)
 class UniswapV3PoolExternalUpdate:
     block_number: int = dataclasses.field(compare=False)
-    liquidity: Optional[int] = None
-    sqrt_price_x96: Optional[int] = None
-    tick: Optional[int] = None
-    liquidity_change: Optional[
-        Tuple[
-            int,  # Liquidity
-            int,  # TickLower
-            int,  # TickUpper
-        ]
-    ] = None
-    tx: Optional[str] = dataclasses.field(compare=False, default=None)
+    liquidity: int | None = None
+    sqrt_price_x96: int | None = None
+    tick: int | None = None
+    liquidity_change: Tuple[
+        int,  # Liquidity
+        int,  # TickLower
+        int,  # TickUpper
+    ] | None = None
+    tx: str | None = dataclasses.field(compare=False, default=None)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -56,8 +54,8 @@ class UniswapV3PoolState:
     liquidity: int
     sqrt_price_x96: int
     tick: int
-    tick_bitmap: Optional[Dict[int, UniswapV3BitmapAtWord]] = dataclasses.field(default=None)
-    tick_data: Optional[Dict[int, UniswapV3LiquidityAtTick]] = dataclasses.field(default=None)
+    tick_bitmap: Dict[int, UniswapV3BitmapAtWord] | None = dataclasses.field(default=None)
+    tick_data: Dict[int, UniswapV3LiquidityAtTick] | None = dataclasses.field(default=None)
 
     def copy(self) -> "UniswapV3PoolState":
         return UniswapV3PoolState(

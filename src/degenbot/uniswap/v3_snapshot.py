@@ -1,5 +1,5 @@
 from io import TextIOWrapper
-from typing import Any, Dict, List, Optional, TextIO, Tuple
+from typing import Any, Dict, List, TextIO, Tuple
 
 import ujson
 from eth_typing import ChecksumAddress
@@ -28,7 +28,7 @@ class UniswapV3LiquiditySnapshot:
     def __init__(
         self,
         file: TextIO | str,
-        chain_id: Optional[int] = None,
+        chain_id: int | None = None,
     ):
         _file: TextIOWrapper
         json_liquidity_snapshot: Dict[str, Any]

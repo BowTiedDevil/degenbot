@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 from warnings import warn
 
 import eth_abi
@@ -55,12 +55,12 @@ class Erc20Token(TokenHelper):
     def __init__(
         self,
         address: str,
-        abi: Optional[List[Any]] = None,
-        oracle_address: Optional[str] = None,
+        abi: List[Any] | None = None,
+        oracle_address: str | None = None,
         silent: bool = False,
         unload_brownie_contract_after_init: bool = False,  # deprecated
         min_abi: bool = False,  # deprecated
-        user: Optional[Any] = None,  # deprecated
+        user: Any | None = None,  # deprecated
     ) -> None:
         self.address: ChecksumAddress = to_checksum_address(address)
         self.abi = abi if abi is not None else ERC20_ABI_MINIMAL
@@ -187,7 +187,7 @@ class Erc20Token(TokenHelper):
                 f"Token contract at {self.address} does not implement a 'decimals' function. Setting to 0."
             )
 
-        self.price: Optional[float] = None
+        self.price: float | None = None
         if oracle_address:
             self._price_oracle = ChainlinkPriceContract(address=oracle_address)
             self.price = self._price_oracle.price
@@ -273,7 +273,7 @@ class Erc20Token(TokenHelper):
         self,
         owner: AnyAddress,
         spender: AnyAddress,
-        block_identifier: Optional[BlockIdentifier] = None,
+        block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """
         Retrieve the amount that can be spent by `spender` on behalf of `owner`.
@@ -313,7 +313,7 @@ class Erc20Token(TokenHelper):
     def get_balance(
         self,
         address: AnyAddress,
-        block_identifier: Optional[BlockIdentifier] = None,
+        block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """
         Retrieve the ERC-20 balance for the given address.
@@ -340,7 +340,7 @@ class Erc20Token(TokenHelper):
         self._cached_total_supply[block_number] = total_supply
         return total_supply
 
-    def get_total_supply(self, block_identifier: Optional[BlockIdentifier] = None) -> int:
+    def get_total_supply(self, block_identifier: BlockIdentifier | None = None) -> int:
         """
         Retrieve the total supply for this token.
         """
@@ -389,7 +389,7 @@ class EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE(Erc20Token):
     def get_balance(
         self,
         address: AnyAddress,
-        block_identifier: Optional[BlockIdentifier] = None,
+        block_identifier: BlockIdentifier | None = None,
     ) -> int:
         return self._get_balance_cachable(
             address=to_checksum_address(address),

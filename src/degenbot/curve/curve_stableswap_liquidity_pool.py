@@ -8,7 +8,7 @@
 
 
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
 
 import eth_abi
 import eth_abi.exceptions
@@ -267,7 +267,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         self._create_timestamp = _w3.eth.get_block("latest")["timestamp"]
         chain_id = _w3.eth.chain_id
 
-        cached_pool_attributes: Optional[CurveStableSwapPoolAttributes] = None
+        cached_pool_attributes: CurveStableSwapPoolAttributes | None = None
         try:
             # if chain_id in POOL_ATTRIBUTES and self.address in POOL_ATTRIBUTES[chain_id]:
             cached_pool_attributes = CurveStableSwapPoolAttributes(
@@ -416,7 +416,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
 
             self.tokens_underlying = [self.tokens[0]] + base_pool_tokens
 
-            self.base_cache_updated: Optional[int] = None
+            self.base_cache_updated: int | None = None
             try:
                 self.base_cache_updated = self._get_base_cache_updated(block_number=state_block)
             except web3.exceptions.ContractLogicError:
@@ -513,7 +513,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             abi=self.abi,
         )
 
-    def _A(self, timestamp: Optional[int] = None) -> int:
+    def _A(self, timestamp: int | None = None) -> int:
         """
         Handle ramping A up or down
         """
@@ -599,8 +599,8 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         i: int,
         j: int,
         dx: int,
-        block_identifier: Optional[BlockIdentifier] = None,
-        override_state: Optional[CurveStableswapPoolState] = None,
+        block_identifier: BlockIdentifier | None = None,
+        override_state: CurveStableswapPoolState | None = None,
     ) -> int:
         """
         @notice Calculate the current output dy given input dx
@@ -1163,8 +1163,8 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         i: int,
         j: int,
         dx: int,
-        block_identifier: Optional[BlockIdentifier] = None,
-        override_state: Optional[CurveStableswapPoolState] = None,
+        block_identifier: BlockIdentifier | None = None,
+        override_state: CurveStableswapPoolState | None = None,
     ) -> int:
         if override_state is not None:
             pool_balances = override_state.balances.copy()
@@ -1571,8 +1571,8 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         self,
         amounts: List[int],
         deposit: bool,
-        block_identifier: Optional[BlockIdentifier] = None,
-        override_state: Optional[CurveStableswapPoolState] = None,
+        block_identifier: BlockIdentifier | None = None,
+        override_state: CurveStableswapPoolState | None = None,
     ) -> int:
         """
         Simplified method to calculate addition or reduction in token supply at
@@ -1616,7 +1616,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         return diff * token_amount // D0
 
     def _calc_withdraw_one_coin(
-        self, _token_amount: int, i: int, block_identifier: Optional[BlockIdentifier] = None
+        self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
     ) -> Tuple[int, ...]:
         block_number = (
             config.get_web3().eth.get_block_number()
@@ -2208,9 +2208,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
     def _xp(self, rates: List[int], balances: List[int]) -> List[int]:
         return [rate * balance // self.PRECISION for rate, balance in zip(rates, balances)]
 
-    def auto_update(
-        self, block_number: Optional[int] = None
-    ) -> Tuple[bool, CurveStableswapPoolState]:
+    def auto_update(self, block_number: int | None = None) -> Tuple[bool, CurveStableswapPoolState]:
         """
         Retrieve updated balances from the contract
         """
@@ -2286,8 +2284,8 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
         token_in: Erc20Token,
         token_out: Erc20Token,
         token_in_quantity: int,
-        override_state: Optional[CurveStableswapPoolState] = None,
-        block_identifier: Optional[BlockIdentifier] = None,
+        override_state: CurveStableswapPoolState | None = None,
+        block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.

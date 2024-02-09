@@ -1,7 +1,7 @@
 from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Set, Tuple
 from warnings import warn
 
 from eth_typing import ChecksumAddress
@@ -42,12 +42,12 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
     def __init__(
         self,
         address: ChecksumAddress | str,
-        tokens: List["Erc20Token"] | None = None,
+        tokens: List[Erc20Token] | None = None,
         name: str | None = None,
         update_method: str = "polling",
         abi: List[Any] | None = None,
-        factory_address: Optional[str] = None,
-        factory_init_hash: Optional[str] = None,
+        factory_address: str | None = None,
+        factory_init_hash: str | None = None,
         fee: Fraction | Iterable[Fraction] = Fraction(3, 1000),
         silent: bool = False,
         state_block: int | None = None,
@@ -319,11 +319,11 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
     def calculate_tokens_in_from_tokens_out(
         self,
         token_out_quantity: int,
-        token_out: "Erc20Token",
-        token_in: Optional["Erc20Token"] = None,
-        override_reserves_token0: Optional[int] = None,
-        override_reserves_token1: Optional[int] = None,
-        override_state: Optional[UniswapV2PoolState] = None,
+        token_out: Erc20Token,
+        token_in: Erc20Token | None = None,
+        override_reserves_token0: int | None = None,
+        override_reserves_token1: int | None = None,
+        override_state: UniswapV2PoolState | None = None,
     ) -> int:
         """
         Calculates the required token INPUT of token_in for a target OUTPUT
@@ -413,11 +413,11 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
     def calculate_tokens_out_from_tokens_in(
         self,
-        token_in: "Erc20Token",
+        token_in: Erc20Token,
         token_in_quantity: int,
-        override_reserves_token0: Optional[int] = None,
-        override_reserves_token1: Optional[int] = None,
-        override_state: Optional[UniswapV2PoolState] = None,
+        override_reserves_token0: int | None = None,
+        override_reserves_token1: int | None = None,
+        override_state: UniswapV2PoolState | None = None,
     ) -> int:
         """
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
@@ -533,7 +533,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         self,
         added_reserves_token0: int,
         added_reserves_token1: int,
-        override_state: Optional[UniswapV2PoolState] = None,
+        override_state: UniswapV2PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
         if override_state:
             logger.debug(f"State override: {override_state}")
@@ -557,7 +557,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         self,
         removed_reserves_token0: int,
         removed_reserves_token1: int,
-        override_state: Optional[UniswapV2PoolState] = None,
+        override_state: UniswapV2PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
         if override_state:
             logger.debug(f"State override: {override_state}")
@@ -579,11 +579,11 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
     def simulate_swap(
         self,
-        token_in: Optional["Erc20Token"] = None,
-        token_in_quantity: Optional[int] = None,
-        token_out: Optional["Erc20Token"] = None,
-        token_out_quantity: Optional[int] = None,
-        override_state: Optional[UniswapV2PoolState] = None,
+        token_in: Erc20Token | None = None,
+        token_in_quantity: int | None = None,
+        token_out: Erc20Token | None = None,
+        token_out_quantity: int | None = None,
+        override_state: UniswapV2PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
         if token_in_quantity is None and token_out_quantity is None:
             raise ValueError("No quantity was provided")
@@ -650,7 +650,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
 
     def auto_update(
         self,
-        block_number: Optional[int] = None,
+        block_number: int | None = None,
         silent: bool = True,
     ) -> Tuple[bool, UniswapV2PoolState]:
         found_updates: bool = self.update_reserves(
@@ -680,10 +680,10 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         silent: bool = False,
         print_reserves: bool = True,
         print_ratios: bool = True,
-        external_token0_reserves: Optional[int] = None,
-        external_token1_reserves: Optional[int] = None,
-        override_update_method: Optional[str] = None,
-        update_block: Optional[int] = None,
+        external_token0_reserves: int | None = None,
+        external_token1_reserves: int | None = None,
+        override_update_method: str | None = None,
+        update_block: int | None = None,
     ) -> bool:
         """
         Checks for updated reserve values when set to "polling", otherwise
@@ -787,7 +787,7 @@ class CamelotLiquidityPool(CamelotStablePoolMixin, LiquidityPool):
     def __init__(
         self,
         address: str,
-        tokens: List["Erc20Token"] | None = None,
+        tokens: List[Erc20Token] | None = None,
         name: str | None = None,
         update_method: str = "polling",
         abi: List[Any] | None = None,
@@ -844,9 +844,9 @@ class CamelotLiquidityPool(CamelotStablePoolMixin, LiquidityPool):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        override_reserves_token0: Optional[int] = None,  # TODO: drop after removing in superclass
-        override_reserves_token1: Optional[int] = None,  # TODO: drop after removing in superclass
-        override_state: Optional[UniswapV2PoolState] = None,
+        override_reserves_token0: int | None = None,  # TODO: drop after removing in superclass
+        override_reserves_token1: int | None = None,  # TODO: drop after removing in superclass
+        override_state: UniswapV2PoolState | None = None,
     ) -> int:
         if self.stable_swap:
             return self._calculate_tokens_out_from_tokens_in_stable_swap(

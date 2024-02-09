@@ -1,5 +1,5 @@
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -97,7 +97,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
     def __init__(
         self,
         factory_address: ChecksumAddress | str,
-        chain_id: Optional[int] = None,
+        chain_id: int | None = None,
     ):
         chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
 
@@ -257,8 +257,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
     def __init__(
         self,
         factory_address: ChecksumAddress | str,
-        chain_id: Optional[int] = None,
-        snapshot: Optional[UniswapV3LiquiditySnapshot] = None,
+        chain_id: int | None = None,
+        snapshot: UniswapV3LiquiditySnapshot | None = None,
     ):
         chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
 
@@ -319,13 +319,17 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
     def get_pool(
         self,
-        pool_address: Optional[ChecksumAddress | str] = None,
-        token_addresses: Optional[Tuple[ChecksumAddress | str, ChecksumAddress | str]] = None,
-        pool_fee: Optional[int] = None,
+        pool_address: ChecksumAddress | str | None = None,
+        token_addresses: Tuple[
+            ChecksumAddress | str,
+            ChecksumAddress | str,
+        ]
+        | None = None,
+        pool_fee: int | None = None,
         silent: bool = False,
         # keyword arguments passed to the `V3LiquidityPool` constructor
-        v3liquiditypool_kwargs: Optional[Dict[str, Any]] = None,
-        state_block: Optional[int] = None,
+        v3liquiditypool_kwargs: Dict[str, Any] | None = None,
+        state_block: int | None = None,
     ) -> V3LiquidityPool:
         """
         Get a `V3LiquidityPool` from its address, or a tuple of token addresses
@@ -341,7 +345,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         def find_or_build(
             pool_address: ChecksumAddress,
-            state_block: Optional[int] = None,
+            state_block: int | None = None,
         ) -> V3LiquidityPool:
             if TYPE_CHECKING:
                 assert isinstance(v3liquiditypool_kwargs, dict)

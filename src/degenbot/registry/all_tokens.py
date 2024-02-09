@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict
 from eth_utils.address import to_checksum_address
 from eth_typing import ChecksumAddress
 
@@ -32,5 +32,5 @@ class AllTokens:
     def __len__(self) -> int:
         return len(self.tokens)
 
-    def get(self, token_address: str) -> Optional[TokenHelper]:
+    def get(self, token_address: str) -> TokenHelper | None:
         return self.tokens.get(to_checksum_address(token_address))

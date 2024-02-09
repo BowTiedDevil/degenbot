@@ -3,18 +3,7 @@
 import asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Awaitable,
-    Dict,
-    Iterable,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    TypeAlias,
-)
+from typing import TYPE_CHECKING, Any, Awaitable, Dict, Iterable, List, Sequence, Tuple, TypeAlias
 from warnings import warn
 
 import eth_abi
@@ -70,7 +59,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
         input_token: Erc20Token,
         swap_pools: Iterable[Pool],
         id: str,
-        max_input: Optional[int] = None,
+        max_input: int | None = None,
     ):
         if any(
             [
@@ -189,7 +178,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
     def _sort_overrides(
         self,
-        overrides: Optional[StateOverride],
+        overrides: StateOverride | None,
     ) -> Dict[ChecksumAddress, PoolState]:
         """
         Validate the overrides, extract and insert the resulting pool states
@@ -231,8 +220,8 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_state_overrides: Optional[Dict[ChecksumAddress, PoolState]] = None,
-        block_number: Optional[int] = None,
+        pool_state_overrides: Dict[ChecksumAddress, PoolState] | None = None,
+        block_number: int | None = None,
     ) -> List[SwapAmount]:
         """
         Generate human-readable inputs for a complete swap along the arbitrage
@@ -369,7 +358,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
     def _pre_calculation_check(
         self,
-        override_state: Optional[StateOverride] = None,
+        override_state: StateOverride | None = None,
     ) -> None:
         state_overrides = self._sort_overrides(override_state)
 
@@ -467,8 +456,8 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
     def _calculate(
         self,
-        override_state: Optional[StateOverride] = None,
-        block_number: Optional[int] = None,
+        override_state: StateOverride | None = None,
+        block_number: int | None = None,
     ) -> ArbitrageCalculationResult:
         state_overrides = self._sort_overrides(override_state)
 
@@ -586,7 +575,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
     def calculate(
         self,
-        override_state: Optional[StateOverride] = None,
+        override_state: StateOverride | None = None,
     ) -> ArbitrageCalculationResult:
         """
         Calculate the optimum arbitrage input and intermediate swap values for the current pool states.
@@ -599,7 +588,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
     async def calculate_with_pool(
         self,
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
-        override_state: Optional[StateOverride] = None,
+        override_state: StateOverride | None = None,
     ) -> Awaitable[Any]:
         """
         Wrap the arbitrage calculation into an asyncio future using the
@@ -823,7 +812,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                     current_approval = _swap_amounts.token_in.get_approval(
                         from_address, swap_pool.address
                     )
-                    amount_to_approve: Optional[int] = None
+                    amount_to_approve: int | None = None
                     if infinite_approval is True and current_approval != MAX_UINT256:
                         amount_to_approve = MAX_UINT256
                     elif infinite_approval is False and current_approval < _swap_amounts.amount_in:

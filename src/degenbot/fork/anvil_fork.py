@@ -2,7 +2,7 @@ import os
 import shutil
 import socket
 import subprocess
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import ujson
 from eth_utils.address import to_checksum_address
@@ -23,14 +23,14 @@ class AnvilFork:
     def __init__(
         self,
         fork_url: str,
-        fork_block: Optional[int] = None,
+        fork_block: int | None = None,
         hardfork: str = "latest",
         gas_limit: int = 30_000_000,
-        port: Optional[int] = None,
-        chain_id: Optional[int] = None,
-        base_fee: Optional[int] = None,
-        ipc_path: Optional[str] = None,
-        middlewares: Optional[List[Tuple[Middleware, int]]] = None,
+        port: int | None = None,
+        chain_id: int | None = None,
+        base_fee: int | None = None,
+        ipc_path: str | None = None,
+        middlewares: List[Tuple[Middleware, int]] | None = None,
         mnemonic: str = (
             # Default mnemonic used by Brownie for Ganache forks
             "patient rude simple dog close planet oval animal hunt sketch suspect slim"
@@ -84,7 +84,7 @@ class AnvilFork:
         self.base_fee = (
             base_fee if base_fee is not None else self.w3.eth.get_block(self.block)["baseFeePerGas"]
         )
-        self.base_fee_next: Optional[int] = None
+        self.base_fee_next: int | None = None
         self.socket = socket.socket(socket.AF_UNIX)
         self.socket.connect(self.ipc_path)
 
@@ -94,7 +94,7 @@ class AnvilFork:
         if os.path.exists(self.ipc_path):
             os.remove(self.ipc_path)
 
-    def _send_request(self, method: str, params: Optional[List[Any]] = None) -> None:
+    def _send_request(self, method: str, params: List[Any] | None = None) -> None:
         """
         Send a JSON-formatted request through the socket.
         """
@@ -153,8 +153,8 @@ class AnvilFork:
 
     def reset(
         self,
-        fork_url: Optional[str] = None,
-        block_number: Optional[int] = None,
+        fork_url: str | None = None,
+        block_number: int | None = None,
     ) -> None:
         forking_params: Dict[str, Any] = dict()
         forking_params["jsonRpcUrl"] = fork_url if fork_url is not None else self.fork_url

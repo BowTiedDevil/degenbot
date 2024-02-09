@@ -3,7 +3,7 @@
 # TODO: add state block argument for pool simulation calls
 
 import pprint
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
 
 import eth_abi
 from eth_typing import ChainId, ChecksumAddress
@@ -214,8 +214,8 @@ class UniswapTransaction(TransactionHelper):
 
         self.router_address = router_address
 
-        self.v2_pool_manager: Optional[UniswapV2LiquidityPoolManager] = None
-        self.v3_pool_manager: Optional[UniswapV3LiquidityPoolManager] = None
+        self.v2_pool_manager: UniswapV2LiquidityPoolManager | None = None
+        self.v3_pool_manager: UniswapV3LiquidityPoolManager | None = None
 
         try:
             self.v2_pool_manager = UniswapV2LiquidityPoolManager(
@@ -302,7 +302,7 @@ class UniswapTransaction(TransactionHelper):
         recipient: ChecksumAddress | str,
         token_in: Erc20Token,
         amount_in: int,
-        amount_out_min: Optional[int] = None,
+        amount_out_min: int | None = None,
         first_swap: bool = False,
         last_swap: bool = False,
     ) -> Tuple[
@@ -400,7 +400,7 @@ class UniswapTransaction(TransactionHelper):
         recipient: ChecksumAddress | str,
         token_in: Erc20Token,
         amount_out: int,
-        amount_in_max: Optional[int] = None,
+        amount_in_max: int | None = None,
         first_swap: bool = False,
     ) -> Tuple[LiquidityPool, UniswapV2PoolSimulationResult]:
         """
@@ -461,8 +461,8 @@ class UniswapTransaction(TransactionHelper):
         recipient: str,
         token_in: Erc20Token,
         amount_in: int,
-        amount_out_min: Optional[int] = None,
-        sqrt_price_limit_x96: Optional[int] = None,
+        amount_out_min: int | None = None,
+        sqrt_price_limit_x96: int | None = None,
         first_swap: bool = False,
     ) -> Tuple[
         V3LiquidityPool,
@@ -551,8 +551,8 @@ class UniswapTransaction(TransactionHelper):
         recipient: str,
         token_in: Erc20Token,
         amount_out: int,
-        amount_in_max: Optional[int] = None,
-        sqrt_price_limit_x96: Optional[int] = None,
+        amount_in_max: int | None = None,
+        sqrt_price_limit_x96: int | None = None,
         first_swap: bool = False,
         last_swap: bool = False,
     ) -> Tuple[
@@ -773,12 +773,13 @@ class UniswapTransaction(TransactionHelper):
         def _process_universal_router_command(
             command_type: int,
             inputs: bytes,
-        ) -> Optional[
+        ) -> (
             List[
                 Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
                 | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ]
-        ]:
+            | None
+        ):
             # ref: https://github.com/Uniswap/universal-router/blob/main/contracts/libraries/Commands.sol
 
             UNIVERSAL_ROUTER_COMMAND_VALUES = {
@@ -2340,7 +2341,7 @@ class UniswapTransaction(TransactionHelper):
     def simulate(
         self,
         silent: bool = False,
-        state_block: Optional[int] = None,
+        state_block: int | None = None,
     ) -> List[
         Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
         | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]

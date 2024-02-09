@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List
 
 from scipy.optimize import minimize_scalar
 
@@ -181,8 +181,8 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
     def _calculate_arbitrage(
         self,
         override_future: bool = False,
-        override_future_borrow_pool_reserves_token0: Optional[int] = None,
-        override_future_borrow_pool_reserves_token1: Optional[int] = None,
+        override_future_borrow_pool_reserves_token0: int | None = None,
+        override_future_borrow_pool_reserves_token1: int | None = None,
     ) -> None:
         if override_future:
             if (
@@ -371,8 +371,8 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
         print_reserves: bool = True,
         print_ratios: bool = True,
         override_future: bool = False,
-        override_future_borrow_pool_reserves_token0: Optional[int] = None,
-        override_future_borrow_pool_reserves_token1: Optional[int] = None,
+        override_future_borrow_pool_reserves_token0: int | None = None,
+        override_future_borrow_pool_reserves_token1: int | None = None,
     ) -> bool:
         """
         Checks each liquidity pool for updates by passing a call to .update_reserves(), which returns False if there are no updates.

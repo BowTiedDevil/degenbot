@@ -1,5 +1,5 @@
 import dataclasses
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .v2_liquidity_pool import LiquidityPool
@@ -32,4 +32,4 @@ class UniswapV2PoolExternalUpdate:
     block_number: int = dataclasses.field(compare=False)
     reserves_token0: int
     reserves_token1: int
-    tx: Optional[str] = dataclasses.field(compare=False, default=None)
+    tx: str | None = dataclasses.field(compare=False, default=None)

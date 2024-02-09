@@ -1,5 +1,3 @@
-from typing import Optional
-
 from ...constants import MAX_UINT128, MIN_UINT128, MIN_UINT160
 from ...exceptions import EVMRevertError
 from . import full_math as FullMath
@@ -12,7 +10,7 @@ def getAmount0Delta(
     sqrtRatioAX96: int,
     sqrtRatioBX96: int,
     liquidity: int,
-    roundUp: Optional[bool] = None,
+    roundUp: bool | None = None,
 ) -> int:
     if roundUp is not None or MIN_UINT128 <= liquidity <= MAX_UINT128:
         if sqrtRatioAX96 > sqrtRatioBX96:
@@ -44,7 +42,7 @@ def getAmount1Delta(
     sqrtRatioAX96: int,
     sqrtRatioBX96: int,
     liquidity: int,
-    roundUp: Optional[bool] = None,
+    roundUp: bool | None = None,
 ) -> int:
     if roundUp is not None or MIN_UINT128 <= liquidity <= MAX_UINT128:
         if sqrtRatioAX96 > sqrtRatioBX96:

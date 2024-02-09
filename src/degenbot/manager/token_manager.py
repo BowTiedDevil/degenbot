@@ -1,5 +1,5 @@
 from threading import Lock
-from typing import Any, Dict, Optional, Unpack
+from typing import Any, Dict
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -20,7 +20,7 @@ class Erc20TokenHelperManager(HelperManager):
 
     _state: Dict[int, Dict[str, Any]] = {}
 
-    def __init__(self, chain_id: Optional[int] = None) -> None:
+    def __init__(self, chain_id: int | None = None) -> None:
         chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
 
         # the internal state data for this object is held in the

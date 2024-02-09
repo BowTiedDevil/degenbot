@@ -1,12 +1,10 @@
-from typing import Optional
-
 from web3.types import BlockIdentifier
 
 from . import config
 from .constants import MAX_UINT256
 
 
-def get_number_for_block_identifier(identifier: Optional[BlockIdentifier]) -> int:
+def get_number_for_block_identifier(identifier: BlockIdentifier | None) -> int:
     match identifier:
         case None:
             return config.get_web3().eth.get_block_number()
@@ -29,7 +27,7 @@ def next_base_fee(
     parent_base_fee: int,
     parent_gas_used: int,
     parent_gas_limit: int,
-    min_base_fee: Optional[int] = None,
+    min_base_fee: int | None = None,
     base_fee_max_change_denominator: int = 8,  # limits the maximum base fee increase per block to 1/8 (12.5%)
     elasticity_multiplier: int = 2,
 ) -> int:

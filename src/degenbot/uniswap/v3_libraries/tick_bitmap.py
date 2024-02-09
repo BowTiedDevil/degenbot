@@ -1,24 +1,18 @@
 from decimal import Decimal
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 from ...constants import MAX_UINT8
-from ...exceptions import (
-    BitmapWordUnavailableError,
-    EVMRevertError,
-    MissingTickWordError,
-)
+from ...exceptions import BitmapWordUnavailableError, EVMRevertError, MissingTickWordError
 from ...logging import logger
+from ..v3_dataclasses import UniswapV3BitmapAtWord
 from . import bit_math as BitMath
-
-if TYPE_CHECKING:
-    from ..v3_dataclasses import UniswapV3BitmapAtWord
 
 
 def flipTick(
     tick_bitmap: Dict[int, "UniswapV3BitmapAtWord"],
     tick: int,
     tick_spacing: int,
-    update_block: Optional[int] = None,
+    update_block: int | None = None,
 ) -> None:
     if not (tick % tick_spacing == 0):
         raise EVMRevertError("Tick not correctly spaced!")

@@ -1,5 +1,3 @@
-from typing import Optional
-
 import pytest
 import web3
 import web3.middleware
@@ -113,7 +111,10 @@ def test_router_additions() -> None:
     ],
 )
 def test_v2_router_transactions(
-    fork_mainnet_archive: AnvilFork, block_number, tx_dict: dict, exception_match: Optional[str]
+    fork_mainnet_archive: AnvilFork,
+    block_number,
+    tx_dict: dict,
+    exception_match: str | None,
 ) -> None:
     fork_mainnet_archive.reset(block_number=block_number)
     set_web3(fork_mainnet_archive.w3)

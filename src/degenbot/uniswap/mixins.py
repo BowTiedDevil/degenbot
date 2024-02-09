@@ -1,5 +1,5 @@
 from fractions import Fraction
-from typing import Optional
+
 
 from ..erc20_token import Erc20Token
 from ..exceptions import ZeroSwapError
@@ -21,7 +21,7 @@ class CamelotStablePoolMixin:
         self,
         token_in: "Erc20Token",
         token_in_quantity: int,
-        override_state: Optional[UniswapV2PoolState] = None,
+        override_state: UniswapV2PoolState | None = None,
     ) -> int:
         """
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
