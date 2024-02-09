@@ -37,11 +37,14 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.mypy]
+files="src/degenbot"
 check_untyped_defs = true
-disable_error_code = "method-assign"
 
 [[tool.mypy.overrides]]
-module='eth_abi.*'
+module=[
+    "eth_abi.*",    
+    "scipy.*"
+]
 ignore_missing_imports = true
 
 [tool.ruff]
@@ -50,8 +53,8 @@ indent-width = 4
 
 [tool.coverage.run]
 omit = [
-    'conftest.py',
-    'tests/*'
+    "conftest.py",
+    "tests/*"
 ]
 
 [tool.coverage.report]
@@ -64,3 +67,6 @@ exclude_also = [
     "def __hash__(self):",
     "logger.debug",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
