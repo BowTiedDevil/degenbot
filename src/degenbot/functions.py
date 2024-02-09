@@ -13,7 +13,7 @@ def get_number_for_block_identifier(identifier: Optional[BlockIdentifier]) -> in
         case int() if 1 <= identifier <= MAX_UINT256:
             return identifier
         case bytes():
-            return int.from_bytes(identifier)
+            return int.from_bytes(identifier, byteorder="big")
         case str() if isinstance(identifier, str) and identifier[:2] == "0x" and len(
             identifier
         ) == 66:
