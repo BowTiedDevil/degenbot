@@ -50,7 +50,8 @@ SwapAmount: TypeAlias = (
 )
 
 
-_CURVE_V1_SLIPPAGE = 0.9999
+# Discount applied to amount received, accounts for small differences in get_dy() vs exchange()
+_CURVE_V1_DISCOUNT_FACTOR = 0.9999
 
 
 class UniswapCurveCycle(Subscriber, ArbitrageHelper):
@@ -287,7 +288,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                                 CurveStableswapPoolState,
                             )
                         _token_out_quantity = int(
-                            _CURVE_V1_SLIPPAGE  # TODO determine how to handle get_dy() differences vs exchange()
+                            _CURVE_V1_DISCOUNT_FACTOR
                             * pool.calculate_tokens_out_from_tokens_in(
                                 token_in=token_in,
                                 token_out=token_out,
@@ -508,7 +509,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                             if TYPE_CHECKING:
                                 assert isinstance(pool_override, CurveStableswapPoolState)
                             token_out_quantity = int(
-                                _CURVE_V1_SLIPPAGE  # TODO determine how to handle get_dy() differences vs exchange()
+                                _CURVE_V1_DISCOUNT_FACTOR
                                 * pool.calculate_tokens_out_from_tokens_in(
                                     token_in=swap_vector.token_in,
                                     token_in_quantity=(
@@ -565,7 +566,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
             raise ArbitrageError(f"No possible arbitrage: {e}") from e
 
         return ArbitrageCalculationResult(
-            id_=self.id,
+            id=self.id,
             input_token=self.input_token,
             profit_token=self.input_token,
             input_amount=swap_amount,
