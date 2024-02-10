@@ -209,6 +209,8 @@ class Erc20Token(TokenHelper):
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, Erc20Token):
             return self.address == other.address
+        elif isinstance(other, bytes):
+            return self.address.lower() == other.hex().lower()
         elif isinstance(other, str):
             return self.address.lower() == other.lower()
         else:
@@ -217,6 +219,8 @@ class Erc20Token(TokenHelper):
     def __lt__(self, other: Any) -> bool:
         if isinstance(other, Erc20Token):
             return self.address < other.address
+        elif isinstance(other, bytes):
+            return self.address.lower() < other.hex().lower()
         elif isinstance(other, str):
             return self.address.lower() < other.lower()
         else:
@@ -225,6 +229,8 @@ class Erc20Token(TokenHelper):
     def __gt__(self, other: Any) -> bool:
         if isinstance(other, Erc20Token):
             return self.address > other.address
+        elif isinstance(other, bytes):
+            return self.address.lower() > other.hex().lower()
         elif isinstance(other, str):
             return self.address.lower() > other.lower()
         else:

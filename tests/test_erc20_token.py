@@ -1,5 +1,6 @@
 from degenbot import Erc20Token, set_web3
 from eth_utils import to_checksum_address
+from hexbytes import HexBytes
 
 VITALIK_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -13,26 +14,38 @@ class MockErc20Token(Erc20Token):
 
 def test_erc20token_comparisons():
     token0 = MockErc20Token()
-    token0.address = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+    token0.address = to_checksum_address(WETH_ADDRESS)
 
     token1 = MockErc20Token()
-    token1.address = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
-
-    assert token0 == "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-    assert token0 == "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".lower()
-    assert token0 == to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+    token1.address = to_checksum_address(WBTC_ADDRESS)
 
     assert token0 != token1
 
+    assert token0 == WETH_ADDRESS
+    assert token0 == WETH_ADDRESS.lower()
+    assert token0 == WETH_ADDRESS.upper()
+    assert token0 == to_checksum_address(WETH_ADDRESS)
+    assert token0 == HexBytes(WETH_ADDRESS)
+
+    assert token1 == WBTC_ADDRESS
+    assert token1 == WBTC_ADDRESS.lower()
+    assert token1 == WBTC_ADDRESS.upper()
+    assert token1 == to_checksum_address(WBTC_ADDRESS)
+    assert token1 == HexBytes(WBTC_ADDRESS)
+
     assert token0 > token1
-    assert token0 > "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
-    assert token0 > "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599".lower()
-    assert token0 > to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
+    assert token0 > WBTC_ADDRESS
+    assert token0 > WBTC_ADDRESS.lower()
+    assert token0 > WBTC_ADDRESS.upper()
+    assert token0 > to_checksum_address(WBTC_ADDRESS)
+    assert token0 > HexBytes(WBTC_ADDRESS)
 
     assert token1 < token0
-    assert token1 < "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-    assert token1 < "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".lower()
-    assert token1 < to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+    assert token1 < WETH_ADDRESS
+    assert token1 < WETH_ADDRESS.lower()
+    assert token1 < WETH_ADDRESS.upper()
+    assert token1 < to_checksum_address(WETH_ADDRESS)
+    assert token1 < HexBytes(WETH_ADDRESS)
 
 
 def test_non_compliant_tokens(ethereum_full_node_web3):
