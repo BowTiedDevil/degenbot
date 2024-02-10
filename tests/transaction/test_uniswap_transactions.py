@@ -474,6 +474,106 @@ def test_v2_router_transactions(
             ),
             None,
         ),
+        (
+            19199448 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x7f93ec1914d4c4d5db9d69693bb452b0ea1e2635906e5ecb448e571ebe4f0786",
+                tx_nonce=49283,
+                tx_value=0,
+                tx_sender="0xb3382eC98b0C4453c6A81BD095D9696FC3C7eC46",
+                func_name="multicall",
+                func_params={
+                    "deadline": 1707589785,
+                    "data": [
+                        HexBytes(
+                            "0x04e45aaf0000000000000000000000002b591e99afe9f32eaa6214f7b7629768c40eeb39000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000000000000000000000000000000000000000000bb800000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000142983cc726b0000000000000000000000000000000000000000000000000cf4a03fa101cf910000000000000000000000000000000000000000000000000000000000000000"
+                        ),
+                        HexBytes(
+                            "0x49404b7c0000000000000000000000000000000000000000000000000cf4a03fa101cf91000000000000000000000000077d360f11d220e4d5d831430c81c26c9be7c4a4"
+                        ),
+                    ],
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            19199470 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x9549021fb039810f8da32d210c32f12e1e688747e9155b81238f6b9b2b84c88d",
+                tx_nonce=1393,
+                tx_value=0,
+                tx_sender="0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
+                func_name="exactInputSingle",
+                func_params={
+                    "params": {
+                        "tokenIn": "0x2B591E99AFE9F32EAA6214F7B7629768C40EEB39",
+                        "tokenOut": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                        "fee": 3000,
+                        "recipient": "0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
+                        "deadline": 1707589615,
+                        "amountIn": 38179275262415,
+                        "amountOutMinimum": 1631204831946501888,
+                        "sqrtPriceLimitX96": 0,
+                    }
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            # duplicate of the above, but in 8-tuple format (Router01)
+            19199470 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x9549021fb039810f8da32d210c32f12e1e688747e9155b81238f6b9b2b84c88d",
+                tx_nonce=1393,
+                tx_value=0,
+                tx_sender="0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
+                func_name="exactInputSingle",
+                func_params={
+                    "params": (
+                        "0x2B591E99AFE9F32EAA6214F7B7629768C40EEB39",
+                        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                        3000,
+                        "0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
+                        1707589615,
+                        38179275262415,
+                        1631204831946501888,
+                        0,
+                    )
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            # duplicate of the above, but in 7-tuple format (Router02)
+            19199470 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x9549021fb039810f8da32d210c32f12e1e688747e9155b81238f6b9b2b84c88d",
+                tx_nonce=1393,
+                tx_value=0,
+                tx_sender="0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
+                func_name="exactInputSingle",
+                func_params={
+                    "params": (
+                        "0x2B591E99AFE9F32EAA6214F7B7629768C40EEB39",
+                        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                        3000,
+                        "0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
+                        38179275262415,
+                        1631204831946501888,
+                        0,
+                    )
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
     ],
 )
 def test_v3_router_transactions(

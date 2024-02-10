@@ -1262,7 +1262,7 @@ class UniswapTransaction(TransactionHelper):
                         )
                         _token_in = (
                             v3_pool.token0
-                            if v3_pool.token0.address == tx_token_in_address
+                            if v3_pool.token0 == tx_token_in_address
                             else v3_pool.token1
                         )
                         _amount_in = tx_amount_in if first_swap else _amount_out
@@ -1352,7 +1352,7 @@ class UniswapTransaction(TransactionHelper):
                         )
                         _token_in = (
                             v3_pool.token0
-                            if v3_pool.token0.address == tx_token_in_address
+                            if v3_pool.token0 == tx_token_in_address
                             else v3_pool.token1
                         )
                         _amount_out = tx_amount_out if last_swap else _amount_in
@@ -1854,12 +1854,14 @@ class UniswapTransaction(TransactionHelper):
                             pool=v3_pool,
                             recipient=tx_recipient,
                             token_in=v3_pool.token0
-                            if v3_pool.token0.address == tx_token_in_address
+                            if v3_pool.token0 == tx_token_in_address
                             else v3_pool.token1,
                             amount_in=tx_amount_in,
                             amount_out_min=tx_amount_out_min,
                             first_swap=True,
                         )
+
+                        print(f"{_sim_result=}")
 
                         _v3_router_future_pool_states.append((v3_pool, _sim_result))
 
@@ -1867,6 +1869,7 @@ class UniswapTransaction(TransactionHelper):
                             _sim_result.amount1_delta,
                             _sim_result.amount0_delta,
                         )
+                        print(f"{token_out_quantity=}")
 
                     case "exactInput":
                         # Extract parameters from the dict results of web3py v6
@@ -1959,7 +1962,7 @@ class UniswapTransaction(TransactionHelper):
                                 if last_swap
                                 else UniversalRouterSpecialAddress.ROUTER,
                                 token_in=v3_pool.token0
-                                if v3_pool.token0.address == tx_token_in_address
+                                if v3_pool.token0 == tx_token_in_address
                                 else v3_pool.token1,
                                 amount_in=tx_amount_in if token_pos == 0 else token_out_quantity,
                                 # only apply minimum output to the last swap
@@ -2041,7 +2044,7 @@ class UniswapTransaction(TransactionHelper):
                             pool=v3_pool,
                             recipient=tx_recipient,
                             token_in=v3_pool.token0
-                            if v3_pool.token0.address == tx_token_in_address
+                            if v3_pool.token0 == tx_token_in_address
                             else v3_pool.token1,
                             amount_out=tx_amount_out,
                             amount_in_max=tx_amount_in_max,
@@ -2150,7 +2153,7 @@ class UniswapTransaction(TransactionHelper):
                             )
                             _token_in = (
                                 v3_pool.token0
-                                if v3_pool.token0.address == tx_token_in_address
+                                if v3_pool.token0 == tx_token_in_address
                                 else v3_pool.token1
                             )
                             _amount_out = tx_amount_out if last_swap else _amount_in
