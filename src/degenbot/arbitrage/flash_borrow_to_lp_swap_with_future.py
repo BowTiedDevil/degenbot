@@ -85,16 +85,16 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
         ]:
             raise ValueError("Repay token not found in the last swap pool")
 
-        if self.swap_pools[0].token0.address == borrow_token.address:
+        if self.swap_pools[0].token0 == borrow_token:
             forward_token_address = self.swap_pools[0].token1.address
         else:
             forward_token_address = self.swap_pools[0].token0.address
 
         token_in_address = forward_token_address
         for pool in self.swap_pools:
-            if pool.token0.address == token_in_address:
+            if pool.token0 == token_in_address:
                 forward_token_address = pool.token1.address
-            elif pool.token1.address == token_in_address:
+            elif pool.token1 == token_in_address:
                 forward_token_address = pool.token0.address
             else:
                 raise Exception("Swap pools are invalid, no swap route possible!")
