@@ -1788,8 +1788,6 @@ class UniswapTransaction(TransactionHelper):
                         )
 
                     case "exactInputSingle":
-                        print(f"{func_name}")
-                        print(f"{self.hash.hex()=}")
                         # Extract parameters from the dict results of web3py v6
                         if isinstance(func_params["params"], dict):
                             tx_token_in_address = func_params["params"]["tokenIn"]
@@ -2292,13 +2290,12 @@ class UniswapTransaction(TransactionHelper):
                             _wrapped_token_amount,
                         )
 
-            # bugfix: prevents nested multicalls from spamming exception
-            # message.
-            # e.g. 'Simulation failed: Simulation failed: {error}'
+            # Catch and re-raise without special handling. These are raised by this class, so short-circuit if one has bubbled up.
+            # This prevents nested multicalls from adding redundant strings to exception message.
+            # e.g. 'Simulation failed: Simulation failed: Simulation failed: Simulation failed: {error}'
             except TransactionError:
                 raise
-            # catch generic DegenbotError (non-fatal) and re-raise as
-            # TransactionError
+            # Catch errors from pool helper simulation attempts
             except DegenbotError as e:
                 raise TransactionError(f"Simulation failed: {e}") from e
             else:
