@@ -23,10 +23,32 @@ class PoolHelper:
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, PoolHelper):
             return self.address == other.address
+        elif isinstance(other, bytes):
+            return self.address.lower() == other.hex().lower()
         elif isinstance(other, str):
             return self.address.lower() == other.lower()
         else:
-            raise NotImplementedError
+            return NotImplemented
+
+    def __lt__(self, other: Any) -> bool:
+        if isinstance(other, PoolHelper):
+            return self.address < other.address
+        elif isinstance(other, bytes):
+            return self.address.lower() < other.hex().lower()
+        elif isinstance(other, str):
+            return self.address.lower() < other.lower()
+        else:
+            return NotImplemented
+
+    def __gt__(self, other: Any) -> bool:
+        if isinstance(other, PoolHelper):
+            return self.address > other.address
+        elif isinstance(other, bytes):
+            return self.address.lower() > other.hex().lower()
+        elif isinstance(other, str):
+            return self.address.lower() > other.lower()
+        else:
+            return NotImplemented
 
     def __hash__(self) -> int:
         return hash(self.address)
@@ -36,7 +58,35 @@ class PoolHelper:
 
 
 class TokenHelper:
-    ...
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, TokenHelper):
+            return self.address == other.address
+        elif isinstance(other, bytes):
+            return self.address.lower() == other.hex().lower()
+        elif isinstance(other, str):
+            return self.address.lower() == other.lower()
+        else:
+            return NotImplemented
+
+    def __lt__(self, other: Any) -> bool:
+        if isinstance(other, TokenHelper):
+            return self.address < other.address
+        elif isinstance(other, bytes):
+            return self.address.lower() < other.hex().lower()
+        elif isinstance(other, str):
+            return self.address.lower() < other.lower()
+        else:
+            return NotImplemented
+
+    def __gt__(self, other: Any) -> bool:
+        if isinstance(other, TokenHelper):
+            return self.address > other.address
+        elif isinstance(other, bytes):
+            return self.address.lower() > other.hex().lower()
+        elif isinstance(other, str):
+            return self.address.lower() > other.lower()
+        else:
+            return NotImplemented
 
 
 class TransactionHelper:
