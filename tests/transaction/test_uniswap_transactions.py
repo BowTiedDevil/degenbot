@@ -154,30 +154,82 @@ def test_v2_router_transactions(
 @pytest.mark.parametrize(
     "block_number, tx_dict,exception_match",
     [
-        # (
-        #     17560200,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x44391e7f2ba292cb4ff42d33b3cff859c93a9ebf0e3ed7120d27b144d3787b4f",
-        #         tx_nonce=57,
-        #         tx_value=0,
-        #         tx_sender="0x42ED7246690EA1429e887CC246C460F35315a72b",
-        #         func_name="exactOutputSingle",
-        #         func_params={
-        #             "params": {
-        #                 "tokenIn": "0x6E975115250B05C828ecb8edeDb091975Fc20a5d",
-        #                 "tokenOut": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        #                 "fee": 500,
-        #                 "recipient": "0x42ED7246690EA1429e887CC246C460F35315a72b",
-        #                 "deadline": 1687744791,
-        #                 "amountOut": 692000000000000000,
-        #                 "amountInMaximum": 2695875027951196591488,
-        #                 "sqrtPriceLimitX96": 0,
-        #             }
-        #         },
-        #         router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
-        #     ),
-        # ),
+        (
+            17560200,
+            dict(
+                chain_id=1,
+                tx_hash="0x44391e7f2ba292cb4ff42d33b3cff859c93a9ebf0e3ed7120d27b144d3787b4f",
+                tx_nonce=57,
+                tx_value=0,
+                tx_sender="0x42ED7246690EA1429e887CC246C460F35315a72b",
+                func_name="exactOutputSingle",
+                func_params={
+                    "params": {
+                        "tokenIn": "0x6E975115250B05C828ecb8edeDb091975Fc20a5d",
+                        "tokenOut": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                        "fee": 500,
+                        "recipient": "0x42ED7246690EA1429e887CC246C460F35315a72b",
+                        "deadline": 1687744791,
+                        "amountOut": 692000000000000000,
+                        "amountInMaximum": 2695875027951196591488,
+                        "sqrtPriceLimitX96": 0,
+                    }
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
+            # duplicate of the above, but in 8-tuple format (Router01)
+            17560200,
+            dict(
+                chain_id=1,
+                tx_hash="0x44391e7f2ba292cb4ff42d33b3cff859c93a9ebf0e3ed7120d27b144d3787b4f",
+                tx_nonce=57,
+                tx_value=0,
+                tx_sender="0x42ED7246690EA1429e887CC246C460F35315a72b",
+                func_name="exactOutputSingle",
+                func_params={
+                    "params": (
+                        "0x6E975115250B05C828ecb8edeDb091975Fc20a5d",
+                        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                        500,
+                        "0x42ED7246690EA1429e887CC246C460F35315a72b",
+                        1687744791,
+                        692000000000000000,
+                        2695875027951196591488,
+                        0,
+                    ),
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
+            # duplicate of the above, but in 7-tuple format (Router02)
+            17560200,
+            dict(
+                chain_id=1,
+                tx_hash="0x44391e7f2ba292cb4ff42d33b3cff859c93a9ebf0e3ed7120d27b144d3787b4f",
+                tx_nonce=57,
+                tx_value=0,
+                tx_sender="0x42ED7246690EA1429e887CC246C460F35315a72b",
+                func_name="exactOutputSingle",
+                func_params={
+                    "params": (
+                        "0x6E975115250B05C828ecb8edeDb091975Fc20a5d",
+                        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                        500,
+                        "0x42ED7246690EA1429e887CC246C460F35315a72b",
+                        692000000000000000,
+                        2695875027951196591488,
+                        0,
+                    ),
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
         (
             19195876 - 1,
             dict(
@@ -321,6 +373,100 @@ def test_v2_router_transactions(
                     "data": [
                         HexBytes(
                             "0x472b43f300000000000000000000000000000000000000000000000000001da17a434054000000000000000000000000000000000000000000000000017682063d9c0bcb00000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000200000000000000000000000044face2e310e543f6d85867eb06fb251e3bfe1fc000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+                        ),
+                    ],
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            19199283 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x07eac30cb8d9d96faef41c4cd04397195a93bfc53729806626b76dbc5f0146c1",
+                tx_nonce=21347,
+                tx_value=0,
+                tx_sender="0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
+                func_name="exactInput",
+                func_params={
+                    "params": {
+                        "path": HexBytes(
+                            "0x31e4efe290973ebe91b3a875a7994f650942d28f000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                        ),
+                        "recipient": "0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
+                        "deadline": 99999999999999,
+                        "amountIn": 29738575235245025056471,
+                        "amountOutMinimum": 7579379036,
+                    }
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            # duplicate of the above, but in 5-tuple format (Router01)
+            19199283 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x07eac30cb8d9d96faef41c4cd04397195a93bfc53729806626b76dbc5f0146c1",
+                tx_nonce=21347,
+                tx_value=0,
+                tx_sender="0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
+                func_name="exactInput",
+                func_params={
+                    "params": (
+                        HexBytes(
+                            "0x31e4efe290973ebe91b3a875a7994f650942d28f000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                        ),
+                        "0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
+                        99999999999999,
+                        29738575235245025056471,
+                        7579379036,
+                    )
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            # duplicate of the above, but in 4-tuple format (Router02)
+            19199283 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x07eac30cb8d9d96faef41c4cd04397195a93bfc53729806626b76dbc5f0146c1",
+                tx_nonce=21347,
+                tx_value=0,
+                tx_sender="0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
+                func_name="exactInput",
+                func_params={
+                    "params": (
+                        HexBytes(
+                            "0x31e4efe290973ebe91b3a875a7994f650942d28f000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                        ),
+                        "0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
+                        29738575235245025056471,
+                        7579379036,
+                    )
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            19199376 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0xaa74821d005281080966e29c3a93ad0f4cb36cb86fd1f08d11c0e560dce5d90a",
+                tx_nonce=110,
+                tx_value=0,
+                tx_sender="0xaF1F9Db296f6E0F144bc414EB748678d548fD320",
+                func_name="multicall",
+                func_params={
+                    "deadline": 1707590171,
+                    "data": [
+                        HexBytes(
+                            "0xb858183f00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000080000000000000000000000000af1f9db296f6e0f144bc414eb748678d548fd320000000000000000000000000000000000000000000000000000014bc89e6a0000000000000000000000000000000000000000000000000000000000092d3181100000000000000000000000000000000000000000000000000000000000000422b591e99afe9f32eaa6214f7b7629768c40eeb39000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000000000"
                         ),
                     ],
                 },
