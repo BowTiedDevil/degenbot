@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Tuple
 from warnings import warn
 
+import eth_abi.abi
 import ujson
 from eth_typing import AnyAddress, ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -9,7 +10,6 @@ from web3.contract.contract import Contract
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError
 from web3.types import BlockIdentifier
 
-import eth_abi.abi
 from . import config
 from .baseclasses import TokenHelper
 from .chainlink import ChainlinkPriceContract
