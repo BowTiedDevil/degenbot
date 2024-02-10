@@ -206,36 +206,6 @@ class Erc20Token(TokenHelper):
     def __repr__(self) -> str:  # pragma: no cover
         return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"
 
-    def __eq__(self, other: Any) -> bool:
-        if isinstance(other, Erc20Token):
-            return self.address == other.address
-        elif isinstance(other, bytes):
-            return self.address.lower() == other.hex().lower()
-        elif isinstance(other, str):
-            return self.address.lower() == other.lower()
-        else:
-            return NotImplemented
-
-    def __lt__(self, other: Any) -> bool:
-        if isinstance(other, Erc20Token):
-            return self.address < other.address
-        elif isinstance(other, bytes):
-            return self.address.lower() < other.hex().lower()
-        elif isinstance(other, str):
-            return self.address.lower() < other.lower()
-        else:
-            return NotImplemented
-
-    def __gt__(self, other: Any) -> bool:
-        if isinstance(other, Erc20Token):
-            return self.address > other.address
-        elif isinstance(other, bytes):
-            return self.address.lower() > other.hex().lower()
-        elif isinstance(other, str):
-            return self.address.lower() > other.lower()
-        else:
-            return NotImplemented
-
     def __hash__(self) -> int:
         return hash(self.address)
 

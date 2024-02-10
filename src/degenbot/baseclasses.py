@@ -58,6 +58,8 @@ class PoolHelper:
 
 
 class TokenHelper:
+    address: ChecksumAddress
+
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, TokenHelper):
             return self.address == other.address
