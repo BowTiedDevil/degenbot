@@ -521,7 +521,7 @@ class UniswapLpCycle(Subscriber, ArbitrageHelper):
             raise ArbitrageError(f"No possible arbitrage: {e}") from e
 
         return ArbitrageCalculationResult(
-            id_=self.id,
+            id=self.id,
             input_token=self.input_token,
             profit_token=self.input_token,
             input_amount=swap_amount,
