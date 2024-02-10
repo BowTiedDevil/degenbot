@@ -6,7 +6,7 @@ from ..erc20_token import Erc20Token
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class ArbitrageCalculationResult:
-    id_: str
+    id: str
     input_token: Erc20Token
     profit_token: Erc20Token
     input_amount: int
