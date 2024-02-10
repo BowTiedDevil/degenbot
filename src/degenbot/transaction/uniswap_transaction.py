@@ -1851,15 +1851,15 @@ class UniswapTransaction(TransactionHelper):
                         _, _sim_result = self._simulate_v3_swap_exact_in(
                             pool=v3_pool,
                             recipient=tx_recipient,
-                            token_in=v3_pool.token0
-                            if v3_pool.token0 == tx_token_in_address
-                            else v3_pool.token1,
+                            token_in=(
+                                v3_pool.token0
+                                if v3_pool.token0 == tx_token_in_address
+                                else v3_pool.token1
+                            ),
                             amount_in=tx_amount_in,
                             amount_out_min=tx_amount_out_min,
                             first_swap=True,
                         )
-
-                        print(f"{_sim_result=}")
 
                         _v3_router_future_pool_states.append((v3_pool, _sim_result))
 
@@ -1867,7 +1867,6 @@ class UniswapTransaction(TransactionHelper):
                             _sim_result.amount1_delta,
                             _sim_result.amount0_delta,
                         )
-                        print(f"{token_out_quantity=}")
 
                     case "exactInput":
                         # Extract parameters from the dict results of web3py v6
@@ -1976,8 +1975,6 @@ class UniswapTransaction(TransactionHelper):
                             )
 
                     case "exactOutputSingle":
-                        print(f"{func_name}")
-                        print(f"{self.hash.hex()=}")
                         # Extract parameters from the dict results of web3py v6
                         if isinstance(func_params["params"], dict):
                             tx_token_in_address = func_params["params"]["tokenIn"]
@@ -2063,7 +2060,7 @@ class UniswapTransaction(TransactionHelper):
                             )
 
                     case "exactOutput":
-                        print(f"{func_name}")
+                        print(f"Processing {func_name}")
                         print(f"{self.hash.hex()=}")
                         # Extract parameters from the dict results of web3py v6
                         if isinstance(func_params["params"], dict):
@@ -2252,7 +2249,7 @@ class UniswapTransaction(TransactionHelper):
 
                     case "sweepToken":
                         print(f"Processing {func_name}")
-                        print(f"{self.hash=}")
+                        print(f"{self.hash.hex()=}")
                         """
                         This function transfers the current token balance
                         held by the contract to `recipient`
@@ -2281,7 +2278,7 @@ class UniswapTransaction(TransactionHelper):
 
                     case "wrapETH":
                         print(f"Processing {func_name}")
-                        print(f"{self.hash=}")
+                        print(f"{self.hash.hex()=}")
                         _wrapped_token_amount = func_params["value"]
                         _wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
                         self.ledger.adjust(

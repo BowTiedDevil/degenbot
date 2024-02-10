@@ -276,6 +276,30 @@ def test_v2_router_transactions(
             None,
         ),
         (
+            19200547 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x0348df6b2a08e73d356774a005c952dd6fa5c5403f34106c10d27d1b4aca56e7",
+                tx_nonce=1323,
+                tx_value=0,
+                tx_sender="0xd7452CE7652f353c150ddd2427B6680052467d3d",
+                func_name="exactOutput",
+                func_params={
+                    "params": {
+                        "path": HexBytes(
+                            "0xda31d0d1bc934fc34f7189e38a413ca0a5e8b44f002710c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4dac17f958d2ee523a2206206994597c13d831ec7"
+                        ),
+                        "recipient": "0xd7452CE7652f353c150ddd2427B6680052467d3d",
+                        "deadline": 1707603210,
+                        "amountOut": 599620000000000000000,
+                        "amountInMaximum": 537159816,
+                    },
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
             17471674,
             dict(
                 chain_id=1,
