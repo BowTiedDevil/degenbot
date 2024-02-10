@@ -127,12 +127,6 @@ class LedgerError(TransactionError):
     """
 
 
-class TransactionEncodingError(TransactionError):
-    """
-    Thrown when a transaction input cannot be decoded using the known ABI
-    """
-
-
 # 2nd level exceptions for Uniswap Manager classes
 class PoolNotAssociated(ManagerError):
     """
