@@ -294,7 +294,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
         (e.g. 10 * 10 ** (18-8) ETH/BTC).
         """
 
-        if token_in not in self.tokens:
+        if token_in not in self.tokens:  # pragma: no cover
             raise ValueError(f"Token in {token_in} not held by this pool.")
 
         if token_in == self.token0:
@@ -396,7 +396,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 else self.reserves_token0
             )
             fee = self.fee_token1
-        else:
+        else:  # pragma: no cover
             raise ValueError(
                 f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"
             )
@@ -472,7 +472,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 else self.reserves_token0
             )
             fee = self.fee_token1
-        else:
+        else:  # pragma: no cover
             raise ValueError(
                 f"Could not identify token_in: {token_in}! Pool holds: {self.token0} {self.token1}"
             )
