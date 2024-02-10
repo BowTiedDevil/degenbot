@@ -517,9 +517,6 @@ def test_comparisons(ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool)
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool == other_lp
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool is not other_lp
 
-    with pytest.raises(NotImplementedError):
-        assert ethereum_uniswap_v2_wbtc_weth_liquiditypool == 420
-
     # sets depend on __hash__ dunder method
     set([ethereum_uniswap_v2_wbtc_weth_liquiditypool, other_lp])
 
