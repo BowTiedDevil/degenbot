@@ -39,6 +39,7 @@ build-backend = "setuptools.build_meta"
 [tool.mypy]
 files="src/degenbot"
 strict = true
+python_version = "3.10"
 
 [[tool.mypy.overrides]]
 module=[
