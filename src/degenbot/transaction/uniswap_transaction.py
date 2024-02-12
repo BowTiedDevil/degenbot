@@ -100,9 +100,9 @@ _ROUTERS = {
 
 class UniversalRouterSpecialAddress:
     # ref: https://github.com/Uniswap/universal-router/blob/deployed-commit/contracts/libraries/Constants.sol
-    ETH = "0x0000000000000000000000000000000000000000"
-    MSG_SENDER = "0x0000000000000000000000000000000000000001"
-    ROUTER = "0x0000000000000000000000000000000000000002"
+    ETH = to_checksum_address("0x0000000000000000000000000000000000000000")
+    MSG_SENDER = to_checksum_address("0x0000000000000000000000000000000000000001")
+    ROUTER = to_checksum_address("0x0000000000000000000000000000000000000002")
 
 
 class UniversalRouterSpecialValues:
@@ -114,11 +114,11 @@ class UniversalRouterSpecialValues:
 class V3RouterSpecialAddress:
     # SwapRouter.sol checks for address(0)
     # ref: https://github.com/Uniswap/v3-periphery/blob/main/contracts/SwapRouter.sol
-    ROUTER_1 = "0x0000000000000000000000000000000000000000"
+    ROUTER_1 = to_checksum_address("0x0000000000000000000000000000000000000000")
 
     # ref: https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/libraries/Constants.sol
-    MSG_SENDER = "0x0000000000000000000000000000000000000001"
-    ROUTER_2 = "0x0000000000000000000000000000000000000002"
+    MSG_SENDER = to_checksum_address("0x0000000000000000000000000000000000000001")
+    ROUTER_2 = to_checksum_address("0x0000000000000000000000000000000000000002")
 
 
 class V3RouterSpecialValues:
@@ -974,21 +974,22 @@ class UniswapTransaction(TransactionHelper):
                     `recipient` is evaluated before adjusting the ledger balance.
                     """
 
+                    tx_recipient: ChecksumAddress
                     try:
-                        tx_recipient, _wrap_amount_min = eth_abi.abi.decode(
+                        _tx_recipient, _wrap_amount_min = eth_abi.abi.decode(
                             types=("address", "uint256"),
                             data=inputs,
                         )
                     except Exception:
                         raise ValueError(f"Could not decode input for {command}")
 
-                    match tx_recipient:
+                    match _tx_recipient:
                         case UniversalRouterSpecialAddress.ROUTER:
                             _recipient = self.router_address
                         case UniversalRouterSpecialAddress.MSG_SENDER:
                             _recipient = self.sender
                         case _:
-                            _recipient = tx_recipient
+                            _recipient = to_checksum_address(_tx_recipient)
 
                     # if tx_recipient == UniversalRouterSpecialAddress.ROUTER:
                     #     _recipient = self.router_address
