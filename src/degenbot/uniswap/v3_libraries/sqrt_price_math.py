@@ -1,4 +1,4 @@
-from ...constants import MAX_UINT128, MIN_UINT128, MIN_UINT160
+from ...constants import MIN_UINT160
 from ...exceptions import EVMRevertError
 from . import full_math as FullMath
 from . import unsafe_math as UnsafeMath
@@ -12,9 +12,12 @@ def getAmount0Delta(
     liquidity: int,
     roundUp: bool | None = None,
 ) -> int:
-    if roundUp is not None or MIN_UINT128 <= liquidity <= MAX_UINT128:
+    # The Solidity function is overloaded with respect to `roundUp`.
+    # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/SqrtPriceMath.sol
+
+    if roundUp is not None:
         if sqrtRatioAX96 > sqrtRatioBX96:
-            (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96)
+            sqrtRatioAX96, sqrtRatioBX96 = sqrtRatioBX96, sqrtRatioAX96
 
         numerator1 = liquidity << Q96_RESOLUTION
         numerator2 = sqrtRatioBX96 - sqrtRatioAX96
@@ -24,15 +27,14 @@ def getAmount0Delta(
 
         return (
             UnsafeMath.divRoundingUp(
-                FullMath.mulDivRoundingUp(numerator1, numerator2, sqrtRatioBX96),
-                sqrtRatioAX96,
+                FullMath.mulDivRoundingUp(numerator1, numerator2, sqrtRatioBX96), sqrtRatioAX96
             )
             if roundUp
-            else (FullMath.mulDiv(numerator1, numerator2, sqrtRatioBX96)) // sqrtRatioAX96
+            else FullMath.mulDiv(numerator1, numerator2, sqrtRatioBX96) // sqrtRatioAX96
         )
     else:
         return to_int256(
-            -getAmount0Delta(sqrtRatioAX96, sqrtRatioBX96, -liquidity, False)
+            to_int256(-getAmount0Delta(sqrtRatioAX96, sqrtRatioBX96, -liquidity, False))
             if liquidity < 0
             else to_int256(getAmount0Delta(sqrtRatioAX96, sqrtRatioBX96, liquidity, True))
         )
@@ -44,7 +46,10 @@ def getAmount1Delta(
     liquidity: int,
     roundUp: bool | None = None,
 ) -> int:
-    if roundUp is not None or MIN_UINT128 <= liquidity <= MAX_UINT128:
+    # The Solidity function is overloaded with respect to `roundUp`.
+    # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/SqrtPriceMath.sol
+
+    if roundUp is not None:
         if sqrtRatioAX96 > sqrtRatioBX96:
             sqrtRatioAX96, sqrtRatioBX96 = sqrtRatioBX96, sqrtRatioAX96
 
@@ -55,7 +60,7 @@ def getAmount1Delta(
         )
     else:
         return to_int256(
-            -getAmount1Delta(sqrtRatioAX96, sqrtRatioBX96, -liquidity, False)
+            to_int256(-getAmount1Delta(sqrtRatioAX96, sqrtRatioBX96, -liquidity, False))
             if liquidity < 0
             else to_int256(getAmount1Delta(sqrtRatioAX96, sqrtRatioBX96, liquidity, True))
         )
