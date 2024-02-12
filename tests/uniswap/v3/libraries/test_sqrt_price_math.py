@@ -5,14 +5,22 @@ from degenbot.constants import MIN_UINT128, MAX_UINT128, MAX_UINT256
 from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3_libraries import SqrtPriceMath
 
-# Tests adapted from Typescript tests on Uniswap V3 Github repo
+# Adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/SqrtPriceMath.spec.ts
 
 
-# Change the rounding method to match the BigNumber unit test at https://github.com/Uniswap/v3-core/blob/main/test/shared/utilities.ts
-# which specifies .integerValue(3), the 'ROUND_FLOOR' rounding method per https://mikemcl.github.io/bignumber.js/#bignumber
-getcontext().prec = 256
-getcontext().rounding = "ROUND_FLOOR"
+getcontext().prec = (
+    40
+    # Match the decimal places value specified in Uniswap tests
+    # ref: https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/test/shared/utilities.ts#L60
+)
+
+getcontext().rounding = (
+    # Change the rounding method to match the BigNumber rounding mode "3",
+    # which is 'ROUND_FLOOR' per https://mikemcl.github.io/bignumber.js/#bignumber
+    # ref: https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/test/shared/utilities.ts#L69
+    "ROUND_FLOOR"
+)
 
 
 def expandTo18Decimals(x: int):
@@ -23,7 +31,7 @@ def encodePriceSqrt(reserve1: int, reserve0: int):
     """
     Returns the sqrt price as a Q64.96 value
     """
-    return round((Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96))
+    return ((Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96)).to_integral_value()
 
 
 def test_getNextSqrtPriceFromInput():
@@ -262,9 +270,7 @@ def test_getAmount1Delta():
         expandTo18Decimals(1),
         True,
     )
-    # TODO: investigate github test - asserts value == 100000000000000000,
-    # but test fails (off-by-one)
-    assert amount1 == 100000000000000001
+    assert amount1 == 100000000000000000
 
     amount1RoundedDown = SqrtPriceMath.getAmount1Delta(
         encodePriceSqrt(1, 1),
