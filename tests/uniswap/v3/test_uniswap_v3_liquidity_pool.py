@@ -2133,11 +2133,11 @@ def test_creation(ethereum_full_node_web3) -> None:
             ],
         )
 
-    with pytest.raises(ValueError):
-        V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD", tick_bitmap={1: None})
+    with pytest.raises(ValueError, match="Must provide both tick_bitmap and tick_data"):
+        V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD", tick_bitmap={0: {}})
 
-    with pytest.raises(ValueError):
-        V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD", tick_data={1: None})
+    with pytest.raises(ValueError, match="Must provide both tick_bitmap and tick_data"):
+        V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD", tick_data={0: {}})
 
 
 def test_reorg(mocked_wbtc_weth_v3liquiditypool) -> None:
