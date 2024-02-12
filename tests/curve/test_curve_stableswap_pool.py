@@ -357,3 +357,8 @@ def test_factory_stableswap_pools(fork_mainnet: AnvilFork):
         except Exception as e:
             print(f"{type(e)}: {e} - pool {i}, {pool_address=}")
             raise
+
+
+def test_get_D(tripool):
+    # Check that D=0 for an empty pool
+    assert tripool._get_D(_xp=[0, 0, 0], _amp=1000) == 0
