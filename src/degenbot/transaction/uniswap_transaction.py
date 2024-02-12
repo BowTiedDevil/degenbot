@@ -225,7 +225,7 @@ class UniswapTransaction(TransactionHelper):
         self.chain_id = int(chain_id, 16) if isinstance(chain_id, str) else chain_id
         self.routers = _ROUTERS[self.chain_id]
         self.sender = to_checksum_address(tx_sender)
-        self.to: Set[ChecksumAddress] = set()
+        self.recipients: Set[ChecksumAddress] = set()
 
         router_address = to_checksum_address(router_address)
         if router_address not in self.routers:
@@ -384,7 +384,7 @@ class UniswapTransaction(TransactionHelper):
         )
 
         if last_swap:
-            self.to.add(to_checksum_address(recipient))
+            self.recipients.add(to_checksum_address(recipient))
 
         if last_swap and amount_out_min is not None and _amount_out < amount_out_min:
             raise TransactionError(
@@ -483,7 +483,7 @@ class UniswapTransaction(TransactionHelper):
 
         silent = self.silent
 
-        self.to.add(to_checksum_address(recipient))
+        self.recipients.add(to_checksum_address(recipient))
 
         if token_in not in pool.tokens:
             raise ValueError(f"Token {token_in} not found in pool {pool}")
@@ -574,7 +574,7 @@ class UniswapTransaction(TransactionHelper):
 
         silent = self.silent
 
-        self.to.add(to_checksum_address(recipient))
+        self.recipients.add(to_checksum_address(recipient))
 
         if token_in not in pool.tokens:
             raise ValueError(f"Token {token_in} not found in pool {pool}")
@@ -646,7 +646,7 @@ class UniswapTransaction(TransactionHelper):
                     _recipient = self.router_address
                 case _:
                     _recipient = to_checksum_address(recipient)
-                    self.to.add(_recipient)
+                    self.recipients.add(_recipient)
 
             self.ledger.transfer(
                 token=token_out.address,
@@ -960,7 +960,7 @@ class UniswapTransaction(TransactionHelper):
                             self.router_address,
                             _pay_portion_recipient,
                         )
-                        self.to.add(to_checksum_address(_pay_portion_recipient))
+                        self.recipients.add(to_checksum_address(_pay_portion_recipient))
 
                 case "WRAP_ETH":
                     """
@@ -1597,7 +1597,7 @@ class UniswapTransaction(TransactionHelper):
                         if tx_recipient == UniversalRouterSpecialAddress.ROUTER:
                             tx_recipient = self.router_address
                         else:
-                            self.to.add(tx_recipient)
+                            self.recipients.add(tx_recipient)
 
                         try:
                             tx_deadline = func_params["deadline"]
@@ -2249,8 +2249,6 @@ class UniswapTransaction(TransactionHelper):
                         self._simulate_unwrap(wrapped_token_address)
 
                     case "sweepToken":
-                        print(f"Processing {func_name}")
-                        print(f"{self.hash.hex()=}")
                         """
                         This function transfers the current token balance
                         held by the contract to `recipient`
@@ -2267,6 +2265,8 @@ class UniswapTransaction(TransactionHelper):
                             # `msg.sender`
                             if tx_recipient is None:
                                 tx_recipient = self.sender
+                            else:
+                                self.recipients.add(tx_recipient)
 
                         _balance = self.ledger.token_balance(self.router_address, tx_token_address)
 
@@ -2407,7 +2407,7 @@ class UniswapTransaction(TransactionHelper):
         except ValueError as e:
             raise TransactionError(e)
 
-        if set(self.ledger._balances) - set([self.sender]) - self.to:
+        if set(self.ledger._balances) - set([self.sender]) - self.recipients:
             # Ignore case where an excess wrapped token balance remains at the router
             if self.ledger._balances[self.router_address][WRAPPED_NATIVE_TOKENS[self.chain_id]]:
                 logger.info("Simulation results in leftover wrapped token balance")
