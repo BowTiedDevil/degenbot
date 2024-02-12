@@ -30,7 +30,7 @@ from ..dex.curve import (
     CURVE_V1_REGISTRY_ADDRESS,
 )
 from ..erc20_token import Erc20Token
-from ..exceptions import BrokenPool, ZeroLiquidityError, ZeroSwapError
+from ..exceptions import BrokenPool, EVMRevertError, ZeroLiquidityError, ZeroSwapError
 from ..functions import get_number_for_block_identifier
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
@@ -866,7 +866,9 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                         assert (frac > 10**16 - 1) and (frac < 10**20 + 1), "unsafe value for y"
                         return y
 
-                raise Exception("_newton_y() did not converge")
+                raise EVMRevertError(
+                    f"_newton_y() did not converge for pool {self.address}"
+                )  # pragma: no cover
 
             def _reduction_coefficient(x: List[int], fee_gamma: int) -> int:
                 """
@@ -1791,7 +1793,9 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                     if Dprev - D <= 1:
                         return D
 
-        raise Exception(f"_get_D() did not converge for pool {self.address}")
+        raise EVMRevertError(
+            f"_get_D() did not converge for pool {self.address}"
+        )  # pragma: no cover
 
     def _get_y(self, i: int, j: int, x: int, xp: List[int]) -> int:
         """
@@ -1898,7 +1902,9 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                     if y_prev - y <= 1:
                         return y
 
-        raise Exception("_get_y() failed to converge")
+        raise EVMRevertError(
+            f"_get_y() did not converge for pool {self.address}"
+        )  # pragma: no cover
 
     def _get_y_D(self, A_: int, i: int, xp: List[int], D: int) -> int:
         """
@@ -1958,7 +1964,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                 else:
                     if y_prev - y <= 1:
                         return y
-            raise
+            raise EVMRevertError(f"_get_y_D() failed to converge for pool {self.address}")
 
         else:
             # x in the input is converted to the same price/precision
