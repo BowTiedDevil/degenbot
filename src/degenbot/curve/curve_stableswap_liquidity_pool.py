@@ -80,8 +80,13 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             height. Defaults to the latest block if omitted.
         """
 
-        self.rate_multipliers: List[int]
+        self.fee_gamma: int
+        self.mid_fee: int
+        self.offpeg_fee_multiplier: int
+        self.out_fee: int
         self.precision_multipliers: List[int]
+        self.rate_multipliers: List[int]
+        self.use_lending: List[bool]
 
         def _get_coin_index_type() -> str:
             # Identify the coins input format (int128 or uint256)
@@ -208,7 +213,6 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
                     self.use_lending = [True, True, True, False]
                 case "0xDeBF20617708857ebe4F679508E7b7863a8A8EeE":
                     self.precision_multipliers = [1, 10**12, 10**12]
-                    self.offpeg_fee_multiplier: int
                     self.offpeg_fee_multiplier, *_ = eth_abi.abi.decode(
                         types=["uint256"],
                         data=_w3.eth.call(
