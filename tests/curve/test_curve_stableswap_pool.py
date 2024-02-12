@@ -57,7 +57,7 @@ def _test_calculations(lp: CurveStableswapPool):
                 }
                 contract_amount, *_ = eth_abi.abi.decode(
                     data=degenbot.get_web3().eth.call(
-                        transaction=tx,
+                        transaction=tx,  # type: ignore[arg-type]
                         block_identifier=state_block,
                     ),
                     types=["uint256"],
@@ -253,7 +253,7 @@ def test_tricrypto_pool(fork_mainnet: AnvilFork):
 def test_metapool_over_multiple_blocks_to_verify_cache_behavior(fork_mainnet_archive: AnvilFork):
     _POOL_ADDRESS = "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d"
     _START_BLOCK = 18_850_000
-    _END_BLOCK = 18_851_000
+    _END_BLOCK = 18_850_500
 
     # Pool has a 10 minute base rate cache expiry, so choose a 30 block interval (5 minutes)
     # to capture calcs at both cached and cache-expired states

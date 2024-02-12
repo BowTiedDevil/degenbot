@@ -828,7 +828,7 @@ def test_universal_router_transactions(
 ) -> None:
     fork_mainnet_archive.reset(block_number=block_number)
     assert fork_mainnet_archive.w3.eth.get_block_number() == block_number
-    fork_mainnet_archive.w3.provider.timeout = 600
+    fork_mainnet_archive.w3.provider.timeout = 600  # type: ignore[attr-defined]
     set_web3(fork_mainnet_archive.w3)
     tx = UniswapTransaction(**tx_dict)
 
@@ -935,7 +935,7 @@ def test_expired_transaction(fork_mainnet_archive: AnvilFork):
     block_number = 19195827 - 1
     fork_mainnet_archive.reset(block_number=block_number)
     assert fork_mainnet_archive.w3.eth.get_block_number() == block_number
-    fork_mainnet_archive.w3.provider.timeout = 600
+    fork_mainnet_archive.w3.provider.timeout = 600  # type: ignore[attr-defined]
     set_web3(fork_mainnet_archive.w3)
 
     with pytest.raises(TransactionError, match="Deadline expired"):

@@ -1,14 +1,16 @@
 import pytest
 import ujson
+import web3.middleware
+from degenbot.config import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.fork import AnvilFork
-from degenbot.config import set_web3
-import web3.middleware
+from eth_utils.address import to_checksum_address
+from web3.types import Wei
 
 from ..conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_FULL_NODE_HTTP_URI
 
-VITALIK_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
-WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 
 def test_anvil_forks():
@@ -53,10 +55,12 @@ def test_rpc_methods(fork_mainnet_archive: AnvilFork):
     deposit_transaction = weth_contract.functions.deposit().build_transaction(
         {
             "from": VITALIK_ADDRESS,
-            "value": 1,
+            "value": Wei(1),
         },
     )
-    access_list = fork_mainnet_archive.create_access_list(transaction=deposit_transaction)
+    access_list = fork_mainnet_archive.create_access_list(
+        transaction=deposit_transaction,  # type: ignore[arg-type]
+    )
     assert isinstance(access_list, list)
 
     fork_mainnet_archive.reset(block_number=18_500_000)

@@ -26,14 +26,10 @@ class MockErc20Token(Erc20Token):
 # Tests are based on the WBTC-WETH Uniswap V2 pool on Ethereum mainnet,
 # evaluated against the results from the Uniswap V2 Router 2 contract
 # functions `getAmountsOut` and `getAmountsIn`
-#
-# Pool address: 0xBb2b8038a1640196FbE3e38816F3e67Cba72D940
-# Router address: 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D
 
-UNISWAP_V2_WBTC_WETH_POOL_ADDRESS = to_checksum_address(
-    "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
-)
-UNISWAPV2_FACTORY_ADDRESS = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+UNISWAP_V2_ROUTER02 = to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
+UNISWAP_V2_WBTC_WETH_POOL = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
+UNISWAPV2_FACTORY = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
 UNISWAPV2_FACTORY_POOL_INIT_HASH = (
     "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
 )
@@ -48,9 +44,9 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool(load_env: dict) -> LiquidityPool
     degenbot.set_web3(ankr_w3)
 
     lp = LiquidityPool(
-        address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+        address=UNISWAP_V2_WBTC_WETH_POOL,
         update_method="external",
-        factory_address=UNISWAPV2_FACTORY_ADDRESS,
+        factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
         state_block=17_600_000,
     )
@@ -74,37 +70,37 @@ def test_create_pool(ethereum_full_node_web3: web3.Web3) -> None:
     token1.symbol = "WETH"
 
     LiquidityPool(
-        address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+        address=UNISWAP_V2_WBTC_WETH_POOL,
         tokens=[token0, token1],
         name="WBTC-WETH (V2, 0.30%)",
-        factory_address=UNISWAPV2_FACTORY_ADDRESS,
+        factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
     )
 
     # Omitting tokens
     LiquidityPool(
-        address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+        address=UNISWAP_V2_WBTC_WETH_POOL,
         # tokens=[token0, token1],
         name="WBTC-WETH (V2, 0.30%)",
-        factory_address=UNISWAPV2_FACTORY_ADDRESS,
+        factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
     )
 
     with pytest.raises(ValueError, match="Expected 2 tokens, found"):
         LiquidityPool(
-            address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+            address=UNISWAP_V2_WBTC_WETH_POOL,
             tokens=[token0, token1, token0],
             name="WBTC-WETH (V2, 0.30%)",
-            factory_address=UNISWAPV2_FACTORY_ADDRESS,
+            factory_address=UNISWAPV2_FACTORY,
             factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
         )
 
     with pytest.raises(ValueError, match="Expected 2 tokens, found"):
         LiquidityPool(
-            address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+            address=UNISWAP_V2_WBTC_WETH_POOL,
             tokens=[token0],
             name="WBTC-WETH (V2, 0.30%)",
-            factory_address=UNISWAPV2_FACTORY_ADDRESS,
+            factory_address=UNISWAPV2_FACTORY,
             factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
         )
 
@@ -200,20 +196,20 @@ def test_create_empty_pool(
     degenbot.set_web3(ethereum_full_node_web3)
 
     LiquidityPool(
-        address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+        address=UNISWAP_V2_WBTC_WETH_POOL,
         tokens=[_pool.token0, _pool.token1],
         name="WBTC-WETH (V2, 0.30%)",
-        factory_address=UNISWAPV2_FACTORY_ADDRESS,
+        factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
         empty=True,
     )
 
     with pytest.raises(ValueError):
         LiquidityPool(
-            address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+            address=UNISWAP_V2_WBTC_WETH_POOL,
             # tokens=[_pool.token0, _pool.token1],
             name="WBTC-WETH (V2, 0.30%)",
-            factory_address=UNISWAPV2_FACTORY_ADDRESS,
+            factory_address=UNISWAPV2_FACTORY,
             factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
             empty=True,
         )
@@ -221,7 +217,7 @@ def test_create_empty_pool(
     # Create pool without factory address
     with pytest.raises(ValueError):
         LiquidityPool(
-            address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+            address=UNISWAP_V2_WBTC_WETH_POOL,
             tokens=[_pool.token0, _pool.token1],
             name="WBTC-WETH (V2, 0.30%)",
             # factory_address=UNISWAPV2_FACTORY_ADDRESS,
@@ -232,10 +228,10 @@ def test_create_empty_pool(
     # Create pool without init hash
     with pytest.raises(ValueError):
         LiquidityPool(
-            address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+            address=UNISWAP_V2_WBTC_WETH_POOL,
             tokens=[_pool.token0, _pool.token1],
             name="WBTC-WETH (V2, 0.30%)",
-            factory_address=UNISWAPV2_FACTORY_ADDRESS,
+            factory_address=UNISWAPV2_FACTORY,
             # factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
             empty=True,
         )
@@ -244,23 +240,23 @@ def test_create_empty_pool(
     bad_init_hash = UNISWAPV2_FACTORY_POOL_INIT_HASH.replace("a", "b")
     with pytest.raises(
         ValueError,
-        match=f"Pool address {UNISWAP_V2_WBTC_WETH_POOL_ADDRESS} does not match deterministic address",
+        match=f"Pool address {UNISWAP_V2_WBTC_WETH_POOL} does not match deterministic address",
     ):
         LiquidityPool(
-            address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+            address=UNISWAP_V2_WBTC_WETH_POOL,
             tokens=[_pool.token0, _pool.token1],
             name="WBTC-WETH (V2, 0.30%)",
-            factory_address=UNISWAPV2_FACTORY_ADDRESS,
+            factory_address=UNISWAPV2_FACTORY,
             factory_init_hash=bad_init_hash,
             empty=True,
         )
 
     # Create with non-standard fee
     LiquidityPool(
-        address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+        address=UNISWAP_V2_WBTC_WETH_POOL,
         tokens=[_pool.token0, _pool.token1],
         name="WBTC-WETH (V2, 0.30%)",
-        factory_address=UNISWAPV2_FACTORY_ADDRESS,
+        factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
         fee=Fraction(2, 1000),
         empty=True,
@@ -269,32 +265,32 @@ def test_create_empty_pool(
     # Create with float fee
     with pytest.raises(TypeError, match="LP fee was not correctly passed!"):
         LiquidityPool(
-            address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+            address=UNISWAP_V2_WBTC_WETH_POOL,
             tokens=[_pool.token0, _pool.token1],
             name="WBTC-WETH (V2, 0.30%)",
-            factory_address=UNISWAPV2_FACTORY_ADDRESS,
+            factory_address=UNISWAPV2_FACTORY,
             factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
-            fee=0.003,
+            fee=0.003,  # type:ignore
             empty=True,
         )
 
     # Create with float fee in tuple format
     with pytest.raises(TypeError, match="LP fee was not correctly passed!"):
         LiquidityPool(
-            address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+            address=UNISWAP_V2_WBTC_WETH_POOL,
             tokens=[_pool.token0, _pool.token1],
             name="WBTC-WETH (V2, 0.30%)",
-            factory_address=UNISWAPV2_FACTORY_ADDRESS,
+            factory_address=UNISWAPV2_FACTORY,
             factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
-            fee=(0.003, 0.003),
+            fee=(0.003, 0.003),  # type:ignore
             empty=True,
         )
 
     # Create split-fee pool of differing values
     lp = LiquidityPool(
-        address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+        address=UNISWAP_V2_WBTC_WETH_POOL,
         tokens=[_pool.token0, _pool.token1],
-        factory_address=UNISWAPV2_FACTORY_ADDRESS,
+        factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
         fee=(Fraction(3, 1000), Fraction(5, 1000)),
         empty=True,
@@ -304,9 +300,9 @@ def test_create_empty_pool(
 
     # Create split-fee pool of equal values
     lp = LiquidityPool(
-        address=UNISWAP_V2_WBTC_WETH_POOL_ADDRESS,
+        address=UNISWAP_V2_WBTC_WETH_POOL,
         tokens=[_pool.token0, _pool.token1],
-        factory_address=UNISWAPV2_FACTORY_ADDRESS,
+        factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
         fee=(Fraction(6, 1000), Fraction(6, 1000)),
         empty=True,
@@ -330,7 +326,7 @@ def test_calculate_tokens_out_from_ratio_out(fork_mainnet_archive: AnvilFork) ->
     degenbot.set_web3(fork_mainnet_archive.w3)
 
     router_contract = fork_mainnet_archive.w3.eth.contract(
-        address="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+        address=to_checksum_address(UNISWAP_V2_ROUTER02),
         abi=degenbot.uniswap.abi.UNISWAP_V2_ROUTER_ABI,
     )
 
@@ -508,7 +504,7 @@ def test_comparisons(ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool)
             ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1,
         ],
         name="WBTC-WETH (V2, 0.30%)",
-        factory_address=UNISWAPV2_FACTORY_ADDRESS,
+        factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
         fee=Fraction(3, 1000),
         empty=True,

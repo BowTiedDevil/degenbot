@@ -197,7 +197,7 @@ def test_pools_from_token_path(ethereum_full_node_web3: Web3) -> None:
         tx_path=[WBTC_ADDRESS, WETH_ADDRESS],
         pool_manager=uniswap_v2_pool_manager,
     ) == [
-        uniswap_v2_pool_manager.get_pool(token_addresses=[WBTC_ADDRESS, WETH_ADDRESS]),
+        uniswap_v2_pool_manager.get_pool(token_addresses=(WBTC_ADDRESS, WETH_ADDRESS)),
     ]
 
 
