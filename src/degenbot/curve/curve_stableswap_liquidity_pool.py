@@ -553,7 +553,10 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             if TYPE_CHECKING:
                 assert A0 is not None
                 assert t0 is not None
-            scaled_A = A0 - (A0 - A1) * (timestamp - t0) // (t1 - t0)
+            if A1 > A0:
+                scaled_A = A0 + (A1 - A0) * (timestamp - t0) // (t1 - t0)
+            else:
+                scaled_A = A0 - (A0 - A1) * (timestamp - t0) // (t1 - t0)
         else:
             scaled_A = A1
 
