@@ -1,7 +1,10 @@
 from typing import Dict
 
-from degenbot.uniswap.v3_libraries import TickBitmap, TickMath
+import pytest
+from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3_dataclasses import UniswapV3BitmapAtWord
+from degenbot.uniswap.v3_libraries import TickBitmap, TickMath
+from degenbot.uniswap.v3_libraries.tick_bitmap import MissingTickWordError
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/TickBitmap.spec.ts
@@ -15,20 +18,29 @@ def is_initialized(tick_bitmap: Dict[int, UniswapV3BitmapAtWord], tick: int) -> 
     return next == tick if initialized else False
 
 
-def empty_bitmap():
+def empty_full_bitmap(spacing: int = 1):
     """
-    Generates an empty tick bitmap of maximum size
+    Generate a empty tick bitmap, maximum size, with the given tick spacing
     """
 
     tick_bitmap = {}
-    for tick in range(TickMath.MIN_TICK, TickMath.MAX_TICK):
+    for tick in range(TickMath.MIN_TICK, TickMath.MAX_TICK, spacing):
         wordPos, _ = TickBitmap.position(tick=tick)
         tick_bitmap[wordPos] = UniswapV3BitmapAtWord()
     return tick_bitmap
 
 
+def empty_sparse_bitmap():
+    """
+    Generate a sparse, empty tick bitmap no populated words
+    """
+
+    tick_bitmap = {}
+    return tick_bitmap
+
+
 def test_isInitialized():
-    tick_bitmap = empty_bitmap()
+    tick_bitmap = empty_full_bitmap()
 
     assert is_initialized(tick_bitmap, 1) is False
 
@@ -49,7 +61,7 @@ def test_isInitialized():
 
 
 def test_flipTick() -> None:
-    tick_bitmap = empty_bitmap()
+    tick_bitmap = empty_full_bitmap()
 
     TickBitmap.flipTick(tick_bitmap, tick=-230, tick_spacing=1)
     assert is_initialized(tick_bitmap, -230) is True
@@ -75,6 +87,19 @@ def test_flipTick() -> None:
 
     assert is_initialized(tick_bitmap, -259) is True
     assert is_initialized(tick_bitmap, -229) is False
+
+
+def test_flipTick_sparse() -> None:
+    tick_bitmap = empty_sparse_bitmap()
+    with pytest.raises(MissingTickWordError, match="Called flipTick on missing word"):
+        TickBitmap.flipTick(tick_bitmap, tick=-230, tick_spacing=1)
+
+
+def test_incorrect_tick_spacing_flip() -> None:
+    tick_spacing = 3
+    tick_bitmap = empty_full_bitmap(tick_spacing)
+    with pytest.raises(EVMRevertError, match="Tick not correctly spaced"):
+        TickBitmap.flipTick(tick_bitmap, tick=2, tick_spacing=tick_spacing)
 
 
 def test_nextInitializedTickWithinOneWord() -> None:
