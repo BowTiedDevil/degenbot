@@ -48,15 +48,14 @@ class Erc20TokenHelperManager(HelperManager):
 
         address = to_checksum_address(address)
 
-        if address == "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE":
-            # TODO: find a more elegant way to handle this, it's so dumb
-            return EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE()
-
         if token_helper := self._erc20tokens.get(address):
             return token_helper
 
         try:
-            token_helper = Erc20Token(address=address, **kwargs)
+            if address == EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE.address:
+                token_helper = EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE()
+            else:
+                token_helper = Erc20Token(address=address, **kwargs)
         except Exception:
             raise ManagerError(f"Could not create Erc20Token helper: {address=}")
 
