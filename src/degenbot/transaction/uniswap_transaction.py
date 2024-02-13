@@ -816,8 +816,8 @@ class UniswapTransaction(TransactionHelper):
                 0x20: "SEAPORT_V1_4",
                 0x21: "EXECUTE_SUB_PLAN",
                 0x22: "APPROVE_ERC20",
-                0x23: "WRAP_STETH",
-                0x24: "UNWRAP_STETH",
+                0x23: None,  # COMMAND_PLACEHOLDER
+                0x24: None,  # COMMAND_PLACEHOLDER
                 0x25: None,  # COMMAND_PLACEHOLDER
                 0x26: None,  # COMMAND_PLACEHOLDER
                 0x27: None,  # COMMAND_PLACEHOLDER
@@ -870,8 +870,6 @@ class UniswapTransaction(TransactionHelper):
                 "SWEEP_ERC1155",
                 "SWEEP_ERC721",
                 "TRANSFER",
-                "UNWRAP_STETH",
-                "WRAP_STETH",
                 "X2Y2_1155",
                 "X2Y2_721",
             }
