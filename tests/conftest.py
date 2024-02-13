@@ -3,6 +3,8 @@
 import logging
 
 import degenbot
+import degenbot.registry
+import degenbot.uniswap.managers
 import dotenv
 import pytest
 import web3
@@ -55,6 +57,7 @@ def clear_degenbot_state() -> None:
     # These dictionaries store module-level state, which will corrupt sequential tests if not reset
     degenbot.registry.all_pools._all_pools.clear()
     degenbot.registry.all_tokens._all_tokens.clear()
+    degenbot.Erc20TokenHelperManager._state.clear()
     degenbot.uniswap.managers.UniswapLiquidityPoolManager._state.clear()
     degenbot.uniswap.V3LiquidityPool._lens_contracts.clear()
 
