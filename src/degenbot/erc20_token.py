@@ -345,6 +345,7 @@ class EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE(Erc20Token):
 
     def __init__(self) -> None:
         self._cached_balance: Dict[Tuple[int, ChecksumAddress], int] = {}
+        AllTokens(chain_id=config.get_web3().eth.chain_id)[self.address] = self
 
     def _get_balance_cachable(
         self,
