@@ -338,11 +338,12 @@ class EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE(Erc20Token):
     An adapter for pools using the 'all Es' placeholder address to represent native Ether.
     """
 
+    address = to_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
+    symbol = "ETH"
+    name = "Ether Placeholder"
+    decimals = 18
+
     def __init__(self) -> None:
-        self.address = to_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
-        self.symbol = "ETH"
-        self.name = "Ether Placeholder"
-        self.decimals = 18
         self._cached_balance: Dict[Tuple[int, ChecksumAddress], int] = {}
 
     def _get_balance_cachable(
