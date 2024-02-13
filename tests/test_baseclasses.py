@@ -14,7 +14,12 @@ def test_address_comparisons():
 
     assert p1 != p2
     assert p1 < p2
+    assert p1 < P2_ADDRESS
+    assert p1 < HexBytes(P2_ADDRESS)
+
     assert p2 > p1
+    assert p2 > P1_ADDRESS
+    assert p2 > HexBytes(P1_ADDRESS)
 
     assert p1 == P1_ADDRESS
     assert p2 == P2_ADDRESS
