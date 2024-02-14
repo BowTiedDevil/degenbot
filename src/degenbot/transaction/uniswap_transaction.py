@@ -2225,9 +2225,6 @@ class UniswapTransaction(TransactionHelper):
                         self._simulate_unwrap(wrapped_token_address)
 
                     case "unwrapWETH9WithFee":
-                        print(f"Processing {func_name}")
-                        print(f"{self.hash.hex()=}")
-
                         # TODO: if ETH balances are ever needed, handle the
                         # two ETH transfers resulting from this function
                         _amount_in = func_params["amountMinimum"]
