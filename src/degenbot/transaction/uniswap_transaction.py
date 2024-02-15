@@ -2059,8 +2059,6 @@ class UniswapTransaction(TransactionHelper):
                             )
 
                     case "exactOutput":
-                        print(f"Processing {func_name}")
-                        print(f"{self.hash.hex()=}")
                         # Extract parameters from the dict results of web3py v6
                         if isinstance(func_params["params"], dict):
                             tx_path = func_params["params"]["path"]

@@ -300,6 +300,78 @@ def test_v2_router_transactions(
             None,
         ),
         (
+            19231984 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0xf9b1a43c34c400090cf695121b4b060324ea520aad2e0fee67365c5c462aacd2",
+                tx_nonce=2490,
+                tx_value=0,
+                tx_sender="0xf9b306b5Ef6Be6c7E93d7Daffa4a806E3015c58A",
+                func_name="exactOutput",
+                func_params={
+                    "params": (
+                        HexBytes(
+                            "0x3c3a81e81dc49a522a592e7622a7e711c06bf354000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+                        ),
+                        "0xf9b306b5Ef6Be6c7E93d7Daffa4a806E3015c58A",
+                        1707983833,
+                        20000000000000000000000,
+                        5685474000000000000,
+                    ),
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
+            # same as above, but in 4-tuple format (Router02)
+            19231984 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0xf9b1a43c34c400090cf695121b4b060324ea520aad2e0fee67365c5c462aacd2",
+                tx_nonce=2490,
+                tx_value=0,
+                tx_sender="0xf9b306b5Ef6Be6c7E93d7Daffa4a806E3015c58A",
+                func_name="exactOutput",
+                func_params={
+                    "params": (
+                        HexBytes(
+                            "0x3c3a81e81dc49a522a592e7622a7e711c06bf354000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+                        ),
+                        "0xf9b306b5Ef6Be6c7E93d7Daffa4a806E3015c58A",
+                        20000000000000000000000,
+                        5685474000000000000,
+                    ),
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
+            19229539 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x91f6955f167d8e79af01c4b1a0cddf714933075d750a66043f67348e6f926974",
+                tx_nonce=1408,
+                tx_value=0,
+                tx_sender="0xd7452CE7652f353c150ddd2427B6680052467d3d",
+                func_name="exactOutput",
+                func_params={
+                    "params": {
+                        "path": HexBytes(
+                            "0xda31d0d1bc934fc34f7189e38a413ca0a5e8b44f002710c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4dac17f958d2ee523a2206206994597c13d831ec7"
+                        ),
+                        "recipient": "0xd7452CE7652f353c150ddd2427B6680052467d3d",
+                        "deadline": 1707954771,
+                        "amountOut": 1384200000000000000000,
+                        "amountInMaximum": 1257174724,
+                    },
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
             17471674,
             dict(
                 chain_id=1,
@@ -624,6 +696,30 @@ def test_v2_router_transactions(
                         ),
                         HexBytes(
                             "0xdf2ab5bb00000000000000000000000026c8afbbfe1ebaca03c2bb082e69d0476bffe0990000000000000000000000000000000000000000000000e67a857849c4cd223f0000000000000000000000004400b633e90947c59903759e2121abcd83ddfa22"
+                        ),
+                    ],
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            19229227 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x68d27a8dbbf74d1cbead370da978c68e92a7f698107f7cb179eb82d82aeaf5bd",
+                tx_nonce=38,
+                tx_value=0,
+                tx_sender="0x43a2241335584c46b5a3C75CF9895c92c0AED74B",
+                func_name="multicall",
+                func_params={
+                    "deadline": 1707952175,
+                    "data": [
+                        HexBytes(
+                            "0x04e45aaf000000000000000000000000f9ca9523e5b5a42c3018c62b084db8543478c400000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000000000000000000000000000000000000000000bb80000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000002a5a058fc295ed00000000000000000000000000000000000000000000000000000022a867bfd4dcd2540000000000000000000000000000000000000000000000000000000000000000"
+                        ),
+                        HexBytes(
+                            "0x9b2c0a3700000000000000000000000000000000000000000000000022a867bfd4dcd25400000000000000000000000043a2241335584c46b5a3c75cf9895c92c0aed74b0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000d62ba193d0c0c556d4d37dbbc5e431330471a557"
                         ),
                     ],
                 },
