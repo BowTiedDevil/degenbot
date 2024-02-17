@@ -83,6 +83,14 @@ def test_rpc_methods(fork_mainnet_archive: AnvilFork):
     with pytest.raises(ValueError):
         fork_mainnet_archive.set_balance(VITALIK_ADDRESS, MAX_UINT256 + 1)
 
+    FAKE_ADDRESS = "0x6969696969696969696969696969696969696969"
+    FAKE_BYTECODE = HexBytes("0x0420")
+    fork_mainnet_archive.set_code(
+        FAKE_ADDRESS,
+        FAKE_BYTECODE,
+    )
+    assert fork_mainnet_archive.w3.eth.get_code(FAKE_ADDRESS) == FAKE_BYTECODE
+
 
 def test_injecting_middleware():
     fork = AnvilFork(

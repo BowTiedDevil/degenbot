@@ -35,6 +35,8 @@ class AnvilFork:
             # Default mnemonic used by Brownie for Ganache forks
             "patient rude simple dog close planet oval animal hunt sketch suspect slim"
         ),
+        balance_overrides: Iterable[Tuple[HexAddress, int]] | None = None,
+        bytecode_overrides: Iterable[Tuple[HexAddress, bytes]] | None = None,
     ):
         if shutil.which("anvil") is None:  # pragma: no cover
             raise Exception("Anvil is not installed or not accessible in the current path.")
@@ -87,6 +89,14 @@ class AnvilFork:
         self.base_fee_next: int | None = None
         self.socket = socket.socket(socket.AF_UNIX)
         self.socket.connect(self.ipc_path)
+
+        if balance_overrides is not None:
+            for account, balance in balance_overrides:
+                self.set_balance(account, balance)
+
+        if bytecode_overrides is not None:
+            for account, bytecode in bytecode_overrides:
+                self.set_code(account, bytecode)
 
     def __del__(self) -> None:
         self._process.terminate()
@@ -188,6 +198,16 @@ class AnvilFork:
             params=[
                 to_checksum_address(address),
                 hex(balance),
+            ],
+        )
+        self._get_response()
+
+    def set_code(self, address: str, bytecode: bytes) -> None:
+        self._send_request(
+            method="anvil_setCode",
+            params=[
+                HexBytes(address).hex(),
+                HexBytes(bytecode).hex(),
             ],
         )
         self._get_response()
