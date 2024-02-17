@@ -181,6 +181,10 @@ class AnvilFork:
         if fork_url:
             self.fork_url = fork_url
 
+    def mine(self) -> None:
+        self._send_request(method="evm_mine")
+        self._get_response()
+
     def return_to_snapshot(self, id: int) -> bool:
         if id < 0:
             raise ValueError("ID cannot be negative")
@@ -199,6 +203,13 @@ class AnvilFork:
                 to_checksum_address(address),
                 hex(balance),
             ],
+        )
+        self._get_response()
+
+    def set_coinbase(self, address: str) -> None:
+        self._send_request(
+            method="anvil_setCoinbase",
+            params=[HexBytes(address).hex()],
         )
         self._get_response()
 
