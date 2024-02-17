@@ -176,6 +176,8 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 silent=silent,
             )
 
+        self.tokens = (self.token0, self.token1)
+
         if factory_address is not None and factory_init_hash is not None:
             computed_pool_address = generate_v2_pool_address(
                 token_addresses=[self.token0.address, self.token1.address],
@@ -276,10 +278,6 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
             reserves_token0=self.reserves_token0,
             reserves_token1=new_reserves,
         )
-
-    @property
-    def tokens(self) -> Tuple[Erc20Token, Erc20Token]:
-        return (self.token0, self.token1)
 
     def calculate_tokens_in_from_ratio_out(
         self,

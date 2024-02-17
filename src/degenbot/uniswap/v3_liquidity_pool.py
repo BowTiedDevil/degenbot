@@ -135,6 +135,8 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
                 silent=silent,
             )
 
+        self.tokens = (self.token0, self.token1)
+
         self._fee: int = fee if fee is not None else _w3_contract.functions.fee().call()
         self._tick_spacing = self._TICKSPACING_BY_FEE[self._fee]  # immutable
 
@@ -607,10 +609,6 @@ class V3LiquidityPool(SubscriptionMixin, PoolHelper):
             tick_bitmap=self.tick_bitmap,
             tick_data=new_tick_data,
         )
-
-    @property
-    def tokens(self) -> Tuple[Erc20Token, Erc20Token]:
-        return (self.token0, self.token1)
 
     @property
     def _w3_contract(self) -> Contract:
