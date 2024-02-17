@@ -3,11 +3,11 @@ from eth_typing import ChecksumAddress
 from scipy.optimize import minimize_scalar
 
 from ..erc20_token import Erc20Token
-from ..baseclasses import ArbitrageHelper
+from ..baseclasses import BaseArbitrage
 from ..uniswap.v2_liquidity_pool import LiquidityPool
 
 
-class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
+class FlashBorrowToLpSwapWithFuture(BaseArbitrage):
     def __init__(
         self,
         borrow_pool: LiquidityPool,
@@ -45,6 +45,7 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
         self._update_method = update_method
 
         # if the object was initialized with pool objects directly, use these directly
+        self.swap_pools: List[LiquidityPool]
         if swap_pools:
             self.swap_pools = swap_pools
 
@@ -62,7 +63,9 @@ class FlashBorrowToLpSwapWithFuture(ArbitrageHelper):
         self.swap_pool_addresses = [pool.address for pool in self.swap_pools]
         self.swap_pool_tokens = [[pool.token0, pool.token1] for pool in self.swap_pools]
 
-        self.all_pool_addresses = [pool.address for pool in self.swap_pools + [self.borrow_pool]]
+        self.all_pool_addresses = [pool.address for pool in self.swap_pools] + [
+            self.borrow_pool.address
+        ]
 
         if name:
             self.name = name

@@ -48,5 +48,3 @@ class UniswapV3PoolSwapAmounts:
 class CurveStableSwapPoolVector:
     token_in: Erc20Token
     token_out: Erc20Token
-    token_in_index: int
-    token_out_index: int

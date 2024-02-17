@@ -11,7 +11,7 @@ from web3.exceptions import BadFunctionCallOutput, ContractLogicError
 from web3.types import BlockIdentifier
 
 from . import config
-from .baseclasses import TokenHelper
+from .baseclasses import BaseToken
 from .chainlink import ChainlinkPriceContract
 from .functions import get_number_for_block_identifier
 from .logging import logger
@@ -24,7 +24,7 @@ ERC20_ABI_MINIMAL = ujson.loads(
 )
 
 
-class Erc20Token(TokenHelper):
+class Erc20Token(BaseToken):
     """
     An ERC-20 token contract.
 
@@ -205,12 +205,6 @@ class Erc20Token(TokenHelper):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"
-
-    def __hash__(self) -> int:
-        return hash(self.address)
-
-    def __str__(self) -> str:
-        return self.symbol
 
     @property
     def _w3_contract(self) -> Contract:

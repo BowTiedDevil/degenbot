@@ -1,27 +1,55 @@
+import dataclasses
+import abc
+from typing import TYPE_CHECKING, Any, Iterator, Sequence
+
 from eth_typing import ChecksumAddress
-from typing import Any
+
+if TYPE_CHECKING:
+    from .erc20_token import Erc20Token
 
 
-class ArbitrageHelper:
+class BaseArbitrage:
+    id: str
     gas_estimate: int
+    swap_pools: Sequence["BaseLiquidityPool"]
 
 
-class HelperManager:
-    """An abstract base class for managers that generate, track and distribute various helper classes"""
+class BaseManager:
+    """
+    Base class for managers that generate, track and distribute various helper classes
+    """
 
     ...
 
 
-class AbstractPoolUpdate:
+class BasePoolUpdate:
     ...
 
 
-class PoolHelper:
+class BasePoolState:
+    pool: "BaseLiquidityPool"
+
+
+class BaseSimulationResult:
+    ...
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class UniswapSimulationResult(BaseSimulationResult):
+    amount0_delta: int
+    amount1_delta: int
+    current_state: BasePoolState
+    future_state: BasePoolState
+
+
+class BaseLiquidityPool(abc.ABC):
     address: ChecksumAddress
     name: str
+    state: BasePoolState
+    tokens: Sequence["Erc20Token"]
 
     def __eq__(self, other: Any) -> bool:
-        if isinstance(other, PoolHelper):
+        if isinstance(other, BaseLiquidityPool):
             return self.address == other.address
         elif isinstance(other, bytes):
             return self.address.lower() == other.hex().lower()
@@ -31,7 +59,7 @@ class PoolHelper:
             return NotImplemented
 
     def __lt__(self, other: Any) -> bool:
-        if isinstance(other, PoolHelper):
+        if isinstance(other, BaseLiquidityPool):
             return self.address < other.address
         elif isinstance(other, bytes):
             return self.address.lower() < other.hex().lower()
@@ -41,7 +69,7 @@ class PoolHelper:
             return NotImplemented
 
     def __gt__(self, other: Any) -> bool:
-        if isinstance(other, PoolHelper):
+        if isinstance(other, BaseLiquidityPool):
             return self.address > other.address
         elif isinstance(other, bytes):
             return self.address.lower() > other.hex().lower()
@@ -56,12 +84,23 @@ class PoolHelper:
     def __str__(self) -> str:
         return self.name
 
+    @abc.abstractmethod
+    def subscribe(self, subscriber: Any) -> None:
+        ...
 
-class TokenHelper:
+    @abc.abstractmethod
+    def get_arbitrage_helpers(self) -> Iterator[BaseArbitrage]:
+        ...
+
+
+class BaseToken:
     address: ChecksumAddress
+    symbol: str
+    name: str
+    decimals: int
 
     def __eq__(self, other: Any) -> bool:
-        if isinstance(other, TokenHelper):
+        if isinstance(other, BaseToken):
             return self.address == other.address
         elif isinstance(other, bytes):
             return self.address.lower() == other.hex().lower()
@@ -71,7 +110,7 @@ class TokenHelper:
             return NotImplemented
 
     def __lt__(self, other: Any) -> bool:
-        if isinstance(other, TokenHelper):
+        if isinstance(other, BaseToken):
             return self.address < other.address
         elif isinstance(other, bytes):
             return self.address.lower() < other.hex().lower()
@@ -81,7 +120,7 @@ class TokenHelper:
             return NotImplemented
 
     def __gt__(self, other: Any) -> bool:
-        if isinstance(other, TokenHelper):
+        if isinstance(other, BaseToken):
             return self.address > other.address
         elif isinstance(other, bytes):
             return self.address.lower() > other.hex().lower()
@@ -90,6 +129,12 @@ class TokenHelper:
         else:
             return NotImplemented
 
+    def __hash__(self) -> int:
+        return hash(self.address)
 
-class TransactionHelper:
+    def __str__(self) -> str:
+        return self.symbol
+
+
+class BaseTransaction:
     ...

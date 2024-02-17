@@ -2,7 +2,9 @@ import os
 import shutil
 import socket
 import subprocess
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
+from eth_typing import HexAddress
+from hexbytes import HexBytes
 
 import ujson
 from eth_utils.address import to_checksum_address
@@ -30,11 +32,12 @@ class AnvilFork:
         chain_id: int | None = None,
         base_fee: int | None = None,
         ipc_path: str | None = None,
-        middlewares: List[Tuple[Middleware, int]] | None = None,
         mnemonic: str = (
             # Default mnemonic used by Brownie for Ganache forks
             "patient rude simple dog close planet oval animal hunt sketch suspect slim"
         ),
+        coinbase: HexAddress | None = None,
+        middlewares: List[Tuple[Middleware, int]] | None = None,
         balance_overrides: Iterable[Tuple[HexAddress, int]] | None = None,
         bytecode_overrides: Iterable[Tuple[HexAddress, bytes]] | None = None,
     ):
@@ -97,6 +100,9 @@ class AnvilFork:
         if bytecode_overrides is not None:
             for account, bytecode in bytecode_overrides:
                 self.set_code(account, bytecode)
+
+        if coinbase is not None:
+            self.set_coinbase(coinbase)
 
     def __del__(self) -> None:
         self._process.terminate()

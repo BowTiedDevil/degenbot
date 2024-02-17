@@ -12,7 +12,7 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from .. import config
-from ..baseclasses import TransactionHelper
+from ..baseclasses import BaseSimulationResult, BaseTransaction
 from ..constants import WRAPPED_NATIVE_TOKENS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
@@ -126,7 +126,7 @@ class V3RouterSpecialValues:
     USE_CONTRACT_BALANCE = 0
 
 
-class UniswapTransaction(TransactionHelper):
+class UniswapTransaction(BaseTransaction):
     @classmethod
     def add_chain(cls, chain_id: int) -> None:
         try:
@@ -187,7 +187,7 @@ class UniswapTransaction(TransactionHelper):
     def __init__(
         self,
         chain_id: int | str,
-        tx_hash: str,
+        tx_hash: HexBytes | bytes | str,
         tx_nonce: int | str,
         tx_value: int | str,
         tx_sender: str,
@@ -473,10 +473,7 @@ class UniswapTransaction(TransactionHelper):
         amount_out_min: int | None = None,
         sqrt_price_limit_x96: int | None = None,
         first_swap: bool = False,
-    ) -> Tuple[
-        V3LiquidityPool,
-        UniswapV3PoolSimulationResult,
-    ]:
+    ) -> Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]:
         assert isinstance(
             pool, V3LiquidityPool
         ), f"Called _simulate_v3_swap_exact_in on pool {pool}"
@@ -564,10 +561,7 @@ class UniswapTransaction(TransactionHelper):
         sqrt_price_limit_x96: int | None = None,
         first_swap: bool = False,
         last_swap: bool = False,
-    ) -> Tuple[
-        V3LiquidityPool,
-        UniswapV3PoolSimulationResult,
-    ]:
+    ) -> Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]:
         assert isinstance(
             pool, V3LiquidityPool
         ), f"Called _simulate_v3_swap_exact_out on pool {pool}"
@@ -1267,7 +1261,8 @@ class UniswapTransaction(TransactionHelper):
                         _amount_in = tx_amount_in if first_swap else _amount_out
                         _amount_out_min = tx_amount_out_min if last_swap else None
 
-                        _, _sim_result = self._simulate_v3_swap_exact_in(
+                        v3_sim_result: UniswapV3PoolSimulationResult
+                        _, v3_sim_result = self._simulate_v3_swap_exact_in(
                             pool=v3_pool,
                             recipient=_recipient,
                             token_in=_token_in,
@@ -1277,11 +1272,13 @@ class UniswapTransaction(TransactionHelper):
                         )
 
                         _amount_out = -min(
-                            _sim_result.amount0_delta,
-                            _sim_result.amount1_delta,
+                            v3_sim_result.amount0_delta,
+                            v3_sim_result.amount1_delta,
                         )
 
-                        _universal_router_command_future_pool_states.append((v3_pool, _sim_result))
+                        _universal_router_command_future_pool_states.append(
+                            (v3_pool, v3_sim_result)
+                        )
 
                 case "V3_SWAP_EXACT_OUT":
                     """
@@ -1357,7 +1354,7 @@ class UniswapTransaction(TransactionHelper):
                         _amount_out = tx_amount_out if last_swap else _amount_in
                         _amount_in_max = tx_amount_in_max if first_swap else None
 
-                        _, _sim_result = self._simulate_v3_swap_exact_out(
+                        _, v3_sim_result = self._simulate_v3_swap_exact_out(
                             pool=v3_pool,
                             recipient=_recipient,
                             token_in=_token_in,
@@ -1368,8 +1365,8 @@ class UniswapTransaction(TransactionHelper):
                         )
 
                         _amount_in = max(
-                            _sim_result.amount0_delta,
-                            _sim_result.amount1_delta,
+                            v3_sim_result.amount0_delta,
+                            v3_sim_result.amount1_delta,
                         )
 
                         # check that the output of each intermediate swap meets
@@ -1383,7 +1380,10 @@ class UniswapTransaction(TransactionHelper):
                             ) = _universal_router_command_future_pool_states[-1]
 
                             if TYPE_CHECKING:
-                                assert isinstance(_last_sim_result, UniswapV3PoolSimulationResult)
+                                assert isinstance(
+                                    _last_sim_result,
+                                    (UniswapV2PoolSimulationResult, UniswapV2PoolSimulationResult),
+                                )
 
                             _last_amount_in = max(
                                 _last_sim_result.amount1_delta,
@@ -1395,7 +1395,9 @@ class UniswapTransaction(TransactionHelper):
                                     f"Insufficient swap amount through requested pool {v3_pool}. Needed {_last_amount_in}, received {_amount_out}"
                                 )
 
-                        _universal_router_command_future_pool_states.append((v3_pool, _sim_result))
+                        _universal_router_command_future_pool_states.append(
+                            (v3_pool, v3_sim_result)
+                        )
 
                 case None:
                     pass
@@ -1772,9 +1774,7 @@ class UniswapTransaction(TransactionHelper):
             ] = []
 
             if TYPE_CHECKING:
-                _amount_in: int = 0
-                _amount_out: int = 0
-                _sim_result: UniswapV2PoolSimulationResult | UniswapV3PoolSimulationResult
+                v3_sim_result: UniswapV3PoolSimulationResult
                 assert self.v3_pool_manager is not None
 
             silent = self.silent
@@ -1838,6 +1838,8 @@ class UniswapTransaction(TransactionHelper):
                         if tx_deadline:
                             self._raise_if_expired(tx_deadline)
 
+                        if TYPE_CHECKING:
+                            assert isinstance(self.v3_pool_manager, UniswapV3LiquidityPoolManager)
                         v3_pool = self.v3_pool_manager.get_pool(
                             token_addresses=(
                                 tx_token_in_address,
@@ -1847,7 +1849,7 @@ class UniswapTransaction(TransactionHelper):
                             silent=self.silent,
                         )
 
-                        _, _sim_result = self._simulate_v3_swap_exact_in(
+                        _, v3_sim_result = self._simulate_v3_swap_exact_in(
                             pool=v3_pool,
                             recipient=tx_recipient,
                             token_in=(
@@ -1860,11 +1862,11 @@ class UniswapTransaction(TransactionHelper):
                             first_swap=True,
                         )
 
-                        _v3_router_future_pool_states.append((v3_pool, _sim_result))
+                        _v3_router_future_pool_states.append((v3_pool, v3_sim_result))
 
                         token_out_quantity = -min(
-                            _sim_result.amount1_delta,
-                            _sim_result.amount0_delta,
+                            v3_sim_result.amount1_delta,
+                            v3_sim_result.amount0_delta,
                         )
 
                     case "exactInput":
@@ -1943,6 +1945,10 @@ class UniswapTransaction(TransactionHelper):
                             first_swap = token_pos == 0
                             last_swap = token_pos == last_token_pos
 
+                            if TYPE_CHECKING:
+                                assert isinstance(
+                                    self.v3_pool_manager, UniswapV3LiquidityPoolManager
+                                )
                             v3_pool = self.v3_pool_manager.get_pool(
                                 token_addresses=(
                                     tx_token_in_address,
@@ -1952,7 +1958,7 @@ class UniswapTransaction(TransactionHelper):
                                 silent=self.silent,
                             )
 
-                            _, _sim_result = self._simulate_v3_swap_exact_in(
+                            _, v3_sim_result = self._simulate_v3_swap_exact_in(
                                 pool=v3_pool,
                                 recipient=tx_recipient
                                 if last_swap
@@ -1966,11 +1972,11 @@ class UniswapTransaction(TransactionHelper):
                                 first_swap=first_swap,
                             )
 
-                            _v3_router_future_pool_states.append((v3_pool, _sim_result))
+                            _v3_router_future_pool_states.append((v3_pool, v3_sim_result))
 
                             token_out_quantity = -min(
-                                _sim_result.amount0_delta,
-                                _sim_result.amount1_delta,
+                                v3_sim_result.amount0_delta,
+                                v3_sim_result.amount1_delta,
                             )
 
                     case "exactOutputSingle":
@@ -2025,6 +2031,8 @@ class UniswapTransaction(TransactionHelper):
                         if tx_deadline:
                             self._raise_if_expired(tx_deadline)
 
+                        if TYPE_CHECKING:
+                            assert isinstance(self.v3_pool_manager, UniswapV3LiquidityPoolManager)
                         v3_pool = self.v3_pool_manager.get_pool(
                             token_addresses=(
                                 tx_token_in_address,
@@ -2034,7 +2042,7 @@ class UniswapTransaction(TransactionHelper):
                             silent=self.silent,
                         )
 
-                        _, _sim_result = self._simulate_v3_swap_exact_out(
+                        _, v3_sim_result = self._simulate_v3_swap_exact_out(
                             pool=v3_pool,
                             recipient=tx_recipient,
                             token_in=v3_pool.token0
@@ -2046,11 +2054,11 @@ class UniswapTransaction(TransactionHelper):
                             last_swap=True,
                         )
 
-                        _v3_router_future_pool_states.append((v3_pool, _sim_result))
+                        _v3_router_future_pool_states.append((v3_pool, v3_sim_result))
 
                         amount_deposited = max(
-                            _sim_result.amount0_delta,
-                            _sim_result.amount1_delta,
+                            v3_sim_result.amount0_delta,
+                            v3_sim_result.amount1_delta,
                         )
 
                         if amount_deposited > tx_amount_in_max:
@@ -2119,6 +2127,8 @@ class UniswapTransaction(TransactionHelper):
                         # position. e.g. tokenOut, fee, tokenIn
                         last_token_pos = len(tx_path_decoded) - 3
 
+                        _amount_in = 0
+
                         for token_pos in range(
                             0,
                             len(tx_path_decoded) - 2,
@@ -2131,6 +2141,10 @@ class UniswapTransaction(TransactionHelper):
                             first_swap = token_pos == last_token_pos
                             last_swap = token_pos == 0
 
+                            if TYPE_CHECKING:
+                                assert isinstance(
+                                    self.v3_pool_manager, UniswapV3LiquidityPoolManager
+                                )
                             v3_pool = self.v3_pool_manager.get_pool(
                                 token_addresses=(
                                     tx_token_in_address,
@@ -2151,7 +2165,7 @@ class UniswapTransaction(TransactionHelper):
                             _amount_out = tx_amount_out if last_swap else _amount_in
                             _amount_in_max = tx_amount_in_max if first_swap else None
 
-                            _, _sim_result = self._simulate_v3_swap_exact_out(
+                            _, v3_sim_result = self._simulate_v3_swap_exact_out(
                                 pool=v3_pool,
                                 recipient=_recipient,
                                 token_in=_token_in,
@@ -2162,13 +2176,13 @@ class UniswapTransaction(TransactionHelper):
                             )
 
                             _amount_in = max(
-                                _sim_result.amount0_delta,
-                                _sim_result.amount1_delta,
+                                v3_sim_result.amount0_delta,
+                                v3_sim_result.amount1_delta,
                             )
 
                             _amount_out = -min(
-                                _sim_result.amount0_delta,
-                                _sim_result.amount1_delta,
+                                v3_sim_result.amount0_delta,
+                                v3_sim_result.amount1_delta,
                             )
 
                             # check that the output of each intermediate swap meets
@@ -2181,6 +2195,15 @@ class UniswapTransaction(TransactionHelper):
                                     _last_sim_result,
                                 ) = _v3_router_future_pool_states[-1]
 
+                                if TYPE_CHECKING:
+                                    assert isinstance(
+                                        _last_sim_result,
+                                        (
+                                            UniswapV2PoolSimulationResult,
+                                            UniswapV2PoolSimulationResult,
+                                        ),
+                                    )
+
                                 _last_amount_in = max(
                                     _last_sim_result.amount0_delta,
                                     _last_sim_result.amount1_delta,
@@ -2191,10 +2214,11 @@ class UniswapTransaction(TransactionHelper):
                                         f"Insufficient swap amount through requested pool {v3_pool}. Needed {_last_amount_in}, received {_amount_out}"
                                     )
 
-                            _v3_router_future_pool_states.append((v3_pool, _sim_result))
+                            _v3_router_future_pool_states.append((v3_pool, v3_sim_result))
 
                         # V3 Router enforces a maximum input
                         if first_swap:
+                            _sim_result: BaseSimulationResult
                             _, _sim_result = _v3_router_future_pool_states[-1]
 
                             amount_deposited = max(

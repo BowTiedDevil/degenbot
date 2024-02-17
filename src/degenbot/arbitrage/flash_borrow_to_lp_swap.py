@@ -4,7 +4,7 @@ from eth_utils.address import to_checksum_address
 from scipy import optimize
 
 from .. import config
-from ..baseclasses import ArbitrageHelper
+from ..baseclasses import BaseArbitrage
 from ..erc20_token import Erc20Token
 from ..logging import logger
 from ..uniswap.managers import UniswapV2LiquidityPoolManager
@@ -12,7 +12,7 @@ from ..uniswap.v2_functions import get_v2_pools_from_token_path
 from ..uniswap.v2_liquidity_pool import LiquidityPool
 
 
-class FlashBorrowToLpSwap(ArbitrageHelper):
+class FlashBorrowToLpSwap(BaseArbitrage):
     def __init__(
         self,
         borrow_pool: LiquidityPool,
@@ -46,7 +46,7 @@ class FlashBorrowToLpSwap(ArbitrageHelper):
         # build the list of intermediate pool pairs for the given multi-token path.
         # Pool list length will be 1 less than the token path length, e.g. a token1->token2->token3
         # path will result in a pool list consisting of token1/token2 and token2/token3
-        self.swap_pools = []
+        self.swap_pools: List[LiquidityPool]
 
         swap_factory_address = to_checksum_address(swap_factory_address)
 

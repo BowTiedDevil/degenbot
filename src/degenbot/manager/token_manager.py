@@ -5,12 +5,12 @@ from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
 from .. import config
-from ..baseclasses import HelperManager
+from ..baseclasses import BaseManager
 from ..erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE, Erc20Token
 from ..exceptions import ManagerError
 
 
-class Erc20TokenHelperManager(HelperManager):
+class Erc20TokenHelperManager(BaseManager):
     """
     A class that generates and tracks Erc20Token helpers
 

@@ -1,5 +1,3 @@
-# TODO: support arbitrage using LP tokens
-
 import asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
@@ -12,7 +10,12 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import minimize_scalar
 from web3 import Web3
 
-from ..baseclasses import ArbitrageHelper
+from ..baseclasses import (
+    BaseArbitrage,
+    BaseLiquidityPool,
+    BasePoolState,
+    UniswapSimulationResult,
+)
 from ..config import get_web3
 from ..constants import MAX_UINT256
 from ..curve.curve_stableswap_dataclasses import CurveStableswapPoolState
@@ -35,16 +38,6 @@ from .arbitrage_dataclasses import (
     UniswapV3PoolSwapAmounts,
 )
 
-Pool: TypeAlias = CurveStableswapPool | LiquidityPool | V3LiquidityPool
-PoolState: TypeAlias = CurveStableswapPoolState | UniswapV2PoolState | UniswapV3PoolState
-StateOverride: TypeAlias = Sequence[
-    Tuple[CurveStableswapPool, CurveStableswapPoolState]
-    | Tuple[LiquidityPool, UniswapV2PoolState]
-    | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
-    | Tuple[V3LiquidityPool, UniswapV3PoolState]
-    | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
-    # | Tuple[CurveStableswapPool, CurveStableswapPoolSimulationResult], <---- TODO
-]
 SwapAmount: TypeAlias = (
     CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
 )
@@ -54,11 +47,11 @@ SwapAmount: TypeAlias = (
 _CURVE_V1_DISCOUNT_FACTOR = 0.9999
 
 
-class UniswapCurveCycle(Subscriber, ArbitrageHelper):
+class UniswapCurveCycle(Subscriber, BaseArbitrage):
     def __init__(
         self,
         input_token: Erc20Token,
-        swap_pools: Iterable[Pool],
+        swap_pools: Iterable[BaseLiquidityPool],
         id: str,
         max_input: int | None = None,
     ):
@@ -73,10 +66,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
         self.swap_pools = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
 
-        self.pool_states: Dict[
-            ChecksumAddress,
-            CurveStableswapPoolState | UniswapV2PoolState | UniswapV3PoolState,
-        ] = {}
+        self.pool_states: Dict[ChecksumAddress, BasePoolState] = {}
         self._update_pool_states(self.swap_pools)
 
         for pool in swap_pools:
@@ -120,6 +110,15 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                             zero_for_one = False
                         else:
                             raise ValueError("Input token could not be identified!")
+
+                    _swap_vectors.append(
+                        UniswapPoolSwapVector(
+                            token_in=token_in,
+                            token_out=token_out,
+                            zero_for_one=zero_for_one,
+                        )
+                    )
+
                 case CurveStableswapPool():
                     # A Curve pool may have 3 or more tokens, so instead of a binary
                     # token0/token1 choice, determine the forward token by comparing
@@ -130,37 +129,21 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                         )
                     token_in = token_out
                     next_pool = self.swap_pools[i + 1]
-                    shared_tokens = list(set(pool.tokens).intersection(next_pool.tokens))
+                    shared_tokens = list(
+                        set(pool.tokens).intersection(next_pool.tokens),
+                    )
                     assert len(shared_tokens) > 0, f"this: {pool.tokens}, next: {next_pool.tokens}"
-                    token_out = list(set(pool.tokens).intersection(next_pool.tokens))[0]
-                    # print(f"{token_in.symbol=}")
-                    # print(f"{token_out.symbol=}")
+
+                    # @dev
+                    # This assumes the first shared token is the correct one to continue
+                    token_out = shared_tokens[0]
+
+                    _swap_vectors.append(
+                        CurveStableSwapPoolVector(token_in=token_in, token_out=token_out)
+                    )
 
                 case _:
                     raise ValueError("Pool type could not be identified")
-
-            match pool:
-                case LiquidityPool() | V3LiquidityPool():
-                    _swap_vectors.append(
-                        UniswapPoolSwapVector(
-                            token_in=token_in,
-                            token_out=token_out,
-                            zero_for_one=zero_for_one,
-                        )
-                    )
-                case CurveStableswapPool():
-                    _swap_vectors.append(
-                        CurveStableSwapPoolVector(
-                            token_in=token_in,
-                            token_out=token_out,
-                            token_in_index=pool.tokens.index(token_in)
-                            if not pool.is_metapool
-                            else pool.tokens_underlying.index(token_in),
-                            token_out_index=pool.tokens.index(token_out)
-                            if not pool.is_metapool
-                            else pool.tokens_underlying.index(token_out),
-                        )
-                    )
 
         self._swap_vectors = tuple(_swap_vectors)
 
@@ -179,8 +162,14 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
     def _sort_overrides(
         self,
-        overrides: StateOverride | None,
-    ) -> Dict[ChecksumAddress, PoolState]:
+        overrides: Sequence[
+            Tuple[
+                BaseLiquidityPool,
+                BasePoolState | UniswapSimulationResult,
+            ]
+        ]
+        | None,
+    ) -> Dict[ChecksumAddress, BasePoolState]:
         """
         Validate the overrides, extract and insert the resulting pool states
         into a dictionary.
@@ -189,7 +178,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
         if overrides is None:
             return {}
 
-        sorted_overrides: Dict[ChecksumAddress, PoolState] = {}
+        sorted_overrides: Dict[ChecksumAddress, BasePoolState] = {}
 
         for pool, override in overrides:
             if isinstance(
@@ -221,7 +210,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_state_overrides: Dict[ChecksumAddress, PoolState] | None = None,
+        pool_state_overrides: Dict[ChecksumAddress, BasePoolState] | None = None,
         block_number: int | None = None,
     ) -> List[SwapAmount]:
         """
@@ -351,7 +340,7 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
         return pools_amounts_out
 
-    def _update_pool_states(self, pools: Iterable[Pool]) -> None:
+    def _update_pool_states(self, pools: Iterable[BaseLiquidityPool]) -> None:
         """
         Update `self.pool_states` with state values from the `pools` iterable
         """
@@ -359,7 +348,13 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
     def _pre_calculation_check(
         self,
-        override_state: StateOverride | None = None,
+        override_state: Sequence[
+            Tuple[
+                BaseLiquidityPool,
+                BasePoolState | UniswapSimulationResult,
+            ]
+        ]
+        | None = None,
     ) -> None:
         state_overrides = self._sort_overrides(override_state)
 
@@ -450,6 +445,8 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                 case _:
                     raise ValueError("Could not identify pool")
 
+            # print(f"{profit_factor=}")
+
         if profit_factor < 1.0:
             raise ArbitrageError(
                 f"No profitable arbitrage at current prices. Profit factor: {profit_factor}"
@@ -457,7 +454,13 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
     def _calculate(
         self,
-        override_state: StateOverride | None = None,
+        override_state: Sequence[
+            Tuple[
+                BaseLiquidityPool,
+                BasePoolState | UniswapSimulationResult,
+            ]
+        ]
+        | None = None,
         block_number: int | None = None,
     ) -> ArbitrageCalculationResult:
         state_overrides = self._sort_overrides(override_state)
@@ -576,7 +579,13 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
 
     def calculate(
         self,
-        override_state: StateOverride | None = None,
+        override_state: Sequence[
+            Tuple[
+                BaseLiquidityPool,
+                BasePoolState | UniswapSimulationResult,
+            ]
+        ]
+        | None = None,
     ) -> ArbitrageCalculationResult:
         """
         Calculate the optimum arbitrage input and intermediate swap values for the current pool states.
@@ -589,7 +598,13 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
     async def calculate_with_pool(
         self,
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
-        override_state: StateOverride | None = None,
+        override_state: Sequence[
+            Tuple[
+                BaseLiquidityPool,
+                BasePoolState | UniswapSimulationResult,
+            ]
+        ]
+        | None = None,
     ) -> Awaitable[Any]:
         """
         Wrap the arbitrage calculation into an asyncio future using the
@@ -615,6 +630,8 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
         This is an async function that must be called with the `await` keyword.
         """
 
+        self._pre_calculation_check(override_state)
+
         if any(
             [pool._sparse_bitmap for pool in self.swap_pools if isinstance(pool, V3LiquidityPool)]
         ):
@@ -622,21 +639,25 @@ class UniswapCurveCycle(Subscriber, ArbitrageHelper):
                 f"Cannot calculate {self} with executor. One or more V3 pools has a sparse bitmap."
             )
 
-        self._pre_calculation_check(override_state)
+        curve_pool = self.swap_pools[1]
+        curve_swap_vector = self._swap_vectors[1]
+
+        if TYPE_CHECKING:
+            assert isinstance(curve_pool, CurveStableswapPool)
+            assert isinstance(curve_swap_vector, CurveStableSwapPoolVector)
+
+        block_number = get_web3().eth.get_block_number()
 
         # Some Curve pools utilize on-chain lookups in their calc, so do a simple pre-calc to
         # cache those values for a given block since the pool will be disconnected once sent
         # into the process pool, e.g. it will have no web3 object for communication with the chain
-        curve_pool = self.swap_pools[1]
-        if TYPE_CHECKING:
-            assert isinstance(curve_pool, CurveStableswapPool)
-        block_number = get_web3().eth.get_block_number()
         curve_pool.calculate_tokens_out_from_tokens_in(
-            token_in=self._swap_vectors[1].token_in,
+            token_in=curve_swap_vector.token_in,
             token_in_quantity=1,
-            token_out=self._swap_vectors[1].token_out,
+            token_out=curve_swap_vector.token_out,
             block_identifier=block_number,
         )
+
         return asyncio.get_running_loop().run_in_executor(
             executor,
             self._calculate,

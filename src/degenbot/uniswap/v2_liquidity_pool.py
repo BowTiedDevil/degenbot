@@ -9,7 +9,7 @@ from eth_utils.address import to_checksum_address
 from web3.contract.contract import Contract
 
 from .. import config
-from ..baseclasses import PoolHelper
+from ..baseclasses import BaseLiquidityPool
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     DeprecationError,
@@ -32,7 +32,7 @@ from .v2_dataclasses import (
 from .v2_functions import generate_v2_pool_address
 
 
-class LiquidityPool(SubscriptionMixin, PoolHelper):
+class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
     """
     Represents a Uniswap V2 liquidity pool
     """
@@ -102,7 +102,7 @@ class LiquidityPool(SubscriptionMixin, PoolHelper):
                 "Empty LiquidityPool cannot be created without pool, factory, and token addresses"
             )
 
-        self.state = UniswapV2PoolState(
+        self.state: UniswapV2PoolState = UniswapV2PoolState(
             pool=self,
             reserves_token0=0,
             reserves_token1=0,

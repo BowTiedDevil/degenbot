@@ -5,14 +5,14 @@ import warnings
 from bisect import bisect_left
 from decimal import Decimal
 from threading import Lock
-from typing import TYPE_CHECKING, Dict, List, Set, Tuple, Any
+from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from web3.contract.contract import Contract
 
 from .. import config
-from ..baseclasses import PoolHelper
+from ..baseclasses import BaseLiquidityPool
 from ..dex.uniswap import TICKLENS_ADDRESSES
 from ..erc20_token import Erc20Token
 from ..exceptions import (
@@ -41,7 +41,7 @@ from .v3_libraries.functions import to_int256
 from .v3_tick_lens import TickLens
 
 
-class V3LiquidityPool(SubscriptionMixin, PoolHelper):
+class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
     # Holds a reference to a TickLens contract object. This is a singleton
     # contract so there is no need to create separate references for each pool.
     # Dict is keyed by a tuple of chain ID and factory address

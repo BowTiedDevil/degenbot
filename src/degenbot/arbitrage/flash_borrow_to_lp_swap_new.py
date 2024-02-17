@@ -2,7 +2,7 @@ from typing import List
 
 from scipy.optimize import minimize_scalar
 
-from ..baseclasses import ArbitrageHelper
+from ..baseclasses import BaseArbitrage
 from ..erc20_token import Erc20Token
 from ..uniswap.v2_dataclasses import UniswapV2PoolState
 from ..uniswap.v2_liquidity_pool import LiquidityPool
@@ -10,7 +10,7 @@ from ..uniswap.v2_liquidity_pool import LiquidityPool
 # TODO: improve arbitrage calculation for repaying with same token, instead of borrow A -> repay B
 
 
-class FlashBorrowToLpSwapNew(ArbitrageHelper):
+class FlashBorrowToLpSwapNew(BaseArbitrage):
     def __init__(
         self,
         borrow_pool: LiquidityPool,
@@ -53,6 +53,7 @@ class FlashBorrowToLpSwapNew(ArbitrageHelper):
         self._update_method = update_method
 
         # if the object was initialized with pool objects directly, use these directly
+        self.swap_pools: List[LiquidityPool]
         if swap_pools:
             self.swap_pools = swap_pools
 

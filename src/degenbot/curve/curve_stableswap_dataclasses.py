@@ -3,14 +3,14 @@ from typing import TYPE_CHECKING, List
 
 from eth_typing import ChecksumAddress, HexAddress
 
+from ..baseclasses import BasePoolUpdate, BasePoolState
+
 if TYPE_CHECKING:
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 
-from ..baseclasses import AbstractPoolUpdate
-
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class CurveStableswapPoolState:
+class CurveStableswapPoolState(BasePoolState):
     pool: "CurveStableswapPool"
     address: ChecksumAddress  # TODO: convert other states to reference address instead of object
     balances: List[int]
@@ -26,7 +26,7 @@ class CurveStableswapPoolSimulationResult:
 
 
 @dataclasses.dataclass(slots=True, eq=False)
-class CurveStableswapPoolExternalUpdate(AbstractPoolUpdate):
+class CurveStableswapPoolExternalUpdate(BasePoolUpdate):
     block_number: int = dataclasses.field(compare=False)
     sold_id: int
     bought_id: int

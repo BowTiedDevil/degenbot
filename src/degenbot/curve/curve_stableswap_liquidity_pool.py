@@ -11,8 +11,8 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
 
 import eth_abi.abi
-from eth_abi.exceptions import InsufficientDataBytes
 import web3.exceptions
+from eth_abi.exceptions import InsufficientDataBytes
 from eth_typing import AnyAddress, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
@@ -21,7 +21,7 @@ from web3.contract.contract import Contract
 from web3.types import BlockIdentifier
 
 from .. import config
-from ..baseclasses import PoolHelper
+from ..baseclasses import BaseLiquidityPool
 from ..constants import ZERO_ADDRESS
 from ..dex.curve import (
     BROKEN_CURVE_V1_POOLS,
@@ -44,7 +44,7 @@ from .curve_stableswap_dataclasses import (
 )
 
 
-class CurveStableswapPool(SubscriptionMixin, PoolHelper):
+class CurveStableswapPool(SubscriptionMixin, BaseLiquidityPool):
     # Constants from contract
     # ref: https://github.com/curvefi/curve-contract/blob/master/contracts/pool-templates/base/SwapTemplateBase.vy
     PRECISION_DECIMALS = 18
@@ -376,13 +376,15 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             )
 
         _token_manager = Erc20TokenHelperManager(chain_id)
-        self.tokens = [
-            _token_manager.get_erc20token(
-                address=token_address,
-                silent=silent,
-            )
-            for token_address in token_addresses
-        ]
+        self.tokens = tuple(
+            [
+                _token_manager.get_erc20token(
+                    address=token_address,
+                    silent=silent,
+                )
+                for token_address in token_addresses
+            ]
+        )
         self.lp_token = _token_manager.get_erc20token(
             address=lp_token_address,
             silent=silent,
@@ -420,7 +422,7 @@ class CurveStableswapPool(SubscriptionMixin, PoolHelper):
             if TYPE_CHECKING:
                 assert base_pool_tokens is not None
 
-            self.tokens_underlying = [self.tokens[0]] + base_pool_tokens
+            self.tokens_underlying = tuple([self.tokens[0]] + list(base_pool_tokens))
 
             self.base_cache_updated: int | None = None
             try:

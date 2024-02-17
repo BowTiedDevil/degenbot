@@ -72,6 +72,7 @@ v2_lp.reserves_token0 = 16231137593
 v2_lp.reserves_token1 = 2571336301536722443178
 v2_lp.token0 = wbtc
 v2_lp.token1 = weth
+v2_lp.tokens = (wbtc, weth)
 v2_lp._update_method = "external"
 
 
@@ -90,6 +91,7 @@ v3_lp.factory = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"
 v3_lp._fee = 3000
 v3_lp.token0 = wbtc
 v3_lp.token1 = weth
+v3_lp.tokens = (wbtc, weth)
 v3_lp.liquidity = 1612978974357835825
 v3_lp.sqrt_price_x96 = 31549217861118002279483878013792428
 v3_lp._sparse_bitmap = False

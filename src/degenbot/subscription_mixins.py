@@ -1,6 +1,6 @@
 from typing import Iterator, Protocol, Set
 
-from .baseclasses import ArbitrageHelper
+from .baseclasses import BaseArbitrage
 
 
 class Subscriber(Protocol):
@@ -21,11 +21,11 @@ class Publisher(Protocol):
 
 
 class SubscriptionMixin:
-    def get_arbitrage_helpers(self: Publisher) -> Iterator[ArbitrageHelper]:
+    def get_arbitrage_helpers(self: Publisher) -> Iterator[BaseArbitrage]:
         return (
             subscriber
             for subscriber in self._subscribers
-            if isinstance(subscriber, (ArbitrageHelper))
+            if isinstance(subscriber, (BaseArbitrage))
         )
 
     def subscribe(self: Publisher, subscriber: Subscriber) -> None:

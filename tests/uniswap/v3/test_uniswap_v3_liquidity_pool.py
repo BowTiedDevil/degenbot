@@ -70,6 +70,7 @@ def mocked_wbtc_weth_v3liquiditypool():
     lp._fee = 3000
     lp.token0 = token0
     lp.token1 = token1
+    lp.tokens = (token0, token1)
     lp.liquidity = 1612978974357835825
     lp._update_block = 1
     lp.sqrt_price_x96 = 31549217861118002279483878013792428

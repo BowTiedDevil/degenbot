@@ -1,12 +1,13 @@
 import dataclasses
 from typing import TYPE_CHECKING
+from ..baseclasses import BasePoolState, UniswapSimulationResult
 
 if TYPE_CHECKING:
     from .v2_liquidity_pool import LiquidityPool
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV2PoolState:
+class UniswapV2PoolState(BasePoolState):
     pool: "LiquidityPool"
     reserves_token0: int
     reserves_token1: int
@@ -20,9 +21,7 @@ class UniswapV2PoolState:
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV2PoolSimulationResult:
-    amount0_delta: int
-    amount1_delta: int
+class UniswapV2PoolSimulationResult(UniswapSimulationResult):
     current_state: UniswapV2PoolState
     future_state: UniswapV2PoolState
 
