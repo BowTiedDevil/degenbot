@@ -2,7 +2,7 @@ from decimal import Decimal, getcontext
 from math import floor, log
 
 import pytest
-
+from degenbot.constants import MAX_UINT160, MIN_UINT160
 from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3_libraries import TickMath
 
@@ -59,6 +59,12 @@ def test_maxSqrtRatio() -> None:
 
 
 def test_getTickAtSqrtRatio() -> None:
+    with pytest.raises(EVMRevertError, match="Not a valid uint160"):
+        TickMath.getTickAtSqrtRatio(MIN_UINT160 - 1)
+
+    with pytest.raises(EVMRevertError, match="Not a valid uint160"):
+        TickMath.getTickAtSqrtRatio(MAX_UINT160 + 1)
+
     with pytest.raises(EVMRevertError, match="R"):
         TickMath.getTickAtSqrtRatio(TickMath.MIN_SQRT_RATIO - 1)
 

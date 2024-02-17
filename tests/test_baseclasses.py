@@ -1,13 +1,24 @@
-from degenbot.baseclasses import PoolHelper
+from typing import Any
+
+from degenbot.baseclasses import BaseLiquidityPool
 from hexbytes import HexBytes
+
+
+class FakePool(BaseLiquidityPool):
+    # Override abstract methods
+    def subscribe(self, subscriber: Any):
+        return
+
+    def get_arbitrage_helpers(self):
+        return
 
 
 def test_address_comparisons():
     P1_ADDRESS = "0x0a1b2c3d"
     P2_ADDRESS = "0x3d2c1b0a"
 
-    p1 = PoolHelper()
-    p2 = PoolHelper()
+    p1 = FakePool()
+    p2 = FakePool()
 
     p1.address = P1_ADDRESS
     p2.address = P2_ADDRESS

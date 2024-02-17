@@ -5,6 +5,7 @@ from degenbot.config import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.fork import AnvilFork
 from eth_utils.address import to_checksum_address
+from hexbytes import HexBytes
 from web3.types import Wei
 
 from ..conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_FULL_NODE_HTTP_URI

@@ -1,7 +1,6 @@
-from ...constants import MAX_UINT256
+from ...constants import MAX_UINT160, MAX_UINT256, MIN_UINT160
 from ...exceptions import EVMRevertError
 from . import yul_operations as yul
-
 
 MIN_TICK = -887272
 MAX_TICK = -MIN_TICK
@@ -69,8 +68,8 @@ def getSqrtRatioAtTick(tick: int) -> int:
 
 
 def getTickAtSqrtRatio(sqrt_price_x96: int) -> int:
-    if not (0 <= sqrt_price_x96 <= 2**160 - 1):
-        raise EVMRevertError("not a valid uint160")
+    if not (MIN_UINT160 <= sqrt_price_x96 <= MAX_UINT160):
+        raise EVMRevertError("Not a valid uint160")
 
     # second inequality must be < because the price can never reach the price at the max tick
     if not (sqrt_price_x96 >= MIN_SQRT_RATIO and sqrt_price_x96 < MAX_SQRT_RATIO):
