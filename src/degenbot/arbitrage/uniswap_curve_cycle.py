@@ -43,8 +43,9 @@ SwapAmount: TypeAlias = (
 )
 
 
-# Discount applied to amount received, accounts for small differences in get_dy() vs exchange()
-_CURVE_V1_DISCOUNT_FACTOR = 0.9999
+# Default discount applied to amount received.
+# This masks small differences in get_dy() vs exchange().
+CURVE_V1_DEFAULT_DISCOUNT_FACTOR = 0.9999
 
 
 class UniswapCurveCycle(Subscriber, BaseArbitrage):
@@ -68,6 +69,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
 
         self.pool_states: Dict[ChecksumAddress, BasePoolState] = {}
         self._update_pool_states(self.swap_pools)
+        self.discount_factor = CURVE_V1_DEFAULT_DISCOUNT_FACTOR
 
         for pool in swap_pools:
             pool.subscribe(self)
@@ -277,7 +279,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                                 CurveStableswapPoolState,
                             )
                         _token_out_quantity = int(
-                            _CURVE_V1_DISCOUNT_FACTOR
+                            self.discount_factor
                             * pool.calculate_tokens_out_from_tokens_in(
                                 token_in=token_in,
                                 token_out=token_out,
@@ -512,7 +514,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                             if TYPE_CHECKING:
                                 assert isinstance(pool_override, CurveStableswapPoolState)
                             token_out_quantity = int(
-                                _CURVE_V1_DISCOUNT_FACTOR
+                                self.discount_factor
                                 * pool.calculate_tokens_out_from_tokens_in(
                                     token_in=swap_vector.token_in,
                                     token_in_quantity=(
