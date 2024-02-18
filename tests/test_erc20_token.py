@@ -61,6 +61,7 @@ def test_non_compliant_tokens(ethereum_full_node_web3):
         "0x431ad2ff6a9C365805eBaD47Ee021148d6f7DBe0",
         "0x89d24A6b4CcB1B6fAA2625fE562bDD9a23260359",
         "0xEB9951021698B42e4399f9cBb6267Aa35F82D59D",
+        "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2",
     ]:
         Erc20Token(token_address)
 

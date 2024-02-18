@@ -119,6 +119,8 @@ class Erc20Token(BaseToken):
             warn(
                 f"Token contract at {self.address} does not implement a 'name' function. Setting to '{self.name}'"
             )
+        finally:
+            self.name = self.name.strip("\x00")
 
         try:
             self.symbol: str
