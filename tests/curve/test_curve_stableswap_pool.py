@@ -142,6 +142,7 @@ def test_auto_update(fork_mainnet_archive: AnvilFork):
     ]
 
 
+@pytest.mark.skip(reason="External updates disabled for Curve V1 pools")
 def test_external_update(fork_mainnet_archive: AnvilFork):
     # Build the pool at a known historical block
     _BLOCK_NUMBER = 18849427 - 1

@@ -2266,35 +2266,35 @@ class CurveStableswapPool(SubscriptionMixin, BaseLiquidityPool):
             pool=self, address=self.address, balances=self.balances
         )
 
-    def external_update(self, update: CurveStableswapPoolExternalUpdate) -> bool:
-        with self._state_lock:
-            i = update.sold_id
-            j = update.bought_id
-            dx = update.tokens_sold
-            dy_out = update.tokens_bought
+    # def external_update(self, update: CurveStableswapPoolExternalUpdate) -> bool:
+    #     with self._state_lock:
+    #         i = update.sold_id
+    #         j = update.bought_id
+    #         dx = update.tokens_sold
+    #         dy_out = update.tokens_bought
 
-            _xp = self._xp(rates=self.rate_multipliers, balances=self.balances)
-            x = _xp[i] + dx * self.rate_multipliers[i] // self.PRECISION
-            y = self._get_y(i, j, x, _xp)
+    #         _xp = self._xp(rates=self.rate_multipliers, balances=self.balances)
+    #         x = _xp[i] + dx * self.rate_multipliers[i] // self.PRECISION
+    #         y = self._get_y(i, j, x, _xp)
 
-            dy = _xp[j] - y - 1
-            dy_fee = dy * self.fee // self.FEE_DENOMINATOR
+    #         dy = _xp[j] - y - 1
+    #         dy_fee = dy * self.fee // self.FEE_DENOMINATOR
 
-            dy = (dy - dy_fee) * self.PRECISION // self.rate_multipliers[j]
+    #         dy = (dy - dy_fee) * self.PRECISION // self.rate_multipliers[j]
 
-            dy_admin_fee = dy_fee * self.admin_fee // self.FEE_DENOMINATOR
-            dy_admin_fee = dy_admin_fee * self.PRECISION // self.rate_multipliers[j]
+    #         dy_admin_fee = dy_fee * self.admin_fee // self.FEE_DENOMINATOR
+    #         dy_admin_fee = dy_admin_fee * self.PRECISION // self.rate_multipliers[j]
 
-            assert dy == dy_out, f"Predicted output {dy} does not match update {dy_out}"
+    #         assert dy == dy_out, f"Predicted output {dy} does not match update {dy_out}"
 
-            self.balances[i] += dx
-            self.balances[j] -= dy_out + dy_admin_fee
+    #         self.balances[i] += dx
+    #         self.balances[j] -= dy_out + dy_admin_fee
 
-            if update.block_number:
-                self.update_block = update.block_number
+    #         if update.block_number:
+    #             self.update_block = update.block_number
 
-            self._update_pool_state()
-            return True
+    #         self._update_pool_state()
+    #         return True
 
     def calculate_tokens_out_from_tokens_in(
         self,
