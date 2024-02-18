@@ -112,7 +112,7 @@ def test_create_camelot_v2_stable_pool(load_env: dict) -> None:
         f"https://rpc.ankr.com/arbitrum/{load_env['ANKR_API_KEY']}",
         fork_block=FORK_BLOCK,
     )
-    assert fork.block == FORK_BLOCK
+    assert fork.block_number == FORK_BLOCK
     assert fork.w3.eth.get_block_number() == FORK_BLOCK
     degenbot.set_web3(fork.w3)
 

@@ -88,14 +88,53 @@ def test_rpc_methods(fork_mainnet_archive: AnvilFork):
     fork_mainnet_archive.set_coinbase(FAKE_COINBASE)
     # @dev the eth_coinbase method fails when called on Anvil,
     # so check by mining a block and comparing the miner address
+
     fork_mainnet_archive.mine()
     block = fork_mainnet_archive.w3.eth.get_block("latest")
     assert block["miner"] == FAKE_COINBASE
 
+
+def test_mine_and_reset(fork_mainnet_archive: AnvilFork):
+    starting_block = fork_mainnet_archive.w3.eth.get_block_number()
+    fork_mainnet_archive.mine()
+    fork_mainnet_archive.mine()
+    fork_mainnet_archive.mine()
+    assert fork_mainnet_archive.w3.eth.get_block_number() == starting_block + 3
+    fork_mainnet_archive.reset(block_number=starting_block)
+    assert fork_mainnet_archive.w3.eth.get_block_number() == starting_block
+
+
+def test_balance_overrides_in_constructor():
+    FAKE_BALANCE = 100 * 10**18
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        balance_overrides=[
+            (VITALIK_ADDRESS, FAKE_BALANCE),
+        ],
+    )
+    assert fork.w3.eth.get_balance(VITALIK_ADDRESS) == FAKE_BALANCE
+
+
+def test_bytecode_overrides_in_constructor():
     FAKE_ADDRESS = "0x6969696969696969696969696969696969696969"
     FAKE_BYTECODE = HexBytes("0x0420")
-    fork_mainnet_archive.set_code(FAKE_ADDRESS, FAKE_BYTECODE)
-    assert fork_mainnet_archive.w3.eth.get_code(FAKE_ADDRESS) == FAKE_BYTECODE
+
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI, bytecode_overrides=[(FAKE_ADDRESS, FAKE_BYTECODE)]
+    )
+    assert fork.w3.eth.get_code(FAKE_ADDRESS) == FAKE_BYTECODE
+
+
+def test_coinbase_override_in_constructor():
+    FAKE_COINBASE = "0x6969696969696969696969696969696969696969"
+
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        coinbase=FAKE_COINBASE,
+    )
+    fork.mine()
+    block = fork.w3.eth.get_block("latest")
+    assert block["miner"] == FAKE_COINBASE
 
 
 def test_injecting_middleware():

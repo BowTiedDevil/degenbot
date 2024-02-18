@@ -85,13 +85,17 @@ class AnvilFork:
         while self.w3.is_connected() is False:
             continue
 
-        self.block = fork_block if fork_block is not None else self.w3.eth.get_block_number()
-        self.base_fee = (
-            base_fee if base_fee is not None else self.w3.eth.get_block(self.block)["baseFeePerGas"]
-        )
-        self.base_fee_next: int | None = None
         self.socket = socket.socket(socket.AF_UNIX)
         self.socket.connect(self.ipc_path)
+
+        self.block_number = fork_block if fork_block is not None else self.w3.eth.get_block_number()
+        self.base_fee = (
+            base_fee
+            if base_fee is not None
+            else self.w3.eth.get_block(self.block_number)["baseFeePerGas"]
+        )
+        self.base_fee_next: int | None = None
+        self.chain_id: int = chain_id if chain_id is not None else self.w3.eth.chain_id
 
         if balance_overrides is not None:
             for account, balance in balance_overrides:
@@ -172,18 +176,19 @@ class AnvilFork:
         fork_url: str | None = None,
         block_number: int | None = None,
     ) -> None:
-        forking_params: Dict[str, Any] = dict()
-        forking_params["jsonRpcUrl"] = fork_url if fork_url is not None else self.fork_url
-        if block_number is not None:
-            forking_params["blockNumber"] = block_number
+        forking_params: Dict[str, Any] = {
+            "jsonRpcUrl": fork_url if fork_url is not None else self.fork_url,
+            "blockNumber": block_number if block_number is not None else self.block_number,
+        }
 
         self._send_request(
             method="anvil_reset",
             params=[{"forking": forking_params}],
         )
         self._get_response()
+
         if block_number:
-            self.block = block_number
+            self.block_number = block_number
         if fork_url:
             self.fork_url = fork_url
 
