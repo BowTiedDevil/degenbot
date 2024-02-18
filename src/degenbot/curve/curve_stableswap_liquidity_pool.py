@@ -37,11 +37,7 @@ from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
 from ..subscription_mixins import Subscriber, SubscriptionMixin
 from .abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
-from .curve_stableswap_dataclasses import (
-    CurveStableSwapPoolAttributes,
-    CurveStableswapPoolExternalUpdate,
-    CurveStableswapPoolState,
-)
+from .curve_stableswap_dataclasses import CurveStableSwapPoolAttributes, CurveStableswapPoolState
 
 
 class CurveStableswapPool(SubscriptionMixin, BaseLiquidityPool):
