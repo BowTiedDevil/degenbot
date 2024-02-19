@@ -3,11 +3,11 @@ import shutil
 import socket
 import subprocess
 from typing import Any, Dict, Iterable, List, Tuple
-from eth_typing import HexAddress
-from hexbytes import HexBytes
 
 import ujson
+from eth_typing import HexAddress
 from eth_utils.address import to_checksum_address
+from hexbytes import HexBytes
 from web3 import IPCProvider, Web3
 from web3.types import Middleware
 
@@ -140,15 +140,34 @@ class AnvilFork:
         Read the response payload from socket and return the JSON-decoded result.
         """
         raw_response = b""
+        response: Dict[str, Any]
         while True:
-            raw_response += self.socket.recv(_SOCKET_READ_BUFFER_SIZE).rstrip()
-            if raw_response.endswith((b"]", b"}")):
-                # Valid JSON RPC responses will end in ] or }
+            try:
+                raw_response += self.socket.recv(_SOCKET_READ_BUFFER_SIZE).rstrip()
+            except socket.timeout:
+                continue
+
+            if raw_response.endswith(
+                (
+                    b"}",
+                    b"]",
+                )
+            ):
+                # Valid JSON RPC responses will end in } or ]
                 # ref: http://www.jsonrpc.org/specification
-                response = ujson.loads(raw_response)
-                if response.get("error"):
-                    raise Exception(f"Error in response: {response}")
-                return response["result"]
+                try:
+                    response = ujson.loads(raw_response)
+                except ujson.JSONDecodeError:
+                    # The end of the response might end in } or ] if the last byte is the closing
+                    # character of an array or map. If there are more bytes remaining, the JSON
+                    # string will fail to decode correctly, so continue reading from the socket.
+                    continue
+                else:
+                    break
+
+        if response.get("error"):
+            raise Exception(f"Error in response: {response}")
+        return response["result"]
 
     def create_access_list(self, transaction: Dict[Any, Any]) -> Any:
         # Exclude transaction values that are irrelevant for the JSON-RPC method
