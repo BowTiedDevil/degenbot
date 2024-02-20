@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Iterable, List
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List
 
 import aiohttp
 import eth_account.datastructures
@@ -72,7 +72,7 @@ class BlockBuilder:
                 f"Must provide signing address and key for required header {self.authentication_header_label}"
             )
 
-        bundle_params = {
+        bundle_params: Dict[str, Any] = {
             "txs": (
                 # Array[String], A list of signed transactions to execute in an atomic bundle
                 formatted_bundle
@@ -175,7 +175,7 @@ class BlockBuilder:
 
         formatted_bundle: List[str] = [tx.hex() for tx in bundle]
 
-        bundle_params = {
+        bundle_params: Dict[str, Any] = {
             "txs": (
                 # Array[String], A list of signed transactions to execute in an atomic bundle
                 formatted_bundle
@@ -186,12 +186,15 @@ class BlockBuilder:
             ),
         }
 
-        if isinstance(state_block, str) and state_block != "latest":
-            raise ValueError("state_block tag may only be an integer, or the string 'latest'")
-        bundle_params[
-            # String, either a hex encoded number or a block tag for which state to base this simulation on. Can use "latest"
-            "stateBlockNumber"
-        ] = hex(state_block)
+        if isinstance(state_block, str):
+            if state_block != "latest":
+                raise ValueError("state_block tag may only be an integer, or the string 'latest'")
+            bundle_params["stateBlockNumber"] = state_block
+        elif isinstance(state_block, int):
+            bundle_params[
+                # String, either a hex encoded number or a block tag for which state to base this simulation on. Can use "latest"
+                "stateBlockNumber"
+            ] = hex(state_block)
 
         if block_timestamp is not None:
             bundle_params["timestamp"] = block_timestamp
