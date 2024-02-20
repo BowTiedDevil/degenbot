@@ -5,7 +5,6 @@ import degenbot
 import pytest
 import eth_abi.abi
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_REGISTRY_ABI
-from degenbot.curve.curve_stableswap_dataclasses import CurveStableswapPoolExternalUpdate
 from degenbot.curve.curve_stableswap_liquidity_pool import BrokenPool, CurveStableswapPool
 from degenbot.exceptions import ZeroLiquidityError, ZeroSwapError
 from degenbot.fork import AnvilFork
@@ -135,43 +134,6 @@ def test_auto_update(fork_mainnet_archive: AnvilFork):
     assert fork_mainnet_archive.w3.eth.get_block_number() == _BLOCK_NUMBER + 1
     _tripool.auto_update()
     assert _tripool.update_block == _BLOCK_NUMBER + 1
-    assert _tripool.balances == [
-        75010632422398781503259123,
-        76437030384826,
-        34599346168546,
-    ]
-
-
-@pytest.mark.skip(reason="External updates disabled for Curve V1 pools")
-def test_external_update(fork_mainnet_archive: AnvilFork):
-    # Build the pool at a known historical block
-    _BLOCK_NUMBER = 18849427 - 1
-    fork_mainnet_archive.reset(block_number=_BLOCK_NUMBER)
-    degenbot.set_web3(fork_mainnet_archive.w3)
-
-    _tripool = CurveStableswapPool(TRIPOOL_ADDRESS)
-
-    assert fork_mainnet_archive.w3.eth.get_block_number() == _BLOCK_NUMBER
-    assert _tripool.update_block == _BLOCK_NUMBER
-
-    _EXPECTED_BALANCES = [75010632422398781503259123, 76382820384826, 34653521595900]
-    assert _tripool.balances == _EXPECTED_BALANCES
-
-    _SOLD_ID = 1
-    _TOKENS_SOLD = 54210000000
-    _BOUGHT_ID = 2
-    _TOKENS_BOUGHT = 54172718448
-
-    # ref: https://etherscan.io/tx/0x34cd3858eab8ac17a2ef0fd483da48e077d910075d392ab3d510ca6d5e6b4cce
-    update = CurveStableswapPoolExternalUpdate(
-        block_number=_BLOCK_NUMBER + 1,
-        sold_id=_SOLD_ID,
-        bought_id=_BOUGHT_ID,
-        tokens_sold=_TOKENS_SOLD,
-        tokens_bought=_TOKENS_BOUGHT,
-    )
-    _tripool.external_update(update)
-
     assert _tripool.balances == [
         75010632422398781503259123,
         76437030384826,
