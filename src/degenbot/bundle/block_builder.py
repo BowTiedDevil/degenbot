@@ -7,6 +7,7 @@ import ujson
 import web3
 from hexbytes import HexBytes
 
+from ..exceptions import ExternalServiceError
 from ..logging import logger
 
 _SUPPORTED_ENDPOINTS = [
@@ -38,6 +39,35 @@ class BlockBuilder:
         )
 
         self.authentication_header_label = authentication_header_label
+
+    @staticmethod
+    async def send(
+        url: str,
+        session: aiohttp.ClientSession,
+        headers: Dict[str, Any],
+        data: Dict[str, Any],
+        close_session_after: bool,
+    ) -> Any:
+        try:
+            async with session.post(
+                url=url,
+                data=data,
+                headers=headers,
+            ) as resp:
+                relay_response = await resp.json(
+                    # Some builders omit or return an invalid MIME type, so use None to bypass the
+                    # check in the `json` method
+                    content_type=None,
+                )
+        except aiohttp.ClientError as exc:
+            raise ExternalServiceError(f"HTTP Error: {exc}") from None
+        else:
+            if "error" in relay_response:
+                return relay_response["error"]
+            return relay_response["result"]
+        finally:
+            if close_session_after is False:
+                await session.close()
 
     async def send_eth_bundle(
         self,
@@ -133,23 +163,14 @@ class BlockBuilder:
             bundle_signature = signer_address.lower() + ":" + send_bundle_message.signature.hex()
             bundle_headers[self.authentication_header_label] = bundle_signature
 
-        try:
-            async with http_session.post(
-                url=self.url,
-                headers=bundle_headers,
-                data=bundle_payload,
-            ) as resp:
-                relay_response = await resp.json(
-                    # Some endpoints omit the MIME type, so use None to force decoding
-                    content_type=None,
-                )
-        except aiohttp.ClientError as exc:
-            raise Exception(f"HTTP Error: {exc}") from None
-        else:
-            return relay_response["result"]
-        finally:
-            if not http_session_provided:
-                await http_session.close()
+        result = await self.send(
+            url=self.url,
+            session=http_session,
+            headers=bundle_headers,
+            data=bundle_payload,
+            close_session_after=False if http_session_provided is True else True,
+        )
+        return result
 
     async def call_eth_bundle(
         self,
@@ -225,22 +246,11 @@ class BlockBuilder:
             bundle_signature = signer_address.lower() + ":" + bundle_message.signature.hex()
             bundle_headers[self.authentication_header_label] = bundle_signature
 
-        try:
-            async with http_session.post(
-                url=self.url,
-                headers=bundle_headers,
-                data=bundle_payload,
-            ) as resp:
-                relay_response = await resp.json(
-                    # Some endpoints omit the MIME type, so use None to force decoding
-                    content_type=None,
-                )
-        except aiohttp.ClientError as exc:
-            raise Exception(f"HTTP Error: {exc}") from None
-        else:
-            if "error" in relay_response:
-                return relay_response["error"]
-            return relay_response["result"]
-        finally:
-            if not http_session_provided:
-                await http_session.close()
+        result = await self.send(
+            url=self.url,
+            session=http_session,
+            headers=bundle_headers,
+            data=bundle_payload,
+            close_session_after=False if http_session_provided is True else True,
+        )
+        return result
