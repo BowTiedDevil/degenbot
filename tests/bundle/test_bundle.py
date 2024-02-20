@@ -3,20 +3,19 @@ import degenbot.fork
 import pytest
 from degenbot.bundle.block_builder import BlockBuilder
 
-
 BEAVERBUILD_URL = "https://rpc.beaverbuild.org"
-FLASHBOTS_URL = "https://relay.flashbots.net"
-TITANBUILDER_URL = "https://rpc.titanbuilder.xyz"
 BUILDER0X69_URL = "https://builder0x69.io"
+FLASHBOTS_URL = "https://relay.flashbots.net"
 RSYNCBUILDER_URL = "https://rsync-builder.xyz"
+TITANBUILDER_URL = "https://rpc.titanbuilder.xyz"
 
 
 BUILDER_FIXTURES = [
     "beaverbuild",
-    "flashbots",
-    "titanbuilder",
     "builder0x69",
+    "flashbots",
     "rsyncbuilder",
+    "titanbuilder",
 ]
 
 # Taken from https://privatekeys.pw/keys/ethereum/random
@@ -33,6 +32,16 @@ def beaverbuild() -> BlockBuilder:
 
 
 @pytest.fixture()
+def builder0x69() -> BlockBuilder:
+    return BlockBuilder(
+        url=BUILDER0X69_URL,
+        endpoints=["eth_sendBundle"],
+        # ref: https://docs.builder0x69.io/
+        authentication_header_label="X-Flashbots-Signature",
+    )
+
+
+@pytest.fixture()
 def flashbots() -> BlockBuilder:
     return BlockBuilder(
         url=FLASHBOTS_URL,
@@ -40,26 +49,6 @@ def flashbots() -> BlockBuilder:
             "eth_callBundle",
             "eth_sendBundle",
         ],
-        authentication_header_label="X-Flashbots-Signature",
-    )
-
-
-@pytest.fixture()
-def titanbuilder() -> BlockBuilder:
-    return BlockBuilder(
-        url=TITANBUILDER_URL,
-        endpoints=["eth_sendBundle"],
-        # ref: https://docs.titanbuilder.xyz/authentication
-        authentication_header_label="X-Flashbots-Signature",
-    )
-
-
-@pytest.fixture()
-def builder0x69() -> BlockBuilder:
-    return BlockBuilder(
-        url=BUILDER0X69_URL,
-        endpoints=["eth_sendBundle"],
-        # ref: https://docs.builder0x69.io/
         authentication_header_label="X-Flashbots-Signature",
     )
 
@@ -73,6 +62,16 @@ def rsyncbuilder() -> BlockBuilder:
             "eth_sendBundle",
             "eth_sendPrivateRawTransaction",
         ],
+        authentication_header_label="X-Flashbots-Signature",
+    )
+
+
+@pytest.fixture()
+def titanbuilder() -> BlockBuilder:
+    return BlockBuilder(
+        url=TITANBUILDER_URL,
+        endpoints=["eth_sendBundle"],
+        # ref: https://docs.titanbuilder.xyz/authentication
         authentication_header_label="X-Flashbots-Signature",
     )
 
