@@ -1,9 +1,8 @@
 import degenbot.bundle
 import degenbot.fork
-from degenbot.bundle.block_builder import BlockBuilder
 import pytest
-from hexbytes import HexBytes
-import web3
+from degenbot.bundle.block_builder import BlockBuilder
+
 
 BEAVERBUILD_URL = "https://rpc.beaverbuild.org"
 FLASHBOTS_URL = "https://relay.flashbots.net"
