@@ -1684,7 +1684,6 @@ class CurveStableswapPool(SubscriptionMixin, BaseLiquidityPool):
 
         if self.address in (
             "0x06364f10B501e868329afBc005b3492902d6C763",
-            "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
             "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
             "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
             "0x7fC77b5c7614E1533320Ea6DDc2Eb61fa00A9714",
@@ -1705,6 +1704,7 @@ class CurveStableswapPool(SubscriptionMixin, BaseLiquidityPool):
                         return D
 
         elif self.address in (
+            "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
             "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
             "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
             "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
