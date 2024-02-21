@@ -18,7 +18,7 @@ _SUPPORTED_ENDPOINTS = [
 
 class BlockBuilder:
     """
-    A block builder providing an HTTP endpoint and offering one or more bundle methods as defined by the Flashbots RPC endpoint specification.
+    An external block builder offering an HTTP endpoint with one or more bundle-receiving methods, as defined by the Flashbots RPC endpoint specification at https://docs.flashbots.net/flashbots-auction/advanced/rpc-endpoint.
     """
 
     def __init__(
@@ -45,7 +45,7 @@ class BlockBuilder:
         url: str,
         session: aiohttp.ClientSession,
         headers: Dict[str, Any],
-        data: Dict[str, Any],
+        data: str,
         close_session_after: bool,
     ) -> Any:
         try:
