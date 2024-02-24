@@ -3,22 +3,19 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List
 import aiohttp
 import eth_account.datastructures
 import eth_account.messages
+import eth_account.signers.local
 import ujson
-import web3
+from eth_account.signers.local import LocalAccount
 from hexbytes import HexBytes
 
+from ..config import get_web3
 from ..exceptions import ExternalServiceError
-from ..logging import logger
-
-_SUPPORTED_ENDPOINTS = [
-    "eth_callBundle",
-    "eth_sendBundle",
-]
+from ..functions import eip_191_hash
 
 
-class BlockBuilder:
+class BuilderEndpoint:
     """
-    An external block builder offering an HTTP endpoint with one or more bundle-receiving methods, as defined by the Flashbots RPC endpoint specification at https://docs.flashbots.net/flashbots-auction/advanced/rpc-endpoint.
+    An external HTTP endpoint with one or more bundle-related methods defined by the Flashbots RPC specification at https://docs.flashbots.net/flashbots-auction/advanced/rpc-endpoint
     """
 
     def __init__(
@@ -31,23 +28,22 @@ class BlockBuilder:
             raise ValueError("Invalid URL")
         self.url = url
 
-        for endpoint in endpoints:
-            if endpoint not in _SUPPORTED_ENDPOINTS:
-                logger.warning(f"Endpoint {endpoint} is not supported and has been ignored.")
-        self.endpoints = tuple(
-            [endpoint for endpoint in endpoints if endpoint in _SUPPORTED_ENDPOINTS]
-        )
-
+        self.endpoints = tuple(endpoints)
         self.authentication_header_label = authentication_header_label
 
     @staticmethod
-    async def send(
+    async def send_payload(
         url: str,
-        session: aiohttp.ClientSession,
         headers: Dict[str, Any],
         data: str,
-        close_session_after: bool,
+        http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
+        close_session_after_post = http_session is None
+
+        session = (
+            aiohttp.ClientSession(raise_for_status=True) if http_session is None else http_session
+        )
+
         try:
             async with session.post(
                 url=url,
@@ -66,8 +62,75 @@ class BlockBuilder:
                 return relay_response["error"]
             return relay_response["result"]
         finally:
-            if close_session_after is False:
+            if close_session_after_post:
                 await session.close()
+
+    async def call_eth_bundle(
+        self,
+        bundle: Iterable[HexBytes],
+        block_number: int,
+        state_block: int | str,
+        signer_key: str,
+        block_timestamp: int | None = None,
+        http_session: aiohttp.ClientSession | None = None,
+    ) -> Any:
+        """
+        Send a formatted bundle to the eth_callBundle endpoint for simulation against some block state
+        """
+
+        ENDPOINT_METHOD = "eth_callBundle"
+
+        if ENDPOINT_METHOD not in self.endpoints:
+            raise ValueError(
+                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+            )
+
+        bundle_params: Dict[str, Any] = {
+            "txs": (
+                # Array[String], A list of signed transactions to execute in an atomic bundle
+                [tx.hex() for tx in bundle]
+            ),
+            "blockNumber": (
+                # String, a hex encoded block number for which this bundle is valid on
+                hex(block_number)
+            ),
+        }
+
+        if isinstance(state_block, str):
+            if state_block != "latest":
+                raise ValueError("state_block tag may only be an integer, or the string 'latest'")
+            bundle_params["stateBlockNumber"] = state_block
+        elif isinstance(state_block, int):
+            bundle_params[
+                # String, either a hex encoded number or a block tag for which state to base this simulation on. Can use "latest"
+                "stateBlockNumber"
+            ] = hex(state_block)
+
+        if block_timestamp is not None:
+            bundle_params["timestamp"] = block_timestamp
+
+        payload = ujson.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": ENDPOINT_METHOD,
+                "params": [bundle_params],
+            }
+        )
+
+        bundle_headers = self._build_authentication_header(
+            payload=payload,
+            header_label=self.authentication_header_label,
+            signer_key=signer_key,
+        )
+
+        result = await self.send_payload(
+            url=self.url,
+            http_session=http_session,
+            headers=bundle_headers,
+            data=payload,
+        )
+        return result
 
     async def send_eth_bundle(
         self,
@@ -76,8 +139,7 @@ class BlockBuilder:
         min_timestamp: int | None = None,
         max_timestamp: int | None = None,
         reverting_hashes: List[str] | None = None,
-        replacement_uuid: str | None = None,
-        signer_address: str | None = None,
+        uuid: str | None = None,
         signer_key: str | None = None,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
@@ -85,19 +147,14 @@ class BlockBuilder:
         Send a formatted bundle to the eth_sendBundle endpoint
         """
 
-        if "eth_sendBundle" not in self.endpoints:
-            raise ValueError("eth_sendBundle was not included in the list of supported endpoints.")
+        ENDPOINT_METHOD = "eth_sendBundle"
 
-        http_session_provided = True if http_session is not None else False
-        if http_session is None:
-            http_session_provided = False
-            http_session = aiohttp.ClientSession(raise_for_status=True)
+        if ENDPOINT_METHOD not in self.endpoints:
+            raise ValueError(
+                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+            )
 
-        formatted_bundle: List[str] = [tx.hex() for tx in bundle]
-
-        if self.authentication_header_label is not None and any(
-            [signer_address is None, signer_key is None]
-        ):
+        if self.authentication_header_label is not None and signer_key is None:
             raise ValueError(
                 f"Must provide signing address and key for required header {self.authentication_header_label}"
             )
@@ -105,7 +162,7 @@ class BlockBuilder:
         bundle_params: Dict[str, Any] = {
             "txs": (
                 # Array[String], A list of signed transactions to execute in an atomic bundle
-                formatted_bundle
+                [tx.hex() for tx in bundle]
             ),
             "blockNumber": (
                 # String, a hex encoded block number for which this bundle is valid on
@@ -131,126 +188,313 @@ class BlockBuilder:
                 "revertingTxHashes"
             ] = reverting_hashes
 
-        if replacement_uuid is not None:
+        if uuid is not None:
             bundle_params[
                 # (Optional) String, UUID that can be used to cancel/replace this bundle
                 "replacementUuid"
-            ] = replacement_uuid
+            ] = uuid
 
-        bundle_payload = ujson.dumps(
+        payload = ujson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": "eth_sendBundle",
+                "method": ENDPOINT_METHOD,
                 "params": [bundle_params],
             }
         )
 
-        bundle_headers = {"Content-Type": "application/json"}
+        bundle_headers = self._build_authentication_header(
+            payload=payload,
+            signer_key=signer_key,
+            header_label=self.authentication_header_label,
+        )
 
-        if self.authentication_header_label:
-            if TYPE_CHECKING:
-                assert signer_address is not None
-                assert signer_key is not None
-            send_bundle_message: eth_account.datastructures.SignedMessage = (
-                eth_account.Account.sign_message(
-                    signable_message=eth_account.messages.encode_defunct(
-                        text=web3.Web3.keccak(text=bundle_payload).hex()
-                    ),
-                    private_key=signer_key,
-                )
-            )
-            bundle_signature = signer_address.lower() + ":" + send_bundle_message.signature.hex()
-            bundle_headers[self.authentication_header_label] = bundle_signature
-
-        result = await self.send(
+        result = await self.send_payload(
             url=self.url,
-            session=http_session,
             headers=bundle_headers,
-            data=bundle_payload,
-            close_session_after=False if http_session_provided is True else True,
+            data=payload,
+            http_session=http_session,
         )
         return result
 
-    async def call_eth_bundle(
+    async def get_user_stats(
         self,
-        bundle: Iterable[HexBytes],
+        signer_key: str,
         block_number: int,
-        state_block: int | str,
-        block_timestamp: int | None = None,
-        signer_address: str | None = None,
+        http_session: aiohttp.ClientSession | None = None,
+    ) -> Any:
+        """
+        Get the Flashbots V2 user stats for the given searcher identity.
+        """
+
+        ENDPOINT_METHOD = "flashbots_getUserStatsV2"
+
+        if ENDPOINT_METHOD not in self.endpoints:
+            raise ValueError(
+                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+            )
+
+        if self.authentication_header_label is not None and signer_key is None:
+            raise ValueError(
+                f"Must provide signing address and key for required header {self.authentication_header_label}"
+            )
+
+        if block_number is None:
+            block_number = get_web3().eth.block_number
+
+        payload = ujson.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": ENDPOINT_METHOD,
+                "params": [
+                    {
+                        "blockNumber": hex(block_number),
+                    }
+                ],
+            }
+        )
+
+        bundle_headers = self._build_authentication_header(
+            payload=payload,
+            signer_key=signer_key,
+            header_label=self.authentication_header_label,
+        )
+
+        result = await self.send_payload(
+            url=self.url,
+            http_session=http_session,
+            headers=bundle_headers,
+            data=payload,
+        )
+        return result
+
+    async def get_bundle_stats(
+        self,
+        bundle_hash: str,
+        block_number: int,
+        signer_key: str,
+        http_session: aiohttp.ClientSession | None = None,
+    ) -> Any:
+        """
+        Get the Flashbots V2 user stats for the given searcher identity.
+        """
+
+        ENDPOINT_METHOD = "flashbots_getBundleStatsV2"
+
+        if ENDPOINT_METHOD not in self.endpoints:
+            raise ValueError(
+                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+            )
+
+        if self.authentication_header_label is not None and signer_key is None:
+            raise ValueError(
+                f"Must provide signing address and key for required header {self.authentication_header_label}"
+            )
+
+        if block_number is None:
+            block_number = get_web3().eth.block_number
+
+        payload = ujson.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": ENDPOINT_METHOD,
+                "params": [
+                    {
+                        "bundleHash": bundle_hash,
+                        "blockNumber": hex(block_number),
+                    }
+                ],
+            }
+        )
+
+        bundle_headers = self._build_authentication_header(
+            payload=payload,
+            signer_key=signer_key,
+            header_label=self.authentication_header_label,
+        )
+
+        result = await self.send_payload(
+            url=self.url,
+            http_session=http_session,
+            headers=bundle_headers,
+            data=payload,
+        )
+        return result
+
+    async def cancel_eth_bundle(
+        self,
+        uuid: str | None = None,
         signer_key: str | None = None,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
         """
-        Send a formatted bundle to the eth_callBundle endpoint for simulation against some block state
+        Send a cancellation for the specified UUID.
         """
 
-        if "eth_callBundle" not in self.endpoints:
-            raise ValueError("eth_callBundle was not included in the list of supported endpoints.")
+        ENDPOINT_METHOD = "eth_cancelBundle"
 
-        http_session_provided = True if http_session is not None else False
-        if http_session is None:
-            http_session_provided = False
-            http_session = aiohttp.ClientSession(raise_for_status=True)
+        if ENDPOINT_METHOD not in self.endpoints:
+            raise ValueError(
+                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+            )
 
-        formatted_bundle: List[str] = [tx.hex() for tx in bundle]
+        if self.authentication_header_label is not None and signer_key is None:
+            raise ValueError(
+                f"Must provide signing address and key for required header {self.authentication_header_label}"
+            )
 
-        bundle_params: Dict[str, Any] = {
-            "txs": (
-                # Array[String], A list of signed transactions to execute in an atomic bundle
-                formatted_bundle
-            ),
-            "blockNumber": (
-                # String, a hex encoded block number for which this bundle is valid on
-                hex(block_number)
-            ),
+        payload = ujson.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": ENDPOINT_METHOD,
+                "params": [
+                    {
+                        "replacementUuid": uuid,
+                    }
+                ],
+            }
+        )
+
+        bundle_headers = self._build_authentication_header(
+            payload=payload,
+            signer_key=signer_key,
+            header_label=self.authentication_header_label,
+        )
+
+        result = await self.send_payload(
+            url=self.url,
+            http_session=http_session,
+            headers=bundle_headers,
+            data=payload,
+        )
+        return result
+
+    async def send_mev_bundle(
+        self,
+        bundle: Iterable[HexBytes],
+        block_number: int,
+        max_block_number: int | None = None,
+        signer_key: str | None = None,
+        http_session: aiohttp.ClientSession | None = None,
+    ) -> Any:
+        """
+        Send a formatted bundle to the mev_sendBundle endpoint
+        """
+
+        if "mev_sendBundle" not in self.endpoints:
+            raise ValueError("eth_sendBundle was not included in the list of supported endpoints.")
+
+        if self.authentication_header_label is not None and signer_key is None:
+            raise ValueError(
+                f"Must provide signing address and key for required header {self.authentication_header_label}"
+            )
+
+        mev_bundle_params: Dict[str, Any] = {
+            "version": "v0.1",
+            "inclusion": {
+                "block": hex(block_number),
+                # optional - "maxBlock": hex(number)
+            },
+            "body": [
+                """
+                {"hash": "string"} | 
+                {"tx": "string", "canRevert": "bool"} |
+                {"bundle": "MevSendBundleParams"}
+                """
+            ],
+            # optional
+            "validity": {
+                # optional
+                "refund": [
+                    {
+                        "bodyIdx": "int",
+                        "percent": "int",
+                    }
+                ],
+                # optional
+                "refundConfig": [
+                    {
+                        "address": "string",
+                        "percent": "number",
+                    }
+                ],
+            },
+            # optional
+            "privacy": {
+                # optional
+                "hints": [
+                    """                    
+                    "calldata" |
+                    "contract_address" |
+                    "logs" |
+                    "function_selector" |
+                    "hash" |
+                    "tx_hash"
+                    """
+                ],
+                # optional
+                "builders": ["string", "string"],
+            },
+            # optional
+            "metadata": {
+                # optional
+                "originId": "string",
+            },
         }
 
-        if isinstance(state_block, str):
-            if state_block != "latest":
-                raise ValueError("state_block tag may only be an integer, or the string 'latest'")
-            bundle_params["stateBlockNumber"] = state_block
-        elif isinstance(state_block, int):
-            bundle_params[
-                # String, either a hex encoded number or a block tag for which state to base this simulation on. Can use "latest"
-                "stateBlockNumber"
-            ] = hex(state_block)
-
-        if block_timestamp is not None:
-            bundle_params["timestamp"] = block_timestamp
+        if max_block_number is not None:
+            mev_bundle_params["inclusion"]["maxBlock"] = hex(max_block_number)
 
         bundle_payload = ujson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": "eth_callBundle",
-                "params": [bundle_params],
+                "method": "mev_sendBundle",
+                "params": [mev_bundle_params],
             }
         )
 
-        bundle_headers = {"Content-Type": "application/json"}
+        bundle_headers = self._build_authentication_header(
+            payload=bundle_payload,
+            header_label=self.authentication_header_label,
+            signer_key=signer_key,
+        )
 
-        if self.authentication_header_label:
-            if TYPE_CHECKING:
-                assert signer_address is not None
-                assert signer_key is not None
-            bundle_message: eth_account.datastructures.SignedMessage = (
-                eth_account.Account.sign_message(
-                    signable_message=eth_account.messages.encode_defunct(
-                        text=web3.Web3.keccak(text=bundle_payload).hex()
-                    ),
-                    private_key=signer_key,
-                )
-            )
-            bundle_signature = signer_address.lower() + ":" + bundle_message.signature.hex()
-            bundle_headers[self.authentication_header_label] = bundle_signature
-
-        result = await self.send(
+        result = await self.send_payload(
             url=self.url,
-            session=http_session,
+            http_session=http_session,
             headers=bundle_headers,
             data=bundle_payload,
-            close_session_after=False if http_session_provided is True else True,
         )
         return result
+
+    @staticmethod
+    def _build_authentication_header(
+        payload: str,
+        header_label: str | None,
+        signer_key: str | None,
+    ) -> Dict[str, Any]:
+        """
+        Build a MIME type header with an optional EIP-191 signature of the provided payload.
+        """
+
+        if signer_key:
+            signer_account: LocalAccount = eth_account.Account.from_key(signer_key)
+            signer_address = signer_account.address
+
+        bundle_headers = {"Content-Type": "application/json"}
+
+        if all([header_label is not None, signer_key is not None]):
+            if TYPE_CHECKING:
+                assert header_label is not None
+                assert signer_key is not None
+                assert isinstance(signer_address, eth_account.Account)
+
+            message_signature = eip_191_hash(message=payload, private_key=signer_key)
+            bundle_signature = f"{signer_address}:{message_signature}"
+            bundle_headers[header_label] = bundle_signature
+
+        return bundle_headers

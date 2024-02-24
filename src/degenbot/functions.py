@@ -2,6 +2,22 @@ from web3.types import BlockIdentifier
 
 from . import config
 from .constants import MAX_UINT256
+from eth_account.datastructures import SignedMessage
+import eth_account.messages
+import web3
+
+
+def eip_191_hash(message: str, private_key: str) -> SignedMessage:
+    """
+    Get the signature hash (a hex-formatted string) for a given message and signing key.
+    """
+    result: SignedMessage = eth_account.Account.sign_message(
+        signable_message=eth_account.messages.encode_defunct(
+            text=web3.Web3.keccak(text=message).hex()
+        ),
+        private_key=private_key,
+    )
+    return result.signature.hex()
 
 
 def get_number_for_block_identifier(identifier: BlockIdentifier | None) -> int:
