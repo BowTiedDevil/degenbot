@@ -1,8 +1,8 @@
+import warnings
 from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
 from typing import Any, Dict, Iterable, List, Set, Tuple
-from warnings import warn
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -111,10 +111,12 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         self._state_lock = Lock()
 
         if unload_brownie_contract_after_init is not None:  # pragma: no cover
-            warn("unload_brownie_contract_after_init has been deprecated and is ignored.")
+            warnings.warn("unload_brownie_contract_after_init has been deprecated and is ignored.")
 
         if update_reserves_on_start is not None:  # pragma: no cover
-            warn("update_reserves_on_start has been deprecated in favor of `empty` argument.")
+            warnings.warn(
+                "update_reserves_on_start has been deprecated in favor of `empty` argument."
+            )
 
         self.address: ChecksumAddress = to_checksum_address(address)
         self.abi = abi if abi is not None else UNISWAP_V2_POOL_ABI
@@ -336,7 +338,7 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         """
 
         if token_in is not None:
-            warn(
+            warnings.warn(
                 "The use of token_in is deprecated and will be removed in the future. Please modify your calling code to specify token_out instead."
             )
 
@@ -350,7 +352,7 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
                 reserves_token0=override_reserves_token0,
                 reserves_token1=override_reserves_token1,
             )
-            warn(
+            warnings.warn(
                 "Overriding individual reserves is deprecated in favor of a single state override via override_state. The individual overrides have been transformed in-place, but this will be removed in a future release."
             )
 
@@ -430,7 +432,7 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
             and override_reserves_token0 is not None
             and override_reserves_token1 is not None
         ):  # pragma: no cover
-            warn(
+            warnings.warn(
                 "Overriding individual reserves is deprecated in favor of a single state override via override_state. The individual overrides have been transformed in-place, but this will be removed in a future release."
             )
             override_state = UniswapV2PoolState(
@@ -523,7 +525,7 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
             self._notify_subscribers()
 
     def set_swap_target(self, *args: Any, **kwargs: Any) -> None:
-        warn(
+        warnings.warn(
             "set_swap_target has been deprecated. Please convert your code to use the calculate_tokens_in_from_ratio_out method directly."
         )
 
@@ -794,14 +796,14 @@ class CamelotLiquidityPool(CamelotStablePoolMixin, LiquidityPool):
         unload_brownie_contract_after_init: bool | None = None,  # deprecated
     ) -> None:
         if unload_brownie_contract_after_init is not None:  # pragma: no cover
-            warn(
+            warnings.warn(
                 "unload_brownie_contract_after_init is no longer needed and is "
                 "ignored. Remove constructor argument to stop seeing this "
                 "message."
             )
 
         if update_reserves_on_start is not None:  # pragma: no cover
-            warn("update_reserves_on_start has been deprecated.")
+            warnings.warn("update_reserves_on_start has been deprecated.")
 
         address = to_checksum_address(address)
 

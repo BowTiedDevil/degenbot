@@ -1,10 +1,10 @@
 from typing import Dict
-from warnings import warn
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
 from ..baseclasses import BaseLiquidityPool
+from ..logging import logger
 
 # Internal state dictionary that maintains a keyed dictionary of all
 # pool helper objects. The top level dict is keyed by chain ID, and
@@ -37,7 +37,7 @@ class AllPools:
     def __setitem__(self, pool_address: str, pool_helper: BaseLiquidityPool) -> None:
         _pool_address = to_checksum_address(pool_address)
         if self.pools.get(_pool_address):
-            warn(
+            logger.warning(
                 f"A pool helper with address {_pool_address} already exists! It has been overwritten."
             )
         self.pools[_pool_address] = pool_helper

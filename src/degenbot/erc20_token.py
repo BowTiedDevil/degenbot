@@ -1,5 +1,5 @@
+import warnings
 from typing import Any, Dict, List, Tuple
-from warnings import warn
 
 import eth_abi.abi
 import ujson
@@ -69,20 +69,20 @@ class Erc20Token(BaseToken):
         _w3_contract = self._w3_contract
 
         if user:  # pragma: no cover
-            warn(
+            warnings.warn(
                 "Instantiating with a single user is deprecated. You may use "
                 "the get_balance() method to retrieve token balances for a "
                 "particular address."
             )
 
         if min_abi:  # pragma: no cover
-            warn(
+            warnings.warn(
                 "Using a minimal ABI is now the default behavior. Remove "
                 "min_abi constructor argument to stop seeing this message."
             )
 
         if unload_brownie_contract_after_init:  # pragma: no cover
-            warn(
+            warnings.warn(
                 "unload_brownie_contract_after_init is deprecated. Remove "
                 "constructor argument to stop seeing this message."
             )
@@ -116,7 +116,7 @@ class Erc20Token(BaseToken):
             if not _w3.eth.get_code(self.address):
                 raise ValueError("No contract deployed at this address")
             self.name = f"Unknown @ {self.address}"
-            warn(
+            logger.warning(
                 f"Token contract at {self.address} does not implement a 'name' function. Setting to '{self.name}'"
             )
         finally:
@@ -151,7 +151,7 @@ class Erc20Token(BaseToken):
             if not _w3.eth.get_code(self.address):  # pragma: no cover
                 raise ValueError("No contract deployed at this address")
             self.symbol = "UNKN"
-            warn(
+            logger.warning(
                 f"Token contract at {self.address} does not implement a 'symbol' function. Setting to {self.symbol}"
             )
 
@@ -185,7 +185,7 @@ class Erc20Token(BaseToken):
             if not _w3.eth.get_code(self.address):  # pragma: no cover
                 raise ValueError("No contract deployed at this address")
             self.decimals = 0
-            warn(
+            logger.warning(
                 f"Token contract at {self.address} does not implement a 'decimals' function. Setting to 0."
             )
 
