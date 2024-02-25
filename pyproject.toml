@@ -8,8 +8,8 @@ description = "Python classes to aid rapid development of Uniswap V2 & V3 arbitr
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    'scipy >=1.12.0',
-    'ujson',
+    'scipy >=1.12.0, <1.13',
+    'ujson >= 5.9.0, <6',
     'web3 >=6.15.0, <7',
 ]
 license = {text = "MIT"}
@@ -30,9 +30,6 @@ tests = [
     'pytest-doc',
     'pytest-xdist',
     'python-dotenv',
-]
-build = [
-    'setuptools >= 69.0',
 ]
 
 [project.urls]
@@ -82,3 +79,5 @@ exclude_also = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = "--cov --cov-report=html"
+python_files = "test_*.py"
+testpaths = "tests"
