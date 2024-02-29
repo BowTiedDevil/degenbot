@@ -78,6 +78,6 @@ exclude_also = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "--cov --cov-report=html"
+addopts = "--cov --cov-append --cov-report=html"
 python_files = "test_*.py"
 testpaths = "tests"
