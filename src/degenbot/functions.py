@@ -7,7 +7,7 @@ import eth_account.messages
 import web3
 
 
-def eip_191_hash(message: str, private_key: str) -> SignedMessage:
+def eip_191_hash(message: str, private_key: str) -> str:
     """
     Get the signature hash (a hex-formatted string) for a given message and signing key.
     """
