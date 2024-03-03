@@ -1,10 +1,10 @@
+import eth_account.messages
+import web3
+from eth_account.datastructures import SignedMessage
 from web3.types import BlockIdentifier
 
 from . import config
 from .constants import MAX_UINT256
-from eth_account.datastructures import SignedMessage
-import eth_account.messages
-import web3
 
 
 def eip_191_hash(message: str, private_key: str) -> str:
