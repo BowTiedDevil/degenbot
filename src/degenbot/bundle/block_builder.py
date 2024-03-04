@@ -459,7 +459,7 @@ class BuilderEndpoint:
         raw_transaction: bytes | str,
         signer_key: str,
         max_block_number: int | None = None,
-        preferences: dict | None = None,
+        preferences: Dict[str, Any] | None = None,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
         """
@@ -481,7 +481,7 @@ class BuilderEndpoint:
         if isinstance(raw_transaction, bytes):
             raw_transaction = raw_transaction.hex()
 
-        params_dict = {
+        params_dict: Dict[str, Any] = {
             "tx": raw_transaction,
         }
 
@@ -520,7 +520,7 @@ class BuilderEndpoint:
         self,
         raw_transaction: bytes | str,
         signer_key: str,
-        preferences: dict | None = None,
+        preferences: Dict[str, Any] | None = None,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
         """
@@ -542,7 +542,7 @@ class BuilderEndpoint:
         if isinstance(raw_transaction, bytes):
             raw_transaction = raw_transaction.hex()
 
-        params = [
+        params: List[str | Dict[str, Any]] = [
             raw_transaction,
         ]
 
