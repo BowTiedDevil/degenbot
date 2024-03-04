@@ -160,22 +160,17 @@ class BuilderEndpoint:
         )
         return result
 
-    async def send_eth_bundle(
+    async def cancel_eth_bundle(
         self,
-        bundle: Iterable[HexBytes],
-        block_number: int,
-        min_timestamp: int | None = None,
-        max_timestamp: int | None = None,
-        reverting_hashes: List[str] | None = None,
         uuid: str | None = None,
         signer_key: str | None = None,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
         """
-        Send a formatted bundle to the eth_sendBundle endpoint
+        Send a cancellation for the specified UUID.
         """
 
-        ENDPOINT_METHOD = "eth_sendBundle"
+        ENDPOINT_METHOD = "eth_cancelBundle"
 
         if ENDPOINT_METHOD not in self.endpoints:
             raise ValueError(
@@ -187,47 +182,16 @@ class BuilderEndpoint:
                 f"Must provide signing address and key for required header {self.authentication_header_label}"
             )
 
-        bundle_params: Dict[str, Any] = {
-            "txs": (
-                # Array[String], A list of signed transactions to execute in an atomic bundle
-                [tx.hex() for tx in bundle]
-            ),
-            "blockNumber": (
-                # String, a hex encoded block number for which this bundle is valid on
-                hex(block_number)
-            ),
-        }
-
-        if min_timestamp is not None:
-            bundle_params[
-                # (Optional) Number, the minimum timestamp for which this bundle is valid, in seconds since the unix epoch
-                "minTimestamp"
-            ] = min_timestamp
-
-        if max_timestamp is not None:
-            bundle_params[
-                # (Optional) Number, the maximum timestamp for which this bundle is valid, in seconds since the unix epoch
-                "maxTimestamp"
-            ] = max_timestamp
-
-        if reverting_hashes is not None:
-            bundle_params[
-                # (Optional) Array[String], A list of tx hashes that are allowed to revert
-                "revertingTxHashes"
-            ] = reverting_hashes
-
-        if uuid is not None:
-            bundle_params[
-                # (Optional) String, UUID that can be used to cancel/replace this bundle
-                "replacementUuid"
-            ] = uuid
-
         payload = ujson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": ENDPOINT_METHOD,
-                "params": [bundle_params],
+                "params": [
+                    {
+                        "replacementUuid": uuid,
+                    }
+                ],
             }
         )
 
@@ -239,9 +203,63 @@ class BuilderEndpoint:
 
         result = await self.send_payload(
             url=self.url,
+            http_session=http_session,
             headers=bundle_headers,
             data=payload,
+        )
+        return result
+
+    async def cancel_private_transaction(
+        self,
+        tx_hash: bytes | str,
+        signer_key: str,
+        http_session: aiohttp.ClientSession | None = None,
+    ) -> Any:
+        """
+        Send a cancellation for the specified private transaction hash.
+
+        The signer key used for the request must match the signer key for the transaction.
+        """
+
+        ENDPOINT_METHOD = "eth_cancelPrivateTransaction"
+
+        if ENDPOINT_METHOD not in self.endpoints:
+            raise ValueError(
+                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+            )
+
+        if self.authentication_header_label is not None and signer_key is None:
+            raise ValueError(
+                f"Must provide signing address and key for required header {self.authentication_header_label}"
+            )
+
+        if isinstance(tx_hash, bytes):
+            tx_hash = tx_hash.hex()
+
+        payload = ujson.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": ENDPOINT_METHOD,
+                "params": [
+                    {
+                        "txHash": tx_hash,
+                    }
+                ],
+            }
+        )
+
+        bundle_headers = self._build_authentication_header(
+            payload=payload,
+            signer_key=signer_key,
+            header_label=self.authentication_header_label,
+        )
+
+        result = await self.send_payload(
+            url=self.url,
             http_session=http_session,
+            headers=bundle_headers,
+            data=payload,
         )
         return result
 
@@ -351,17 +369,22 @@ class BuilderEndpoint:
         )
         return result
 
-    async def cancel_eth_bundle(
+    async def send_eth_bundle(
         self,
+        bundle: Iterable[HexBytes],
+        block_number: int,
+        min_timestamp: int | None = None,
+        max_timestamp: int | None = None,
+        reverting_hashes: List[str] | None = None,
         uuid: str | None = None,
         signer_key: str | None = None,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
         """
-        Send a cancellation for the specified UUID.
+        Send a formatted bundle to the eth_sendBundle endpoint
         """
 
-        ENDPOINT_METHOD = "eth_cancelBundle"
+        ENDPOINT_METHOD = "eth_sendBundle"
 
         if ENDPOINT_METHOD not in self.endpoints:
             raise ValueError(
@@ -373,16 +396,165 @@ class BuilderEndpoint:
                 f"Must provide signing address and key for required header {self.authentication_header_label}"
             )
 
+        bundle_params: Dict[str, Any] = {
+            "txs": (
+                # Array[String], A list of signed transactions to execute in an atomic bundle
+                [tx.hex() for tx in bundle]
+            ),
+            "blockNumber": (
+                # String, a hex encoded block number for which this bundle is valid on
+                hex(block_number)
+            ),
+        }
+
+        if min_timestamp is not None:
+            bundle_params[
+                # (Optional) Number, the minimum timestamp for which this bundle is valid, in seconds since the unix epoch
+                "minTimestamp"
+            ] = min_timestamp
+
+        if max_timestamp is not None:
+            bundle_params[
+                # (Optional) Number, the maximum timestamp for which this bundle is valid, in seconds since the unix epoch
+                "maxTimestamp"
+            ] = max_timestamp
+
+        if reverting_hashes is not None:
+            bundle_params[
+                # (Optional) Array[String], A list of tx hashes that are allowed to revert
+                "revertingTxHashes"
+            ] = reverting_hashes
+
+        if uuid is not None:
+            bundle_params[
+                # (Optional) String, UUID that can be used to cancel/replace this bundle
+                "replacementUuid"
+            ] = uuid
+
+        payload = ujson.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": ENDPOINT_METHOD,
+                "params": [bundle_params],
+            }
+        )
+
+        bundle_headers = self._build_authentication_header(
+            payload=payload,
+            signer_key=signer_key,
+            header_label=self.authentication_header_label,
+        )
+
+        result = await self.send_payload(
+            url=self.url,
+            headers=bundle_headers,
+            data=payload,
+            http_session=http_session,
+        )
+        return result
+
+    async def send_private_transaction(
+        self,
+        raw_transaction: bytes | str,
+        signer_key: str,
+        max_block_number: int | None = None,
+        preferences: dict | None = None,
+        http_session: aiohttp.ClientSession | None = None,
+    ) -> Any:
+        """
+        Send a private raw transaction.
+        """
+
+        ENDPOINT_METHOD = "eth_sendPrivateTransaction"
+
+        if ENDPOINT_METHOD not in self.endpoints:
+            raise ValueError(
+                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+            )
+
+        if self.authentication_header_label is not None and signer_key is None:
+            raise ValueError(
+                f"Must provide signing address and key for required header {self.authentication_header_label}"
+            )
+
+        if isinstance(raw_transaction, bytes):
+            raw_transaction = raw_transaction.hex()
+
+        params_dict = {
+            "tx": raw_transaction,
+        }
+
+        if max_block_number is not None:
+            params_dict["maxBlockNumber"] = max_block_number
+
+        if preferences is not None:
+            params_dict["preferences"] = preferences
+
         payload = ujson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": ENDPOINT_METHOD,
                 "params": [
-                    {
-                        "replacementUuid": uuid,
-                    }
+                    params_dict,
                 ],
+            }
+        )
+
+        bundle_headers = self._build_authentication_header(
+            payload=payload,
+            signer_key=signer_key,
+            header_label=self.authentication_header_label,
+        )
+
+        result = await self.send_payload(
+            url=self.url,
+            http_session=http_session,
+            headers=bundle_headers,
+            data=payload,
+        )
+        return result
+
+    async def send_private_raw_transaction(
+        self,
+        raw_transaction: bytes | str,
+        signer_key: str,
+        preferences: dict | None = None,
+        http_session: aiohttp.ClientSession | None = None,
+    ) -> Any:
+        """
+        Send a private raw transaction.
+        """
+
+        ENDPOINT_METHOD = "eth_sendPrivateRawTransaction"
+
+        if ENDPOINT_METHOD not in self.endpoints:
+            raise ValueError(
+                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+            )
+
+        if self.authentication_header_label is not None and signer_key is None:
+            raise ValueError(
+                f"Must provide signing address and key for required header {self.authentication_header_label}"
+            )
+
+        if isinstance(raw_transaction, bytes):
+            raw_transaction = raw_transaction.hex()
+
+        params = [
+            raw_transaction,
+        ]
+
+        if preferences is not None:
+            params.append(preferences)
+
+        payload = ujson.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": ENDPOINT_METHOD,
+                "params": params,
             }
         )
 
