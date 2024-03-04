@@ -32,6 +32,34 @@ class BuilderEndpoint:
         self.authentication_header_label = authentication_header_label
 
     @staticmethod
+    def _build_authentication_header(
+        payload: str,
+        header_label: str | None,
+        signer_key: str | None,
+    ) -> Dict[str, Any]:
+        """
+        Build a MIME type header with an optional EIP-191 signature of the provided payload.
+        """
+
+        if signer_key:
+            signer_account: LocalAccount = eth_account.Account.from_key(signer_key)
+            signer_address = signer_account.address
+
+        bundle_headers = {"Content-Type": "application/json"}
+
+        if all([header_label is not None, signer_key is not None]):
+            if TYPE_CHECKING:
+                assert header_label is not None
+                assert signer_key is not None
+                assert isinstance(signer_address, eth_account.Account)
+
+            message_signature = eip_191_hash(message=payload, private_key=signer_key)
+            bundle_signature = f"{signer_address}:{message_signature}"
+            bundle_headers[header_label] = bundle_signature
+
+        return bundle_headers
+
+    @staticmethod
     async def send_payload(
         url: str,
         headers: Dict[str, Any],
@@ -371,130 +399,3 @@ class BuilderEndpoint:
             data=payload,
         )
         return result
-
-    async def send_mev_bundle(
-        self,
-        bundle: Iterable[HexBytes],
-        block_number: int,
-        max_block_number: int | None = None,
-        signer_key: str | None = None,
-        http_session: aiohttp.ClientSession | None = None,
-    ) -> Any:
-        """
-        Send a formatted bundle to the mev_sendBundle endpoint
-        """
-
-        if "mev_sendBundle" not in self.endpoints:
-            raise ValueError("eth_sendBundle was not included in the list of supported endpoints.")
-
-        if self.authentication_header_label is not None and signer_key is None:
-            raise ValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"
-            )
-
-        mev_bundle_params: Dict[str, Any] = {
-            "version": "v0.1",
-            "inclusion": {
-                "block": hex(block_number),
-                # optional - "maxBlock": hex(number)
-            },
-            "body": [
-                """
-                {"hash": "string"} | 
-                {"tx": "string", "canRevert": "bool"} |
-                {"bundle": "MevSendBundleParams"}
-                """
-            ],
-            # optional
-            "validity": {
-                # optional
-                "refund": [
-                    {
-                        "bodyIdx": "int",
-                        "percent": "int",
-                    }
-                ],
-                # optional
-                "refundConfig": [
-                    {
-                        "address": "string",
-                        "percent": "number",
-                    }
-                ],
-            },
-            # optional
-            "privacy": {
-                # optional
-                "hints": [
-                    """                    
-                    "calldata" |
-                    "contract_address" |
-                    "logs" |
-                    "function_selector" |
-                    "hash" |
-                    "tx_hash"
-                    """
-                ],
-                # optional
-                "builders": ["string", "string"],
-            },
-            # optional
-            "metadata": {
-                # optional
-                "originId": "string",
-            },
-        }
-
-        if max_block_number is not None:
-            mev_bundle_params["inclusion"]["maxBlock"] = hex(max_block_number)
-
-        bundle_payload = ujson.dumps(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "mev_sendBundle",
-                "params": [mev_bundle_params],
-            }
-        )
-
-        bundle_headers = self._build_authentication_header(
-            payload=bundle_payload,
-            header_label=self.authentication_header_label,
-            signer_key=signer_key,
-        )
-
-        result = await self.send_payload(
-            url=self.url,
-            http_session=http_session,
-            headers=bundle_headers,
-            data=bundle_payload,
-        )
-        return result
-
-    @staticmethod
-    def _build_authentication_header(
-        payload: str,
-        header_label: str | None,
-        signer_key: str | None,
-    ) -> Dict[str, Any]:
-        """
-        Build a MIME type header with an optional EIP-191 signature of the provided payload.
-        """
-
-        if signer_key:
-            signer_account: LocalAccount = eth_account.Account.from_key(signer_key)
-            signer_address = signer_account.address
-
-        bundle_headers = {"Content-Type": "application/json"}
-
-        if all([header_label is not None, signer_key is not None]):
-            if TYPE_CHECKING:
-                assert header_label is not None
-                assert signer_key is not None
-                assert isinstance(signer_address, eth_account.Account)
-
-            message_signature = eip_191_hash(message=payload, private_key=signer_key)
-            bundle_signature = f"{signer_address}:{message_signature}"
-            bundle_headers[header_label] = bundle_signature
-
-        return bundle_headers
