@@ -1,15 +1,16 @@
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 
 class ConditionalAction:
     def __init__(
         self,
         condition: Callable[[Any], bool],
-        action: Callable[[Any], Any],
+        actions: Sequence[Callable[[Any], Any]],
     ):
         self.condition = condition
-        self.action = action
+        self.actions = actions
 
     def check(self):
         if self.condition() is True:
-            self.action()
+            for action in self.actions:
+                action()
