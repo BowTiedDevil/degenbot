@@ -675,6 +675,41 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
             print_ratios=not silent,
         )
 
+    def get_absolute_price(self, token) -> Fraction:
+        """
+        Get the absolute price for the given token, expressed as a ratio of the two pool tokens.
+        """
+
+        if token == self.token0:
+            return Fraction(self.reserves_token0) / Fraction(self.reserves_token1)
+        elif token == self.token1:
+            return Fraction(self.reserves_token1) / Fraction(self.reserves_token0)
+        else:
+            raise ValueError(f"Unknown token {token}")
+
+    def get_nominal_price(self, token) -> Fraction:
+        """
+        Get the nominal price for the given token, expressed as a ratio of the two pool tokens,
+        corrected for decimal place values.
+        """
+
+        if token == self.token0:
+            return (
+                Fraction(self.reserves_token0)
+                / Fraction(self.reserves_token1)
+                * Fraction(10**self.token1.decimals)
+                / Fraction(10**self.token0.decimals)
+            )
+        elif token == self.token1:
+            return (
+                Fraction(self.reserves_token1)
+                / Fraction(self.reserves_token0)
+                * Fraction(10**self.token0.decimals)
+                / Fraction(10**self.token1.decimals)
+            )
+        else:
+            raise ValueError(f"Unknown token {token}")
+
     def update_reserves(
         self,
         silent: bool = False,
