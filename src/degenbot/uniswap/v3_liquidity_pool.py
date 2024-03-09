@@ -4,6 +4,7 @@ import dataclasses
 import warnings
 from bisect import bisect_left
 from decimal import Decimal
+from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
@@ -1145,3 +1146,38 @@ class V3LiquidityPool(BaseLiquidityPool):
                     tick=end_tick,
                 ),
             )
+
+    def get_absolute_price(self, token) -> Fraction:
+        """
+        Get the absolute price for the given token, expressed as a ratio of the two pool tokens.
+        """
+
+        if token == self.token0:
+            return Fraction(2**192) / Fraction(self.sqrt_price_x96**2)
+        elif token == self.token1:
+            return Fraction(self.sqrt_price_x96**2) / Fraction(2**192)
+        else:
+            raise ValueError(f"Unknown token {token}")
+
+    def get_nominal_price(self, token) -> Fraction:
+        """
+        Get the nominal price for the given token, expressed as a ratio of the two pool tokens,
+        corrected for decimal place values.
+        """
+
+        if token == self.token0:
+            return (
+                Fraction(2**192)
+                / Fraction(self.sqrt_price_x96**2)
+                * Fraction(10**self.token1.decimals)
+                / Fraction(10**self.token0.decimals)
+            )
+        elif token == self.token1:
+            return (
+                Fraction(self.sqrt_price_x96**2)
+                / Fraction(2**192)
+                * Fraction(10**self.token0.decimals)
+                / Fraction(10**self.token1.decimals)
+            )
+        else:
+            raise ValueError(f"Unknown token {token}")
