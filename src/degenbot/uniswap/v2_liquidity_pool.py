@@ -52,6 +52,7 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         silent: bool = False,
         state_block: int | None = None,
         empty: bool = False,
+        w3_contract: Contract | None = None,
         update_reserves_on_start: bool | None = None,  # deprecated
         unload_brownie_contract_after_init: bool | None = None,  # deprecated
     ) -> None:
@@ -122,7 +123,7 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         self.abi = abi if abi is not None else UNISWAP_V2_POOL_ABI
 
         _w3 = config.get_web3()
-        _w3_contract = self._w3_contract
+        _w3_contract = self._w3_contract if w3_contract is None else w3_contract
 
         if factory_address:
             if factory_init_hash is None:
@@ -792,19 +793,10 @@ class CamelotLiquidityPool(CamelotStablePoolMixin, LiquidityPool):
         update_method: str = "polling",
         abi: List[Any] | None = None,
         silent: bool = False,
-        update_reserves_on_start: bool | None = None,  # deprecated
-        unload_brownie_contract_after_init: bool | None = None,  # deprecated
+        state_block: int | None = None,
+        factory_address: str | None = None,
+        factory_init_hash: str | None = None,
     ) -> None:
-        if unload_brownie_contract_after_init is not None:  # pragma: no cover
-            warnings.warn(
-                "unload_brownie_contract_after_init is no longer needed and is "
-                "ignored. Remove constructor argument to stop seeing this "
-                "message."
-            )
-
-        if update_reserves_on_start is not None:  # pragma: no cover
-            warnings.warn("update_reserves_on_start has been deprecated.")
-
         address = to_checksum_address(address)
 
         if abi is None:
@@ -812,8 +804,6 @@ class CamelotLiquidityPool(CamelotStablePoolMixin, LiquidityPool):
 
         _w3 = config.get_web3()
         _w3_contract = config.get_web3().eth.contract(address=address, abi=abi)
-
-        state_block = _w3.eth.get_block_number()
 
         (
             _,
@@ -836,6 +826,9 @@ class CamelotLiquidityPool(CamelotStablePoolMixin, LiquidityPool):
             fee=(fee_token0, fee_token1),
             silent=silent,
             state_block=state_block,
+            factory_address=factory_address,
+            factory_init_hash=factory_init_hash,
+            w3_contract=_w3_contract,
         )
 
         self.stable_swap: bool = _w3_contract.functions.stableSwap().call()
