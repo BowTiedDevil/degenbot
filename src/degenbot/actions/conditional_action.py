@@ -1,6 +1,6 @@
 from typing import Any, Callable, Sequence
 
-from .conditions import BaseCondition
+from .token_price_conditions import BaseCondition
 
 
 class ConditionalAction:
