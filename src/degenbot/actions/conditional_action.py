@@ -1,10 +1,12 @@
 from typing import Any, Callable, Sequence
 
+from .conditions import BaseCondition
+
 
 class ConditionalAction:
     def __init__(
         self,
-        condition: Callable[[], bool],
+        condition: BaseCondition,
         actions: Sequence[Callable[[], Any]],
     ):
         self.condition = condition
