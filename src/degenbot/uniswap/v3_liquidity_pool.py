@@ -14,6 +14,7 @@ from web3.contract.contract import Contract
 
 from .. import config
 from ..baseclasses import BaseLiquidityPool
+from ..dex.baseclasses import UniswapV3Dex
 from ..dex.uniswap_dataclasses import UniswapV3DexDeployment
 from ..dex.uniswap_deployments import TICKLENS_DEPLOYMENTS
 from ..erc20_token import Erc20Token
@@ -66,6 +67,7 @@ class V3LiquidityPool(BaseLiquidityPool):
         address: str,
         dex: UniswapV3DexDeployment | None = None,
         dex: UniswapV3ExchangeDeployment | None = None,
+        dex: UniswapV3Dex | None = None,
         fee: int | None = None,
         lens: TickLens | None = None,
         tokens: List[Erc20Token] | None = None,
@@ -127,6 +129,9 @@ class V3LiquidityPool(BaseLiquidityPool):
                 self.lens = self._lens_contracts[_w3.eth.chain_id, self.factory]
             except KeyError:
                 if dex is not None:
+                    if dex is not None:
+                    self.lens = TickLens(dex.tick_lens)
+                else:
                     self.lens = TickLens(dex.tick_lens.address)
                 else:
                     if dex is not None:
