@@ -24,6 +24,7 @@ from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 
 
+@pytest.mark.skip(reason="Refactoring in progress to inject Dex info at runtime")
 def _generate_random_address() -> ChecksumAddress:
     return to_checksum_address(random.randbytes(20))
 
@@ -1133,6 +1134,20 @@ def test_adding_new_router_and_chain():
         exchanges=[quickswap_dex_deployment],
     )
 
+    quickswap_dex_deployment = UniswapV2DexDeployment(
+        name="Quickswap",
+        chain_id=QUICKSWAP_CHAIN,
+        factory=UniswapFactoryDeployment(
+            address=QUICKSWAP_V2_FACTORY_ADDRESS,
+            pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
+        ),
+    )
+    quickswap_router = UniswapRouterDeployment(
+        address=QUICKSWAP_ROUTER_ADDRESS,
+        name="Quickswap: Router",
+        exchanges=[quickswap_dex_deployment],
+    )
+
     fork = AnvilFork(
         fork_url="https://rpc.ankr.com/polygon",
         fork_block=53178474 - 1,
@@ -1141,6 +1156,28 @@ def test_adding_new_router_and_chain():
         ],
     )
     set_web3(fork.w3)
+
+    # UniswapTransaction.add_chain(QUICKSWAP_CHAIN)
+    # assert QUICKSWAP_CHAIN in PRELOADED_ROUTERS
+
+    # UniswapTransaction.add_router(
+    #     chain_id=QUICKSWAP_CHAIN,
+    #     router_address=QUICKSWAP_ROUTER_ADDRESS,
+    #     router_dict=QUICKSWAP_ROUTER_INFO,
+    # )
+    # assert QUICKSWAP_ROUTER_ADDRESS in PRELOADED_ROUTERS[QUICKSWAP_CHAIN]
+
+    # # add the init hash for this factory
+    # UniswapV2LiquidityPoolManager.add_factory(
+    #     chain_id=QUICKSWAP_CHAIN,
+    #     factory_address=QUICKSWAP_V2_FACTORY_ADDRESS,
+    # )
+    # UniswapV2LiquidityPoolManager.add_pool_init_hash(
+    #     chain_id=QUICKSWAP_CHAIN,
+    #     factory_address=QUICKSWAP_V2_FACTORY_ADDRESS,
+    #     pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
+    # )
+    # assert QUICKSWAP_CHAIN in PRELOADED_POOL_INIT_HASHES
 
     tx = UniswapTransaction(
         chain_id=QUICKSWAP_CHAIN,

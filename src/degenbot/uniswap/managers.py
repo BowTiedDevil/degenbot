@@ -8,7 +8,8 @@ from web3.contract.contract import Contract
 from .. import config
 from ..baseclasses import BaseManager
 from ..constants import ZERO_ADDRESS
-from ..dex.baseclasses import UniswapV2Dex, UniswapV3Dex
+from ..dex.baseclasses import UniswapV2DexDeployment, UniswapV3DexDeployment
+from ..dex.uniswap import PRELOADED_POOL_INIT_HASHES, PRELOADED_TICKLENS_ADDRESSES
 from ..erc20_token import Erc20Token
 from ..exceptions import ManagerError, PoolNotAssociated
 from ..exchanges.uniswap.dataclasses import UniswapV2ExchangeDeployment, UniswapV3ExchangeDeployment
@@ -116,7 +117,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         factory_address: ChecksumAddress | str,
         chain_id: int | None = None,
         exchange: UniswapV2ExchangeDeployment | None = None,
-        dex: UniswapV2Dex | None = None,
+        exchange: UniswapV2DexDeployment | None = None,
     ):
         if exchange is not None:
             chain_id = exchange.chain_id
@@ -276,7 +277,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
     def __init__(
         self,
-        factory_address: ChecksumAddress | str,
+        factory_address: ChecksumAddress | str | None = None,
         deployer_address: ChecksumAddress | str | None = None,
         chain_id: int | None = None,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
@@ -482,7 +483,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 token_addresses=tokens_key,
                 fee=pool_fee,
                 factory_or_deployer_address=self._deployer_address,
-                init_hash=self._factory_init_hash,
+                init_hash=self._pool_init_hash,
             )
         else:
             raise ValueError("THIS BLOCK SHOULD BE UNREACHABLE")
