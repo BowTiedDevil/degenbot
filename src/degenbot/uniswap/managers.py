@@ -8,6 +8,7 @@ from web3.contract.contract import Contract
 from .. import config
 from ..baseclasses import BaseManager
 from ..constants import ZERO_ADDRESS
+from ..dex.baseclasses import UniswapV2Dex, UniswapV3Dex
 from ..erc20_token import Erc20Token
 from ..exceptions import ManagerError, PoolNotAssociated
 from ..exchanges.uniswap.dataclasses import UniswapV2ExchangeDeployment, UniswapV3ExchangeDeployment
@@ -115,6 +116,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         factory_address: ChecksumAddress | str,
         chain_id: int | None = None,
         exchange: UniswapV2ExchangeDeployment | None = None,
+        dex: UniswapV2Dex | None = None,
     ):
         if exchange is not None:
             chain_id = exchange.chain_id
@@ -123,7 +125,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         else:
             chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
             factory_address = to_checksum_address(factory_address)
-            if factory_address not in FACTORY_DEPLOYMENTS[chain_id]:
+            if dex is None and factory_address not in FACTORY_DEPLOYMENTS[chain_id]:
                 raise ManagerError(
                     f"Pool manager could not be initialized from unknown factory address {factory_address}. Add the factory address and pool init hash with `add_factory`, followed by `add_pool_init_hash`"
                 )
@@ -278,6 +280,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         deployer_address: ChecksumAddress | str | None = None,
         chain_id: int | None = None,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
+        dex: UniswapV3Dex | None = None,
         pool_abi: List[Any] | None = None,
         exchange: UniswapV3ExchangeDeployment | None = None,
     ):
@@ -291,7 +294,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 raise ValueError("Factory address not provided.")
             chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
             factory_address = to_checksum_address(factory_address)
-            if any(
+            if dex is None and any(
                 [
                     factory_address not in FACTORY_DEPLOYMENTS[chain_id],
                     factory_address not in TICKLENS_DEPLOYMENTS[chain_id],

@@ -14,6 +14,7 @@ from web3.contract.contract import Contract
 
 from .. import config
 from ..baseclasses import BaseLiquidityPool
+from ..dex.baseclasses import UniswapV3Dex
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     BitmapWordUnavailableError,
@@ -62,6 +63,7 @@ class V3LiquidityPool(BaseLiquidityPool):
     def __init__(
         self,
         address: str,
+        dex: UniswapV3Dex | None = None,
         dex: UniswapV3ExchangeDeployment | None = None,
         fee: int | None = None,
         lens: TickLens | None = None,
@@ -124,6 +126,9 @@ class V3LiquidityPool(BaseLiquidityPool):
                 self.lens = self._lens_contracts[_w3.eth.chain_id, self.factory]
             except KeyError:
                 if dex is not None:
+                    self.lens = TickLens(dex.tick_lens)
+                else:
+                    if dex is not None:
                     self.lens = TickLens(dex.tick_lens.address)
                 else:
                     self.lens = TickLens(
