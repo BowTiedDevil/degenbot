@@ -14,8 +14,8 @@ from web3.contract.contract import Contract
 
 from .. import config
 from ..baseclasses import BaseLiquidityPool
-from ..dex.baseclasses import UniswapV3Dex
-from ..dex.uniswap import TICKLENS_ADDRESSES
+from ..dex.baseclasses import UniswapV3DexDeployment
+from ..dex.uniswap import PRELOADED_TICKLENS_ADDRESSES
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     BitmapWordUnavailableError,
@@ -62,7 +62,7 @@ class V3LiquidityPool(BaseLiquidityPool):
     def __init__(
         self,
         address: str,
-        dex: UniswapV3Dex | None = None,
+        dex: UniswapV3DexDeployment | None = None,
         fee: int | None = None,
         lens: TickLens | None = None,
         tokens: List[Erc20Token] | None = None,
@@ -121,12 +121,15 @@ class V3LiquidityPool(BaseLiquidityPool):
         else:
             # Use the singleton TickLens helper if available
             try:
-                self.lens = self._lens_contracts[(_w3.eth.chain_id, self.factory)]
+                self.lens = self._lens_contracts[_w3.eth.chain_id, self.factory]
             except KeyError:
                 if dex is not None:
-                    self.lens = TickLens(dex.tick_lens)
+                    self.lens = TickLens(dex.tick_lens.address)
                 else:
-                    self.lens = TickLens(address=TICKLENS_ADDRESSES[_w3.eth.chain_id][self.factory])
+                    self.lens = TickLens(
+                        address=PRELOADED_TICKLENS_ADDRESSES[_w3.eth.chain_id][self.factory]
+                    )
+            finally:
                 self._lens_contracts[(_w3.eth.chain_id, self.factory)] = self.lens
 
         token0_address: ChecksumAddress = to_checksum_address(

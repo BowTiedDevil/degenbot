@@ -5,30 +5,35 @@ from eth_typing import ChainId, ChecksumAddress, HexStr
 
 
 @dataclass(slots=True, frozen=True)
-class BaseDex:
+class BaseDexDeployment:
     name: str
-    chain: ChainId
+    chain_id: ChainId
 
 
 @dataclass(slots=True, frozen=True)
-class UniswapFactory:
+class UniswapFactoryDeployment:
     address: ChecksumAddress
     pool_init_hash: HexStr
 
 
 @dataclass(slots=True, frozen=True)
-class UniswapV2Dex(BaseDex):
-    factory: UniswapFactory
+class UniswapTickLensDeployment:
+    address: ChecksumAddress
 
 
 @dataclass(slots=True, frozen=True)
-class UniswapV3Dex(BaseDex):
-    factory: UniswapFactory
-    tick_lens: ChecksumAddress
+class UniswapV2DexDeployment(BaseDexDeployment):
+    factory: UniswapFactoryDeployment
 
 
 @dataclass(slots=True, frozen=True)
-class UniswapRouter:
+class UniswapV3DexDeployment(BaseDexDeployment):
+    factory: UniswapFactoryDeployment
+    tick_lens: UniswapTickLensDeployment
+
+
+@dataclass(slots=True, frozen=True)
+class UniswapRouterDeployment:
     address: ChecksumAddress
     name: str
-    dex: List[UniswapV2Dex | UniswapV3Dex]
+    exchanges: List[UniswapV2DexDeployment | UniswapV3DexDeployment]

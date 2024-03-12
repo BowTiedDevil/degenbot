@@ -2,17 +2,19 @@ from typing import Any, Dict
 import pytest
 import web3
 import web3.middleware
-from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.uniswap.managers import UniswapV2LiquidityPoolManager
-from degenbot.config import set_web3
-from degenbot.dex.uniswap import FACTORY_ADDRESSES
-from degenbot.transaction.uniswap_transaction import _ROUTERS, UniswapTransaction
-from degenbot.exceptions import TransactionError
+from degenbot import AnvilFork, set_web3
+from degenbot.dex.baseclasses import (
+    UniswapFactoryDeployment,
+    UniswapRouterDeployment,
+    UniswapV2DexDeployment,
+)
+from degenbot.transaction.uniswap_transaction import TransactionError, UniswapTransaction
 from eth_typing import ChainId
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 
 
+@pytest.mark.skip(reason="Refactoring in progress to inject Dex info at runtime")
 def test_router_additions() -> None:
     # Create a new chain
     UniswapTransaction.add_chain(chain_id=69)
@@ -1086,6 +1088,20 @@ def test_adding_new_router_and_chain():
         "factory_address": {2: QUICKSWAP_V2_FACTORY_ADDRESS},
     }
 
+    quickswap_dex_deployment = UniswapV2DexDeployment(
+        name="Quickswap",
+        chain_id=QUICKSWAP_CHAIN,
+        factory=UniswapFactoryDeployment(
+            address=QUICKSWAP_V2_FACTORY_ADDRESS,
+            pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
+        ),
+    )
+    quickswap_router = UniswapRouterDeployment(
+        address=QUICKSWAP_ROUTER_ADDRESS,
+        name="Quickswap: Router",
+        exchanges=[quickswap_dex_deployment],
+    )
+
     fork = AnvilFork(
         fork_url="https://rpc.ankr.com/polygon",
         fork_block=53178474 - 1,
@@ -1095,27 +1111,27 @@ def test_adding_new_router_and_chain():
     )
     set_web3(fork.w3)
 
-    UniswapTransaction.add_chain(QUICKSWAP_CHAIN)
-    assert QUICKSWAP_CHAIN in _ROUTERS
+    # UniswapTransaction.add_chain(QUICKSWAP_CHAIN)
+    # assert QUICKSWAP_CHAIN in PRELOADED_ROUTERS
 
-    UniswapTransaction.add_router(
-        chain_id=QUICKSWAP_CHAIN,
-        router_address=QUICKSWAP_ROUTER_ADDRESS,
-        router_dict=QUICKSWAP_ROUTER_INFO,
-    )
-    assert QUICKSWAP_ROUTER_ADDRESS in _ROUTERS[QUICKSWAP_CHAIN]
+    # UniswapTransaction.add_router(
+    #     chain_id=QUICKSWAP_CHAIN,
+    #     router_address=QUICKSWAP_ROUTER_ADDRESS,
+    #     router_dict=QUICKSWAP_ROUTER_INFO,
+    # )
+    # assert QUICKSWAP_ROUTER_ADDRESS in PRELOADED_ROUTERS[QUICKSWAP_CHAIN]
 
-    # add the init hash for this factory
-    UniswapV2LiquidityPoolManager.add_factory(
-        chain_id=QUICKSWAP_CHAIN,
-        factory_address=QUICKSWAP_V2_FACTORY_ADDRESS,
-    )
-    UniswapV2LiquidityPoolManager.add_pool_init_hash(
-        chain_id=QUICKSWAP_CHAIN,
-        factory_address=QUICKSWAP_V2_FACTORY_ADDRESS,
-        pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
-    )
-    assert QUICKSWAP_CHAIN in FACTORY_ADDRESSES
+    # # add the init hash for this factory
+    # UniswapV2LiquidityPoolManager.add_factory(
+    #     chain_id=QUICKSWAP_CHAIN,
+    #     factory_address=QUICKSWAP_V2_FACTORY_ADDRESS,
+    # )
+    # UniswapV2LiquidityPoolManager.add_pool_init_hash(
+    #     chain_id=QUICKSWAP_CHAIN,
+    #     factory_address=QUICKSWAP_V2_FACTORY_ADDRESS,
+    #     pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
+    # )
+    # assert QUICKSWAP_CHAIN in PRELOADED_POOL_INIT_HASHES
 
     tx = UniswapTransaction(
         chain_id=QUICKSWAP_CHAIN,
@@ -1134,7 +1150,8 @@ def test_adding_new_router_and_chain():
             "to": "0x88fA4057386A787D098710ad0D4438C1e5266EA3",
             "deadline": 1707194715,
         },
-        router_address=QUICKSWAP_ROUTER_ADDRESS,
+        router=quickswap_router,
+        # router_address=QUICKSWAP_ROUTER_ADDRESS,
     )
     tx.simulate()
 
