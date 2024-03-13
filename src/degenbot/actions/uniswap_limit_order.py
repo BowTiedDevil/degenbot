@@ -17,11 +17,11 @@ from .token_price_conditions import (
 
 
 class PriceModes(enum.Enum):
-    GREATER_THAN = enum.auto()
-    GREATER_THAN_OR_EQUAL = enum.auto()
     LESS_THAN = enum.auto()
     LESS_THAN_OR_EQUAL = enum.auto()
     EQUALS = enum.auto()
+    GREATER_THAN_OR_EQUAL = enum.auto()
+    GREATER_THAN = enum.auto()
 
 
 class UniswapLimitOrder(ConditionalAction):
