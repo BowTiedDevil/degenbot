@@ -11,7 +11,17 @@ from degenbot.exchanges.uniswap.dataclasses import (
     UniswapTickLensDeployment,
     UniswapV2ExchangeDeployment,
     UniswapV3ExchangeDeployment,
+    UniswapV3DexDeployment,
+    UniswapTickLensDeployment,
 )
+from degenbot.dex.uniswap_functions import register_exchange, register_router
+from eth_typing import ChecksumAddress
+from degenbot.dex.uniswap_deployments import (
+    TICKLENS_DEPLOYMENTS,
+    ROUTER_DEPLOYMENTS,
+    FACTORY_DEPLOYMENTS,
+)
+import random
 from degenbot.exchanges.uniswap.deployments import (
     FACTORY_DEPLOYMENTS,
     ROUTER_DEPLOYMENTS,
@@ -1144,6 +1154,7 @@ def test_adding_new_router_and_chain():
     )
     quickswap_router = UniswapRouterDeployment(
         address=QUICKSWAP_ROUTER_ADDRESS,
+        chain_id=QUICKSWAP_CHAIN,
         name="Quickswap: Router",
         exchanges=[quickswap_dex_deployment],
     )
@@ -1156,28 +1167,6 @@ def test_adding_new_router_and_chain():
         ],
     )
     set_web3(fork.w3)
-
-    # UniswapTransaction.add_chain(QUICKSWAP_CHAIN)
-    # assert QUICKSWAP_CHAIN in PRELOADED_ROUTERS
-
-    # UniswapTransaction.add_router(
-    #     chain_id=QUICKSWAP_CHAIN,
-    #     router_address=QUICKSWAP_ROUTER_ADDRESS,
-    #     router_dict=QUICKSWAP_ROUTER_INFO,
-    # )
-    # assert QUICKSWAP_ROUTER_ADDRESS in PRELOADED_ROUTERS[QUICKSWAP_CHAIN]
-
-    # # add the init hash for this factory
-    # UniswapV2LiquidityPoolManager.add_factory(
-    #     chain_id=QUICKSWAP_CHAIN,
-    #     factory_address=QUICKSWAP_V2_FACTORY_ADDRESS,
-    # )
-    # UniswapV2LiquidityPoolManager.add_pool_init_hash(
-    #     chain_id=QUICKSWAP_CHAIN,
-    #     factory_address=QUICKSWAP_V2_FACTORY_ADDRESS,
-    #     pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
-    # )
-    # assert QUICKSWAP_CHAIN in PRELOADED_POOL_INIT_HASHES
 
     tx = UniswapTransaction(
         chain_id=QUICKSWAP_CHAIN,

@@ -25,7 +25,7 @@ from ..baseclasses import BaseLiquidityPool
 from ..constants import ZERO_ADDRESS
 from ..erc20_token import Erc20Token
 from ..exceptions import BrokenPool, EVMRevertError, ZeroLiquidityError, ZeroSwapError
-from ..exchanges.curve.deployments import (
+from ..exchanges.curve.deployments_stableswap_deployments import (
     BROKEN_CURVE_V1_POOLS,
     CACHED_CURVE_V1_POOL_ATTRIBUTES,
     CURVE_V1_FACTORY_ADDRESS,

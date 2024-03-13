@@ -14,8 +14,8 @@ from web3.contract.contract import Contract
 
 from .. import config
 from ..baseclasses import BaseLiquidityPool
-from ..dex.baseclasses import UniswapV3DexDeployment
-from ..dex.uniswap import PRELOADED_TICKLENS_ADDRESSES
+from ..dex.uniswap_dataclasses import UniswapV3DexDeployment
+from ..dex.uniswap_deployments import TICKLENS_DEPLOYMENTS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     BitmapWordUnavailableError,

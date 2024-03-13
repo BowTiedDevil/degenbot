@@ -8,8 +8,8 @@ from web3.contract.contract import Contract
 from .. import config
 from ..baseclasses import BaseManager
 from ..constants import ZERO_ADDRESS
-from ..dex.baseclasses import UniswapV2DexDeployment, UniswapV3DexDeployment
-from ..dex.uniswap import PRELOADED_POOL_INIT_HASHES, PRELOADED_TICKLENS_ADDRESSES
+from ..dex.uniswap_dataclasses import UniswapV2DexDeployment, UniswapV3DexDeployment
+from ..dex.uniswap_deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
 from ..erc20_token import Erc20Token
 from ..exceptions import ManagerError, PoolNotAssociated
 from ..exchanges.uniswap.dataclasses import UniswapV2ExchangeDeployment, UniswapV3ExchangeDeployment
