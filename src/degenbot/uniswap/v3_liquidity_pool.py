@@ -14,8 +14,8 @@ from web3.contract.contract import Contract
 
 from .. import config
 from ..baseclasses import BaseLiquidityPool
-from ..dex.baseclasses import UniswapV3DexDeployment
-from ..dex.uniswap import PRELOADED_TICKLENS_ADDRESSES
+from ..dex.uniswap_dataclasses import UniswapV3DexDeployment
+from ..dex.uniswap_deployments import TICKLENS_DEPLOYMENTS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     BitmapWordUnavailableError,
@@ -127,7 +127,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                     self.lens = TickLens(dex.tick_lens.address)
                 else:
                     self.lens = TickLens(
-                        address=PRELOADED_TICKLENS_ADDRESSES[_w3.eth.chain_id][self.factory]
+                        address=TICKLENS_DEPLOYMENTS[_w3.eth.chain_id][self.factory].address
                     )
             finally:
                 self._lens_contracts[(_w3.eth.chain_id, self.factory)] = self.lens

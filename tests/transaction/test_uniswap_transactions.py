@@ -3,66 +3,100 @@ import pytest
 import web3
 import web3.middleware
 from degenbot import AnvilFork, set_web3
-from degenbot.dex.baseclasses import (
+from degenbot.dex.uniswap_dataclasses import (
     UniswapFactoryDeployment,
     UniswapRouterDeployment,
     UniswapV2DexDeployment,
+    UniswapV3DexDeployment,
+    UniswapTickLensDeployment,
 )
+from degenbot.dex.uniswap_functions import register_exchange, register_router
+from eth_typing import ChecksumAddress
+from degenbot.dex.uniswap_deployments import (
+    TICKLENS_DEPLOYMENTS,
+    ROUTER_DEPLOYMENTS,
+    FACTORY_DEPLOYMENTS,
+)
+import random
 from degenbot.transaction.uniswap_transaction import TransactionError, UniswapTransaction
 from eth_typing import ChainId
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 
 
-@pytest.mark.skip(reason="Refactoring in progress to inject Dex info at runtime")
-def test_router_additions() -> None:
-    # Create a new chain
-    UniswapTransaction.add_chain(chain_id=69)
+def _generate_random_address() -> ChecksumAddress:
+    return to_checksum_address(random.randbytes(20))
 
-    # Add a new Uniswap V2/V3 compatible router on chain ID 69
-    UniswapTransaction.add_router(
-        chain_id=69,
-        router_address="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-        router_dict={
-            "name": "Shitcoins R Us",
-            "factory_address": {
-                2: "0x02",
-                3: "0x03",
-            },
-        },
+
+def test_register_v2_exchange() -> None:
+    DEPLOYMENT_CHAIN = 69
+    FACTORY_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
+
+    exchange = UniswapV2DexDeployment(
+        name="V2 DEX",
+        chain_id=DEPLOYMENT_CHAIN,
+        factory=UniswapFactoryDeployment(
+            address=FACTORY_DEPLOYMENT_ADDRESS,
+            pool_init_hash="0x0420",
+        ),
     )
 
-    # Test validations for bad router dicts
-    with pytest.raises(ValueError, match="not found in router_dict"):
-        UniswapTransaction.add_router(
-            chain_id=69,
-            router_address="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-            router_dict={
-                # "name": "Shitcoins R Us",
-                "factory_address": {
-                    2: "0x02",
-                    3: "0x03",
-                },
-            },
-        )
-    with pytest.raises(ValueError, match="not found in router_dict"):
-        UniswapTransaction.add_router(
-            chain_id=69,
-            router_address="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-            router_dict={
-                "name": "Shitcoins R Us",
-                # "factory_address": {
-                #     2: "0x02",
-                #     3: "0x03",
-                # },
-            },
-        )
+    register_exchange(exchange)
+    assert DEPLOYMENT_CHAIN in FACTORY_DEPLOYMENTS
+    assert FACTORY_DEPLOYMENT_ADDRESS in FACTORY_DEPLOYMENTS[DEPLOYMENT_CHAIN]
+    assert FACTORY_DEPLOYMENTS[DEPLOYMENT_CHAIN][FACTORY_DEPLOYMENT_ADDRESS] is exchange.factory
 
-    # Add a new wrapped token
-    UniswapTransaction.add_wrapped_token(
-        chain_id=69,
-        token_address="0x6969696969696969696969696969696969696969",
+
+def test_register_v3_exchange() -> None:
+    DEPLOYMENT_CHAIN = 69
+    FACTORY_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
+    TICKLENS_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
+
+    exchange = UniswapV3DexDeployment(
+        name="V3 DEX",
+        chain_id=DEPLOYMENT_CHAIN,
+        factory=UniswapFactoryDeployment(
+            address=FACTORY_DEPLOYMENT_ADDRESS,
+            pool_init_hash="0x0420",
+        ),
+        tick_lens=UniswapTickLensDeployment(address=TICKLENS_DEPLOYMENT_ADDRESS),
     )
+
+    register_exchange(exchange)
+    assert DEPLOYMENT_CHAIN in FACTORY_DEPLOYMENTS
+    assert FACTORY_DEPLOYMENT_ADDRESS in FACTORY_DEPLOYMENTS[DEPLOYMENT_CHAIN]
+    assert FACTORY_DEPLOYMENTS[DEPLOYMENT_CHAIN][FACTORY_DEPLOYMENT_ADDRESS] is exchange.factory
+    assert TICKLENS_DEPLOYMENTS[DEPLOYMENT_CHAIN][FACTORY_DEPLOYMENT_ADDRESS] is exchange.tick_lens
+
+
+def test_register_router() -> None:
+    DEPLOYMENT_CHAIN = 69
+    FACTORY_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
+    TICKLENS_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
+
+    exchange = UniswapV3DexDeployment(
+        name="V3 DEX",
+        chain_id=DEPLOYMENT_CHAIN,
+        factory=UniswapFactoryDeployment(
+            address=FACTORY_DEPLOYMENT_ADDRESS,
+            pool_init_hash="0x0420",
+        ),
+        tick_lens=UniswapTickLensDeployment(address=TICKLENS_DEPLOYMENT_ADDRESS),
+    )
+
+    ROUTER_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
+
+    router = UniswapRouterDeployment(
+        address=ROUTER_DEPLOYMENT_ADDRESS,
+        chain_id=DEPLOYMENT_CHAIN,
+        name="Router",
+        exchanges=[exchange],
+    )
+
+    register_router(router)
+    assert DEPLOYMENT_CHAIN in ROUTER_DEPLOYMENTS
+    assert router.address in ROUTER_DEPLOYMENTS[DEPLOYMENT_CHAIN]
+    assert ROUTER_DEPLOYMENTS[DEPLOYMENT_CHAIN][router.address] is router
 
 
 @pytest.mark.parametrize(
@@ -1083,10 +1117,6 @@ def test_adding_new_router_and_chain():
     QUICKSWAP_CHAIN = ChainId.MATIC
     QUICKSWAP_ROUTER_ADDRESS = to_checksum_address("0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff")
     QUICKSWAP_V2_FACTORY_ADDRESS = to_checksum_address("0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32")
-    QUICKSWAP_ROUTER_INFO = {
-        "name": "Quickswap: Router",
-        "factory_address": {2: QUICKSWAP_V2_FACTORY_ADDRESS},
-    }
 
     quickswap_dex_deployment = UniswapV2DexDeployment(
         name="Quickswap",
@@ -1098,6 +1128,7 @@ def test_adding_new_router_and_chain():
     )
     quickswap_router = UniswapRouterDeployment(
         address=QUICKSWAP_ROUTER_ADDRESS,
+        chain_id=QUICKSWAP_CHAIN,
         name="Quickswap: Router",
         exchanges=[quickswap_dex_deployment],
     )
@@ -1110,28 +1141,6 @@ def test_adding_new_router_and_chain():
         ],
     )
     set_web3(fork.w3)
-
-    # UniswapTransaction.add_chain(QUICKSWAP_CHAIN)
-    # assert QUICKSWAP_CHAIN in PRELOADED_ROUTERS
-
-    # UniswapTransaction.add_router(
-    #     chain_id=QUICKSWAP_CHAIN,
-    #     router_address=QUICKSWAP_ROUTER_ADDRESS,
-    #     router_dict=QUICKSWAP_ROUTER_INFO,
-    # )
-    # assert QUICKSWAP_ROUTER_ADDRESS in PRELOADED_ROUTERS[QUICKSWAP_CHAIN]
-
-    # # add the init hash for this factory
-    # UniswapV2LiquidityPoolManager.add_factory(
-    #     chain_id=QUICKSWAP_CHAIN,
-    #     factory_address=QUICKSWAP_V2_FACTORY_ADDRESS,
-    # )
-    # UniswapV2LiquidityPoolManager.add_pool_init_hash(
-    #     chain_id=QUICKSWAP_CHAIN,
-    #     factory_address=QUICKSWAP_V2_FACTORY_ADDRESS,
-    #     pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
-    # )
-    # assert QUICKSWAP_CHAIN in PRELOADED_POOL_INIT_HASHES
 
     tx = UniswapTransaction(
         chain_id=QUICKSWAP_CHAIN,

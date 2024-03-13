@@ -8,8 +8,8 @@ from web3.contract.contract import Contract
 from .. import config
 from ..baseclasses import BaseManager
 from ..constants import ZERO_ADDRESS
-from ..dex.baseclasses import UniswapV2DexDeployment, UniswapV3DexDeployment
-from ..dex.uniswap import PRELOADED_POOL_INIT_HASHES, PRELOADED_TICKLENS_ADDRESSES
+from ..dex.uniswap_dataclasses import UniswapV2DexDeployment, UniswapV3DexDeployment
+from ..dex.uniswap_deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
 from ..erc20_token import Erc20Token
 from ..exceptions import ManagerError, PoolNotAssociated
 from ..logging import logger
@@ -123,11 +123,11 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         else:
             chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
             factory_address = to_checksum_address(factory_address)
-            if factory_address not in PRELOADED_POOL_INIT_HASHES[chain_id]:
+            if factory_address not in FACTORY_DEPLOYMENTS[chain_id]:
                 raise ManagerError(
                     f"Pool manager could not be initialized from unknown factory address {factory_address}. Add the factory address and pool init hash with `add_factory`, followed by `add_pool_init_hash`"
                 )
-            pool_init_hash = PRELOADED_POOL_INIT_HASHES[chain_id][factory_address]["init_hash"]
+            pool_init_hash = FACTORY_DEPLOYMENTS[chain_id][factory_address].pool_init_hash
 
         super().__init__(
             factory_address=factory_address,
@@ -293,15 +293,15 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             factory_address = to_checksum_address(factory_address)
             if any(
                 [
-                    factory_address not in PRELOADED_POOL_INIT_HASHES[chain_id],
-                    factory_address not in PRELOADED_TICKLENS_ADDRESSES[chain_id],
+                    factory_address not in FACTORY_DEPLOYMENTS[chain_id],
+                    factory_address not in TICKLENS_DEPLOYMENTS[chain_id],
                 ]
             ):
                 raise ManagerError(
-                    f"Pool manager could not be initialized from unknown factory address {factory_address}. Provide a UniswapV3DexDeployment with the `dex` argument."
+                    f"Pool manager could not be initialized from unknown factory address {factory_address}. Provide a UniswapV3DexDeployment with the `exchange` argument, or load the deployment using degenbot.dex.load_deployment()"
                 )
-            tick_lens_address = PRELOADED_TICKLENS_ADDRESSES[chain_id][factory_address]
-            pool_init_hash = PRELOADED_POOL_INIT_HASHES[chain_id][factory_address]["init_hash"]
+            tick_lens_address = TICKLENS_DEPLOYMENTS[chain_id][factory_address].address
+            pool_init_hash = FACTORY_DEPLOYMENTS[chain_id][factory_address].pool_init_hash
 
         super().__init__(
             factory_address=factory_address,

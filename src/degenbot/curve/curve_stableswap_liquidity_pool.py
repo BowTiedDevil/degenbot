@@ -23,7 +23,7 @@ from web3.types import BlockIdentifier
 from .. import config
 from ..baseclasses import BaseLiquidityPool
 from ..constants import ZERO_ADDRESS
-from ..dex.curve import (
+from ..dex.curve_stableswap_deployments import (
     BROKEN_CURVE_V1_POOLS,
     CACHED_CURVE_V1_POOL_ATTRIBUTES,
     CURVE_V1_FACTORY_ADDRESS,

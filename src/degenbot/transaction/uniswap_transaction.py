@@ -14,12 +14,12 @@ from web3 import Web3
 from .. import config
 from ..baseclasses import BaseSimulationResult, BaseTransaction
 from ..constants import WRAPPED_NATIVE_TOKENS
-from ..dex.baseclasses import (
+from ..dex.uniswap_dataclasses import (
     UniswapRouterDeployment,
     UniswapV2DexDeployment,
     UniswapV3DexDeployment,
 )
-from ..dex.uniswap import PRELOADED_ROUTERS
+from ..dex.uniswap_deployments import ROUTER_DEPLOYMENTS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     DegenbotError,
@@ -196,10 +196,10 @@ class UniswapTransaction(BaseTransaction):
             self.chain_id = int(chain_id, 16) if isinstance(chain_id, str) else chain_id
 
             self.router_address = to_checksum_address(router_address)
-            if self.router_address not in PRELOADED_ROUTERS[self.chain_id]:
+            if self.router_address not in ROUTER_DEPLOYMENTS[self.chain_id]:
                 raise ValueError(f"Router address {router_address} unknown!")
 
-            router_deployment = PRELOADED_ROUTERS[self.chain_id][self.router_address]
+            router_deployment = ROUTER_DEPLOYMENTS[self.chain_id][self.router_address]
 
             # Create pool managers for the supported exchanges
             for exchange in router_deployment.exchanges:

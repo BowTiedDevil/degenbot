@@ -1,13 +1,9 @@
 from dataclasses import dataclass
 from typing import List
 
-from eth_typing import ChainId, ChecksumAddress, HexStr
+from eth_typing import ChecksumAddress, HexStr
 
-
-@dataclass(slots=True, frozen=True)
-class BaseDexDeployment:
-    name: str
-    chain_id: ChainId
+from .base_dataclasses import BaseDexDeployment
 
 
 @dataclass(slots=True, frozen=True)
@@ -35,5 +31,6 @@ class UniswapV3DexDeployment(BaseDexDeployment):
 @dataclass(slots=True, frozen=True)
 class UniswapRouterDeployment:
     address: ChecksumAddress
+    chain_id: int
     name: str
     exchanges: List[UniswapV2DexDeployment | UniswapV3DexDeployment]
