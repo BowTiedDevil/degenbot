@@ -1,4 +1,6 @@
 import enum
+from decimal import Decimal
+from fractions import Fraction
 from typing import Any, Callable, Sequence
 
 from ..erc20_token import Erc20Token
@@ -25,10 +27,10 @@ class PRICEMODE(enum.Enum):
 class UniswapLimitOrder(ConditionalAction):
     def __init__(
         self,
-        token: Erc20Token,
         pool: LiquidityPool | V3LiquidityPool,
+        token: Erc20Token,
         mode: PRICEMODE,
-        target,
+        target: int | float | Decimal | Fraction,
         actions: Sequence[Callable[[], Any]],
     ):
         if mode not in PRICEMODE:
