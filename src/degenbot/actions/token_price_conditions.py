@@ -21,6 +21,15 @@ class TokenPriceCondition(BaseCondition):
         pool: LiquidityPool | V3LiquidityPool,
         target: int | float | Decimal | Fraction,
     ):
+        """
+        An abstract condition that can access the instantaneous price of `token` in terms of the
+        other token held by `pool`. The price is absolute, i.e. it does not account for decimal
+        places in ERC-20 token contracts.
+
+        Derived classes should override the `__call__` method to implement boolean conditions
+        related to this price.
+        """
+
         self.token = token
         self.pool = pool
         self.target = target
