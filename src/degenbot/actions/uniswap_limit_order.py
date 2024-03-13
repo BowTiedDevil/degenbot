@@ -79,7 +79,7 @@ class UniswapLimitOrder(ConditionalAction):
         return cls(
             pool=pool,
             buy_token=buy_token,
-            mode=price_mode,
-            target=absolute_target,
+            price_mode=price_mode,
+            price_target=absolute_target,
             actions=actions,
         )
