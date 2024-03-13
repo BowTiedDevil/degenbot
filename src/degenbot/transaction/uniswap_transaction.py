@@ -21,12 +21,12 @@ from ..dex.uniswap_dataclasses import (
     UniswapV3DexDeployment,
 )
 from ..dex.uniswap_deployments import ROUTER_DEPLOYMENTS
-from ..dex.baseclasses import (
+from ..dex.uniswap_dataclasses import (
     UniswapRouterDeployment,
     UniswapV2DexDeployment,
     UniswapV3DexDeployment,
 )
-from ..dex.uniswap import PRELOADED_ROUTERS
+from ..dex.uniswap_deployments import ROUTER_DEPLOYMENTS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     DegenbotError,
