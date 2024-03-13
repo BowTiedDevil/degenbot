@@ -1,7 +1,7 @@
 import functools
 
 from degenbot.actions.token_price_conditions import TokenPriceCondition
-from degenbot.actions.uniswap_limit_order import PRICEMODE, UniswapLimitOrder
+from degenbot.actions.uniswap_limit_order import PriceModes, UniswapLimitOrder
 from degenbot.erc20_token import Erc20Token
 from degenbot.uniswap.v2_liquidity_pool import LiquidityPool
 
@@ -15,7 +15,7 @@ def test_limit_order_creation() -> None:
 
     dummy_action = functools.partial(print, "action")
 
-    for price_mode in PRICEMODE:
+    for price_mode in PriceModes:
         order = UniswapLimitOrder(
             token=wbtc,
             pool=wbtc_weth_pool,

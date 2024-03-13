@@ -16,7 +16,7 @@ from .token_price_conditions import (
 )
 
 
-class PRICEMODE(enum.Enum):
+class PriceModes(enum.Enum):
     GREATER_THAN = enum.auto()
     GREATER_THAN_OR_EQUAL = enum.auto()
     LESS_THAN = enum.auto()
@@ -29,23 +29,23 @@ class UniswapLimitOrder(ConditionalAction):
         self,
         pool: LiquidityPool | V3LiquidityPool,
         token: Erc20Token,
-        mode: PRICEMODE,
+        mode: PriceModes,
         target: int | float | Decimal | Fraction,
         actions: Sequence[Callable[[], Any]],
     ):
-        if mode not in PRICEMODE:
+        if mode not in PriceModes:
             raise ValueError(f"Unknown price mode {mode} specified")
 
         match mode:
-            case PRICEMODE.GREATER_THAN:
+            case PriceModes.GREATER_THAN:
                 self.condition = TokenPriceGreaterThan(token=token, pool=pool, target=target)
-            case PRICEMODE.GREATER_THAN_OR_EQUAL:
+            case PriceModes.GREATER_THAN_OR_EQUAL:
                 self.condition = TokenPriceGreaterThanOrEqual(token=token, pool=pool, target=target)
-            case PRICEMODE.LESS_THAN:
+            case PriceModes.LESS_THAN:
                 self.condition = TokenPriceLessThan(token=token, pool=pool, target=target)
-            case PRICEMODE.LESS_THAN_OR_EQUAL:
+            case PriceModes.LESS_THAN_OR_EQUAL:
                 self.condition = TokenPriceLessThanOrEqual(token=token, pool=pool, target=target)
-            case PRICEMODE.EQUALS:
+            case PriceModes.EQUALS:
                 self.condition = TokenPriceEquals(token=token, pool=pool, target=target)
 
         self.actions = actions
