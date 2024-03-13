@@ -28,24 +28,58 @@ class UniswapLimitOrder(ConditionalAction):
     def __init__(
         self,
         pool: LiquidityPool | V3LiquidityPool,
-        token: Erc20Token,
-        mode: PriceModes,
-        target: int | float | Decimal | Fraction,
+        buy_token: Erc20Token,
+        price_mode: PriceModes,
+        price_target: int | float | Decimal | Fraction,
         actions: Sequence[Callable[[], Any]],
     ):
-        if mode not in PriceModes:
-            raise ValueError(f"Unknown price mode {mode} specified")
+        """
+        A Uniswap limit order, triggered by conditions involving the token price of `token` in the given `pool`
+        """
 
-        match mode:
-            case PriceModes.GREATER_THAN:
-                self.condition = TokenPriceGreaterThan(token=token, pool=pool, target=target)
-            case PriceModes.GREATER_THAN_OR_EQUAL:
-                self.condition = TokenPriceGreaterThanOrEqual(token=token, pool=pool, target=target)
+        match price_mode:
             case PriceModes.LESS_THAN:
-                self.condition = TokenPriceLessThan(token=token, pool=pool, target=target)
+                self.condition = TokenPriceLessThan(token=buy_token, pool=pool, target=price_target)
             case PriceModes.LESS_THAN_OR_EQUAL:
-                self.condition = TokenPriceLessThanOrEqual(token=token, pool=pool, target=target)
+                self.condition = TokenPriceLessThanOrEqual(
+                    token=buy_token, pool=pool, target=price_target
+                )
             case PriceModes.EQUALS:
-                self.condition = TokenPriceEquals(token=token, pool=pool, target=target)
+                self.condition = TokenPriceEquals(token=buy_token, pool=pool, target=price_target)
+            case PriceModes.GREATER_THAN_OR_EQUAL:
+                self.condition = TokenPriceGreaterThanOrEqual(
+                    token=buy_token, pool=pool, target=price_target
+                )
+            case PriceModes.GREATER_THAN:
+                self.condition = TokenPriceGreaterThan(
+                    token=buy_token, pool=pool, target=price_target
+                )
+            case _:
+                raise ValueError(f"Unknown price mode {price_mode} specified")
 
         self.actions = actions
+
+    @classmethod
+    def from_nominal_price(
+        cls,
+        pool: LiquidityPool | V3LiquidityPool,
+        buy_token: Erc20Token,
+        price_mode: PriceModes,
+        price_target: int | float | Decimal | Fraction,
+        actions: Sequence[Callable[[], Any]],
+    ) -> "UniswapLimitOrder":
+        """
+        Build a Uniswap limit order using nominal prices. Translates nominal values to absolute
+        values for the token.
+
+        e.g. a price target of 100.00 USDC is translated to 100.00 * 10**6
+        """
+
+        absolute_target = price_target * 10**buy_token.decimals
+        return cls(
+            pool=pool,
+            buy_token=buy_token,
+            mode=price_mode,
+            target=absolute_target,
+            actions=actions,
+        )
