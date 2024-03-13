@@ -203,7 +203,7 @@ class UniswapTransaction(BaseTransaction):
             self.chain_id = int(chain_id, 16) if isinstance(chain_id, str) else chain_id
 
             self.router_address = to_checksum_address(router_address)
-            if self.router_address not in ROUTER_DEPLOYMENTS[self.chain_id]:
+            if self.self.router_address not in ROUTER_DEPLOYMENTS[self.chain_id]:
                 raise ValueError(f"Router address {router_address} unknown!")
 
             router_deployment = ROUTER_DEPLOYMENTS[self.chain_id][self.router_address]
