@@ -16,7 +16,7 @@ from .token_price_conditions import (
 )
 
 
-class PriceModes(enum.Enum):
+class ComparisonModes(enum.Enum):
     LESS_THAN = enum.auto()
     LESS_THAN_OR_EQUAL = enum.auto()
     EQUALS = enum.auto()
@@ -29,33 +29,57 @@ class UniswapLimitOrder(ConditionalAction):
         self,
         pool: LiquidityPool | V3LiquidityPool,
         buy_token: Erc20Token,
-        price_mode: PriceModes,
+        mode: ComparisonModes,
         price_target: int | float | Decimal | Fraction,
         actions: Sequence[Callable[[], Any]],
     ):
         """
-        A Uniswap limit order, triggered by conditions involving the token price of `token` in the given `pool`
+        A Uniswap limit order, conditionally executed against the price of `token` in the given
+        `pool`.
         """
 
-        match price_mode:
-            case PriceModes.LESS_THAN:
-                self.condition = TokenPriceLessThan(token=buy_token, pool=pool, target=price_target)
-            case PriceModes.LESS_THAN_OR_EQUAL:
+        # Convert int or float price targets to Decimal values so the inverse operation does not
+        # introduce floating point error
+        if isinstance(price_target, float):
+            target_rate = Decimal.from_float(price_target)
+        elif isinstance(price_target, int):
+            target_rate = Decimal(price_target)
+        else:
+            target_rate = 1 / price_target
+
+        match mode:
+            case ComparisonModes.LESS_THAN:
+                self.condition = TokenPriceLessThan(
+                    token=buy_token,
+                    pool=pool,
+                    target=target_rate,
+                )
+            case ComparisonModes.LESS_THAN_OR_EQUAL:
                 self.condition = TokenPriceLessThanOrEqual(
-                    token=buy_token, pool=pool, target=price_target
+                    token=buy_token,
+                    pool=pool,
+                    target=target_rate,
                 )
-            case PriceModes.EQUALS:
-                self.condition = TokenPriceEquals(token=buy_token, pool=pool, target=price_target)
-            case PriceModes.GREATER_THAN_OR_EQUAL:
+            case ComparisonModes.EQUALS:
+                self.condition = TokenPriceEquals(
+                    token=buy_token,
+                    pool=pool,
+                    target=target_rate,
+                )
+            case ComparisonModes.GREATER_THAN_OR_EQUAL:
                 self.condition = TokenPriceGreaterThanOrEqual(
-                    token=buy_token, pool=pool, target=price_target
+                    token=buy_token,
+                    pool=pool,
+                    target=target_rate,
                 )
-            case PriceModes.GREATER_THAN:
+            case ComparisonModes.GREATER_THAN:
                 self.condition = TokenPriceGreaterThan(
-                    token=buy_token, pool=pool, target=price_target
+                    token=buy_token,
+                    pool=pool,
+                    target=target_rate,
                 )
             case _:
-                raise ValueError(f"Unknown price mode {price_mode} specified")
+                raise ValueError(f"Unknown price mode {mode} specified")
 
         self.actions = actions
 
@@ -64,22 +88,23 @@ class UniswapLimitOrder(ConditionalAction):
         cls,
         pool: LiquidityPool | V3LiquidityPool,
         buy_token: Erc20Token,
-        price_mode: PriceModes,
+        mode: ComparisonModes,
         price_target: int | float | Decimal | Fraction,
         actions: Sequence[Callable[[], Any]],
     ) -> "UniswapLimitOrder":
         """
-        Build a Uniswap limit order using nominal prices. Translates nominal values to absolute
-        values for the token.
+        Build a Uniswap limit order using a nominal price target. Translates nominal values to
+        absolute values for the given token by correcting for decimal places.
 
         e.g. a price target of 100.00 USDC is translated to 100.00 * 10**6
         """
 
-        absolute_target = price_target * 10**buy_token.decimals
+        absolute_price = price_target * 10**buy_token.decimals
+
         return cls(
             pool=pool,
             buy_token=buy_token,
-            price_mode=price_mode,
-            price_target=absolute_target,
+            mode=mode,
+            price_target=absolute_price,
             actions=actions,
         )

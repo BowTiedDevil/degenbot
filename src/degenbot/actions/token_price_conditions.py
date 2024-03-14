@@ -1,4 +1,4 @@
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from decimal import Decimal
 from fractions import Fraction
 
@@ -7,7 +7,7 @@ from ..uniswap.v2_liquidity_pool import LiquidityPool
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
 
 
-class BaseCondition:
+class BaseCondition(ABC):
     # Derived classes must implement a `__call__` method so the condition can be evaluated as a
     # callable.
     @abstractmethod
@@ -52,6 +52,11 @@ class TokenPriceLessThanOrEqual(TokenPriceCondition):
         return self.price <= self.target
 
 
+class TokenPriceEquals(TokenPriceCondition):
+    def __call__(self) -> bool:
+        return self.price == self.target
+
+
 class TokenPriceGreaterThan(TokenPriceCondition):
     def __call__(self) -> bool:
         return self.price > self.target
@@ -60,8 +65,3 @@ class TokenPriceGreaterThan(TokenPriceCondition):
 class TokenPriceGreaterThanOrEqual(TokenPriceCondition):
     def __call__(self) -> bool:
         return self.price > self.target
-
-
-class TokenPriceEquals(TokenPriceCondition):
-    def __call__(self) -> bool:
-        return self.price == self.target
