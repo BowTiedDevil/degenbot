@@ -1147,9 +1147,9 @@ class V3LiquidityPool(BaseLiquidityPool):
                 ),
             )
 
-    def get_absolute_price(self, token: Erc20Token) -> Fraction:
+    def get_absolute_rate(self, token: Erc20Token) -> Fraction:
         """
-        Get the absolute price for the given token, expressed as a ratio of the two pool tokens.
+        Get the absolute rate of exchange for the given token, expressed in units of the other.
         """
 
         if token == self.token0:
@@ -1159,10 +1159,17 @@ class V3LiquidityPool(BaseLiquidityPool):
         else:
             raise ValueError(f"Unknown token {token}")
 
-    def get_nominal_price(self, token: Erc20Token) -> Fraction:
+    def get_absolute_price(self, token: Erc20Token) -> Fraction:
         """
-        Get the nominal price for the given token, expressed as a ratio of the two pool tokens,
-        corrected for decimal place values.
+        Get the absolute price for the given token, expressed in units of the other.
+        """
+
+        return 1 / self.get_absolute_rate(token)
+
+    def get_nominal_rate(self, token: Erc20Token) -> Fraction:
+        """
+        Get the nominal rate for the given token, expressed in units of the other, corrected for
+        decimal place values.
         """
 
         if token == self.token0:
@@ -1181,3 +1188,10 @@ class V3LiquidityPool(BaseLiquidityPool):
             )
         else:
             raise ValueError(f"Unknown token {token}")
+
+    def get_nominal_price(self, token: Erc20Token) -> Fraction:
+        """
+        Get the nominal price for the given token, expressed in units of the other, corrected for
+        decimal place values.
+        """
+        return 1 / self.get_nominal_rate(token)

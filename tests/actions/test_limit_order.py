@@ -3,7 +3,7 @@ from decimal import Decimal
 from fractions import Fraction
 
 from degenbot.actions.token_price_conditions import TokenPriceCondition
-from degenbot.actions.uniswap_limit_order import PriceModes, UniswapLimitOrder
+from degenbot.actions.uniswap_limit_order import ComparisonModes, UniswapLimitOrder
 from degenbot.erc20_token import Erc20Token
 from degenbot.uniswap.v2_liquidity_pool import LiquidityPool
 
@@ -19,28 +19,29 @@ def test_limit_order_creation() -> None:
 
     NOMINAL_PRICE_TARGET = Decimal("0.05")  # Nominal price of 0.05 WBTC/WETH
     ABSOLUTE_PRICE_TARGET = NOMINAL_PRICE_TARGET * 10**wbtc.decimals
+    ABSOLUTE_RATE_TARGET = 1 / ABSOLUTE_PRICE_TARGET
 
-    for price_mode in PriceModes:
+    for price_mode in ComparisonModes:
         order = UniswapLimitOrder.from_nominal_price(
             pool=wbtc_weth_pool,
             buy_token=wbtc,
             price_target=NOMINAL_PRICE_TARGET,
-            price_mode=price_mode,
+            mode=price_mode,
             actions=[dummy_action],
         )
         assert isinstance(order.condition, TokenPriceCondition)
-        assert order.condition.target == ABSOLUTE_PRICE_TARGET
+        assert order.condition.target == ABSOLUTE_RATE_TARGET
 
-    for price_mode in PriceModes:
+    for price_mode in ComparisonModes:
         order = UniswapLimitOrder(
             pool=wbtc_weth_pool,
             buy_token=wbtc,
             price_target=ABSOLUTE_PRICE_TARGET,
-            price_mode=price_mode,
+            mode=price_mode,
             actions=[dummy_action],
         )
         assert isinstance(order.condition, TokenPriceCondition)
-        assert order.condition.target == ABSOLUTE_PRICE_TARGET
+        assert order.condition.target == ABSOLUTE_RATE_TARGET
 
     # Test with alternative target formats
     for target in [0.05, Fraction(1, 20)]:
@@ -48,7 +49,7 @@ def test_limit_order_creation() -> None:
             pool=wbtc_weth_pool,
             buy_token=wbtc,
             price_target=target,
-            price_mode=price_mode,
+            mode=price_mode,
             actions=[dummy_action],
         )
         order.check()
