@@ -1,3 +1,4 @@
+from fractions import Fraction
 from itertools import cycle
 from typing import Iterable, List
 
@@ -39,6 +40,11 @@ def decode_v3_path(path: bytes) -> List[ChecksumAddress | int]:
             break
 
     return decoded_path
+
+
+def exchange_rate_from_sqrt_price_x96(sqrt_price_x96: int) -> Fraction:
+    # ref: https://blog.uniswap.org/uniswap-v3-math-primer
+    return Fraction(sqrt_price_x96**2, 2**192)
 
 
 def generate_v3_pool_address(

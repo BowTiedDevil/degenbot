@@ -701,18 +701,12 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         """
 
         if token == self.token0:
-            return (
-                Fraction(self.reserves_token0)
-                / Fraction(self.reserves_token1)
-                * Fraction(10**self.token1.decimals)
-                / Fraction(10**self.token0.decimals)
+            return Fraction(self.reserves_token0, 10**self.token0.decimals) * Fraction(
+                10**self.token1.decimals, self.reserves_token1
             )
         elif token == self.token1:
-            return (
-                Fraction(self.reserves_token1)
-                / Fraction(self.reserves_token0)
-                * Fraction(10**self.token0.decimals)
-                / Fraction(10**self.token1.decimals)
+            return Fraction(self.reserves_token1, 10**self.token1.decimals) * Fraction(
+                10**self.token0.decimals, self.reserves_token0
             )
         else:
             raise ValueError(f"Unknown token {token}")

@@ -3,7 +3,6 @@ import asyncio.futures
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Awaitable, Dict, Iterable, List, Sequence, Tuple
-from warnings import warn
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -19,6 +18,7 @@ from ..subscription_mixins import Publisher, Subscriber
 from ..uniswap.v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from ..uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
 from ..uniswap.v3_dataclasses import UniswapV3PoolSimulationResult, UniswapV3PoolState
+from ..uniswap.v3_functions import exchange_rate_from_sqrt_price_x96
 from ..uniswap.v3_libraries import TickMath
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
 from .arbitrage_dataclasses import (
@@ -408,14 +408,14 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                                 f"V3 pool {pool.address} has no liquidity for a 1 -> 0 swap"
                             )
 
-                    price = pool_state.sqrt_price_x96**2 / (2**192)
+                    price = exchange_rate_from_sqrt_price_x96(pool_state.sqrt_price_x96)
 
                     # V3 fees are integer values representing hundredths of a bip (0.0001)
                     # e.g. fee=3000 represents 0.3%
                     fee = Fraction(pool._fee, 1000000)
 
                 case _:
-                    ...
+                    raise ValueError(f"Unrecognized pool: {pool}")
 
             profit_factor *= (price if vector.zero_for_one else 1 / price) * (
                 (fee.denominator - fee.numerator) / fee.denominator
