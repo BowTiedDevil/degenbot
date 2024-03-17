@@ -372,7 +372,7 @@ def test_calculate_tokens_out_from_ratio_out(fork_mainnet_archive: AnvilFork) ->
 
 
 def test_calculate_tokens_out_from_tokens_in(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool,
 ) -> None:
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool.calculate_tokens_out_from_tokens_in(
@@ -403,7 +403,7 @@ def test_calculate_tokens_out_from_tokens_in(
 
 
 def test_calculate_tokens_out_from_tokens_in_with_override(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool,
 ) -> None:
     # Overridden reserve values for this test are taken at block height 17,650,000
     # token0 reserves: 16027096956
@@ -426,7 +426,7 @@ def test_calculate_tokens_out_from_tokens_in_with_override(
 
 
 def test_calculate_tokens_in_from_tokens_out(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool,
 ) -> None:
     """
     Reserve values for this test are taken at block height 17,600,000
@@ -450,7 +450,7 @@ def test_calculate_tokens_in_from_tokens_out(
 
 
 def test_calculate_tokens_in_from_tokens_out_with_override(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool,
 ) -> None:
     # Overridden reserve values for this test are taken at block height 17,650,000
     # token0 reserves: 16027096956
@@ -660,7 +660,7 @@ def test_simulations(ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool)
 
 
 def test_simulations_with_override(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool,
 ) -> None:
     sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=8000000000,

@@ -125,7 +125,7 @@ class BuilderEndpoint:
         }
 
         if isinstance(state_block, str):
-            if state_block != "latest":
+            if state_block != "latest":  # pragma: no cover
                 raise ValueError("state_block tag may only be an integer, or the string 'latest'")
             bundle_params["stateBlockNumber"] = state_block
         elif isinstance(state_block, int):

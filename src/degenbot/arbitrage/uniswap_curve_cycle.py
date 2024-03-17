@@ -9,12 +9,7 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import minimize_scalar
 from web3 import Web3
 
-from ..baseclasses import (
-    BaseArbitrage,
-    BaseLiquidityPool,
-    BasePoolState,
-    UniswapSimulationResult,
-)
+from ..baseclasses import BaseArbitrage, BaseLiquidityPool, BasePoolState, UniswapSimulationResult
 from ..config import get_web3
 from ..constants import MAX_UINT256
 from ..curve.curve_stableswap_dataclasses import CurveStableswapPoolState

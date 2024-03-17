@@ -52,8 +52,6 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         silent: bool = False,
         state_block: int | None = None,
         empty: bool = False,
-        update_reserves_on_start: bool | None = None,  # deprecated
-        unload_brownie_contract_after_init: bool | None = None,  # deprecated
     ) -> None:
         """
         Create a new `LiquidityPool` object for interaction with a Uniswap
@@ -109,14 +107,6 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         )
 
         self._state_lock = Lock()
-
-        if unload_brownie_contract_after_init is not None:  # pragma: no cover
-            warnings.warn("unload_brownie_contract_after_init has been deprecated and is ignored.")
-
-        if update_reserves_on_start is not None:  # pragma: no cover
-            warnings.warn(
-                "update_reserves_on_start has been deprecated in favor of `empty` argument."
-            )
 
         self.address: ChecksumAddress = to_checksum_address(address)
         self.abi = abi if abi is not None else UNISWAP_V2_POOL_ABI
@@ -320,79 +310,43 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         self,
         token_out_quantity: int,
         token_out: Erc20Token,
-        token_in: Erc20Token | None = None,
-        override_reserves_token0: int | None = None,
-        override_reserves_token1: int | None = None,
         override_state: UniswapV2PoolState | None = None,
     ) -> int:
         """
-        Calculates the required token INPUT of token_in for a target OUTPUT
-        at current pool reserves. Uses the `self.token0` and `self.token1`
-        references to determine which token is being swapped in.
+        Calculates the required token INPUT of token_in for a target OUTPUT at current pool
+        reserves.
 
-        @dev This method accepts overrides in the form of individual tokens
-        reserves or a single override dictionary. The override dictionary is
-        used by other helpers and is the preferred method. The individual
-        overrides are left here for backward compatibility with older scripts,
-        and will be deprecated in the future.
+        Accepts a `UniswapV2PoolState` state override for calculation against an arbitrary state
+        in lieu of the recorded state.
         """
 
-        if token_in is not None:
-            warnings.warn(
-                "The use of token_in is deprecated and will be removed in the future. Please modify your calling code to specify token_out instead."
-            )
+        if token_out_quantity <= 0:  # pragma: no cover
+            raise ZeroSwapError("token_out_quantity must be positive")
 
-        if (
-            override_state is None
-            and override_reserves_token0 is not None
-            and override_reserves_token1 is not None
-        ):
-            override_state = UniswapV2PoolState(
-                pool=self,
-                reserves_token0=override_reserves_token0,
-                reserves_token1=override_reserves_token1,
-            )
-            warnings.warn(
-                "Overriding individual reserves is deprecated in favor of a single state override via override_state. The individual overrides have been transformed in-place, but this will be removed in a future release."
-            )
-
-        if override_state:
-            # if override_reserves_token0 or override_reserves_token1:
-            #     raise ValueError(
-            #         "Provide a single override via `override_state` or individual reserves."
-            #     )
-            override_reserves_token0 = override_state.reserves_token0
-            override_reserves_token1 = override_state.reserves_token1
-            logger.debug("Reserve overrides applied:")
-            logger.debug(f"token0: {override_reserves_token0}")
-            logger.debug(f"token1: {override_reserves_token1}")
-
-            # if (override_reserves_token0 and not override_reserves_token1) or (
-            #     not override_reserves_token0 and override_reserves_token1
-            # ):
-            #     raise ValueError("Must provide reserve override values for both tokens")
+        if override_state:  # pragma: no cover
+            logger.debug(f"State overrides applied: {override_state}")
 
         if token_out == self.token1:
             reserves_in = (
-                override_reserves_token0
-                if override_reserves_token0 is not None
+                override_state.reserves_token0
+                if override_state is not None
                 else self.reserves_token0
             )
             reserves_out = (
-                override_reserves_token1
-                if override_reserves_token1 is not None
+                override_state.reserves_token1
+                if override_state is not None
                 else self.reserves_token1
             )
             fee = self.fee_token0
         elif token_out == self.token0:
             reserves_in = (
-                override_reserves_token1
-                if override_reserves_token1 is not None
+                override_state.reserves_token1
+                if override_state is not None
                 else self.reserves_token1
             )
             reserves_out = (
-                override_reserves_token0
-                if override_reserves_token0 is not None
+                override_state.reserves_token0
+                if override_state is not None
                 else self.reserves_token0
             )
             fee = self.fee_token1
@@ -415,60 +369,39 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        override_reserves_token0: int | None = None,
-        override_reserves_token1: int | None = None,
         override_state: UniswapV2PoolState | None = None,
     ) -> int:
         """
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
-        Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         """
 
-        if token_in_quantity <= 0:
+        if token_in_quantity <= 0:  # pragma: no cover
             raise ZeroSwapError("token_in_quantity must be positive")
 
-        if (
-            override_state is None
-            and override_reserves_token0 is not None
-            and override_reserves_token1 is not None
-        ):  # pragma: no cover
-            warnings.warn(
-                "Overriding individual reserves is deprecated in favor of a single state override via override_state. The individual overrides have been transformed in-place, but this will be removed in a future release."
-            )
-            override_state = UniswapV2PoolState(
-                pool=self,
-                reserves_token0=override_reserves_token0,
-                reserves_token1=override_reserves_token1,
-            )
-
-        if override_state:
-            override_reserves_token0 = override_state.reserves_token0
-            override_reserves_token1 = override_state.reserves_token1
-            logger.debug("Reserve overrides applied:")
-            logger.debug(f"token0: {override_reserves_token0}")
-            logger.debug(f"token1: {override_reserves_token1}")
+        if override_state:  # pragma: no cover
+            logger.debug(f"State overrides applied: {override_state}")
 
         if token_in == self.token0:
             reserves_in = (
-                override_reserves_token0
-                if override_reserves_token0 is not None
+                override_state.reserves_token0
+                if override_state is not None
                 else self.reserves_token0
             )
             reserves_out = (
-                override_reserves_token1
-                if override_reserves_token1 is not None
+                override_state.reserves_token1
+                if override_state is not None
                 else self.reserves_token1
             )
             fee = self.fee_token0
         elif token_in == self.token1:
             reserves_in = (
-                override_reserves_token1
-                if override_reserves_token1 is not None
+                override_state.reserves_token1
+                if override_state is not None
                 else self.reserves_token1
             )
             reserves_out = (
-                override_reserves_token0
-                if override_reserves_token0 is not None
+                override_state.reserves_token0
+                if override_state is not None
                 else self.reserves_token0
             )
             fee = self.fee_token1
@@ -494,16 +427,10 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         re-organization.
         """
 
-        # Find the index for the most recent pool state PRIOR to the requested
-        # block number.
-        #
-        # e.g. Calling restore_state_before_block(block=104) for a pool with
-        # states at blocks 100, 101, 102, 103, 104. `bisect_left()` returns
-        # block_index=3, since block 104 is at index=4. The state held at
-        # index=3 is for block 103.
-
         with self._state_lock:
             known_blocks = list(self._pool_state_archive.keys())
+
+            # Finds the index prior to the requested block number
             block_index = bisect_left(known_blocks, block)
 
             if block_index == 0:
@@ -686,8 +613,8 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         update_block: int | None = None,
     ) -> bool:
         """
-        Checks for updated reserve values when set to "polling", otherwise
-        if set to "external" assumes that provided reserves are valid
+        Checks for updated reserve values when set to "polling". If set to "external", updated the
+        state without performing verification.
         """
 
         _w3_contract = self._w3_contract
@@ -773,10 +700,6 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
                     logger.info(
                         f"{self.token1}/{self.token0}: {self.reserves_token1 / self.reserves_token0}"
                     )
-        elif self._update_method == "event":  # pragma: no cover
-            raise DeprecationError(
-                "The 'event' update method is deprecated. Please update your bot to use the default 'polling' method"
-            )
         else:  # pragma: no cover
             raise ValueError(f"Update method {self._update_method} is not recognized.")
 
@@ -792,19 +715,7 @@ class CamelotLiquidityPool(CamelotStablePoolMixin, LiquidityPool):
         update_method: str = "polling",
         abi: List[Any] | None = None,
         silent: bool = False,
-        update_reserves_on_start: bool | None = None,  # deprecated
-        unload_brownie_contract_after_init: bool | None = None,  # deprecated
     ) -> None:
-        if unload_brownie_contract_after_init is not None:  # pragma: no cover
-            warnings.warn(
-                "unload_brownie_contract_after_init is no longer needed and is "
-                "ignored. Remove constructor argument to stop seeing this "
-                "message."
-            )
-
-        if update_reserves_on_start is not None:  # pragma: no cover
-            warnings.warn("update_reserves_on_start has been deprecated.")
-
         address = to_checksum_address(address)
 
         if abi is None:

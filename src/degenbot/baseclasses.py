@@ -1,5 +1,5 @@
 import dataclasses
-import abc
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Iterator, Sequence
 
 from eth_typing import ChecksumAddress
@@ -22,16 +22,14 @@ class BaseManager:
     ...
 
 
-class BasePoolUpdate:
-    ...
+class BasePoolUpdate: ...
 
 
 class BasePoolState:
     pool: "BaseLiquidityPool"
 
 
-class BaseSimulationResult:
-    ...
+class BaseSimulationResult: ...
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -42,7 +40,7 @@ class UniswapSimulationResult(BaseSimulationResult):
     future_state: BasePoolState
 
 
-class BaseLiquidityPool(abc.ABC):
+class BaseLiquidityPool(ABC):
     address: ChecksumAddress
     name: str
     state: BasePoolState
@@ -84,13 +82,11 @@ class BaseLiquidityPool(abc.ABC):
     def __str__(self) -> str:
         return self.name
 
-    @abc.abstractmethod
-    def subscribe(self, subscriber: Any) -> None:
-        ...
+    @abstractmethod
+    def subscribe(self, subscriber: Any) -> None: ...
 
-    @abc.abstractmethod
-    def get_arbitrage_helpers(self) -> Iterator[BaseArbitrage]:
-        ...
+    @abstractmethod
+    def get_arbitrage_helpers(self) -> Iterator[BaseArbitrage]: ...
 
 
 class BaseToken:
@@ -136,5 +132,4 @@ class BaseToken:
         return self.symbol
 
 
-class BaseTransaction:
-    ...
+class BaseTransaction: ...

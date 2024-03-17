@@ -40,7 +40,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
             raise ValueError("Must provide only Uniswap liquidity pools.")
 
         self.swap_pools: Tuple[LiquidityPool | V3LiquidityPool, ...]
-        _swap_pools = []
+        _swap_pools: List[LiquidityPool | V3LiquidityPool] = []
         for pool in swap_pools:
             if not isinstance(pool, (LiquidityPool, V3LiquidityPool)):
                 raise ValueError(f"{pool} must be a Uniswap V2 or V3 pool")
@@ -119,8 +119,8 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
         dropped_attributes = (
-            "_lock",
             "_subscribers",
+            "pool_states",
         )
         copied_attributes = ()
 
@@ -156,19 +156,13 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         for pool, override in overrides:
             if isinstance(
                 override,
-                (
-                    UniswapV2PoolState,
-                    UniswapV3PoolState,
-                ),
+                (UniswapV2PoolState, UniswapV3PoolState),
             ):
                 logger.debug(f"Applying override {override} to {pool}")
                 sorted_overrides[pool.address] = override
             elif isinstance(
                 override,
-                (
-                    UniswapV2PoolSimulationResult,
-                    UniswapV3PoolSimulationResult,
-                ),
+                (UniswapV2PoolSimulationResult, UniswapV3PoolSimulationResult),
             ):
                 logger.debug(f"Applying override {override.future_state} to {pool}")
                 sorted_overrides[pool.address] = override.future_state

@@ -144,7 +144,7 @@ class AnvilFork:
         while True:
             try:
                 raw_response += self.socket.recv(_SOCKET_READ_BUFFER_SIZE).rstrip()
-            except socket.timeout:
+            except socket.timeout:  # pragma: no cover
                 continue
 
             if raw_response.endswith(
@@ -157,7 +157,7 @@ class AnvilFork:
                 # ref: http://www.jsonrpc.org/specification
                 try:
                     response = ujson.loads(raw_response)
-                except ujson.JSONDecodeError:
+                except ujson.JSONDecodeError:  # pragma: no cover
                     # The end of the response might end in } or ] if the last byte is the closing
                     # character of an array or map. If there are more bytes remaining, the JSON
                     # string will fail to decode correctly, so continue reading from the socket.

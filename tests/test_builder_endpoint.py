@@ -87,6 +87,11 @@ def test_create_builders(builder_name: str, request: pytest.FixtureRequest):
     assert isinstance(builder, BuilderEndpoint)
 
 
+async def test_bad_url():
+    with pytest.raises(ValueError):
+        BuilderEndpoint(url="ws://www.google.com", endpoints=["eth_sendBundle"])
+
+
 async def test_blank_eth_send_bundle(
     beaverbuild: BuilderEndpoint,
     fork_mainnet: degenbot.fork.AnvilFork,
@@ -106,6 +111,7 @@ async def test_eth_call_bundle(
 ):
     current_block = fork_mainnet.w3.eth.block_number
     current_base_fee = fork_mainnet.w3.eth.get_block("latest")["baseFeePerGas"]
+    current_block_timestamp = fork_mainnet.w3.eth.get_block("latest")["timestamp"]
 
     signer: LocalAccount = eth_account.Account.from_key(SIGNER_KEY)
     SIGNER_ADDRESS = signer.address
@@ -142,6 +148,25 @@ async def test_eth_call_bundle(
     response = await flashbots.call_eth_bundle(
         bundle=[signed_tx_1, signed_tx_2],
         block_number=current_block + 1,
+        state_block=current_block,
+        signer_key=SIGNER_KEY,
+    )
+    assert isinstance(response, dict)
+
+    # Test with "latest" state block alias
+    response = await flashbots.call_eth_bundle(
+        bundle=[signed_tx_1, signed_tx_2],
+        block_number=current_block + 1,
+        state_block="latest",
+        signer_key=SIGNER_KEY,
+    )
+    assert isinstance(response, dict)
+
+    # Test with timestamp
+    response = await flashbots.call_eth_bundle(
+        bundle=[signed_tx_1, signed_tx_2],
+        block_number=current_block + 1,
+        block_timestamp=current_block_timestamp + 12,
         state_block=current_block,
         signer_key=SIGNER_KEY,
     )

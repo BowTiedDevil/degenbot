@@ -1,6 +1,5 @@
 from fractions import Fraction
 
-
 from ..erc20_token import Erc20Token
 from ..exceptions import ZeroSwapError
 from ..logging import logger
@@ -19,7 +18,7 @@ class CamelotStablePoolMixin:
 
     def _calculate_tokens_out_from_tokens_in_stable_swap(
         self,
-        token_in: "Erc20Token",
+        token_in: Erc20Token,
         token_in_quantity: int,
         override_state: UniswapV2PoolState | None = None,
     ) -> int:
@@ -28,12 +27,10 @@ class CamelotStablePoolMixin:
         Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
         """
 
-        if override_state is not None:
-            logger.debug("Reserve overrides applied:")
-            logger.debug(f"token0: {override_state.reserves_token0}")
-            logger.debug(f"token1: {override_state.reserves_token1}")
+        if override_state is not None:  # pragma: no cover
+            logger.debug(f"State overrides applied: {override_state}")
 
-        if token_in_quantity <= 0:
+        if token_in_quantity <= 0:  # pragma: no cover
             raise ZeroSwapError("token_in_quantity must be positive")
 
         precision_multiplier_token0: int = 10**self.token0.decimals
@@ -75,16 +72,9 @@ class CamelotStablePoolMixin:
         def _d(x_0: int, y: int) -> int:
             return 3 * x_0 * (y * y // 10**18) // 10**18 + (x_0 * x_0 // 10**18 * x_0 // 10**18)
 
-        # fee_percent is stored as a uint16 in the contract, but as a Fraction
-        # in the superclass, so it must be converted.
-        #
-        # e.g. 0.04% fee = Fraction(1,2500) in the helper, fee = 40 in the
-        # contract. To convert, multiply the fraction by the `FEE_DENOMINATOR`,
-        # so fee_percent = 1/2500 * 100_000 = 40
-
-        fee_percent = (
+        fee_percent = self.fee_denominator * (
             self.fee_token0 if token_in is self.token0 else self.fee_token1
-        ) * self.fee_denominator
+        )
 
         reserves_token0 = (
             override_state.reserves_token0 if override_state is not None else self.reserves_token0
@@ -93,7 +83,7 @@ class CamelotStablePoolMixin:
             override_state.reserves_token1 if override_state is not None else self.reserves_token1
         )
 
-        # remove fee from amount received
+        # Remove fee from amount received
         token_in_quantity -= token_in_quantity * fee_percent // self.fee_denominator
         xy = _k(reserves_token0, reserves_token1)
         reserves_token0 = reserves_token0 * 10**18 // precision_multiplier_token0
