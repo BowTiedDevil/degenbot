@@ -1,8 +1,7 @@
-import degenbot.bundle
 import degenbot.fork
 import eth_account
 import pytest
-from degenbot.bundle.block_builder import BuilderEndpoint
+from degenbot.builder_endpoint import BuilderEndpoint
 from eth_account.signers.local import LocalAccount
 
 BEAVERBUILD_URL = "https://rpc.beaverbuild.org"

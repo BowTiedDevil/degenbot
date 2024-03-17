@@ -8,9 +8,9 @@ import ujson
 from eth_account.signers.local import LocalAccount
 from hexbytes import HexBytes
 
-from ..config import get_web3
-from ..exceptions import ExternalServiceError
-from ..functions import eip_191_hash
+from .config import get_web3
+from .exceptions import ExternalServiceError
+from .functions import eip_191_hash
 
 
 class BuilderEndpoint:

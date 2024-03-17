@@ -9,7 +9,7 @@ from .arbitrage.flash_borrow_to_lp_swap_with_future import FlashBorrowToLpSwapWi
 from .arbitrage.flash_borrow_to_router_swap import FlashBorrowToRouterSwap
 from .arbitrage.uniswap_curve_cycle import UniswapCurveCycle
 from .arbitrage.uniswap_lp_cycle import UniswapLpCycle
-from .bundle.block_builder import BuilderEndpoint
+from .builder_endpoint import BuilderEndpoint
 from .chainlink import ChainlinkPriceContract
 from .config import get_web3, set_web3
 from .curve.curve_stableswap_liquidity_pool import CurveStableswapPool
