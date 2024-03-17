@@ -13,13 +13,13 @@ from degenbot.exchanges.uniswap.dataclasses import (
     UniswapV3ExchangeDeployment,
     UniswapV3DexDeployment,
     UniswapTickLensDeployment,
+    UniswapV2ExchangeDeployment,
+    UniswapV3ExchangeDeployment,
 )
-from degenbot.dex.uniswap_functions import register_exchange, register_router
-from eth_typing import ChecksumAddress
-from degenbot.dex.uniswap_deployments import (
-    TICKLENS_DEPLOYMENTS,
-    ROUTER_DEPLOYMENTS,
+from degenbot.exchanges.uniswap.deployments import (
     FACTORY_DEPLOYMENTS,
+    ROUTER_DEPLOYMENTS,
+    TICKLENS_DEPLOYMENTS,
 )
 import random
 from degenbot.exchanges.uniswap.deployments import (
