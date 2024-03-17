@@ -9,8 +9,8 @@ import dotenv
 import pytest
 import web3
 
-ETHEREUM_FULL_NODE_HTTP_URI = "http://localhost:8545"
-ETHEREUM_ARCHIVE_NODE_HTTP_URI = "http://localhost:8543"
+env_file = dotenv.find_dotenv("tests.env")
+env_values = dotenv.dotenv_values(env_file)
 
 
 @pytest.fixture(scope="session")
@@ -19,11 +19,19 @@ def load_env() -> dict:
     return dotenv.dotenv_values(env_file)
 
 
-env_file = dotenv.find_dotenv("tests.env")
-env_values = dotenv.dotenv_values(env_file)
 ARBITRUM_ARCHIVE_NODE_HTTP_URI = f"https://rpc.ankr.com/arbitrum/{env_values['ANKR_API_KEY']}"
+ARBITRUM_FULL_NODE_HTTP_URI = "http://localhost:8547"
+
+ETHEREUM_ARCHIVE_NODE_HTTP_URI = "http://localhost:8543"
 # ETHEREUM_ARCHIVE_NODE_HTTP_URI = f"https://rpc.ankr.com/eth/{env_values['ANKR_API_KEY']}"
-# ETHEREUM_ARCHIVE_NODE_HTTP_URI = "https://eth.merkle.io"
+ETHEREUM_FULL_NODE_HTTP_URI = "http://localhost:8545"
+
+
+# Set up a web3 connection to an Arbitrum full node
+@pytest.fixture(scope="session")
+def arbitrum_full_node_web3() -> web3.Web3:
+    w3 = web3.Web3(web3.HTTPProvider(ARBITRUM_FULL_NODE_HTTP_URI))
+    return w3
 
 
 # Set up a web3 connection to an Ethereum archive node
@@ -71,4 +79,16 @@ def fork_mainnet_archive() -> degenbot.AnvilFork:
 @pytest.fixture(scope="function")
 def fork_mainnet() -> degenbot.AnvilFork:
     fork = degenbot.AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
+    return fork
+
+
+@pytest.fixture(scope="function")
+def fork_arbitrum() -> degenbot.AnvilFork:
+    fork = degenbot.AnvilFork(fork_url=ARBITRUM_FULL_NODE_HTTP_URI)
+    return fork
+
+
+@pytest.fixture(scope="function")
+def fork_arbitrum_archive() -> degenbot.AnvilFork:
+    fork = degenbot.AnvilFork(fork_url=ARBITRUM_ARCHIVE_NODE_HTTP_URI)
     return fork

@@ -38,22 +38,6 @@ WETH_CONTRACT_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 WBTC_CONTRACT_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 
 
-@pytest.fixture(scope="function")
-def ethereum_uniswap_v2_wbtc_weth_liquiditypool(load_env: dict) -> LiquidityPool:
-    ankr_w3 = web3.Web3(web3.HTTPProvider(f"https://rpc.ankr.com/eth/{load_env['ANKR_API_KEY']}"))
-    degenbot.set_web3(ankr_w3)
-
-    lp = LiquidityPool(
-        address=UNISWAP_V2_WBTC_WETH_POOL,
-        update_method="external",
-        factory_address=UNISWAPV2_FACTORY,
-        factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
-        state_block=17_600_000,
-    )
-
-    return lp
-
-
 def test_create_pool(ethereum_full_node_web3: web3.Web3) -> None:
     degenbot.set_web3(ethereum_full_node_web3)
 
@@ -105,16 +89,13 @@ def test_create_pool(ethereum_full_node_web3: web3.Web3) -> None:
         )
 
 
-def test_create_camelot_v2_stable_pool(load_env: dict) -> None:
+def test_create_camelot_v2_stable_pool(fork_arbitrum_archive) -> None:
     CAMELOT_MIM_USDC_LP_ADDRESS = "0x68A0859de50B4Dfc6EFEbE981cA906D38Cdb0D1F"
     FORK_BLOCK = 153_759_000
-    fork = AnvilFork(
-        f"https://rpc.ankr.com/arbitrum/{load_env['ANKR_API_KEY']}",
-        fork_block=FORK_BLOCK,
-    )
-    assert fork.block_number == FORK_BLOCK
-    assert fork.w3.eth.get_block_number() == FORK_BLOCK
-    degenbot.set_web3(fork.w3)
+
+    assert fork_arbitrum_archive.block_number == FORK_BLOCK
+    assert fork_arbitrum_archive.w3.eth.get_block_number() == FORK_BLOCK
+    degenbot.set_web3(fork_arbitrum_archive.w3)
 
     lp = CamelotLiquidityPool(address=CAMELOT_MIM_USDC_LP_ADDRESS)
     assert lp.stable_swap is True
@@ -162,10 +143,9 @@ def test_create_camelot_v2_stable_pool(load_env: dict) -> None:
     )
 
 
-def test_create_camelot_v2_pool(load_env: dict) -> None:
+def test_create_camelot_v2_pool(fork_arbitrum) -> None:
     CAMELOT_WETH_USDC_LP_ADDRESS = "0x84652bb2539513BAf36e225c930Fdd8eaa63CE27"
-    fork = AnvilFork(f"https://rpc.ankr.com/arbitrum/{load_env['ANKR_API_KEY']}")
-    degenbot.set_web3(fork.w3)
+    degenbot.set_web3(fork_arbitrum.w3)
     lp = CamelotLiquidityPool(address=CAMELOT_WETH_USDC_LP_ADDRESS)
     assert lp.stable_swap is False
 
@@ -180,12 +160,10 @@ def test_create_camelot_v2_pool(load_env: dict) -> None:
     )
 
 
-def test_pickle_camelot_v2_pool(load_env: dict) -> None:
+def test_pickle_camelot_v2_pool(fork_arbitrum) -> None:
     CAMELOT_WETH_USDC_LP_ADDRESS = "0x84652bb2539513BAf36e225c930Fdd8eaa63CE27"
-    fork = AnvilFork(f"https://rpc.ankr.com/arbitrum/{load_env['ANKR_API_KEY']}")
-    degenbot.set_web3(fork.w3)
+    degenbot.set_web3(fork_arbitrum.w3)
     lp = CamelotLiquidityPool(address=CAMELOT_WETH_USDC_LP_ADDRESS)
-
     pickle.dumps(lp)
 
 

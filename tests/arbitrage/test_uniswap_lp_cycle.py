@@ -2199,19 +2199,15 @@ def test_arbitrage_with_overrides() -> None:
     )
 
 
-async def test_pickle_uniswap_lp_cycle(load_env: dict) -> None:
-    # test is specific to Arbitrum, so use appropriate token addresses
+async def test_pickle_uniswap_lp_cycle(fork_arbitrum) -> None:
+    # Arbitrum-specific token addresses
     _WBTC_ADDRESS = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"
     _WETH_ADDRESS = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
 
     _CAMELOT_WETH_WBTC_LP_ADDRESS = "0x96059759C6492fb4e8a9777b65f307F2C811a34F"
     _SUSHI_V2_WETH_WBTC_LP_ADDRESS = "0x515e252b2b5c22b4b2b6Df66c2eBeeA871AA4d69"
 
-    fork = AnvilFork(f"https://rpc.ankr.com/arbitrum/{load_env['ANKR_API_KEY']}")
-    set_web3(fork.w3)
-
-    # w3 = web3.Web3(web3.HTTPProvider("http://localhost:8547"))
-    # set_web3(w3)
+    set_web3(fork_arbitrum.w3)
 
     _weth = Erc20Token(_WETH_ADDRESS)
 
