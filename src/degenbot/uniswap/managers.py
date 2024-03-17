@@ -15,7 +15,7 @@ from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
 from .abi import UNISWAP_V2_FACTORY_ABI
-from .v2_liquidity_pool import LiquidityPool
+from .v2_liquidity_pool import LiquidityPool, CamelotLiquidityPool
 from .v3_functions import generate_v3_pool_address
 from .v3_liquidity_pool import V3LiquidityPool
 from .v3_snapshot import UniswapV3LiquiditySnapshot
@@ -227,14 +227,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 raise PoolNotAssociated(f"Pool {pool_address} is not associated with this DEX")
 
         try:
-            pool_helper = LiquidityPool(
-                address=pool_address,
-                silent=silent,
-                state_block=state_block,
-                factory_address=self._factory_address,
-                factory_init_hash=self._factory_init_hash,
-                update_method=update_method,
-            )
+            pool_helper = self._create_pool(pool_address, silent, state_block, update_method)
         except Exception as e:
             self._untracked_pools.add(
                 pool_address
@@ -244,6 +237,29 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         else:
             self._add_pool(pool_helper)
             return pool_helper
+
+    def _create_pool(self, pool_address, silent, state_block, update_method):
+        return LiquidityPool(
+            address=pool_address,
+            silent=silent,
+            state_block=state_block,
+            factory_address=self._factory_address,
+            factory_init_hash=self._factory_init_hash,
+            update_method=update_method,
+        )
+
+
+class CamelotV2LiquidityPoolManager(UniswapV2LiquidityPoolManager):
+
+    def _create_pool(self, pool_address, silent, state_block, update_method):
+        return CamelotLiquidityPool(
+            address=pool_address,
+            silent=silent,
+            state_block=state_block,
+            factory_address=self._factory_address,
+            factory_init_hash=self._factory_init_hash,
+            update_method=update_method,
+        )
 
 
 class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
