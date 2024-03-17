@@ -2,6 +2,6 @@ from dataclasses import dataclass
 
 
 @dataclass(slots=True, frozen=True)
-class BaseDexDeployment:
+class AbstractExchangeDeployment:
     name: str
     chain_id: int

@@ -3,7 +3,7 @@ from typing import List
 
 from eth_typing import ChecksumAddress, HexStr
 
-from .base_dataclasses import BaseDexDeployment
+from ..dataclasses import AbstractExchangeDeployment
 
 
 @dataclass(slots=True, frozen=True)
@@ -18,12 +18,12 @@ class UniswapTickLensDeployment:
 
 
 @dataclass(slots=True, frozen=True)
-class UniswapV2DexDeployment(BaseDexDeployment):
+class UniswapV2ExchangeDeployment(AbstractExchangeDeployment):
     factory: UniswapFactoryDeployment
 
 
 @dataclass(slots=True, frozen=True)
-class UniswapV3DexDeployment(BaseDexDeployment):
+class UniswapV3ExchangeDeployment(AbstractExchangeDeployment):
     factory: UniswapFactoryDeployment
     tick_lens: UniswapTickLensDeployment
 
@@ -33,4 +33,4 @@ class UniswapRouterDeployment:
     address: ChecksumAddress
     chain_id: int
     name: str
-    exchanges: List[UniswapV2DexDeployment | UniswapV3DexDeployment]
+    exchanges: List[UniswapV2ExchangeDeployment | UniswapV3ExchangeDeployment]

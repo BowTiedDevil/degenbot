@@ -3,19 +3,19 @@ from typing import Dict
 from eth_typing import ChainId, ChecksumAddress, HexStr
 from eth_utils.address import to_checksum_address
 
-from .uniswap_dataclasses import (
+from .dataclasses import (
     UniswapFactoryDeployment,
     UniswapRouterDeployment,
     UniswapTickLensDeployment,
-    UniswapV2DexDeployment,
-    UniswapV3DexDeployment,
+    UniswapV2ExchangeDeployment,
+    UniswapV3ExchangeDeployment,
 )
 
 # Mainnet DEX --------------- START
 # ---------------------------------
 
 # Uniswap V2 and forks
-EthereumMainnetUniswapV2 = UniswapV2DexDeployment(
+EthereumMainnetUniswapV2 = UniswapV2ExchangeDeployment(
     name="Ethereum Mainnet Uniswap V2",
     chain_id=ChainId.ETH,
     factory=UniswapFactoryDeployment(
@@ -23,7 +23,7 @@ EthereumMainnetUniswapV2 = UniswapV2DexDeployment(
         pool_init_hash=HexStr("0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"),
     ),
 )
-EthereumMainnetSushiswapV2 = UniswapV2DexDeployment(
+EthereumMainnetSushiswapV2 = UniswapV2ExchangeDeployment(
     name="Ethereum Mainnet Sushiswap V2",
     chain_id=ChainId.ETH,
     factory=UniswapFactoryDeployment(
@@ -33,7 +33,7 @@ EthereumMainnetSushiswapV2 = UniswapV2DexDeployment(
 )
 
 # Uniswap V3 and forks
-EthereumMainnetUniswapV3 = UniswapV3DexDeployment(
+EthereumMainnetUniswapV3 = UniswapV3ExchangeDeployment(
     name="Ethereum Mainnet Uniswap V3",
     chain_id=ChainId.ETH,
     factory=UniswapFactoryDeployment(
@@ -44,7 +44,7 @@ EthereumMainnetUniswapV3 = UniswapV3DexDeployment(
         to_checksum_address("0xbfd8137f7d1516D3ea5cA83523914859ec47F573")
     ),
 )
-EthereumMainnetSushiswapV3 = UniswapV3DexDeployment(
+EthereumMainnetSushiswapV3 = UniswapV3ExchangeDeployment(
     name="Ethereum Mainnet Sushiswap V3",
     chain_id=ChainId.ETH,
     factory=UniswapFactoryDeployment(
@@ -62,7 +62,7 @@ EthereumMainnetSushiswapV3 = UniswapV3DexDeployment(
 # ---------------------------------
 
 # Uniswap V2 and forks
-ArbitrumSushiswapV2 = UniswapV2DexDeployment(
+ArbitrumSushiswapV2 = UniswapV2ExchangeDeployment(
     name="Arbitrum Sushiswap V2",
     chain_id=ChainId.ARB1,
     factory=UniswapFactoryDeployment(
@@ -72,7 +72,7 @@ ArbitrumSushiswapV2 = UniswapV2DexDeployment(
 )
 
 # Uniswap V3 and forks
-ArbitrumUniswapV3 = UniswapV3DexDeployment(
+ArbitrumUniswapV3 = UniswapV3ExchangeDeployment(
     name="Arbitrum Uniswap V3",
     chain_id=ChainId.ARB1,
     factory=UniswapFactoryDeployment(
@@ -83,7 +83,7 @@ ArbitrumUniswapV3 = UniswapV3DexDeployment(
         to_checksum_address("0xbfd8137f7d1516D3ea5cA83523914859ec47F573")
     ),
 )
-ArbitrumSushiswapV3 = UniswapV3DexDeployment(
+ArbitrumSushiswapV3 = UniswapV3ExchangeDeployment(
     name="Arbitrum Sushiswap V3",
     chain_id=ChainId.ARB1,
     factory=UniswapFactoryDeployment(

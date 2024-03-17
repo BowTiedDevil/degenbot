@@ -14,12 +14,6 @@ from web3 import Web3
 from .. import config
 from ..baseclasses import BaseSimulationResult, BaseTransaction
 from ..constants import WRAPPED_NATIVE_TOKENS
-from ..dex.uniswap_dataclasses import (
-    UniswapRouterDeployment,
-    UniswapV2DexDeployment,
-    UniswapV3DexDeployment,
-)
-from ..dex.uniswap_deployments import ROUTER_DEPLOYMENTS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     DegenbotError,
@@ -29,6 +23,12 @@ from ..exceptions import (
     ManagerError,
     TransactionError,
 )
+from ..exchanges.uniswap.dataclasses import (
+    UniswapRouterDeployment,
+    UniswapV2ExchangeDeployment,
+    UniswapV3ExchangeDeployment,
+)
+from ..exchanges.uniswap.deployments import ROUTER_DEPLOYMENTS
 from ..logging import logger
 from ..uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from ..uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
@@ -179,12 +179,12 @@ class UniswapTransaction(BaseTransaction):
 
             for exchange in router.exchanges:
                 match exchange:
-                    case UniswapV2DexDeployment():
+                    case UniswapV2ExchangeDeployment():
                         self.v2_pool_manager = UniswapV2LiquidityPoolManager(
                             factory_address=exchange.factory.address,
                             exchange=exchange,
                         )
-                    case UniswapV3DexDeployment():
+                    case UniswapV3ExchangeDeployment():
                         self.v3_pool_manager = UniswapV3LiquidityPoolManager(
                             factory_address=exchange.factory.address, exchange=exchange
                         )
@@ -204,11 +204,11 @@ class UniswapTransaction(BaseTransaction):
             # Create pool managers for the supported exchanges
             for exchange in router_deployment.exchanges:
                 match exchange:
-                    case UniswapV2DexDeployment():
+                    case UniswapV2ExchangeDeployment():
                         self.v2_pool_manager = UniswapV2LiquidityPoolManager(
                             factory_address=exchange.factory.address
                         )
-                    case UniswapV3DexDeployment():
+                    case UniswapV3ExchangeDeployment():
                         self.v3_pool_manager = UniswapV3LiquidityPoolManager(
                             factory_address=exchange.factory.address
                         )

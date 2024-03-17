@@ -1,12 +1,12 @@
-from .uniswap_deployments import TICKLENS_DEPLOYMENTS, FACTORY_DEPLOYMENTS, ROUTER_DEPLOYMENTS
-from .uniswap_dataclasses import (
-    UniswapV2DexDeployment,
-    UniswapV3DexDeployment,
+from .deployments import TICKLENS_DEPLOYMENTS, FACTORY_DEPLOYMENTS, ROUTER_DEPLOYMENTS
+from .dataclasses import (
+    UniswapV2ExchangeDeployment,
+    UniswapV3ExchangeDeployment,
     UniswapRouterDeployment,
 )
 
 
-def register_exchange(exchange: UniswapV2DexDeployment | UniswapV3DexDeployment) -> None:
+def register_exchange(exchange: UniswapV2ExchangeDeployment | UniswapV3ExchangeDeployment) -> None:
     if exchange.chain_id not in TICKLENS_DEPLOYMENTS:
         TICKLENS_DEPLOYMENTS[exchange.chain_id] = {}
 
@@ -23,7 +23,7 @@ def register_exchange(exchange: UniswapV2DexDeployment | UniswapV3DexDeployment)
 
     FACTORY_DEPLOYMENTS[exchange.chain_id][exchange.factory.address] = exchange.factory
 
-    if isinstance(exchange, UniswapV3DexDeployment):
+    if isinstance(exchange, UniswapV3ExchangeDeployment):
         TICKLENS_DEPLOYMENTS[exchange.chain_id][exchange.factory.address] = exchange.tick_lens
 
 

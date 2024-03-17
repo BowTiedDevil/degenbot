@@ -8,10 +8,10 @@ from web3.contract.contract import Contract
 from .. import config
 from ..baseclasses import BaseManager
 from ..constants import ZERO_ADDRESS
-from ..dex.uniswap_dataclasses import UniswapV2DexDeployment, UniswapV3DexDeployment
-from ..dex.uniswap_deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
 from ..erc20_token import Erc20Token
 from ..exceptions import ManagerError, PoolNotAssociated
+from ..exchanges.uniswap.dataclasses import UniswapV2ExchangeDeployment, UniswapV3ExchangeDeployment
+from ..exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
@@ -114,7 +114,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         self,
         factory_address: ChecksumAddress | str,
         chain_id: int | None = None,
-        exchange: UniswapV2DexDeployment | None = None,
+        exchange: UniswapV2ExchangeDeployment | None = None,
     ):
         if exchange is not None:
             chain_id = exchange.chain_id
@@ -279,7 +279,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         chain_id: int | None = None,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
         pool_abi: List[Any] | None = None,
-        exchange: UniswapV3DexDeployment | None = None,
+        exchange: UniswapV3ExchangeDeployment | None = None,
     ):
         if exchange is not None:
             chain_id = exchange.chain_id

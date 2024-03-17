@@ -14,8 +14,6 @@ from web3.contract.contract import Contract
 
 from .. import config
 from ..baseclasses import BaseLiquidityPool
-from ..dex.uniswap_dataclasses import UniswapV3DexDeployment
-from ..dex.uniswap_deployments import TICKLENS_DEPLOYMENTS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     BitmapWordUnavailableError,
@@ -25,6 +23,8 @@ from ..exceptions import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
+from ..exchanges.uniswap.dataclasses import UniswapV3ExchangeDeployment
+from ..exchanges.uniswap.deployments import TICKLENS_DEPLOYMENTS
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
@@ -62,7 +62,7 @@ class V3LiquidityPool(BaseLiquidityPool):
     def __init__(
         self,
         address: str,
-        dex: UniswapV3DexDeployment | None = None,
+        dex: UniswapV3ExchangeDeployment | None = None,
         fee: int | None = None,
         lens: TickLens | None = None,
         tokens: List[Erc20Token] | None = None,

@@ -1,25 +1,25 @@
 from typing import Any, Dict
+import random
+
 import pytest
 import web3
 import web3.middleware
 from degenbot import AnvilFork, set_web3
-from degenbot.dex.uniswap_dataclasses import (
+from degenbot.exchanges.uniswap.dataclasses import (
     UniswapFactoryDeployment,
     UniswapRouterDeployment,
-    UniswapV2DexDeployment,
-    UniswapV3DexDeployment,
     UniswapTickLensDeployment,
+    UniswapV2ExchangeDeployment,
+    UniswapV3ExchangeDeployment,
 )
-from degenbot.dex.uniswap_functions import register_exchange, register_router
-from eth_typing import ChecksumAddress
-from degenbot.dex.uniswap_deployments import (
-    TICKLENS_DEPLOYMENTS,
-    ROUTER_DEPLOYMENTS,
+from degenbot.exchanges.uniswap.deployments import (
     FACTORY_DEPLOYMENTS,
+    ROUTER_DEPLOYMENTS,
+    TICKLENS_DEPLOYMENTS,
 )
-import random
+from degenbot.exchanges.uniswap.register import register_exchange, register_router
 from degenbot.transaction.uniswap_transaction import TransactionError, UniswapTransaction
-from eth_typing import ChainId
+from eth_typing import ChainId, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 
@@ -32,7 +32,7 @@ def test_register_v2_exchange() -> None:
     DEPLOYMENT_CHAIN = 69
     FACTORY_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
 
-    exchange = UniswapV2DexDeployment(
+    exchange = UniswapV2ExchangeDeployment(
         name="V2 DEX",
         chain_id=DEPLOYMENT_CHAIN,
         factory=UniswapFactoryDeployment(
@@ -52,7 +52,7 @@ def test_register_v3_exchange() -> None:
     FACTORY_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
     TICKLENS_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
 
-    exchange = UniswapV3DexDeployment(
+    exchange = UniswapV3ExchangeDeployment(
         name="V3 DEX",
         chain_id=DEPLOYMENT_CHAIN,
         factory=UniswapFactoryDeployment(
@@ -74,7 +74,7 @@ def test_register_router() -> None:
     FACTORY_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
     TICKLENS_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
 
-    exchange = UniswapV3DexDeployment(
+    exchange = UniswapV3ExchangeDeployment(
         name="V3 DEX",
         chain_id=DEPLOYMENT_CHAIN,
         factory=UniswapFactoryDeployment(
@@ -1118,7 +1118,7 @@ def test_adding_new_router_and_chain():
     QUICKSWAP_ROUTER_ADDRESS = to_checksum_address("0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff")
     QUICKSWAP_V2_FACTORY_ADDRESS = to_checksum_address("0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32")
 
-    quickswap_dex_deployment = UniswapV2DexDeployment(
+    quickswap_dex_deployment = UniswapV2ExchangeDeployment(
         name="Quickswap",
         chain_id=QUICKSWAP_CHAIN,
         factory=UniswapFactoryDeployment(
