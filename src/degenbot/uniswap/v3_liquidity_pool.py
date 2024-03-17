@@ -888,7 +888,7 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
                 block_number = update.block_number
             else:
                 block_number = config.get_web3().eth.get_block_number()
-                warnings.warn(
+                logger.warning(
                     f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
                 )
 

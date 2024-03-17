@@ -78,7 +78,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
         self.input_token = input_token
 
         if max_input is None:
-            warn("No maximum input provided, setting to 100 WETH")
+            logger.warning("No maximum input provided, setting to 100 WETH")
             max_input = 100 * 10**18
         self.max_input = max_input
 
