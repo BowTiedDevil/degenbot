@@ -2,7 +2,6 @@ import asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Awaitable, Dict, Iterable, List, Sequence, Tuple, TypeAlias
-from warnings import warn
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
