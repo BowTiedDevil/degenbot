@@ -435,8 +435,6 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         ]
         | None = None,
     ) -> ArbitrageCalculationResult:
-        self._pre_calculation_check(override_state)
-
         state_overrides = self._sort_overrides(override_state)
 
         # bound the amount to be swapped
@@ -636,6 +634,8 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         """
         TBD
         """
+
+        self._pre_calculation_check(override_state)
 
         result = self._calculate(override_state=override_state)
 
