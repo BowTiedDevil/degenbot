@@ -16,7 +16,6 @@ from degenbot.arbitrage.arbitrage_dataclasses import (
 from degenbot.config import set_web3
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError
-from degenbot.fork import AnvilFork
 from degenbot.uniswap import V3LiquidityPool
 from degenbot.uniswap.v2_liquidity_pool import (
     CamelotLiquidityPool,

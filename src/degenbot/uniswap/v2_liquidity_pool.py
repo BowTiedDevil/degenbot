@@ -12,7 +12,6 @@ from .. import config
 from ..baseclasses import BaseLiquidityPool
 from ..erc20_token import Erc20Token
 from ..exceptions import (
-    DeprecationError,
     ExternalUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
