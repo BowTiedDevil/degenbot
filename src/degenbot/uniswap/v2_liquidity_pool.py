@@ -755,8 +755,6 @@ class CamelotLiquidityPool(CamelotStablePoolMixin, LiquidityPool):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        override_reserves_token0: int | None = None,  # TODO: drop after removing in superclass
-        override_reserves_token1: int | None = None,  # TODO: drop after removing in superclass
         override_state: UniswapV2PoolState | None = None,
     ) -> int:
         if self.stable_swap:

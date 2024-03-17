@@ -819,7 +819,6 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         updates: Dict[str, Any] | None = None,
         block_number: int | None = None,
         silent: bool = True,
-        fetch_missing: bool | None = None,
         force: bool = False,  # added primarily to support liquidity bootstrapping without excessive refactoring
     ) -> bool:
         """
@@ -845,11 +844,6 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
             The `force` argument to `external_update` will trigger this to always return True
             """
             return True if force else block_number >= self._update_block
-
-        if fetch_missing is not None:
-            raise DeprecationWarning(
-                "The fetch_missing argument has been deprecated, to address this exception remove it from any calls to external_update"
-            )
 
         # warnings.warn(
         #     "\n"

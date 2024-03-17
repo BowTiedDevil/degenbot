@@ -58,34 +58,12 @@ class Erc20Token(BaseToken):
         abi: List[Any] | None = None,
         oracle_address: str | None = None,
         silent: bool = False,
-        unload_brownie_contract_after_init: bool = False,  # deprecated
-        min_abi: bool = False,  # deprecated
-        user: Any | None = None,  # deprecated
     ) -> None:
         self.address: ChecksumAddress = to_checksum_address(address)
         self.abi = abi if abi is not None else ERC20_ABI_MINIMAL
 
         _w3 = config.get_web3()
         _w3_contract = self._w3_contract
-
-        if user:  # pragma: no cover
-            warnings.warn(
-                "Instantiating with a single user is deprecated. You may use "
-                "the get_balance() method to retrieve token balances for a "
-                "particular address."
-            )
-
-        if min_abi:  # pragma: no cover
-            warnings.warn(
-                "Using a minimal ABI is now the default behavior. Remove "
-                "min_abi constructor argument to stop seeing this message."
-            )
-
-        if unload_brownie_contract_after_init:  # pragma: no cover
-            warnings.warn(
-                "unload_brownie_contract_after_init is deprecated. Remove "
-                "constructor argument to stop seeing this message."
-            )
 
         try:
             self.name: str
