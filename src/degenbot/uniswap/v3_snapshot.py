@@ -40,10 +40,8 @@ class UniswapV3LiquiditySnapshot:
             elif isinstance(file, str):
                 with open(file) as _file:
                     json_liquidity_snapshot = ujson.load(_file)
-            else:
+            else:  # pragma: no cover
                 raise ValueError(f"GOT {type(file)}")
-        except:
-            raise
         finally:
             _file.close()
 
@@ -148,36 +146,31 @@ class UniswapV3LiquiditySnapshot:
         logger.info(f"Updated snapshot to block {to_block}")
         self.newest_block = to_block
 
-    def get_pool_updates(self, pool_address: str) -> List[UniswapV3PoolExternalUpdate]:
+    def get_new_liquidity_updates(self, pool_address: str) -> List[UniswapV3PoolExternalUpdate]:
         pool_address = to_checksum_address(pool_address)
+        pool_updates = self._liquidity_events.get(pool_address, list())
+        self._liquidity_events[pool_address] = []
 
-        try:
-            self._liquidity_events[pool_address]
-        except KeyError:
-            return []
-        else:
-            # Sort the liquidity events by block, then transaction index
-            # before returning them.
-            # @dev the V3LiquidityPool helper will reject liquidity events
-            # associated with a past block, so they must be processed in
-            # chronological order
-            sorted_events = sorted(
-                self._liquidity_events[pool_address],
-                key=lambda event: (event.block_number, event.tx_index),
+        # Sort the liquidity events by block, then transaction index
+        #
+        # @dev the V3LiquidityPool helper will reject liquidity events associated with a past
+        # block, so they must be applied in chronological order
+        sorted_events = sorted(
+            pool_updates,
+            key=lambda event: (event.block_number, event.tx_index),
+        )
+
+        return [
+            UniswapV3PoolExternalUpdate(
+                block_number=event.block_number,
+                liquidity_change=(
+                    event.liquidity,
+                    event.tick_lower,
+                    event.tick_upper,
+                ),
             )
-            self._liquidity_events[pool_address].clear()
-
-            return [
-                UniswapV3PoolExternalUpdate(
-                    block_number=event.block_number,
-                    liquidity_change=(
-                        event.liquidity,
-                        event.tick_lower,
-                        event.tick_upper,
-                    ),
-                )
-                for event in sorted_events
-            ]
+            for event in sorted_events
+        ]
 
     def get_tick_bitmap(
         self, pool: V3LiquidityPool | ChecksumAddress

@@ -337,10 +337,9 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         """
 
         def apply_liquidity_updates(pool: V3LiquidityPool) -> None:
-            logger.debug(f"Applying liquidity updates to {pool}")
             if not self._snapshot:
                 return
-            for external_update in self._snapshot.get_pool_updates(pool.address):
+            for external_update in self._snapshot.get_new_liquidity_updates(pool.address):
                 pool.external_update(update=external_update, force=True)
 
         def find_or_build(
