@@ -39,14 +39,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         if any([not isinstance(pool, (LiquidityPool, V3LiquidityPool)) for pool in swap_pools]):
             raise ValueError("Must provide only Uniswap liquidity pools.")
 
-        self.swap_pools: Tuple[LiquidityPool | V3LiquidityPool, ...]
-        _swap_pools: List[LiquidityPool | V3LiquidityPool] = []
-        for pool in swap_pools:
-            if not isinstance(pool, (LiquidityPool, V3LiquidityPool)):
-                raise ValueError(f"{pool} must be a Uniswap V2 or V3 pool")
-            _swap_pools.append(pool)
-
-        self.swap_pools = tuple(_swap_pools)
+        self.swap_pools: Tuple[LiquidityPool | V3LiquidityPool, ...] = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
 
         for pool in swap_pools:
