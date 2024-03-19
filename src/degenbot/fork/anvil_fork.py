@@ -2,7 +2,7 @@ import os
 import shutil
 import socket
 import subprocess
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple, cast
 
 import ujson
 from eth_typing import HexAddress
@@ -44,14 +44,15 @@ class AnvilFork:
         if shutil.which("anvil") is None:  # pragma: no cover
             raise Exception("Anvil is not installed or not accessible in the current path.")
 
-        if not port:
+        def get_free_port_number() -> int:
             with socket.socket() as sock:
                 sock.bind(("", 0))
                 _, port = sock.getsockname()
-        self.port = port
+                return cast(int, port)
 
-        if not ipc_path:
-            ipc_path = f"/tmp/anvil-{self.port}.ipc"
+        self.port = port if port is not None else get_free_port_number()
+
+        ipc_path = f"/tmp/anvil-{self.port}.ipc" if ipc_path is None else ipc_path
 
         command = []
         command.append("anvil")
@@ -111,8 +112,10 @@ class AnvilFork:
     def __del__(self) -> None:
         self._process.terminate()
         self._process.wait()
-        if os.path.exists(self.ipc_path):
+        try:
             os.remove(self.ipc_path)
+        except Exception:
+            pass
 
     def _send_request(self, method: str, params: List[Any] | None = None) -> None:
         """

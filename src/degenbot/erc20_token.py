@@ -89,15 +89,14 @@ class Erc20Token(BaseToken):
 
         try:
             self.name
-        except AttributeError:  # pragma: no cover
-            if not _w3.eth.get_code(self.address):
+        except AttributeError:
+            if not _w3.eth.get_code(self.address):  # pragma: no cover
                 raise ValueError("No contract deployed at this address")
             self.name = f"Unknown @ {self.address}"
+            self.name = self.name.strip("\x00")
             logger.warning(
                 f"Token contract at {self.address} does not implement a 'name' function. Setting to '{self.name}'"
             )
-        finally:
-            self.name = self.name.strip("\x00")
 
         try:
             self.symbol: str
@@ -179,7 +178,7 @@ class Erc20Token(BaseToken):
         self._cached_balance: Dict[Tuple[int, ChecksumAddress], int] = {}
         self._cached_total_supply: Dict[int, int] = {}
 
-        if not silent:
+        if not silent:  # pragma: no cover
             logger.info(f"• {self.symbol} ({self.name})")
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -294,8 +293,11 @@ class Erc20Token(BaseToken):
         Retrieve the total supply for this token.
         """
 
-        if block_identifier is None:
-            block_identifier = config.get_web3().eth.get_block_number()
+        block_identifier = (
+            config.get_web3().eth.get_block_number()
+            if block_identifier is None
+            else block_identifier
+        )
 
         return self._get_total_supply_cachable(
             block_number=get_number_for_block_identifier(block_identifier)

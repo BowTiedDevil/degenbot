@@ -52,6 +52,7 @@ def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> LiquidityPool:
     pool = LiquidityPool(WBTC_WETH_V2_POOL_ADDRESS)
     pool.reserves_token0 = 16231137593
     pool.reserves_token1 = 2571336301536722443178
+
     return pool
 
 
@@ -2065,9 +2066,7 @@ def wbtc_weth_arb(
     wbtc_weth_v2_lp: LiquidityPool,
     wbtc_weth_v3_lp: V3LiquidityPool,
     weth_token: Erc20Token,
-    fork_mainnet: AnvilFork,
 ):
-    set_web3(fork_mainnet.w3)
     return UniswapLpCycle(
         id="test_arb",
         input_token=weth_token,
@@ -2087,6 +2086,39 @@ class MockV3LiquidityPool(V3LiquidityPool):
     def __init__(self):
         self._state_lock = Lock()
         self._subscribers = set()
+
+
+def test_create_with_either_token_input(
+    wbtc_weth_v2_lp: LiquidityPool,
+    wbtc_weth_v3_lp: V3LiquidityPool,
+    weth_token: Erc20Token,
+    wbtc_token: Erc20Token,
+):
+    UniswapLpCycle(
+        id="test_arb",
+        input_token=weth_token,
+        swap_pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp],
+        max_input=100 * 10**18,
+    )
+    UniswapLpCycle(
+        id="test_arb",
+        input_token=wbtc_token,
+        swap_pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp],
+        max_input=100 * 10**18,
+    )
+
+
+def test_create_from_token_addresses(fork_mainnet: AnvilFork):
+    set_web3(fork_mainnet.w3)
+    UniswapLpCycle.from_addresses(
+        input_token_address=WETH_ADDRESS,
+        swap_pool_addresses=[
+            (WBTC_WETH_V2_POOL_ADDRESS, "V2"),
+            (WBTC_WETH_V3_POOL_ADDRESS, "V3"),
+        ],
+        id="test",
+        max_input=1,
+    )
 
 
 def test_arbitrage_with_overrides(

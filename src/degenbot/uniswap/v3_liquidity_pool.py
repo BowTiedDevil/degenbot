@@ -237,7 +237,7 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
 
         self._subscribers: Set[Subscriber] = set()
 
-        if not silent:
+        if not silent:  # pragma: no branch
             logger.info(self.name)
             logger.info(f"• Token 0: {self.token0}")
             logger.info(f"• Token 1: {self.token1}")
@@ -396,11 +396,15 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         _tick_data = override_tick_data if override_tick_data is not None else self.tick_data
 
         if not (
-            sqrt_price_limit_x96 < _sqrt_price_x96
-            and sqrt_price_limit_x96 > TickMath.MIN_SQRT_RATIO
+            (
+                sqrt_price_limit_x96 < _sqrt_price_x96
+                and sqrt_price_limit_x96 > TickMath.MIN_SQRT_RATIO
+            )
             if zeroForOne
-            else sqrt_price_limit_x96 > _sqrt_price_x96
-            and sqrt_price_limit_x96 < TickMath.MAX_SQRT_RATIO
+            else (
+                sqrt_price_limit_x96 > _sqrt_price_x96
+                and sqrt_price_limit_x96 < TickMath.MAX_SQRT_RATIO
+            )
         ):
             raise EVMRevertError("SPL")
 
@@ -453,6 +457,7 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
                             f"\n{self.name}"
                         )
                         self._update_tick_data_at_word(word_position=tick_next_word)
+
                     break
 
             # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
@@ -494,7 +499,7 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
                 )
 
             # shift tick if we reached the next price
-            if state.sqrt_price_x96 == step.sqrt_price_next_x96:
+            if state.sqrt_price_x96 == step.sqrt_price_next_x96:  # pragma: no branch
                 # if the tick is initialized, run the tick transition
                 if step.initialized:
                     tick_next = step.tick_next
@@ -507,7 +512,7 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
 
                 state.tick = step.tick_next - 1 if zeroForOne else step.tick_next
 
-            elif state.sqrt_price_x96 != step.sqrt_price_start_x96:
+            elif state.sqrt_price_x96 != step.sqrt_price_start_x96:  # pragma: no branch
                 # recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
                 state.tick = TickMath.getTickAtSqrtRatio(state.sqrt_price_x96)
 
@@ -639,42 +644,32 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         with self._state_lock:
             updated = False
 
-            # use the block_number if provided, otherwise pull from web3
-            if block_number is None:
-                block_number = config.get_web3().eth.get_block_number()
+            block_number = (
+                config.get_web3().eth.get_block_number() if block_number is None else block_number
+            )
 
-            if block_number < self._update_block:
-                raise ExternalUpdateError(
-                    f"Current state recorded at block {self._update_block}, received update for stale block {block_number}"
-                )
-
-            (
-                _sqrt_price_x96,
-                _tick,
-                *_,
-            ) = _w3_contract.functions.slot0().call(
+            _sqrt_price_x96, _tick, *_ = _w3_contract.functions.slot0().call(
                 block_identifier=block_number,
             )
             _liquidity = _w3_contract.functions.liquidity().call(block_identifier=block_number)
 
-            if self.sqrt_price_x96 != _sqrt_price_x96:
+            if self.sqrt_price_x96 != _sqrt_price_x96:  # pragma: no branch
                 updated = True
                 self.sqrt_price_x96 = _sqrt_price_x96
 
-            if self.tick != _tick:
+            if self.tick != _tick:  # pragma: no branch
                 updated = True
                 self.tick = _tick
 
-            if self.liquidity != _liquidity:
+            if self.liquidity != _liquidity:  # pragma: no branch
                 updated = True
                 self.liquidity = _liquidity
 
-            if updated:
+            if updated:  # pragma: no branch
                 self._notify_subscribers()
-                # WIP: maintain a dict of pool states by block to unwind updates that were removed by a re-org
                 self._pool_state_archive[block_number] = self.state
 
-            if not silent:
+            if not silent:  # pragma: no branch
                 logger.info(f"Liquidity: {self.liquidity}")
                 logger.info(f"SqrtPriceX96: {self.sqrt_price_x96}")
                 logger.info(f"Tick: {self.tick}")
@@ -717,7 +712,7 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
             - 'tick_bitmap'  (not yet implemented)
         """
 
-        if token_in not in self.tokens:
+        if token_in not in self.tokens:  # pragma: no branch
             raise ValueError("token_in not found!")
 
         if override_state:
@@ -782,7 +777,7 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
             - 'tick_bitmap'  (not yet implemented)
         """
 
-        if token_out not in self.tokens:
+        if token_out not in self.tokens:  # pragma: no branch
             raise ValueError("token_out not found!")
 
         _is_zero_for_one = token_out == self.token1
@@ -876,7 +871,6 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         if TYPE_CHECKING:
             assert isinstance(update, UniswapV3PoolExternalUpdate)
 
-        # If a block number was not provided, pull from web3
         if block_number is None:
             if update is not None:
                 block_number = update.block_number

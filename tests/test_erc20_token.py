@@ -1,6 +1,9 @@
 from degenbot import Erc20Token, set_web3
 from eth_utils import to_checksum_address
 from hexbytes import HexBytes
+from degenbot.fork.anvil_fork import AnvilFork
+from degenbot.erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+import web3
 
 VITALIK_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -84,3 +87,9 @@ def test_erc20token_functions(ethereum_full_node_web3):
     weth.get_approval(VITALIK_ADDRESS, weth.address)
     weth.get_balance(VITALIK_ADDRESS)
     weth.update_price()
+
+
+def test_ether_placeholder(fork_mainnet_archive: AnvilFork):
+    set_web3(fork_mainnet_archive.w3)
+    ether = EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE()
+    ether.get_balance(VITALIK_ADDRESS)

@@ -19,8 +19,6 @@ class BaseManager:
     Base class for managers that generate, track and distribute various helper classes
     """
 
-    ...
-
 
 class BasePoolUpdate: ...
 
@@ -83,10 +81,16 @@ class BaseLiquidityPool(ABC):
         return self.name
 
     @abstractmethod
-    def subscribe(self, subscriber: Any) -> None: ...
+    def subscribe(self, subscriber: Any) -> None:
+        """
+        Subscribe to state updates from the pool.
+        """
 
     @abstractmethod
-    def get_arbitrage_helpers(self) -> Iterator[BaseArbitrage]: ...
+    def get_arbitrage_helpers(self) -> Iterator[BaseArbitrage]:
+        """
+        Retrieve all subscribed arbitrage helpers.
+        """
 
 
 class BaseToken:

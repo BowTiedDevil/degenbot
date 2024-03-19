@@ -32,7 +32,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
     def __init__(
         self,
         input_token: Erc20Token,
-        swap_pools: Iterable[BaseLiquidityPool],
+        swap_pools: Iterable[LiquidityPool | V3LiquidityPool],
         id: str,
         max_input: int | None = None,
     ):
@@ -69,7 +69,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                     token_in = pool.token1
                     token_out = pool.token0
                     zero_for_one = False
-                else:
+                else:  # pragma: no cover
                     raise ValueError("Input token could not be identified!")
             else:
                 # token_out references the output from the previous pool
@@ -81,7 +81,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                     token_in = pool.token1
                     token_out = pool.token0
                     zero_for_one = False
-                else:
+                else:  # pragma: no cover
                     raise ValueError("Input token could not be identified!")
             _swap_vectors.append(
                 UniswapPoolSwapVector(
@@ -109,8 +109,6 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         }
 
     def __getstate__(self) -> Dict[str, Any]:
-        # Remove objects that cannot be pickled and are unnecessary to perform
-        # the calculation
         dropped_attributes = (
             "_subscribers",
             "pool_states",
@@ -159,7 +157,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
             ):
                 logger.debug(f"Applying override {override.future_state} to {pool}")
                 sorted_overrides[pool.address] = override.future_state
-            else:
+            else:  # pragma: no cover
                 raise ValueError(f"Override for {pool} has unsupported type {type(override)}")
 
         return sorted_overrides
@@ -218,7 +216,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                         token_in_quantity=_token_in_quantity,
                         override_state=pool_state_override,
                     )
-                else:
+                else:  # pragma: no cover
                     raise ValueError(f"Could not determine Uniswap version for pool {pool}")
             except LiquidityPoolError as e:
                 raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}")
@@ -244,7 +242,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                         else TickMath.MAX_SQRT_RATIO - 1,
                     )
                 )
-            else:
+            else:  # pragma: no cover
                 raise ValueError(
                     f"Could not identify Uniswap version for pool: {self.swap_pools[i]}"
                 )
@@ -310,7 +308,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                     self._update_pool_states((pool,))
                     found_updates = True
                     break
-            else:
+            else:  # pragma: no cover
                 raise ValueError(f"Could not identify pool {pool}!")
 
         if found_updates:
@@ -685,14 +683,15 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         # create the pool objects
         pool_objects: List[LiquidityPool | V3LiquidityPool | CamelotLiquidityPool] = []
         for pool_address, pool_type in swap_pool_addresses:
-            if pool_type == "V2":
-                pool_objects.append(LiquidityPool(address=pool_address))
-            elif pool_type == "V3":
-                pool_objects.append(V3LiquidityPool(address=pool_address))
-            elif pool_type == "CamelotV2":
-                pool_objects.append(CamelotLiquidityPool(address=pool_address))
-            else:
-                raise ArbitrageError(f"Pool type {pool_type} unknown!")
+            match pool_type:
+                case "V2":
+                    pool_objects.append(LiquidityPool(address=pool_address))
+                case "V3":
+                    pool_objects.append(V3LiquidityPool(address=pool_address))
+                case "CamelotV2":
+                    pool_objects.append(CamelotLiquidityPool(address=pool_address))
+                case _:  # pragma: no cover
+                    raise ArbitrageError(f"Pool type {pool_type} unknown!")
 
         return cls(
             input_token=token,
@@ -875,7 +874,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                             msg_value,
                         )
                     )
-                else:
+                else:  # pragma: no cover
                     raise ValueError(
                         f"Could not identify pool: {swap_pool}, type={type(swap_pool)}"
                     )

@@ -71,6 +71,9 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
         self.id = id
         self.input_token = input_token
 
+        if max_input == 0:
+            raise ValueError("Maximum input must be positive.")
+
         if max_input is None:
             logger.warning("No maximum input provided, setting to 100 WETH")
             max_input = 100 * 10**18
@@ -138,7 +141,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                         CurveStableSwapPoolVector(token_in=token_in, token_out=token_out)
                     )
 
-                case _:
+                case _:  # pragma: no cover
                     raise ValueError("Pool type could not be identified")
 
         self._swap_vectors = tuple(_swap_vectors)
@@ -253,6 +256,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
+
                     case V3LiquidityPool():
                         pool_state_override = pool_state_overrides.get(pool.address)
                         if TYPE_CHECKING:
@@ -265,6 +269,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
+
                     case CurveStableswapPool():
                         pool_state_override = pool_state_overrides.get(pool.address)
                         if TYPE_CHECKING:
@@ -282,7 +287,8 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                                 block_identifier=block_number,
                             )
                         )
-                    case _:
+
+                    case _:  # pragma: no cover
                         raise ValueError(f"Could not determine pool type for {pool}")
             except LiquidityPoolError as e:
                 raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}")
@@ -299,6 +305,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                             else (_token_out_quantity, 0),
                         )
                     )
+
                 case V3LiquidityPool():
                     pools_amounts_out.append(
                         UniswapV3PoolSwapAmounts(
@@ -309,6 +316,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                             else TickMath.MAX_SQRT_RATIO - 1,
                         )
                     )
+
                 case CurveStableswapPool():
                     pools_amounts_out.append(
                         CurveStableSwapPoolSwapAmounts(
@@ -329,7 +337,8 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                             else False,
                         )
                     )
-                case _:
+
+                case _:  # pragma: no cover
                     raise ValueError(
                         f"Could not identify Uniswap version for pool: {self.swap_pools[i]}"
                     )
@@ -438,7 +447,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                     fee = Fraction(pool.fee, pool.FEE_DENOMINATOR)
                     profit_factor *= price * ((fee.denominator - fee.numerator) / fee.denominator)
 
-                case _:
+                case _:  # pragma: no cover
                     raise ValueError("Could not identify pool")
 
             # print(f"{profit_factor=}")
@@ -494,6 +503,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                                 else token_out_quantity,
                                 override_state=pool_override,
                             )
+
                         case V3LiquidityPool():
                             if TYPE_CHECKING:
                                 assert isinstance(pool_override, UniswapV3PoolState)
@@ -504,6 +514,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                                 else token_out_quantity,
                                 override_state=pool_override,
                             )
+
                         case CurveStableswapPool():
                             if TYPE_CHECKING:
                                 assert isinstance(pool_override, CurveStableswapPoolState)
@@ -519,7 +530,8 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                                     block_identifier=block_number,
                                 )
                             )
-                        case _:
+
+                        case _:  # pragma: no cover
                             raise ValueError
 
                 except (EVMRevertError, LiquidityPoolError):

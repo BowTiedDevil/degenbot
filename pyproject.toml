@@ -70,9 +70,9 @@ exclude_also = [
     "if TYPE_CHECKING:", # exclude type checking imports and checks
     "except Exception", # exclude catch-alls
     "return NotImplemented", # required for __eq__, __lt__, __gt__
-    "def __repr__(self):",
-    "def __str__(self):",
-    "def __hash__(self):",
+    "def __hash__",
+    "def __repr__",
+    "def __str__",
     "logger.debug",
 ]
 

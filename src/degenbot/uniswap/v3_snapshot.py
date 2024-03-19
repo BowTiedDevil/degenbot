@@ -17,7 +17,6 @@ from .v3_dataclasses import (
     UniswapV3LiquidityEvent,
     UniswapV3PoolExternalUpdate,
 )
-from .v3_liquidity_pool import V3LiquidityPool
 
 
 class UniswapV3LiquiditySnapshot:
@@ -30,31 +29,25 @@ class UniswapV3LiquiditySnapshot:
         file: TextIO | str,
         chain_id: int | None = None,
     ):
-        _file: TextIOWrapper
+        file_handle: TextIOWrapper
         json_liquidity_snapshot: Dict[str, Any]
 
-        try:
-            if isinstance(file, TextIOWrapper):
-                _file = file
+        match file:
+            case TextIOWrapper():
+                file_handle = file
                 json_liquidity_snapshot = ujson.load(file)
-            elif isinstance(file, str):
-                with open(file) as _file:
-                    json_liquidity_snapshot = ujson.load(_file)
-            else:  # pragma: no cover
-                raise ValueError(f"GOT {type(file)}")
-        finally:
-            _file.close()
+            case str():
+                with open(file) as file_handle:
+                    json_liquidity_snapshot = ujson.load(file_handle)
+            case _:  # pragma: no cover
+                raise ValueError(f"Unrecognized file type {type(file)}")
 
         self._chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
 
         self.newest_block = json_liquidity_snapshot.pop("snapshot_block")
 
-        self._liquidity_snapshot: Dict[ChecksumAddress, Dict[str, Any]] = dict()
-        for (
-            pool_address,
-            pool_liquidity_snapshot,
-        ) in json_liquidity_snapshot.items():
-            self._liquidity_snapshot[to_checksum_address(pool_address)] = {
+        self._liquidity_snapshot: Dict[ChecksumAddress, Dict[str, Any]] = {
+            to_checksum_address(pool_address): {
                 "tick_bitmap": {
                     int(k): UniswapV3BitmapAtWord(**v)
                     for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
@@ -64,6 +57,8 @@ class UniswapV3LiquiditySnapshot:
                     for k, v in pool_liquidity_snapshot["tick_data"].items()
                 },
             }
+            for pool_address, pool_liquidity_snapshot in json_liquidity_snapshot.items()
+        }
 
         logger.info(
             f"Loaded LP snapshot: {len(json_liquidity_snapshot)} pools @ block {self.newest_block}"
@@ -131,8 +126,7 @@ class UniswapV3LiquiditySnapshot:
                 for log in event_logs:
                     pool_address, liquidity_event = _process_log()
 
-                    # skip zero liquidity events
-                    if liquidity_event.liquidity == 0:
+                    if liquidity_event.liquidity == 0:  # pragma: no cover
                         continue
 
                     self._add_pool_if_missing(pool_address)
@@ -172,15 +166,8 @@ class UniswapV3LiquiditySnapshot:
             for event in sorted_events
         ]
 
-    def get_tick_bitmap(
-        self, pool: V3LiquidityPool | ChecksumAddress
-    ) -> Dict[int, UniswapV3BitmapAtWord]:
-        if isinstance(pool, V3LiquidityPool):
-            pool_address = pool.address
-        elif isinstance(pool, str):
-            pool_address = to_checksum_address(pool)
-        else:
-            raise ValueError(f"Unexpected input for pool: {type(pool)}")
+    def get_tick_bitmap(self, pool: ChecksumAddress | str) -> Dict[int, UniswapV3BitmapAtWord]:
+        pool_address = to_checksum_address(pool)
 
         try:
             tick_bitmap: Dict[int, UniswapV3BitmapAtWord] = self._liquidity_snapshot[pool_address][
@@ -190,15 +177,8 @@ class UniswapV3LiquiditySnapshot:
         except KeyError:
             return dict()
 
-    def get_tick_data(
-        self, pool: V3LiquidityPool | ChecksumAddress
-    ) -> Dict[int, UniswapV3LiquidityAtTick]:
-        if isinstance(pool, V3LiquidityPool):
-            pool_address = pool.address
-        elif isinstance(pool, str):
-            pool_address = to_checksum_address(pool)
-        else:
-            raise ValueError(f"Unexpected input for pool: {type(pool)}")
+    def get_tick_data(self, pool: ChecksumAddress | str) -> Dict[int, UniswapV3LiquidityAtTick]:
+        pool_address = to_checksum_address(pool)
 
         try:
             tick_data: Dict[int, UniswapV3LiquidityAtTick] = self._liquidity_snapshot[pool_address][
@@ -210,16 +190,11 @@ class UniswapV3LiquiditySnapshot:
 
     def update_snapshot(
         self,
-        pool: V3LiquidityPool | ChecksumAddress,
+        pool: ChecksumAddress | str,
         tick_data: Dict[int, UniswapV3LiquidityAtTick],
         tick_bitmap: Dict[int, UniswapV3BitmapAtWord],
     ) -> None:
-        if isinstance(pool, V3LiquidityPool):
-            pool_address = pool.address
-        elif isinstance(pool, str):
-            pool_address = to_checksum_address(pool)
-        else:
-            raise ValueError(f"Unexpected input for pool: {type(pool)}")
+        pool_address = to_checksum_address(pool)
 
         self._add_pool_if_missing(pool_address)
         self._liquidity_snapshot[pool_address].update(

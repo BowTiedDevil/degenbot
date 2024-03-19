@@ -8,6 +8,7 @@ from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20_token import Erc20Token
 from degenbot.uniswap.v2_liquidity_pool import LiquidityPool, UniswapV2PoolState
 import time
+import pytest
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
@@ -223,3 +224,47 @@ async def test_process_pool_calculation() -> None:
             await task
             print(f"Completed process_pool calc #{i}, {time.perf_counter()-start:.2f}s since start")
         print(f"Completed {_NUM_FUTURES} calculations in {time.perf_counter() - start:.1f}s")
+
+
+def test_bad_pool_in_constructor():
+    weth = Erc20Token(WETH_ADDRESS)
+    uniswap_v2_weth_dai_lp = LiquidityPool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
+
+    with pytest.raises(
+        ValueError, match="Must provide only Curve StableSwap or Uniswap liquidity pools."
+    ):
+        UniswapCurveCycle(
+            input_token=weth,
+            swap_pools=[uniswap_v2_weth_dai_lp, None, uniswap_v2_weth_usdc_lp],
+            id="test",
+            max_input=10 * 10**18,
+        )
+
+
+def test_no_max_input():
+    weth = Erc20Token(WETH_ADDRESS)
+    uniswap_v2_weth_dai_lp = LiquidityPool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
+
+    UniswapCurveCycle(
+        id="test_arb",
+        input_token=weth,
+        swap_pools=[uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp],
+    )
+
+
+def test_zero_max_input():
+    weth = Erc20Token(WETH_ADDRESS)
+    uniswap_v2_weth_dai_lp = LiquidityPool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
+
+    with pytest.raises(ValueError, match="Maximum input must be positive."):
+        UniswapCurveCycle(
+            id="test_arb",
+            input_token=weth,
+            swap_pools=[uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp],
+            max_input=0,
+        )

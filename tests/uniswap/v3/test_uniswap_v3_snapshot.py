@@ -23,7 +23,7 @@ def first_250_blocks_snapshot(
 ) -> UniswapV3LiquiditySnapshot:
     degenbot.set_web3(fork_mainnet_archive.w3)
     snapshot = UniswapV3LiquiditySnapshot(file=EMPTY_SNAPSHOT_FILENAME)
-    snapshot.fetch_new_liquidity_events(to_block=EMPTY_SNAPSHOT_BLOCK + 250)
+    snapshot.fetch_new_liquidity_events(to_block=EMPTY_SNAPSHOT_BLOCK + 250, span=50)
     return snapshot
 
 
@@ -172,6 +172,11 @@ def test_apply_update_to_snapshot(
         ),
         17: UniswapV3BitmapAtWord(bitmap=288230376155906048, block=12369846),
     }
+    zero_snapshot.update_snapshot(
+        pool=POOL_ADDRESS,
+        tick_data=tick_data,
+        tick_bitmap=tick_bitmap,
+    )
     zero_snapshot.update_snapshot(
         pool=POOL_ADDRESS,
         tick_data=tick_data,
