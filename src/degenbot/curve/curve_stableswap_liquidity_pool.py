@@ -1734,6 +1734,7 @@ class CurveStableswapPool(SubscriptionMixin, BaseLiquidityPool):
             "0x69ACcb968B19a53790f43e57558F5E443A91aF22",
             "0x875DF0bA24ccD867f8217593ee27253280772A97",
             "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8",
+            "0xB657B895B265C38c53FFF00166cF7F6A3C70587d",
         ):
             for _ in range(255):
                 D_P = D * D // _xp[0] * D // _xp[1] // N_COINS**2
