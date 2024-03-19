@@ -255,67 +255,6 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         """
         self.pool_states.update({pool.address: pool.state for pool in pools})
 
-    def auto_update(
-        self,
-        silent: bool = True,
-        block_number: int | None = None,
-        override_update_method: str | None = None,
-    ) -> bool:
-        """
-        TBD
-        """
-
-        found_updates = False
-
-        if None in self.pool_states.values():
-            found_updates = True
-            self._update_pool_states(self.swap_pools)
-            self.clear_best()
-
-            return found_updates
-
-        if override_update_method:
-            logger.debug(f"OVERRIDDEN UPDATE METHOD: {override_update_method}")
-
-        for pool in self.swap_pools:
-            pool_updated = False
-            if isinstance(pool, LiquidityPool):
-                if pool._update_method == "polling" or override_update_method == "polling":
-                    pool_updated = pool.update_reserves(
-                        silent=silent,
-                        override_update_method=override_update_method,
-                        update_block=block_number,
-                    )
-                elif pool._update_method == "external":
-                    if pool.state != self.pool_states[pool.address]:
-                        logger.debug(f"(UniswapLpCycle) found update for pool {pool}")
-                        pool_updated = True
-
-                if pool_updated:
-                    logger.debug(f"(UniswapLpCycle) found update for pool {pool}")
-                    self._update_pool_states((pool,))
-                    found_updates = True
-                    break
-
-            elif isinstance(pool, V3LiquidityPool):
-                pool_updated, _ = pool.auto_update(
-                    silent=silent,
-                    block_number=block_number,
-                )
-
-                if pool_updated:
-                    logger.debug(f"(UniswapLpCycle) found update for pool {pool}")
-                    self._update_pool_states((pool,))
-                    found_updates = True
-                    break
-            else:  # pragma: no cover
-                raise ValueError(f"Could not identify pool {pool}!")
-
-        if found_updates:
-            self.clear_best()
-
-        return found_updates
-
     def _pre_calculation_check(
         self,
         override_state: Sequence[
