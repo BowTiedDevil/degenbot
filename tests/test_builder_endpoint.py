@@ -1,3 +1,4 @@
+import aiohttp
 import degenbot.fork
 import eth_account
 import pytest
@@ -103,6 +104,19 @@ async def test_blank_eth_send_bundle(
     )
     assert isinstance(response, dict)
     assert "bundleHash" in response
+
+
+async def test_blank_eth_send_bundle_with_session(
+    beaverbuild: BuilderEndpoint,
+    fork_mainnet: degenbot.fork.AnvilFork,
+):
+    async with aiohttp.ClientSession(raise_for_status=True) as session:
+        current_block = fork_mainnet.w3.eth.block_number
+        response = await beaverbuild.send_eth_bundle(
+            bundle=[], block_number=current_block + 1, http_session=session
+        )
+        assert isinstance(response, dict)
+        assert "bundleHash" in response
 
 
 async def test_eth_call_bundle(

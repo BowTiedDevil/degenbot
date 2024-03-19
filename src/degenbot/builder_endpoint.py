@@ -83,12 +83,12 @@ class BuilderEndpoint:
                     # check in the `json` method
                     content_type=None,
                 )
-        except aiohttp.ClientError as exc:
+        except aiohttp.ClientError as exc:  # pragma: no cover
             raise ExternalServiceError(f"HTTP Error: {exc}") from None
         else:
-            if "error" in relay_response:
-                return relay_response["error"]
-            return relay_response["result"]
+            return (
+                relay_response["error"] if "error" in relay_response else relay_response["result"]
+            )
         finally:
             if close_session_after_post:
                 await session.close()
@@ -108,7 +108,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "eth_callBundle"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
@@ -172,7 +172,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "eth_cancelBundle"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
@@ -223,7 +223,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "eth_cancelPrivateTransaction"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
@@ -275,7 +275,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "flashbots_getUserStatsV2"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
@@ -323,23 +323,15 @@ class BuilderEndpoint:
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
         """
-        Get the Flashbots V2 user stats for the given searcher identity.
+        Get the Flashbots V2 bundle stats for the given searcher identity.
         """
 
         ENDPOINT_METHOD = "flashbots_getBundleStatsV2"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
-
-        if self.authentication_header_label is not None and signer_key is None:
-            raise ValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"
-            )
-
-        if block_number is None:
-            block_number = get_web3().eth.block_number
 
         payload = ujson.dumps(
             {
@@ -386,7 +378,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "eth_sendBundle"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
@@ -468,7 +460,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "eth_sendPrivateTransaction"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
@@ -529,7 +521,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "eth_sendPrivateRawTransaction"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
