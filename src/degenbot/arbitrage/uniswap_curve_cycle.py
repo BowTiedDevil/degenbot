@@ -294,8 +294,6 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                             )
                         )
 
-                    case _:  # pragma: no cover
-                        raise ValueError(f"Could not determine pool type for {pool}")
             except LiquidityPoolError as e:
                 raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}")
             else:
@@ -342,11 +340,6 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                             )
                             else False,
                         )
-                    )
-
-                case _:  # pragma: no cover
-                    raise ValueError(
-                        f"Could not identify Uniswap version for pool: {self.swap_pools[i]}"
                     )
 
         return pools_amounts_out
@@ -453,9 +446,6 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                     fee = Fraction(pool.fee, pool.FEE_DENOMINATOR)
                     profit_factor *= price * ((fee.denominator - fee.numerator) / fee.denominator)
 
-                case _:  # pragma: no cover
-                    raise ValueError("Could not identify pool")
-
             # print(f"{profit_factor=}")
 
         if profit_factor < 1.0:
@@ -536,9 +526,6 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                                     block_identifier=block_number,
                                 )
                             )
-
-                        case _:  # pragma: no cover
-                            raise ValueError
 
                 except (EVMRevertError, LiquidityPoolError):
                     # The optimizer might send invalid amounts into the swap
