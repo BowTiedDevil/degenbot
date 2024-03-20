@@ -1,6 +1,6 @@
 import dataclasses
 from typing import TYPE_CHECKING
-from ..baseclasses import BasePoolState, UniswapSimulationResult
+from ..baseclasses import BasePoolState, UniswapSimulationResult, Message
 
 if TYPE_CHECKING:
     from .v2_liquidity_pool import LiquidityPool
@@ -32,3 +32,8 @@ class UniswapV2PoolExternalUpdate:
     reserves_token0: int
     reserves_token1: int
     tx: str | None = dataclasses.field(compare=False, default=None)
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class UniswapV2PoolStateUpdated(Message):
+    state: UniswapV2PoolState

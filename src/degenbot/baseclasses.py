@@ -1,11 +1,39 @@
 import dataclasses
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Iterator, Sequence
+import abc
+
+from typing import TYPE_CHECKING, Any, Iterator, Sequence, Set, Protocol
+
 
 from eth_typing import ChecksumAddress
 
 if TYPE_CHECKING:
     from .erc20_token import Erc20Token
+
+
+class Message:
+    """
+    A message sent from a `Publisher` to a `Subscriber`
+    """
+
+
+class Publisher(Protocol):
+    """
+    Can publish updates and accept subscriptions.
+    """
+
+    _subscribers: Set["Subscriber"]
+
+
+class Subscriber(Protocol):
+    """
+    Can be notified via the `notify()` method
+    """
+
+    @abc.abstractmethod
+    def notify(self, publisher: "Publisher", message: "Message") -> None:
+        """
+        Deliver `message` from `publisher`.
+        """
 
 
 class BaseArbitrage:
@@ -38,11 +66,12 @@ class UniswapSimulationResult(BaseSimulationResult):
     future_state: BasePoolState
 
 
-class BaseLiquidityPool(ABC):
+class BaseLiquidityPool(abc.ABC, Publisher):
     address: ChecksumAddress
     name: str
     state: BasePoolState
     tokens: Sequence["Erc20Token"]
+    _subscribers: Set[Subscriber]
 
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, BaseLiquidityPool):
@@ -80,17 +109,22 @@ class BaseLiquidityPool(ABC):
     def __str__(self) -> str:
         return self.name
 
-    @abstractmethod
-    def subscribe(self, subscriber: Any) -> None:
-        """
-        Subscribe to state updates from the pool.
-        """
+    def _notify_subscribers(self: Publisher, message: Message) -> None:
+        for subscriber in self._subscribers:
+            subscriber.notify(self, message)
 
-    @abstractmethod
-    def get_arbitrage_helpers(self) -> Iterator[BaseArbitrage]:
-        """
-        Retrieve all subscribed arbitrage helpers.
-        """
+    def get_arbitrage_helpers(self: Publisher) -> Iterator[BaseArbitrage]:
+        return (
+            subscriber
+            for subscriber in self._subscribers
+            if isinstance(subscriber, (BaseArbitrage))
+        )
+
+    def subscribe(self: Publisher, subscriber: Subscriber) -> None:
+        self._subscribers.add(subscriber)
+
+    def unsubscribe(self: Publisher, subscriber: Subscriber) -> None:
+        self._subscribers.discard(subscriber)
 
 
 class BaseToken:

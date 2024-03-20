@@ -8,7 +8,7 @@
 
 
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 import eth_abi.abi
 import web3.exceptions
@@ -35,12 +35,15 @@ from ..functions import get_number_for_block_identifier
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
-from ..subscription_mixins import Subscriber, SubscriptionMixin
 from .abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
-from .curve_stableswap_dataclasses import CurveStableSwapPoolAttributes, CurveStableswapPoolState
+from .curve_stableswap_dataclasses import (
+    CurveStableSwapPoolAttributes,
+    CurveStableswapPoolState,
+    CurveStableSwapPoolStateUpdated,
+)
 
 
-class CurveStableswapPool(SubscriptionMixin, BaseLiquidityPool):
+class CurveStableswapPool(BaseLiquidityPool):
     # Constants from contract
     # ref: https://github.com/curvefi/curve-contract/blob/master/contracts/pool-templates/base/SwapTemplateBase.vy
     PRECISION_DECIMALS = 18
@@ -452,7 +455,8 @@ class CurveStableswapPool(SubscriptionMixin, BaseLiquidityPool):
         token_string = "-".join([token.symbol for token in self.tokens])
         self.name = f"{token_string} (CurveStable, {fee_string}%)"
 
-        self._subscribers: Set[Subscriber] = set()
+        self._subscribers = set()
+
         self.state: CurveStableswapPoolState
         self._update_pool_state()
         self._pool_state_archive: Dict[int, CurveStableswapPoolState] = {
@@ -508,7 +512,9 @@ class CurveStableswapPool(SubscriptionMixin, BaseLiquidityPool):
         self.state = CurveStableswapPoolState(
             pool=self, address=self.address, balances=self.balances
         )
-        self._notify_subscribers()
+        self._notify_subscribers(
+            message=CurveStableSwapPoolStateUpdated(self.state),
+        )
 
     @property
     def _w3_contract(self) -> Contract:

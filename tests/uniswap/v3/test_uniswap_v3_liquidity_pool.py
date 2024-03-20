@@ -2290,7 +2290,7 @@ def test_calculate_tokens_out_from_tokens_in(mocked_wbtc_weth_v3liquiditypool) -
 
 
 def test_calculate_tokens_out_from_tokens_in_with_override(
-    mocked_wbtc_weth_v3liquiditypool
+    mocked_wbtc_weth_v3liquiditypool,
 ) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
     # Overridden reserve values for this test are taken at block height 17,650,000
@@ -2335,7 +2335,7 @@ def test_calculate_tokens_in_from_tokens_out(mocked_wbtc_weth_v3liquiditypool) -
 
 
 def test_calculate_tokens_in_from_tokens_out_with_override(
-    mocked_wbtc_weth_v3liquiditypool
+    mocked_wbtc_weth_v3liquiditypool,
 ) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
     # Overridden reserve values for this test are taken at block height 17,650,000

@@ -9,7 +9,14 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import minimize_scalar
 from web3 import Web3
 
-from ..baseclasses import BaseArbitrage, BaseLiquidityPool, BasePoolState, UniswapSimulationResult
+from ..baseclasses import (
+    BaseArbitrage,
+    BaseLiquidityPool,
+    BasePoolState,
+    Publisher,
+    Subscriber,
+    UniswapSimulationResult,
+)
 from ..config import get_web3
 from ..constants import MAX_UINT256
 from ..curve.curve_stableswap_dataclasses import CurveStableswapPoolState
@@ -17,7 +24,6 @@ from ..curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
-from ..subscription_mixins import Publisher, Subscriber
 from ..uniswap.v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from ..uniswap.v2_liquidity_pool import LiquidityPool
 from ..uniswap.v3_dataclasses import UniswapV3PoolSimulationResult, UniswapV3PoolState
@@ -946,7 +952,11 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
 
         return payloads
 
-    def notify(self, publisher: Publisher) -> None:
-        # On receipt of a notification from a publishing pool, update the pool state
-        if isinstance(publisher, (LiquidityPool, V3LiquidityPool)):
-            self._update_pool_states((publisher,))
+    def notify(self, publisher: Publisher, message: Any) -> None:
+        match publisher:
+            case LiquidityPool() | V3LiquidityPool() | CurveStableswapPool():
+                self._update_pool_states((publisher,))
+            case _:
+                logger.info(
+                    f"{self} received message {message} from unsupported subscriber {publisher}"
+                )

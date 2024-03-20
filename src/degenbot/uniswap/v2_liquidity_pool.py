@@ -1,8 +1,7 @@
-import warnings
 from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
-from typing import Any, Dict, Iterable, List, Set, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -20,17 +19,17 @@ from ..exceptions import (
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
-from ..subscription_mixins import Subscriber, SubscriptionMixin
 from .abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
 from .v2_dataclasses import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
+    UniswapV2PoolStateUpdated,
 )
 from .v2_functions import generate_v2_pool_address
 
 
-class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
+class LiquidityPool(BaseLiquidityPool):
     """
     Represents a Uniswap V2 liquidity pool
     """
@@ -212,7 +211,7 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
 
         AllPools(chain_id)[self.address] = self
 
-        self._subscribers: Set[Subscriber] = set()
+        self._subscribers = set()
 
         if not silent:
             logger.info(self.name)
@@ -447,10 +446,12 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
             # Restore previous state and block
             self.state = restored_state
             self.update_block = restored_block
-            self._notify_subscribers()
+            self._notify_subscribers(
+                message=UniswapV2PoolStateUpdated(self.state),
+            )
 
-    def set_swap_target(self, *args: Any, **kwargs: Any) -> None:
-        warnings.warn(
+    def set_swap_target(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover
+        raise DeprecationWarning(
             "set_swap_target has been deprecated. Please convert your code to use the calculate_tokens_in_from_ratio_out method directly."
         )
 
@@ -510,23 +511,24 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
         token_out_quantity: int | None = None,
         override_state: UniswapV2PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
-        if token_in_quantity is None and token_out_quantity is None:
+        if token_in_quantity is None and token_out_quantity is None:  # pragma: no cover
             raise ValueError("No quantity was provided")
 
-        if token_in_quantity is not None and token_out_quantity is not None:
+        if token_in_quantity is not None and token_out_quantity is not None:  # pragma: no cover
             raise ValueError("Provide token_in_quantity or token_out_quantity, not both")
 
-        if token_in and token_out and token_in == token_out:
+        if token_in and token_out and token_in == token_out:  # pragma: no cover
             raise ValueError("Both tokens are the same!")
 
         if override_state:
             logger.debug(f"State override: {override_state}")
 
-        if token_in and token_in not in self.tokens:
+        if token_in and token_in not in self.tokens:  # pragma: no cover
             raise ValueError(
                 f"Token not found! token_in = {repr(token_in)}, pool holds {self.token0},{self.token1}"
             )
-        if token_out and token_out not in self.tokens:
+
+        if token_out and token_out not in self.tokens:  # pragma: no cover
             raise ValueError(
                 f"Token not found! token_out = {repr(token_out)}, pool holds {self.token0},{self.token1}"
             )
@@ -646,7 +648,9 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
                         reserves0,
                         reserves1,
                     )
-                    self._notify_subscribers()
+                    self._notify_subscribers(
+                        message=UniswapV2PoolStateUpdated(self.state),
+                    )
                     self._pool_state_archive[update_block] = self.state
                     updates = True
 
@@ -684,7 +688,9 @@ class LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
                 self.reserves_token1 = external_token1_reserves
                 self.new_reserves = True
                 self._pool_state_archive[update_block] = self.state
-                self._notify_subscribers()
+                self._notify_subscribers(
+                    message=UniswapV2PoolStateUpdated(self.state),
+                )
 
             if not silent:
                 logger.info(f"[{self.name}]")

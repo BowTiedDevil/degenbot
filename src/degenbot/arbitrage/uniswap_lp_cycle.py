@@ -10,11 +10,10 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import minimize_scalar
 from web3 import Web3
 
-from ..baseclasses import BaseArbitrage, BaseLiquidityPool, BasePoolState
+from ..baseclasses import BaseArbitrage, BaseLiquidityPool, BasePoolState, Publisher, Subscriber
 from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
-from ..subscription_mixins import Publisher, Subscriber
 from ..uniswap.v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from ..uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
 from ..uniswap.v3_dataclasses import UniswapV3PoolSimulationResult, UniswapV3PoolState
@@ -180,6 +179,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         for i, (pool, swap_vector) in enumerate(zip(self.swap_pools, self._swap_vectors)):
             token_in = swap_vector.token_in
             zero_for_one = swap_vector.zero_for_one
+            pool_state_override = pool_state_overrides.get(pool.address)
 
             if i == 0:
                 _token_in_quantity = token_in_quantity
@@ -189,7 +189,6 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
             try:
                 match pool:
                     case LiquidityPool():
-                        pool_state_override = pool_state_overrides.get(pool.address)
                         if TYPE_CHECKING:
                             assert pool_state_override is None or isinstance(
                                 pool_state_override,
@@ -201,7 +200,6 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                             override_state=pool_state_override,
                         )
                     case V3LiquidityPool():
-                        pool_state_override = pool_state_overrides.get(pool.address)
                         if TYPE_CHECKING:
                             assert pool_state_override is None or isinstance(
                                 pool_state_override,
@@ -212,8 +210,6 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
-                    case _:  # pragma: no cover
-                        raise ValueError(f"Could not determine Uniswap version for pool {pool}")
             except LiquidityPoolError as e:
                 raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}")
             else:
@@ -238,10 +234,6 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                             if zero_for_one
                             else TickMath.MAX_SQRT_RATIO - 1,
                         )
-                    )
-                case _:  # pragma: no cover
-                    raise ValueError(
-                        f"Could not identify Uniswap version for pool: {self.swap_pools[i]}"
                     )
 
         return pools_amounts_out
@@ -811,17 +803,17 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                                 msg_value,
                             )
                         )
-                    case _:  # pragma: no cover
-                        raise ValueError(
-                            f"Could not identify pool: {swap_pool}, type={type(swap_pool)}"
-                        )
         except Exception as e:
             logger.exception("generate_payloads catch-all")
             raise ArbitrageError(f"generate_payloads (catch-all)): {e}") from e
 
         return payloads
 
-    def notify(self, publisher: Publisher) -> None:
-        # On receipt of a notification from a publishing pool, update the pool state
-        if isinstance(publisher, (LiquidityPool, V3LiquidityPool)):
-            self._update_pool_states((publisher,))
+    def notify(self, publisher: Publisher, message: Any) -> None:
+        match publisher:
+            case LiquidityPool() | V3LiquidityPool():
+                self._update_pool_states((publisher,))
+            case _:
+                logger.info(
+                    f"{self} received message {message} from unsupported subscriber {publisher}"
+                )

@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, List
 
 from eth_typing import ChecksumAddress, HexAddress
 
-from ..baseclasses import BasePoolState
+from ..baseclasses import BasePoolState, Message
 
 if TYPE_CHECKING:
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
@@ -36,3 +36,8 @@ class CurveStableSwapPoolAttributes:
     is_metapool: bool
     underlying_coin_addresses: List[HexAddress] | None = dataclasses.field(default=None)
     base_pool_address: HexAddress | None = dataclasses.field(default=None)
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class CurveStableSwapPoolStateUpdated(Message):
+    state: CurveStableswapPoolState

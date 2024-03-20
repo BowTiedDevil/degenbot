@@ -5,7 +5,7 @@ import warnings
 from bisect import bisect_left
 from decimal import Decimal
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -26,7 +26,7 @@ from ..exceptions import (
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
-from ..subscription_mixins import Subscriber, SubscriptionMixin
+
 from .abi import UNISWAP_V3_POOL_ABI
 from .v3_dataclasses import (
     UniswapV3BitmapAtWord,
@@ -34,6 +34,7 @@ from .v3_dataclasses import (
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
+    UniswapV3PoolStateUpdated,
 )
 from .v3_functions import generate_v3_pool_address
 from .v3_libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
@@ -41,7 +42,7 @@ from .v3_libraries.functions import to_int256
 from .v3_tick_lens import TickLens
 
 
-class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
+class V3LiquidityPool(BaseLiquidityPool):
     # Holds a reference to a TickLens contract object. This is a singleton
     # contract so there is no need to create separate references for each pool.
     # Dict is keyed by a tuple of chain ID and factory address
@@ -235,7 +236,7 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
 
         AllPools(_w3.eth.chain_id)[self.address] = self
 
-        self._subscribers: Set[Subscriber] = set()
+        self._subscribers = set()
 
         if not silent:  # pragma: no branch
             logger.info(self.name)
@@ -666,7 +667,9 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
                 self.liquidity = _liquidity
 
             if updated:  # pragma: no branch
-                self._notify_subscribers()
+                self._notify_subscribers(
+                    message=UniswapV3PoolStateUpdated(self.state),
+                )
                 self._pool_state_archive[block_number] = self.state
 
             if not silent:  # pragma: no branch
@@ -1008,7 +1011,9 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
 
             if updated_state:
                 self._pool_state_archive[block_number] = self.state
-                self._notify_subscribers()
+                self._notify_subscribers(
+                    message=UniswapV3PoolStateUpdated(self.state),
+                )
 
                 if not force:
                     self._update_block = block_number
@@ -1055,7 +1060,9 @@ class V3LiquidityPool(SubscriptionMixin, BaseLiquidityPool):
             self.state = restored_state
             self._update_block = restored_block
 
-        self._notify_subscribers()
+        self._notify_subscribers(
+            message=UniswapV3PoolStateUpdated(self.state),
+        )
 
     def simulate_swap(
         self,

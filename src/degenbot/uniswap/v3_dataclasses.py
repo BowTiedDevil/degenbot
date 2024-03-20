@@ -1,7 +1,7 @@
 import dataclasses
 from typing import TYPE_CHECKING, Any, Dict, Tuple
 
-from ..baseclasses import BasePoolState, UniswapSimulationResult
+from ..baseclasses import BasePoolState, UniswapSimulationResult, Message
 
 if TYPE_CHECKING:
     from .v3_liquidity_pool import V3LiquidityPool
@@ -41,11 +41,14 @@ class UniswapV3PoolExternalUpdate:
     liquidity: int | None = None
     sqrt_price_x96: int | None = None
     tick: int | None = None
-    liquidity_change: Tuple[
-        int,  # Liquidity
-        int,  # TickLower
-        int,  # TickUpper
-    ] | None = None
+    liquidity_change: (
+        Tuple[
+            int,  # Liquidity
+            int,  # TickLower
+            int,  # TickUpper
+        ]
+        | None
+    ) = None
     tx: str | None = dataclasses.field(compare=False, default=None)
 
 
@@ -73,3 +76,8 @@ class UniswapV3PoolState(BasePoolState):
 class UniswapV3PoolSimulationResult(UniswapSimulationResult):
     current_state: UniswapV3PoolState = dataclasses.field(compare=False)
     future_state: UniswapV3PoolState = dataclasses.field(compare=False)
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class UniswapV3PoolStateUpdated(Message):
+    state: UniswapV3PoolState
