@@ -326,9 +326,6 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                     # e.g. fee=3000 represents 0.3%
                     fee = Fraction(pool._fee, 1000000)
 
-                case _:
-                    ...
-
             profit_factor *= (price if vector.zero_for_one else 1 / price) * (
                 (fee.denominator - fee.numerator) / fee.denominator
             )
