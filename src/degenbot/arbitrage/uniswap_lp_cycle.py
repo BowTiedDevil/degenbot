@@ -810,7 +810,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         match publisher:
             case LiquidityPool() | V3LiquidityPool():
                 self._update_pool_states((publisher,))
-            case _:
+            case _:  # pragma: no cover
                 logger.info(
                     f"{self} received message {message} from unsupported subscriber {publisher}"
                 )

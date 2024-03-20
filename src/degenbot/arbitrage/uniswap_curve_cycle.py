@@ -943,7 +943,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
         match publisher:
             case LiquidityPool() | V3LiquidityPool() | CurveStableswapPool():
                 self._update_pool_states((publisher,))
-            case _:
+            case _:  # pragma: no cover
                 logger.info(
                     f"{self} received message {message} from unsupported subscriber {publisher}"
                 )
