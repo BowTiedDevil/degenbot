@@ -3,7 +3,6 @@ from eth_utils import to_checksum_address
 from hexbytes import HexBytes
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
-import web3
 
 VITALIK_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
