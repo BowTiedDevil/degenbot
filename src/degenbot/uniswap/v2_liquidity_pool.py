@@ -600,6 +600,7 @@ class LiquidityPool(BaseLiquidityPool):
             external_token1_reserves=update.reserves_token1,
             print_reserves=not silent,
             print_ratios=not silent,
+            override_update_method="external",
         )
 
     def update_reserves(
@@ -613,11 +614,13 @@ class LiquidityPool(BaseLiquidityPool):
         update_block: int | None = None,
     ) -> bool:
         """
-        Checks for updated reserve values when set to "polling". If set to "external", updated the
-        state without performing verification.
+        Updates token reserves. If update method is set to "polling", uses Web3 to read current
+        contract values. If set to "external", uses the provided reserves without verification.
         """
 
         _w3_contract = self._w3_contract
+
+        update_method = override_update_method or self._update_method
 
         updates = False
 
@@ -633,7 +636,7 @@ class LiquidityPool(BaseLiquidityPool):
         else:
             self.update_block = update_block
 
-        if self._update_method == "polling" or override_update_method == "polling":
+        if update_method == "polling":
             try:
                 (
                     reserves0,
@@ -670,7 +673,7 @@ class LiquidityPool(BaseLiquidityPool):
                     updates = False
             except Exception as e:
                 print(f"LiquidityPool: Exception in update_reserves (polling): {e}")
-        elif self._update_method == "external":
+        elif update_method == "external":
             if not (external_token0_reserves is not None and external_token1_reserves is not None):
                 raise ValueError(
                     "Called update_reserves without providing reserve values for both tokens!"
@@ -705,7 +708,7 @@ class LiquidityPool(BaseLiquidityPool):
                         f"{self.token1}/{self.token0}: {self.reserves_token1 / self.reserves_token0}"
                     )
         else:  # pragma: no cover
-            raise ValueError(f"Update method {self._update_method} is not recognized.")
+            raise ValueError(f"Update method {update_method} is not recognized.")
 
         return updates
 
