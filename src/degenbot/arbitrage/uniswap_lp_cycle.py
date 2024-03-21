@@ -303,6 +303,11 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                             f"V3 pool {pool.address} has no liquidity (empty bitmap)"
                         )
 
+                    if pool_state.tick_data == {}:
+                        raise ZeroLiquidityError(
+                            f"V3 pool {pool.address} has no liquidity (no initialized ticks)"
+                        )
+
                     if pool_state.liquidity == 0:
                         # Check if the swap is 0 -> 1 and cannot swap any more
                         # token0 for token1
