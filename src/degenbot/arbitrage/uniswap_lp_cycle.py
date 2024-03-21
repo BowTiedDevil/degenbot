@@ -62,9 +62,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
             max_input = 100 * 10**18
         self.max_input = max_input
 
-        # Set up pre-determined "swap vectors", which allows the helper
-        # to identify the tokens and direction of each swap along the path
-        _swap_vectors: List[UniswapPoolSwapVector] = []
+        self._swap_vectors: List[UniswapPoolSwapVector] = []
         for i, pool in enumerate(self.swap_pools):
             if i == 0:
                 if self.input_token == pool.token0:
@@ -87,9 +85,8 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                     token_in = pool.token1
                     token_out = pool.token0
                     zero_for_one = False
-                else:  # pragma: no cover
-                    raise ValueError("Input token could not be identified!")
-            _swap_vectors.append(
+
+            self._swap_vectors.append(
                 UniswapPoolSwapVector(
                     token_in=token_in,
                     token_out=token_out,
