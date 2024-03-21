@@ -10,13 +10,21 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import minimize_scalar
 from web3 import Web3
 
-from ..baseclasses import BaseArbitrage, BaseLiquidityPool, BasePoolState, Publisher, Subscriber
+from ..baseclasses import BaseArbitrage, BasePoolState, Publisher, Subscriber
 from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
-from ..uniswap.v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
+from ..uniswap.v2_dataclasses import (
+    UniswapV2PoolSimulationResult,
+    UniswapV2PoolState,
+    UniswapV2PoolStateUpdated,
+)
 from ..uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
-from ..uniswap.v3_dataclasses import UniswapV3PoolSimulationResult, UniswapV3PoolState
+from ..uniswap.v3_dataclasses import (
+    UniswapV3PoolSimulationResult,
+    UniswapV3PoolState,
+    UniswapV3PoolStateUpdated,
+)
 from ..uniswap.v3_libraries import TickMath
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
 from .arbitrage_dataclasses import (
@@ -89,13 +97,10 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                     zero_for_one=zero_for_one,
                 )
             )
-        self._swap_vectors = tuple(_swap_vectors)
 
-        self.pool_states: Dict[
-            ChecksumAddress,
-            # UniswapV2PoolState | UniswapV3PoolState | None,
-            BasePoolState | None,
-        ] = {pool.address: None for pool in self.swap_pools}
+        self.pool_states: Dict[ChecksumAddress, BasePoolState | None] = {
+            pool.address: pool.state for pool in self.swap_pools
+        }
 
         self.best: Dict[str, Any] = {
             "input_token": self.input_token,
@@ -238,11 +243,10 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
 
         return pools_amounts_out
 
-    def _update_pool_states(self, pools: Iterable[BaseLiquidityPool]) -> None:
-        """
-        Update `self.pool_states` with state values from the `pools` iterable
-        """
-        self.pool_states.update({pool.address: pool.state for pool in pools})
+    def _update_pool_states(
+        self, pool_states: Iterable[UniswapV2PoolState | UniswapV3PoolState]
+    ) -> None:
+        self.pool_states.update({state.pool.address: state for state in pool_states})
 
     def _pre_calculation_check(
         self,
@@ -809,8 +813,14 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
     def notify(self, publisher: Publisher, message: Any) -> None:
         match publisher:
             case LiquidityPool() | V3LiquidityPool():
-                self._update_pool_states((publisher,))
+                match message:
+                    case UniswapV2PoolStateUpdated() | UniswapV3PoolStateUpdated():
+                        self._update_pool_states([message.state])
+                    case _:  # pragma: no cover
+                        logger.info(
+                            f"{self} unhandled message {message} from subscriber {publisher}"
+                        )
             case _:  # pragma: no cover
                 logger.info(
-                    f"{self} received message {message} from unsupported subscriber {publisher}"
+                    f"{self} unhandled message {message} from unsupported subscriber {publisher}"
                 )
