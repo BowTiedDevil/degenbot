@@ -196,15 +196,15 @@ class UniswapTransaction(BaseTransaction):
         router_address: str,
     ):
         """
-        Build a standalone representation of a transaction submitted to a known Uniswap-based router contract address.
+        Build a standalone representation of a transaction submitted to a known Uniswap-based
+        router contract.
 
-        Supported addresses:
-            - 0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F (Sushiswap Router)
-            - 0xf164fC0Ec4E93095b804a4795bBe1e041497b92a (Uniswap V2 Router)
-            - 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D (Uniswap V2 Router 2)
-            - 0xE592427A0AEce92De3Edee1F18E0157C05861564 (Uniswap V3 Router)
-            - 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45 (Uniswap V3 Router 2)
-            - 0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B (Uniswap Universal Router)
+        Supported contracts:
+            Uniswap V2 Router
+            Uniswap V2 Router 2
+            Uniswap V3 Router
+            Uniswap V3 Router 2
+            Uniswap Universal Router
         """
 
         # @dev The `self.ledger` is used to track token balances for all
@@ -256,16 +256,21 @@ class UniswapTransaction(BaseTransaction):
         self.func_name = func_name
         self.func_params = func_params
         if previous_block_hash := self.func_params.get("previousBlockhash"):
-            self.func_previous_block_hash = previous_block_hash.hex()
+            self.func_previous_block_hash = HexBytes(previous_block_hash)
 
         self.silent = False
 
-    def _raise_if_expired(self, deadline: int) -> None:
+    def _raise_if_past_deadline(self, deadline: int) -> None:
         if (
             self.state_block is not None
             and config.get_web3().eth.get_block(self.state_block)["timestamp"] > deadline
         ):
             raise TransactionError("Deadline expired")
+
+    def _raise_if_block_hash_mismatch(self, block_hash: HexBytes) -> None:
+        print(f"Checking previousBlockhash: {block_hash!r}")
+        if config.get_web3().eth.get_block("latest")["hash"] != block_hash:
+            raise TransactionError("Previous block hash mismatch")
 
     def _show_pool_states(
         self,
@@ -1421,6 +1426,11 @@ class UniswapTransaction(BaseTransaction):
                 | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
             ] = []
 
+            try:
+                self._raise_if_block_hash_mismatch(params["previousBlockhash"])
+            except KeyError:
+                pass
+
             for payload in params["data"]:
                 try:
                     # decode with Router ABI
@@ -1446,6 +1456,11 @@ class UniswapTransaction(BaseTransaction):
                 # another multicall
                 if payload_func.fn_name == "multicall":
                     logger.debug("Unwrapping nested multicall")
+
+                    try:
+                        self._raise_if_block_hash_mismatch(params["previousBlockhash"])
+                    except KeyError:
+                        pass
 
                     for payload in payload_args["data"]:
                         try:
@@ -1542,7 +1557,7 @@ class UniswapTransaction(BaseTransaction):
                         except KeyError:
                             pass
                         else:
-                            self._raise_if_expired(tx_deadline)
+                            self._raise_if_past_deadline(tx_deadline)
 
                         try:
                             pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
@@ -1604,7 +1619,7 @@ class UniswapTransaction(BaseTransaction):
                         except KeyError:
                             pass
                         else:
-                            self._raise_if_expired(tx_deadline)
+                            self._raise_if_past_deadline(tx_deadline)
 
                         try:
                             pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
@@ -1708,7 +1723,7 @@ class UniswapTransaction(BaseTransaction):
 
                         tx_to = func_params["to"]  # noqa: F841
                         tx_deadline = func_params["deadline"]
-                        self._raise_if_expired(tx_deadline)
+                        self._raise_if_past_deadline(tx_deadline)
 
                         try:
                             _pool = self.v2_pool_manager.get_pool(
@@ -1836,7 +1851,7 @@ class UniswapTransaction(BaseTransaction):
                             )
 
                         if tx_deadline:
-                            self._raise_if_expired(tx_deadline)
+                            self._raise_if_past_deadline(tx_deadline)
 
                         if TYPE_CHECKING:
                             assert isinstance(self.v3_pool_manager, UniswapV3LiquidityPoolManager)
@@ -1910,7 +1925,7 @@ class UniswapTransaction(BaseTransaction):
                             )
 
                         if tx_deadline:
-                            self._raise_if_expired(tx_deadline)
+                            self._raise_if_past_deadline(tx_deadline)
 
                         tx_path_decoded = decode_v3_path(tx_path)
 
@@ -2029,7 +2044,7 @@ class UniswapTransaction(BaseTransaction):
                             )
 
                         if tx_deadline:
-                            self._raise_if_expired(tx_deadline)
+                            self._raise_if_past_deadline(tx_deadline)
 
                         if TYPE_CHECKING:
                             assert isinstance(self.v3_pool_manager, UniswapV3LiquidityPoolManager)
@@ -2106,7 +2121,7 @@ class UniswapTransaction(BaseTransaction):
                             )
 
                         if tx_deadline:
-                            self._raise_if_expired(tx_deadline)
+                            self._raise_if_past_deadline(tx_deadline)
 
                         tx_path_decoded = decode_v3_path(tx_path)
 
@@ -2338,7 +2353,7 @@ class UniswapTransaction(BaseTransaction):
                 except KeyError:
                     pass
                 else:
-                    self._raise_if_expired(tx_deadline)
+                    self._raise_if_past_deadline(tx_deadline)
 
                 tx_commands = func_params["commands"]
                 tx_inputs = func_params["inputs"]
