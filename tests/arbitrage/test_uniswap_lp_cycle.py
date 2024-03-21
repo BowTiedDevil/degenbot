@@ -2380,7 +2380,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
 
     lp_2 = MockLiquidityPool()
     lp_2.name = "WBTC-WETH (V2, 0.30%)"
-    lp_2.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
+    lp_2.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D941")
     lp_2.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp_2.fee = None
     lp_2.fee_token0 = Fraction(3, 1000)
