@@ -1,8 +1,6 @@
-import dataclasses
 import abc
-
-from typing import TYPE_CHECKING, Any, Iterator, Sequence, Set, Protocol
-
+import dataclasses
+from typing import TYPE_CHECKING, Any, Iterator, Protocol, Sequence, Set
 
 from eth_typing import ChecksumAddress
 
