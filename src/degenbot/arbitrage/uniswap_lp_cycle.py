@@ -1,5 +1,4 @@
 import asyncio
-import asyncio.futures
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Awaitable, Dict, Iterable, List, Sequence, Tuple
@@ -169,8 +168,8 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         | None = None,
     ) -> List[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts]:
         """
-        Generate human-readable inputs for a complete swap along the arbitrage
-        path, starting with `token_in_quantity` amount of `token_in`.
+        Generate human-readable inputs for a swap along the arbitrage path, starting with the
+        specified amount of the given input token.
         """
 
         if pool_state_overrides is None:
@@ -606,10 +605,8 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
             A unique identifier for bookkeeping purposes, not validated
         """
 
-        # create the token object
         token = Erc20Token(input_token_address)
 
-        # create the pool objects
         pool_objects: List[LiquidityPool | V3LiquidityPool | CamelotLiquidityPool] = []
         for pool_address, pool_type in swap_pool_addresses:
             match pool_type:
