@@ -114,7 +114,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
     def __getstate__(self) -> Dict[str, Any]:
         dropped_attributes = (
             "_subscribers",
-            "pool_states",
+            # "pool_states",
         )
         copied_attributes = ()
 
@@ -266,7 +266,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
 
         # Check the pool state liquidity in the direction of the trade
         for pool, vector in zip(self.swap_pools, self._swap_vectors):
-            pool_state = state_overrides.get(pool.address) or pool.state
+            pool_state = state_overrides.get(pool.address) or self.pool_states[pool.address]
 
             match pool:
                 case LiquidityPool():
