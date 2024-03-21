@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Dict, Iterable, List, Sequence
 import eth_abi.abi
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from scipy.optimize import minimize_scalar
+from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
 from ..baseclasses import BaseArbitrage, BasePoolState, Publisher, Subscriber
@@ -254,12 +254,78 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         ]
         | None = None,
     ) -> None:
+        def _check_v2_pool_liquidity(
+            pool: LiquidityPool,
+            vector: UniswapPoolSwapVector,
+            pool_state: UniswapV2PoolState,
+        ) -> None:
+            if TYPE_CHECKING:
+                assert isinstance(pool_state, UniswapV2PoolState)
+
+            if all(
+                [
+                    pool_state.reserves_token0 > 1,
+                    pool_state.reserves_token1 > 1,
+                ]
+            ):
+                return  # No liquidity issues
+            elif any(
+                [
+                    pool_state.reserves_token0 == 0,
+                    pool_state.reserves_token1 == 0,
+                ]
+            ):
+                raise ZeroLiquidityError(f"V2 pool {pool.address} has no liquidity")
+            elif pool_state.reserves_token1 == 1 and vector.zero_for_one is True:
+                raise ZeroLiquidityError(
+                    f"V2 pool {pool.address} has no liquidity for a 0 -> 1 swap"
+                )
+            elif pool_state.reserves_token0 == 1 and vector.zero_for_one is False:
+                raise ZeroLiquidityError(
+                    f"V2 pool {pool.address} has no liquidity for a 1 -> 0 swap"
+                )
+
+        def _check_v3_pool_liquidity(
+            pool: V3LiquidityPool,
+            vector: UniswapPoolSwapVector,
+            pool_state: UniswapV3PoolState,
+        ) -> None:
+            if TYPE_CHECKING:
+                assert isinstance(pool_state, UniswapV3PoolState)
+
+            if pool_state.sqrt_price_x96 == 0:
+                raise ZeroLiquidityError(
+                    f"V3 pool {pool.address} has no liquidity (not initialized)"
+                )
+
+            if pool_state.tick_bitmap == {}:
+                # TODO: add housekeeping to `V3LiquidityPool` to remove tick_bitmaps set to 0
+                raise ZeroLiquidityError(f"V3 pool {pool.address} has no liquidity (empty bitmap)")
+
+            if pool_state.tick_data == {}:
+                raise ZeroLiquidityError(
+                    f"V3 pool {pool.address} has no liquidity (no initialized ticks)"
+                )
+
+            if pool_state.liquidity == 0:
+                if (
+                    pool_state.sqrt_price_x96 == TickMath.MIN_SQRT_RATIO + 1
+                    and vector.zero_for_one is True
+                ):
+                    # Swap is 0 -> 1 and cannot swap any more token0 for token1
+                    raise ZeroLiquidityError(f"{pool} has no liquidity for a 0 -> 1 swap")
+                elif (
+                    pool_state.sqrt_price_x96 == TickMath.MAX_SQRT_RATIO - 1
+                    and vector.zero_for_one is False
+                ):
+                    # Swap is 1 -> 0  and cannot swap any more token1 for token0
+                    raise ZeroLiquidityError(f"{pool} has no liquidity for a 1 -> 0 swap")
+
         state_overrides = self._sort_overrides(override_state)
 
-        # A scalar value representing the net amount of 1 input token across
-        # the complete path (including fees).
-        # profit_factor > 1.0 indicates a profitable trade.
-        profit_factor: float = 1.0
+        # A scalar value representing the net amount of 1 input token across the complete path
+        # including fees. A net rate > 1.0 indicates a profitable swap.
+        net_rate_of_exchange = Fraction(1)
 
         # Check the pool state liquidity in the direction of the trade
         for pool, vector in zip(self.swap_pools, self._swap_vectors):
@@ -269,75 +335,26 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                 case LiquidityPool():
                     if TYPE_CHECKING:
                         assert isinstance(pool_state, UniswapV2PoolState)
-
-                    if pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:
-                        raise ZeroLiquidityError(f"V2 pool {pool.address} has no liquidity")
-
-                    if pool_state.reserves_token1 == 1 and vector.zero_for_one:
-                        raise ZeroLiquidityError(
-                            f"V2 pool {pool.address} has no liquidity for a 0 -> 1 swap"
-                        )
-                    elif pool_state.reserves_token0 == 1 and not vector.zero_for_one:
-                        raise ZeroLiquidityError(
-                            f"V2 pool {pool.address} has no liquidity for a 1 -> 0 swap"
-                        )
-
-                    # V2 fee is 0.3% by default, represented by 3/1000 = Fraction(3,1000)
+                    _check_v2_pool_liquidity(pool, vector, pool_state)
+                    exchange_rate = Fraction(pool_state.reserves_token1, pool_state.reserves_token0)
                     fee = pool.fee_token0 if vector.zero_for_one else pool.fee_token1
-                    price = pool_state.reserves_token1 / pool_state.reserves_token0
 
                 case V3LiquidityPool():
                     if TYPE_CHECKING:
                         assert isinstance(pool_state, UniswapV3PoolState)
+                    _check_v3_pool_liquidity(pool, vector, pool_state)
+                    exchange_rate = Fraction(pool_state.sqrt_price_x96**2, 2**192)
+                    fee = Fraction(
+                        pool._fee, 1000000
+                    )  # V3 fees are in hundredths of a bip (0.0001), e.g. 3000 == 0.3%
 
-                    if pool_state.sqrt_price_x96 == 0:
-                        raise ZeroLiquidityError(
-                            f"V3 pool {pool.address} has no liquidity (not initialized)"
-                        )
+            net_rate_of_exchange *= (
+                exchange_rate if vector.zero_for_one is True else 1 / exchange_rate
+            ) * Fraction(fee.denominator - fee.numerator, fee.denominator)
 
-                    if pool_state.tick_bitmap == {}:
-                        raise ZeroLiquidityError(
-                            f"V3 pool {pool.address} has no liquidity (empty bitmap)"
-                        )
-
-                    if pool_state.tick_data == {}:
-                        raise ZeroLiquidityError(
-                            f"V3 pool {pool.address} has no liquidity (no initialized ticks)"
-                        )
-
-                    if pool_state.liquidity == 0:
-                        # Check if the swap is 0 -> 1 and cannot swap any more
-                        # token0 for token1
-                        if (
-                            pool_state.sqrt_price_x96 == TickMath.MIN_SQRT_RATIO + 1
-                            and vector.zero_for_one
-                        ):
-                            raise ZeroLiquidityError(
-                                f"V3 pool {pool.address} has no liquidity for a 0 -> 1 swap"
-                            )
-                        # Check if the swap is 1 -> 0 (zeroForOne=False) and
-                        # cannot swap any more token1 for token0
-                        elif (
-                            pool_state.sqrt_price_x96 == TickMath.MAX_SQRT_RATIO - 1
-                            and not vector.zero_for_one
-                        ):
-                            raise ZeroLiquidityError(
-                                f"V3 pool {pool.address} has no liquidity for a 1 -> 0 swap"
-                            )
-
-                    price = pool_state.sqrt_price_x96**2 / (2**192)
-
-                    # V3 fees are integer values representing hundredths of a bip (0.0001)
-                    # e.g. fee=3000 represents 0.3%
-                    fee = Fraction(pool._fee, 1000000)
-
-            profit_factor *= (price if vector.zero_for_one else 1 / price) * (
-                (fee.denominator - fee.numerator) / fee.denominator
-            )
-
-        if profit_factor < 1.0:
+        if net_rate_of_exchange < 1.0:
             raise ArbitrageError(
-                f"No profitable arbitrage at current prices. Profit factor: {profit_factor}"
+                f"No profitable arbitrage at current prices. Profit factor: {net_rate_of_exchange}"
             )
 
     def _calculate(
@@ -350,21 +367,19 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         ]
         | None = None,
     ) -> ArbitrageCalculationResult:
+        """
+        Calculate the optimal arbitrage profit using the maximum input as an upper bound.
+        """
+
         state_overrides = self._sort_overrides(override_state)
 
-        # bound the amount to be swapped
+        # The bounded Brent optimizer requires bounds for the input amount, and a bracketed guess
+        # to initiate the search
         bounds: Tuple[float, float] = (
             1.0,
             float(self.max_input),
         )
-
-        # bracket the initial guess for the algo
-        bracket_amount: int = self.max_input
-        bracket: Tuple[float, float, float] = (
-            0.45 * bracket_amount,
-            0.50 * bracket_amount,
-            0.55 * bracket_amount,
-        )
+        bracket: Tuple[float, float] = (0.25 * self.max_input, 0.50 * self.max_input)
 
         def arb_profit(x: float) -> float:
             token_in_quantity = int(x)  # round the input down
@@ -412,7 +427,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
             # negated profit
             return -float(token_out_quantity - token_in_quantity)
 
-        opt = minimize_scalar(
+        opt: OptimizeResult = minimize_scalar(
             fun=arb_profit,
             method="bounded",
             bounds=bounds,
