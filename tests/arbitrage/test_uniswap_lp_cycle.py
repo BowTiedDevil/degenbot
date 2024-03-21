@@ -14,10 +14,12 @@ from degenbot.arbitrage.arbitrage_dataclasses import (
     UniswapV3PoolSwapAmounts,
 )
 from degenbot.config import set_web3
+from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError
 from degenbot.fork import AnvilFork
 from degenbot.uniswap import V3LiquidityPool
+from degenbot.uniswap.v2_dataclasses import UniswapV2PoolExternalUpdate
 from degenbot.uniswap.v2_liquidity_pool import (
     CamelotLiquidityPool,
     LiquidityPool,
@@ -26,6 +28,7 @@ from degenbot.uniswap.v2_liquidity_pool import (
 from degenbot.uniswap.v3_dataclasses import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
+    UniswapV3PoolExternalUpdate,
     UniswapV3PoolState,
 )
 from eth_utils import to_checksum_address
@@ -2397,24 +2400,27 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
     # price is higher in the second pool.
     # i.e. sell overpriced token0 (WETH) in pool0 for token1 (WBTC),
     # buy underpriced token0 (WETH) in pool1 with token1 (WBTC)
-    UniswapLpCycle(
+    arb = UniswapLpCycle(
         id="test_arb",
         input_token=weth_token,
         swap_pools=[lp_1, lp_2],
         max_input=100 * 10**18,
-    ).calculate_arbitrage()
+    )
+    arb.calculate_arbitrage()
+    arb.generate_payloads(from_address=ZERO_ADDRESS)
 
     # This arb path should result in an unprofitable calculation, since token1
     # price is lower in the second pool.
     # i.e. sell underpriced token0 (WETH) in pool0 for token1 (WBTC),
     # buy overpriced token0 (WETH) in pool1 with token1 (WBTC)
     with pytest.raises(ArbitrageError, match="No profitable arbitrage at current prices."):
-        UniswapLpCycle(
+        arb = UniswapLpCycle(
             id="test_arb",
             input_token=weth_token,
             swap_pools=[lp_2, lp_1],
             max_input=100 * 10**18,
-        ).calculate_arbitrage()
+        )
+        arb.calculate_arbitrage()
 
 
 def test_bad_pool_in_constructor(
@@ -2432,11 +2438,12 @@ def test_bad_pool_in_constructor(
 def test_no_max_input(
     wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: LiquidityPool, weth_token: Erc20Token
 ):
-    UniswapLpCycle(
+    arb = UniswapLpCycle(
         id="test_arb",
         input_token=weth_token,
         swap_pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp],
     )
+    assert arb.max_input == 100 * 10**18
 
 
 def test_zero_max_input(
@@ -2449,3 +2456,34 @@ def test_zero_max_input(
             swap_pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp],
             max_input=0,
         )
+
+
+def test_arbitrage_helper_subscribes_to_pool_state_updates(
+    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool
+):
+    assert wbtc_weth_arb in wbtc_weth_v2_lp._subscribers
+    assert wbtc_weth_arb in wbtc_weth_v3_lp._subscribers
+
+
+def test_pool_updates_trigger_updated_arbitrage_pool_state(
+    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool
+):
+    current_block = wbtc_weth_v2_lp.update_block
+    initial_arb_state = wbtc_weth_arb.pool_states.copy()
+    wbtc_weth_v2_lp.external_update(
+        update=UniswapV2PoolExternalUpdate(
+            block_number=current_block + 1, reserves_token0=69, reserves_token1=420
+        )
+    )
+    assert wbtc_weth_v2_lp.reserves_token0 == 69
+    assert wbtc_weth_v2_lp.reserves_token1 == 420
+    assert wbtc_weth_arb.pool_states[wbtc_weth_v2_lp.address].reserves_token0 == 69
+
+    v3_update = UniswapV3PoolExternalUpdate(block_number=current_block + 1, liquidity=69_420)
+    wbtc_weth_v3_lp.external_update(update=v3_update, block_number=current_block + 1)
+    assert wbtc_weth_v3_lp.liquidity == 69_420
+    assert wbtc_weth_arb.pool_states[wbtc_weth_v3_lp.address].liquidity == 69_420
+
+    new_arb_state = wbtc_weth_arb.pool_states.copy()
+
+    assert initial_arb_state != new_arb_state
