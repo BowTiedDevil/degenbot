@@ -25,6 +25,7 @@ from ..uniswap.v3_dataclasses import (
     UniswapV3PoolStateUpdated,
 )
 from ..uniswap.v3_functions import exchange_rate_from_sqrt_price_x96
+from ..uniswap.v3_functions import exchange_rate_from_sqrt_price_x96
 from ..uniswap.v3_libraries import TickMath
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
 from .arbitrage_dataclasses import (

@@ -3,6 +3,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Awaitable, Dict, Iterable, List, Sequence, Tuple, TypeAlias
 
+
 import eth_abi.abi
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
