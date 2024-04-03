@@ -39,9 +39,10 @@ WBTC_CONTRACT_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 
 
 @pytest.fixture(scope="function")
-def ethereum_uniswap_v2_wbtc_weth_liquiditypool(load_env: dict) -> LiquidityPool:
-    ankr_w3 = web3.Web3(web3.HTTPProvider(f"https://rpc.ankr.com/eth/{load_env['ANKR_API_KEY']}"))
-    degenbot.set_web3(ankr_w3)
+def ethereum_uniswap_v2_wbtc_weth_liquiditypool(
+    ethereum_archive_node_web3: web3.Web3,
+) -> LiquidityPool:
+    degenbot.set_web3(ethereum_archive_node_web3)
 
     lp = LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,

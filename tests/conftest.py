@@ -20,7 +20,8 @@ def load_env() -> dict:
 
 
 ARBITRUM_ARCHIVE_NODE_HTTP_URI = f"https://rpc.ankr.com/arbitrum/{env_values['ANKR_API_KEY']}"
-ARBITRUM_FULL_NODE_HTTP_URI = "http://localhost:8547"
+# ARBITRUM_FULL_NODE_HTTP_URI = "http://localhost:8547"
+ARBITRUM_FULL_NODE_HTTP_URI = f"https://rpc.ankr.com/arbitrum/{env_values['ANKR_API_KEY']}"
 
 ETHEREUM_ARCHIVE_NODE_HTTP_URI = "http://localhost:8543"
 # ETHEREUM_ARCHIVE_NODE_HTTP_URI = f"https://rpc.ankr.com/eth/{env_values['ANKR_API_KEY']}"
