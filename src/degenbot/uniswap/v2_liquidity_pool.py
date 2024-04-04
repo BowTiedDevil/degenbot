@@ -268,6 +268,20 @@ class LiquidityPool(BaseLiquidityPool):
             reserves_token1=new_reserves,
         )
 
+    def auto_update(
+        self,
+        block_number: int | None = None,
+        silent: bool = True,
+    ) -> Tuple[bool, UniswapV2PoolState]:
+        found_updates: bool = self.update_reserves(
+            silent=silent,
+            print_ratios=not silent,
+            print_reserves=not silent,
+            update_block=block_number,
+            override_update_method="polling",
+        )
+        return found_updates, self.state
+
     def calculate_tokens_in_from_ratio_out(
         self,
         token_in: Erc20Token,
@@ -413,6 +427,20 @@ class LiquidityPool(BaseLiquidityPool):
 
         return numerator // denominator
 
+    def external_update(
+        self,
+        update: UniswapV2PoolExternalUpdate,
+        silent: bool = True,
+    ) -> bool:
+        return self.update_reserves(
+            silent=silent,
+            external_token0_reserves=update.reserves_token0,
+            external_token1_reserves=update.reserves_token1,
+            print_reserves=not silent,
+            print_ratios=not silent,
+            override_update_method="external",
+        )
+
     def get_absolute_price(self, token: Erc20Token) -> Fraction:
         """
         Get the absolute price for the given token, expressed in units of the other.
@@ -455,6 +483,7 @@ class LiquidityPool(BaseLiquidityPool):
             )
         else:
             raise ValueError(f"Unknown token {token}")
+
     def restore_state_before_block(
         self,
         block: int,
@@ -616,34 +645,6 @@ class LiquidityPool(BaseLiquidityPool):
                     reserves_token1=self.reserves_token1 + token1_delta,
                 ),
             )
-
-    def auto_update(
-        self,
-        block_number: int | None = None,
-        silent: bool = True,
-    ) -> Tuple[bool, UniswapV2PoolState]:
-        found_updates: bool = self.update_reserves(
-            silent=silent,
-            print_ratios=not silent,
-            print_reserves=not silent,
-            update_block=block_number,
-            override_update_method="polling",
-        )
-        return found_updates, self.state
-
-    def external_update(
-        self,
-        update: UniswapV2PoolExternalUpdate,
-        silent: bool = True,
-    ) -> bool:
-        return self.update_reserves(
-            silent=silent,
-            external_token0_reserves=update.reserves_token0,
-            external_token1_reserves=update.reserves_token1,
-            print_reserves=not silent,
-            print_ratios=not silent,
-            override_update_method="external",
-        )
 
     def update_reserves(
         self,
