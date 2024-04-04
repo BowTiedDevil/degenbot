@@ -413,6 +413,48 @@ class LiquidityPool(BaseLiquidityPool):
 
         return numerator // denominator
 
+    def get_absolute_price(self, token: Erc20Token) -> Fraction:
+        """
+        Get the absolute price for the given token, expressed in units of the other.
+        """
+
+        return 1 / self.get_absolute_rate(token)
+
+    def get_absolute_rate(self, token: Erc20Token) -> Fraction:
+        """
+        Get the absolute rate for the given token, expressed in units of the other.
+        """
+
+        if token == self.token0:
+            return Fraction(self.reserves_token0) / Fraction(self.reserves_token1)
+        elif token == self.token1:
+            return Fraction(self.reserves_token1) / Fraction(self.reserves_token0)
+        else:
+            raise ValueError(f"Unknown token {token}")
+
+    def get_nominal_price(self, token: Erc20Token) -> Fraction:
+        """
+        Get the nominal price for the given token, expressed in units of the other, corrected for
+        decimal place values.
+        """
+        return 1 / self.get_nominal_rate(token)
+
+    def get_nominal_rate(self, token: Erc20Token) -> Fraction:
+        """
+        Get the nominal rate for the given token, expressed in units of the other, corrected for
+        decimal place values.
+        """
+
+        if token == self.token0:
+            return Fraction(self.reserves_token0, 10**self.token0.decimals) * Fraction(
+                10**self.token1.decimals, self.reserves_token1
+            )
+        elif token == self.token1:
+            return Fraction(self.reserves_token1, 10**self.token1.decimals) * Fraction(
+                10**self.token0.decimals, self.reserves_token0
+            )
+        else:
+            raise ValueError(f"Unknown token {token}")
     def restore_state_before_block(
         self,
         block: int,

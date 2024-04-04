@@ -4,6 +4,7 @@ import dataclasses
 import warnings
 from bisect import bisect_left
 from decimal import Decimal
+from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
@@ -26,7 +27,6 @@ from ..exceptions import (
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
-
 from .abi import UNISWAP_V3_POOL_ABI
 from .v3_dataclasses import (
     UniswapV3BitmapAtWord,
@@ -36,7 +36,7 @@ from .v3_dataclasses import (
     UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
-from .v3_functions import generate_v3_pool_address
+from .v3_functions import exchange_rate_from_sqrt_price_x96, generate_v3_pool_address
 from .v3_libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
 from .v3_libraries.functions import to_int256
 from .v3_tick_lens import TickLens
@@ -1019,6 +1019,51 @@ class V3LiquidityPool(BaseLiquidityPool):
                     self._update_block = block_number
 
             return updated_state
+
+    def get_absolute_price(self, token: Erc20Token) -> Fraction:
+        """
+        Get the absolute price for the given token, expressed in units of the other.
+        """
+
+        return 1 / self.get_absolute_rate(token)
+
+    def get_absolute_rate(self, token: Erc20Token) -> Fraction:
+        """
+        Get the absolute rate of exchange for the given token, expressed in units of the other.
+        """
+
+        if token == self.token0:
+            return 1 / exchange_rate_from_sqrt_price_x96(self.sqrt_price_x96)
+        elif token == self.token1:
+            return exchange_rate_from_sqrt_price_x96(self.sqrt_price_x96)
+        else:
+            raise ValueError(f"Unknown token {token}")
+
+    def get_nominal_price(self, token: Erc20Token) -> Fraction:
+        """
+        Get the nominal price for the given token, expressed in units of the other, corrected for
+        decimal place values.
+        """
+        return 1 / self.get_nominal_rate(token)
+
+    def get_nominal_rate(self, token: Erc20Token) -> Fraction:
+        """
+        Get the nominal rate for the given token, expressed in units of the other, corrected for
+        decimal place values.
+        """
+
+        if token == self.token0:
+            return (
+                1
+                / exchange_rate_from_sqrt_price_x96(self.sqrt_price_x96)
+                * Fraction(10**self.token1.decimals, 10**self.token0.decimals)
+            )
+        elif token == self.token1:
+            return exchange_rate_from_sqrt_price_x96(self.sqrt_price_x96) * Fraction(
+                10**self.token0.decimals, 10**self.token1.decimals
+            )
+        else:
+            raise ValueError(f"Unknown token {token}")
 
     def restore_state_before_block(
         self,
