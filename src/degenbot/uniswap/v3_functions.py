@@ -1,6 +1,6 @@
 from fractions import Fraction
 from itertools import cycle
-from typing import Iterable, List
+from typing import Callable, Iterable, Iterator, List, Tuple
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -11,10 +11,11 @@ from web3 import Web3
 
 def decode_v3_path(path: bytes) -> List[ChecksumAddress | int]:
     """
-    Decode the `path` byte string used by the Uniswap V3 Router/Router2 contracts.
-    `path` is a close-packed encoding of pool addresses (20 bytes) and fees
-    (3 bytes).
+    Decode the `path` bytes used by the Uniswap V3 Router/Router2 contracts. `path` is a
+    close-packed encoding of 20 byte pool addresses, interleaved with 3 byte fees.
     """
+    ADDRESS_BYTES = 20
+    FEE_BYTES = 3
 
     def _extract_address(chunk: bytes) -> ChecksumAddress:
         return to_checksum_address(chunk)
@@ -22,22 +23,36 @@ def decode_v3_path(path: bytes) -> List[ChecksumAddress | int]:
     def _extract_fee(chunk: bytes) -> int:
         return int.from_bytes(chunk, byteorder="big")
 
-    path_pos = 0
+    if any(
+        [
+            len(path) < ADDRESS_BYTES + FEE_BYTES + ADDRESS_BYTES,
+            len(path) % (ADDRESS_BYTES + FEE_BYTES) != ADDRESS_BYTES,
+        ]
+    ):  # pragma: no cover
+        raise ValueError("Invalid path.")
+
+    chunk_length_and_decoder_function: Iterator[
+        Tuple[
+            int,
+            Callable[
+                [bytes],
+                ChecksumAddress | int,
+            ],
+        ]
+    ] = cycle(
+        [
+            (ADDRESS_BYTES, _extract_address),
+            (FEE_BYTES, _extract_fee),
+        ]
+    )
+
+    path_offset = 0
     decoded_path: List[ChecksumAddress | int] = []
-    # read alternating 20 and 3 byte chunks from the encoded path,
-    # store each address (hex string) and fee (int)
-    for byte_length in cycle((20, 3)):
-        chunk = HexBytes(path[path_pos : path_pos + byte_length])
-
-        match byte_length:
-            case 3:
-                decoded_path.append(_extract_fee(chunk))
-            case 20:
-                decoded_path.append(_extract_address(chunk))
-
-        path_pos += byte_length
-        if path_pos == len(path):
-            break
+    while path_offset != len(path):
+        byte_length, extraction_func = next(chunk_length_and_decoder_function)
+        chunk = HexBytes(path[path_offset : path_offset + byte_length])
+        decoded_path.append(extraction_func(chunk))
+        path_offset += byte_length
 
     return decoded_path
 

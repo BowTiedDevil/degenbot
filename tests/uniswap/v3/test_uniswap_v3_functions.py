@@ -1,5 +1,11 @@
+from fractions import Fraction
+
 import pytest
-from degenbot.uniswap.v3_functions import decode_v3_path, generate_v3_pool_address
+from degenbot.uniswap.v3_functions import (
+    decode_v3_path,
+    exchange_rate_from_sqrt_price_x96,
+    generate_v3_pool_address,
+)
 from hexbytes import HexBytes
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
@@ -41,4 +47,12 @@ def test_v3_decode_path() -> None:
             + HexBytes((fee).to_bytes(length=3, byteorder="big"))  # pad to 3 bytes
             + HexBytes(WETH_ADDRESS)
         )
-    assert decode_v3_path(path) == [WBTC_ADDRESS, fee, WETH_ADDRESS]
+        assert decode_v3_path(path) == [WBTC_ADDRESS, fee, WETH_ADDRESS]
+
+
+def test_v3_exchange_rates_from_sqrt_price_x96() -> None:
+    PRICE = 2018382873588440326581633304624437
+    assert (
+        exchange_rate_from_sqrt_price_x96(PRICE)
+        == Fraction(2018382873588440326581633304624437, 2**96) ** 2
+    )
