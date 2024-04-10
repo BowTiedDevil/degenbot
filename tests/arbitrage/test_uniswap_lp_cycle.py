@@ -2413,7 +2413,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
     # price is lower in the second pool.
     # i.e. sell underpriced token0 (WETH) in pool0 for token1 (WBTC),
     # buy overpriced token0 (WETH) in pool1 with token1 (WBTC)
-    with pytest.raises(ArbitrageError, match="No profitable arbitrage at current prices."):
+    with pytest.raises(ArbitrageError, match="No acceptable arbitrage at current rate of exchange"):
         arb = UniswapLpCycle(
             id="test_arb",
             input_token=weth_token,

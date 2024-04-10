@@ -253,6 +253,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
             | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ]
         | None = None,
+        min_rate_of_exchange: Fraction | None = None,
     ) -> None:
         def _check_v2_pool_liquidity(
             pool: LiquidityPool,
@@ -323,6 +324,9 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
 
         state_overrides = self._sort_overrides(override_state)
 
+        if min_rate_of_exchange is None:
+            min_rate_of_exchange = Fraction(1, 1)
+
         # A scalar value representing the net amount of 1 input token across the complete path
         # including fees. A net rate > 1.0 indicates a profitable swap.
         net_rate_of_exchange = Fraction(1)
@@ -352,9 +356,9 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                 exchange_rate if vector.zero_for_one is True else 1 / exchange_rate
             ) * Fraction(fee.denominator - fee.numerator, fee.denominator)
 
-        if net_rate_of_exchange < 1.0:
+        if net_rate_of_exchange < min_rate_of_exchange:
             raise ArbitrageError(
-                f"No profitable arbitrage at current prices. Profit factor: {net_rate_of_exchange}"
+                f"No acceptable arbitrage at current rate of exchange ({float(net_rate_of_exchange)}), minimum {float(min_rate_of_exchange)}."
             )
 
     def _calculate(
@@ -473,12 +477,16 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
             | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ]
         | None = None,
+        min_rate_of_exchange: Fraction | None = None,
     ) -> ArbitrageCalculationResult:
         """
         Stateless calculation that does not use `self.best`
         """
 
-        self._pre_calculation_check(override_state)
+        self._pre_calculation_check(
+            override_state,
+            min_rate_of_exchange=min_rate_of_exchange,
+        )
 
         return self._calculate(override_state=override_state)
 
@@ -492,6 +500,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
             | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ]
         | None = None,
+        min_rate_of_exchange: Fraction | None = None,
     ) -> Awaitable[Any]:
         """
         Wrap the arbitrage calculation into an asyncio future using the
@@ -524,7 +533,10 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                 f"Cannot calculate {self} with executor. One or more V3 pools has a sparse bitmap."
             )
 
-        self._pre_calculation_check(override_state)
+        self._pre_calculation_check(
+            override_state=override_state,
+            min_rate_of_exchange=min_rate_of_exchange,
+        )
 
         return asyncio.get_running_loop().run_in_executor(
             executor,
@@ -560,12 +572,16 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
             | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ]
         | None = None,
+        min_rate_of_exchange: Fraction | None = None,
     ) -> Tuple[bool, Tuple[int, int]]:
         """
         TBD
         """
 
-        self._pre_calculation_check(override_state)
+        self._pre_calculation_check(
+            override_state=override_state,
+            min_rate_of_exchange=min_rate_of_exchange,
+        )
 
         result = self._calculate(override_state=override_state)
 
