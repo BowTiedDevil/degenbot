@@ -562,10 +562,14 @@ class LiquidityPool(BaseLiquidityPool):
         if override_state:
             logger.debug(f"State override: {override_state}")
 
-        reserves_token0 = override_state.reserves_token0 if override_state else self.reserves_token0
-        reserves_token1 = override_state.reserves_token1 if override_state else self.reserves_token1
-
         with self._state_lock:
+            reserves_token0 = (
+                override_state.reserves_token0 if override_state else self.reserves_token0
+            )
+            reserves_token1 = (
+                override_state.reserves_token1 if override_state else self.reserves_token1
+            )
+
             return UniswapV2PoolSimulationResult(
                 amount0_delta=added_reserves_token0,
                 amount1_delta=added_reserves_token1,
@@ -586,10 +590,14 @@ class LiquidityPool(BaseLiquidityPool):
         if override_state:
             logger.debug(f"State override: {override_state}")
 
-        reserves_token0 = override_state.reserves_token0 if override_state else self.reserves_token0
-        reserves_token1 = override_state.reserves_token1 if override_state else self.reserves_token1
-
         with self._state_lock:
+            reserves_token0 = (
+                override_state.reserves_token0 if override_state else self.reserves_token0
+            )
+            reserves_token1 = (
+                override_state.reserves_token1 if override_state else self.reserves_token1
+            )
+
             return UniswapV2PoolSimulationResult(
                 amount0_delta=-removed_reserves_token0,
                 amount1_delta=-removed_reserves_token1,
@@ -641,27 +649,25 @@ class LiquidityPool(BaseLiquidityPool):
         elif token_out is not None and token_out == self.token1:
             token_in = self.token0
 
-        if token_in is not None and token_in_quantity is not None:
-            token_out_quantity = self.calculate_tokens_out_from_tokens_in(
-                token_in=token_in,
-                token_in_quantity=token_in_quantity,
-                # WIP: consolidate into single override_state arg
-                override_state=override_state,
-            )
-            token0_delta = -token_out_quantity if token_in is self.token1 else token_in_quantity
-            token1_delta = -token_out_quantity if token_in is self.token0 else token_in_quantity
-
-        elif token_out is not None and token_out_quantity is not None:
-            token_in_quantity = self.calculate_tokens_in_from_tokens_out(
-                token_out=token_out,
-                token_out_quantity=token_out_quantity,
-                # WIP: consolidate into single override_state arg
-                override_state=override_state,
-            )
-            token0_delta = token_in_quantity if token_in == self.token0 else -token_out_quantity
-            token1_delta = token_in_quantity if token_in == self.token1 else -token_out_quantity
-
         with self._state_lock:
+            if token_in is not None and token_in_quantity is not None:
+                token_out_quantity = self.calculate_tokens_out_from_tokens_in(
+                    token_in=token_in,
+                    token_in_quantity=token_in_quantity,
+                    override_state=override_state,
+                )
+                token0_delta = -token_out_quantity if token_in is self.token1 else token_in_quantity
+                token1_delta = -token_out_quantity if token_in is self.token0 else token_in_quantity
+
+            elif token_out is not None and token_out_quantity is not None:
+                token_in_quantity = self.calculate_tokens_in_from_tokens_out(
+                    token_out=token_out,
+                    token_out_quantity=token_out_quantity,
+                    override_state=override_state,
+                )
+                token0_delta = token_in_quantity if token_in == self.token0 else -token_out_quantity
+                token1_delta = token_in_quantity if token_in == self.token1 else -token_out_quantity
+
             return UniswapV2PoolSimulationResult(
                 amount0_delta=token0_delta,
                 amount1_delta=token1_delta,
