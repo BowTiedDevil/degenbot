@@ -441,45 +441,72 @@ class LiquidityPool(BaseLiquidityPool):
             override_update_method="external",
         )
 
-    def get_absolute_price(self, token: Erc20Token) -> Fraction:
+    def get_absolute_price(
+        self, token: Erc20Token, override_state: UniswapV2PoolState | None = None
+    ) -> Fraction:
         """
         Get the absolute price for the given token, expressed in units of the other.
         """
 
-        return 1 / self.get_absolute_rate(token)
+        return 1 / self.get_absolute_rate(token, override_state=override_state)
 
-    def get_absolute_rate(self, token: Erc20Token) -> Fraction:
+    def get_absolute_rate(
+        self,
+        token: Erc20Token,
+        override_state: UniswapV2PoolState | None = None,
+    ) -> Fraction:
         """
         Get the absolute rate for the given token, expressed in units of the other.
         """
 
+        if override_state is None:
+            state = self.state
+        else:
+            logger.debug(f"Overridden state {override_state}")
+            state = override_state
+
         if token == self.token0:
-            return Fraction(self.reserves_token0) / Fraction(self.reserves_token1)
+            return Fraction(state.reserves_token0) / Fraction(state.reserves_token1)
         elif token == self.token1:
-            return Fraction(self.reserves_token1) / Fraction(self.reserves_token0)
+            return Fraction(state.reserves_token1) / Fraction(state.reserves_token0)
         else:
             raise ValueError(f"Unknown token {token}")
 
-    def get_nominal_price(self, token: Erc20Token) -> Fraction:
+    def get_nominal_price(
+        self,
+        token: Erc20Token,
+        override_state: UniswapV2PoolState | None = None,
+    ) -> Fraction:
         """
         Get the nominal price for the given token, expressed in units of the other, corrected for
         decimal place values.
         """
-        return 1 / self.get_nominal_rate(token)
 
-    def get_nominal_rate(self, token: Erc20Token) -> Fraction:
+        return 1 / self.get_nominal_rate(token, override_state=override_state)
+
+    def get_nominal_rate(
+        self,
+        token: Erc20Token,
+        override_state: UniswapV2PoolState | None = None,
+    ) -> Fraction:
         """
         Get the nominal rate for the given token, expressed in units of the other, corrected for
         decimal place values.
         """
 
+        if override_state is None:
+            state = self.state
+        else:
+            logger.debug(f"Overridden state {override_state}")
+            state = override_state
+
         if token == self.token0:
-            return Fraction(self.reserves_token0, 10**self.token0.decimals) * Fraction(
-                10**self.token1.decimals, self.reserves_token1
+            return Fraction(state.reserves_token0, 10**self.token0.decimals) * Fraction(
+                10**self.token1.decimals, state.reserves_token1
             )
         elif token == self.token1:
-            return Fraction(self.reserves_token1, 10**self.token1.decimals) * Fraction(
-                10**self.token0.decimals, self.reserves_token0
+            return Fraction(state.reserves_token1, 10**self.token1.decimals) * Fraction(
+                10**self.token0.decimals, state.reserves_token0
             )
         else:
             raise ValueError(f"Unknown token {token}")
