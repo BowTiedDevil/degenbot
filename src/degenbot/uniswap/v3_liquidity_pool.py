@@ -349,7 +349,7 @@ class V3LiquidityPool(BaseLiquidityPool):
         ):  # pragma: no cover
             raise EVMRevertError("SPL")
 
-        exactInput = amount_specified > 0
+        exact_input = amount_specified > 0
         cache = SwapCache(liquidity_start=_liquidity, tick_cumulative=0)
         state = SwapState(
             amount_specified_remaining=amount_specified,
@@ -363,7 +363,6 @@ class V3LiquidityPool(BaseLiquidityPool):
             state.amount_specified_remaining != 0 and state.sqrt_price_x96 != sqrt_price_limit_x96
         ):
             step = StepComputations()
-
             step.sqrt_price_start_x96 = state.sqrt_price_x96
 
             while True:
@@ -430,7 +429,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                 self._fee,
             )
 
-            if exactInput:
+            if exact_input:
                 state.amount_specified_remaining -= to_int256(step.amount_in + step.fee_amount)
                 state.amount_calculated = to_int256(state.amount_calculated - step.amount_out)
             else:
@@ -462,7 +461,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                 amount_specified - state.amount_specified_remaining,
                 state.amount_calculated,
             )
-            if zero_for_one == exactInput
+            if zero_for_one == exact_input
             else (
                 state.amount_calculated,
                 amount_specified - state.amount_specified_remaining,
@@ -749,10 +748,10 @@ class V3LiquidityPool(BaseLiquidityPool):
             tokenOut=token_out,
             fee=[automatically determined by helper],
             amountOut=token_out_quantity,
-            sqrt_price_limitX96 = 0
+            sqrtPriceLimitX96 = 0
         )` which returns the value `amountIn`
 
-        Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset, thus the
+        Note that this wrapper function always assumes that the sqrtPriceLimitX96 argument is unset, thus the
         swap calculation will continue until the target amount is satisfied, regardless of price impact
 
         Accepts a dictionary of state values (`override_state`) to allow calculations beginning from an
@@ -760,8 +759,8 @@ class V3LiquidityPool(BaseLiquidityPool):
             - 'liquidity'
             - 'sqrt_price_x96'
             - 'tick'
-            - 'tick_data'  (not yet implemented)
-            - 'tick_bitmap'  (not yet implemented)
+            - 'tick_data'
+            - 'tick_bitmap'
         """
 
         if token_out not in self.tokens:  # pragma: no branch
