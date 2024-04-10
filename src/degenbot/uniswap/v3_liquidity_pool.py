@@ -1092,8 +1092,7 @@ class V3LiquidityPool(BaseLiquidityPool):
         """
         Restore the last pool state recorded prior to a target block.
 
-        Use this method to maintain consistent state data following a chain
-        re-organization.
+        Use this method to maintain consistent state data following a chain re-organization.
         """
 
         # Find the index for the most recent pool state PRIOR to the requested
