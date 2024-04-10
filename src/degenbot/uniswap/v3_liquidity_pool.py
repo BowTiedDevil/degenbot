@@ -21,6 +21,7 @@ from ..exceptions import (
     BlockUnavailableError,
     EVMRevertError,
     ExternalUpdateError,
+    InsufficientAmountOutError,
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
@@ -797,6 +798,15 @@ class V3LiquidityPool(BaseLiquidityPool):
         except EVMRevertError as e:
             raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
         else:
+            if _is_zero_for_one is True and -amount1_delta < token_out_quantity:
+                raise InsufficientAmountOutError(
+                    "Insufficient liquidity to swap for the requested amount."
+                )
+            if _is_zero_for_one is False and -amount0_delta < token_out_quantity:
+                raise InsufficientAmountOutError(
+                    "Insufficient liquidity to swap for the requested amount."
+                )
+
             return amount0_delta if _is_zero_for_one else amount1_delta
 
     def external_update(

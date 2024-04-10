@@ -105,6 +105,12 @@ class ExternalUpdateError(LiquidityPoolError):
     """
 
 
+class InsufficientAmountOutError(LiquidityPoolError):
+    """
+    Raised if an exact output swap results in fewer tokens than requested
+    """
+
+
 class MissingTickWordError(LiquidityPoolError):
     """
     Raised by the TickBitmap library when calling for an operation on a word that
