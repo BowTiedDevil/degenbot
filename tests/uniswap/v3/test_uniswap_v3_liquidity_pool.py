@@ -3,6 +3,9 @@ from threading import Lock
 from typing import Dict
 
 import pytest
+from hexbytes import HexBytes
+
+from web3 import Web3
 from degenbot import (
     Erc20Token,
     UniswapV3BitmapAtWord,
@@ -13,12 +16,16 @@ from degenbot import (
     V3LiquidityPool,
     set_web3,
 )
+from degenbot.constants import MIN_INT128, MAX_INT128, MAX_UINT128, MIN_UINT128
 from degenbot.exceptions import (
     ExternalUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
+    InsufficientAmountOutError,
 )
 from eth_utils import to_checksum_address
+
+from degenbot.fork.anvil_fork import AnvilFork
 
 
 class MockErc20Token(Erc20Token):
@@ -2078,7 +2085,7 @@ def mocked_wbtc_weth_v3liquiditypool():
     return lp
 
 
-def test_creation(ethereum_full_node_web3) -> None:
+def test_creation(ethereum_full_node_web3: Web3) -> None:
     set_web3(ethereum_full_node_web3)
     V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
     V3LiquidityPool(
@@ -2141,7 +2148,7 @@ def test_creation(ethereum_full_node_web3) -> None:
         V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD", tick_data={0: {}})
 
 
-def test_reorg(mocked_wbtc_weth_v3liquiditypool) -> None:
+def test_reorg(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
 
     _START_BLOCK = 2
@@ -2194,7 +2201,7 @@ def test_tick_bitmap_equality() -> None:
     assert UniswapV3BitmapAtWord(bitmap=1, block=1) == UniswapV3BitmapAtWord(bitmap=1, block=2)
 
 
-def test_pickle_pool(mocked_wbtc_weth_v3liquiditypool):
+def test_pickle_pool(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool):
     pickle.dumps(mocked_wbtc_weth_v3liquiditypool)
 
 
@@ -2211,7 +2218,7 @@ def test_tick_data_equality() -> None:
     ) == UniswapV3LiquidityAtTick(liquidityNet=1, liquidityGross=2, block=4)
 
 
-def test_pool_state_equality(mocked_wbtc_weth_v3liquiditypool) -> None:
+def test_pool_state_equality(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
     with pytest.raises(AssertionError):
         assert UniswapV3PoolState(
@@ -2271,7 +2278,9 @@ def test_pool_state_equality(mocked_wbtc_weth_v3liquiditypool) -> None:
     )
 
 
-def test_calculate_tokens_out_from_tokens_in(mocked_wbtc_weth_v3liquiditypool) -> None:
+def test_calculate_tokens_out_from_tokens_in(
+    mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool,
+) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
     assert (
         lp.calculate_tokens_out_from_tokens_in(
@@ -2290,7 +2299,7 @@ def test_calculate_tokens_out_from_tokens_in(mocked_wbtc_weth_v3liquiditypool) -
 
 
 def test_calculate_tokens_out_from_tokens_in_with_override(
-    mocked_wbtc_weth_v3liquiditypool,
+    mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool,
 ) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
     # Overridden reserve values for this test are taken at block height 17,650,000
@@ -2315,7 +2324,9 @@ def test_calculate_tokens_out_from_tokens_in_with_override(
     )
 
 
-def test_calculate_tokens_in_from_tokens_out(mocked_wbtc_weth_v3liquiditypool) -> None:
+def test_calculate_tokens_in_from_tokens_out(
+    mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool,
+) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
     assert (
         lp.calculate_tokens_in_from_tokens_out(
@@ -2335,7 +2346,7 @@ def test_calculate_tokens_in_from_tokens_out(mocked_wbtc_weth_v3liquiditypool) -
 
 
 def test_calculate_tokens_in_from_tokens_out_with_override(
-    mocked_wbtc_weth_v3liquiditypool,
+    mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool,
 ) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
     # Overridden reserve values for this test are taken at block height 17,650,000
@@ -2360,7 +2371,7 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
     )
 
 
-def test_simulations(mocked_wbtc_weth_v3liquiditypool) -> None:
+def test_simulations(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
     # 1 WETH -> WBTC swap
     weth_amount_in = 1 * 10**18
@@ -2452,7 +2463,7 @@ def test_simulations(mocked_wbtc_weth_v3liquiditypool) -> None:
         lp.simulate_swap(token_out=lp.token1, token_out_quantity=0)
 
 
-def test_simulations_with_override(mocked_wbtc_weth_v3liquiditypool) -> None:
+def test_simulations_with_override(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
     # Overridden reserve values for this test are taken at block height 17,650,000
     # Liquidity: 1533143241938066251
@@ -2499,7 +2510,7 @@ def test_simulations_with_override(mocked_wbtc_weth_v3liquiditypool) -> None:
     )
 
 
-def test_zero_swaps(mocked_wbtc_weth_v3liquiditypool) -> None:
+def test_zero_swaps(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
     with pytest.raises(LiquidityPoolError):
         assert (
@@ -2520,28 +2531,25 @@ def test_zero_swaps(mocked_wbtc_weth_v3liquiditypool) -> None:
         )
 
 
-def test_swap_for_all(mocked_wbtc_weth_v3liquiditypool) -> None:
+def test_swap_for_all(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
-    # pool has ~1800 WBTC, so an attempt to swap beyond current reserves will result in a max swap out
-    assert (
+
+    with pytest.raises(InsufficientAmountOutError):
+        # pool has ~94,000 WETH, calculation should throw
         lp.calculate_tokens_in_from_tokens_out(
             token_out=lp.token0,
             token_out_quantity=2500 * 10**8,
         )
-        == 1792433013901515271861550407570332
-    )
 
-    # pool has ~94,000 WETH, so all calculations should result in the maximum amount out
-    assert (
+    with pytest.raises(InsufficientAmountOutError):
+        # pool has ~94,000 WETH, calculation should throw
         lp.calculate_tokens_in_from_tokens_out(
             token_out=lp.token1,
             token_out_quantity=150_000 * 10**18,
         )
-        == 2989455025796272434286933989528647
-    )
 
 
-def test_external_update(mocked_wbtc_weth_v3liquiditypool) -> None:
+def test_external_update(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool) -> None:
     lp: MockV3LiquidityPool = mocked_wbtc_weth_v3liquiditypool
     lp.external_update(
         update=UniswapV3PoolExternalUpdate(
@@ -2599,7 +2607,79 @@ def test_external_update(mocked_wbtc_weth_v3liquiditypool) -> None:
     assert lp.liquidity == 69_420_000 + 1
 
 
-def test_auto_update(ethereum_full_node_web3) -> None:
+def test_auto_update(ethereum_full_node_web3: Web3) -> None:
     set_web3(ethereum_full_node_web3)
     lp = V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
     lp.auto_update()
+
+
+def test_complex_liquidity_transaction(fork_mainnet_archive: AnvilFork):
+    """
+    Tests transaction 0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d, which executes a complex Burn/Swap/Mint
+
+    State values taken from Tenderly: https://dashboard.tenderly.co/tx/mainnet/0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d/state-diff
+    """
+
+    STATE_BLOCK = 19619258
+    LP_ADDRESS = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
+
+    fork_mainnet_archive.reset(block_number=STATE_BLOCK)
+    set_web3(fork_mainnet_archive.w3)
+    lp = V3LiquidityPool(LP_ADDRESS)
+
+    # Verify initial state
+    assert lp.liquidity == 14421592867765366
+
+    # Apply relevant updates: Burn -> Swap -> Mint
+    # ref: https://dashboard.tenderly.co/tx/mainnet/0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d/logs
+
+    lp.external_update(
+        # Burn
+        update=UniswapV3PoolExternalUpdate(
+            block_number=STATE_BLOCK + 1,
+            liquidity_change=(-32898296636481156, -2, 0),
+        )
+    )
+    lp.external_update(
+        # Swap
+        update=UniswapV3PoolExternalUpdate(
+            block_number=STATE_BLOCK + 1,
+            liquidity=14421592867765366,
+            sqrt_price_x96=79231240136335768538165178627,
+            tick=0,
+        )
+    )
+    lp.external_update(
+        # Mint
+        update=UniswapV3PoolExternalUpdate(
+            block_number=STATE_BLOCK + 1,
+            liquidity_change=(32881222444111623, -1, 1),
+        )
+    )
+
+    def convert_unsigned_integer_to_signed(num):
+        """
+        Workaround for the values shown on Tenderly's "State Changes" view, which converts signed
+        integers in a tuple to their unsigned representation
+        """
+        return int.from_bytes(HexBytes(num), byteorder="big", signed=True)
+
+    assert lp.liquidity == 47302815311876989
+
+    assert lp.tick_data[-2].liquidityGross == 2444435478572158
+    assert lp.tick_data[-2].liquidityNet == convert_unsigned_integer_to_signed(
+        340282366920938463463373056991514192626
+    )
+
+    assert lp.tick_data[-1].liquidityGross == 35737394957587036
+    assert lp.tick_data[-1].liquidityNet == 32197982189243310
+
+    assert lp.tick_data[0].liquidityGross == 3908477120807173
+    assert lp.tick_data[0].liquidityNet == convert_unsigned_integer_to_signed(
+        340282366920938463463370705564595110629
+    )
+
+    assert lp.tick_data[1].liquidityGross == 35087990576870618
+    assert lp.tick_data[1].liquidityNet == convert_unsigned_integer_to_signed(
+        340282366920938463463340830792807716726
+    )
