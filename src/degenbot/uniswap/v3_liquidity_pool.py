@@ -483,42 +483,37 @@ class V3LiquidityPool(BaseLiquidityPool):
         block_number: int | None = None,
     ) -> None:
         """
-        Update the initialized tick values at a specific word (a 32 byte number
-        representing 256 ticks at the tickSpacing interval). Store
-        the liquidity values in the `self.tick_data` dictionary using the tick
-        as the key, and update the `self.tick_bitmap` dictionary.
-
-        Uses a lock to guard state-modifying methods that might cause race conditions
-        when used with threads.
+        Update the initialized tick values within a specified word position. A word is divided into
+        256 ticks, spaced per the tickSpacing interval.
         """
+
         _w3_contract = self._w3_contract
 
         if block_number is None:
             block_number = config.get_web3().eth.get_block_number()
 
-        with self._state_lock:
-            try:
-                _tick_bitmap = _w3_contract.functions.tickBitmap(word_position).call(
-                    block_identifier=block_number,
-                )
-                _tick_data = self.lens._w3_contract.functions.getPopulatedTicksInWord(
-                    self.address, word_position
-                ).call(block_identifier=block_number)
-            except Exception as e:
-                print(f"(V3LiquidityPool) (_update_tick_data_at_word) (single tick): {e}")
-                print(type(e))
-                raise
-            else:
-                self.tick_bitmap[word_position] = UniswapV3BitmapAtWord(
-                    bitmap=_tick_bitmap,
+        try:
+            _tick_bitmap = _w3_contract.functions.tickBitmap(word_position).call(
+                block_identifier=block_number,
+            )
+            _tick_data = self.lens._w3_contract.functions.getPopulatedTicksInWord(
+                self.address, word_position
+            ).call(block_identifier=block_number)
+        except Exception as e:
+            print(f"(V3LiquidityPool) (_update_tick_data_at_word) (single tick): {e}")
+            print(type(e))
+            raise
+        else:
+            self.tick_bitmap[word_position] = UniswapV3BitmapAtWord(
+                bitmap=_tick_bitmap,
+                block=block_number,
+            )
+            for tick, liquidity_net, liquidity_gross in _tick_data:
+                self.tick_data[tick] = UniswapV3LiquidityAtTick(
+                    liquidityNet=liquidity_net,
+                    liquidityGross=liquidity_gross,
                     block=block_number,
                 )
-                for tick, liquidity_net, liquidity_gross in _tick_data:
-                    self.tick_data[tick] = UniswapV3LiquidityAtTick(
-                        liquidityNet=liquidity_net,
-                        liquidityGross=liquidity_gross,
-                        block=block_number,
-                    )
 
     def _get_tick_bitmap_word_and_bit_position(self, tick: int) -> Tuple[int, int]:
         """
