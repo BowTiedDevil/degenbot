@@ -892,21 +892,21 @@ class V3LiquidityPool(BaseLiquidityPool):
         with self._state_lock:
             updated_state = False
 
-            for update_type in ("tick", "liquidity", "sqrt_price_x96"):
-                if (update_value := getattr(update, update_type, None)) and update_value != getattr(
-                    self, update_type
-                ):
-                    setattr(self, update_type, update_value)
-                    updated_state = True
-
-            if update.liquidity_change and update.liquidity_change[0] != 0:
-                (
-                    liquidity_delta,
-                    lower_tick,
-                    upper_tick,
-                ) = update.liquidity_change
-
+            if update.tick is not None and update.tick != self.tick:
                 updated_state = True
+                self.tick = update.tick
+
+            if update.liquidity is not None and update.liquidity != self.liquidity:
+                updated_state = True
+                self.liquidity = update.liquidity
+
+            if update.sqrt_price_x96 is not None and update.sqrt_price_x96 != self.sqrt_price_x96:
+                updated_state = True
+                self.sqrt_price_x96 = update.sqrt_price_x96
+
+            if update.liquidity_change is not None and update.liquidity_change[0] != 0:
+                updated_state = True
+                liquidity_delta, lower_tick, upper_tick = update.liquidity_change
 
                 # adjust in-range liquidity if current tick is within the position's range
                 if lower_tick <= self.tick < upper_tick and not force:
@@ -917,7 +917,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                     )
                     assert (
                         self.liquidity >= 0
-                    ), f"{self.address=}, {liquidity_before=}, {self.liquidity=}, {update=} {block_number=} {self.tick=}"
+                    ), f"{self.address=}, {liquidity_before=}, {self.liquidity=}, {update=}, {block_number=}, {self.state=}, {self._pool_state_archive=}"
 
                 for i, tick in enumerate([lower_tick, upper_tick]):
                     tick_word, _ = self._get_tick_bitmap_word_and_bit_position(tick)
