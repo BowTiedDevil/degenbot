@@ -2613,7 +2613,7 @@ def test_auto_update(ethereum_full_node_web3: Web3) -> None:
     lp.auto_update()
 
 
-def test_complex_liquidity_transaction(fork_mainnet_archive: AnvilFork):
+def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
     """
     Tests transaction 0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d, which executes a complex Burn/Swap/Mint
 
@@ -2682,4 +2682,76 @@ def test_complex_liquidity_transaction(fork_mainnet_archive: AnvilFork):
     assert lp.tick_data[1].liquidityGross == 35087990576870618
     assert lp.tick_data[1].liquidityNet == convert_unsigned_integer_to_signed(
         340282366920938463463340830792807716726
+    )
+
+
+def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
+    """
+    Tests transaction 0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b, which executes a complex Burn/Swap/Mint
+
+    State values taken from Tenderly: https://dashboard.tenderly.co/tx/mainnet/0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b/state-diff
+    """
+
+    STATE_BLOCK = 19624318
+    LP_ADDRESS = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
+
+    fork_mainnet_archive.reset(block_number=STATE_BLOCK)
+    set_web3(fork_mainnet_archive.w3)
+    lp = V3LiquidityPool(LP_ADDRESS)
+
+    # Verify initial state
+    assert lp.liquidity == 14823044070524674
+
+    # Apply relevant updates: Burn -> Swap -> Mint
+    # ref: https://dashboard.tenderly.co/tx/mainnet/0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b/logs
+
+    lp.external_update(
+        # Burn
+        update=UniswapV3PoolExternalUpdate(
+            block_number=STATE_BLOCK + 1,
+            liquidity_change=(-32832176391550116, 1, 3),
+        )
+    )
+    lp.external_update(
+        # Swap
+        update=UniswapV3PoolExternalUpdate(
+            block_number=STATE_BLOCK + 1,
+            liquidity=14823044070524674,
+            sqrt_price_x96=79229207277353295810379307480,
+            tick=0,
+        )
+    )
+    lp.external_update(
+        # Mint
+        update=UniswapV3PoolExternalUpdate(
+            block_number=STATE_BLOCK + 1,
+            liquidity_change=(32906745642438587, 0, 2),
+        )
+    )
+
+    def convert_unsigned_integer_to_signed(num):
+        """
+        Workaround for the values shown on Tenderly's "State Changes" view, which converts signed
+        integers in a tuple to their unsigned representation
+        """
+        return int.from_bytes(HexBytes(num), byteorder="big", signed=True)
+
+    assert lp.liquidity == 47729789712963261
+
+    assert lp.tick_data[0].liquidityGross == 36789742298460066
+    assert lp.tick_data[0].liquidityNet == 29030358934123454
+
+    assert lp.tick_data[1].liquidityGross == 2206768132758995
+    assert lp.tick_data[1].liquidityNet == convert_unsigned_integer_to_signed(
+        340282366920938463463373712015251828349
+    )
+
+    assert lp.tick_data[2].liquidityGross == 33976822553596059
+    assert lp.tick_data[2].liquidityNet == convert_unsigned_integer_to_signed(
+        340282366920938463463340631050012819095
+    )
+
+    assert lp.tick_data[3].liquidityGross == 996384072015849
+    assert lp.tick_data[3].liquidityNet == convert_unsigned_integer_to_signed(
+        340282366920938463463373611250495718043
     )
