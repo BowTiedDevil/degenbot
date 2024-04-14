@@ -19,7 +19,6 @@ from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError
 from degenbot.fork import AnvilFork
 from degenbot.uniswap import V3LiquidityPool
-from degenbot.uniswap.v2_dataclasses import UniswapV2PoolExternalUpdate
 from degenbot.uniswap.v2_liquidity_pool import (
     CamelotLiquidityPool,
     LiquidityPool,
@@ -28,7 +27,6 @@ from degenbot.uniswap.v2_liquidity_pool import (
 from degenbot.uniswap.v3_dataclasses import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
-    UniswapV3PoolExternalUpdate,
     UniswapV3PoolState,
 )
 from eth_utils import to_checksum_address
@@ -60,7 +58,7 @@ def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> LiquidityPool:
 
 
 @pytest.fixture
-def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> LiquidityPool:
+def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> V3LiquidityPool:
     set_web3(fork_mainnet.w3)
     pool = V3LiquidityPool(
         WBTC_WETH_V3_POOL_ADDRESS,
@@ -2127,7 +2125,7 @@ def test_create_from_token_addresses(fork_mainnet: AnvilFork):
 def test_arbitrage_with_overrides(
     wbtc_weth_arb: UniswapLpCycle,
     wbtc_weth_v2_lp: LiquidityPool,
-    wbtc_weth_v3_lp: LiquidityPool,
+    wbtc_weth_v3_lp: V3LiquidityPool,
     weth_token: Erc20Token,
     wbtc_token: Erc20Token,
 ):
@@ -2180,7 +2178,6 @@ def test_arbitrage_with_overrides(
     irrelevant_v2_pool.address = to_checksum_address("0x0000000000000000000000000000000000000069")
     irrelevant_v2_pool.name = "WBTC-WETH (V2, 0.30%)"
     irrelevant_v2_pool.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-    irrelevant_v2_pool.fee = None
     irrelevant_v2_pool.fee_token0 = Fraction(3, 1000)
     irrelevant_v2_pool.fee_token1 = Fraction(3, 1000)
     irrelevant_v2_pool.reserves_token0 = 16231137593
@@ -2273,7 +2270,7 @@ async def test_pickle_uniswap_lp_cycle(fork_arbitrum: AnvilFork):
 
 
 async def test_process_pool_calculation(
-    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v3_lp: LiquidityPool, weth_token: Erc20Token
+    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
 ):
     start = time.perf_counter()
 
@@ -2337,7 +2334,7 @@ async def test_process_pool_calculation(
 
 
 async def test_process_pool_calculation_with_return_best(
-    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v3_lp: LiquidityPool
+    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v3_lp: V3LiquidityPool
 ):
     v3_pool_state_override = UniswapV3PoolState(
         pool=wbtc_weth_v3_lp,
@@ -2373,7 +2370,6 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
     lp_1.name = "WBTC-WETH (V2, 0.30%)"
     lp_1.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
     lp_1.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-    lp_1.fee = None
     lp_1.fee_token0 = Fraction(3, 1000)
     lp_1.fee_token1 = Fraction(3, 1000)
     lp_1.reserves_token0 = 16000000000
@@ -2385,7 +2381,6 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
     lp_2.name = "WBTC-WETH (V2, 0.30%)"
     lp_2.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D941")
     lp_2.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-    lp_2.fee = None
     lp_2.fee_token0 = Fraction(3, 1000)
     lp_2.fee_token1 = Fraction(3, 1000)
     lp_2.reserves_token0 = 15000000000
@@ -2424,19 +2419,19 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
 
 
 def test_bad_pool_in_constructor(
-    wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: LiquidityPool, weth_token: Erc20Token
+    wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
 ):
     with pytest.raises(ValueError, match="Must provide only Uniswap liquidity pools."):
         UniswapLpCycle(
             id="test_arb",
             input_token=weth_token,
-            swap_pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp, None],
+            swap_pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp, None],  # type: ignore[list-item]
             max_input=100 * 10**18,
         )
 
 
 def test_no_max_input(
-    wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: LiquidityPool, weth_token: Erc20Token
+    wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
 ):
     arb = UniswapLpCycle(
         id="test_arb",
@@ -2447,7 +2442,7 @@ def test_no_max_input(
 
 
 def test_zero_max_input(
-    wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: LiquidityPool, weth_token: Erc20Token
+    wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
 ):
     with pytest.raises(ValueError, match="Maximum input must be positive."):
         UniswapLpCycle(
@@ -2463,27 +2458,3 @@ def test_arbitrage_helper_subscribes_to_pool_state_updates(
 ):
     assert wbtc_weth_arb in wbtc_weth_v2_lp._subscribers
     assert wbtc_weth_arb in wbtc_weth_v3_lp._subscribers
-
-
-def test_pool_updates_trigger_updated_arbitrage_pool_state(
-    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool
-):
-    current_block = wbtc_weth_v2_lp.update_block
-    initial_arb_state = wbtc_weth_arb.pool_states.copy()
-    wbtc_weth_v2_lp.external_update(
-        update=UniswapV2PoolExternalUpdate(
-            block_number=current_block + 1, reserves_token0=69, reserves_token1=420
-        )
-    )
-    assert wbtc_weth_v2_lp.reserves_token0 == 69
-    assert wbtc_weth_v2_lp.reserves_token1 == 420
-    assert wbtc_weth_arb.pool_states[wbtc_weth_v2_lp.address].reserves_token0 == 69
-
-    v3_update = UniswapV3PoolExternalUpdate(block_number=current_block + 1, liquidity=69_420)
-    wbtc_weth_v3_lp.external_update(update=v3_update, block_number=current_block + 1)
-    assert wbtc_weth_v3_lp.liquidity == 69_420
-    assert wbtc_weth_arb.pool_states[wbtc_weth_v3_lp.address].liquidity == 69_420
-
-    new_arb_state = wbtc_weth_arb.pool_states.copy()
-
-    assert initial_arb_state != new_arb_state

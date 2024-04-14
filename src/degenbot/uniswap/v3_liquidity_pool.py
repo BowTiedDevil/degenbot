@@ -71,8 +71,8 @@ class V3LiquidityPool(BaseLiquidityPool):
         factory_init_hash: str | None = None,
         extra_words: int = 10,
         silent: bool = False,
-        tick_data: Dict[int, Dict[str, Any]] | None = None,
-        tick_bitmap: Dict[int, Dict[str, Any]] | None = None,
+        tick_data: Dict[int, Dict[str, Any] | UniswapV3LiquidityAtTick] | None = None,
+        tick_bitmap: Dict[int, Dict[str, Any] | UniswapV3BitmapAtWord] | None = None,
         state_block: int | None = None,
     ):
         self.address = to_checksum_address(address)

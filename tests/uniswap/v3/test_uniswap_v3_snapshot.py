@@ -7,6 +7,7 @@ from degenbot import (
     UniswapV3LiquiditySnapshot,
 )
 from degenbot.uniswap.managers import UniswapV3LiquidityPoolManager
+from eth_utils import to_checksum_address
 
 EMPTY_SNAPSHOT_FILENAME = "tests/uniswap/v3/empty_v3_liquidity_snapshot.json"
 EMPTY_SNAPSHOT_BLOCK = 12_369_620  # Uniswap V3 factory was deployed on the next block, so use this as the initial zero state
@@ -141,7 +142,7 @@ def test_get_new_liquidity_updates(
         "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf",
     ]:
         first_250_blocks_snapshot.get_new_liquidity_updates(pool_address)
-        assert first_250_blocks_snapshot._liquidity_events[pool_address] == []
+        assert first_250_blocks_snapshot._liquidity_events[to_checksum_address(pool_address)] == []
 
 
 def test_apply_update_to_snapshot(
@@ -340,5 +341,5 @@ def test_pool_manager_applies_snapshots(
                 }
 
     # Check that the injected events were removed from the queue
-    for pool in first_250_blocks_snapshot._liquidity_events:
-        assert first_250_blocks_snapshot._liquidity_events[pool] == []
+    for pool_address in first_250_blocks_snapshot._liquidity_events:
+        assert first_250_blocks_snapshot._liquidity_events[pool_address] == []

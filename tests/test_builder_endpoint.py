@@ -20,6 +20,9 @@ BUILDER_FIXTURES = [
     "titanbuilder",
 ]
 
+TEST_BUNDLE_HASH: str
+TEST_BUNDLE_BLOCK: int
+
 # Taken from https://privatekeys.pw/keys/ethereum/random
 SIGNER_KEY = "52661f05c0512d64e2dc681900f45996e9946856ec352b7a2950203b150dbd28"
 
@@ -232,9 +235,9 @@ async def test_eth_send_bundle(
         signer_key=SIGNER_KEY,
     )
     assert isinstance(response, dict)
+
     global TEST_BUNDLE_HASH
     global TEST_BUNDLE_BLOCK
-
     TEST_BUNDLE_HASH = response["bundleHash"]
     TEST_BUNDLE_BLOCK = current_block + 1
 

@@ -2,7 +2,6 @@
 # TODO: implement "blank" V3 pools and incorporate try/except for all V3 pool manager get_pool calls
 # TODO: add state block argument for pool simulation calls
 
-import pprint
 from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple, cast
 
 import eth_abi.abi
@@ -1688,10 +1687,8 @@ class UniswapTransaction(BaseTransaction):
                             tx_token_b = to_checksum_address(func_params["tokenB"])
                             tx_token_amount_a = func_params["amountADesired"]
                             tx_token_amount_b = func_params["amountBDesired"]
-                            # fmt: off
                             tx_token_amount_a_min = func_params["amountAMin"]  # noqa: F841
                             tx_token_amount_b_min = func_params["amountBMin"]  # noqa: F841
-                            # fmt: on
                             token0_address, token1_address = (
                                 (tx_token_a, tx_token_b)
                                 if tx_token_a < tx_token_b
@@ -1705,9 +1702,7 @@ class UniswapTransaction(BaseTransaction):
                         elif func_name == "addLiquidityETH":
                             tx_token = to_checksum_address(func_params["token"])
                             tx_token_amount = func_params["amountTokenDesired"]
-                            # fmt: off
                             tx_token_amount_min = func_params["amountTokenMin"]  # noqa: F841
-                            # fmt: on
                             tx_eth_min = func_params["amountETHMin"]
                             _wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
                             token0_address, token1_address = (

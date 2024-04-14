@@ -2,8 +2,8 @@ import itertools
 from typing import cast
 
 import degenbot
+import eth_abi  # type: ignore[import-untyped]
 import pytest
-import eth_abi.abi
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_liquidity_pool import BrokenPool, CurveStableswapPool
 from degenbot.exceptions import ZeroLiquidityError, ZeroSwapError

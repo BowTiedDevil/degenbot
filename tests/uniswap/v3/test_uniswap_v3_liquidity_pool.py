@@ -16,7 +16,6 @@ from degenbot import (
     V3LiquidityPool,
     set_web3,
 )
-from degenbot.constants import MIN_INT128, MAX_INT128, MAX_UINT128, MIN_UINT128
 from degenbot.exceptions import (
     ExternalUpdateError,
     LiquidityPoolError,
