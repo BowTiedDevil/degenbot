@@ -1,14 +1,13 @@
 import dataclasses
-from typing import TYPE_CHECKING
-from ..baseclasses import BasePoolState, UniswapSimulationResult, Message
 
-if TYPE_CHECKING:
-    from .v2_liquidity_pool import LiquidityPool
+from eth_typing import ChecksumAddress
+
+from ..baseclasses import BasePoolState, Message, UniswapSimulationResult
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV2PoolState(BasePoolState):
-    pool: "LiquidityPool"
+    pool: ChecksumAddress
     reserves_token0: int
     reserves_token1: int
 

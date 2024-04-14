@@ -88,17 +88,17 @@ def test_arb_payload_encoding():
 
     # set up overrides for a profitable arbitrage condition
     v2_weth_dai_state_override = UniswapV2PoolState(
-        pool=uniswap_v2_weth_dai_lp,
+        pool=uniswap_v2_weth_dai_lp.address,
         reserves_token0=7154631418308101780013056,  # DAI <----- overridden, added 10% to DAI supply
         reserves_token1=2641882268814772168174,  # WETH
     )
     v2_weth_usdc_lp_state_override = UniswapV2PoolState(
-        pool=uniswap_v2_weth_usdc_lp,
+        pool=uniswap_v2_weth_usdc_lp.address,
         reserves_token0=51264330493455,  # USDC
         reserves_token1=20822226989581225186276,  # WETH
     )
     v2_weth_usdt_lp_state_override = UniswapV2PoolState(
-        pool=uniswap_v2_weth_usdt_lp,
+        pool=uniswap_v2_weth_usdt_lp.address,
         reserves_token0=33451964234532476269546,  # WETH
         reserves_token1=82374477120833,  # USDT
     )
@@ -164,17 +164,17 @@ async def test_process_pool_calculation() -> None:
 
     # set up overrides for a profitable arbitrage condition
     v2_weth_dai_state_override = UniswapV2PoolState(
-        pool=uniswap_v2_weth_dai_lp,
+        pool=uniswap_v2_weth_dai_lp.address,
         reserves_token0=7154631418308101780013056,  # DAI <----- overridden, added 10% to DAI supply
         reserves_token1=2641882268814772168174,  # WETH
     )
     v2_weth_usdc_lp_state_override = UniswapV2PoolState(
-        pool=uniswap_v2_weth_usdc_lp,
+        pool=uniswap_v2_weth_usdc_lp.address,
         reserves_token0=51264330493455,  # USDC
         reserves_token1=20822226989581225186276,  # WETH
     )
     v2_weth_usdt_lp_state_override = UniswapV2PoolState(
-        pool=uniswap_v2_weth_usdt_lp,
+        pool=uniswap_v2_weth_usdt_lp.address,
         reserves_token0=33451964234532476269546,  # WETH
         reserves_token1=82374477120833,  # USDT
     )

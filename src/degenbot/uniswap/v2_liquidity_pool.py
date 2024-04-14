@@ -3,8 +3,9 @@ from fractions import Fraction
 from threading import Lock
 from typing import Any, Dict, Iterable, List, Tuple
 
-from eth_typing import ChecksumAddress
+from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
+from typing_extensions import override
 from web3.contract.contract import Contract
 
 from .. import config
@@ -31,7 +32,7 @@ from .v2_functions import generate_v2_pool_address
 
 class LiquidityPool(BaseLiquidityPool):
     """
-    Represents a Uniswap V2 liquidity pool
+    A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
 
     uniswap_version = 2
@@ -92,17 +93,19 @@ class LiquidityPool(BaseLiquidityPool):
             simulating transactions through pools that do not exist.
         """
 
-        if empty and any([address is None, factory_address is None, tokens is None]):
+        if empty and any(
+            [
+                address is None,
+                factory_address is None,
+                tokens is None,
+            ]
+        ):
             raise ValueError(
                 "Empty LiquidityPool cannot be created without pool, factory, and token addresses"
             )
 
-        self.state: UniswapV2PoolState = UniswapV2PoolState(
-            pool=self,
-            reserves_token0=0,
-            reserves_token1=0,
-        )
-
+        self.factory: ChecksumAddress
+        self._state: UniswapV2PoolState | None = None
         self._state_lock = Lock()
 
         self.address: ChecksumAddress = to_checksum_address(address)
@@ -137,18 +140,14 @@ class LiquidityPool(BaseLiquidityPool):
                 )
 
         self._update_method = update_method
-        self.new_reserves = False
+        self.update_block: BlockNumber | int = _w3.eth.get_block_number()
+        self.factory = (
+            to_checksum_address(factory_address)
+            if factory_address is not None
+            else _w3_contract.functions.factory().call()
+        )
 
-        if empty:
-            self.update_block = 1
-        else:
-            self.update_block = (
-                state_block if state_block is not None else _w3.eth.get_block_number()
-            )
-            self.factory = _w3_contract.functions.factory().call()
-
-        chain_id = 1 if empty else _w3.eth.chain_id
-
+        chain_id = _w3.eth.chain_id
         if tokens is not None:
             if len(tokens) != 2:
                 raise ValueError(f"Expected 2 tokens, found {len(tokens)}")
@@ -188,26 +187,12 @@ class LiquidityPool(BaseLiquidityPool):
 
             self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
 
-        if not empty:
-            (
-                self.reserves_token0,
-                self.reserves_token1,
-                *_,
-            ) = _w3_contract.functions.getReserves().call(block_identifier=self.update_block)
-
         if self._update_method == "event":  # pragma: no cover
             raise ValueError(
                 "The 'event' update method is inaccurate and unsupported, please update your bot to use the default 'polling' method"
             )
 
-        self._pool_state_archive: Dict[int, UniswapV2PoolState] = {
-            0: UniswapV2PoolState(
-                pool=self,
-                reserves_token0=0,
-                reserves_token1=0,
-            ),
-            self.update_block: self.state,
-        }
+        self._pool_state_archive: Dict[int, UniswapV2PoolState] = {}
 
         AllPools(chain_id)[self.address] = self
 
@@ -215,8 +200,9 @@ class LiquidityPool(BaseLiquidityPool):
 
         if not silent:
             logger.info(self.name)
-            logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
-            logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
+            if not empty:
+                logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
+                logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
 
     def __getstate__(self) -> Dict[str, Any]:
         # Remove objects that either cannot be pickled or are unnecessary to perform the calculation
@@ -239,34 +225,38 @@ class LiquidityPool(BaseLiquidityPool):
 
     @property
     def _w3_contract(self) -> Contract:
-        return config.get_web3().eth.contract(
-            address=self.address,
-            abi=self.abi,
-        )
+        return config.get_web3().eth.contract(address=self.address, abi=self.abi)
 
     @property
     def reserves_token0(self) -> int:
         return self.state.reserves_token0
 
-    @reserves_token0.setter
-    def reserves_token0(self, new_reserves: int) -> None:
-        self.state = UniswapV2PoolState(
-            pool=self,
-            reserves_token0=new_reserves,
-            reserves_token1=self.reserves_token1,
-        )
-
     @property
     def reserves_token1(self) -> int:
         return self.state.reserves_token1
 
-    @reserves_token1.setter
-    def reserves_token1(self, new_reserves: int) -> None:
-        self.state = UniswapV2PoolState(
-            pool=self,
-            reserves_token0=self.reserves_token0,
-            reserves_token1=new_reserves,
-        )
+    @property
+    @override
+    def state(self) -> UniswapV2PoolState:
+        if self._state is None:
+            current_block = config.get_web3().eth.get_block_number()
+            logger.info(f"Getting initial state for {self} at block {current_block}")
+            reserves0, reserves1, *_ = self._w3_contract.functions.getReserves().call(
+                block_identifier=current_block
+            )
+            self.update_block = current_block
+            self._state = UniswapV2PoolState(
+                pool=self.address,
+                reserves_token0=reserves0,
+                reserves_token1=reserves1,
+            )
+            self._pool_state_archive[current_block] = self._state
+        return self._state
+
+    @state.setter
+    @override
+    def state(self, new_state: UniswapV2PoolState) -> None:
+        self._state = new_state
 
     def auto_update(
         self,
@@ -539,14 +529,9 @@ class LiquidityPool(BaseLiquidityPool):
             for block in known_blocks[block_index:]:
                 del self._pool_state_archive[block]
 
-            restored_block, restored_state = list(self._pool_state_archive.items())[-1]
-
             # Restore previous state and block
-            self.state = restored_state
-            self.update_block = restored_block
-            self._notify_subscribers(
-                message=UniswapV2PoolStateUpdated(self.state),
-            )
+            self.update_block, self.state = list(self._pool_state_archive.items())[-1]
+            self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
 
     def set_swap_target(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover
         raise DeprecationWarning(
@@ -573,9 +558,9 @@ class LiquidityPool(BaseLiquidityPool):
             return UniswapV2PoolSimulationResult(
                 amount0_delta=added_reserves_token0,
                 amount1_delta=added_reserves_token1,
-                current_state=self.state.copy(),
+                current_state=override_state if override_state is not None else self.state.copy(),
                 future_state=UniswapV2PoolState(
-                    pool=self,
+                    pool=self.address,
                     reserves_token0=reserves_token0 + added_reserves_token0,
                     reserves_token1=reserves_token1 + added_reserves_token1,
                 ),
@@ -603,7 +588,7 @@ class LiquidityPool(BaseLiquidityPool):
                 amount1_delta=-removed_reserves_token1,
                 current_state=self.state.copy(),
                 future_state=UniswapV2PoolState(
-                    pool=self,
+                    pool=self.address,
                     reserves_token0=reserves_token0 - removed_reserves_token0,
                     reserves_token1=reserves_token1 - removed_reserves_token1,
                 ),
@@ -673,7 +658,7 @@ class LiquidityPool(BaseLiquidityPool):
                 amount1_delta=token1_delta,
                 current_state=self.state.copy(),
                 future_state=UniswapV2PoolState(
-                    pool=self,
+                    pool=self.address,
                     reserves_token0=self.reserves_token0 + token0_delta,
                     reserves_token1=self.reserves_token1 + token1_delta,
                 ),
@@ -698,8 +683,6 @@ class LiquidityPool(BaseLiquidityPool):
 
         update_method = override_update_method or self._update_method
 
-        updates = False
-
         # Fetch the chain height if a specific update_block is not provided
         if update_block is None:
             update_block = config.get_web3().eth.get_block_number()
@@ -712,26 +695,25 @@ class LiquidityPool(BaseLiquidityPool):
         else:
             self.update_block = update_block
 
+        state_updated = False
         if update_method == "polling":
             try:
-                (
-                    reserves0,
-                    reserves1,
-                    *_,
-                ) = _w3_contract.functions.getReserves().call(block_identifier=self.update_block)
-                if (self.reserves_token0, self.reserves_token1) != (
-                    reserves0,
-                    reserves1,
-                ):
-                    self.reserves_token0, self.reserves_token1 = (
-                        reserves0,
-                        reserves1,
+                reserves0, reserves1, *_ = _w3_contract.functions.getReserves().call(
+                    block_identifier=self.update_block
+                )
+                if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
+                    self.state = UniswapV2PoolState(
+                        pool=self.address,
+                        reserves_token0=reserves0,
+                        reserves_token1=reserves1,
                     )
+                    # self.reserves_token0, self.reserves_token1 = reserves0, reserves1
+                    self._pool_state_archive[update_block] = self.state
+
                     self._notify_subscribers(
                         message=UniswapV2PoolStateUpdated(self.state),
                     )
-                    self._pool_state_archive[update_block] = self.state
-                    updates = True
+                    state_updated = True
 
                     if not silent:
                         logger.info(f"[{self.name}]")
@@ -745,8 +727,6 @@ class LiquidityPool(BaseLiquidityPool):
                             logger.info(
                                 f"{self.token1}/{self.token0}: {(self.reserves_token1/10**self.token1.decimals) / (self.reserves_token0/10**self.token0.decimals)}"
                             )
-                else:
-                    updates = False
             except Exception as e:
                 print(f"LiquidityPool: Exception in update_reserves (polling): {e}")
         elif update_method == "external":
@@ -760,12 +740,16 @@ class LiquidityPool(BaseLiquidityPool):
                 external_token0_reserves == self.reserves_token0
                 and external_token1_reserves == self.reserves_token1
             ):
-                self.new_reserves = False
-                updates = False
+                state_updated = False
             else:
-                self.reserves_token0 = external_token0_reserves
-                self.reserves_token1 = external_token1_reserves
-                self.new_reserves = True
+                self.state = UniswapV2PoolState(
+                    pool=self.address,
+                    reserves_token0=external_token0_reserves,
+                    reserves_token1=external_token1_reserves,
+                )
+                # self.reserves_token0 = external_token0_reserves
+                # self.reserves_token1 = external_token1_reserves
+
                 self._pool_state_archive[update_block] = self.state
                 self._notify_subscribers(
                     message=UniswapV2PoolStateUpdated(self.state),
@@ -786,7 +770,7 @@ class LiquidityPool(BaseLiquidityPool):
         else:  # pragma: no cover
             raise ValueError(f"Update method {update_method} is not recognized.")
 
-        return updates
+        return state_updated
 
 
 class CamelotLiquidityPool(LiquidityPool):

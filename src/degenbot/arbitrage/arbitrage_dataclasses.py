@@ -35,6 +35,7 @@ class UniswapPoolSwapVector:
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV2PoolSwapAmounts:
     amounts: Tuple[int, int]
+    amounts_in: Tuple[int, int] | None = None
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

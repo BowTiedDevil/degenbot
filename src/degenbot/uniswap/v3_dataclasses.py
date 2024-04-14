@@ -1,10 +1,9 @@
 import dataclasses
-from typing import TYPE_CHECKING, Any, Dict, Tuple
+from typing import Any, Dict, Tuple
 
-from ..baseclasses import BasePoolState, UniswapSimulationResult, Message
+from eth_typing import ChecksumAddress
 
-if TYPE_CHECKING:
-    from .v3_liquidity_pool import V3LiquidityPool
+from ..baseclasses import BasePoolState, Message, UniswapSimulationResult
 
 
 @dataclasses.dataclass(slots=True)
@@ -54,7 +53,7 @@ class UniswapV3PoolExternalUpdate:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV3PoolState(BasePoolState):
-    pool: "V3LiquidityPool"
+    pool: ChecksumAddress
     liquidity: int
     sqrt_price_x96: int
     tick: int

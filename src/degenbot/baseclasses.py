@@ -50,7 +50,7 @@ class BasePoolUpdate: ...
 
 
 class BasePoolState:
-    pool: "BaseLiquidityPool"
+    pool: ChecksumAddress
 
 
 class BaseSimulationResult: ...

@@ -82,7 +82,7 @@ class V3LiquidityPool(BaseLiquidityPool):
         _w3_contract = self._w3_contract
 
         self.state: UniswapV3PoolState = UniswapV3PoolState(
-            pool=self,
+            pool=self.address,
             liquidity=0,
             sqrt_price_x96=0,
             tick=0,
@@ -227,7 +227,7 @@ class V3LiquidityPool(BaseLiquidityPool):
 
         self._pool_state_archive: Dict[int, UniswapV3PoolState] = {
             0: UniswapV3PoolState(
-                pool=self,
+                pool=self.address,
                 liquidity=0,
                 sqrt_price_x96=0,
                 tick=0,
@@ -527,7 +527,7 @@ class V3LiquidityPool(BaseLiquidityPool):
     @liquidity.setter
     def liquidity(self, new_liquidity: int) -> None:
         self.state = UniswapV3PoolState(
-            pool=self,
+            pool=self.address,
             liquidity=new_liquidity,
             sqrt_price_x96=self.sqrt_price_x96,
             tick=self.tick,
@@ -542,7 +542,7 @@ class V3LiquidityPool(BaseLiquidityPool):
     @sqrt_price_x96.setter
     def sqrt_price_x96(self, new_sqrt_price_x96: int) -> None:
         self.state = UniswapV3PoolState(
-            pool=self,
+            pool=self.address,
             liquidity=self.liquidity,
             sqrt_price_x96=new_sqrt_price_x96,
             tick=self.tick,
@@ -557,7 +557,7 @@ class V3LiquidityPool(BaseLiquidityPool):
     @tick.setter
     def tick(self, new_tick: int) -> None:
         self.state = UniswapV3PoolState(
-            pool=self,
+            pool=self.address,
             liquidity=self.liquidity,
             sqrt_price_x96=self.sqrt_price_x96,
             tick=new_tick,
@@ -574,7 +574,7 @@ class V3LiquidityPool(BaseLiquidityPool):
     @tick_bitmap.setter
     def tick_bitmap(self, new_tick_bitmap: Dict[int, UniswapV3BitmapAtWord]) -> None:
         self.state = UniswapV3PoolState(
-            pool=self,
+            pool=self.address,
             liquidity=self.liquidity,
             sqrt_price_x96=self.sqrt_price_x96,
             tick=self.tick,
@@ -591,7 +591,7 @@ class V3LiquidityPool(BaseLiquidityPool):
     @tick_data.setter
     def tick_data(self, new_tick_data: Dict[int, UniswapV3LiquidityAtTick]) -> None:
         self.state = UniswapV3PoolState(
-            pool=self,
+            pool=self.address,
             liquidity=self.liquidity,
             sqrt_price_x96=self.sqrt_price_x96,
             tick=self.tick,
@@ -1203,7 +1203,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                 amount1_delta=amount1_delta,
                 current_state=self.state.copy(),
                 future_state=UniswapV3PoolState(
-                    pool=self,
+                    pool=self.address,
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrtprice,
                     tick=end_tick,
