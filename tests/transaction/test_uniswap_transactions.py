@@ -132,6 +132,48 @@ def test_router_additions() -> None:
             ),
             None,
         ),
+        (
+            19651601 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0xb7941464e07ad5815503e275a4a11ecc3105784874f7323281cd5581462dd9d4",
+                tx_nonce=3,
+                tx_value=10 * 10**18,
+                tx_sender="0xd73E1cF9272D160EdCA8d26A0B49befE68D6Ae09",
+                func_name="addLiquidityETH",
+                func_params={
+                    "token": "0x5909CE8477356AA9D0BF1DD68D72504CD21DE23B",
+                    "amountTokenDesired": 10000000000000000000000000000,
+                    "amountTokenMin": 10000000000000000000000000000,
+                    "amountETHMin": 10000000000000000000,
+                    "to": "0xD73E1CF9272D160EDCA8D26A0B49BEFE68D6AE09",
+                    "deadline": 1713071999,
+                },
+                router_address="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+            ),
+            None,
+        ),
+        (
+            19651990 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x75cc383aa061e344829d2ca68dc5b9d7b639a575516560e9b1e14a5996fcd4ed",
+                tx_nonce=3,
+                tx_value=10 * 10**18,
+                tx_sender="0xDcd5DBfcac27966f37A9Ac417AA4C1f86F2F1E2b",
+                func_name="addLiquidityETH",
+                func_params={
+                    "token": "0x0e32E481c9836C1130d4D7147A45980631aA3BbD",
+                    "amountTokenDesired": 30000000000000000000000000000,
+                    "amountTokenMin": 30000000000000000000000000000,
+                    "amountETHMin": 10000000000000000000,
+                    "to": "0xDcd5DBfcac27966f37A9Ac417AA4C1f86F2F1E2b",
+                    "deadline": 1713076703,
+                },
+                router_address="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+            ),
+            None,
+        ),
     ],
 )
 def test_v2_router_transactions(
@@ -148,7 +190,8 @@ def test_v2_router_transactions(
         with pytest.raises(TransactionError, match=exception_match):
             tx.simulate()
     else:
-        tx.simulate()
+        result = tx.simulate()
+        print(result)
 
 
 @pytest.mark.parametrize(
