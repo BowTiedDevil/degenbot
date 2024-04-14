@@ -273,11 +273,11 @@ class UniswapTransaction(BaseTransaction):
 
     def _show_pool_states(
         self,
+        pool: LiquidityPool | V3LiquidityPool,
         sim_result: UniswapV2PoolSimulationResult | UniswapV3PoolSimulationResult,
     ) -> None:
         current_state = sim_result.current_state
         future_state = sim_result.future_state
-        pool = current_state.pool
 
         # amount out is negative
         if sim_result.amount0_delta < sim_result.amount1_delta:
@@ -396,7 +396,7 @@ class UniswapTransaction(BaseTransaction):
             )
 
         if not silent:
-            self._show_pool_states(sim_result)
+            self._show_pool_states(pool, sim_result)
 
         return pool, sim_result
 
@@ -464,7 +464,7 @@ class UniswapTransaction(BaseTransaction):
             raise TransactionError(f"Required input {_amount_in} exceeds maximum {amount_in_max}")
 
         if not silent:
-            self._show_pool_states(sim_result)
+            self._show_pool_states(pool, sim_result)
 
         return pool, sim_result
 
@@ -551,7 +551,7 @@ class UniswapTransaction(BaseTransaction):
             )
 
         if not silent:
-            self._show_pool_states(_sim_result)
+            self._show_pool_states(pool, _sim_result)
 
         return pool, _sim_result
 
@@ -654,7 +654,7 @@ class UniswapTransaction(BaseTransaction):
             )
 
         if not silent:
-            self._show_pool_states(_sim_result)
+            self._show_pool_states(pool, _sim_result)
 
         return pool, _sim_result
 
