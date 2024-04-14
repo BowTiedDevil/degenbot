@@ -62,6 +62,8 @@ def mocked_wbtc_weth_v3liquiditypool():
     token1.symbol = "WETH"
 
     lp = MockV3LiquidityPool()
+    lp.address = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
+    lp.factory = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
     lp.name = "WBTC-WETH (V3, 0.30%)"
     lp.state = UniswapV3PoolState(
         pool=lp.address,
@@ -71,8 +73,6 @@ def mocked_wbtc_weth_v3liquiditypool():
         tick_bitmap={},
         tick_data={},
     )
-    lp.address = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
-    lp.factory = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
     lp._fee = 3000
     lp.token0 = token0
     lp.token1 = token1

@@ -2192,6 +2192,7 @@ def test_arbitrage_with_overrides(
     irrelevant_v2_pool.token1 = weth_token
 
     irrelevant_v3_pool = MockV3LiquidityPool()
+    irrelevant_v3_pool.address = to_checksum_address("0x0000000000000000000000000000000000000420")
     irrelevant_v3_pool.state = UniswapV3PoolState(
         pool=irrelevant_v3_pool.address,
         liquidity=0,
@@ -2200,7 +2201,6 @@ def test_arbitrage_with_overrides(
         tick_bitmap={},
         tick_data={},
     )
-    irrelevant_v3_pool.address = to_checksum_address("0x0000000000000000000000000000000000000420")
     irrelevant_v3_pool.name = "WBTC-WETH (V3, 0.30%)"
     irrelevant_v3_pool.factory = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
     irrelevant_v3_pool._fee = 3000
