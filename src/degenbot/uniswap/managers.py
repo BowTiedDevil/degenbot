@@ -192,12 +192,11 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             except Exception:
                 raise ManagerError("Could not get both Erc20Token helpers")
 
-            if pool_address == ZERO_ADDRESS:
-                raise ManagerError("No V2 LP available")
-
             pool_address = to_checksum_address(
                 self._w3_contract.functions.getPair(*checksummed_token_addresses).call()
             )
+            if pool_address == ZERO_ADDRESS:
+                raise ManagerError("No V2 LP available")
 
         if TYPE_CHECKING:
             assert pool_address is not None
