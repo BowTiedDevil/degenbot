@@ -240,7 +240,7 @@ class LiquidityPool(BaseLiquidityPool):
     def state(self) -> UniswapV2PoolState:
         if self._state is None:
             current_block = config.get_web3().eth.get_block_number()
-            logger.info(f"Getting initial state for {self} at block {current_block}")
+            logger.debug(f"Getting initial state for {self} at block {current_block}")
             reserves0, reserves1, *_ = self._w3_contract.functions.getReserves().call(
                 block_identifier=current_block
             )
