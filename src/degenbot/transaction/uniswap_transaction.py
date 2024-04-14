@@ -126,6 +126,9 @@ class V3RouterSpecialValues:
 
 
 class UniswapTransaction(BaseTransaction):
+    class LeftoverRouterBalance(LedgerError):
+        pass
+
     @classmethod
     def add_chain(cls, chain_id: int) -> None:
         try:
@@ -2434,13 +2437,9 @@ class UniswapTransaction(BaseTransaction):
         except ValueError as e:
             raise TransactionError(e)
 
-        if set(self.ledger._balances) - set([self.sender]) - self.recipients:
-            # Ignore case where an excess wrapped token balance remains at the router
-            if self.ledger._balances[self.router_address][WRAPPED_NATIVE_TOKENS[self.chain_id]]:
-                logger.info("Simulation results in leftover wrapped token balance")
-            else:
-                raise LedgerError(
-                    f"UNACCOUNTED BALANCE FOUND!\n{pprint.pformat(self.ledger._balances)}"
-                )
+        if self.router_address in self.ledger._balances:
+            raise self.LeftoverRouterBalance(
+                "Unaccounted router balance", self.ledger._balances[self.router_address]
+            )
 
         return results
