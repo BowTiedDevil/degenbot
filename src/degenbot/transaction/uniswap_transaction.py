@@ -408,10 +408,12 @@ class UniswapTransaction(BaseTransaction):
         pool: LiquidityPool,
         added_reserves_token0: int,
         added_reserves_token1: int,
+        override_state: UniswapV2PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
         return pool.simulate_add_liquidity(
             added_reserves_token0=added_reserves_token0,
             added_reserves_token1=added_reserves_token1,
+            override_state=override_state,
         )
 
     def _simulate_v2_swap_exact_out(
@@ -1756,6 +1758,11 @@ class UniswapTransaction(BaseTransaction):
                             pool=_pool,
                             added_reserves_token0=token0_amount,
                             added_reserves_token1=token1_amount,
+                            override_state=UniswapV2PoolState(
+                                pool=_pool.address,
+                                reserves_token0=0,
+                                reserves_token1=0,
+                            ),
                         )
 
                         _v2_router_future_pool_states.append((_pool, _sim_result))
