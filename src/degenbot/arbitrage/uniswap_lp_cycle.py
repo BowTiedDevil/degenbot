@@ -9,7 +9,7 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
-from ..baseclasses import BaseArbitrage, BasePoolState, Publisher, Subscriber
+from ..baseclasses import BaseArbitrage, Publisher, Subscriber
 from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
@@ -94,10 +94,6 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                 )
             )
 
-        self.pool_states: Dict[ChecksumAddress, BasePoolState | None] = {
-            pool.address: pool.state for pool in self.swap_pools
-        }
-
         self.best: Dict[str, Any] = {
             "input_token": self.input_token,
             "last_swap_amount": 0,
@@ -109,10 +105,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         }
 
     def __getstate__(self) -> Dict[str, Any]:
-        dropped_attributes = (
-            "_subscribers",
-            # "pool_states",
-        )
+        dropped_attributes = ("_subscribers",)
         copied_attributes = ()
 
         return {
@@ -239,11 +232,6 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
 
         return pools_amounts_out
 
-    def _update_pool_states(
-        self, pool_states: Iterable[UniswapV2PoolState | UniswapV3PoolState]
-    ) -> None:
-        self.pool_states.update({state.pool.address: state for state in pool_states})
-
     def _pre_calculation_check(
         self,
         override_state: Sequence[
@@ -333,7 +321,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
 
         # Check the pool state liquidity in the direction of the trade
         for pool, vector in zip(self.swap_pools, self._swap_vectors):
-            pool_state = state_overrides.get(pool.address) or self.pool_states[pool.address]
+            pool_state = state_overrides.get(pool.address) or pool.state
 
             match pool:
                 case LiquidityPool():
@@ -845,7 +833,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
             case LiquidityPool() | V3LiquidityPool():
                 match message:
                     case UniswapV2PoolStateUpdated() | UniswapV3PoolStateUpdated():
-                        self._update_pool_states([message.state])
+                        pass
                     case _:  # pragma: no cover
                         logger.info(
                             f"{self} unhandled message {message} from subscriber {publisher}"
