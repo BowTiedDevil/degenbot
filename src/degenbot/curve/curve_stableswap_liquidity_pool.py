@@ -461,8 +461,7 @@ class CurveStableswapPool(BaseLiquidityPool):
         self._update_pool_state()
         self._pool_state_archive: Dict[int, CurveStableswapPoolState] = {
             0: CurveStableswapPoolState(
-                pool=self,
-                address=self.address,
+                pool=self.address,
                 balances=self.balances,
                 base=getattr(self, "base_pool", None),
             ),
@@ -509,9 +508,7 @@ class CurveStableswapPool(BaseLiquidityPool):
         return f"CurveStableswapPool(address={self.address}, tokens={token_string}, fee={100*self.fee/self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"
 
     def _update_pool_state(self) -> None:
-        self.state = CurveStableswapPoolState(
-            pool=self, address=self.address, balances=self.balances
-        )
+        self.state = CurveStableswapPoolState(pool=self.address, balances=self.balances)
         self._notify_subscribers(
             message=CurveStableSwapPoolStateUpdated(self.state),
         )
@@ -2266,9 +2263,7 @@ class CurveStableswapPool(BaseLiquidityPool):
 
         self.update_block = block_number
 
-        return found_updates, CurveStableswapPoolState(
-            pool=self, address=self.address, balances=self.balances
-        )
+        return found_updates, CurveStableswapPoolState(pool=self.address, balances=self.balances)
 
     # def external_update(self, update: CurveStableswapPoolExternalUpdate) -> bool:
     #     with self._state_lock:
