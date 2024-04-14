@@ -258,12 +258,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                 ]
             ):
                 return  # No liquidity issues
-            elif any(
-                [
-                    pool_state.reserves_token0 == 0,
-                    pool_state.reserves_token1 == 0,
-                ]
-            ):
+            elif pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:
                 raise ZeroLiquidityError(f"V2 pool {pool.address} has no liquidity")
             elif pool_state.reserves_token1 == 1 and vector.zero_for_one is True:
                 raise ZeroLiquidityError(
