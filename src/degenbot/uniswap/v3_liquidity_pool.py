@@ -239,7 +239,7 @@ class V3LiquidityPool(BaseLiquidityPool):
 
         self._subscribers = set()
 
-        if not silent:  # pragma: no branch
+        if not silent:  # pragma: no cover
             logger.info(self.name)
             logger.info(f"• Token 0: {self.token0}")
             logger.info(f"• Token 1: {self.token1}")

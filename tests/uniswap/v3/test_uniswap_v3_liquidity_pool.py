@@ -2084,6 +2084,13 @@ def mocked_wbtc_weth_v3liquiditypool():
     return lp
 
 
+def test_fetching_tick_data(ethereum_archive_node_web3: Web3):
+    set_web3(ethereum_archive_node_web3)
+    lp = V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
+    word_position, _ = lp._get_tick_bitmap_word_and_bit_position(lp.tick)
+    lp._fetch_tick_data_at_word(word_position + 5)
+
+
 def test_creation(ethereum_full_node_web3: Web3) -> None:
     set_web3(ethereum_full_node_web3)
     V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
@@ -2265,15 +2272,11 @@ def test_pool_state_equality(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPo
         liquidity=10 * 10**18,
         sqrt_price_x96=10 * 10**18,
         tick=69_420,
-        # tick_bitmap={"a": "b"},
-        # tick_data={"c": "d"},
     ) == UniswapV3PoolState(
         pool=lp.address,
         liquidity=10 * 10**18,
         sqrt_price_x96=10 * 10**18,
         tick=69_420,
-        # tick_bitmap={"e": "f"},
-        # tick_data={"g": "h"},
     )
 
 
@@ -2388,7 +2391,7 @@ def test_simulations(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool) -> N
     )
 
     assert (
-        lp.simulate_swap(
+        lp.simulate_exact_input_swap(
             token_in=lp.token1,
             token_in_quantity=weth_amount_in,
         )
@@ -2419,7 +2422,7 @@ def test_simulations(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool) -> N
     )
 
     assert (
-        lp.simulate_swap(
+        lp.simulate_exact_input_swap(
             token_in=lp.token0,
             token_in_quantity=wbtc_amount_in,
         )
@@ -2440,26 +2443,20 @@ def test_simulations(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool) -> N
     mocked_dai.symbol = "DAI"
 
     # Test the input validation
-    with pytest.raises(ValueError, match="Neither token_in nor token_out were provided."):
-        lp.simulate_swap()
     with pytest.raises(ValueError, match="token_in is unknown!"):
-        lp.simulate_swap(
+        lp.simulate_exact_input_swap(
             token_in=mocked_dai,
+            token_in_quantity=1,
         )
     with pytest.raises(ValueError, match="token_out is unknown!"):
-        lp.simulate_swap(
+        lp.simulate_exact_output_swap(
             token_out=mocked_dai,
+            token_out_quantity=69,
         )
-    with pytest.raises(ValueError, match="token_in_quantity not provided."):
-        lp.simulate_swap(token_in=lp.token0)
-    with pytest.raises(ValueError, match="token_out_quantity not provided."):
-        lp.simulate_swap(token_out=lp.token0)
-    with pytest.raises(ValueError, match="Provide token_in or token_out, not both."):
-        lp.simulate_swap(token_in=lp.token0, token_out=lp.token1)
-    with pytest.raises(ValueError, match="Zero input/output swap requested."):
-        lp.simulate_swap(token_in=lp.token0, token_in_quantity=0)
-    with pytest.raises(ValueError, match="Zero input/output swap requested."):
-        lp.simulate_swap(token_out=lp.token1, token_out_quantity=0)
+    with pytest.raises(ValueError, match="Zero input swap requested."):
+        lp.simulate_exact_input_swap(token_in=lp.token0, token_in_quantity=0)
+    with pytest.raises(ValueError, match="Zero output swap requested."):
+        lp.simulate_exact_output_swap(token_out=lp.token1, token_out_quantity=0)
 
 
 def test_simulations_with_override(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool) -> None:
@@ -2476,7 +2473,7 @@ def test_simulations_with_override(mocked_wbtc_weth_v3liquiditypool: MockV3Liqui
         tick=258116,
     )
 
-    assert lp.simulate_swap(
+    assert lp.simulate_exact_input_swap(
         token_in=lp.token1,
         token_in_quantity=1 * 10**18,
         override_state=pool_state_override,
@@ -2492,7 +2489,7 @@ def test_simulations_with_override(mocked_wbtc_weth_v3liquiditypool: MockV3Liqui
         ),
     )
 
-    assert lp.simulate_swap(
+    assert lp.simulate_exact_output_swap(
         token_out=lp.token0,
         token_out_quantity=6157179,
         override_state=pool_state_override,
@@ -2605,11 +2602,29 @@ def test_external_update(mocked_wbtc_weth_v3liquiditypool: MockV3LiquidityPool) 
     )
     assert lp.liquidity == 69_420_000 + 1
 
+    lp.external_update(
+        update=UniswapV3PoolExternalUpdate(
+            block_number=12,
+            tick=69,
+        )
+    )
+    # Update twice to test branches that check for a no-change update
+    lp.external_update(
+        update=UniswapV3PoolExternalUpdate(
+            block_number=12,
+            tick=69,
+        )
+    )
 
-def test_auto_update(ethereum_full_node_web3: Web3) -> None:
-    set_web3(ethereum_full_node_web3)
+
+def test_auto_update(fork_mainnet_archive: AnvilFork) -> None:
+    current_block = fork_mainnet_archive.w3.eth.block_number
+    fork_mainnet_archive.reset(block_number=current_block - 500_000)
+    set_web3(fork_mainnet_archive.w3)
     lp = V3LiquidityPool(address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
+    fork_mainnet_archive.reset(block_number=current_block)
     lp.auto_update()
+    lp.auto_update()  # update twice to cover the "no update" cases
 
 
 def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):

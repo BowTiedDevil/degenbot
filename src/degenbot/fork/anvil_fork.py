@@ -96,7 +96,7 @@ class AnvilFork:
             else self.w3.eth.get_block(self.block_number)["baseFeePerGas"]
         )
         self.base_fee_next: int | None = None
-        self.chain_id: int = chain_id if chain_id is not None else self.w3.eth.chain_id
+        self.chain_id = chain_id if chain_id is not None else self.w3.eth.chain_id
 
         if balance_overrides is not None:
             for account, balance in balance_overrides:
@@ -147,26 +147,13 @@ class AnvilFork:
         while True:
             try:
                 raw_response += self.socket.recv(_SOCKET_READ_BUFFER_SIZE).rstrip()
+                response = ujson.loads(raw_response)
+                break
             except socket.timeout:  # pragma: no cover
                 continue
-
-            if raw_response.endswith(
-                (
-                    b"}",
-                    b"]",
-                )
-            ):
-                # Valid JSON RPC responses will end in } or ]
-                # ref: http://www.jsonrpc.org/specification
-                try:
-                    response = ujson.loads(raw_response)
-                except ujson.JSONDecodeError:  # pragma: no cover
-                    # The end of the response might end in } or ] if the last byte is the closing
-                    # character of an array or map. If there are more bytes remaining, the JSON
-                    # string will fail to decode correctly, so continue reading from the socket.
-                    continue
-                else:
-                    break
+            except ujson.JSONDecodeError:  # pragma: no cover
+                # Typically thrown if a long response does not fit in buffer length
+                continue
 
         if response.get("error"):
             raise Exception(f"Error in response: {response}")
@@ -182,9 +169,8 @@ class AnvilFork:
         # ref: https://docs.infura.io/networks/ethereum/json-rpc-methods/eth_createaccesslist
         keys_to_hexify = ("value", "nonce")
         for key in keys_to_hexify:
-            if key in sanitized_tx:
-                if isinstance(sanitized_tx[key], int):
-                    sanitized_tx[key] = hex(sanitized_tx[key])
+            if key in sanitized_tx and isinstance(sanitized_tx[key], int):
+                sanitized_tx[key] = hex(sanitized_tx[key])
 
         self._send_request(
             method="eth_createAccessList",
