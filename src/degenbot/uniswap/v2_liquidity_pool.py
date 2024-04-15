@@ -634,35 +634,36 @@ class LiquidityPool(BaseLiquidityPool):
         elif token_out is not None and token_out == self.token1:
             token_in = self.token0
 
-        with self._state_lock:
-            if token_in is not None and token_in_quantity is not None:
-                token_out_quantity = self.calculate_tokens_out_from_tokens_in(
-                    token_in=token_in,
-                    token_in_quantity=token_in_quantity,
-                    override_state=override_state,
-                )
-                token0_delta = -token_out_quantity if token_in is self.token1 else token_in_quantity
-                token1_delta = -token_out_quantity if token_in is self.token0 else token_in_quantity
+        current_state = override_state if override_state is not None else self.state.copy()
 
-            elif token_out is not None and token_out_quantity is not None:
-                token_in_quantity = self.calculate_tokens_in_from_tokens_out(
-                    token_out=token_out,
-                    token_out_quantity=token_out_quantity,
-                    override_state=override_state,
-                )
-                token0_delta = token_in_quantity if token_in == self.token0 else -token_out_quantity
-                token1_delta = token_in_quantity if token_in == self.token1 else -token_out_quantity
-
-            return UniswapV2PoolSimulationResult(
-                amount0_delta=token0_delta,
-                amount1_delta=token1_delta,
-                current_state=self.state.copy(),
-                future_state=UniswapV2PoolState(
-                    pool=self.address,
-                    reserves_token0=self.reserves_token0 + token0_delta,
-                    reserves_token1=self.reserves_token1 + token1_delta,
-                ),
+        if token_in is not None and token_in_quantity is not None:
+            token_out_quantity = self.calculate_tokens_out_from_tokens_in(
+                token_in=token_in,
+                token_in_quantity=token_in_quantity,
+                override_state=current_state,
             )
+            token0_delta = -token_out_quantity if token_in is self.token1 else token_in_quantity
+            token1_delta = -token_out_quantity if token_in is self.token0 else token_in_quantity
+
+        elif token_out is not None and token_out_quantity is not None:
+            token_in_quantity = self.calculate_tokens_in_from_tokens_out(
+                token_out=token_out,
+                token_out_quantity=token_out_quantity,
+                override_state=current_state,
+            )
+            token0_delta = token_in_quantity if token_in == self.token0 else -token_out_quantity
+            token1_delta = token_in_quantity if token_in == self.token1 else -token_out_quantity
+
+        return UniswapV2PoolSimulationResult(
+            amount0_delta=token0_delta,
+            amount1_delta=token1_delta,
+            current_state=current_state,
+            future_state=UniswapV2PoolState(
+                pool=self.address,
+                reserves_token0=self.reserves_token0 + token0_delta,
+                reserves_token1=self.reserves_token1 + token1_delta,
+            ),
+        )
 
     def update_reserves(
         self,
