@@ -180,11 +180,11 @@ class LiquidityPool(BaseLiquidityPool):
         if name is not None:
             self.name = name
         else:
-            if self.fee_token0 != self.fee_token1:
-                fee_string = f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
-            elif self.fee_token0 == self.fee_token1:
-                fee_string = f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
-
+            fee_string = (
+                f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
+                if self.fee_token0 == self.fee_token1
+                else f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
+            )
             self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
 
         if self._update_method == "event":  # pragma: no cover
@@ -198,7 +198,7 @@ class LiquidityPool(BaseLiquidityPool):
 
         self._subscribers = set()
 
-        if not silent:
+        if not silent:  # pragma: no cover
             logger.info(self.name)
             if not empty:
                 logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
@@ -459,7 +459,7 @@ class LiquidityPool(BaseLiquidityPool):
             return Fraction(state.reserves_token0) / Fraction(state.reserves_token1)
         elif token == self.token1:
             return Fraction(state.reserves_token1) / Fraction(state.reserves_token0)
-        else:
+        else:  # pragma: no cover
             raise ValueError(f"Unknown token {token}")
 
     def get_nominal_price(
@@ -498,7 +498,7 @@ class LiquidityPool(BaseLiquidityPool):
             return Fraction(state.reserves_token1, 10**self.token1.decimals) * Fraction(
                 10**self.token0.decimals, state.reserves_token0
             )
-        else:
+        else:  # pragma: no cover
             raise ValueError(f"Unknown token {token}")
 
     def restore_state_before_block(
@@ -594,65 +594,68 @@ class LiquidityPool(BaseLiquidityPool):
                 ),
             )
 
-    def simulate_swap(
+    def simulate_exact_input_swap(
         self,
-        token_in: Erc20Token | None = None,
-        token_in_quantity: int | None = None,
-        token_out: Erc20Token | None = None,
-        token_out_quantity: int | None = None,
+        token_in: Erc20Token,
+        token_in_quantity: int,
         override_state: UniswapV2PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
-        if token_in_quantity is None and token_out_quantity is None:  # pragma: no cover
-            raise ValueError("No quantity was provided")
+        if token_in not in self.tokens:  # pragma: no cover
+            raise ValueError("token_in is unknown.")
 
-        if token_in_quantity is not None and token_out_quantity is not None:  # pragma: no cover
-            raise ValueError("Provide token_in_quantity or token_out_quantity, not both")
-
-        if token_in and token_out and token_in == token_out:  # pragma: no cover
-            raise ValueError("Both tokens are the same!")
+        if token_in_quantity == 0:  # pragma: no cover
+            raise ValueError("Zero input swap requested.")
 
         if override_state:
             logger.debug(f"State override: {override_state}")
 
-        if token_in and token_in not in self.tokens:  # pragma: no cover
-            raise ValueError(
-                f"Token not found! token_in = {repr(token_in)}, pool holds {self.token0},{self.token1}"
-            )
+        current_state = override_state if override_state is not None else self.state.copy()
+        zero_for_one = token_in == self.token0
 
-        if token_out and token_out not in self.tokens:  # pragma: no cover
-            raise ValueError(
-                f"Token not found! token_out = {repr(token_out)}, pool holds {self.token0},{self.token1}"
-            )
+        token_out_quantity = self.calculate_tokens_out_from_tokens_in(
+            token_in=token_in,
+            token_in_quantity=token_in_quantity,
+            override_state=current_state,
+        )
+        token0_delta = -token_out_quantity if zero_for_one is False else token_in_quantity
+        token1_delta = -token_out_quantity if zero_for_one is True else token_in_quantity
 
-        if token_in is not None and token_in == self.token0:
-            token_out = self.token1
-        elif token_in is not None and token_in == self.token1:
-            token_out = self.token0
+        return UniswapV2PoolSimulationResult(
+            amount0_delta=token0_delta,
+            amount1_delta=token1_delta,
+            current_state=current_state,
+            future_state=UniswapV2PoolState(
+                pool=self.address,
+                reserves_token0=self.reserves_token0 + token0_delta,
+                reserves_token1=self.reserves_token1 + token1_delta,
+            ),
+        )
 
-        if token_out is not None and token_out == self.token0:
-            token_in = self.token1
-        elif token_out is not None and token_out == self.token1:
-            token_in = self.token0
+    def simulate_exact_output_swap(
+        self,
+        token_out: Erc20Token,
+        token_out_quantity: int,
+        override_state: UniswapV2PoolState | None = None,
+    ) -> UniswapV2PoolSimulationResult:
+        if token_out not in self.tokens:  # pragma: no cover
+            raise ValueError("token_out is unknown.")
+
+        if token_out_quantity == 0:  # pragma: no cover
+            raise ValueError("Zero output swap requested.")
+
+        if override_state:
+            logger.debug(f"State override: {override_state}")
 
         current_state = override_state if override_state is not None else self.state.copy()
+        zero_for_one = token_out == self.token1
 
-        if token_in is not None and token_in_quantity is not None:
-            token_out_quantity = self.calculate_tokens_out_from_tokens_in(
-                token_in=token_in,
-                token_in_quantity=token_in_quantity,
-                override_state=current_state,
-            )
-            token0_delta = -token_out_quantity if token_in is self.token1 else token_in_quantity
-            token1_delta = -token_out_quantity if token_in is self.token0 else token_in_quantity
-
-        elif token_out is not None and token_out_quantity is not None:
-            token_in_quantity = self.calculate_tokens_in_from_tokens_out(
-                token_out=token_out,
-                token_out_quantity=token_out_quantity,
-                override_state=current_state,
-            )
-            token0_delta = token_in_quantity if token_in == self.token0 else -token_out_quantity
-            token1_delta = token_in_quantity if token_in == self.token1 else -token_out_quantity
+        token_in_quantity = self.calculate_tokens_in_from_tokens_out(
+            token_out=token_out,
+            token_out_quantity=token_out_quantity,
+            override_state=current_state,
+        )
+        token0_delta = token_in_quantity if zero_for_one is True else -token_out_quantity
+        token1_delta = token_in_quantity if zero_for_one is False else -token_out_quantity
 
         return UniswapV2PoolSimulationResult(
             amount0_delta=token0_delta,
@@ -716,7 +719,7 @@ class LiquidityPool(BaseLiquidityPool):
                     )
                     state_updated = True
 
-                    if not silent:
+                    if not silent:  # pragma: no cover
                         logger.info(f"[{self.name}]")
                         if print_reserves:
                             logger.info(f"{self.token0}: {self.reserves_token0}")
@@ -756,7 +759,7 @@ class LiquidityPool(BaseLiquidityPool):
                     message=UniswapV2PoolStateUpdated(self.state),
                 )
 
-            if not silent:
+            if not silent:  # pragma: no cover
                 logger.info(f"[{self.name}]")
                 if print_reserves:
                     logger.info(f"{self.token0}: {self.reserves_token0}")

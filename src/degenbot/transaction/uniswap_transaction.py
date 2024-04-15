@@ -357,7 +357,7 @@ class UniswapTransaction(BaseTransaction):
             )
             amount_in = self.ledger.token_balance(pool.address, token_in)
 
-        sim_result = pool.simulate_swap(
+        sim_result = pool.simulate_exact_input_swap(
             token_in=token_in,
             token_in_quantity=amount_in,
         )
@@ -434,7 +434,7 @@ class UniswapTransaction(BaseTransaction):
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
-        sim_result = pool.simulate_swap(
+        sim_result = pool.simulate_exact_output_swap(
             token_out=token_out,
             token_out_quantity=amount_out,
         )
@@ -512,10 +512,10 @@ class UniswapTransaction(BaseTransaction):
             )
 
         try:
-            _sim_result = pool.simulate_swap(
+            _sim_result = pool.simulate_exact_input_swap(
                 token_in=token_in,
                 token_in_quantity=amount_in,
-                sqrt_price_limit=sqrt_price_limit_x96,
+                sqrt_price_limit_x96=sqrt_price_limit_x96,
             )
         except EVMRevertError as e:
             raise TransactionError(f"V3 revert: {e}")
@@ -585,10 +585,10 @@ class UniswapTransaction(BaseTransaction):
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
         try:
-            _sim_result = pool.simulate_swap(
+            _sim_result = pool.simulate_exact_output_swap(
                 token_out=token_out,
                 token_out_quantity=amount_out,
-                sqrt_price_limit=sqrt_price_limit_x96,
+                sqrt_price_limit_x96=sqrt_price_limit_x96,
             )
         except EVMRevertError as e:
             raise TransactionError(f"V3 revert: {e}")

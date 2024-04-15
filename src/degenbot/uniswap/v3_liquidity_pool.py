@@ -633,29 +633,29 @@ class V3LiquidityPool(BaseLiquidityPool):
             )
 
             _sqrt_price_x96, _tick, *_ = _w3_contract.functions.slot0().call(
-                block_identifier=block_number,
+                block_identifier=block_number
             )
             _liquidity = _w3_contract.functions.liquidity().call(block_identifier=block_number)
 
-            if self.sqrt_price_x96 != _sqrt_price_x96:  # pragma: no branch
+            if self.sqrt_price_x96 != _sqrt_price_x96:
                 updated = True
                 self.sqrt_price_x96 = _sqrt_price_x96
 
-            if self.tick != _tick:  # pragma: no branch
+            if self.tick != _tick:
                 updated = True
                 self.tick = _tick
 
-            if self.liquidity != _liquidity:  # pragma: no branch
+            if self.liquidity != _liquidity:
                 updated = True
                 self.liquidity = _liquidity
 
-            if updated:  # pragma: no branch
+            if updated:
                 self._notify_subscribers(
                     message=UniswapV3PoolStateUpdated(self.state),
                 )
                 self._pool_state_archive[block_number] = self.state
 
-            if not silent:  # pragma: no branch
+            if not silent:  # pragma: no cover
                 logger.info(f"Liquidity: {self.liquidity}")
                 logger.info(f"SqrtPriceX96: {self.sqrt_price_x96}")
                 logger.info(f"Tick: {self.tick}")
@@ -698,7 +698,7 @@ class V3LiquidityPool(BaseLiquidityPool):
             - 'tick_bitmap'  (not yet implemented)
         """
 
-        if token_in not in self.tokens:  # pragma: no branch
+        if token_in not in self.tokens:  # pragma: no cover
             raise ValueError("token_in not found!")
 
         if override_state:
@@ -763,7 +763,7 @@ class V3LiquidityPool(BaseLiquidityPool):
             - 'tick_bitmap'
         """
 
-        if token_out not in self.tokens:  # pragma: no branch
+        if token_out not in self.tokens:  # pragma: no cover
             raise ValueError("token_out not found!")
 
         _is_zero_for_one = token_out == self.token1
@@ -1042,7 +1042,7 @@ class V3LiquidityPool(BaseLiquidityPool):
             return 1 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
         elif token == self.token1:
             return exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-        else:
+        else:  # pragma: no cover
             raise ValueError(f"Unknown token {token}")
 
     def get_nominal_price(
@@ -1082,7 +1082,7 @@ class V3LiquidityPool(BaseLiquidityPool):
             return exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96) * Fraction(
                 10**self.token0.decimals, 10**self.token1.decimals
             )
-        else:
+        else:  # pragma: no cover
             raise ValueError(f"Unknown token {token}")
 
     def restore_state_before_block(
@@ -1128,53 +1128,86 @@ class V3LiquidityPool(BaseLiquidityPool):
             message=UniswapV3PoolStateUpdated(self.state),
         )
 
-    def simulate_swap(
+    def simulate_exact_input_swap(
         self,
-        token_in: Erc20Token | None = None,
-        token_in_quantity: int | None = None,
-        token_out: Erc20Token | None = None,
-        token_out_quantity: int | None = None,
-        sqrt_price_limit: int | None = None,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        sqrt_price_limit_x96: int | None = None,
         override_state: UniswapV3PoolState | None = None,
     ) -> UniswapV3PoolSimulationResult:
         """
-        [TBD]
+        Simulate an exact input swap.
         """
 
-        if token_in is not None and token_in not in self.tokens:
+        if token_in not in self.tokens:  # pragma: no cover
             raise ValueError("token_in is unknown!")
-        if token_out is not None and token_out not in self.tokens:
+        if token_in_quantity == 0:  # pragma: no cover
+            raise ValueError("Zero input swap requested.")
+
+        zero_for_one = token_in == self.token0
+
+        if sqrt_price_limit_x96 is None:
+            sqrt_price_limit_x96 = (
+                TickMath.MIN_SQRT_RATIO + 1 if zero_for_one else TickMath.MAX_SQRT_RATIO - 1
+            )
+
+        try:
+            (
+                amount0_delta,
+                amount1_delta,
+                end_sqrt_price_x96,
+                end_liquidity,
+                end_tick,
+            ) = self._calculate_swap(
+                zero_for_one=zero_for_one,
+                amount_specified=token_in_quantity,
+                sqrt_price_limit_x96=sqrt_price_limit_x96,
+                override_start_liquidity=override_state.liquidity if override_state else None,
+                override_start_sqrt_price_x96=override_state.sqrt_price_x96
+                if override_state
+                else None,
+                override_start_tick=override_state.tick if override_state else None,
+                override_tick_bitmap=override_state.tick_bitmap if override_state else None,
+                override_tick_data=override_state.tick_data if override_state else None,
+            )
+        except EVMRevertError as e:
+            raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
+        else:
+            return UniswapV3PoolSimulationResult(
+                amount0_delta=amount0_delta,
+                amount1_delta=amount1_delta,
+                current_state=self.state.copy(),
+                future_state=UniswapV3PoolState(
+                    pool=self.address,
+                    liquidity=end_liquidity,
+                    sqrt_price_x96=end_sqrt_price_x96,
+                    tick=end_tick,
+                ),
+            )
+
+    def simulate_exact_output_swap(
+        self,
+        token_out: Erc20Token,
+        token_out_quantity: int,
+        sqrt_price_limit_x96: int | None = None,
+        override_state: UniswapV3PoolState | None = None,
+    ) -> UniswapV3PoolSimulationResult:
+        """
+        Simulate an exact output swap.
+        """
+
+        if token_out not in self.tokens:  # pragma: no cover
             raise ValueError("token_out is unknown!")
 
-        if token_in is None and token_out is None:
-            raise ValueError("Neither token_in nor token_out were provided.")
-        elif token_in is not None and token_out is not None:
-            raise ValueError("Provide token_in or token_out, not both.")
+        if token_out_quantity == 0:  # pragma: no cover
+            raise ValueError("Zero output swap requested.")
 
-        if token_in is not None and token_in_quantity is None:
-            raise ValueError("token_in_quantity not provided.")
-        if token_out is not None and token_out_quantity is None:
-            raise ValueError("token_out_quantity not provided.")
+        zero_for_one = token_out == self.token1
 
-        if 0 in (token_in_quantity, token_out_quantity):
-            raise ValueError("Zero input/output swap requested.")
-
-        # determine whether the swap is token0 -> token1
-        if token_in is not None:
-            zeroForOne = True if token_in == self.token0 else False
-        elif token_out is not None:
-            zeroForOne = True if token_out == self.token1 else False
-
-        _sqrt_price_limit = (
-            sqrt_price_limit
-            if sqrt_price_limit is not None
-            else (TickMath.MIN_SQRT_RATIO + 1 if zeroForOne else TickMath.MAX_SQRT_RATIO - 1)
-        )
-
-        if token_in_quantity is not None:
-            _amount_specified = token_in_quantity
-        elif token_out_quantity is not None:
-            _amount_specified = -token_out_quantity
+        if sqrt_price_limit_x96 is None:
+            sqrt_price_limit_x96 = (
+                TickMath.MIN_SQRT_RATIO + 1 if zero_for_one else TickMath.MAX_SQRT_RATIO - 1
+            )
 
         try:
             (
@@ -1184,9 +1217,9 @@ class V3LiquidityPool(BaseLiquidityPool):
                 end_liquidity,
                 end_tick,
             ) = self._calculate_swap(
-                zero_for_one=zeroForOne,
-                amount_specified=_amount_specified,
-                sqrt_price_limit_x96=_sqrt_price_limit,
+                zero_for_one=zero_for_one,
+                amount_specified=-token_out_quantity,
+                sqrt_price_limit_x96=sqrt_price_limit_x96,
                 override_start_liquidity=override_state.liquidity if override_state else None,
                 override_start_sqrt_price_x96=override_state.sqrt_price_x96
                 if override_state

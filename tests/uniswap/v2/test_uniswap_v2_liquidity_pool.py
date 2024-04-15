@@ -615,17 +615,9 @@ def test_simulations(
         ),
     )
 
-    # token_in = lp.token0 should have same result as token_out = lp.token1
     assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.simulate_swap(
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.simulate_exact_input_swap(
             token_in=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.token0,
-            token_in_quantity=8000000000,
-        )
-        == sim_result
-    )
-    assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.simulate_swap(
-            token_out=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.token1,
             token_in_quantity=8000000000,
         )
         == sim_result
@@ -645,16 +637,8 @@ def test_simulations(
     )
 
     assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.simulate_swap(
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.simulate_exact_input_swap(
             token_in=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.token1,
-            token_in_quantity=1200000000000000000000,
-        )
-        == sim_result
-    )
-
-    assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.simulate_swap(
-            token_out=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.token0,
             token_in_quantity=1200000000000000000000,
         )
         == sim_result
@@ -699,10 +683,16 @@ def test_simulations(
 def test_simulations_with_override(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
 ):
-    sim_result = UniswapV2PoolSimulationResult(
+    pool_state_override = UniswapV2PoolState(
+        pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
+        reserves_token0=16027096956,
+        reserves_token1=2602647332090181827846,
+    )
+
+    expected_sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=8000000000,
         amount1_delta=-864834865217768537471,
-        current_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
+        current_state=pool_state_override,
         future_state=UniswapV2PoolState(
             pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
@@ -712,25 +702,19 @@ def test_simulations_with_override(
         ),
     )
 
-    pool_state_override = UniswapV2PoolState(
-        pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
-        reserves_token0=16027096956,
-        reserves_token1=2602647332090181827846,
-    )
-
     assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.simulate_swap(
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.simulate_exact_input_swap(
             token_in=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.token0,
             token_in_quantity=8000000000,
             override_state=pool_state_override,
         )
-        == sim_result
+        == expected_sim_result
     )
 
-    sim_result = UniswapV2PoolSimulationResult(
+    expected_sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=13752842264,
         amount1_delta=-1200000000000000000000,
-        current_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
+        current_state=pool_state_override,
         future_state=UniswapV2PoolState(
             pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
@@ -741,12 +725,12 @@ def test_simulations_with_override(
     )
 
     assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.simulate_swap(
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.simulate_exact_output_swap(
             token_out=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.token1,
             token_out_quantity=1200000000000000000000,
             override_state=pool_state_override,
         )
-        == sim_result
+        == expected_sim_result
     )
 
 
