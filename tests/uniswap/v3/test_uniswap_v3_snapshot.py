@@ -210,8 +210,6 @@ def test_pool_manager_applies_snapshots(
         snapshot=first_250_blocks_snapshot,
     )
 
-    print(f"{first_250_blocks_snapshot._liquidity_events=}")
-
     # Check that the pending events were applied
     for pool_address in first_250_blocks_snapshot._liquidity_snapshot:
         pool = pool_manager.get_pool(pool_address)
