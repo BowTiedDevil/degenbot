@@ -92,7 +92,7 @@ class Erc20Token(BaseToken):
         except AttributeError:
             if not _w3.eth.get_code(self.address):  # pragma: no cover
                 raise ValueError("No contract deployed at this address")
-            self.name = f"Unknown @ {self.address}"
+            self.name = "Unknown"
             self.name = self.name.strip("\x00")
             logger.warning(
                 f"Token contract at {self.address} does not implement a 'name' function. Setting to '{self.name}'"
