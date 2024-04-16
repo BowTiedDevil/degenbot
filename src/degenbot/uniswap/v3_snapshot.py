@@ -143,12 +143,10 @@ class UniswapV3LiquiditySnapshot:
     def get_new_liquidity_updates(self, pool_address: str) -> List[UniswapV3PoolExternalUpdate]:
         pool_address = to_checksum_address(pool_address)
         pool_updates = self._liquidity_events.get(pool_address, list())
-        self._liquidity_events[pool_address] = []
+        self._liquidity_events[pool_address] = list()
 
-        # Sort the liquidity events by block, then transaction index
-        #
-        # @dev the V3LiquidityPool helper will reject liquidity events associated with a past
-        # block, so they must be applied in chronological order
+        # The V3LiquidityPool helper will reject liquidity events associated with a past block, so
+        # they must be applied in chronological order
         sorted_events = sorted(
             pool_updates,
             key=lambda event: (event.block_number, event.tx_index),
