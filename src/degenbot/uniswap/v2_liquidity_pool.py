@@ -263,7 +263,7 @@ class LiquidityPool(BaseLiquidityPool):
         block_number: int | None = None,
         silent: bool = True,
     ) -> Tuple[bool, UniswapV2PoolState]:
-        found_updates: bool = self.update_reserves(
+        found_updates = self.update_reserves(
             silent=silent,
             print_ratios=not silent,
             print_reserves=not silent,
@@ -449,11 +449,7 @@ class LiquidityPool(BaseLiquidityPool):
         Get the absolute rate for the given token, expressed in units of the other.
         """
 
-        if override_state is None:
-            state = self.state
-        else:
-            logger.debug(f"Overridden state {override_state}")
-            state = override_state
+        state = self.state if override_state is None else override_state
 
         if token == self.token0:
             return Fraction(state.reserves_token0) / Fraction(state.reserves_token1)
@@ -484,11 +480,7 @@ class LiquidityPool(BaseLiquidityPool):
         decimal place values.
         """
 
-        if override_state is None:
-            state = self.state
-        else:
-            logger.debug(f"Overridden state {override_state}")
-            state = override_state
+        state = self.state if override_state is None else override_state
 
         if token == self.token0:
             return Fraction(state.reserves_token0, 10**self.token0.decimals) * Fraction(
@@ -508,8 +500,7 @@ class LiquidityPool(BaseLiquidityPool):
         """
         Restore the last pool state recorded prior to a target block.
 
-        Use this method to maintain consistent state data following a chain
-        re-organization.
+        Use this method to maintain consistent state data following a chain re-organization.
         """
 
         with self._state_lock:
@@ -789,11 +780,8 @@ class CamelotLiquidityPool(LiquidityPool):
     ) -> None:
         address = to_checksum_address(address)
 
-        if abi is None:
-            abi = CAMELOT_POOL_ABI
-
         _w3 = config.get_web3()
-        _w3_contract = config.get_web3().eth.contract(address=address, abi=abi)
+        _w3_contract = config.get_web3().eth.contract(address=address, abi=abi or CAMELOT_POOL_ABI)
 
         state_block = _w3.eth.get_block_number()
 
@@ -814,7 +802,7 @@ class CamelotLiquidityPool(LiquidityPool):
             tokens=tokens,
             name=name,
             update_method=update_method,
-            abi=abi,
+            abi=abi or CAMELOT_POOL_ABI,
             fee=(fee_token0, fee_token1),
             silent=silent,
             state_block=state_block,

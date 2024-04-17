@@ -813,12 +813,14 @@ class V3LiquidityPool(BaseLiquidityPool):
     ) -> bool:
         """
         Process a `UniswapV3PoolExternalUpdate` with one or more of the following update types:
+            - `block_number`: int
             - `tick`: int
             - `liquidity`: int
             - `sqrt_price_x96`: int
-            - `liquidity_change`: tuple of (liquidity_delta, lower_tick, upper_tick). The delta can be positive or negative to indicate added or removed liquidity.
+            - `liquidity_change`: tuple of (liquidity_delta, lower_tick, upper_tick). The delta can
+                be positive or negative to indicate added or removed liquidity.
 
-        `block_number` is validated against the most recently recorded block prior to recording any changes. If `force=True`, the block check is skipped.
+        `block_number` is validated against the most recently recorded block prior to recording any changes.
 
         If any update is processed, `self.state` and `self.update_block` are updated.
 
@@ -908,8 +910,8 @@ class V3LiquidityPool(BaseLiquidityPool):
                 updated_state = True
                 liquidity_delta, lower_tick, upper_tick = update.liquidity_change
 
-                # adjust in-range liquidity if current tick is within the position's range
-                if lower_tick <= self.tick < upper_tick and not force:
+                # Adjust in-range liquidity if current tick is within the modified range
+                if lower_tick <= self.tick < upper_tick:
                     liquidity_before = self.liquidity
                     self.liquidity += liquidity_delta
                     logger.debug(
@@ -971,8 +973,9 @@ class V3LiquidityPool(BaseLiquidityPool):
                     )
                     new_liquidity_gross = tick_liquidity_gross + liquidity_delta
 
-                    # Delete entirely if there is no liquidity referencing this tick, then flip it in the bitmap
                     if new_liquidity_gross == 0:
+                        # Delete if there is no remaining liquidity referencing this tick, then
+                        # flip it in the bitmap
                         del self.tick_data[tick]
                         TickBitmap.flipTick(
                             self.tick_bitmap,
@@ -1032,11 +1035,7 @@ class V3LiquidityPool(BaseLiquidityPool):
         Get the absolute rate of exchange for the given token, expressed in units of the other.
         """
 
-        if override_state is None:
-            state = self.state
-        else:
-            logger.debug(f"Overridden state {override_state}")
-            state = override_state
+        state = self.state if override_state is None else override_state
 
         if token == self.token0:
             return 1 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
@@ -1066,11 +1065,7 @@ class V3LiquidityPool(BaseLiquidityPool):
         decimal place values.
         """
 
-        if override_state is None:
-            state = self.state
-        else:
-            logger.debug(f"Overridden state {override_state}")
-            state = override_state
+        state = self.state if override_state is None else override_state
 
         if token == self.token0:
             return (
@@ -1146,11 +1141,6 @@ class V3LiquidityPool(BaseLiquidityPool):
 
         zero_for_one = token_in == self.token0
 
-        if sqrt_price_limit_x96 is None:
-            sqrt_price_limit_x96 = (
-                TickMath.MIN_SQRT_RATIO + 1 if zero_for_one else TickMath.MAX_SQRT_RATIO - 1
-            )
-
         try:
             (
                 amount0_delta,
@@ -1161,7 +1151,13 @@ class V3LiquidityPool(BaseLiquidityPool):
             ) = self._calculate_swap(
                 zero_for_one=zero_for_one,
                 amount_specified=token_in_quantity,
-                sqrt_price_limit_x96=sqrt_price_limit_x96,
+                sqrt_price_limit_x96=(
+                    sqrt_price_limit_x96
+                    if sqrt_price_limit_x96 is not None
+                    else (
+                        TickMath.MIN_SQRT_RATIO + 1 if zero_for_one else TickMath.MAX_SQRT_RATIO - 1
+                    )
+                ),
                 override_start_liquidity=override_state.liquidity if override_state else None,
                 override_start_sqrt_price_x96=override_state.sqrt_price_x96
                 if override_state
@@ -1204,11 +1200,6 @@ class V3LiquidityPool(BaseLiquidityPool):
 
         zero_for_one = token_out == self.token1
 
-        if sqrt_price_limit_x96 is None:
-            sqrt_price_limit_x96 = (
-                TickMath.MIN_SQRT_RATIO + 1 if zero_for_one else TickMath.MAX_SQRT_RATIO - 1
-            )
-
         try:
             (
                 amount0_delta,
@@ -1219,7 +1210,13 @@ class V3LiquidityPool(BaseLiquidityPool):
             ) = self._calculate_swap(
                 zero_for_one=zero_for_one,
                 amount_specified=-token_out_quantity,
-                sqrt_price_limit_x96=sqrt_price_limit_x96,
+                sqrt_price_limit_x96=(
+                    sqrt_price_limit_x96
+                    if sqrt_price_limit_x96 is not None
+                    else (
+                        TickMath.MIN_SQRT_RATIO + 1 if zero_for_one else TickMath.MAX_SQRT_RATIO - 1
+                    )
+                ),
                 override_start_liquidity=override_state.liquidity if override_state else None,
                 override_start_sqrt_price_x96=override_state.sqrt_price_x96
                 if override_state
