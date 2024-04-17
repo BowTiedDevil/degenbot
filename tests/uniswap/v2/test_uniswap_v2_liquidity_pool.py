@@ -55,17 +55,23 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000(
     return lp
 
 
+@pytest.fixture
+def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> LiquidityPool:
+    degenbot.set_web3(fork_mainnet.w3)
+    return LiquidityPool(UNISWAP_V2_WBTC_WETH_POOL)
+
+
 def test_create_pool(ethereum_full_node_web3: web3.Web3):
     degenbot.set_web3(ethereum_full_node_web3)
 
     token0 = MockErc20Token()
-    token0.address = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
+    token0.address = to_checksum_address(WBTC_CONTRACT_ADDRESS)
     token0.decimals = 8
     token0.name = "Wrapped BTC"
     token0.symbol = "WBTC"
 
     token1 = MockErc20Token()
-    token1.address = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+    token1.address = to_checksum_address(WETH_CONTRACT_ADDRESS)
     token1.decimals = 18
     token1.name = "Wrapped Ether"
     token1.symbol = "WETH"
@@ -103,6 +109,31 @@ def test_create_pool(ethereum_full_node_web3: web3.Web3):
             name="WBTC-WETH (V2, 0.30%)",
             factory_address=UNISWAPV2_FACTORY,
             factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
+        )
+
+
+def test_price_is_inverse_of_exchange_rate(wbtc_weth_v2_lp: LiquidityPool):
+    for token in [wbtc_weth_v2_lp.token0, wbtc_weth_v2_lp.token1]:
+        assert wbtc_weth_v2_lp.get_absolute_price(token) == 1 / wbtc_weth_v2_lp.get_absolute_rate(
+            token
+        )
+
+
+def test_nominal_rate_scaled_by_decimals(wbtc_weth_v2_lp: LiquidityPool):
+    for token in [wbtc_weth_v2_lp.token0, wbtc_weth_v2_lp.token1]:
+        nom_rate = int(wbtc_weth_v2_lp.get_nominal_rate(token))
+        abs_rate = int(wbtc_weth_v2_lp.get_absolute_rate(token))
+        assert nom_rate == abs_rate // (
+            10 ** (wbtc_weth_v2_lp.token1.decimals - wbtc_weth_v2_lp.token0.decimals)
+        )
+
+
+def test_nominal_price_scaled_by_decimals(wbtc_weth_v2_lp: LiquidityPool):
+    for token in [wbtc_weth_v2_lp.token0, wbtc_weth_v2_lp.token1]:
+        nom_price = int(wbtc_weth_v2_lp.get_nominal_price(token))
+        abs_price = int(wbtc_weth_v2_lp.get_absolute_price(token))
+        assert nom_price == abs_price // (
+            10 ** (wbtc_weth_v2_lp.token1.decimals - wbtc_weth_v2_lp.token0.decimals)
         )
 
 
@@ -335,7 +366,7 @@ def test_calculate_tokens_out_from_ratio_out(fork_mainnet_archive: AnvilFork):
         abi=degenbot.uniswap.abi.UNISWAP_V2_ROUTER_ABI,
     )
 
-    lp = LiquidityPool("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
+    lp = LiquidityPool(UNISWAP_V2_WBTC_WETH_POOL)
 
     for wbtc_amount_in in [
         int(0.1 * 10**8),
@@ -494,12 +525,11 @@ def test_comparisons(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
 ):
     assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000
-        == "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000 == UNISWAP_V2_WBTC_WETH_POOL
     )
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000
-        == "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940".lower()
+        == UNISWAP_V2_WBTC_WETH_POOL.lower()
     )
 
     del degenbot.AllPools(chain_id=1)[
@@ -507,7 +537,7 @@ def test_comparisons(
     ]
 
     other_lp = LiquidityPool(
-        address="0xBb2b8038a1640196FbE3e38816F3e67Cba72D940",
+        address=UNISWAP_V2_WBTC_WETH_POOL,
         update_method="external",
         tokens=[
             ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.token0,
