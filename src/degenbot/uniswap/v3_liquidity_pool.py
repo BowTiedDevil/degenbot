@@ -319,7 +319,7 @@ class V3LiquidityPool(BaseLiquidityPool):
             amount_out: int = 0
             fee_amount: int = 0
 
-        if amount_specified == 0:
+        if amount_specified == 0:  # pragma: no cover
             raise EVMRevertError("AS")
 
         _liquidity = (
@@ -722,7 +722,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                     override_state.tick_data if override_state is not None else self.tick_data
                 ),
             )
-        except EVMRevertError as e:
+        except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
         else:
             return -amount1_delta if _is_zero_for_one else -amount0_delta
@@ -784,7 +784,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                     override_state.tick_data if override_state is not None else self.tick_data
                 ),
             )
-        except EVMRevertError as e:
+        except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
         else:
             if _is_zero_for_one is True and -amount1_delta < token_out_quantity:
@@ -1094,7 +1094,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                 override_tick_bitmap=override_state.tick_bitmap if override_state else None,
                 override_tick_data=override_state.tick_data if override_state else None,
             )
-        except EVMRevertError as e:
+        except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
         else:
             return UniswapV3PoolSimulationResult(
@@ -1153,7 +1153,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                 override_tick_bitmap=override_state.tick_bitmap if override_state else None,
                 override_tick_data=override_state.tick_data if override_state else None,
             )
-        except EVMRevertError as e:
+        except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
         else:
             return UniswapV3PoolSimulationResult(
