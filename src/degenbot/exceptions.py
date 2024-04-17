@@ -21,12 +21,6 @@ class ArbitrageError(DegenbotError):
     """
 
 
-class BlockUnavailableError(DegenbotError):
-    """
-    Exception raised when a call for a specific block fails (trie node unavailable)
-    """
-
-
 class Erc20TokenError(DegenbotError):
     """
     Exception raised inside ERC-20 token helpers

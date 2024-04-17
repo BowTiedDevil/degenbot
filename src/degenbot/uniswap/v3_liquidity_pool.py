@@ -18,7 +18,6 @@ from ..dex.uniswap import TICKLENS_ADDRESSES
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     BitmapWordUnavailableError,
-    BlockUnavailableError,
     EVMRevertError,
     ExternalUpdateError,
     InsufficientAmountOutError,
@@ -868,16 +867,12 @@ class V3LiquidityPool(BaseLiquidityPool):
                             logger.debug(
                                 f"(external_update) {tick_word=} not found in tick_bitmap {self.tick_bitmap.keys()=}"
                             )
-                            try:
-                                self._fetch_tick_data_at_word(
-                                    word_position=tick_word,
-                                    # Fetch the word using the previous block as a known "good" state snapshot
-                                    block_number=update.block_number - 1,
-                                )
-                            except ValueError as e:
-                                raise BlockUnavailableError(
-                                    f"Could not query chain at block {update.block_number - 1}"
-                                ) from e
+                            self._fetch_tick_data_at_word(
+                                word_position=tick_word,
+                                # Fetch the word using the previous block as a known "good" state snapshot
+                                block_number=update.block_number - 1,
+                            )
+
                         else:
                             # The bitmap is complete (sparse=False), so mark this word as empty
                             self.tick_bitmap[tick_word] = UniswapV3BitmapAtWord()
