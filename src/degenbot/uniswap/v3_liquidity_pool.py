@@ -660,10 +660,6 @@ class V3LiquidityPool(BaseLiquidityPool):
                 logger.info(f"SqrtPriceX96: {self.sqrt_price_x96}")
                 logger.info(f"Tick: {self.tick}")
 
-            # WORKAROUND: update the block even if there are no state changes
-            # pools were being repeatedly caught by "stale pool" checks
-            self._update_block = block_number
-
         return updated, self.state
 
     def calculate_tokens_out_from_tokens_in(
@@ -805,11 +801,8 @@ class V3LiquidityPool(BaseLiquidityPool):
 
     def external_update(
         self,
-        update: UniswapV3PoolExternalUpdate | None = None,
-        updates: Dict[str, Any] | None = None,
-        block_number: int | None = None,
+        update: UniswapV3PoolExternalUpdate,
         silent: bool = True,
-        force: bool = False,  # added primarily to support liquidity bootstrapping without excessive refactoring
     ) -> bool:
         """
         Process a `UniswapV3PoolExternalUpdate` with one or more of the following update types:
@@ -829,66 +822,12 @@ class V3LiquidityPool(BaseLiquidityPool):
         @dev This method uses a lock to guard state-modifying methods that might cause race conditions when used with threads.
         """
 
-        def is_valid_update_block(block_number: int) -> bool:
-            """
-            Check if `block_number` is valid (matches or exceeds the last update block)
-
-            The `force` argument to `external_update` will trigger this to always return True
-            """
-            return True if force else block_number >= self._update_block
-
-        # warnings.warn(
-        #     "\n"
-        #     + "The `updates` dict argument is deprecated and will be "
-        #     + "removed in the future. It has been converted in-place to a "
-        #     + "`UniswapV3PoolExternalUpdate` object. Pass this using the "
-        #     + "`update=` argument to remove this warning."
-        #     + "\n"
-        #     + "For the values you've provided, pass this data using "
-        #     + "the format: \n"
-        #     + "update=UniswapV3PoolExternalUpdate(\n"
-        #     + (
-        #         f"    liquidity={val}\n"
-        #         if (val := updates.get("liquidity")) is not None
-        #         else ""
-        #     )
-        #     + (
-        #         f"    sqrt_price_x96={val}\n"
-        #         if (val := updates.get("sqrt_price_x96")) is not None
-        #         else ""
-        #     )
-        #     + (
-        #         f"    tick={val}\n"
-        #         if (val := updates.get("tick")) is not None
-        #         else ""
-        #     )
-        #     + ")",
-        # )
-
         if TYPE_CHECKING:
             assert isinstance(update, UniswapV3PoolExternalUpdate)
 
-        if block_number is None:
-            if update is not None:
-                block_number = update.block_number
-            else:
-                block_number = config.get_web3().eth.get_block_number()
-                logger.warning(
-                    f"(V3LiquidityPool.external_update) block_number was not provided, using {block_number} from chain"
-                )
-
-        if not is_valid_update_block(block_number):
+        if update.block_number < self._update_block:
             raise ExternalUpdateError(
-                f"Rejected update for block {block_number} in the past, current update block is {self._update_block}"
-            )
-
-        if updates and not update:
-            update = UniswapV3PoolExternalUpdate(
-                block_number=block_number,
-                liquidity=updates.get("liquidity"),
-                sqrt_price_x96=updates.get("sqrt_price_x96"),
-                tick=updates.get("tick"),
-                liquidity_change=updates.get("liquidity_change"),
+                f"Rejected update for block {update.block_number} in the past, current update block is {self._update_block}"
             )
 
         with self._state_lock:
@@ -917,16 +856,13 @@ class V3LiquidityPool(BaseLiquidityPool):
                     logger.debug(
                         f"Adjusting in-range liquidity, TX {update.tx}, tick range = [{lower_tick},{upper_tick}], current tick = {self.tick}, {self.address=}, previous liquidity = {liquidity_before}, liquidity change = {liquidity_delta}, current liquidity = {self.liquidity}"
                     )
-                    assert (
-                        self.liquidity >= 0
-                    ), f"{self.address=}, {liquidity_before=}, {self.liquidity=}, {update=}, {block_number=}, {self.state=}, {self._pool_state_archive=}"
 
-                for i, tick in enumerate([lower_tick, upper_tick]):
+                for tick in (lower_tick, upper_tick):
                     tick_word, _ = self._get_tick_bitmap_word_and_bit_position(tick)
 
                     if tick_word not in self.tick_bitmap:
-                        # the tick bitmap must be available for the word prior to flipping
-                        # the initialized status of any tick
+                        # The tick bitmap must be known for the word prior to changing the
+                        # initialized status of any tick
 
                         if self._sparse_bitmap:
                             logger.debug(
@@ -936,11 +872,11 @@ class V3LiquidityPool(BaseLiquidityPool):
                                 self._fetch_tick_data_at_word(
                                     word_position=tick_word,
                                     # Fetch the word using the previous block as a known "good" state snapshot
-                                    block_number=block_number - 1,
+                                    block_number=update.block_number - 1,
                                 )
                             except ValueError as e:
                                 raise BlockUnavailableError(
-                                    f"Could not query chain at block {block_number - 1}"
+                                    f"Could not query chain at block {update.block_number - 1}"
                                 ) from e
                         else:
                             # The bitmap is complete (sparse=False), so mark this word as empty
@@ -960,7 +896,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                             self.tick_bitmap,
                             tick,
                             self._tick_spacing,
-                            update_block=block_number,
+                            update_block=update.block_number,
                         )
 
                     # MINT: add liquidity at lower tick (i==0), subtract at upper tick (i==1)
@@ -968,7 +904,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                     # Same equation, but for BURN events the liquidity_delta value is negative
                     new_liquidity_net = (
                         tick_liquidity_net + liquidity_delta
-                        if i == 0
+                        if tick == lower_tick
                         else tick_liquidity_net - liquidity_delta
                     )
                     new_liquidity_gross = tick_liquidity_gross + liquidity_delta
@@ -981,14 +917,13 @@ class V3LiquidityPool(BaseLiquidityPool):
                             self.tick_bitmap,
                             tick,
                             self._tick_spacing,
-                            update_block=block_number,
+                            update_block=update.block_number,
                         )
-                    # otherwise record the new values
                     else:
                         self.tick_data[tick] = UniswapV3LiquidityAtTick(
                             liquidityNet=new_liquidity_net,
                             liquidityGross=new_liquidity_gross,
-                            block=block_number,
+                            block=update.block_number,
                         )
 
             if not silent:
@@ -1002,16 +937,14 @@ class V3LiquidityPool(BaseLiquidityPool):
                     "\n"
                     f"new liquidity: {new_liquidity_net} net, {new_liquidity_gross} gross"
                 )
-                logger.debug(f"update block: {block_number} (last={self._update_block})")
+                logger.debug(f"update block: {update.block_number} (last={self._update_block})")
 
             if updated_state:
-                self._pool_state_archive[block_number] = self.state
+                self._pool_state_archive[update.block_number] = self.state
                 self._notify_subscribers(
                     message=UniswapV3PoolStateUpdated(self.state),
                 )
-
-                if not force:
-                    self._update_block = block_number
+                self._update_block = update.block_number
 
             return updated_state
 
