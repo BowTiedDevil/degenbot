@@ -1100,8 +1100,8 @@ class V3LiquidityPool(BaseLiquidityPool):
             return UniswapV3PoolSimulationResult(
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
-                current_state=self.state.copy(),
-                future_state=UniswapV3PoolState(
+                initial_state=self.state.copy(),
+                final_state=UniswapV3PoolState(
                     pool=self.address,
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrt_price_x96,
@@ -1159,8 +1159,8 @@ class V3LiquidityPool(BaseLiquidityPool):
             return UniswapV3PoolSimulationResult(
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
-                current_state=self.state.copy(),
-                future_state=UniswapV3PoolState(
+                initial_state=self.state.copy(),
+                final_state=UniswapV3PoolState(
                     pool=self.address,
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrtprice,

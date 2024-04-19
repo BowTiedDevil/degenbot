@@ -60,8 +60,8 @@ class BaseSimulationResult: ...
 class UniswapSimulationResult(BaseSimulationResult):
     amount0_delta: int
     amount1_delta: int
-    current_state: BasePoolState
-    future_state: BasePoolState
+    initial_state: BasePoolState
+    final_state: BasePoolState
 
 
 class BaseLiquidityPool(abc.ABC, Publisher):

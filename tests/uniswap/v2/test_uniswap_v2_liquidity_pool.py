@@ -653,8 +653,8 @@ def test_simulations(
     sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=8000000000,
         amount1_delta=-847228560678214929944,
-        current_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
-        future_state=UniswapV2PoolState(
+        initial_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
+        final_state=UniswapV2PoolState(
             pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
             + 8000000000,
@@ -674,8 +674,8 @@ def test_simulations(
     sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=-5154005339,
         amount1_delta=1200000000000000000000,
-        current_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
-        future_state=UniswapV2PoolState(
+        initial_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
+        final_state=UniswapV2PoolState(
             pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
             - 5154005339,
@@ -698,8 +698,8 @@ def test_simulations(
     ) == UniswapV2PoolSimulationResult(
         amount0_delta=ADDED_LIQUIDITY,
         amount1_delta=ADDED_LIQUIDITY,
-        current_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
-        future_state=UniswapV2PoolState(
+        initial_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
+        final_state=UniswapV2PoolState(
             pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
             + ADDED_LIQUIDITY,
@@ -716,8 +716,8 @@ def test_simulations(
         == UniswapV2PoolSimulationResult(
             amount0_delta=-REMOVED_LIQUIDITY,
             amount1_delta=-REMOVED_LIQUIDITY,
-            current_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
-            future_state=UniswapV2PoolState(
+            initial_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
+            final_state=UniswapV2PoolState(
                 pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
                 reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
                 - REMOVED_LIQUIDITY,
@@ -740,8 +740,8 @@ def test_simulations_with_override(
     expected_sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=8000000000,
         amount1_delta=-864834865217768537471,
-        current_state=pool_state_override,
-        future_state=UniswapV2PoolState(
+        initial_state=pool_state_override,
+        final_state=UniswapV2PoolState(
             pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
             + 8000000000,
@@ -762,8 +762,8 @@ def test_simulations_with_override(
     expected_sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=13752842264,
         amount1_delta=-1200000000000000000000,
-        current_state=pool_state_override,
-        future_state=UniswapV2PoolState(
+        initial_state=pool_state_override,
+        final_state=UniswapV2PoolState(
             pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
             + 13752842264,

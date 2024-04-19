@@ -279,8 +279,8 @@ class UniswapTransaction(BaseTransaction):
         pool: LiquidityPool | V3LiquidityPool,
         sim_result: UniswapV2PoolSimulationResult | UniswapV3PoolSimulationResult,
     ) -> None:
-        current_state = sim_result.current_state
-        future_state = sim_result.future_state
+        current_state = sim_result.initial_state
+        future_state = sim_result.final_state
 
         # amount out is negative
         if sim_result.amount0_delta < sim_result.amount1_delta:

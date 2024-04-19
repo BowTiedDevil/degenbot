@@ -204,8 +204,8 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                     UniswapV3PoolSimulationResult,
                 ),
             ):
-                logger.debug(f"Applying override {override.future_state} to {pool}")
-                sorted_overrides[pool.address] = override.future_state
+                logger.debug(f"Applying override {override.final_state} to {pool}")
+                sorted_overrides[pool.address] = override.final_state
             else:
                 raise ValueError(f"Override for {pool} has unsupported type {type(override)}")
 

@@ -367,8 +367,8 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool, dai: 
     simulated_state = UniswapV3PoolSimulationResult(
         amount0_delta=-6287477,
         amount1_delta=1000000000000000000,
-        current_state=lp.state,
-        future_state=UniswapV3PoolState(
+        initial_state=lp.state,
+        final_state=UniswapV3PoolState(
             pool=lp.address,
             liquidity=1612978974357835825,
             sqrt_price_x96=31549266832914462409708360853542079,
@@ -398,8 +398,8 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool, dai: 
     simulated_state = UniswapV3PoolSimulationResult(
         amount0_delta=100000000,
         amount1_delta=-15808930695950518795,
-        current_state=lp.state,
-        future_state=UniswapV3PoolState(
+        initial_state=lp.state,
+        final_state=UniswapV3PoolState(
             pool=lp.address,
             liquidity=1612978974357835825,
             sqrt_price_x96=31548441339817807300885591332345643,
@@ -463,8 +463,8 @@ def test_simulations_with_override(
     ) == UniswapV3PoolSimulationResult(
         amount0_delta=-6157179,
         amount1_delta=1 * 10**18,
-        current_state=lp.state,
-        future_state=UniswapV3PoolState(
+        initial_state=lp.state,
+        final_state=UniswapV3PoolState(
             pool=lp.address,
             sqrt_price_x96=31881342483860761583159860586051776,
             liquidity=1533143241938066251,
@@ -479,8 +479,8 @@ def test_simulations_with_override(
     ) == UniswapV3PoolSimulationResult(
         amount0_delta=-6157179,
         amount1_delta=999999892383362636,
-        current_state=lp.state,
-        future_state=UniswapV3PoolState(
+        initial_state=lp.state,
+        final_state=UniswapV3PoolState(
             pool=lp.address,
             sqrt_price_x96=31881342483855216967760245337454994,
             liquidity=1533143241938066251,

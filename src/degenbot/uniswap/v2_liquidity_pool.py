@@ -549,8 +549,8 @@ class LiquidityPool(BaseLiquidityPool):
             return UniswapV2PoolSimulationResult(
                 amount0_delta=added_reserves_token0,
                 amount1_delta=added_reserves_token1,
-                current_state=override_state if override_state is not None else self.state.copy(),
-                future_state=UniswapV2PoolState(
+                initial_state=override_state if override_state is not None else self.state.copy(),
+                final_state=UniswapV2PoolState(
                     pool=self.address,
                     reserves_token0=reserves_token0 + added_reserves_token0,
                     reserves_token1=reserves_token1 + added_reserves_token1,
@@ -577,8 +577,8 @@ class LiquidityPool(BaseLiquidityPool):
             return UniswapV2PoolSimulationResult(
                 amount0_delta=-removed_reserves_token0,
                 amount1_delta=-removed_reserves_token1,
-                current_state=self.state.copy(),
-                future_state=UniswapV2PoolState(
+                initial_state=self.state.copy(),
+                final_state=UniswapV2PoolState(
                     pool=self.address,
                     reserves_token0=reserves_token0 - removed_reserves_token0,
                     reserves_token1=reserves_token1 - removed_reserves_token1,
@@ -614,8 +614,8 @@ class LiquidityPool(BaseLiquidityPool):
         return UniswapV2PoolSimulationResult(
             amount0_delta=token0_delta,
             amount1_delta=token1_delta,
-            current_state=current_state,
-            future_state=UniswapV2PoolState(
+            initial_state=current_state,
+            final_state=UniswapV2PoolState(
                 pool=self.address,
                 reserves_token0=self.reserves_token0 + token0_delta,
                 reserves_token1=self.reserves_token1 + token1_delta,
@@ -651,8 +651,8 @@ class LiquidityPool(BaseLiquidityPool):
         return UniswapV2PoolSimulationResult(
             amount0_delta=token0_delta,
             amount1_delta=token1_delta,
-            current_state=current_state,
-            future_state=UniswapV2PoolState(
+            initial_state=current_state,
+            final_state=UniswapV2PoolState(
                 pool=self.address,
                 reserves_token0=self.reserves_token0 + token0_delta,
                 reserves_token1=self.reserves_token1 + token1_delta,

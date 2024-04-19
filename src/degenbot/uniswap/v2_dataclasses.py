@@ -21,8 +21,8 @@ class UniswapV2PoolState(BasePoolState):
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV2PoolSimulationResult(UniswapSimulationResult):
-    current_state: UniswapV2PoolState
-    future_state: UniswapV2PoolState
+    initial_state: UniswapV2PoolState
+    final_state: UniswapV2PoolState
 
 
 @dataclasses.dataclass(slots=True, eq=False)
