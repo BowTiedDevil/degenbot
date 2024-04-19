@@ -1,53 +1,53 @@
+import pytest
 from degenbot import Erc20Token, set_web3
+from degenbot.erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+from degenbot.fork.anvil_fork import AnvilFork
 from eth_utils import to_checksum_address
 from hexbytes import HexBytes
-from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
 
 VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 WBTC_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 
 
-class MockErc20Token(Erc20Token):
-    def __init__(self):
-        pass
+@pytest.fixture
+def wbtc():
+    return Erc20Token(WBTC_ADDRESS)
 
 
-def test_erc20token_comparisons():
-    token0 = MockErc20Token()
-    token0.address = to_checksum_address(WETH_ADDRESS)
+@pytest.fixture
+def weth():
+    return Erc20Token(WETH_ADDRESS)
 
-    token1 = MockErc20Token()
-    token1.address = to_checksum_address(WBTC_ADDRESS)
 
-    assert token0 != token1
+def test_erc20token_comparisons(wbtc, weth):
+    assert weth != wbtc
 
-    assert token0 == WETH_ADDRESS
-    assert token0 == WETH_ADDRESS.lower()
-    assert token0 == WETH_ADDRESS.upper()
-    assert token0 == to_checksum_address(WETH_ADDRESS)
-    assert token0 == HexBytes(WETH_ADDRESS)
+    assert weth == WETH_ADDRESS
+    assert weth == WETH_ADDRESS.lower()
+    assert weth == WETH_ADDRESS.upper()
+    assert weth == to_checksum_address(WETH_ADDRESS)
+    assert weth == HexBytes(WETH_ADDRESS)
 
-    assert token1 == WBTC_ADDRESS
-    assert token1 == WBTC_ADDRESS.lower()
-    assert token1 == WBTC_ADDRESS.upper()
-    assert token1 == to_checksum_address(WBTC_ADDRESS)
-    assert token1 == HexBytes(WBTC_ADDRESS)
+    assert wbtc == WBTC_ADDRESS
+    assert wbtc == WBTC_ADDRESS.lower()
+    assert wbtc == WBTC_ADDRESS.upper()
+    assert wbtc == to_checksum_address(WBTC_ADDRESS)
+    assert wbtc == HexBytes(WBTC_ADDRESS)
 
-    assert token0 > token1
-    assert token0 > WBTC_ADDRESS
-    assert token0 > WBTC_ADDRESS.lower()
-    assert token0 > WBTC_ADDRESS.upper()
-    assert token0 > to_checksum_address(WBTC_ADDRESS)
-    assert token0 > HexBytes(WBTC_ADDRESS)
+    assert weth > wbtc
+    assert weth > WBTC_ADDRESS
+    assert weth > WBTC_ADDRESS.lower()
+    assert weth > WBTC_ADDRESS.upper()
+    assert weth > to_checksum_address(WBTC_ADDRESS)
+    assert weth > HexBytes(WBTC_ADDRESS)
 
-    assert token1 < token0
-    assert token1 < WETH_ADDRESS
-    assert token1 < WETH_ADDRESS.lower()
-    assert token1 < WETH_ADDRESS.upper()
-    assert token1 < to_checksum_address(WETH_ADDRESS)
-    assert token1 < HexBytes(WETH_ADDRESS)
+    assert wbtc < weth
+    assert wbtc < WETH_ADDRESS
+    assert wbtc < WETH_ADDRESS.lower()
+    assert wbtc < WETH_ADDRESS.upper()
+    assert wbtc < to_checksum_address(WETH_ADDRESS)
+    assert wbtc < HexBytes(WETH_ADDRESS)
 
 
 def test_non_compliant_tokens(ethereum_full_node_web3):

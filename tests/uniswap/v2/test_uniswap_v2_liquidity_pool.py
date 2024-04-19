@@ -18,15 +18,6 @@ from degenbot.uniswap.v2_liquidity_pool import CamelotLiquidityPool
 from eth_utils import to_checksum_address
 
 
-class MockErc20Token(Erc20Token):
-    def __init__(self):
-        pass
-
-
-# Tests are based on the WBTC-WETH Uniswap V2 pool on Ethereum mainnet,
-# evaluated against the results from the Uniswap V2 Router 2 contract
-# functions `getAmountsOut` and `getAmountsIn`
-
 UNISWAP_V2_ROUTER02 = to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
 UNISWAP_V2_WBTC_WETH_POOL = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
 UNISWAPV2_FACTORY = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
@@ -34,8 +25,9 @@ UNISWAPV2_FACTORY_POOL_INIT_HASH = (
     "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
 )
 
-WETH_CONTRACT_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+DAI_CONTRACT_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
 WBTC_CONTRACT_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
+WETH_CONTRACT_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 
 @pytest.fixture(scope="function")
@@ -44,15 +36,54 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000(
 ) -> LiquidityPool:
     fork_mainnet_archive.reset(block_number=17_600_000)
     degenbot.set_web3(fork_mainnet_archive.w3)
-
-    lp = LiquidityPool(
+    return LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         update_method="external",
         factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
     )
 
-    return lp
+
+@pytest.fixture(scope="function")
+def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_650_000(
+    fork_mainnet_archive: AnvilFork,
+) -> LiquidityPool:
+    fork_mainnet_archive.reset(block_number=17_650_000)
+    degenbot.set_web3(fork_mainnet_archive.w3)
+    return LiquidityPool(
+        address=UNISWAP_V2_WBTC_WETH_POOL,
+        update_method="external",
+        factory_address=UNISWAPV2_FACTORY,
+        factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
+    )
+
+
+@pytest.fixture(scope="function")
+def ethereum_uniswap_v2_wbtc_weth_liquiditypool(
+    fork_mainnet_archive: AnvilFork,
+) -> LiquidityPool:
+    degenbot.set_web3(fork_mainnet_archive.w3)
+    return LiquidityPool(
+        address=UNISWAP_V2_WBTC_WETH_POOL,
+        update_method="external",
+        factory_address=UNISWAPV2_FACTORY,
+        factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
+    )
+
+
+@pytest.fixture
+def dai() -> Erc20Token:
+    return Erc20Token(DAI_CONTRACT_ADDRESS)
+
+
+@pytest.fixture
+def wbtc() -> Erc20Token:
+    return Erc20Token(WBTC_CONTRACT_ADDRESS)
+
+
+@pytest.fixture
+def weth() -> Erc20Token:
+    return Erc20Token(WETH_CONTRACT_ADDRESS)
 
 
 @pytest.fixture
@@ -61,24 +92,11 @@ def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> LiquidityPool:
     return LiquidityPool(UNISWAP_V2_WBTC_WETH_POOL)
 
 
-def test_create_pool(ethereum_full_node_web3: web3.Web3):
+def test_create_pool(ethereum_full_node_web3: web3.Web3, wbtc: Erc20Token, weth: Erc20Token):
     degenbot.set_web3(ethereum_full_node_web3)
-
-    token0 = MockErc20Token()
-    token0.address = to_checksum_address(WBTC_CONTRACT_ADDRESS)
-    token0.decimals = 8
-    token0.name = "Wrapped BTC"
-    token0.symbol = "WBTC"
-
-    token1 = MockErc20Token()
-    token1.address = to_checksum_address(WETH_CONTRACT_ADDRESS)
-    token1.decimals = 18
-    token1.name = "Wrapped Ether"
-    token1.symbol = "WETH"
-
     LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
-        tokens=[token0, token1],
+        tokens=[wbtc, weth],
         name="WBTC-WETH (V2, 0.30%)",
         factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
@@ -96,7 +114,7 @@ def test_create_pool(ethereum_full_node_web3: web3.Web3):
     with pytest.raises(ValueError, match="Expected 2 tokens, found"):
         LiquidityPool(
             address=UNISWAP_V2_WBTC_WETH_POOL,
-            tokens=[token0, token1, token0],
+            tokens=[wbtc, weth, wbtc],
             name="WBTC-WETH (V2, 0.30%)",
             factory_address=UNISWAPV2_FACTORY,
             factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
@@ -105,7 +123,7 @@ def test_create_pool(ethereum_full_node_web3: web3.Web3):
     with pytest.raises(ValueError, match="Expected 2 tokens, found"):
         LiquidityPool(
             address=UNISWAP_V2_WBTC_WETH_POOL,
-            tokens=[token0],
+            tokens=[wbtc],
             name="WBTC-WETH (V2, 0.30%)",
             factory_address=UNISWAPV2_FACTORY,
             factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
@@ -409,6 +427,7 @@ def test_calculate_tokens_out_from_ratio_out(fork_mainnet_archive: AnvilFork):
 
 def test_calculate_tokens_out_from_tokens_in(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    dai: Erc20Token,
 ):
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.calculate_tokens_out_from_tokens_in(
@@ -425,39 +444,44 @@ def test_calculate_tokens_out_from_tokens_in(
         == 5154005339
     )
 
-    dai_token = MockErc20Token()
-    dai_token.address = to_checksum_address("0x6B175474E89094C44Da98b954EedeAC495271d0F")
-    dai_token.decimals = 18
-    dai_token.name = "Dai Stablecoin"
-    dai_token.symbol = "DAI"
-
     with pytest.raises(ValueError, match="Could not identify token_in"):
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.calculate_tokens_out_from_tokens_in(
-            token_in=dai_token,
+            token_in=dai,
             token_in_quantity=1 * 10**18,
         )
 
 
 def test_calculate_tokens_out_from_tokens_in_with_override(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_650_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool,
 ):
-    # Overridden reserve values for this test are taken at block height 17,650,000
-    # token0 reserves: 16027096956
-    # token1 reserves: 2602647332090181827846
-
     pool_state_override = UniswapV2PoolState(
-        pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
-        reserves_token0=16027096956,
-        reserves_token1=2602647332090181827846,
+        pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_650_000.address,
+        reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_650_000.reserves_token0,
+        reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_650_000.reserves_token1,
     )
+    assert pool_state_override.reserves_token0 == 16027096956
+    assert pool_state_override.reserves_token1 == 2602647332090181827846
 
+    # Overriding the state of the pool to the historical block should should return the values
+    # from that historical block
     assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.calculate_tokens_out_from_tokens_in(
-            token_in=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.token0,
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool.calculate_tokens_out_from_tokens_in(
+            token_in=ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
             token_in_quantity=8000000000,
             override_state=pool_state_override,
         )
         == 864834865217768537471
+    )
+
+    # Historical state calculation should differ from the current state calculation
+    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool.calculate_tokens_out_from_tokens_in(
+        token_in=ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
+        token_in_quantity=8000000000,
+        override_state=pool_state_override,
+    ) == ethereum_uniswap_v2_wbtc_weth_liquiditypool.calculate_tokens_out_from_tokens_in(
+        token_in=ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
+        token_in_quantity=8000000000,
     )
 
 
@@ -486,7 +510,7 @@ def test_calculate_tokens_in_from_tokens_out(
 
 
 def test_calculate_tokens_in_from_tokens_out_with_override(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool, dai: Erc20Token
 ):
     # Overridden reserve values for this test are taken at block height 17,650,000
     # token0 reserves: 16027096956
@@ -507,15 +531,9 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
         == 13752842264
     )
 
-    dai_token = MockErc20Token()
-    dai_token.address = to_checksum_address("0x6B175474E89094C44Da98b954EedeAC495271d0F")
-    dai_token.decimals = 18
-    dai_token.name = "Dai Stablecoin"
-    dai_token.symbol = "DAI"
-
     with pytest.raises(ValueError, match="Could not identify token_out"):
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.calculate_tokens_in_from_tokens_out(
-            token_out=dai_token,
+            token_out=dai,
             token_out_quantity=1200000000000000000000,
             override_state=pool_state_override,
         )
@@ -866,7 +884,6 @@ def test_late_update(
             is False
         )
 
-    # with pytest.raises(ValueError):
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_reserves(
             external_token0_reserves=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0,
