@@ -72,25 +72,22 @@ def getNextSqrtPriceFromAmount0RoundingUp(
     amount: int,
     add: bool,
 ) -> int:
-    # we short circuit amount == 0 because the result is otherwise not guaranteed to equal the input price
     if amount == 0:
         return sqrtPX96
 
     numerator1 = liquidity << Q96_RESOLUTION
 
     if add:
-        product = amount * sqrtPX96
-        if product // amount == sqrtPX96:
-            denominator = numerator1 + product
-            if denominator >= numerator1:
-                # always fits in 160 bits
-                return FullMath.mulDivRoundingUp(numerator1, sqrtPX96, denominator)
-        return UnsafeMath.divRoundingUp(numerator1, numerator1 // sqrtPX96 + amount)
+        return (
+            FullMath.mulDivRoundingUp(numerator1, sqrtPX96, denominator)
+            if (
+                (product := amount * sqrtPX96) // amount == sqrtPX96
+                and (denominator := numerator1 + product) >= numerator1
+            )
+            else UnsafeMath.divRoundingUp(numerator1, numerator1 // sqrtPX96 + amount)
+        )
     else:
         product = amount * sqrtPX96
-        # if the product overflows, we know the denominator underflows
-        # in addition, we must check that the denominator does not underflow
-
         if not (product // amount == sqrtPX96 and numerator1 > product):
             raise EVMRevertError("product / amount == sqrtPX96 && numerator1 > product")
 

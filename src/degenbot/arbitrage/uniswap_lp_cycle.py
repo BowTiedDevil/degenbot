@@ -204,10 +204,10 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
-            except LiquidityPoolError as e:
+            except LiquidityPoolError as e:  # pragma: no cover
                 raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}")
             else:
-                if _token_out_quantity == 0:
+                if _token_out_quantity == 0:  # pragma: no cover
                     raise ArbitrageError(f"Zero-output swap through pool {pool} @ {pool.address}")
 
             match pool:
