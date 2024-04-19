@@ -60,10 +60,7 @@ line-length = 100
 indent-width = 4
 
 [tool.coverage.run]
-omit = [
-    "conftest.py",
-    "tests/*"
-]
+source = ["src/degenbot"]
 
 [tool.coverage.report]
 exclude_also = [
