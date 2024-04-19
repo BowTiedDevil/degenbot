@@ -2224,7 +2224,8 @@ def test_arbitrage_with_overrides(
     )
 
 
-async def test_pickle_uniswap_lp_cycle(fork_arbitrum: AnvilFork):
+@pytest.mark.skip(reason="Unreliable RPC")
+async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum: AnvilFork):
     # Arbitrum-specific token addresses
     _WBTC_ADDRESS = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"
     _WETH_ADDRESS = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
