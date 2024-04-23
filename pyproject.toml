@@ -43,9 +43,21 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.mypy]
-files="src/degenbot"
-strict = true
+files=[
+    "src/degenbot", 
+    "tests/",
+]
 python_version = "3.10"
+
+[[tool.mypy.overrides]]
+module="degenbot.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module="tests.*"
+disable_error_code = [
+    "no-untyped-def",
+]
 
 [[tool.mypy.overrides]]
 module=[
