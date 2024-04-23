@@ -1,20 +1,24 @@
-# pragma: no cover
-
 import logging
+from typing import Any
 
 import degenbot
+import degenbot.config
+import degenbot.logging
+import degenbot.manager
 import degenbot.registry
 import degenbot.uniswap.managers
 import dotenv
 import pytest
 import web3
+from degenbot.fork.anvil_fork import AnvilFork
+from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
 
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
 
 
 @pytest.fixture(scope="session")
-def load_env() -> dict:
+def load_env() -> dict[str, Any]:
     env_file = dotenv.find_dotenv("tests.env")
     return dotenv.dotenv_values(env_file)
 
@@ -52,12 +56,12 @@ def ethereum_full_node_web3() -> web3.Web3:
 # Before every test, reset the degenbot web3 object to use a default node
 @pytest.fixture(scope="function", autouse=True)
 def initialize_degenbot_with_default_node(ethereum_full_node_web3):
-    degenbot.set_web3(ethereum_full_node_web3)
+    degenbot.config.set_web3(ethereum_full_node_web3)
 
 
 @pytest.fixture(scope="function", autouse=True)
 def set_degenbot_logging():
-    degenbot.logger.setLevel(logging.DEBUG)
+    degenbot.logging.logger.setLevel(logging.DEBUG)
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -66,30 +70,30 @@ def clear_degenbot_state() -> None:
     # These dictionaries store module-level state, which will corrupt sequential tests if not reset
     degenbot.registry.all_pools._all_pools.clear()
     degenbot.registry.all_tokens._all_tokens.clear()
-    degenbot.Erc20TokenHelperManager._state.clear()
+    degenbot.manager.token_manager.Erc20TokenHelperManager._state.clear()
     degenbot.uniswap.managers.UniswapLiquidityPoolManager._state.clear()
-    degenbot.uniswap.V3LiquidityPool._lens_contracts.clear()
+    V3LiquidityPool._lens_contracts.clear()
 
 
 @pytest.fixture(scope="function")
-def fork_mainnet_archive() -> degenbot.AnvilFork:
-    fork = degenbot.AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+def fork_mainnet_archive() -> AnvilFork:
+    fork = AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI)
     return fork
 
 
 @pytest.fixture(scope="function")
-def fork_mainnet() -> degenbot.AnvilFork:
-    fork = degenbot.AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
+def fork_mainnet() -> AnvilFork:
+    fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
     return fork
 
 
 @pytest.fixture(scope="function")
-def fork_arbitrum() -> degenbot.AnvilFork:
-    fork = degenbot.AnvilFork(fork_url=ARBITRUM_FULL_NODE_HTTP_URI)
+def fork_arbitrum() -> AnvilFork:
+    fork = AnvilFork(fork_url=ARBITRUM_FULL_NODE_HTTP_URI)
     return fork
 
 
 @pytest.fixture(scope="function")
-def fork_arbitrum_archive() -> degenbot.AnvilFork:
-    fork = degenbot.AnvilFork(fork_url=ARBITRUM_ARCHIVE_NODE_HTTP_URI)
+def fork_arbitrum_archive() -> AnvilFork:
+    fork = AnvilFork(fork_url=ARBITRUM_ARCHIVE_NODE_HTTP_URI)
     return fork

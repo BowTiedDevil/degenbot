@@ -25,11 +25,11 @@ getcontext().prec = 256
 getcontext().rounding = "ROUND_FLOOR"
 
 
-def getMaxLiquidityPerTick(tick_spacing):
-    def getMinTick(tick_spacing):
+def getMaxLiquidityPerTick(tick_spacing: int) -> int:
+    def getMinTick(tick_spacing: int) -> int:
         return ceil(Decimal(-887272) / tick_spacing) * tick_spacing
 
-    def getMaxTick(tick_spacing):
+    def getMaxTick(tick_spacing: int) -> int:
         return floor(Decimal(887272) / tick_spacing) * tick_spacing
 
     return round(

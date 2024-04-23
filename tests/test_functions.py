@@ -10,25 +10,45 @@ from eth_typing import (
 from hexbytes import HexBytes
 
 
-def test_convert_identifier(fork_mainnet_archive):
+def test_converting_block_identifier_to_int(fork_mainnet_archive):
     """
-    Check that all inputs for type BlockIdentifier can be converted to an integer
+    Check that all inputs for web3 type `BlockIdentifier` can be converted to an integer
     """
 
     degenbot.config.set_web3(fork_mainnet_archive.w3)
-    for block_identifier in [
-        "latest",  # BlockParams
-        "earliest",  # BlockParams
-        "pending",  # BlockParams
-        "safe",  # BlockParams
-        "finalized",  # BlockParams
-        BlockNumber(1),  # BlockNumber
-        Hash32(int(1).to_bytes(length=32, byteorder="big")),  # Hash32
-        HexStr("0x" + int(128).to_bytes(32, byteorder="big").hex()),  # HexStr
-        HexBytes(1),  # HexBytes
-        1,  # int
-    ]:
-        assert isinstance(get_number_for_block_identifier(block_identifier), int)
+
+    # Known string literals
+    assert isinstance(get_number_for_block_identifier("latest"), int)
+    assert isinstance(get_number_for_block_identifier("earliest"), int)
+    assert isinstance(get_number_for_block_identifier("pending"), int)
+    assert isinstance(get_number_for_block_identifier("safe"), int)
+    assert isinstance(get_number_for_block_identifier("finalized"), int)
+
+    # BlockNumber
+    assert isinstance(
+        get_number_for_block_identifier(BlockNumber(1)),
+        int,
+    )
+
+    # Hash32
+    assert isinstance(
+        get_number_for_block_identifier(Hash32(int(1).to_bytes(length=32, byteorder="big"))),
+        int,
+    )
+
+    # HexStr
+    assert isinstance(
+        get_number_for_block_identifier(
+            HexStr("0x" + int(128).to_bytes(32, byteorder="big").hex())
+        ),
+        int,
+    )
+
+    # HexBytes
+    assert isinstance(get_number_for_block_identifier(HexBytes(1)), int)
+
+    # int
+    assert isinstance(get_number_for_block_identifier(1), int)
 
     for invalid_block_number in [-1, MAX_UINT256 + 1]:
         with pytest.raises(ValueError):
@@ -36,7 +56,7 @@ def test_convert_identifier(fork_mainnet_archive):
 
     for invalid_tag in ["Latest", "latest ", "next", "previous"]:
         with pytest.raises(ValueError):
-            get_number_for_block_identifier(invalid_tag)
+            get_number_for_block_identifier(invalid_tag)  # type: ignore[arg-type]
 
 
 def test_fee_calcs():

@@ -1,10 +1,9 @@
-from typing import Dict
+from typing import Any, Dict
 
 import pytest
-from degenbot.exceptions import EVMRevertError
+from degenbot.exceptions import EVMRevertError, MissingTickWordError
 from degenbot.uniswap.v3_dataclasses import UniswapV3BitmapAtWord
 from degenbot.uniswap.v3_libraries import TickBitmap, TickMath
-from degenbot.uniswap.v3_libraries.tick_bitmap import MissingTickWordError
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/TickBitmap.spec.ts
@@ -18,7 +17,7 @@ def is_initialized(tick_bitmap: Dict[int, UniswapV3BitmapAtWord], tick: int) -> 
     return next == tick if initialized else False
 
 
-def empty_full_bitmap(spacing: int = 1):
+def empty_full_bitmap(spacing: int = 1) -> Dict[int, UniswapV3BitmapAtWord]:
     """
     Generate a empty tick bitmap, maximum size, with the given tick spacing
     """
@@ -30,13 +29,11 @@ def empty_full_bitmap(spacing: int = 1):
     return tick_bitmap
 
 
-def empty_sparse_bitmap():
+def empty_sparse_bitmap() -> dict[int, Any]:
     """
-    Generate a sparse, empty tick bitmap no populated words
+    Generate a sparse, empty tick bitmap
     """
-
-    tick_bitmap = {}
-    return tick_bitmap
+    return dict()
 
 
 def test_isInitialized():

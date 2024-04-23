@@ -6,7 +6,8 @@ from degenbot.exceptions import ArbitrageError
 from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20_token import Erc20Token
-from degenbot.uniswap.v2_liquidity_pool import LiquidityPool, UniswapV2PoolState
+from degenbot.uniswap.v2_liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_dataclasses import UniswapV2PoolState
 import time
 import pytest
 
@@ -236,7 +237,7 @@ def test_bad_pool_in_constructor():
     ):
         UniswapCurveCycle(
             input_token=weth,
-            swap_pools=[uniswap_v2_weth_dai_lp, None, uniswap_v2_weth_usdc_lp],
+            swap_pools=[uniswap_v2_weth_dai_lp, None, uniswap_v2_weth_usdc_lp],  # type: ignore[list-item]
             id="test",
             max_input=10 * 10**18,
         )

@@ -1,8 +1,8 @@
 import pytest
-from degenbot import Erc20Token, set_web3
-from degenbot.erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+from degenbot.config import set_web3
+from degenbot.erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE, Erc20Token
 from degenbot.fork.anvil_fork import AnvilFork
-from eth_utils import to_checksum_address
+from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 
 VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")

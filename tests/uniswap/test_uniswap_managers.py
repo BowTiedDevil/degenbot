@@ -1,13 +1,12 @@
 import pytest
-from web3 import Web3
-
-from degenbot import set_web3
+from degenbot.config import set_web3
 from degenbot.exceptions import ManagerError, PoolNotAssociated
-from degenbot.fork import AnvilFork
-from degenbot.registry import AllPools
+from degenbot.fork.anvil_fork import AnvilFork
+from degenbot.registry.all_pools import AllPools
 from degenbot.uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
 from eth_utils.address import to_checksum_address
+from web3 import Web3
 
 UNISWAP_V2_FACTORY_ADDRESS = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
 UNISWAP_V3_FACTORY_ADDRESS = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")

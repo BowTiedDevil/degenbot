@@ -1,13 +1,14 @@
-import degenbot
 import pytest
-from degenbot import (
+from degenbot.config import set_web3
+from degenbot.fork.anvil_fork import AnvilFork
+from degenbot.uniswap.managers import UniswapV3LiquidityPoolManager
+from degenbot.uniswap.v3_dataclasses import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3LiquidityEvent,
-    UniswapV3LiquiditySnapshot,
 )
-from degenbot.uniswap.managers import UniswapV3LiquidityPoolManager
-from eth_utils import to_checksum_address
+from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
+from eth_utils.address import to_checksum_address
 
 EMPTY_SNAPSHOT_FILENAME = "tests/uniswap/v3/empty_v3_liquidity_snapshot.json"
 EMPTY_SNAPSHOT_BLOCK = 12_369_620  # Uniswap V3 factory was deployed on the next block, so use this as the initial zero state
@@ -20,9 +21,9 @@ def zero_snapshot() -> UniswapV3LiquiditySnapshot:
 
 @pytest.fixture
 def first_250_blocks_snapshot(
-    fork_mainnet_archive: degenbot.AnvilFork,
+    fork_mainnet_archive: AnvilFork,
 ) -> UniswapV3LiquiditySnapshot:
-    degenbot.set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_archive.w3)
     snapshot = UniswapV3LiquiditySnapshot(file=EMPTY_SNAPSHOT_FILENAME)
     snapshot.fetch_new_liquidity_events(to_block=EMPTY_SNAPSHOT_BLOCK + 250, span=50)
     return snapshot
@@ -39,9 +40,9 @@ def test_create_snapshot_from_file_handle():
 
 def test_fetch_liquidity_events_first_250_blocks(
     first_250_blocks_snapshot: UniswapV3LiquiditySnapshot,
-    fork_mainnet_archive: degenbot.AnvilFork,
+    fork_mainnet_archive: AnvilFork,
 ):
-    degenbot.set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_archive.w3)
 
     # Liquidity snapshots for each pool will be empty, since they only reflect the starting
     # liquidity at the initial snapshot block
@@ -129,9 +130,9 @@ def test_fetch_liquidity_events_first_250_blocks(
 
 def test_get_new_liquidity_updates(
     first_250_blocks_snapshot: UniswapV3LiquiditySnapshot,
-    fork_mainnet_archive: degenbot.AnvilFork,
+    fork_mainnet_archive: AnvilFork,
 ):
-    degenbot.set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_archive.w3)
 
     for pool_address in [
         "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
@@ -147,11 +148,11 @@ def test_get_new_liquidity_updates(
 
 def test_apply_update_to_snapshot(
     zero_snapshot: UniswapV3LiquiditySnapshot,
-    fork_mainnet_archive: degenbot.AnvilFork,
+    fork_mainnet_archive: AnvilFork,
 ):
     POOL_ADDRESS = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 
-    degenbot.set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_archive.w3)
 
     tick_data = {
         253320: UniswapV3LiquidityAtTick(
@@ -199,9 +200,9 @@ def test_apply_update_to_snapshot(
 
 def test_pool_manager_applies_snapshots(
     first_250_blocks_snapshot: UniswapV3LiquiditySnapshot,
-    fork_mainnet_archive: degenbot.AnvilFork,
+    fork_mainnet_archive: AnvilFork,
 ):
-    degenbot.set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_archive.w3)
 
     # Build a pool manager to inject the liquidity events into the new pools as they are created
     pool_manager = UniswapV3LiquidityPoolManager(

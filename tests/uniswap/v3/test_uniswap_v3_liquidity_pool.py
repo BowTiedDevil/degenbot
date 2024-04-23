@@ -2,16 +2,8 @@ import pickle
 from typing import Dict
 
 import pytest
-from degenbot import (
-    Erc20Token,
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
-    UniswapV3PoolExternalUpdate,
-    UniswapV3PoolSimulationResult,
-    UniswapV3PoolState,
-    V3LiquidityPool,
-    set_web3,
-)
+from degenbot.config import set_web3
+from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
     ExternalUpdateError,
     InsufficientAmountOutError,
@@ -19,6 +11,14 @@ from degenbot.exceptions import (
     NoPoolStateAvailable,
 )
 from degenbot.fork.anvil_fork import AnvilFork
+from degenbot.uniswap.v3_dataclasses import (
+    UniswapV3PoolExternalUpdate,
+    UniswapV3PoolSimulationResult,
+    UniswapV3PoolState,
+    UniswapV3BitmapAtWord,
+    UniswapV3LiquidityAtTick,
+)
+from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
 from hexbytes import HexBytes
 from web3 import Web3
 
@@ -46,6 +46,14 @@ def wbtc_weth_v3_lp_at_block_17_600_000(fork_mainnet_archive: AnvilFork) -> V3Li
 def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> V3LiquidityPool:
     set_web3(fork_mainnet.w3)
     return V3LiquidityPool(WBTC_WETH_V3_POOL_ADDRESS)
+
+
+def convert_unsigned_integer_to_signed(num: int):
+    """
+    Workaround for the values shown on Tenderly's "State Changes" view, which converts signed
+    integers in a tuple to their unsigned representation
+    """
+    return int.from_bytes(HexBytes(num), byteorder="big", signed=True)
 
 
 def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool):
@@ -676,13 +684,6 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
         )
     )
 
-    def convert_unsigned_integer_to_signed(num):
-        """
-        Workaround for the values shown on Tenderly's "State Changes" view, which converts signed
-        integers in a tuple to their unsigned representation
-        """
-        return int.from_bytes(HexBytes(num), byteorder="big", signed=True)
-
     assert lp.liquidity == 47302815311876989
 
     assert lp.tick_data[-2].liquidityGross == 2444435478572158
@@ -747,13 +748,6 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
             liquidity_change=(32906745642438587, 0, 2),
         )
     )
-
-    def convert_unsigned_integer_to_signed(num):
-        """
-        Workaround for the values shown on Tenderly's "State Changes" view, which converts signed
-        integers in a tuple to their unsigned representation
-        """
-        return int.from_bytes(HexBytes(num), byteorder="big", signed=True)
 
     assert lp.liquidity == 47729789712963261
 

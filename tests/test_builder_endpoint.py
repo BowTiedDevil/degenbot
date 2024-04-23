@@ -1,8 +1,8 @@
 import aiohttp
-import degenbot.fork
 import eth_account
 import pytest
 from degenbot.builder_endpoint import BuilderEndpoint
+from degenbot.fork.anvil_fork import AnvilFork
 from eth_account.signers.local import LocalAccount
 
 BEAVERBUILD_URL = "https://rpc.beaverbuild.org"
@@ -98,7 +98,7 @@ async def test_bad_url():
 
 async def test_blank_eth_send_bundle(
     beaverbuild: BuilderEndpoint,
-    fork_mainnet: degenbot.fork.AnvilFork,
+    fork_mainnet: AnvilFork,
 ):
     current_block = fork_mainnet.w3.eth.block_number
     response = await beaverbuild.send_eth_bundle(
@@ -111,7 +111,7 @@ async def test_blank_eth_send_bundle(
 
 async def test_blank_eth_send_bundle_with_session(
     beaverbuild: BuilderEndpoint,
-    fork_mainnet: degenbot.fork.AnvilFork,
+    fork_mainnet: AnvilFork,
 ):
     async with aiohttp.ClientSession(raise_for_status=True) as session:
         current_block = fork_mainnet.w3.eth.block_number
@@ -124,7 +124,7 @@ async def test_blank_eth_send_bundle_with_session(
 
 async def test_eth_call_bundle(
     flashbots: BuilderEndpoint,
-    fork_mainnet: degenbot.fork.AnvilFork,
+    fork_mainnet: AnvilFork,
 ):
     current_block = fork_mainnet.w3.eth.block_number
     current_base_fee = fork_mainnet.w3.eth.get_block("latest")["baseFeePerGas"]
@@ -192,7 +192,7 @@ async def test_eth_call_bundle(
 
 async def test_eth_send_bundle(
     flashbots: BuilderEndpoint,
-    fork_mainnet: degenbot.fork.AnvilFork,
+    fork_mainnet: AnvilFork,
 ):
     current_block = fork_mainnet.w3.eth.block_number
     current_base_fee = fork_mainnet.w3.eth.get_block("latest")["baseFeePerGas"]
@@ -244,7 +244,7 @@ async def test_eth_send_bundle(
 
 async def test_get_user_stats(
     flashbots: BuilderEndpoint,
-    fork_mainnet: degenbot.fork.AnvilFork,
+    fork_mainnet: AnvilFork,
 ):
     current_block = fork_mainnet.w3.eth.block_number
     await flashbots.get_user_stats(

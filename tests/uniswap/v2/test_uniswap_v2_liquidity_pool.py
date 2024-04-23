@@ -5,18 +5,19 @@ from typing import Dict
 import degenbot
 import pytest
 import web3
-from degenbot import Erc20Token
+from degenbot.config import set_web3
+from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
     ExternalUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
     ZeroSwapError,
 )
-from degenbot.fork import AnvilFork
-from degenbot.uniswap import LiquidityPool, UniswapV2PoolSimulationResult, UniswapV2PoolState
-from degenbot.uniswap.v2_liquidity_pool import CamelotLiquidityPool
-from eth_utils import to_checksum_address
-
+from degenbot.fork.anvil_fork import AnvilFork
+from degenbot.registry.all_pools import AllPools
+from degenbot.uniswap.v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
+from degenbot.uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
+from eth_utils.address import to_checksum_address
 
 UNISWAP_V2_ROUTER02 = to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
 UNISWAP_V2_WBTC_WETH_POOL = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
@@ -35,7 +36,7 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000(
     fork_mainnet_archive: AnvilFork,
 ) -> LiquidityPool:
     fork_mainnet_archive.reset(block_number=17_600_000)
-    degenbot.set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_archive.w3)
     return LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         update_method="external",
@@ -49,7 +50,7 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_650_000(
     fork_mainnet_archive: AnvilFork,
 ) -> LiquidityPool:
     fork_mainnet_archive.reset(block_number=17_650_000)
-    degenbot.set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_archive.w3)
     return LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         update_method="external",
@@ -62,7 +63,7 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_650_000(
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool(
     fork_mainnet_archive: AnvilFork,
 ) -> LiquidityPool:
-    degenbot.set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_archive.w3)
     return LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         update_method="external",
@@ -88,12 +89,12 @@ def weth() -> Erc20Token:
 
 @pytest.fixture
 def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> LiquidityPool:
-    degenbot.set_web3(fork_mainnet.w3)
+    set_web3(fork_mainnet.w3)
     return LiquidityPool(UNISWAP_V2_WBTC_WETH_POOL)
 
 
 def test_create_pool(ethereum_full_node_web3: web3.Web3, wbtc: Erc20Token, weth: Erc20Token):
-    degenbot.set_web3(ethereum_full_node_web3)
+    set_web3(ethereum_full_node_web3)
     LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         tokens=[wbtc, weth],
@@ -163,7 +164,7 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_archive: AnvilFork):
 
     assert fork_arbitrum_archive.block_number == FORK_BLOCK
     assert fork_arbitrum_archive.w3.eth.get_block_number() == FORK_BLOCK
-    degenbot.set_web3(fork_arbitrum_archive.w3)
+    set_web3(fork_arbitrum_archive.w3)
 
     lp = CamelotLiquidityPool(address=CAMELOT_MIM_USDC_LP_ADDRESS)
     assert lp.stable_swap is True
@@ -216,7 +217,7 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_archive: AnvilFork):
 
 def test_create_camelot_v2_pool(fork_arbitrum: AnvilFork):
     CAMELOT_WETH_USDC_LP_ADDRESS = "0x84652bb2539513BAf36e225c930Fdd8eaa63CE27"
-    degenbot.set_web3(fork_arbitrum.w3)
+    set_web3(fork_arbitrum.w3)
     lp = CamelotLiquidityPool(address=CAMELOT_WETH_USDC_LP_ADDRESS)
     assert lp.stable_swap is False
 
@@ -233,7 +234,7 @@ def test_create_camelot_v2_pool(fork_arbitrum: AnvilFork):
 
 def test_pickle_camelot_v2_pool(fork_arbitrum: AnvilFork):
     CAMELOT_WETH_USDC_LP_ADDRESS = "0x84652bb2539513BAf36e225c930Fdd8eaa63CE27"
-    degenbot.set_web3(fork_arbitrum.w3)
+    set_web3(fork_arbitrum.w3)
     lp = CamelotLiquidityPool(address=CAMELOT_WETH_USDC_LP_ADDRESS)
     pickle.dumps(lp)
 
@@ -243,7 +244,7 @@ def test_create_empty_pool(
     ethereum_full_node_web3: web3.Web3,
 ):
     _pool: LiquidityPool = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000
-    degenbot.set_web3(ethereum_full_node_web3)
+    set_web3(ethereum_full_node_web3)
 
     LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
@@ -378,7 +379,7 @@ def test_pickle_pool(
 def test_calculate_tokens_out_from_ratio_out(fork_mainnet_archive: AnvilFork):
     _BLOCK_NUMBER = 17_600_000
     fork_mainnet_archive.reset(block_number=_BLOCK_NUMBER)
-    degenbot.set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_archive.w3)
 
     router_contract = fork_mainnet_archive.w3.eth.contract(
         address=to_checksum_address(UNISWAP_V2_ROUTER02),
@@ -551,9 +552,7 @@ def test_comparisons(
         == UNISWAP_V2_WBTC_WETH_POOL.lower()
     )
 
-    del degenbot.AllPools(chain_id=1)[
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000
-    ]
+    del AllPools(chain_id=1)[ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000]
 
     other_lp = LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
@@ -841,7 +840,7 @@ def test_polling_update(
 ):
     _BLOCK_NUMBER = 18_000_000
     fork_mainnet_archive.reset(block_number=_BLOCK_NUMBER)
-    degenbot.set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_archive.w3)
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_method = "polling"
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_reserves() is True
     assert (

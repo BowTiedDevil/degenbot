@@ -8,28 +8,29 @@ from threading import Lock
 from typing import Sequence, Tuple
 
 import pytest
-from degenbot.arbitrage import ArbitrageCalculationResult, UniswapLpCycle
 from degenbot.arbitrage.arbitrage_dataclasses import (
+    ArbitrageCalculationResult,
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
+from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from degenbot.config import set_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError
-from degenbot.fork import AnvilFork
-from degenbot.uniswap import V3LiquidityPool
+from degenbot.fork.anvil_fork import AnvilFork
+from degenbot.uniswap.v2_dataclasses import UniswapV2PoolState
 from degenbot.uniswap.v2_liquidity_pool import (
     CamelotLiquidityPool,
     LiquidityPool,
-    UniswapV2PoolState,
 )
 from degenbot.uniswap.v3_dataclasses import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
 )
-from eth_utils import to_checksum_address
+from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
+from eth_utils.address import to_checksum_address
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -2080,14 +2081,14 @@ def wbtc_weth_arb(
 
 
 class MockLiquidityPool(LiquidityPool):
-    def __init__(self):
-        self.state = UniswapV2PoolState(self, 0, 0)
+    def __init__(self) -> None:
+        self.state = UniswapV2PoolState(ZERO_ADDRESS, 0, 0)
         self._state_lock = Lock()
         self._subscribers = set()
 
 
 class MockV3LiquidityPool(V3LiquidityPool):
-    def __init__(self):
+    def __init__(self) -> None:
         self._state_lock = Lock()
         self._subscribers = set()
 

@@ -1,16 +1,16 @@
 import itertools
 from typing import cast
 
-import degenbot
-import eth_abi  # type: ignore[import-untyped]
+import eth_abi
 import pytest
+from degenbot.config import get_web3, set_web3
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_REGISTRY_ABI
-from degenbot.curve.curve_stableswap_liquidity_pool import BrokenPool, CurveStableswapPool
-from degenbot.exceptions import ZeroLiquidityError, ZeroSwapError
-from degenbot.fork import AnvilFork
-from eth_utils import to_checksum_address
+from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.exceptions import BrokenPool, ZeroLiquidityError, ZeroSwapError
+from degenbot.fork.anvil_fork import AnvilFork
+from eth_utils.address import to_checksum_address
 from web3 import Web3
-from web3.contract import Contract
+from web3.contract.contract import Contract
 from web3.types import Timestamp
 
 FRXETH_WETH_CURVE_POOL_ADDRESS = to_checksum_address("0x9c3B46C0Ceb5B9e304FCd6D88Fc50f7DD24B31Bc")
@@ -21,7 +21,7 @@ TRIPOOL_ADDRESS = to_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C
 
 @pytest.fixture()
 def tripool(ethereum_full_node_web3: Web3) -> CurveStableswapPool:
-    degenbot.set_web3(ethereum_full_node_web3)
+    set_web3(ethereum_full_node_web3)
     return CurveStableswapPool(TRIPOOL_ADDRESS)
 
 
@@ -55,7 +55,7 @@ def _test_calculations(lp: CurveStableswapPool):
                     ),
                 }
                 contract_amount, *_ = eth_abi.abi.decode(
-                    data=degenbot.get_web3().eth.call(
+                    data=get_web3().eth.call(
                         transaction=tx,  # type: ignore[arg-type]
                         block_identifier=state_block,
                     ),
@@ -108,7 +108,7 @@ def _test_calculations(lp: CurveStableswapPool):
 
 
 def test_create_pool(ethereum_full_node_web3):
-    degenbot.set_web3(ethereum_full_node_web3)
+    set_web3(ethereum_full_node_web3)
     CurveStableswapPool(address=TRIPOOL_ADDRESS)
 
 
@@ -120,7 +120,7 @@ def test_auto_update(fork_mainnet_archive: AnvilFork):
     # Build the pool at a known historical block
     _BLOCK_NUMBER = 18849427 - 1
     fork_mainnet_archive.reset(block_number=_BLOCK_NUMBER)
-    degenbot.set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_archive.w3)
 
     _tripool = CurveStableswapPool(TRIPOOL_ADDRESS)
 
@@ -151,7 +151,7 @@ def test_A_ramping(fork_mainnet_archive: AnvilFork):
     FINAL_A_TIME = 1654158027
 
     fork_mainnet_archive.reset(block_number=14_900_000)
-    degenbot.set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_archive.w3)
 
     tripool = CurveStableswapPool(address=TRIPOOL_ADDRESS)
     tripool._create_timestamp = cast(Timestamp, 0)  # defeat the timestamp optimization
@@ -165,7 +165,7 @@ def test_base_registry_pools(fork_mainnet: AnvilFork):
     """
     Test the custom pools deployed by Curve
     """
-    degenbot.set_web3(fork_mainnet.w3)
+    set_web3(fork_mainnet.w3)
 
     registry: Contract = fork_mainnet.w3.eth.contract(
         address=CURVE_V1_REGISTRY_ADDRESS,
@@ -195,9 +195,9 @@ def test_single_pool(
 
     if _block_identifier:
         fork_mainnet_archive.reset(block_number=_block_identifier)
-        degenbot.set_web3(fork_mainnet_archive.w3)
+        set_web3(fork_mainnet_archive.w3)
     else:
-        degenbot.set_web3(fork_mainnet.w3)
+        set_web3(fork_mainnet.w3)
 
     lp = CurveStableswapPool(address=_POOL_ADDRESS)
     _test_calculations(lp)
@@ -208,7 +208,7 @@ def test_tricrypto_pool(fork_mainnet: AnvilFork):
     Tricrypto (WETH-wBTC-USDT) has a lot of one-off functions, so always test it
     """
     _POOL_ADDRESS = "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"
-    degenbot.set_web3(fork_mainnet.w3)
+    set_web3(fork_mainnet.w3)
     lp = CurveStableswapPool(address=_POOL_ADDRESS)
     _test_calculations(lp)
 
@@ -224,7 +224,7 @@ def test_metapool_over_multiple_blocks_to_verify_cache_behavior(fork_mainnet_arc
 
     fork_mainnet_archive.reset(block_number=_START_BLOCK)
     fork_mainnet_archive.w3.provider.timeout = 60  # type: ignore[attr-defined]
-    degenbot.set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_archive.w3)
 
     lp = CurveStableswapPool(address=_POOL_ADDRESS)
 
@@ -235,7 +235,7 @@ def test_metapool_over_multiple_blocks_to_verify_cache_behavior(fork_mainnet_arc
 
 
 def test_base_pool(fork_mainnet: AnvilFork):
-    degenbot.set_web3(fork_mainnet.w3)
+    set_web3(fork_mainnet.w3)
 
     POOL_ADDRESS = TRIPOOL_ADDRESS
 
@@ -303,7 +303,7 @@ def test_factory_stableswap_pools(fork_mainnet: AnvilFork):
     Test the user-deployed pools deployed by the factory
     """
 
-    degenbot.set_web3(fork_mainnet.w3)
+    set_web3(fork_mainnet.w3)
     stableswap_factory: Contract = fork_mainnet.w3.eth.contract(
         address=CURVE_V1_FACTORY_ADDRESS, abi=CURVE_V1_FACTORY_ABI
     )

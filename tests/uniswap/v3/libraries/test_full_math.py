@@ -114,13 +114,13 @@ def test_mulDivRoundingUp():
         == Q128 // 3 + 1
     )
 
-    def pseudoRandomBigNumber():
+    def pseudoRandomBigNumber() -> int:
         return int(MAX_UINT256 * random.random())
 
-    def floored(x, y, d):
+    def floored(x, y, d) -> int:
         return FullMath.mulDiv(x, y, d)
 
-    def ceiled(x, y, d):
+    def ceiled(x, y, d) -> int:
         return FullMath.mulDivRoundingUp(x, y, d)
 
     for i in range(1000):

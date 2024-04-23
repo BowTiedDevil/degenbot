@@ -1,5 +1,6 @@
-from degenbot import ChainlinkPriceContract, set_web3
-from eth_utils import to_checksum_address
+from degenbot.chainlink import ChainlinkPriceContract
+from degenbot.config import set_web3
+from eth_utils.address import to_checksum_address
 
 
 def test_chainlink_feed(ethereum_full_node_web3):

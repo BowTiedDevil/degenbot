@@ -3,7 +3,7 @@ import ujson
 import web3.middleware
 from degenbot.config import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.fork import AnvilFork
+from degenbot.fork.anvil_fork import AnvilFork
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3.types import Wei
@@ -84,7 +84,7 @@ def test_rpc_methods(fork_mainnet_archive: AnvilFork):
     with pytest.raises(ValueError):
         fork_mainnet_archive.set_balance(VITALIK_ADDRESS, MAX_UINT256 + 1)
 
-    FAKE_COINBASE = "0x0420042004200420042004200420042004200420"
+    FAKE_COINBASE = to_checksum_address("0x0420042004200420042004200420042004200420")
     fork_mainnet_archive.set_coinbase(FAKE_COINBASE)
     # @dev the eth_coinbase method fails when called on Anvil,
     # so check by mining a block and comparing the miner address
@@ -116,7 +116,7 @@ def test_balance_overrides_in_constructor():
 
 
 def test_bytecode_overrides_in_constructor():
-    FAKE_ADDRESS = "0x6969696969696969696969696969696969696969"
+    FAKE_ADDRESS = to_checksum_address("0x6969696969696969696969696969696969696969")
     FAKE_BYTECODE = HexBytes("0x0420")
 
     fork = AnvilFork(
@@ -126,7 +126,7 @@ def test_bytecode_overrides_in_constructor():
 
 
 def test_coinbase_override_in_constructor():
-    FAKE_COINBASE = "0x6969696969696969696969696969696969696969"
+    FAKE_COINBASE = to_checksum_address("0x6969696969696969696969696969696969696969")
 
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
@@ -142,7 +142,7 @@ def test_injecting_middleware():
         fork_url="https://rpc.ankr.com/polygon",
         fork_block=53178474 - 1,
         middlewares=[
-            (web3.middleware.geth_poa_middleware, 0),
+            (web3.middleware.geth_poa.geth_poa_middleware, 0),
         ],
     )
     set_web3(fork.w3)

@@ -1,7 +1,7 @@
 import web3
-from degenbot import set_web3
-from degenbot.manager import Erc20TokenHelperManager
-from degenbot.registry import AllTokens
+from degenbot.config import set_web3
+from degenbot.manager.token_manager import Erc20TokenHelperManager
+from degenbot.registry.all_tokens import AllTokens
 from eth_utils.address import to_checksum_address
 
 WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
