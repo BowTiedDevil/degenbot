@@ -201,582 +201,582 @@ def test_v2_router_transactions(
 @pytest.mark.parametrize(
     "block_number, tx_dict,exception_match",
     [
-        # (
-        #     17560200,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x44391e7f2ba292cb4ff42d33b3cff859c93a9ebf0e3ed7120d27b144d3787b4f",
-        #         tx_nonce=57,
-        #         tx_value=0,
-        #         tx_sender="0x42ED7246690EA1429e887CC246C460F35315a72b",
-        #         func_name="exactOutputSingle",
-        #         func_params={
-        #             "params": {
-        #                 "tokenIn": "0x6E975115250B05C828ecb8edeDb091975Fc20a5d",
-        #                 "tokenOut": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        #                 "fee": 500,
-        #                 "recipient": "0x42ED7246690EA1429e887CC246C460F35315a72b",
-        #                 "deadline": 1687744791,
-        #                 "amountOut": 692000000000000000,
-        #                 "amountInMaximum": 2695875027951196591488,
-        #                 "sqrtPriceLimitX96": 0,
-        #             }
-        #         },
-        #         router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     # duplicate of the above, but in 8-tuple format (Router01)
-        #     17560200,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x44391e7f2ba292cb4ff42d33b3cff859c93a9ebf0e3ed7120d27b144d3787b4f",
-        #         tx_nonce=57,
-        #         tx_value=0,
-        #         tx_sender="0x42ED7246690EA1429e887CC246C460F35315a72b",
-        #         func_name="exactOutputSingle",
-        #         func_params={
-        #             "params": (
-        #                 "0x6E975115250B05C828ecb8edeDb091975Fc20a5d",
-        #                 "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        #                 500,
-        #                 "0x42ED7246690EA1429e887CC246C460F35315a72b",
-        #                 1687744791,
-        #                 692000000000000000,
-        #                 2695875027951196591488,
-        #                 0,
-        #             ),
-        #         },
-        #         router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     # duplicate of the above, but in 7-tuple format (Router02)
-        #     17560200,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x44391e7f2ba292cb4ff42d33b3cff859c93a9ebf0e3ed7120d27b144d3787b4f",
-        #         tx_nonce=57,
-        #         tx_value=0,
-        #         tx_sender="0x42ED7246690EA1429e887CC246C460F35315a72b",
-        #         func_name="exactOutputSingle",
-        #         func_params={
-        #             "params": (
-        #                 "0x6E975115250B05C828ecb8edeDb091975Fc20a5d",
-        #                 "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        #                 500,
-        #                 "0x42ED7246690EA1429e887CC246C460F35315a72b",
-        #                 692000000000000000,
-        #                 2695875027951196591488,
-        #                 0,
-        #             ),
-        #         },
-        #         router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     19195876 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x0492ef965901b7bc9c1b9d02868ea3e642f84a399f4d0179b006088cd2942d99",
-        #         tx_nonce=672,
-        #         tx_value=0,
-        #         tx_sender="0xff46Bc0A888233028915b6Ce84d6209092Ba9b58",
-        #         func_name="multicall",
-        #         func_params={
-        #             "data": [
-        #                 HexBytes(
-        #                     "0x414bf38900000000000000000000000073576a927cd93a578a9dfd61c75671d97c779da7000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000000000000000000000000000000000000000271000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000065c71bfb00000000000000000000000000000000000000000000000148c9793ff2b8b0b100000000000000000000000000000000000000000000000011fca96ba7d8d08c0000000000000000000000000000000000000000000000000000000000000000"
-        #                 ),
-        #                 HexBytes(
-        #                     "0x49404b7c00000000000000000000000000000000000000000000000011fca96ba7d8d08c000000000000000000000000ff46bc0a888233028915b6ce84d6209092ba9b58"
-        #                 ),
-        #             ],
-        #         },
-        #         router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     19195864 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0xf684531981c2169c168249db3a0e0ae92c8763d19bc7f01a40e4d42997e1b62c",
-        #         tx_nonce=3424,
-        #         tx_value=int(0.2743754838560736 * 10**18),
-        #         tx_sender="0xfbe6Ed1942B03eF4fBa780890550dB1F0c43Bd32",
-        #         func_name="multicall",
-        #         func_params={
-        #             "deadline": 1686667218,
-        #             "data": [
-        #                 HexBytes(
-        #                     "0xf28c0498000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000fbe6ed1942b03ef4fba780890550db1f0c43bd320000000000000000000000000000000000000000000000000000000065c7190a0000000000000000000000000000000000000000000000000000000028eface000000000000000000000000000000000000000000000000003cec70c82513380000000000000000000000000000000000000000000000000000000000000002ba0b86991c6218b36c1d19d4a2e9eb0ce3606eb480001f4c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000000000000000000000"
-        #                 ),
-        #                 HexBytes("0x12210e8a"),
-        #             ],
-        #         },
-        #         router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     19200547 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x0348df6b2a08e73d356774a005c952dd6fa5c5403f34106c10d27d1b4aca56e7",
-        #         tx_nonce=1323,
-        #         tx_value=0,
-        #         tx_sender="0xd7452CE7652f353c150ddd2427B6680052467d3d",
-        #         func_name="exactOutput",
-        #         func_params={
-        #             "params": {
-        #                 "path": HexBytes(
-        #                     "0xda31d0d1bc934fc34f7189e38a413ca0a5e8b44f002710c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4dac17f958d2ee523a2206206994597c13d831ec7"
-        #                 ),
-        #                 "recipient": "0xd7452CE7652f353c150ddd2427B6680052467d3d",
-        #                 "deadline": 1707603210,
-        #                 "amountOut": 599620000000000000000,
-        #                 "amountInMaximum": 537159816,
-        #             },
-        #         },
-        #         router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     19231984 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0xf9b1a43c34c400090cf695121b4b060324ea520aad2e0fee67365c5c462aacd2",
-        #         tx_nonce=2490,
-        #         tx_value=0,
-        #         tx_sender="0xf9b306b5Ef6Be6c7E93d7Daffa4a806E3015c58A",
-        #         func_name="exactOutput",
-        #         func_params={
-        #             "params": (
-        #                 HexBytes(
-        #                     "0x3c3a81e81dc49a522a592e7622a7e711c06bf354000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
-        #                 ),
-        #                 "0xf9b306b5Ef6Be6c7E93d7Daffa4a806E3015c58A",
-        #                 1707983833,
-        #                 20000000000000000000000,
-        #                 5685474000000000000,
-        #             ),
-        #         },
-        #         router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     # same as above, but in 4-tuple format (Router02)
-        #     19231984 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0xf9b1a43c34c400090cf695121b4b060324ea520aad2e0fee67365c5c462aacd2",
-        #         tx_nonce=2490,
-        #         tx_value=0,
-        #         tx_sender="0xf9b306b5Ef6Be6c7E93d7Daffa4a806E3015c58A",
-        #         func_name="exactOutput",
-        #         func_params={
-        #             "params": (
-        #                 HexBytes(
-        #                     "0x3c3a81e81dc49a522a592e7622a7e711c06bf354000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
-        #                 ),
-        #                 "0xf9b306b5Ef6Be6c7E93d7Daffa4a806E3015c58A",
-        #                 20000000000000000000000,
-        #                 5685474000000000000,
-        #             ),
-        #         },
-        #         router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     19229539 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x91f6955f167d8e79af01c4b1a0cddf714933075d750a66043f67348e6f926974",
-        #         tx_nonce=1408,
-        #         tx_value=0,
-        #         tx_sender="0xd7452CE7652f353c150ddd2427B6680052467d3d",
-        #         func_name="exactOutput",
-        #         func_params={
-        #             "params": {
-        #                 "path": HexBytes(
-        #                     "0xda31d0d1bc934fc34f7189e38a413ca0a5e8b44f002710c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4dac17f958d2ee523a2206206994597c13d831ec7"
-        #                 ),
-        #                 "recipient": "0xd7452CE7652f353c150ddd2427B6680052467d3d",
-        #                 "deadline": 1707954771,
-        #                 "amountOut": 1384200000000000000000,
-        #                 "amountInMaximum": 1257174724,
-        #             },
-        #         },
-        #         router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     17471674,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x54534e3242c2b27ffe2eb32a3824a19c2060bd10cd82b6fe7aa02c43bd392f01",
-        #         tx_nonce=593,
-        #         tx_value=0,
-        #         tx_sender="0x2A373E63aa5e2aee150B9b311443674e3250ab3B",
-        #         func_name="multicall",
-        #         func_params={
-        #             "deadline": 1686667218,
-        #             "data": [
-        #                 HexBytes(
-        #                     "0x42712a67000000000000000000000000000000000000000000000000010a741a462780000000000000000000000000000000000000000000000000000004574b1913eede0000000000000000000000000000000000000000000000000000000000000080000000000000000000000000e73cb605b880565477640b55fd752282cd1878220000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000034d31446a522252270b89b09016296ec4c98e23d"
-        #                 ),
-        #             ],
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     17588171 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x7fdc920e5a8a1335ad97abe752e5421c3093b37d177cee333bd90e0ac1c78657",
-        #         tx_nonce=970,
-        #         tx_value=int(0.15 * 10**18),
-        #         tx_sender="0x68ecA53134299f4c6E099C6A50250C76C5fEfBe7",
-        #         func_name="multicall",
-        #         func_params={
-        #             "deadline": 1688082383,
-        #             "data": [
-        #                 HexBytes(
-        #                     "0x472b43f30000000000000000000000000000000000000000000000000214e8348c4f0000000000000000000000000000000000000000000000038c5566a92a2bc65d9f43000000000000000000000000000000000000000000000000000000000000008000000000000000000000000068eca53134299f4c6e099c6a50250c76c5fefbe70000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000005cd40aa65e0f1c3daf333fc334d2de93c1a399f2"
-        #                 ),
-        #             ],
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     18000000,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0xbdb36f71b3fc55b269414887210274ddef91479819a3e5e27c8b64793937ddd5",
-        #         tx_nonce=69,
-        #         tx_value=int(0.05 * 10**18),
-        #         tx_sender="0x68ecA53134299f4c6E099C6A50250C76C5fEfBe7",
-        #         func_name="multicall",
-        #         func_params={
-        #             "deadline": 99999999999999,
-        #             "data": [
-        #                 HexBytes(
-        #                     "0xac9650d800000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000001a45ae401dc00000000000000000000000000000000000000000000000000000000644b3a3c00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000e404e45aaf000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000f1b99e3e573a1a9c5e6b2ce818b617f0e664e86b0000000000000000000000000000000000000000000000000000000000000bb8000000000000000000000000997b9dbded32c79b15e2ba07fadfbc2f91da0a9d00000000000000000000000000000000000000000000000000b1a2bc2ec500000000000000000000000000000000000000000000000000000b0961da046e379f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-        #                 ),
-        #             ],
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     19195614 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x62ede4ae1a1a92d07f580c46f74565e5bf2af2a49e8030b1c80e3f120169128e",
-        #         tx_nonce=10473,
-        #         tx_value=int(0.696590690514831983 * 10**18),
-        #         tx_sender="0x9B228B4F71B3Bc7e4b478251f218060D7B70Dc25",
-        #         func_name="multicall",
-        #         func_params={
-        #             "deadline": 99999999999999,
-        #             "data": [
-        #                 HexBytes(
-        #                     "0xdb3e2198000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000413530a7beb9ff6c44e9e6c9001c93b785420c320000000000000000000000000000000000000000000000000000000000000bb80000000000000000000000009b228b4f71b3bc7e4b478251f218060d7b70dc250000000000000000000000000000000000000000000000000000000065c70fa70000000000000000000000000000000000000000000004a89f54ef0121c0000000000000000000000000000000000000000000000000000009aac98ad5fb0a6f0000000000000000000000000000000000000000000000000000000000000000"
-        #                 ),
-        #             ],
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     19195847 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x37709f0ea96b092fba26048e16a190d378dd9d5c2367fff0842ca5f42b3a9e8a",
-        #         tx_nonce=903,
-        #         tx_value=0,
-        #         tx_sender="0xaE8bCABeaC4acc3bBaf1799EaE07e1f2985B07D6",
-        #         func_name="multicall",
-        #         func_params={
-        #             "deadline": 1707547283,
-        #             "data": [
-        #                 HexBytes(
-        #                     "0x472b43f300000000000000000000000000000000000000000000000000001da17a434054000000000000000000000000000000000000000000000000017682063d9c0bcb00000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000200000000000000000000000044face2e310e543f6d85867eb06fb251e3bfe1fc000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
-        #                 ),
-        #                 HexBytes(
-        #                     "0x49404b7c000000000000000000000000000000000000000000000000017682063d9c0bcb000000000000000000000000ae8bcabeac4acc3bbaf1799eae07e1f2985b07d6"
-        #                 ),
-        #             ],
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     19199283 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x07eac30cb8d9d96faef41c4cd04397195a93bfc53729806626b76dbc5f0146c1",
-        #         tx_nonce=21347,
-        #         tx_value=0,
-        #         tx_sender="0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
-        #         func_name="exactInput",
-        #         func_params={
-        #             "params": {
-        #                 "path": HexBytes(
-        #                     "0x31e4efe290973ebe91b3a875a7994f650942d28f000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-        #                 ),
-        #                 "recipient": "0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
-        #                 "deadline": 99999999999999,
-        #                 "amountIn": 29738575235245025056471,
-        #                 "amountOutMinimum": 7579379036,
-        #             }
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     # duplicate of the above, but in 5-tuple format (Router01)
-        #     19199283 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x07eac30cb8d9d96faef41c4cd04397195a93bfc53729806626b76dbc5f0146c1",
-        #         tx_nonce=21347,
-        #         tx_value=0,
-        #         tx_sender="0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
-        #         func_name="exactInput",
-        #         func_params={
-        #             "params": (
-        #                 HexBytes(
-        #                     "0x31e4efe290973ebe91b3a875a7994f650942d28f000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-        #                 ),
-        #                 "0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
-        #                 99999999999999,
-        #                 29738575235245025056471,
-        #                 7579379036,
-        #             )
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     # duplicate of the above, but in 4-tuple format (Router02)
-        #     19199283 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x07eac30cb8d9d96faef41c4cd04397195a93bfc53729806626b76dbc5f0146c1",
-        #         tx_nonce=21347,
-        #         tx_value=0,
-        #         tx_sender="0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
-        #         func_name="exactInput",
-        #         func_params={
-        #             "params": (
-        #                 HexBytes(
-        #                     "0x31e4efe290973ebe91b3a875a7994f650942d28f000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-        #                 ),
-        #                 "0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
-        #                 29738575235245025056471,
-        #                 7579379036,
-        #             )
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     19199376 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0xaa74821d005281080966e29c3a93ad0f4cb36cb86fd1f08d11c0e560dce5d90a",
-        #         tx_nonce=110,
-        #         tx_value=0,
-        #         tx_sender="0xaF1F9Db296f6E0F144bc414EB748678d548fD320",
-        #         func_name="multicall",
-        #         func_params={
-        #             "deadline": 1707590171,
-        #             "data": [
-        #                 HexBytes(
-        #                     "0xb858183f00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000080000000000000000000000000af1f9db296f6e0f144bc414eb748678d548fd320000000000000000000000000000000000000000000000000000014bc89e6a0000000000000000000000000000000000000000000000000000000000092d3181100000000000000000000000000000000000000000000000000000000000000422b591e99afe9f32eaa6214f7b7629768c40eeb39000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000000000"
-        #                 ),
-        #             ],
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     19199448 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x7f93ec1914d4c4d5db9d69693bb452b0ea1e2635906e5ecb448e571ebe4f0786",
-        #         tx_nonce=49283,
-        #         tx_value=0,
-        #         tx_sender="0xb3382eC98b0C4453c6A81BD095D9696FC3C7eC46",
-        #         func_name="multicall",
-        #         func_params={
-        #             "deadline": 1707589785,
-        #             "data": [
-        #                 HexBytes(
-        #                     "0x04e45aaf0000000000000000000000002b591e99afe9f32eaa6214f7b7629768c40eeb39000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000000000000000000000000000000000000000000bb800000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000142983cc726b0000000000000000000000000000000000000000000000000cf4a03fa101cf910000000000000000000000000000000000000000000000000000000000000000"
-        #                 ),
-        #                 HexBytes(
-        #                     "0x49404b7c0000000000000000000000000000000000000000000000000cf4a03fa101cf91000000000000000000000000077d360f11d220e4d5d831430c81c26c9be7c4a4"
-        #                 ),
-        #             ],
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     19199470 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x9549021fb039810f8da32d210c32f12e1e688747e9155b81238f6b9b2b84c88d",
-        #         tx_nonce=1393,
-        #         tx_value=0,
-        #         tx_sender="0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
-        #         func_name="exactInputSingle",
-        #         func_params={
-        #             "params": {
-        #                 "tokenIn": "0x2B591E99AFE9F32EAA6214F7B7629768C40EEB39",
-        #                 "tokenOut": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        #                 "fee": 3000,
-        #                 "recipient": "0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
-        #                 "deadline": 1707589615,
-        #                 "amountIn": 38179275262415,
-        #                 "amountOutMinimum": 1631204831946501888,
-        #                 "sqrtPriceLimitX96": 0,
-        #             }
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     # duplicate of the above, but in 8-tuple format (Router01)
-        #     19199470 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x9549021fb039810f8da32d210c32f12e1e688747e9155b81238f6b9b2b84c88d",
-        #         tx_nonce=1393,
-        #         tx_value=0,
-        #         tx_sender="0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
-        #         func_name="exactInputSingle",
-        #         func_params={
-        #             "params": (
-        #                 "0x2B591E99AFE9F32EAA6214F7B7629768C40EEB39",
-        #                 "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        #                 3000,
-        #                 "0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
-        #                 1707589615,
-        #                 38179275262415,
-        #                 1631204831946501888,
-        #                 0,
-        #             )
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     # duplicate of the above, but in 7-tuple format (Router02)
-        #     19199470 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x9549021fb039810f8da32d210c32f12e1e688747e9155b81238f6b9b2b84c88d",
-        #         tx_nonce=1393,
-        #         tx_value=0,
-        #         tx_sender="0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
-        #         func_name="exactInputSingle",
-        #         func_params={
-        #             "params": (
-        #                 "0x2B591E99AFE9F32EAA6214F7B7629768C40EEB39",
-        #                 "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        #                 3000,
-        #                 "0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
-        #                 38179275262415,
-        #                 1631204831946501888,
-        #                 0,
-        #             )
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     19211846 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x1b3b1470a6fb67d4032fecab43f932c171a25a0079388b7b3b664ffc8141b1e5",
-        #         tx_nonce=13251,
-        #         tx_value=0,
-        #         tx_sender="0x80C1969588bD9a017190ff4ed669e4e4b70e7768",
-        #         func_name="multicall",
-        #         func_params={
-        #             "deadline": 1707741498,
-        #             "data": [
-        #                 HexBytes(
-        #                     "0x472b43f30000000000000000000000000000000000000000000000000e92596fd62900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000026c8afbbfe1ebaca03c2bb082e69d0476bffe099"
-        #                 ),
-        #                 HexBytes(
-        #                     "0x472b43f30000000000000000000000000000000000000000000000000214e8348c4f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000003000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb4800000000000000000000000026c8afbbfe1ebaca03c2bb082e69d0476bffe099"
-        #                 ),
-        #                 HexBytes(
-        #                     "0x472b43f3000000000000000000000000000000000000000000000000010a741a462780000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000003000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec700000000000000000000000026c8afbbfe1ebaca03c2bb082e69d0476bffe099"
-        #                 ),
-        #                 HexBytes(
-        #                     "0xb858183f000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000031f5c4ed276800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000042c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000bb8dac17f958d2ee523a2206206994597c13d831ec700271026c8afbbfe1ebaca03c2bb082e69d0476bffe099000000000000000000000000000000000000000000000000000000000000"
-        #                 ),
-        #                 HexBytes(
-        #                     "0xdf2ab5bb00000000000000000000000026c8afbbfe1ebaca03c2bb082e69d0476bffe0990000000000000000000000000000000000000000000000e67a857849c4cd223f0000000000000000000000004400b633e90947c59903759e2121abcd83ddfa22"
-        #                 ),
-        #             ],
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
-        # (
-        #     19229227 - 1,
-        #     dict(
-        #         chain_id=1,
-        #         tx_hash="0x68d27a8dbbf74d1cbead370da978c68e92a7f698107f7cb179eb82d82aeaf5bd",
-        #         tx_nonce=38,
-        #         tx_value=0,
-        #         tx_sender="0x43a2241335584c46b5a3C75CF9895c92c0AED74B",
-        #         func_name="multicall",
-        #         func_params={
-        #             "deadline": 1707952175,
-        #             "data": [
-        #                 HexBytes(
-        #                     "0x04e45aaf000000000000000000000000f9ca9523e5b5a42c3018c62b084db8543478c400000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000000000000000000000000000000000000000000bb80000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000002a5a058fc295ed00000000000000000000000000000000000000000000000000000022a867bfd4dcd2540000000000000000000000000000000000000000000000000000000000000000"
-        #                 ),
-        #                 HexBytes(
-        #                     "0x9b2c0a3700000000000000000000000000000000000000000000000022a867bfd4dcd25400000000000000000000000043a2241335584c46b5a3c75cf9895c92c0aed74b0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000d62ba193d0c0c556d4d37dbbc5e431330471a557"
-        #                 ),
-        #             ],
-        #         },
-        #         router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
-        #     ),
-        #     None,
-        # ),
+        (
+            17560200,
+            dict(
+                chain_id=1,
+                tx_hash="0x44391e7f2ba292cb4ff42d33b3cff859c93a9ebf0e3ed7120d27b144d3787b4f",
+                tx_nonce=57,
+                tx_value=0,
+                tx_sender="0x42ED7246690EA1429e887CC246C460F35315a72b",
+                func_name="exactOutputSingle",
+                func_params={
+                    "params": {
+                        "tokenIn": "0x6E975115250B05C828ecb8edeDb091975Fc20a5d",
+                        "tokenOut": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                        "fee": 500,
+                        "recipient": "0x42ED7246690EA1429e887CC246C460F35315a72b",
+                        "deadline": 1687744791,
+                        "amountOut": 692000000000000000,
+                        "amountInMaximum": 2695875027951196591488,
+                        "sqrtPriceLimitX96": 0,
+                    }
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
+            # duplicate of the above, but in 8-tuple format (Router01)
+            17560200,
+            dict(
+                chain_id=1,
+                tx_hash="0x44391e7f2ba292cb4ff42d33b3cff859c93a9ebf0e3ed7120d27b144d3787b4f",
+                tx_nonce=57,
+                tx_value=0,
+                tx_sender="0x42ED7246690EA1429e887CC246C460F35315a72b",
+                func_name="exactOutputSingle",
+                func_params={
+                    "params": (
+                        "0x6E975115250B05C828ecb8edeDb091975Fc20a5d",
+                        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                        500,
+                        "0x42ED7246690EA1429e887CC246C460F35315a72b",
+                        1687744791,
+                        692000000000000000,
+                        2695875027951196591488,
+                        0,
+                    ),
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
+            # duplicate of the above, but in 7-tuple format (Router02)
+            17560200,
+            dict(
+                chain_id=1,
+                tx_hash="0x44391e7f2ba292cb4ff42d33b3cff859c93a9ebf0e3ed7120d27b144d3787b4f",
+                tx_nonce=57,
+                tx_value=0,
+                tx_sender="0x42ED7246690EA1429e887CC246C460F35315a72b",
+                func_name="exactOutputSingle",
+                func_params={
+                    "params": (
+                        "0x6E975115250B05C828ecb8edeDb091975Fc20a5d",
+                        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                        500,
+                        "0x42ED7246690EA1429e887CC246C460F35315a72b",
+                        692000000000000000,
+                        2695875027951196591488,
+                        0,
+                    ),
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
+            19195876 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x0492ef965901b7bc9c1b9d02868ea3e642f84a399f4d0179b006088cd2942d99",
+                tx_nonce=672,
+                tx_value=0,
+                tx_sender="0xff46Bc0A888233028915b6Ce84d6209092Ba9b58",
+                func_name="multicall",
+                func_params={
+                    "data": [
+                        HexBytes(
+                            "0x414bf38900000000000000000000000073576a927cd93a578a9dfd61c75671d97c779da7000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000000000000000000000000000000000000000271000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000065c71bfb00000000000000000000000000000000000000000000000148c9793ff2b8b0b100000000000000000000000000000000000000000000000011fca96ba7d8d08c0000000000000000000000000000000000000000000000000000000000000000"
+                        ),
+                        HexBytes(
+                            "0x49404b7c00000000000000000000000000000000000000000000000011fca96ba7d8d08c000000000000000000000000ff46bc0a888233028915b6ce84d6209092ba9b58"
+                        ),
+                    ],
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
+            19195864 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0xf684531981c2169c168249db3a0e0ae92c8763d19bc7f01a40e4d42997e1b62c",
+                tx_nonce=3424,
+                tx_value=int(0.2743754838560736 * 10**18),
+                tx_sender="0xfbe6Ed1942B03eF4fBa780890550dB1F0c43Bd32",
+                func_name="multicall",
+                func_params={
+                    "deadline": 1686667218,
+                    "data": [
+                        HexBytes(
+                            "0xf28c0498000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000fbe6ed1942b03ef4fba780890550db1f0c43bd320000000000000000000000000000000000000000000000000000000065c7190a0000000000000000000000000000000000000000000000000000000028eface000000000000000000000000000000000000000000000000003cec70c82513380000000000000000000000000000000000000000000000000000000000000002ba0b86991c6218b36c1d19d4a2e9eb0ce3606eb480001f4c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000000000000000000000"
+                        ),
+                        HexBytes("0x12210e8a"),
+                    ],
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
+            19200547 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x0348df6b2a08e73d356774a005c952dd6fa5c5403f34106c10d27d1b4aca56e7",
+                tx_nonce=1323,
+                tx_value=0,
+                tx_sender="0xd7452CE7652f353c150ddd2427B6680052467d3d",
+                func_name="exactOutput",
+                func_params={
+                    "params": {
+                        "path": HexBytes(
+                            "0xda31d0d1bc934fc34f7189e38a413ca0a5e8b44f002710c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4dac17f958d2ee523a2206206994597c13d831ec7"
+                        ),
+                        "recipient": "0xd7452CE7652f353c150ddd2427B6680052467d3d",
+                        "deadline": 1707603210,
+                        "amountOut": 599620000000000000000,
+                        "amountInMaximum": 537159816,
+                    },
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
+            19231984 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0xf9b1a43c34c400090cf695121b4b060324ea520aad2e0fee67365c5c462aacd2",
+                tx_nonce=2490,
+                tx_value=0,
+                tx_sender="0xf9b306b5Ef6Be6c7E93d7Daffa4a806E3015c58A",
+                func_name="exactOutput",
+                func_params={
+                    "params": (
+                        HexBytes(
+                            "0x3c3a81e81dc49a522a592e7622a7e711c06bf354000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+                        ),
+                        "0xf9b306b5Ef6Be6c7E93d7Daffa4a806E3015c58A",
+                        1707983833,
+                        20000000000000000000000,
+                        5685474000000000000,
+                    ),
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
+            # same as above, but in 4-tuple format (Router02)
+            19231984 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0xf9b1a43c34c400090cf695121b4b060324ea520aad2e0fee67365c5c462aacd2",
+                tx_nonce=2490,
+                tx_value=0,
+                tx_sender="0xf9b306b5Ef6Be6c7E93d7Daffa4a806E3015c58A",
+                func_name="exactOutput",
+                func_params={
+                    "params": (
+                        HexBytes(
+                            "0x3c3a81e81dc49a522a592e7622a7e711c06bf354000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+                        ),
+                        "0xf9b306b5Ef6Be6c7E93d7Daffa4a806E3015c58A",
+                        20000000000000000000000,
+                        5685474000000000000,
+                    ),
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
+            19229539 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x91f6955f167d8e79af01c4b1a0cddf714933075d750a66043f67348e6f926974",
+                tx_nonce=1408,
+                tx_value=0,
+                tx_sender="0xd7452CE7652f353c150ddd2427B6680052467d3d",
+                func_name="exactOutput",
+                func_params={
+                    "params": {
+                        "path": HexBytes(
+                            "0xda31d0d1bc934fc34f7189e38a413ca0a5e8b44f002710c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4dac17f958d2ee523a2206206994597c13d831ec7"
+                        ),
+                        "recipient": "0xd7452CE7652f353c150ddd2427B6680052467d3d",
+                        "deadline": 1707954771,
+                        "amountOut": 1384200000000000000000,
+                        "amountInMaximum": 1257174724,
+                    },
+                },
+                router_address="0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            ),
+            None,
+        ),
+        (
+            17471674,
+            dict(
+                chain_id=1,
+                tx_hash="0x54534e3242c2b27ffe2eb32a3824a19c2060bd10cd82b6fe7aa02c43bd392f01",
+                tx_nonce=593,
+                tx_value=0,
+                tx_sender="0x2A373E63aa5e2aee150B9b311443674e3250ab3B",
+                func_name="multicall",
+                func_params={
+                    "deadline": 1686667218,
+                    "data": [
+                        HexBytes(
+                            "0x42712a67000000000000000000000000000000000000000000000000010a741a462780000000000000000000000000000000000000000000000000000004574b1913eede0000000000000000000000000000000000000000000000000000000000000080000000000000000000000000e73cb605b880565477640b55fd752282cd1878220000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000034d31446a522252270b89b09016296ec4c98e23d"
+                        ),
+                    ],
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            17588171 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x7fdc920e5a8a1335ad97abe752e5421c3093b37d177cee333bd90e0ac1c78657",
+                tx_nonce=970,
+                tx_value=int(0.15 * 10**18),
+                tx_sender="0x68ecA53134299f4c6E099C6A50250C76C5fEfBe7",
+                func_name="multicall",
+                func_params={
+                    "deadline": 1688082383,
+                    "data": [
+                        HexBytes(
+                            "0x472b43f30000000000000000000000000000000000000000000000000214e8348c4f0000000000000000000000000000000000000000000000038c5566a92a2bc65d9f43000000000000000000000000000000000000000000000000000000000000008000000000000000000000000068eca53134299f4c6e099c6a50250c76c5fefbe70000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000005cd40aa65e0f1c3daf333fc334d2de93c1a399f2"
+                        ),
+                    ],
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            18000000,
+            dict(
+                chain_id=1,
+                tx_hash="0xbdb36f71b3fc55b269414887210274ddef91479819a3e5e27c8b64793937ddd5",
+                tx_nonce=69,
+                tx_value=int(0.05 * 10**18),
+                tx_sender="0x68ecA53134299f4c6E099C6A50250C76C5fEfBe7",
+                func_name="multicall",
+                func_params={
+                    "deadline": 99999999999999,
+                    "data": [
+                        HexBytes(
+                            "0xac9650d800000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000001a45ae401dc00000000000000000000000000000000000000000000000000000000644b3a3c00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000e404e45aaf000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000f1b99e3e573a1a9c5e6b2ce818b617f0e664e86b0000000000000000000000000000000000000000000000000000000000000bb8000000000000000000000000997b9dbded32c79b15e2ba07fadfbc2f91da0a9d00000000000000000000000000000000000000000000000000b1a2bc2ec500000000000000000000000000000000000000000000000000000b0961da046e379f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                        ),
+                    ],
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            19195614 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x62ede4ae1a1a92d07f580c46f74565e5bf2af2a49e8030b1c80e3f120169128e",
+                tx_nonce=10473,
+                tx_value=int(0.696590690514831983 * 10**18),
+                tx_sender="0x9B228B4F71B3Bc7e4b478251f218060D7B70Dc25",
+                func_name="multicall",
+                func_params={
+                    "deadline": 99999999999999,
+                    "data": [
+                        HexBytes(
+                            "0xdb3e2198000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000413530a7beb9ff6c44e9e6c9001c93b785420c320000000000000000000000000000000000000000000000000000000000000bb80000000000000000000000009b228b4f71b3bc7e4b478251f218060d7b70dc250000000000000000000000000000000000000000000000000000000065c70fa70000000000000000000000000000000000000000000004a89f54ef0121c0000000000000000000000000000000000000000000000000000009aac98ad5fb0a6f0000000000000000000000000000000000000000000000000000000000000000"
+                        ),
+                    ],
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            19195847 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x37709f0ea96b092fba26048e16a190d378dd9d5c2367fff0842ca5f42b3a9e8a",
+                tx_nonce=903,
+                tx_value=0,
+                tx_sender="0xaE8bCABeaC4acc3bBaf1799EaE07e1f2985B07D6",
+                func_name="multicall",
+                func_params={
+                    "deadline": 1707547283,
+                    "data": [
+                        HexBytes(
+                            "0x472b43f300000000000000000000000000000000000000000000000000001da17a434054000000000000000000000000000000000000000000000000017682063d9c0bcb00000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000200000000000000000000000044face2e310e543f6d85867eb06fb251e3bfe1fc000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+                        ),
+                        HexBytes(
+                            "0x49404b7c000000000000000000000000000000000000000000000000017682063d9c0bcb000000000000000000000000ae8bcabeac4acc3bbaf1799eae07e1f2985b07d6"
+                        ),
+                    ],
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            19199283 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x07eac30cb8d9d96faef41c4cd04397195a93bfc53729806626b76dbc5f0146c1",
+                tx_nonce=21347,
+                tx_value=0,
+                tx_sender="0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
+                func_name="exactInput",
+                func_params={
+                    "params": {
+                        "path": HexBytes(
+                            "0x31e4efe290973ebe91b3a875a7994f650942d28f000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                        ),
+                        "recipient": "0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
+                        "deadline": 99999999999999,
+                        "amountIn": 29738575235245025056471,
+                        "amountOutMinimum": 7579379036,
+                    }
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            # duplicate of the above, but in 5-tuple format (Router01)
+            19199283 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x07eac30cb8d9d96faef41c4cd04397195a93bfc53729806626b76dbc5f0146c1",
+                tx_nonce=21347,
+                tx_value=0,
+                tx_sender="0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
+                func_name="exactInput",
+                func_params={
+                    "params": (
+                        HexBytes(
+                            "0x31e4efe290973ebe91b3a875a7994f650942d28f000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                        ),
+                        "0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
+                        99999999999999,
+                        29738575235245025056471,
+                        7579379036,
+                    )
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            # duplicate of the above, but in 4-tuple format (Router02)
+            19199283 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x07eac30cb8d9d96faef41c4cd04397195a93bfc53729806626b76dbc5f0146c1",
+                tx_nonce=21347,
+                tx_value=0,
+                tx_sender="0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
+                func_name="exactInput",
+                func_params={
+                    "params": (
+                        HexBytes(
+                            "0x31e4efe290973ebe91b3a875a7994f650942d28f000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                        ),
+                        "0x4cb6F0ef0Eeb503f8065AF1A6E6D5DD46197d3d9",
+                        29738575235245025056471,
+                        7579379036,
+                    )
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            19199376 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0xaa74821d005281080966e29c3a93ad0f4cb36cb86fd1f08d11c0e560dce5d90a",
+                tx_nonce=110,
+                tx_value=0,
+                tx_sender="0xaF1F9Db296f6E0F144bc414EB748678d548fD320",
+                func_name="multicall",
+                func_params={
+                    "deadline": 1707590171,
+                    "data": [
+                        HexBytes(
+                            "0xb858183f00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000080000000000000000000000000af1f9db296f6e0f144bc414eb748678d548fd320000000000000000000000000000000000000000000000000000014bc89e6a0000000000000000000000000000000000000000000000000000000000092d3181100000000000000000000000000000000000000000000000000000000000000422b591e99afe9f32eaa6214f7b7629768c40eeb39000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000000000"
+                        ),
+                    ],
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            19199448 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x7f93ec1914d4c4d5db9d69693bb452b0ea1e2635906e5ecb448e571ebe4f0786",
+                tx_nonce=49283,
+                tx_value=0,
+                tx_sender="0xb3382eC98b0C4453c6A81BD095D9696FC3C7eC46",
+                func_name="multicall",
+                func_params={
+                    "deadline": 1707589785,
+                    "data": [
+                        HexBytes(
+                            "0x04e45aaf0000000000000000000000002b591e99afe9f32eaa6214f7b7629768c40eeb39000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000000000000000000000000000000000000000000bb800000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000142983cc726b0000000000000000000000000000000000000000000000000cf4a03fa101cf910000000000000000000000000000000000000000000000000000000000000000"
+                        ),
+                        HexBytes(
+                            "0x49404b7c0000000000000000000000000000000000000000000000000cf4a03fa101cf91000000000000000000000000077d360f11d220e4d5d831430c81c26c9be7c4a4"
+                        ),
+                    ],
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            19199470 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x9549021fb039810f8da32d210c32f12e1e688747e9155b81238f6b9b2b84c88d",
+                tx_nonce=1393,
+                tx_value=0,
+                tx_sender="0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
+                func_name="exactInputSingle",
+                func_params={
+                    "params": {
+                        "tokenIn": "0x2B591E99AFE9F32EAA6214F7B7629768C40EEB39",
+                        "tokenOut": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                        "fee": 3000,
+                        "recipient": "0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
+                        "deadline": 1707589615,
+                        "amountIn": 38179275262415,
+                        "amountOutMinimum": 1631204831946501888,
+                        "sqrtPriceLimitX96": 0,
+                    }
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            # duplicate of the above, but in 8-tuple format (Router01)
+            19199470 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x9549021fb039810f8da32d210c32f12e1e688747e9155b81238f6b9b2b84c88d",
+                tx_nonce=1393,
+                tx_value=0,
+                tx_sender="0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
+                func_name="exactInputSingle",
+                func_params={
+                    "params": (
+                        "0x2B591E99AFE9F32EAA6214F7B7629768C40EEB39",
+                        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                        3000,
+                        "0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
+                        1707589615,
+                        38179275262415,
+                        1631204831946501888,
+                        0,
+                    )
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            # duplicate of the above, but in 7-tuple format (Router02)
+            19199470 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x9549021fb039810f8da32d210c32f12e1e688747e9155b81238f6b9b2b84c88d",
+                tx_nonce=1393,
+                tx_value=0,
+                tx_sender="0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
+                func_name="exactInputSingle",
+                func_params={
+                    "params": (
+                        "0x2B591E99AFE9F32EAA6214F7B7629768C40EEB39",
+                        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                        3000,
+                        "0x86A79Be5CB85cC5DE48bB953cf0B1a01a40d8732",
+                        38179275262415,
+                        1631204831946501888,
+                        0,
+                    )
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            19211846 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x1b3b1470a6fb67d4032fecab43f932c171a25a0079388b7b3b664ffc8141b1e5",
+                tx_nonce=13251,
+                tx_value=0,
+                tx_sender="0x80C1969588bD9a017190ff4ed669e4e4b70e7768",
+                func_name="multicall",
+                func_params={
+                    "deadline": 1707741498,
+                    "data": [
+                        HexBytes(
+                            "0x472b43f30000000000000000000000000000000000000000000000000e92596fd62900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000026c8afbbfe1ebaca03c2bb082e69d0476bffe099"
+                        ),
+                        HexBytes(
+                            "0x472b43f30000000000000000000000000000000000000000000000000214e8348c4f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000003000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb4800000000000000000000000026c8afbbfe1ebaca03c2bb082e69d0476bffe099"
+                        ),
+                        HexBytes(
+                            "0x472b43f3000000000000000000000000000000000000000000000000010a741a462780000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000003000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec700000000000000000000000026c8afbbfe1ebaca03c2bb082e69d0476bffe099"
+                        ),
+                        HexBytes(
+                            "0xb858183f000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000031f5c4ed276800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000042c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000bb8dac17f958d2ee523a2206206994597c13d831ec700271026c8afbbfe1ebaca03c2bb082e69d0476bffe099000000000000000000000000000000000000000000000000000000000000"
+                        ),
+                        HexBytes(
+                            "0xdf2ab5bb00000000000000000000000026c8afbbfe1ebaca03c2bb082e69d0476bffe0990000000000000000000000000000000000000000000000e67a857849c4cd223f0000000000000000000000004400b633e90947c59903759e2121abcd83ddfa22"
+                        ),
+                    ],
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
+        (
+            19229227 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0x68d27a8dbbf74d1cbead370da978c68e92a7f698107f7cb179eb82d82aeaf5bd",
+                tx_nonce=38,
+                tx_value=0,
+                tx_sender="0x43a2241335584c46b5a3C75CF9895c92c0AED74B",
+                func_name="multicall",
+                func_params={
+                    "deadline": 1707952175,
+                    "data": [
+                        HexBytes(
+                            "0x04e45aaf000000000000000000000000f9ca9523e5b5a42c3018c62b084db8543478c400000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000000000000000000000000000000000000000000bb80000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000002a5a058fc295ed00000000000000000000000000000000000000000000000000000022a867bfd4dcd2540000000000000000000000000000000000000000000000000000000000000000"
+                        ),
+                        HexBytes(
+                            "0x9b2c0a3700000000000000000000000000000000000000000000000022a867bfd4dcd25400000000000000000000000043a2241335584c46b5a3c75cf9895c92c0aed74b0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000d62ba193d0c0c556d4d37dbbc5e431330471a557"
+                        ),
+                    ],
+                },
+                router_address="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+            ),
+            None,
+        ),
         (
             19673445 - 1,
             dict(
