@@ -53,21 +53,11 @@ def ethereum_full_node_web3() -> web3.Web3:
     return w3
 
 
-# Before every test, reset the degenbot web3 object to use a default node
-@pytest.fixture(scope="function", autouse=True)
-def initialize_degenbot_with_default_node(ethereum_full_node_web3):
-    degenbot.config.set_web3(ethereum_full_node_web3)
-
-
-@pytest.fixture(scope="function", autouse=True)
-def set_degenbot_logging():
-    degenbot.logging.logger.setLevel(logging.DEBUG)
-
-
-@pytest.fixture(scope="function", autouse=True)
-def clear_degenbot_state() -> None:
-    # Clear shared state dictionaries prior to each new test (activated on every test by autouse=True).
-    # These dictionaries store module-level state, which will corrupt sequential tests if not reset
+# After each test, clear shared state dictionaries
+@pytest.fixture(autouse=True)
+def initialize_and_reset_after_each_test(ethereum_full_node_web3):
+    # degenbot.config.set_web3(ethereum_full_node_web3)
+    yield
     degenbot.registry.all_pools._all_pools.clear()
     degenbot.registry.all_tokens._all_tokens.clear()
     degenbot.manager.token_manager.Erc20TokenHelperManager._state.clear()
@@ -75,25 +65,30 @@ def clear_degenbot_state() -> None:
     V3LiquidityPool._lens_contracts.clear()
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(autouse=True)
+def set_degenbot_logging():
+    degenbot.logging.logger.setLevel(logging.DEBUG)
+
+
+@pytest.fixture()
 def fork_mainnet_archive() -> AnvilFork:
     fork = AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI)
     return fork
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture()
 def fork_mainnet() -> AnvilFork:
     fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
     return fork
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture()
 def fork_arbitrum() -> AnvilFork:
     fork = AnvilFork(fork_url=ARBITRUM_FULL_NODE_HTTP_URI)
     return fork
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture()
 def fork_arbitrum_archive() -> AnvilFork:
     fork = AnvilFork(fork_url=ARBITRUM_ARCHIVE_NODE_HTTP_URI)
     return fork

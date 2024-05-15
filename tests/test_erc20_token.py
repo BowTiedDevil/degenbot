@@ -11,12 +11,14 @@ WBTC_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 
 
 @pytest.fixture
-def wbtc():
+def wbtc(ethereum_full_node_web3):
+    set_web3(ethereum_full_node_web3)
     return Erc20Token(WBTC_ADDRESS)
 
 
 @pytest.fixture
-def weth():
+def weth(ethereum_full_node_web3):
+    set_web3(ethereum_full_node_web3)
     return Erc20Token(WETH_ADDRESS)
 
 
@@ -88,7 +90,7 @@ def test_erc20token_functions(ethereum_full_node_web3):
     weth.update_price()
 
 
-def test_ether_placeholder(fork_mainnet_archive: AnvilFork):
-    set_web3(fork_mainnet_archive.w3)
+def test_ether_placeholder(ethereum_full_node_web3):
+    set_web3(ethereum_full_node_web3)
     ether = EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE()
     ether.get_balance(VITALIK_ADDRESS)

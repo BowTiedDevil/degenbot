@@ -73,17 +73,20 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool(
 
 
 @pytest.fixture
-def dai() -> Erc20Token:
+def dai(ethereum_full_node_web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20Token(DAI_CONTRACT_ADDRESS)
 
 
 @pytest.fixture
-def wbtc() -> Erc20Token:
+def wbtc(ethereum_full_node_web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20Token(WBTC_CONTRACT_ADDRESS)
 
 
 @pytest.fixture
-def weth() -> Erc20Token:
+def weth(ethereum_full_node_web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20Token(WETH_CONTRACT_ADDRESS)
 
 
@@ -93,7 +96,11 @@ def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> LiquidityPool:
     return LiquidityPool(UNISWAP_V2_WBTC_WETH_POOL)
 
 
-def test_create_pool(ethereum_full_node_web3: web3.Web3, wbtc: Erc20Token, weth: Erc20Token):
+def test_create_pool(
+    ethereum_full_node_web3: web3.Web3,
+    wbtc: Erc20Token,
+    weth: Erc20Token,
+):
     set_web3(ethereum_full_node_web3)
     LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
@@ -240,15 +247,17 @@ def test_pickle_camelot_v2_pool(fork_arbitrum: AnvilFork):
 
 
 def test_create_empty_pool(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool,
     ethereum_full_node_web3: web3.Web3,
 ):
-    _pool: LiquidityPool = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000
     set_web3(ethereum_full_node_web3)
 
     LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
-        tokens=[_pool.token0, _pool.token1],
+        tokens=[
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1,
+        ],
         name="WBTC-WETH (V2, 0.30%)",
         factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
@@ -270,7 +279,10 @@ def test_create_empty_pool(
     with pytest.raises(ValueError):
         LiquidityPool(
             address=UNISWAP_V2_WBTC_WETH_POOL,
-            tokens=[_pool.token0, _pool.token1],
+            tokens=[
+                ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
+                ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1,
+            ],
             name="WBTC-WETH (V2, 0.30%)",
             # factory_address=UNISWAPV2_FACTORY_ADDRESS,
             factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
@@ -281,7 +293,10 @@ def test_create_empty_pool(
     with pytest.raises(ValueError):
         LiquidityPool(
             address=UNISWAP_V2_WBTC_WETH_POOL,
-            tokens=[_pool.token0, _pool.token1],
+            tokens=[
+                ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
+                ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1,
+            ],
             name="WBTC-WETH (V2, 0.30%)",
             factory_address=UNISWAPV2_FACTORY,
             # factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
@@ -296,7 +311,10 @@ def test_create_empty_pool(
     ):
         LiquidityPool(
             address=UNISWAP_V2_WBTC_WETH_POOL,
-            tokens=[_pool.token0, _pool.token1],
+            tokens=[
+                ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
+                ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1,
+            ],
             name="WBTC-WETH (V2, 0.30%)",
             factory_address=UNISWAPV2_FACTORY,
             factory_init_hash=bad_init_hash,
@@ -306,7 +324,10 @@ def test_create_empty_pool(
     # Create with non-standard fee
     LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
-        tokens=[_pool.token0, _pool.token1],
+        tokens=[
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1,
+        ],
         name="WBTC-WETH (V2, 0.30%)",
         factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
@@ -318,7 +339,10 @@ def test_create_empty_pool(
     with pytest.raises(TypeError, match="LP fee was not correctly passed!"):
         LiquidityPool(
             address=UNISWAP_V2_WBTC_WETH_POOL,
-            tokens=[_pool.token0, _pool.token1],
+            tokens=[
+                ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
+                ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1,
+            ],
             name="WBTC-WETH (V2, 0.30%)",
             factory_address=UNISWAPV2_FACTORY,
             factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
@@ -330,7 +354,10 @@ def test_create_empty_pool(
     with pytest.raises(TypeError, match="LP fee was not correctly passed!"):
         LiquidityPool(
             address=UNISWAP_V2_WBTC_WETH_POOL,
-            tokens=[_pool.token0, _pool.token1],
+            tokens=[
+                ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
+                ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1,
+            ],
             name="WBTC-WETH (V2, 0.30%)",
             factory_address=UNISWAPV2_FACTORY,
             factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
@@ -341,7 +368,10 @@ def test_create_empty_pool(
     # Create split-fee pool of differing values
     lp = LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
-        tokens=[_pool.token0, _pool.token1],
+        tokens=[
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1,
+        ],
         factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
         fee=(Fraction(3, 1000), Fraction(5, 1000)),
@@ -353,7 +383,10 @@ def test_create_empty_pool(
     # Create split-fee pool of equal values
     lp = LiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
-        tokens=[_pool.token0, _pool.token1],
+        tokens=[
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1,
+        ],
         factory_address=UNISWAPV2_FACTORY,
         factory_init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
         fee=(Fraction(6, 1000), Fraction(6, 1000)),
@@ -364,16 +397,14 @@ def test_create_empty_pool(
 
 
 def test_dunder_methods(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool,
 ):
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.__str__()
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.__hash__()
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool.__str__()
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool.__hash__()
 
 
-def test_pickle_pool(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
-):
-    pickle.dumps(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000)
+def test_pickle_pool(ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool):
+    pickle.dumps(ethereum_uniswap_v2_wbtc_weth_liquiditypool)
 
 
 def test_calculate_tokens_out_from_ratio_out(fork_mainnet_archive: AnvilFork):

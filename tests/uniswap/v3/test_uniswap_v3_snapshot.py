@@ -9,13 +9,15 @@ from degenbot.uniswap.v3_dataclasses import (
 )
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from eth_utils.address import to_checksum_address
+from web3 import Web3
 
 EMPTY_SNAPSHOT_FILENAME = "tests/uniswap/v3/empty_v3_liquidity_snapshot.json"
 EMPTY_SNAPSHOT_BLOCK = 12_369_620  # Uniswap V3 factory was deployed on the next block, so use this as the initial zero state
 
 
 @pytest.fixture
-def zero_snapshot() -> UniswapV3LiquiditySnapshot:
+def empty_snapshot(ethereum_full_node_web3) -> UniswapV3LiquiditySnapshot:
+    set_web3(ethereum_full_node_web3)
     return UniswapV3LiquiditySnapshot(file=EMPTY_SNAPSHOT_FILENAME)
 
 
@@ -29,7 +31,8 @@ def first_250_blocks_snapshot(
     return snapshot
 
 
-def test_create_snapshot_from_file_path():
+def test_create_snapshot_from_file_path(ethereum_full_node_web3: Web3):
+    set_web3(ethereum_full_node_web3)
     UniswapV3LiquiditySnapshot(file=EMPTY_SNAPSHOT_FILENAME)
 
 
@@ -147,7 +150,7 @@ def test_get_new_liquidity_updates(
 
 
 def test_apply_update_to_snapshot(
-    zero_snapshot: UniswapV3LiquiditySnapshot,
+    empty_snapshot: UniswapV3LiquiditySnapshot,
     fork_mainnet_archive: AnvilFork,
 ):
     POOL_ADDRESS = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
@@ -174,24 +177,24 @@ def test_apply_update_to_snapshot(
         ),
         17: UniswapV3BitmapAtWord(bitmap=288230376155906048, block=12369846),
     }
-    zero_snapshot.update_snapshot(
+    empty_snapshot.update_snapshot(
         pool=POOL_ADDRESS,
         tick_data=tick_data,
         tick_bitmap=tick_bitmap,
     )
-    zero_snapshot.update_snapshot(
+    empty_snapshot.update_snapshot(
         pool=POOL_ADDRESS,
         tick_data=tick_data,
         tick_bitmap=tick_bitmap,
     )
 
-    assert zero_snapshot.get_tick_data(POOL_ADDRESS) is tick_data
-    assert zero_snapshot.get_tick_bitmap(POOL_ADDRESS) is tick_bitmap
+    assert empty_snapshot.get_tick_data(POOL_ADDRESS) is tick_data
+    assert empty_snapshot.get_tick_bitmap(POOL_ADDRESS) is tick_bitmap
 
     pool_manager = UniswapV3LiquidityPoolManager(
         factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
         chain_id=1,
-        snapshot=zero_snapshot,
+        snapshot=empty_snapshot,
     )
     pool = pool_manager.get_pool(POOL_ADDRESS)
     assert pool.tick_bitmap == tick_bitmap
