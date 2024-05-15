@@ -173,15 +173,11 @@ def test_base_registry_pools(fork_mainnet: AnvilFork):
     )
     pool_count = registry.functions.pool_count().call()
 
-    for pool_id in range(pool_count):
+    for i, pool_id in enumerate(range(pool_count)):
         pool_address = registry.functions.pool_list(pool_id).call()
-        # print(f"{pool_id}: {pool_address=}")
-        try:
-            lp = CurveStableswapPool(address=pool_address, silent=True)
-            _test_calculations(lp)
-        except Exception:
-            print(f"{pool_address=}")
-            raise
+        print(f"Testing registry pool {i}/{pool_count} @ {pool_address}")
+        lp = CurveStableswapPool(address=pool_address, silent=True)
+        _test_calculations(lp)
 
 
 def test_single_pool(
@@ -311,6 +307,7 @@ def test_factory_stableswap_pools(fork_mainnet: AnvilFork):
 
     for i, pool_id in enumerate(range(pool_count)):
         pool_address = stableswap_factory.functions.pool_list(pool_id).call()
+        print(f"Testing factory pool {i}/{pool_count} @ {pool_address}")
 
         try:
             lp = CurveStableswapPool(address=pool_address, silent=True)
