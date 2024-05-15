@@ -19,8 +19,9 @@ _SOCKET_READ_BUFFER_SIZE = 4096  # https://docs.python.org/3/library/socket.html
 
 class AnvilFork:
     """
-    Launch an Anvil fork via subprocess and provide various methods for
-    interacting with it via JSON-RPC over the built-in IPC socket.
+    Launch an Anvil fork as a separate process and expose methods for commonly-used RPC calls.
+
+    Provides a `Web3` connector to Anvil's IPC socket endpoint at the `.w3` attribute.
     """
 
     def __init__(
@@ -45,18 +46,14 @@ class AnvilFork:
         balance_overrides: Iterable[Tuple[HexAddress, int]] | None = None,
         bytecode_overrides: Iterable[Tuple[HexAddress, bytes]] | None = None,
     ):
-        if shutil.which("anvil") is None:  # pragma: no cover
-            raise Exception("Anvil is not installed or not accessible in the current path.")
-
         def get_free_port_number() -> int:
             with socket.socket() as sock:
                 sock.bind(("", 0))
                 _, port = sock.getsockname()
                 return cast(int, port)
 
-
-        if mining_mode == "interval":
-            logger.debug(f"Using 'interval' mining with {mining_interval}s block times.")
+        if shutil.which("anvil") is None:  # pragma: no cover
+            raise Exception("Anvil is not installed or not accessible in the current path.")
 
         self.port = port if port is not None else get_free_port_number()
 
@@ -199,6 +196,10 @@ class AnvilFork:
         response: Dict[Any, Any] = self._get_response()
         return response["accessList"]
 
+    def mine(self) -> None:
+        self._socket_request(method="evm_mine")
+        self._socket_response()
+
     def reset(
         self,
         fork_url: str | None = None,
@@ -219,10 +220,6 @@ class AnvilFork:
             self.block_number = block_number
         if fork_url:
             self.fork_url = fork_url
-
-    def mine(self) -> None:
-        self._send_request(method="evm_mine")
-        self._get_response()
 
     def return_to_snapshot(self, id: int) -> bool:
         if id < 0:
