@@ -33,6 +33,7 @@ class AnvilFork:
         chain_id: int | None = None,
         mining_mode: Literal["auto", "interval", "none"] = "auto",
         mining_interval: int = 12,
+        storage_caching: bool = True,
         base_fee: int | None = None,
         ipc_path: str | None = None,
         mnemonic: str = (
@@ -78,6 +79,8 @@ class AnvilFork:
             command.append(f"--chain-id={chain_id}")
         if base_fee:
             command.append(f"--base-fee={base_fee}")
+        if storage_caching is False:
+            command.append("--no-storage-caching")
         match mining_mode:
             case "auto":
                 pass
