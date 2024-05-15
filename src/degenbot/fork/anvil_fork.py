@@ -134,7 +134,7 @@ class AnvilFork:
         except Exception:
             pass
 
-    def _send_request(self, method: str, params: List[Any] | None = None) -> None:
+    def _socket_request(self, method: str, params: List[Any] | None = None) -> None:
         """
         Send a JSON-formatted request through the socket.
         """
@@ -155,7 +155,7 @@ class AnvilFork:
             ),
         )
 
-    def _get_response(self) -> Any:
+    def _socket_response(self) -> Any:
         """
         Read the response payload from socket and return the JSON-decoded result.
         """
@@ -189,11 +189,11 @@ class AnvilFork:
             if key in sanitized_tx and isinstance(sanitized_tx[key], int):
                 sanitized_tx[key] = hex(sanitized_tx[key])
 
-        self._send_request(
+        self._socket_request(
             method="eth_createAccessList",
             params=[sanitized_tx],
         )
-        response: Dict[Any, Any] = self._get_response()
+        response: Dict[Any, Any] = self._socket_response()
         return response["accessList"]
 
     def mine(self) -> None:
@@ -210,11 +210,11 @@ class AnvilFork:
             "blockNumber": block_number if block_number is not None else self.block_number,
         }
 
-        self._send_request(
+        self._socket_request(
             method="anvil_reset",
             params=[{"forking": forking_params}],
         )
-        self._get_response()
+        self._socket_response()
 
         if block_number:
             self.block_number = block_number
@@ -224,53 +224,53 @@ class AnvilFork:
     def return_to_snapshot(self, id: int) -> bool:
         if id < 0:
             raise ValueError("ID cannot be negative")
-        self._send_request(
+        self._socket_request(
             method="evm_revert",
             params=[id],
         )
-        return bool(self._get_response())
+        return bool(self._socket_response())
 
     def set_balance(self, address: str, balance: int) -> None:
         if not (0 <= balance <= MAX_UINT256):
             raise ValueError("Invalid balance, must be within range: 0 <= balance <= 2**256 - 1")
-        self._send_request(
+        self._socket_request(
             method="anvil_setBalance",
             params=[
                 to_checksum_address(address),
                 hex(balance),
             ],
         )
-        self._get_response()
-
-    def set_coinbase(self, address: str) -> None:
-        self._send_request(
-            method="anvil_setCoinbase",
-            params=[HexBytes(address).hex()],
-        )
-        self._get_response()
+        self._socket_response()
 
     def set_code(self, address: str, bytecode: bytes) -> None:
-        self._send_request(
+        self._socket_request(
             method="anvil_setCode",
             params=[
                 HexBytes(address).hex(),
                 HexBytes(bytecode).hex(),
             ],
         )
-        self._get_response()
+        self._socket_response()
+
+    def set_coinbase(self, address: str) -> None:
+        self._socket_request(
+            method="anvil_setCoinbase",
+            params=[HexBytes(address).hex()],
+        )
+        self._socket_response()
 
     def set_next_base_fee(self, fee: int) -> None:
         if not (0 <= fee <= MAX_UINT256):
             raise ValueError("Fee outside valid range 0 <= fee <= 2**256-1")
-        self._send_request(
+        self._socket_request(
             method="anvil_setNextBlockBaseFeePerGas",
             params=[hex(fee)],
         )
-        self._get_response()
+        self._socket_response()
         self.base_fee_next = fee
 
     def set_snapshot(self) -> int:
-        self._send_request(
+        self._socket_request(
             method="evm_snapshot",
         )
-        return int(self._get_response(), 16)
+        return int(self._socket_response(), 16)
