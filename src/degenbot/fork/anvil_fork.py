@@ -2,7 +2,7 @@ import os
 import shutil
 import socket
 import subprocess
-from typing import Any, Dict, Iterable, List, Tuple, cast
+from typing import Any, Dict, Iterable, List, Literal, Tuple, cast
 
 import ujson
 from eth_typing import HexAddress
@@ -12,6 +12,7 @@ from web3 import IPCProvider, Web3
 from web3.types import Middleware
 
 from ..constants import MAX_UINT256
+from ..logging import logger
 
 _SOCKET_READ_BUFFER_SIZE = 4096  # https://docs.python.org/3/library/socket.html#socket.socket.recv
 
@@ -30,6 +31,8 @@ class AnvilFork:
         gas_limit: int = 30_000_000,
         port: int | None = None,
         chain_id: int | None = None,
+        mining_mode: Literal["auto", "interval", "none"] = "auto",
+        mining_interval: int = 12,
         base_fee: int | None = None,
         ipc_path: str | None = None,
         mnemonic: str = (
@@ -49,6 +52,10 @@ class AnvilFork:
                 sock.bind(("", 0))
                 _, port = sock.getsockname()
                 return cast(int, port)
+
+
+        if mining_mode == "interval":
+            logger.debug(f"Using 'interval' mining with {mining_interval}s block times.")
 
         self.port = port if port is not None else get_free_port_number()
 
@@ -71,6 +78,16 @@ class AnvilFork:
             command.append(f"--chain-id={chain_id}")
         if base_fee:
             command.append(f"--base-fee={base_fee}")
+        match mining_mode:
+            case "auto":
+                pass
+            case "interval":
+                logger.debug(f"Using 'interval' mining with {mining_interval}s block times.")
+                command.append(f"--block-time={mining_interval}")
+            case "none":
+                command.append("--no-mining")
+            case _:
+                raise ValueError(f"Unknown mining mode '{mining_mode}'.")
 
         self._process = subprocess.Popen(command)
         self.fork_url = fork_url
