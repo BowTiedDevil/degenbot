@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 import pytest
 import ujson
 import web3.middleware
@@ -6,6 +8,7 @@ from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.fork.anvil_fork import AnvilFork
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
+from web3.providers.ipc import IPCProvider
 from web3.types import Wei
 
 from ..conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_FULL_NODE_HTTP_URI
@@ -130,6 +133,8 @@ def test_ipc_kwargs():
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
         ipc_provider_kwargs=dict(timeout=None),
     )
+    if TYPE_CHECKING:
+        assert isinstance(fork.w3.provider, IPCProvider)
     assert fork.w3.provider.timeout is None
 
 

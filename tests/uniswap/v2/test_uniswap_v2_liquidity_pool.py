@@ -169,7 +169,6 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_archive: AnvilFork):
     FORK_BLOCK = 153_759_000
     fork_arbitrum_archive.reset(block_number=FORK_BLOCK)
 
-    assert fork_arbitrum_archive.block_number == FORK_BLOCK
     assert fork_arbitrum_archive.w3.eth.get_block_number() == FORK_BLOCK
     set_web3(fork_arbitrum_archive.w3)
 
