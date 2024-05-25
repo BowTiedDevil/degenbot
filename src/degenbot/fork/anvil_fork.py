@@ -107,13 +107,9 @@ class AnvilFork:
         self.socket = socket.socket(socket.AF_UNIX)
         self.socket.connect(self.ipc_path)
 
-        self.block_number = fork_block if fork_block is not None else self.w3.eth.get_block_number()
-        self.base_fee = (
-            base_fee
-            if base_fee is not None
-            else self.w3.eth.get_block(self.block_number)["baseFeePerGas"]
+        self._initial_block_number = (
+            fork_block if fork_block is not None else self.w3.eth.get_block_number()
         )
-        self.base_fee_next: int | None = None
         self.chain_id = chain_id if chain_id is not None else self.w3.eth.chain_id
 
         if balance_overrides is not None:
@@ -208,7 +204,7 @@ class AnvilFork:
     ) -> None:
         forking_params: Dict[str, Any] = {
             "jsonRpcUrl": fork_url if fork_url is not None else self.fork_url,
-            "blockNumber": block_number if block_number is not None else self.block_number,
+            "blockNumber": block_number if block_number is not None else self._initial_block_number,
         }
 
         self._socket_request(
@@ -217,9 +213,7 @@ class AnvilFork:
         )
         self._socket_response()
 
-        if block_number:
-            self.block_number = block_number
-        if fork_url:
+        if fork_url is not None:
             self.fork_url = fork_url
 
     def return_to_snapshot(self, id: int) -> bool:
