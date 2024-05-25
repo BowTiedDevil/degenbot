@@ -86,6 +86,7 @@ class AnvilFork:
                 command.append(f"--block-time={mining_interval}")
             case "none":
                 command.append("--no-mining")
+                command.append("--order=fifo")
             case _:
                 raise ValueError(f"Unknown mining mode '{mining_mode}'.")
 
