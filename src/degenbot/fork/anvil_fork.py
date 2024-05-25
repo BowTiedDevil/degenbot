@@ -45,6 +45,7 @@ class AnvilFork:
         middlewares: List[Tuple[Middleware, int]] | None = None,
         balance_overrides: Iterable[Tuple[HexAddress, int]] | None = None,
         bytecode_overrides: Iterable[Tuple[HexAddress, bytes]] | None = None,
+        ipc_provider_kwargs: Dict[str, Any] | None = None,
     ):
         def get_free_port_number() -> int:
             with socket.socket() as sock:
@@ -95,7 +96,10 @@ class AnvilFork:
         self.http_url = f"http://localhost:{self.port}"
         self.ws_url = f"ws://localhost:{self.port}"
         self.ipc_path = ipc_path
-        self.w3 = Web3(IPCProvider(ipc_path))
+
+        if ipc_provider_kwargs is None:
+            ipc_provider_kwargs = dict()
+        self.w3 = Web3(IPCProvider(ipc_path=ipc_path, **ipc_provider_kwargs))
 
         if middlewares is not None:
             for middleware, layer in middlewares:
