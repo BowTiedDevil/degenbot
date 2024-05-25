@@ -201,6 +201,7 @@ class AnvilFork:
         self,
         fork_url: str | None = None,
         block_number: int | None = None,
+        base_fee: int | None = None,
     ) -> None:
         forking_params: Dict[str, Any] = {
             "jsonRpcUrl": fork_url if fork_url is not None else self.fork_url,
@@ -215,6 +216,8 @@ class AnvilFork:
 
         if fork_url is not None:
             self.fork_url = fork_url
+        if base_fee is not None:
+            self.set_next_base_fee(base_fee)
 
     def return_to_snapshot(self, id: int) -> bool:
         if id < 0:
