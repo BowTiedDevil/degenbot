@@ -104,6 +104,35 @@ def test_mine_and_reset(fork_mainnet_archive: AnvilFork):
     assert fork_mainnet_archive.w3.eth.get_block_number() == starting_block
 
 
+def test_set_next_block_base_fee(fork_mainnet_archive: AnvilFork):
+    BASE_FEE_OVERRIDE = 69 * 10**9
+
+    fork_mainnet_archive.set_next_base_fee(BASE_FEE_OVERRIDE)
+    fork_mainnet_archive.mine()
+    assert fork_mainnet_archive.w3.eth.get_block("latest")["baseFeePerGas"] == BASE_FEE_OVERRIDE
+
+
+def test_reset_and_set_next_block_base_fee(fork_mainnet_archive: AnvilFork):
+    BASE_FEE_OVERRIDE = 69 * 10**9
+
+    starting_block = fork_mainnet_archive.w3.eth.get_block_number()
+    fork_mainnet_archive.reset(block_number=starting_block - 10, base_fee=BASE_FEE_OVERRIDE)
+    fork_mainnet_archive.mine()
+    assert fork_mainnet_archive.w3.eth.get_block_number() == starting_block - 9
+    assert (
+        fork_mainnet_archive.w3.eth.get_block(starting_block - 9)["baseFeePerGas"]
+        == BASE_FEE_OVERRIDE
+    )
+
+
+def test_ipc_kwargs():
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        ipc_provider_kwargs=dict(timeout=None),
+    )
+    assert fork.w3.provider.timeout is None
+
+
 def test_balance_overrides_in_constructor():
     FAKE_BALANCE = 100 * 10**18
     fork = AnvilFork(
