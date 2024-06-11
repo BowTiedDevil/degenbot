@@ -4,17 +4,14 @@ import socket
 import subprocess
 from typing import Any, Dict, Iterable, List, Literal, Tuple, cast
 
-import ujson
 from eth_typing import HexAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import IPCProvider, Web3
-from web3.types import Middleware
+from web3.types import Middleware, RPCEndpoint
 
 from ..constants import MAX_UINT256
 from ..logging import logger
-
-_SOCKET_READ_BUFFER_SIZE = 4096  # https://docs.python.org/3/library/socket.html#socket.socket.recv
 
 
 class AnvilFork:
@@ -46,6 +43,7 @@ class AnvilFork:
         balance_overrides: Iterable[Tuple[HexAddress, int]] | None = None,
         bytecode_overrides: Iterable[Tuple[HexAddress, bytes]] | None = None,
         ipc_provider_kwargs: Dict[str, Any] | None = None,
+        prune_history: bool = False,
     ):
         def get_free_port_number() -> int:
             with socket.socket() as sock:
@@ -79,6 +77,8 @@ class AnvilFork:
             command.append(f"--base-fee={base_fee}")
         if storage_caching is False:
             command.append("--no-storage-caching")
+        if prune_history:
+            command.append("--prune-history")
         match mining_mode:
             case "auto":
                 pass
@@ -135,48 +135,6 @@ class AnvilFork:
         except Exception:
             pass
 
-    def _socket_request(self, method: str, params: List[Any] | None = None) -> None:
-        """
-        Send a JSON-formatted request through the socket.
-        """
-        if params is None:
-            params = []
-
-        self.socket.sendall(
-            bytes(
-                ujson.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": None,
-                        "method": method,
-                        "params": params,
-                    }
-                ),
-                encoding="utf-8",
-            ),
-        )
-
-    def _socket_response(self) -> Any:
-        """
-        Read the response payload from socket and return the JSON-decoded result.
-        """
-        raw_response = b""
-        response: Dict[str, Any]
-        while True:
-            try:
-                raw_response += self.socket.recv(_SOCKET_READ_BUFFER_SIZE).rstrip()
-                response = ujson.loads(raw_response)
-                break
-            except socket.timeout:  # pragma: no cover
-                continue
-            except ujson.JSONDecodeError:  # pragma: no cover
-                # Typically thrown if a long response does not fit in buffer length
-                continue
-
-        if response.get("error"):
-            raise Exception(f"Error in response: {response}")
-        return response["result"]
-
     def create_access_list(self, transaction: Dict[Any, Any]) -> Any:
         # Exclude transaction values that are irrelevant for the JSON-RPC method
         # ref: https://docs.infura.io/networks/ethereum/json-rpc-methods/eth_createaccesslist
@@ -190,16 +148,16 @@ class AnvilFork:
             if key in sanitized_tx and isinstance(sanitized_tx[key], int):
                 sanitized_tx[key] = hex(sanitized_tx[key])
 
-        self._socket_request(
-            method="eth_createAccessList",
+        return self.w3.provider.make_request(
+            method=RPCEndpoint("eth_createAccessList"),
             params=[sanitized_tx],
-        )
-        response: Dict[Any, Any] = self._socket_response()
-        return response["accessList"]
+        )["result"]["accessList"]
 
     def mine(self) -> None:
-        self._socket_request(method="evm_mine")
-        self._socket_response()
+        self.w3.provider.make_request(
+            method=RPCEndpoint("evm_mine"),
+            params=[],
+        )
 
     def reset(
         self,
@@ -211,12 +169,10 @@ class AnvilFork:
             "jsonRpcUrl": fork_url if fork_url is not None else self.fork_url,
             "blockNumber": block_number if block_number is not None else self._initial_block_number,
         }
-
-        self._socket_request(
-            method="anvil_reset",
+        self.w3.provider.make_request(
+            method=RPCEndpoint("anvil_reset"),
             params=[{"forking": forking_params}],
         )
-        self._socket_response()
 
         if fork_url is not None:
             self.fork_url = fork_url
@@ -226,53 +182,54 @@ class AnvilFork:
     def return_to_snapshot(self, id: int) -> bool:
         if id < 0:
             raise ValueError("ID cannot be negative")
-        self._socket_request(
-            method="evm_revert",
-            params=[id],
+        return bool(
+            self.w3.provider.make_request(
+                method=RPCEndpoint("evm_revert"),
+                params=[id],
+            )["result"]
         )
-        return bool(self._socket_response())
 
     def set_balance(self, address: str, balance: int) -> None:
         if not (0 <= balance <= MAX_UINT256):
             raise ValueError("Invalid balance, must be within range: 0 <= balance <= 2**256 - 1")
-        self._socket_request(
-            method="anvil_setBalance",
+
+        self.w3.provider.make_request(
+            method=RPCEndpoint("anvil_setBalance"),
             params=[
                 to_checksum_address(address),
                 hex(balance),
             ],
         )
-        self._socket_response()
 
     def set_code(self, address: str, bytecode: bytes) -> None:
-        self._socket_request(
-            method="anvil_setCode",
+        self.w3.provider.make_request(
+            method=RPCEndpoint("anvil_setCode"),
             params=[
                 HexBytes(address).hex(),
                 HexBytes(bytecode).hex(),
             ],
         )
-        self._socket_response()
 
     def set_coinbase(self, address: str) -> None:
-        self._socket_request(
-            method="anvil_setCoinbase",
+        self.w3.provider.make_request(
+            method=RPCEndpoint("anvil_setCoinbase"),
             params=[HexBytes(address).hex()],
         )
-        self._socket_response()
 
     def set_next_base_fee(self, fee: int) -> None:
         if not (0 <= fee <= MAX_UINT256):
             raise ValueError("Fee outside valid range 0 <= fee <= 2**256-1")
-        self._socket_request(
-            method="anvil_setNextBlockBaseFeePerGas",
+        self.w3.provider.make_request(
+            method=RPCEndpoint("anvil_setNextBlockBaseFeePerGas"),
             params=[hex(fee)],
         )
-        self._socket_response()
         self.base_fee_next = fee
 
     def set_snapshot(self) -> int:
-        self._socket_request(
-            method="evm_snapshot",
+        return int(
+            self.w3.provider.make_request(
+                method=RPCEndpoint("evm_snapshot"),
+                params=[],
+            )["result"],
+            16,
         )
-        return int(self._socket_response(), 16)
