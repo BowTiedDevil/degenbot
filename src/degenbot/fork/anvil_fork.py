@@ -132,7 +132,7 @@ class AnvilFork:
         self._process.wait()
         try:
             os.remove(self.ipc_path)
-        except Exception:
+        except FileNotFoundError:
             pass
 
     def create_access_list(self, transaction: Dict[Any, Any]) -> Any:
