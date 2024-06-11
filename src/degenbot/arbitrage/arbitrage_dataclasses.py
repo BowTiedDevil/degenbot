@@ -1,6 +1,8 @@
 import dataclasses
 from typing import Any, List, Tuple
 
+from eth_typing import ChecksumAddress
+
 from ..erc20_token import Erc20Token
 
 
@@ -32,17 +34,21 @@ class UniswapPoolSwapVector:
     zero_for_one: bool
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
+@dataclasses.dataclass(slots=True)
 class UniswapV2PoolSwapAmounts:
-    amounts: Tuple[int, int]
-    amounts_in: Tuple[int, int] | None = None
+    pool: ChecksumAddress
+    amounts_in: Tuple[int, int]
+    amounts_out: Tuple[int, int]
+    recipient: ChecksumAddress | None = None
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
+@dataclasses.dataclass(slots=True)
 class UniswapV3PoolSwapAmounts:
+    pool: ChecksumAddress
     amount_specified: int
     zero_for_one: bool
     sqrt_price_limit_x96: int
+    recipient: ChecksumAddress | None = None
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

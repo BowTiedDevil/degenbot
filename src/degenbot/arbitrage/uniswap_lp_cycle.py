@@ -214,7 +214,11 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                 case LiquidityPool():
                     pools_amounts_out.append(
                         UniswapV2PoolSwapAmounts(
-                            amounts=(0, _token_out_quantity)
+                            pool=pool.address,
+                            amounts_in=(_token_in_quantity, 0)
+                            if zero_for_one
+                            else (0, _token_in_quantity),
+                            amounts_out=(0, _token_out_quantity)
                             if zero_for_one
                             else (_token_out_quantity, 0),
                         )
@@ -222,6 +226,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                 case V3LiquidityPool():
                     pools_amounts_out.append(
                         UniswapV3PoolSwapAmounts(
+                            pool=pool.address,
                             amount_specified=_token_in_quantity,
                             zero_for_one=zero_for_one,
                             sqrt_price_limit_x96=TickMath.MIN_SQRT_RATIO + 1
@@ -775,7 +780,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                                         "bytes",
                                     ),
                                     args=(
-                                        *_swap_amounts.amounts,
+                                        *_swap_amounts.amounts_out,
                                         swap_destination_address,
                                         b"",
                                     ),

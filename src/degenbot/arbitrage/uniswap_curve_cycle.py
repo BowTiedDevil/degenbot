@@ -304,7 +304,11 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                 case LiquidityPool():
                     pools_amounts_out.append(
                         UniswapV2PoolSwapAmounts(
-                            amounts=(0, _token_out_quantity)
+                            pool=pool.address,
+                            amounts_in=(_token_in_quantity, 0)
+                            if zero_for_one
+                            else (0, _token_in_quantity),
+                            amounts_out=(0, _token_out_quantity)
                             if zero_for_one
                             else (_token_out_quantity, 0),
                         )
@@ -313,6 +317,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                 case V3LiquidityPool():
                     pools_amounts_out.append(
                         UniswapV3PoolSwapAmounts(
+                            pool=pool.address,
                             amount_specified=_token_in_quantity,
                             zero_for_one=zero_for_one,
                             sqrt_price_limit_x96=TickMath.MIN_SQRT_RATIO + 1
@@ -748,14 +753,14 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                 if isinstance(swap_pool, LiquidityPool):
                     if TYPE_CHECKING:
                         assert isinstance(_swap_amounts, UniswapV2PoolSwapAmounts)
-                    if _swap_amounts.amounts[0] == 0:
+                    if _swap_amounts.amounts_out[0] == 0:
                         _token_in = swap_pool.token0
                         _token_out = swap_pool.token1
-                        _amount_out = _swap_amounts.amounts[1]
+                        _amount_out = _swap_amounts.amounts_out[1]
                     else:
                         _token_in = swap_pool.token1
                         _token_out = swap_pool.token0
-                        _amount_out = _swap_amounts.amounts[0]
+                        _amount_out = _swap_amounts.amounts_out[0]
                     logger.debug(f"PAYLOAD: building V2 swap at pool {i}")
                     logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
                     logger.debug(f"PAYLOAD: swap {_token_in} -> {_amount_out} {_token_out} ")
@@ -774,7 +779,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                                     "bytes",
                                 ),
                                 args=(
-                                    *_swap_amounts.amounts,
+                                    *_swap_amounts.amounts_out,
                                     swap_destination_address,
                                     b"",
                                 ),

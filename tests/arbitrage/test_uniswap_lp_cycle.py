@@ -2314,9 +2314,12 @@ async def test_process_pool_calculation(
             profit_amount=163028226755627520,
             swap_amounts=[
                 UniswapV2PoolSwapAmounts(
-                    amounts=(127718318, 0),
+                    pool=wbtc_weth_arb.swap_pools[0].address,
+                    amounts_in=(0, 20454968409226055680),
+                    amounts_out=(127718318, 0),
                 ),
                 UniswapV3PoolSwapAmounts(
+                    pool=wbtc_weth_arb.swap_pools[1].address,
                     amount_specified=127718318,
                     zero_for_one=True,
                     sqrt_price_limit_x96=4295128740,
