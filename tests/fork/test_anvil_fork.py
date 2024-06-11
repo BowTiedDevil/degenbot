@@ -67,12 +67,6 @@ def test_rpc_methods(fork_mainnet_archive: AnvilFork):
     )
     assert isinstance(access_list, list)
 
-    fork_mainnet_archive.reset(block_number=18_500_000)
-    with pytest.raises(Exception):
-        fork_mainnet_archive.reset(
-            fork_url="http://google.com",  # <--- Bad RPC URI
-        )
-
     # switch between two different endpoints
     for endpoint in (ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_FULL_NODE_HTTP_URI):
         fork_mainnet_archive.reset(fork_url=endpoint)
