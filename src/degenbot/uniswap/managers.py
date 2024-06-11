@@ -60,6 +60,9 @@ class UniswapLiquidityPoolManager(BaseManager):
         if not FACTORY_ADDRESSES.get(chain_id):
             FACTORY_ADDRESSES[chain_id] = {}
 
+        if not TICKLENS_ADDRESSES.get(chain_id):
+            TICKLENS_ADDRESSES[chain_id] = {}
+
     @classmethod
     def add_factory(cls, chain_id: int, factory_address: str) -> None:
         """
