@@ -111,7 +111,6 @@ class AnvilFork:
         self._initial_block_number = (
             fork_block if fork_block is not None else self.w3.eth.get_block_number()
         )
-        self.chain_id = chain_id if chain_id is not None else self.w3.eth.chain_id
 
         if balance_overrides is not None:
             for account, balance in balance_overrides:
