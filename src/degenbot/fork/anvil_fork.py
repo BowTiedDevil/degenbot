@@ -108,9 +108,6 @@ class AnvilFork:
         while self.w3.is_connected() is False:
             continue
 
-        self.socket = socket.socket(socket.AF_UNIX)
-        self.socket.connect(self.ipc_path)
-
         self._initial_block_number = (
             fork_block if fork_block is not None else self.w3.eth.get_block_number()
         )
