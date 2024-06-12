@@ -42,6 +42,7 @@ class AnvilFork:
         middlewares: List[Tuple[Middleware, int]] | None = None,
         balance_overrides: Iterable[Tuple[HexAddress, int]] | None = None,
         bytecode_overrides: Iterable[Tuple[HexAddress, bytes]] | None = None,
+        nonce_overrides: Iterable[Tuple[HexAddress, int]] | None = None,
         ipc_provider_kwargs: Dict[str, Any] | None = None,
         prune_history: bool = False,
     ):
@@ -121,6 +122,10 @@ class AnvilFork:
         if bytecode_overrides is not None:
             for account, bytecode in bytecode_overrides:
                 self.set_code(account, bytecode)
+
+        if nonce_overrides is not None:
+            for account, nonce in nonce_overrides:
+                self.set_nonce(account, nonce)
 
         if coinbase is not None:
             self.set_coinbase(coinbase)
@@ -222,6 +227,12 @@ class AnvilFork:
             params=[hex(fee)],
         )
         self.base_fee_next = fee
+
+    def set_nonce(self, address: str, nonce: int) -> None:
+        self.w3.provider.make_request(
+            method=RPCEndpoint("anvil_setNonce"),
+            params=[to_checksum_address(address), hex(nonce)],
+        )
 
     def set_snapshot(self) -> int:
         return int(
