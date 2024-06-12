@@ -45,6 +45,41 @@ class AnvilFork:
         ipc_provider_kwargs: Dict[str, Any] | None = None,
         prune_history: bool = False,
     ):
+        def build_anvil_command():  # pragma: no cover
+            command = ["anvil"]
+            command.append("--silent")
+            command.append("--auto-impersonate")
+            command.append("--no-rate-limit")
+            command.append(f"--fork-url={fork_url}")
+            command.append(f"--hardfork={hardfork}")
+            command.append(f"--gas-limit={gas_limit}")
+            command.append(f"--port={self.port}")
+            command.append(f"--ipc={ipc_path}")
+            command.append(f"--mnemonic={mnemonic}")
+            if fork_block:
+                command.append(f"--fork-block-number={fork_block}")
+            if chain_id:
+                command.append(f"--chain-id={chain_id}")
+            if base_fee:
+                command.append(f"--base-fee={base_fee}")
+            if storage_caching is False:
+                command.append("--no-storage-caching")
+            if prune_history:
+                command.append("--prune-history")
+            match mining_mode:
+                case "auto":
+                    pass
+                case "interval":
+                    logger.debug(f"Using 'interval' mining with {mining_interval}s block times.")
+                    command.append(f"--block-time={mining_interval}")
+                case "none":
+                    command.append("--no-mining")
+                    command.append("--order=fifo")
+                case _:
+                    raise ValueError(f"Unknown mining mode '{mining_mode}'.")
+
+            return command
+
         def get_free_port_number() -> int:
             with socket.socket() as sock:
                 sock.bind(("", 0))
@@ -58,40 +93,7 @@ class AnvilFork:
 
         ipc_path = f"/tmp/anvil-{self.port}.ipc" if ipc_path is None else ipc_path
 
-        command = []
-        command.append("anvil")
-        command.append("--silent")
-        command.append("--auto-impersonate")
-        command.append("--no-rate-limit")
-        command.append(f"--fork-url={fork_url}")
-        command.append(f"--hardfork={hardfork}")
-        command.append(f"--gas-limit={gas_limit}")
-        command.append(f"--port={self.port}")
-        command.append(f"--ipc={ipc_path}")
-        command.append(f"--mnemonic={mnemonic}")
-        if fork_block:
-            command.append(f"--fork-block-number={fork_block}")
-        if chain_id:
-            command.append(f"--chain-id={chain_id}")
-        if base_fee:
-            command.append(f"--base-fee={base_fee}")
-        if storage_caching is False:
-            command.append("--no-storage-caching")
-        if prune_history:
-            command.append("--prune-history")
-        match mining_mode:
-            case "auto":
-                pass
-            case "interval":
-                logger.debug(f"Using 'interval' mining with {mining_interval}s block times.")
-                command.append(f"--block-time={mining_interval}")
-            case "none":
-                command.append("--no-mining")
-                command.append("--order=fifo")
-            case _:
-                raise ValueError(f"Unknown mining mode '{mining_mode}'.")
-
-        self._process = subprocess.Popen(command)
+        self._process = subprocess.Popen(build_anvil_command())
         self.fork_url = fork_url
         self.http_url = f"http://localhost:{self.port}"
         self.ws_url = f"ws://localhost:{self.port}"
@@ -128,7 +130,7 @@ class AnvilFork:
         self._process.wait()
         try:
             os.remove(self.ipc_path)
-        except FileNotFoundError:
+        except FileNotFoundError:  # pragma: no cover
             pass
 
     def create_access_list(self, transaction: Dict[Any, Any]) -> Any:
