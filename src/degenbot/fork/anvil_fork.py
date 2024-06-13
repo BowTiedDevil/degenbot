@@ -46,7 +46,7 @@ class AnvilFork:
         ipc_provider_kwargs: Dict[str, Any] | None = None,
         prune_history: bool = False,
     ):
-        def build_anvil_command():  # pragma: no cover
+        def build_anvil_command() -> List[str]:  # pragma: no cover
             command = ["anvil"]
             command.append("--silent")
             command.append("--auto-impersonate")
