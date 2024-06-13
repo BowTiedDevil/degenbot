@@ -57,11 +57,24 @@ class UniswapLiquidityPoolManager(BaseManager):
         """
         Add a new chain ID.
         """
-        if not FACTORY_ADDRESSES.get(chain_id):
+        if chain_id not in FACTORY_ADDRESSES:
             FACTORY_ADDRESSES[chain_id] = {}
 
-        if not TICKLENS_ADDRESSES.get(chain_id):
+        if chain_id not in TICKLENS_ADDRESSES:
             TICKLENS_ADDRESSES[chain_id] = {}
+
+    @classmethod
+    def add_ticklens(cls, chain_id: int, factory_address: str, ticklens_address: str) -> None:
+        """
+        Add a new tick lens address for the given factory.
+        """
+        cls.add_chain(chain_id=chain_id)
+        cls.add_factory(chain_id=chain_id, factory_address=factory_address)
+
+        ticklens_address = to_checksum_address(ticklens_address)
+        factory_address = to_checksum_address(factory_address)
+        if factory_address not in TICKLENS_ADDRESSES[chain_id]:
+            TICKLENS_ADDRESSES[chain_id][factory_address] = ticklens_address
 
     @classmethod
     def add_factory(cls, chain_id: int, factory_address: str) -> None:
@@ -71,8 +84,7 @@ class UniswapLiquidityPoolManager(BaseManager):
         cls.add_chain(chain_id=chain_id)
 
         factory_address = to_checksum_address(factory_address)
-
-        if not FACTORY_ADDRESSES[chain_id].get(factory_address):
+        if factory_address not in FACTORY_ADDRESSES[chain_id]:
             FACTORY_ADDRESSES[chain_id][factory_address] = {}
 
     @classmethod
@@ -295,6 +307,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._untracked_pools: Set[ChecksumAddress] = set()
             except Exception as e:
                 self._state[chain_id][factory_address] = {}
+                logger.exception("debug")
                 raise ManagerError(f"Could not initialize state for {factory_address}") from e
 
     def __delitem__(self, pool: V3LiquidityPool | ChecksumAddress | str) -> None:
