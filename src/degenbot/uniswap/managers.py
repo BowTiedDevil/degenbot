@@ -414,6 +414,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                     lens=self._lens,
                     abi=self._pool_abi,
                     silent=silent,
+                    factory_address=self._factory_address,
                     deployer_address=self._deployer_address,
                     init_hash=self._factory_init_hash,
                     **v3liquiditypool_kwargs,
@@ -466,7 +467,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             pool_address = generate_v3_pool_address(
                 token_addresses=tokens_key,
                 fee=pool_fee,
-                factory_or_deployer_address=self._factory_address,
+                factory_or_deployer_address=self._deployer_address,
                 init_hash=self._factory_init_hash,
             )
         else:
