@@ -1679,7 +1679,7 @@ class UniswapTransaction(BaseTransaction):
                                         token1_address,
                                     ),
                                     factory_address=self.v2_pool_manager._factory_address,
-                                    factory_init_hash=self.v2_pool_manager._factory_init_hash,
+                                    init_hash=self.v2_pool_manager._factory_init_hash,
                                 ),
                                 tokens=[
                                     self.v2_pool_manager._token_manager.get_erc20token(
