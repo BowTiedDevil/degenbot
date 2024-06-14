@@ -53,6 +53,7 @@ class V3LiquidityPool(BaseLiquidityPool):
     _TICKSPACING_BY_FEE = {
         100: 1,
         500: 10,
+        2500: 50,  # Pancake V3
         3000: 60,
         10000: 200,
     }
@@ -68,6 +69,8 @@ class V3LiquidityPool(BaseLiquidityPool):
         abi: List[Any] | None = None,
         factory_address: str | None = None,
         factory_init_hash: str | None = None,
+        deployer_address: str | None = None,
+        init_hash: str | None = None,
         extra_words: int = 10,
         silent: bool = False,
         tick_data: Dict[int, Dict[str, Any] | UniswapV3LiquidityAtTick] | None = None,
@@ -94,10 +97,22 @@ class V3LiquidityPool(BaseLiquidityPool):
 
         self._update_block = state_block if state_block else _w3.eth.get_block_number()
 
+        self.init_hash: str | None = None
+        if factory_init_hash is not None:
+            logger.warning(
+                "factory_init_hash has been renamed to init_hash. It has been automatically converted, but will be removed in a future release. Provide the init_hash argument to remove this warning."
+            )
+            self.init_hash = factory_init_hash
+
         if factory_address:
             self.factory = to_checksum_address(factory_address)
         else:
             self.factory = to_checksum_address(_w3_contract.functions.factory().call())
+
+        if deployer_address:
+            self.deployer = to_checksum_address(deployer_address)
+        else:
+            self.deployer = self.factory
 
         if lens:
             self.lens = lens
@@ -141,12 +156,12 @@ class V3LiquidityPool(BaseLiquidityPool):
         self._fee: int = fee if fee is not None else _w3_contract.functions.fee().call()
         self._tick_spacing = self._TICKSPACING_BY_FEE[self._fee]  # immutable
 
-        if factory_address is not None and factory_init_hash is not None:
+        if self.deployer is not None and init_hash is not None:
             computed_pool_address = generate_v3_pool_address(
                 token_addresses=[self.token0.address, self.token1.address],
                 fee=self._fee,
-                factory_address=factory_address,
-                init_hash=factory_init_hash,
+                factory_or_deployer_address=deployer_address,
+                init_hash=init_hash,
             )
             if computed_pool_address != self.address:
                 raise ValueError(

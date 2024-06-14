@@ -34,7 +34,7 @@ ETHEREUM_FULL_NODE_HTTP_URI = "http://localhost:8545"
 BASE_FULL_NODE_HTTP_URI = "http://localhost:8547"
 
 
-# Set up a web3 connection to an Arbitrum full node
+# Set up a web3 connection to a Base full node
 @pytest.fixture(scope="session")
 def base_full_node_web3() -> web3.Web3:
     w3 = web3.Web3(web3.HTTPProvider(BASE_FULL_NODE_HTTP_URI))

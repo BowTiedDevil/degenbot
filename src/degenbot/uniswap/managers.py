@@ -271,12 +271,19 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
     def __init__(
         self,
         factory_address: ChecksumAddress | str,
+        deployer_address: ChecksumAddress | str | None = None,
         chain_id: int | None = None,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
+        pool_abi: List[Any] | None = None,
     ):
         chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
 
         factory_address = to_checksum_address(factory_address)
+
+        if deployer_address is not None:
+            deployer_address = to_checksum_address(deployer_address)
+        else:
+            deployer_address = factory_address
 
         if factory_address not in FACTORY_ADDRESSES[chain_id]:
             raise ManagerError(
@@ -293,7 +300,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         if self.__dict__ == {}:
             try:
                 self.chain_id = chain_id
-                self._factory_address = to_checksum_address(factory_address)
+                self._factory_address = factory_address
+                self._deployer_address = deployer_address
                 self._lens = TickLens(address=TICKLENS_ADDRESSES[chain_id][factory_address])
                 self._lock = Lock()
                 self._tracked_pools: Dict[ChecksumAddress, V3LiquidityPool] = {}
@@ -305,6 +313,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 ]
                 self._snapshot = snapshot
                 self._untracked_pools: Set[ChecksumAddress] = set()
+                self._pool_abi = pool_abi
             except Exception as e:
                 self._state[chain_id][factory_address] = {}
                 logger.exception("debug")
@@ -403,9 +412,10 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 pool_helper = V3LiquidityPool(
                     address=pool_address,
                     lens=self._lens,
+                    abi=self._pool_abi,
                     silent=silent,
-                    factory_address=self._factory_address,
-                    factory_init_hash=self._factory_init_hash,
+                    deployer_address=self._deployer_address,
+                    init_hash=self._factory_init_hash,
                     **v3liquiditypool_kwargs,
                     state_block=state_block,
                 )
@@ -456,7 +466,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             pool_address = generate_v3_pool_address(
                 token_addresses=tokens_key,
                 fee=pool_fee,
-                factory_address=self._factory_address,
+                factory_or_deployer_address=self._factory_address,
                 init_hash=self._factory_init_hash,
             )
         else:

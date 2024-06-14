@@ -65,7 +65,7 @@ def exchange_rate_from_sqrt_price_x96(sqrt_price_x96: int) -> Fraction:
 def generate_v3_pool_address(
     token_addresses: Iterable[str],
     fee: int,
-    factory_address: str,
+    factory_or_deployer_address: str,
     init_hash: str,
 ) -> ChecksumAddress:
     """
@@ -79,7 +79,7 @@ def generate_v3_pool_address(
     return to_checksum_address(
         Web3.keccak(
             HexBytes(0xFF)
-            + HexBytes(factory_address)
+            + HexBytes(factory_or_deployer_address)
             + Web3.keccak(
                 eth_abi.abi.encode(
                     types=("address", "address", "uint24"),

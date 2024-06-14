@@ -80,8 +80,8 @@ def test_creation(ethereum_full_node_web3: Web3) -> None:
     )
     V3LiquidityPool(
         address=WBTC_WETH_V3_POOL_ADDRESS,
-        factory_address=UNISWAP_V3_FACTORY_ADDRESS,
-        factory_init_hash=UNISWAP_V3_POOL_INIT_HASH,
+        deployer_address=UNISWAP_V3_FACTORY_ADDRESS,
+        init_hash=UNISWAP_V3_POOL_INIT_HASH,
     )
     assert (
         V3LiquidityPool(
@@ -93,8 +93,8 @@ def test_creation(ethereum_full_node_web3: Web3) -> None:
     with pytest.raises(ValueError, match="does not match deterministic address"):
         V3LiquidityPool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
-            factory_address=UNISWAP_V3_FACTORY_ADDRESS,
-            factory_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b53",  # <--- Bad hash (last byte changed)
+            deployer_address=UNISWAP_V3_FACTORY_ADDRESS,
+            init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b53",  # <--- Bad hash (last byte changed)
         )
 
     with pytest.raises(ValueError, match="Expected exactly two tokens"):

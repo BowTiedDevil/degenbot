@@ -44,6 +44,11 @@ BASE_UNISWAP_V2_WETH_DEGEN_ADDRESS = to_checksum_address(
 BASE_UNISWAP_V3_WETH_DEGEN_ADDRESS = to_checksum_address(
     "0xc9034c3E7F58003E6ae0C8438e7c8f4598d5ACAA"
 )
+BASE_PANCAKESWAP_V3_FACTORY_ADDRESS = to_checksum_address(
+    "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"
+)
+BASE_CBETH_WETH_V3_POOL_ADDRESS = to_checksum_address("0x257fcbae4ac6b26a02e4fc5e1a11e4174b5ce395")
+BASE_CBETH_ADDRESS = to_checksum_address("0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22")
 
 
 def test_create_base_managers(base_full_node_web3: Web3):
@@ -113,24 +118,46 @@ def test_create_base_managers(base_full_node_web3: Web3):
 
 
 def test_base_pancakeswap_v3(base_full_node_web3: Web3):
-    BASE_PANCAKESWAP_V3_FACTORY = to_checksum_address("0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865")
+    set_web3(base_full_node_web3)
+
     UniswapLiquidityPoolManager.add_pool_init_hash(
         chain_id=base_full_node_web3.eth.chain_id,
-        factory_address=BASE_PANCAKESWAP_V3_FACTORY,
+        factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
         pool_init_hash="0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2",
     )
-    assert BASE_PANCAKESWAP_V3_FACTORY in FACTORY_ADDRESSES[base_full_node_web3.eth.chain_id]
+    assert (
+        BASE_PANCAKESWAP_V3_FACTORY_ADDRESS in FACTORY_ADDRESSES[base_full_node_web3.eth.chain_id]
+    )
+
     UniswapLiquidityPoolManager.add_ticklens(
         chain_id=base_full_node_web3.eth.chain_id,
-        factory_address=BASE_PANCAKESWAP_V3_FACTORY,
+        factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
         ticklens_address="0x9a489505a00cE272eAa5e07Dba6491314CaE3796",
     )
     assert (
         "0x9a489505a00cE272eAa5e07Dba6491314CaE3796"
-        in TICKLENS_ADDRESSES[base_full_node_web3.eth.chain_id][BASE_PANCAKESWAP_V3_FACTORY]
+        in TICKLENS_ADDRESSES[base_full_node_web3.eth.chain_id][BASE_PANCAKESWAP_V3_FACTORY_ADDRESS]
     )
+
+    from degenbot.uniswap.abi import PANCAKESWAP_V3_POOL_ABI
+    from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
+
+    v3_pool = V3LiquidityPool(
+        address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
+        abi=PANCAKESWAP_V3_POOL_ABI,
+    )
+
     pancakev3_lp_manager = UniswapV3LiquidityPoolManager(
-        factory_address=BASE_PANCAKESWAP_V3_FACTORY
+        factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
+        pool_abi=PANCAKESWAP_V3_POOL_ABI,
+    )
+
+    assert (
+        pancakev3_lp_manager.get_pool(
+            token_addresses=(BASE_WETH_ADDRESS, BASE_CBETH_ADDRESS),
+            pool_fee=100,
+        )
+        is v3_pool
     )
 
 
