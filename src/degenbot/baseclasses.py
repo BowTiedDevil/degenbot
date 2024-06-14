@@ -14,6 +14,14 @@ class Message:
     """
 
 
+class PlaintextMessage(Message):
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def __str__(self) -> str:
+        return self.text
+
+
 class Publisher(Protocol):
     """
     Can publish updates and accept subscriptions.
@@ -38,6 +46,16 @@ class BaseArbitrage:
     id: str
     gas_estimate: int
     swap_pools: Sequence["BaseLiquidityPool"]
+
+    def _notify_subscribers(self: Publisher, message: Message) -> None:
+        for subscriber in self._subscribers:
+            subscriber.notify(publisher=self, message=message)
+
+    def subscribe(self: Publisher, subscriber: Subscriber) -> None:
+        self._subscribers.add(subscriber)
+
+    def unsubscribe(self: Publisher, subscriber: Subscriber) -> None:
+        self._subscribers.discard(subscriber)
 
 
 class BaseManager:

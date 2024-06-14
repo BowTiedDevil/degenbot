@@ -1,7 +1,7 @@
 import asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, Awaitable, Dict, Iterable, List, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Dict, Iterable, List, Sequence, Set, Tuple
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -9,7 +9,7 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
-from ..baseclasses import BaseArbitrage, Publisher, Subscriber
+from ..baseclasses import BaseArbitrage, PlaintextMessage, Publisher, Subscriber
 from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
@@ -103,6 +103,8 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
             "swap_amount": 0,
             "swap_pool_amounts": [],
         }
+
+        self._subscribers: Set[Subscriber] = set()
 
     def __getstate__(self) -> Dict[str, Any]:
         dropped_attributes = ("_subscribers",)
@@ -833,7 +835,10 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
             case LiquidityPool() | V3LiquidityPool():
                 match message:
                     case UniswapV2PoolStateUpdated() | UniswapV3PoolStateUpdated():
-                        pass
+                        if message.state.pool in self.swap_pools:
+                            self._notify_subscribers(
+                                PlaintextMessage(f"Received update from pool {message.state.pool}")
+                            )
                     case _:  # pragma: no cover
                         logger.info(
                             f"{self} unhandled message {message} from subscriber {publisher}"
