@@ -1,4 +1,3 @@
-from typing import Any, Dict
 import random
 
 import pytest
@@ -11,17 +10,7 @@ from degenbot.exchanges.uniswap.dataclasses import (
     UniswapTickLensDeployment,
     UniswapV2ExchangeDeployment,
     UniswapV3ExchangeDeployment,
-    UniswapV3DexDeployment,
-    UniswapTickLensDeployment,
-    UniswapV2ExchangeDeployment,
-    UniswapV3ExchangeDeployment,
 )
-from degenbot.exchanges.uniswap.deployments import (
-    FACTORY_DEPLOYMENTS,
-    ROUTER_DEPLOYMENTS,
-    TICKLENS_DEPLOYMENTS,
-)
-import random
 from degenbot.exchanges.uniswap.deployments import (
     FACTORY_DEPLOYMENTS,
     ROUTER_DEPLOYMENTS,
@@ -30,11 +19,10 @@ from degenbot.exchanges.uniswap.deployments import (
 from degenbot.exchanges.uniswap.register import register_exchange, register_router
 from degenbot.transaction.uniswap_transaction import TransactionError, UniswapTransaction
 from eth_typing import ChainId, ChecksumAddress
-from eth_utils.address import to_checksum_address
+from eth_utils import to_checksum_address
 from hexbytes import HexBytes
 
 
-@pytest.mark.skip(reason="Refactoring in progress to inject Dex info at runtime")
 def _generate_random_address() -> ChecksumAddress:
     return to_checksum_address(random.randbytes(20))
 
@@ -1144,26 +1132,11 @@ def test_adding_new_router_and_chain():
         exchanges=[quickswap_dex_deployment],
     )
 
-    quickswap_dex_deployment = UniswapV2DexDeployment(
-        name="Quickswap",
-        chain_id=QUICKSWAP_CHAIN,
-        factory=UniswapFactoryDeployment(
-            address=QUICKSWAP_V2_FACTORY_ADDRESS,
-            pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
-        ),
-    )
-    quickswap_router = UniswapRouterDeployment(
-        address=QUICKSWAP_ROUTER_ADDRESS,
-        chain_id=QUICKSWAP_CHAIN,
-        name="Quickswap: Router",
-        exchanges=[quickswap_dex_deployment],
-    )
-
     fork = AnvilFork(
         fork_url="https://rpc.ankr.com/polygon",
         fork_block=53178474 - 1,
         middlewares=[
-            (web3.middleware.geth_poa.geth_poa_middleware, 0),
+            (web3.middleware.geth_poa_middleware, 0),
         ],
     )
     set_web3(fork.w3)

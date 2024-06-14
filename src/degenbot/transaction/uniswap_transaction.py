@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple, cast
 
 import eth_abi.abi
 from eth_typing import BlockNumber, ChecksumAddress
-from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
@@ -83,15 +82,12 @@ class V3RouterSpecialValues:
 
 
 class UniswapTransaction(BaseTransaction):
-    class LeftoverRouterBalance(LedgerError):
-        pass
-
-    # # @classmethod
-    # # def add_chain(cls, chain_id: int) -> None:
-    # #     try:
-    ##         PRELOADED PRELOADED_ROUTERS[chain_id]
-    # #     except Exception:
-    ##         PRELOADED PRELOADED_ROUTERS[chain_id] = {}
+    # @classmethod
+    # def add_chain(cls, chain_id: int) -> None:
+    #     try:
+    #         PRELOADED_ROUTERS[chain_id]
+    #     except Exception:
+    #         PRELOADED_ROUTERS[chain_id] = {}
 
     # @classmethod
     # def add_router(cls, chain_id: int, router_address: str, router_dict: Dict[Any, Any]) -> None:
@@ -156,15 +152,7 @@ class UniswapTransaction(BaseTransaction):
         router_address: str | None = None,
     ):
         """
-        Build a standalone representation of a transaction submitted to a known Uniswap-based
-        router contract.
-
-        Supported contracts:
-            Uniswap V2 Router
-            Uniswap V2 Router 2
-            Uniswap V3 Router
-            Uniswap V3 Router 2
-            Uniswap Universal Router
+        Build a standalone representation of a transaction submitted to a known Uniswap-based router contract address.
         """
 
         # @dev The `self.ledger` is used to track token balances for all
@@ -209,7 +197,7 @@ class UniswapTransaction(BaseTransaction):
             self.chain_id = int(chain_id, 16) if isinstance(chain_id, str) else chain_id
 
             self.router_address = to_checksum_address(router_address)
-            if self.self.router_address not in ROUTER_DEPLOYMENTS[self.chain_id]:
+            if self.router_address not in ROUTER_DEPLOYMENTS[self.chain_id]:
                 raise ValueError(f"Router address {router_address} unknown!")
 
             router_deployment = ROUTER_DEPLOYMENTS[self.chain_id][self.router_address]

@@ -8,9 +8,6 @@ from web3.contract.contract import Contract
 from .. import config
 from ..baseclasses import BaseManager
 from ..constants import ZERO_ADDRESS
-from ..dex.baseclasses import UniswapV2Dex, UniswapV3Dex
-from ..dex.uniswap_dataclasses import UniswapV2DexDeployment, UniswapV3DexDeployment
-from ..dex.uniswap_deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
 from ..erc20_token import Erc20Token
 from ..exceptions import ManagerError, PoolNotAssociated
 from ..exchanges.uniswap.dataclasses import UniswapV2ExchangeDeployment, UniswapV3ExchangeDeployment
@@ -56,54 +53,6 @@ class UniswapLiquidityPoolManager(BaseManager):
         except KeyError:
             self._state[chain_id][factory_address] = {}
 
-    @classmethod
-    def add_chain(cls, chain_id: int) -> None:
-        """
-        Add a new chain ID.
-        """
-        if chain_id not in FACTORY_ADDRESSES:
-            FACTORY_ADDRESSES[chain_id] = {}
-
-        if chain_id not in TICKLENS_ADDRESSES:
-            TICKLENS_ADDRESSES[chain_id] = {}
-
-    @classmethod
-    def add_ticklens(cls, chain_id: int, factory_address: str, ticklens_address: str) -> None:
-        """
-        Add a new tick lens address for the given factory.
-        """
-        cls.add_chain(chain_id=chain_id)
-        cls.add_factory(chain_id=chain_id, factory_address=factory_address)
-
-        ticklens_address = to_checksum_address(ticklens_address)
-        factory_address = to_checksum_address(factory_address)
-        if factory_address not in TICKLENS_ADDRESSES[chain_id]:
-            TICKLENS_ADDRESSES[chain_id][factory_address] = ticklens_address
-
-    @classmethod
-    def add_factory(cls, chain_id: int, factory_address: str) -> None:
-        """
-        Add a new factory address at a given chain ID.
-        """
-        cls.add_chain(chain_id=chain_id)
-
-        factory_address = to_checksum_address(factory_address)
-        if factory_address not in FACTORY_ADDRESSES[chain_id]:
-            FACTORY_ADDRESSES[chain_id][factory_address] = {}
-
-    @classmethod
-    def add_pool_init_hash(cls, chain_id: int, factory_address: str, pool_init_hash: str) -> None:
-        """
-        Add a pool_init_hash for a factory at a given chain ID.
-        """
-
-        factory_address = to_checksum_address(factory_address)
-
-        cls.add_factory(chain_id=chain_id, factory_address=factory_address)
-
-        if not FACTORY_ADDRESSES[chain_id][factory_address].get("init_hash"):
-            FACTORY_ADDRESSES[chain_id][factory_address]["init_hash"] = pool_init_hash
-
 
 class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
     """
@@ -118,8 +67,6 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         factory_address: ChecksumAddress | str,
         chain_id: int | None = None,
         exchange: UniswapV2ExchangeDeployment | None = None,
-        exchange: UniswapV2DexDeployment | None = None,
-        dex: UniswapV2Dex | None = None,
     ):
         if exchange is not None:
             chain_id = exchange.chain_id
@@ -128,7 +75,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         else:
             chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
             factory_address = to_checksum_address(factory_address)
-            if dex is None and dex is None and factory_address not in FACTORY_DEPLOYMENTS[chain_id]:
+            if factory_address not in FACTORY_DEPLOYMENTS[chain_id]:
                 raise ManagerError(
                     f"Pool manager could not be initialized from unknown factory address {factory_address}. Add the factory address and pool init hash with `add_factory`, followed by `add_pool_init_hash`"
                 )
@@ -280,12 +227,8 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
     def __init__(
         self,
         factory_address: ChecksumAddress | str | None = None,
-        deployer_address: ChecksumAddress | str | None = None,
         chain_id: int | None = None,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
-        dex: UniswapV3Dex | None = None,
-        dex: UniswapV3Dex | None = None,
-        pool_abi: List[Any] | None = None,
         exchange: UniswapV3ExchangeDeployment | None = None,
     ):
         if exchange is not None:
@@ -298,7 +241,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 raise ValueError("Factory address not provided.")
             chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
             factory_address = to_checksum_address(factory_address)
-            if dex is None and dex is None and any(
+            if any(
                 [
                     factory_address not in FACTORY_DEPLOYMENTS[chain_id],
                     factory_address not in TICKLENS_DEPLOYMENTS[chain_id],
@@ -321,8 +264,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             try:
                 self.chain_id = chain_id
                 self._factory_address = factory_address
-                self._deployer_address = deployer_address
-                self._lens = TickLens(address=TICKLENS_ADDRESSES[chain_id][factory_address])
+                self._lens = TickLens(tick_lens_address)
                 self._lock = Lock()
                 self._tracked_pools: Dict[ChecksumAddress, V3LiquidityPool] = {}
                 self._token_manager: Erc20TokenHelperManager = self._state[chain_id][
@@ -433,8 +375,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                     abi=self._pool_abi,
                     silent=silent,
                     factory_address=self._factory_address,
-                    deployer_address=self._deployer_address,
-                    init_hash=self._pool_init_hash,
+                    factory_init_hash=self._pool_init_hash,
                     **v3liquiditypool_kwargs,
                     state_block=state_block,
                 )
@@ -485,7 +426,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             pool_address = generate_v3_pool_address(
                 token_addresses=tokens_key,
                 fee=pool_fee,
-                factory_or_deployer_address=self._deployer_address,
+                factory_address=self._factory_address,
                 init_hash=self._pool_init_hash,
             )
         else:
