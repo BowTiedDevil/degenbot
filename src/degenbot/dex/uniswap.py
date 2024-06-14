@@ -66,6 +66,20 @@ TICKLENS_ADDRESSES: Dict[
             "0xFB70AD5a200d784E7901230E6875d91d5Fa6B68c"
         ),
     },
+    # Base
+    8453: {
+        # Uniswap V3
+        # ref: https://docs.uniswap.org/contracts/v3/reference/deployments/base-deployments
+        to_checksum_address("0x33128a8fC17869897dcE68Ed026d694621f6FDfD"): to_checksum_address(
+            "0x0CdeE061c75D43c82520eD998C23ac2991c9ac6d"
+        ),
+        # Sushiswap V3
+        # ref: https://docs.sushi.com/docs/Products/V3%20AMM/Core/Deployment%20Addresses
+        # ref: https://docs.sushi.com/docs/Products/V3%20AMM/Periphery/Deployment%20Addresses
+        to_checksum_address("0xc35DADB65012eC5796536bD9864eD8773aBc74C4"): to_checksum_address(
+            "0xF4d73326C13a4Fc5FD7A064217e12780e9Bd62c3"
+        ),
+    },
     # Arbitrum
     42161: {
         # Uniswap V3
