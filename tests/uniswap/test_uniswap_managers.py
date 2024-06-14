@@ -47,6 +47,7 @@ BASE_UNISWAP_V3_WETH_DEGEN_ADDRESS = to_checksum_address(
 BASE_PANCAKESWAP_V3_FACTORY_ADDRESS = to_checksum_address(
     "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"
 )
+BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS = "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9"
 BASE_CBETH_WETH_V3_POOL_ADDRESS = to_checksum_address("0x257fcbae4ac6b26a02e4fc5e1a11e4174b5ce395")
 BASE_CBETH_ADDRESS = to_checksum_address("0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22")
 
@@ -149,6 +150,7 @@ def test_base_pancakeswap_v3(base_full_node_web3: Web3):
 
     pancakev3_lp_manager = UniswapV3LiquidityPoolManager(
         factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
+        deployer_address=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
         pool_abi=PANCAKESWAP_V3_POOL_ABI,
     )
 
