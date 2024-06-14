@@ -160,7 +160,7 @@ class V3LiquidityPool(BaseLiquidityPool):
             computed_pool_address = generate_v3_pool_address(
                 token_addresses=[self.token0.address, self.token1.address],
                 fee=self._fee,
-                factory_or_deployer_address=deployer_address,
+                factory_or_deployer_address=self.deployer,
                 init_hash=init_hash,
             )
             if computed_pool_address != self.address:
