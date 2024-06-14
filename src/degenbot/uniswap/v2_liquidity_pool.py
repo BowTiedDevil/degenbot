@@ -493,6 +493,23 @@ class LiquidityPool(BaseLiquidityPool):
         else:  # pragma: no cover
             raise ValueError(f"Unknown token {token}")
 
+    def discard_states_before_block(self, block: int) -> None:
+        """
+        Discard states recorded prior to a target block.
+        """
+        with self._state_lock:
+            known_blocks = list(self._pool_state_archive.keys())
+
+            # Finds the index prior to the requested block number
+            block_index = bisect_left(known_blocks, block)
+
+            # The earliest known state already meets the criterion, so return early
+            if block_index == 0:
+                return
+
+            if block_index == len(known_blocks):
+                raise NoPoolStateAvailable(f"No pool state known prior to block {block}")
+
     def restore_state_before_block(
         self,
         block: int,
