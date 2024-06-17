@@ -14,18 +14,6 @@ from web3 import Web3
 from .. import config
 from ..baseclasses import BaseSimulationResult, BaseTransaction
 from ..constants import WRAPPED_NATIVE_TOKENS
-from ..dex.uniswap_dataclasses import (
-    UniswapRouterDeployment,
-    UniswapV2DexDeployment,
-    UniswapV3DexDeployment,
-)
-from ..dex.uniswap_deployments import ROUTER_DEPLOYMENTS
-from ..dex.uniswap_dataclasses import (
-    UniswapRouterDeployment,
-    UniswapV2DexDeployment,
-    UniswapV3DexDeployment,
-)
-from ..dex.uniswap_deployments import ROUTER_DEPLOYMENTS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     DegenbotError,

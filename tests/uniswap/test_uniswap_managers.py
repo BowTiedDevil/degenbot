@@ -1,6 +1,5 @@
 import pytest
 from degenbot.config import set_web3
-from degenbot.dex.uniswap import FACTORY_ADDRESSES, TICKLENS_ADDRESSES
 from degenbot.exceptions import ManagerError, PoolNotAssociated
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.registry.all_pools import AllPools
