@@ -1,4 +1,5 @@
 import random
+from typing import Any, Dict
 
 import pytest
 import web3
@@ -18,6 +19,7 @@ from degenbot.exchanges.uniswap.deployments import (
 )
 from degenbot.exchanges.uniswap.register import register_exchange, register_router
 from degenbot.transaction.uniswap_transaction import TransactionError, UniswapTransaction
+from degenbot.uniswap.abi import UNISWAP_V2_POOL_ABI, UNISWAP_V3_POOL_ABI
 from eth_typing import ChainId, ChecksumAddress
 from eth_utils import to_checksum_address
 from hexbytes import HexBytes
@@ -36,7 +38,9 @@ def test_register_v2_exchange() -> None:
         chain_id=DEPLOYMENT_CHAIN,
         factory=UniswapFactoryDeployment(
             address=FACTORY_DEPLOYMENT_ADDRESS,
+            deployer=None,
             pool_init_hash="0x0420",
+            pool_abi=UNISWAP_V2_POOL_ABI,
         ),
     )
 
@@ -56,7 +60,9 @@ def test_register_v3_exchange() -> None:
         chain_id=DEPLOYMENT_CHAIN,
         factory=UniswapFactoryDeployment(
             address=FACTORY_DEPLOYMENT_ADDRESS,
+            deployer=None,
             pool_init_hash="0x0420",
+            pool_abi=UNISWAP_V3_POOL_ABI,
         ),
         tick_lens=UniswapTickLensDeployment(address=TICKLENS_DEPLOYMENT_ADDRESS),
     )
@@ -78,7 +84,9 @@ def test_register_router() -> None:
         chain_id=DEPLOYMENT_CHAIN,
         factory=UniswapFactoryDeployment(
             address=FACTORY_DEPLOYMENT_ADDRESS,
+            deployer=None,
             pool_init_hash="0x0420",
+            pool_abi=UNISWAP_V3_POOL_ABI,
         ),
         tick_lens=UniswapTickLensDeployment(address=TICKLENS_DEPLOYMENT_ADDRESS),
     )

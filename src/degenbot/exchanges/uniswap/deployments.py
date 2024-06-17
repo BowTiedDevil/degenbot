@@ -10,6 +10,7 @@ from .dataclasses import (
     UniswapV2ExchangeDeployment,
     UniswapV3ExchangeDeployment,
 )
+from ...uniswap.abi import UNISWAP_V2_POOL_ABI, UNISWAP_V3_POOL_ABI
 
 # Mainnet DEX --------------- START
 # ---------------------------------
@@ -20,7 +21,9 @@ EthereumMainnetUniswapV2 = UniswapV2ExchangeDeployment(
     chain_id=ChainId.ETH,
     factory=UniswapFactoryDeployment(
         address=to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
+        deployer=None,
         pool_init_hash=HexStr("0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"),
+        pool_abi=UNISWAP_V2_POOL_ABI,
     ),
 )
 EthereumMainnetSushiswapV2 = UniswapV2ExchangeDeployment(
@@ -28,7 +31,9 @@ EthereumMainnetSushiswapV2 = UniswapV2ExchangeDeployment(
     chain_id=ChainId.ETH,
     factory=UniswapFactoryDeployment(
         address=to_checksum_address("0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"),
+        deployer=None,
         pool_init_hash=HexStr("0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303"),
+        pool_abi=UNISWAP_V2_POOL_ABI,
     ),
 )
 
@@ -38,7 +43,9 @@ EthereumMainnetUniswapV3 = UniswapV3ExchangeDeployment(
     chain_id=ChainId.ETH,
     factory=UniswapFactoryDeployment(
         address=to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
+        deployer=None,
         pool_init_hash=HexStr("0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"),
+        pool_abi=UNISWAP_V3_POOL_ABI,
     ),
     tick_lens=UniswapTickLensDeployment(
         to_checksum_address("0xbfd8137f7d1516D3ea5cA83523914859ec47F573")
@@ -49,7 +56,9 @@ EthereumMainnetSushiswapV3 = UniswapV3ExchangeDeployment(
     chain_id=ChainId.ETH,
     factory=UniswapFactoryDeployment(
         address=to_checksum_address("0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F"),
+        deployer=None,
         pool_init_hash=HexStr("0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"),
+        pool_abi=UNISWAP_V3_POOL_ABI,
     ),
     tick_lens=UniswapTickLensDeployment(
         to_checksum_address("0xFB70AD5a200d784E7901230E6875d91d5Fa6B68c")
@@ -67,7 +76,9 @@ ArbitrumSushiswapV2 = UniswapV2ExchangeDeployment(
     chain_id=ChainId.ARB1,
     factory=UniswapFactoryDeployment(
         address=to_checksum_address("0xc35DADB65012eC5796536bD9864eD8773aBc74C4"),
+        deployer=None,
         pool_init_hash=HexStr("0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303"),
+        pool_abi=UNISWAP_V2_POOL_ABI,
     ),
 )
 
@@ -77,7 +88,9 @@ ArbitrumUniswapV3 = UniswapV3ExchangeDeployment(
     chain_id=ChainId.ARB1,
     factory=UniswapFactoryDeployment(
         address=to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
+        deployer=None,
         pool_init_hash=HexStr("0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"),
+        pool_abi=UNISWAP_V3_POOL_ABI,
     ),
     tick_lens=UniswapTickLensDeployment(
         to_checksum_address("0xbfd8137f7d1516D3ea5cA83523914859ec47F573")
@@ -88,7 +101,9 @@ ArbitrumSushiswapV3 = UniswapV3ExchangeDeployment(
     chain_id=ChainId.ARB1,
     factory=UniswapFactoryDeployment(
         address=to_checksum_address("0x1af415a1EbA07a4986a52B6f2e7dE7003D82231e"),
+        deployer=None,
         pool_init_hash=HexStr("0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"),
+        pool_abi=UNISWAP_V3_POOL_ABI,
     ),
     tick_lens=UniswapTickLensDeployment(
         to_checksum_address("0x8516944E89f296eb6473d79aED1Ba12088016c9e")
