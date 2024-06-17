@@ -236,6 +236,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             factory_address = exchange.factory.address
             tick_lens_address = exchange.tick_lens.address
             pool_init_hash = exchange.factory.pool_init_hash
+            pool_abi = exchange.factory.pool_abi
         else:
             if factory_address is None:
                 raise ValueError("Factory address not provided.")
