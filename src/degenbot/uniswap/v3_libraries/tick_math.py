@@ -1,6 +1,7 @@
 from ...constants import MAX_UINT160, MAX_UINT256, MIN_UINT160
 from ...exceptions import EVMRevertError
 from . import yul_operations as yul
+from functools import cache
 
 MIN_TICK = -887272
 MAX_TICK = -MIN_TICK
@@ -8,6 +9,7 @@ MIN_SQRT_RATIO = 4295128739
 MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342
 
 
+@cache
 def getSqrtRatioAtTick(tick: int) -> int:
     abs_tick = abs(tick)
     if not (0 <= abs_tick <= MAX_TICK):
@@ -67,6 +69,7 @@ def getSqrtRatioAtTick(tick: int) -> int:
     return (ratio >> 32) + (0 if (ratio % (1 << 32) == 0) else 1)
 
 
+@cache
 def getTickAtSqrtRatio(sqrt_price_x96: int) -> int:
     if not (MIN_UINT160 <= sqrt_price_x96 <= MAX_UINT160):
         raise EVMRevertError("Not a valid uint160")
