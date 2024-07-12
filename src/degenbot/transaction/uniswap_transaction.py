@@ -28,7 +28,7 @@ from ..uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from ..uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
 from ..uniswap.v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from ..uniswap.v2_functions import generate_v2_pool_address, get_v2_pools_from_token_path
-from ..uniswap.v2_liquidity_pool import LiquidityPool
+from ..uniswap.v2_liquidity_pool import LiquidityPool, UnregisteredLiquidityPool
 from ..uniswap.v3_dataclasses import UniswapV3PoolSimulationResult, UniswapV3PoolState
 from ..uniswap.v3_functions import decode_v3_path
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
@@ -1672,7 +1672,7 @@ class UniswapTransaction(BaseTransaction):
                                 silent=self.silent,
                             )
                         except ManagerError:
-                            _pool = LiquidityPool(
+                            _pool = UnregisteredLiquidityPool(
                                 address=generate_v2_pool_address(
                                     token_addresses=(
                                         token0_address,
@@ -1689,10 +1689,6 @@ class UniswapTransaction(BaseTransaction):
                                         token1_address
                                     ),
                                 ],
-                                factory_address=self.v2_pool_manager._factory_address,
-                                factory_init_hash=self.v2_pool_manager._factory_init_hash,
-                                empty=True,
-                                silent=self.silent,
                             )
 
                         _sim_result = self._simulate_v2_add_liquidity(
