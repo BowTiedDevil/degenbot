@@ -50,6 +50,7 @@ class LiquidityPool(BaseLiquidityPool):
         silent: bool = False,
         state_block: int | None = None,
         empty: bool = False,
+        archive_states: bool = True,
     ) -> None:
         """
         Create a new `LiquidityPool` object for interaction with a Uniswap
@@ -196,6 +197,8 @@ class LiquidityPool(BaseLiquidityPool):
             )
 
         self._pool_state_archive: Dict[int, UniswapV2PoolState] = {}
+        if archive_states:
+            self._pool_state_archive[self._update_block] = self.state
 
         AllPools(chain_id)[self.address] = self
 
@@ -211,6 +214,7 @@ class LiquidityPool(BaseLiquidityPool):
         # Remove objects that either cannot be pickled or are unnecessary to perform the calculation
         copied_attributes = ()
         dropped_attributes = (
+            "_contract",
             "_state_lock",
             "_subscribers",
             "_pool_state_archive",
@@ -506,6 +510,10 @@ class LiquidityPool(BaseLiquidityPool):
         """
         Discard states recorded prior to a target block.
         """
+
+        if not self._pool_state_archive:
+            raise NoPoolStateAvailable("No archived states are available")
+
         with self._state_lock:
             known_blocks = list(self._pool_state_archive.keys())
 
@@ -528,6 +536,9 @@ class LiquidityPool(BaseLiquidityPool):
 
         Use this method to maintain consistent state data following a chain re-organization.
         """
+
+        if not self._pool_state_archive:
+            raise NoPoolStateAvailable("No archived states are available")
 
         with self._state_lock:
             known_blocks = list(self._pool_state_archive.keys())
@@ -947,6 +958,7 @@ class CamelotLiquidityPool(LiquidityPool):
                 token_in=token_in,
                 token_in_quantity=token_in_quantity,
                 override_state=override_state,
+            )
 
 
 class UnregisteredLiquidityPool(LiquidityPool):

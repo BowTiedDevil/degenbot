@@ -76,12 +76,17 @@ class V3LiquidityPool(BaseLiquidityPool):
         tick_data: Dict[int, Dict[str, Any] | UniswapV3LiquidityAtTick] | None = None,
         tick_bitmap: Dict[int, Dict[str, Any] | UniswapV3BitmapAtWord] | None = None,
         state_block: int | None = None,
+        archive_states: bool = True,
     ):
         self.address = to_checksum_address(address)
         self.abi = abi if abi is not None else UNISWAP_V3_POOL_ABI
 
         _w3 = config.get_web3()
         _w3_contract = self._w3_contract
+
+        if state_block is None:
+            state_block = _w3.eth.block_number
+        self._update_block = state_block
 
         self.state: UniswapV3PoolState = UniswapV3PoolState(
             pool=self.address,
@@ -237,15 +242,9 @@ class V3LiquidityPool(BaseLiquidityPool):
             *_,
         ) = _w3_contract.functions.slot0().call(block_identifier=self._update_block)
 
-        self._pool_state_archive: Dict[int, UniswapV3PoolState] = {
-            0: UniswapV3PoolState(
-                pool=self.address,
-                liquidity=0,
-                sqrt_price_x96=0,
-                tick=0,
-            ),
-            self._update_block: self.state,
-        }
+        self._pool_state_archive: Dict[int, UniswapV3PoolState] = {}
+        if archive_states:
+            self._pool_state_archive[self._update_block] = self.state
 
         AllPools(_w3.eth.chain_id)[self.address] = self
 
@@ -269,6 +268,7 @@ class V3LiquidityPool(BaseLiquidityPool):
         )
 
         dropped_attributes = (
+            "_contract",
             "_state_lock",
             "_subscribers",
             "lens",
@@ -613,10 +613,13 @@ class V3LiquidityPool(BaseLiquidityPool):
 
     @property
     def _w3_contract(self) -> Contract:
-        return config.get_web3().eth.contract(
-            address=self.address,
-            abi=self.abi,
-        )
+        if "_contract" not in self.__dict__:
+            self._contract = config.get_web3().eth.contract(address=self.address, abi=self.abi)
+        return self._contract
+        # return config.get_web3().eth.contract(
+        #     address=self.address,
+        #     abi=self.abi,
+        # )
 
     def auto_update(
         self,
@@ -667,7 +670,8 @@ class V3LiquidityPool(BaseLiquidityPool):
                 self._notify_subscribers(
                     message=UniswapV3PoolStateUpdated(self.state),
                 )
-                self._pool_state_archive[block_number] = self.state
+                if self._pool_state_archive:
+                    self._pool_state_archive[block_number] = self.state
 
             if not silent:  # pragma: no cover
                 logger.info(f"Liquidity: {self.liquidity}")
@@ -950,7 +954,8 @@ class V3LiquidityPool(BaseLiquidityPool):
                 logger.debug(f"update block: {update.block_number} (last={self._update_block})")
 
             if updated_state:
-                self._pool_state_archive[update.block_number] = self.state
+                if self._pool_state_archive:
+                    self._pool_state_archive[update.block_number] = self.state
                 self._notify_subscribers(
                     message=UniswapV3PoolStateUpdated(self.state),
                 )
@@ -1041,6 +1046,9 @@ class V3LiquidityPool(BaseLiquidityPool):
         # block_index=3, since block 104 is at index=4. The state held at
         # index=3 is for block 103.
         # block_index = self._pool_state_archive.bisect_left(block)
+
+        if not self._pool_state_archive:
+            raise NoPoolStateAvailable("No archived states are available")
 
         with self._state_lock:
             known_blocks = list(self._pool_state_archive.keys())
