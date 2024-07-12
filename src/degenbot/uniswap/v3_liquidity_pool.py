@@ -101,7 +101,7 @@ class V3LiquidityPool(BaseLiquidityPool):
         self._state_lock = Lock()
 
         self.init_hash: str | None = None
-        if factory_init_hash is not None:
+        if factory_init_hash is not None:  # pragma: no cover
             logger.warning(
                 "factory_init_hash has been renamed to init_hash. It has been automatically converted, but will be removed in a future release. Provide the init_hash argument to remove this warning."
             )
