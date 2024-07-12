@@ -95,8 +95,6 @@ class V3LiquidityPool(BaseLiquidityPool):
         # held for operations that manipulate state data
         self._state_lock = Lock()
 
-        self._update_block = state_block if state_block else _w3.eth.get_block_number()
-
         self.init_hash: str | None = None
         if factory_init_hash is not None:
             logger.warning(
@@ -662,6 +660,8 @@ class V3LiquidityPool(BaseLiquidityPool):
             if self.liquidity != _liquidity:
                 updated = True
                 self.liquidity = _liquidity
+
+            self._update_block = block_number
 
             if updated:
                 self._notify_subscribers(

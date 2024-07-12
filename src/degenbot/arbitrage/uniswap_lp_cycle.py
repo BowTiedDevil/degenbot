@@ -1,7 +1,7 @@
 import asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, Awaitable, Dict, Iterable, List, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Sequence, Set, Tuple
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -250,6 +250,11 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         | None = None,
         min_rate_of_exchange: Fraction | None = None,
     ) -> None:
+        """
+        Perform liquidity and minimum rate of exchange checks and raise an exception if further
+        optimization should be avoided.
+        """
+
         def _check_v2_pool_liquidity(
             pool: LiquidityPool,
             vector: UniswapPoolSwapVector,
@@ -319,7 +324,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
 
         # A scalar value representing the net amount of 1 input token across the complete path
         # including fees. A net rate > 1.0 indicates a profitable swap.
-        net_rate_of_exchange = Fraction(1)
+        net_rate_of_exchange = Fraction(1, 1)
 
         # Check the pool state liquidity in the direction of the trade
         for pool, vector in zip(self.swap_pools, self._swap_vectors):
@@ -491,7 +496,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         ]
         | None = None,
         min_rate_of_exchange: Fraction | None = None,
-    ) -> Awaitable[Any]:
+    ) -> asyncio.Future[ArbitrageCalculationResult]:
         """
         Wrap the arbitrage calculation into an asyncio future using the
         specified executor.

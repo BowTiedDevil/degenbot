@@ -3,7 +3,7 @@ from fractions import Fraction
 from threading import Lock
 from typing import Any, Dict, Iterable, List, Tuple
 
-from eth_typing import BlockNumber, ChecksumAddress
+from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from typing_extensions import override
 from web3.contract.contract import Contract
@@ -113,6 +113,11 @@ class LiquidityPool(BaseLiquidityPool):
 
         _w3 = config.get_web3()
         _w3_contract = self._w3_contract
+        chain_id = _w3.eth.chain_id
+
+        if state_block is None:
+            state_block = _w3.eth.block_number
+        self._update_block = state_block
 
         if factory_address:
             if factory_init_hash is None:
@@ -140,14 +145,12 @@ class LiquidityPool(BaseLiquidityPool):
                 )
 
         self._update_method = update_method
-        self.update_block: BlockNumber | int = _w3.eth.get_block_number()
         self.factory = (
             to_checksum_address(factory_address)
             if factory_address is not None
             else _w3_contract.functions.factory().call()
         )
 
-        chain_id = _w3.eth.chain_id
         if tokens is not None:
             if len(tokens) != 2:
                 raise ValueError(f"Expected 2 tokens, found {len(tokens)}")
@@ -225,7 +228,13 @@ class LiquidityPool(BaseLiquidityPool):
 
     @property
     def _w3_contract(self) -> Contract:
-        return config.get_web3().eth.contract(address=self.address, abi=self.abi)
+        if "_contract" not in self.__dict__:
+            self._contract = config.get_web3().eth.contract(address=self.address, abi=self.abi)
+        return self._contract
+
+    @property
+    def update_block(self) -> int:
+        return self._update_block
 
     @property
     def reserves_token0(self) -> int:
@@ -244,7 +253,7 @@ class LiquidityPool(BaseLiquidityPool):
             reserves0, reserves1, *_ = self._w3_contract.functions.getReserves().call(
                 block_identifier=current_block
             )
-            self.update_block = current_block
+            self._update_block = current_block
             self._state = UniswapV2PoolState(
                 pool=self.address,
                 reserves_token0=reserves0,
@@ -538,7 +547,7 @@ class LiquidityPool(BaseLiquidityPool):
                 del self._pool_state_archive[block]
 
             # Restore previous state and block
-            self.update_block, self.state = list(self._pool_state_archive.items())[-1]
+            self._update_block, self.state = list(self._pool_state_archive.items())[-1]
             self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
 
     def set_swap_target(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover
@@ -700,18 +709,18 @@ class LiquidityPool(BaseLiquidityPool):
             update_block = config.get_web3().eth.get_block_number()
 
         # discard stale updates, but allow updating the same pool multiple times per block (necessary if sending sync events individually)
-        if update_block < self.update_block:
+        if update_block < self._update_block:
             raise ExternalUpdateError(
-                f"Current state recorded at block {self.update_block}, received update for stale block {update_block}"
+                f"Current state recorded at block {self._update_block}, received update for stale block {update_block}"
             )
         else:
-            self.update_block = update_block
+            self._update_block = update_block
 
         state_updated = False
         if update_method == "polling":
             try:
                 reserves0, reserves1, *_ = _w3_contract.functions.getReserves().call(
-                    block_identifier=self.update_block
+                    block_identifier=self._update_block
                 )
                 if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
                     self.state = UniswapV2PoolState(

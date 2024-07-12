@@ -609,15 +609,15 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: 
     from pprint import pprint
 
     starting_state = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state
-    starting_block = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block
+    starting_block = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block
 
     pprint(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive)
 
     _FIRST_UPDATE_BLOCK = (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block + 1
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block + 1
     )
     _LAST_UPDATE_BLOCK = (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block + 10
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block + 10
     )
 
     starting_token0_reserves = starting_state.reserves_token0
@@ -883,8 +883,8 @@ def test_late_update(
 ):
     # Provide some semi-random updates
     for block_number in range(
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block,
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block + 5,
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block,
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block + 5,
     ):
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_reserves(
             external_token0_reserves=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
@@ -901,14 +901,14 @@ def test_late_update(
             + 1,
             external_token1_reserves=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1
             - 1,
-            update_block=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block
+            update_block=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block
             - 1,
         )
 
     with pytest.raises(ValueError):
         assert (
             ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_reserves(
-                update_block=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block
+                update_block=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block
                 + 1,
             )
             is False
@@ -918,7 +918,7 @@ def test_late_update(
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_reserves(
             external_token0_reserves=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0,
             external_token1_reserves=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1,
-            update_block=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block
+            update_block=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block
             + 1,
         )
         is False
