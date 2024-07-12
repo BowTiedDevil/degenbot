@@ -185,10 +185,14 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         silent: bool = False,
         update_method: str = "polling",
         state_block: int | None = None,
+        liquiditypool_kwargs: Dict[str, Any] | None = None,
     ) -> LiquidityPool:
         """
         Get the pool object from its address, or a tuple of token addresses
         """
+
+        if liquiditypool_kwargs is None:
+            liquiditypool_kwargs = dict()
 
         if token_addresses is not None:
             if len(token_addresses) != 2:
@@ -248,6 +252,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 factory_address=self._factory_address,
                 factory_init_hash=self._factory_init_hash,
                 update_method=update_method,
+                **liquiditypool_kwargs,
             )
         except Exception as e:
             self._untracked_pools.add(
@@ -349,13 +354,17 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         if not self._snapshot:
             return
 
-        # Reset the update block to zero so liquidity updates are accepted
         starting_state_block = pool._update_block
-        pool._update_block = 0
 
-        # Apply updates and restore the non-liquidity state at the update block
-        for liquidity_update in self._snapshot.get_new_liquidity_updates(pool.address):
+        # Apply liquidity modifications
+        for i, liquidity_update in enumerate(
+            self._snapshot.get_new_liquidity_updates(pool.address)
+        ):
+            if i == 0:
+                pool._update_block = liquidity_update.block_number
             pool.external_update(liquidity_update)
+
+        # Restore the slot0 values state at the original creation block
         pool.auto_update(block_number=starting_state_block)
 
     def get_pool(
