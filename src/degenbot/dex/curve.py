@@ -5661,7 +5661,7 @@ CACHED_CURVE_V1_POOL_ATTRIBUTES: Dict[
             ],
             coin_index_type="uint256",
             underlying_coin_addresses=None,
-            fee=4000000,
+            fee=None,
             admin_fee=5000000000,
             is_metapool=False,
             base_pool_address=None,

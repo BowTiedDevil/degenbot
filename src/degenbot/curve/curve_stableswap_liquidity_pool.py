@@ -332,7 +332,7 @@ class CurveStableswapPool(BaseLiquidityPool):
         # fee setup
         self.fee: int = (
             cached_pool_attributes.fee
-            if cached_pool_attributes is not None
+            if cached_pool_attributes is not None and cached_pool_attributes.fee is not None
             else _w3_contract.functions.fee().call(block_identifier=state_block)
         )
         self.admin_fee: int = (
@@ -1739,6 +1739,7 @@ class CurveStableswapPool(BaseLiquidityPool):
             "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8",
             "0xB657B895B265C38c53FFF00166cF7F6A3C70587d",
             "0xD6Ac1CB9019137a896343Da59dDE6d097F710538",
+            "0xCA0253A98D16e9C1e3614caFDA19318EE69772D0",
         ):
             for _ in range(255):
                 D_P = D * D // _xp[0] * D // _xp[1] // N_COINS**2

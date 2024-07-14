@@ -184,10 +184,10 @@ def test_single_pool(
     fork_mainnet_archive: AnvilFork,
     fork_mainnet: AnvilFork,
 ):
-    _POOL_ADDRESS = "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d"
+    _POOL_ADDRESS = "0xCA0253A98D16e9C1e3614caFDA19318EE69772D0"
 
     _block_identifier = None
-    _block_identifier = 18850120
+    _block_identifier = 20307213
 
     if _block_identifier:
         fork_mainnet_archive.reset(block_number=_block_identifier)
