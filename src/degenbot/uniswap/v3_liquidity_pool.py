@@ -348,14 +348,12 @@ class V3LiquidityPool(BaseLiquidityPool):
         _tick_data = override_tick_data if override_tick_data is not None else self.tick_data
 
         if zero_for_one is True and not (
-            sqrt_price_limit_x96 < _sqrt_price_x96
-            and sqrt_price_limit_x96 > TickMath.MIN_SQRT_RATIO
+            TickMath.MIN_SQRT_RATIO < sqrt_price_limit_x96 < _sqrt_price_x96
         ):  # pragma: no cover
             raise EVMRevertError("SPL")
 
         if zero_for_one is False and not (
-            sqrt_price_limit_x96 > _sqrt_price_x96
-            and sqrt_price_limit_x96 < TickMath.MAX_SQRT_RATIO
+            _sqrt_price_x96 < sqrt_price_limit_x96 < TickMath.MAX_SQRT_RATIO
         ):  # pragma: no cover
             raise EVMRevertError("SPL")
 
@@ -375,37 +373,18 @@ class V3LiquidityPool(BaseLiquidityPool):
             step = self.StepComputations()
             step.sqrt_price_start_x96 = state.sqrt_price_x96
 
-            while True:
-                try:
-                    step.tick_next, step.initialized = TickBitmap.nextInitializedTickWithinOneWord(
-                        _tick_bitmap,
-                        state.tick,
-                        self._tick_spacing,
-                        zero_for_one,
-                    )
-                except BitmapWordUnavailableError as e:
-                    missing_word = e.args[1]
-                    if self._sparse_bitmap:
-                        logger.debug(f"(swap) {self.name} fetching word {missing_word}")
-                        self._fetch_tick_data_at_word(word_position=missing_word)
-                    else:
-                        # bitmap is complete, so mark the word as empty
-                        # self.tick_bitmap[missing_word] = UniswapV3BitmapAtWord()
-                        _tick_bitmap[missing_word] = UniswapV3BitmapAtWord()
-                else:
-                    # nextInitializedTickWithinOneWord will search up to 256 ticks away, which may
-                    # return a tick in an adjacent word if there are no initialized ticks in the current word.
-                    # This word may not be known to the helper, so check and fetch the containing word for this tick
-                    tick_next_word, _ = self._get_tick_bitmap_word_and_bit_position(step.tick_next)
-
-                    if self._sparse_bitmap and tick_next_word not in _tick_bitmap:
-                        logger.debug(
-                            f"tickNext={step.tick_next} out of range! Fetching word={tick_next_word}"
-                            f"\n{self.name}"
-                        )
-                        self._fetch_tick_data_at_word(word_position=tick_next_word)
-
-                    break
+            try:
+                step.tick_next, step.initialized = TickBitmap.nextInitializedTickWithinOneWord(
+                    _tick_bitmap,
+                    state.tick,
+                    self._tick_spacing,
+                    zero_for_one,
+                )
+            except BitmapWordUnavailableError as exc:
+                missing_word = exc.args[1]
+                if self._sparse_bitmap:
+                    self._fetch_tick_data_at_word(word_position=missing_word)
+                continue
 
             # Ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
             if step.tick_next < TickMath.MIN_TICK:
