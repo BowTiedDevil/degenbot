@@ -58,6 +58,41 @@ class V3LiquidityPool(BaseLiquidityPool):
         10000: 200,
     }
 
+
+class V3LiquidityPool(BaseLiquidityPool):
+    @dataclasses.dataclass(slots=True, repr=False, eq=False)
+    class SwapCache:
+        liquidity_start: int
+        tick_cumulative: int
+
+    @dataclasses.dataclass(slots=True, repr=False, eq=False)
+    class SwapState:
+        amount_specified_remaining: int
+        amount_calculated: int
+        sqrt_price_x96: int
+        tick: int
+        liquidity: int
+
+    @dataclasses.dataclass(slots=True, repr=False, eq=False)
+    class StepComputations:
+        sqrt_price_start_x96: int = 0
+        tick_next: int = 0
+        initialized: bool = False
+        sqrt_price_next_x96: int = 0
+        amount_in: int = 0
+        amount_out: int = 0
+        fee_amount: int = 0
+
+    # Holds references to TickLens contract objects. The TickLens contract is a singleton and can
+    # be used for all pools deployed by a factory.
+    _lens_contracts: Dict[
+        Tuple[
+            int,  # chainID
+            ChecksumAddress,  # Factory
+        ],
+        TickLens,
+    ] = dict()
+
     def __init__(
         self,
         address: str,
@@ -317,29 +352,6 @@ class V3LiquidityPool(BaseLiquidityPool):
         indicates the token quantity deposited.
         """
 
-        @dataclasses.dataclass(slots=True, eq=False)
-        class SwapCache:
-            liquidity_start: int
-            tick_cumulative: int
-
-        @dataclasses.dataclass(slots=True, eq=False)
-        class SwapState:
-            amount_specified_remaining: int
-            amount_calculated: int
-            sqrt_price_x96: int
-            tick: int
-            liquidity: int
-
-        @dataclasses.dataclass(slots=True, eq=False)
-        class StepComputations:
-            sqrt_price_start_x96: int = 0
-            tick_next: int = 0
-            initialized: bool = False
-            sqrt_price_next_x96: int = 0
-            amount_in: int = 0
-            amount_out: int = 0
-            fee_amount: int = 0
-
         if amount_specified == 0:  # pragma: no cover
             raise EVMRevertError("AS")
 
@@ -370,8 +382,8 @@ class V3LiquidityPool(BaseLiquidityPool):
             raise EVMRevertError("SPL")
 
         exact_input = amount_specified > 0
-        cache = SwapCache(liquidity_start=_liquidity, tick_cumulative=0)
-        state = SwapState(
+        cache = self.SwapCache(liquidity_start=_liquidity, tick_cumulative=0)
+        state = self.SwapState(
             amount_specified_remaining=amount_specified,
             amount_calculated=0,
             sqrt_price_x96=_sqrt_price_x96,
@@ -382,7 +394,7 @@ class V3LiquidityPool(BaseLiquidityPool):
         while (
             state.amount_specified_remaining != 0 and state.sqrt_price_x96 != sqrt_price_limit_x96
         ):
-            step = StepComputations()
+            step = self.StepComputations()
             step.sqrt_price_start_x96 = state.sqrt_price_x96
 
             while True:
