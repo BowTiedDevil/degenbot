@@ -734,10 +734,10 @@ class V3LiquidityPool(BaseLiquidityPool):
                 ),
                 override_start_tick=(override_state.tick if override_state is not None else None),
                 override_tick_bitmap=(
-                    override_state.tick_bitmap if override_state is not None else self.tick_bitmap
+                    override_state.tick_bitmap if override_state is not None else None
                 ),
                 override_tick_data=(
-                    override_state.tick_data if override_state is not None else self.tick_data
+                    override_state.tick_data if override_state is not None else None
                 ),
             )
         except EVMRevertError as e:  # pragma: no cover
@@ -796,10 +796,10 @@ class V3LiquidityPool(BaseLiquidityPool):
                 ),
                 override_start_tick=(override_state.tick if override_state is not None else None),
                 override_tick_bitmap=(
-                    override_state.tick_bitmap if override_state is not None else self.tick_bitmap
+                    override_state.tick_bitmap if override_state is not None else None
                 ),
                 override_tick_data=(
-                    override_state.tick_data if override_state is not None else self.tick_data
+                    override_state.tick_data if override_state is not None else None
                 ),
             )
         except EVMRevertError as e:  # pragma: no cover
