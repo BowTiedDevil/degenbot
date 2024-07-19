@@ -107,9 +107,7 @@ def test_creation(ethereum_full_node_web3: Web3) -> None:
             ],
         )
 
-    with pytest.raises(
-        ValueError, match="Token addresses do not match tokens recorded at contract"
-    ):
+    with pytest.raises(ValueError, match="Provided tokens do not match the contract."):
         V3LiquidityPool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
             tokens=[

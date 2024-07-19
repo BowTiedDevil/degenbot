@@ -35,8 +35,6 @@ class LiquidityPool(BaseLiquidityPool):
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
 
-    uniswap_version = 2
-
     def __init__(
         self,
         address: ChecksumAddress | str,
