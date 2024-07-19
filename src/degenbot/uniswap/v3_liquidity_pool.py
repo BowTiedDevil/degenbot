@@ -41,22 +41,13 @@ from .v3_libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
 from .v3_libraries.functions import to_int256
 from .v3_tick_lens import TickLens
 
-
-class V3LiquidityPool(BaseLiquidityPool):
-    # Holds a reference to a TickLens contract object. This is a singleton
-    # contract so there is no need to create separate references for each pool.
-    # Dict is keyed by a tuple of chain ID and factory address
-    _lens_contracts: Dict[Tuple[int, ChecksumAddress], TickLens] = dict()
-
-    uniswap_version = 3
-
-    _TICKSPACING_BY_FEE = {
-        100: 1,
-        500: 10,
-        2500: 50,  # Pancake V3
-        3000: 60,
-        10000: 200,
-    }
+TICK_SPACING_BY_FEE = {
+    100: 1,
+    500: 10,
+    2500: 50,  # Used by PancakeSwap
+    3000: 60,
+    10000: 200,
+}
 
 
 class V3LiquidityPool(BaseLiquidityPool):
@@ -192,7 +183,7 @@ class V3LiquidityPool(BaseLiquidityPool):
         self.tokens = (self.token0, self.token1)
 
         self._fee: int = fee if fee is not None else _w3_contract.functions.fee().call()
-        self._tick_spacing = self._TICKSPACING_BY_FEE[self._fee]  # immutable
+        self._tick_spacing = TICK_SPACING_BY_FEE[self._fee]  # immutable
 
         if self.deployer is not None and init_hash is not None:
             computed_pool_address = generate_v3_pool_address(
