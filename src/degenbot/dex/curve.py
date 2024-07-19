@@ -273,7 +273,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x4f062658EaAF2C1ccf8C8e36D6824CDf41167956": dict(
             address="0x4f062658EaAF2C1ccf8C8e36D6824CDf41167956",
@@ -290,7 +290,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x3eF6A01A0f81D6046290f3e2A8c5b843e738E604": dict(
             address="0x3eF6A01A0f81D6046290f3e2A8c5b843e738E604",
@@ -307,7 +307,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xE7a24EF0C5e95Ffb0f6684b813A78F2a3AD7D171": dict(
             address="0xE7a24EF0C5e95Ffb0f6684b813A78F2a3AD7D171",
@@ -324,7 +324,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x8474DdbE98F5aA3179B3B3F5942D724aFcdec9f6": dict(
             address="0x8474DdbE98F5aA3179B3B3F5942D724aFcdec9f6",
@@ -341,7 +341,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xC18cC39da8b11dA8c3541C598eE022258F9744da": dict(
             address="0xC18cC39da8b11dA8c3541C598eE022258F9744da",
@@ -358,7 +358,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x3E01dD8a5E1fb3481F0F589056b428Fc308AF0Fb": dict(
             address="0x3E01dD8a5E1fb3481F0F589056b428Fc308AF0Fb",
@@ -375,7 +375,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x0f9cb53Ebe405d49A0bbdBD291A65Ff571bC83e1": dict(
             address="0x0f9cb53Ebe405d49A0bbdBD291A65Ff571bC83e1",
@@ -392,7 +392,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x42d7025938bEc20B69cBae5A77421082407f053A": dict(
             address="0x42d7025938bEc20B69cBae5A77421082407f053A",
@@ -409,7 +409,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x890f4e345B1dAED0367A877a1612f86A1f86985f": dict(
             address="0x890f4e345B1dAED0367A877a1612f86A1f86985f",
@@ -426,7 +426,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x071c661B4DeefB59E2a3DdB20Db036821eeE8F4b": dict(
             address="0x071c661B4DeefB59E2a3DdB20Db036821eeE8F4b",
@@ -443,7 +443,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714,
+            base_pool_address="0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714",
         ),
         "0xd81dA8D904b52208541Bade1bD6595D8a251F8dd": dict(
             address="0xd81dA8D904b52208541Bade1bD6595D8a251F8dd",
@@ -460,7 +460,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714,
+            base_pool_address="0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714",
         ),
         "0x7F55DDe206dbAD629C080068923b36fe9D6bDBeF": dict(
             address="0x7F55DDe206dbAD629C080068923b36fe9D6bDBeF",
@@ -477,7 +477,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714,
+            base_pool_address="0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714",
         ),
         "0xC25099792E9349C7DD09759744ea681C7de2cb66": dict(
             address="0xC25099792E9349C7DD09759744ea681C7de2cb66",
@@ -494,7 +494,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714,
+            base_pool_address="0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714",
         ),
         "0xEcd5e75AFb02eFa118AF914515D6521aaBd189F1": dict(
             address="0xEcd5e75AFb02eFa118AF914515D6521aaBd189F1",
@@ -511,7 +511,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA": dict(
             address="0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA",
@@ -528,7 +528,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xd632f22692FaC7611d2AA1C0D552930D43CAEd3B": dict(
             address="0xd632f22692FaC7611d2AA1C0D552930D43CAEd3B",
@@ -545,7 +545,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x4807862AA8b2bF68830e4C8dc86D0e9A998e085a": dict(
             address="0x4807862AA8b2bF68830e4C8dc86D0e9A998e085a",
@@ -562,7 +562,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xF9440930043eb3997fc70e1339dBb11F341de7A8": dict(
             address="0xF9440930043eb3997fc70e1339dBb11F341de7A8",
@@ -591,7 +591,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5": dict(
             address="0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5",
@@ -621,7 +621,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x5a6A4D54456819380173272A5E8E9B9904BdF41B": dict(
             address="0x5a6A4D54456819380173272A5E8E9B9904BdF41B",
@@ -638,7 +638,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xFD5dB7463a3aB53fD211b4af195c5BCCC1A03890": dict(
             address="0xFD5dB7463a3aB53fD211b4af195c5BCCC1A03890",
@@ -827,7 +827,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714,
+            base_pool_address="0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714",
         ),
         "0x87650D7bbfC3A9F10587d7778206671719d9910D": dict(
             address="0x87650D7bbfC3A9F10587d7778206671719d9910D",
@@ -844,7 +844,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x6A274dE3e2462c7614702474D64d376729831dCa": dict(
             address="0x6A274dE3e2462c7614702474D64d376729831dCa",
@@ -873,7 +873,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xf5A95ccDe486B5fE98852bB02d8eC80a4b9422BD": dict(
             address="0xf5A95ccDe486B5fE98852bB02d8eC80a4b9422BD",
@@ -890,7 +890,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x67d9eAe741944D4402eB0D1cB3bC3a168EC1764c": dict(
             address="0x67d9eAe741944D4402eB0D1cB3bC3a168EC1764c",
@@ -907,7 +907,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8": dict(
             address="0x9D0464996170c6B9e75eED71c68B99dDEDf279e8",
@@ -936,7 +936,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x3CFAa1596777CAD9f5004F9a0c443d912E262243": dict(
             address="0x3CFAa1596777CAD9f5004F9a0c443d912E262243",
@@ -967,7 +967,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x6d0Bd8365e2fCd0c2acf7d218f629A319B6c9d47": dict(
             address="0x6d0Bd8365e2fCd0c2acf7d218f629A319B6c9d47",
@@ -984,7 +984,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714,
+            base_pool_address="0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714",
         ),
         "0xAA5A67c256e27A5d80712c51971408db3370927D": dict(
             address="0xAA5A67c256e27A5d80712c51971408db3370927D",
@@ -1001,7 +1001,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x8818a9bb44Fbf33502bE7c15c500d0C783B73067": dict(
             address="0x8818a9bb44Fbf33502bE7c15c500d0C783B73067",
@@ -1102,7 +1102,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714,
+            base_pool_address="0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714",
         ),
         "0x2De8c952871317fB9F22C73BB66BF86A1EeBe1a5": dict(
             address="0x2De8c952871317fB9F22C73BB66BF86A1EeBe1a5",
@@ -1119,7 +1119,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x08Eaf78d40abFA6C341F05692eB48eDCA425Ce04": dict(
             address="0x08Eaf78d40abFA6C341F05692eB48eDCA425Ce04",
@@ -1161,7 +1161,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xE76ebD4f9FA58E5269D3cD032b055b443239e664": dict(
             address="0xE76ebD4f9FA58E5269D3cD032b055b443239e664",
@@ -1178,7 +1178,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xfa65aa60a9D45623c57D383fb4cf8Fb8b854cC4D": dict(
             address="0xfa65aa60a9D45623c57D383fb4cf8Fb8b854cC4D",
@@ -1195,7 +1195,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714,
+            base_pool_address="0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714",
         ),
         "0xeD09ca8275dFfb09c632B6EA58C035a851F73616": dict(
             address="0xeD09ca8275dFfb09c632B6EA58C035a851F73616",
@@ -1212,7 +1212,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xAc5f019a302c4c8caAC0a7F28183ac62E6e80034": dict(
             address="0xAc5f019a302c4c8caAC0a7F28183ac62E6e80034",
@@ -1229,7 +1229,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xbcb91E689114B9Cc865AD7871845C95241Df4105": dict(
             address="0xbcb91E689114B9Cc865AD7871845C95241Df4105",
@@ -1246,7 +1246,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xC2F5FeA5197a3d92736500Fd7733Fcc7a3bBDf3F": dict(
             address="0xC2F5FeA5197a3d92736500Fd7733Fcc7a3bBDf3F",
@@ -1263,7 +1263,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x705DA2596cf6aaA2FEA36f2a59985EC9e8aeC7E2": dict(
             address="0x705DA2596cf6aaA2FEA36f2a59985EC9e8aeC7E2",
@@ -1280,7 +1280,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x6870F9b4DD5d34C7FC53D0d85D9dBd1aAB339BF7": dict(
             address="0x6870F9b4DD5d34C7FC53D0d85D9dBd1aAB339BF7",
@@ -1297,7 +1297,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x55A8a39bc9694714E2874c1ce77aa1E599461E18": dict(
             address="0x55A8a39bc9694714E2874c1ce77aa1E599461E18",
@@ -1338,7 +1338,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x9f4A88da14F2b6DBc785C1Db3511A53B8F342bde": dict(
             address="0x9f4A88da14F2b6DBc785C1Db3511A53B8F342bde",
@@ -1355,7 +1355,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x04c90C198b2eFF55716079bc06d7CCc4aa4d7512": dict(
             address="0x04c90C198b2eFF55716079bc06d7CCc4aa4d7512",
@@ -1384,7 +1384,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x9fED7a930d86Dfe5980040E18C92B1B0d381eC19": dict(
             address="0x9fED7a930d86Dfe5980040E18C92B1B0d381eC19",
@@ -1401,7 +1401,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xf0C081020B9d06EB1b33e357767c00Ccc138bE7c": dict(
             address="0xf0C081020B9d06EB1b33e357767c00Ccc138bE7c",
@@ -1418,7 +1418,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xFB9a265b5a1f52d97838Ec7274A0b1442efAcC87": dict(
             address="0xFB9a265b5a1f52d97838Ec7274A0b1442efAcC87",
@@ -1472,7 +1472,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xFbdCA68601f835b27790D98bbb8eC7f05FDEaA9B": dict(
             address="0xFbdCA68601f835b27790D98bbb8eC7f05FDEaA9B",
@@ -1489,7 +1489,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714,
+            base_pool_address="0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714",
         ),
         "0x8DF0713B2a047c45a0BEf21c3B309bcEF91afd34": dict(
             address="0x8DF0713B2a047c45a0BEf21c3B309bcEF91afd34",
@@ -1518,7 +1518,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714,
+            base_pool_address="0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714",
         ),
         "0x45a8CC73EC100306af64AB2CcB7B12E70EC549A8": dict(
             address="0x45a8CC73EC100306af64AB2CcB7B12E70EC549A8",
@@ -1559,7 +1559,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xb9446c4Ef5EBE66268dA6700D26f96273DE3d571": dict(
             address="0xb9446c4Ef5EBE66268dA6700D26f96273DE3d571",
@@ -1601,7 +1601,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x679CE2A8B3180f5a00e0DCCA26783016799e9A58": dict(
             address="0x679CE2A8B3180f5a00e0DCCA26783016799e9A58",
@@ -1618,7 +1618,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x6d8fF88973b15dF3e2dc6ABb9aF29Cad8C2B5Ef5": dict(
             address="0x6d8fF88973b15dF3e2dc6ABb9aF29Cad8C2B5Ef5",
@@ -1635,7 +1635,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x8083b047E962CA45B210E28aC755fbdA3D773c5B": dict(
             address="0x8083b047E962CA45B210E28aC755fbdA3D773c5B",
@@ -1652,7 +1652,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x3b22B869ba3c0a495Cead0B8A009b70886d37fAC": dict(
             address="0x3b22B869ba3c0a495Cead0B8A009b70886d37fAC",
@@ -1669,7 +1669,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xbB2dC673E1091abCA3eaDB622b18f6D4634b2CD9": dict(
             address="0xbB2dC673E1091abCA3eaDB622b18f6D4634b2CD9",
@@ -1735,7 +1735,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xB37D6c07482Bc11cd28a1f11f1a6ad7b66Dec933": dict(
             address="0xB37D6c07482Bc11cd28a1f11f1a6ad7b66Dec933",
@@ -1776,7 +1776,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x3a70DfA7d2262988064A2D051dd47521E43c9BdD": dict(
             address="0x3a70DfA7d2262988064A2D051dd47521E43c9BdD",
@@ -1793,7 +1793,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x7abD51BbA7f9F6Ae87aC77e1eA1C5783adA56e5c": dict(
             address="0x7abD51BbA7f9F6Ae87aC77e1eA1C5783adA56e5c",
@@ -1810,7 +1810,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x5b78b93Fa851c357586915c7bA7258b762eB1ba0": dict(
             address="0x5b78b93Fa851c357586915c7bA7258b762eB1ba0",
@@ -1827,7 +1827,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x0FaFaFD3C393ead5F5129cFC7e0E12367088c473": dict(
             address="0x0FaFaFD3C393ead5F5129cFC7e0E12367088c473",
@@ -1844,7 +1844,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xd05ce4AB1f4fb0C0e1b65ebE3Ed7F2dcFc6ccf20": dict(
             address="0xd05ce4AB1f4fb0C0e1b65ebE3Ed7F2dcFc6ccf20",
@@ -1861,7 +1861,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x97aEB34ac6561146DD9cE191EFD5634F6465DeF4": dict(
             address="0x97aEB34ac6561146DD9cE191EFD5634F6465DeF4",
@@ -1878,7 +1878,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x9462F2b3C9bEeA8afc334Cdb1D1382B072e494eA": dict(
             address="0x9462F2b3C9bEeA8afc334Cdb1D1382B072e494eA",
@@ -2015,7 +2015,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x04EcD49246bf5143E43e2305136c46AeB6fAd400": dict(
             address="0x04EcD49246bf5143E43e2305136c46AeB6fAd400",
@@ -2044,7 +2044,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714,
+            base_pool_address="0x7FC77B5C7614E1533320EA6DDC2EB61FA00A9714",
         ),
         "0x8c524635d52bd7b1Bd55E062303177a7d916C046": dict(
             address="0x8c524635d52bd7b1Bd55E062303177a7d916C046",
@@ -2134,7 +2134,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x323b3a6e7a71c1b8C257606Ef0364D61df8AA525": dict(
             address="0x323b3a6e7a71c1b8C257606Ef0364D61df8AA525",
@@ -2199,7 +2199,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x8EE017541375F6Bcd802ba119bdDC94dad6911A1": dict(
             address="0x8EE017541375F6Bcd802ba119bdDC94dad6911A1",
@@ -2216,7 +2216,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xaa6a4f8DDcca7d3B9E7ad38C8338a2FCfdB1E713": dict(
             address="0xaa6a4f8DDcca7d3B9E7ad38C8338a2FCfdB1E713",
@@ -2257,7 +2257,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x828b154032950C8ff7CF8085D841723Db2696056": dict(
             address="0x828b154032950C8ff7CF8085D841723Db2696056",
@@ -2286,7 +2286,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xbf5D9DeCCCC762fA7B5eb9faC668c803D42D97b6": dict(
             address="0xbf5D9DeCCCC762fA7B5eb9faC668c803D42D97b6",
@@ -2303,7 +2303,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x1977870a4c18a728C19Dd4eB6542451DF06e0A4b": dict(
             address="0x1977870a4c18a728C19Dd4eB6542451DF06e0A4b",
@@ -2356,7 +2356,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x9558b18f021FC3cBa1c9B777603829A42244818b": dict(
             address="0x9558b18f021FC3cBa1c9B777603829A42244818b",
@@ -2373,7 +2373,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xee60f4A3487c07b4570cCfFEF315401C4c5744c8": dict(
             address="0xee60f4A3487c07b4570cCfFEF315401C4c5744c8",
@@ -2390,7 +2390,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xF38a67dA7a3A12aA12A9981ae6a79C0fdDdd71aB": dict(
             address="0xF38a67dA7a3A12aA12A9981ae6a79C0fdDdd71aB",
@@ -2443,7 +2443,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xdE495223F7cD7EE0cDe1AddbD6836046bBdf3ad3": dict(
             address="0xdE495223F7cD7EE0cDe1AddbD6836046bBdf3ad3",
@@ -2460,7 +2460,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x943b7e761f34866DA12c9b84C99888Fe2Ef607c5": dict(
             address="0x943b7e761f34866DA12c9b84C99888Fe2Ef607c5",
@@ -2501,7 +2501,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x67C7f0a63BA70a2dAc69477B716551FC921aed00": dict(
             address="0x67C7f0a63BA70a2dAc69477B716551FC921aed00",
@@ -2518,7 +2518,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x4606326b4Db89373F5377C316d3b0F6e55Bc6A20": dict(
             address="0x4606326b4Db89373F5377C316d3b0F6e55Bc6A20",
@@ -2534,7 +2534,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0xe3c190c57b5959Ae62EfE3B6797058B76bA2f5eF": dict(
             address="0xe3c190c57b5959Ae62EfE3B6797058B76bA2f5eF",
@@ -2550,7 +2550,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x497CE58F34605B9944E6b15EcafE6b001206fd25": dict(
             address="0x497CE58F34605B9944E6b15EcafE6b001206fd25",
@@ -2566,7 +2566,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x04b727C7e246CA70d496ecF52E6b6280f3c8077D": dict(
             address="0x04b727C7e246CA70d496ecF52E6b6280f3c8077D",
@@ -2582,7 +2582,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x2Ed1D3E7771D64feeD7AE8F25b4032c8dd2D0B99": dict(
             address="0x2Ed1D3E7771D64feeD7AE8F25b4032c8dd2D0B99",
@@ -2598,7 +2598,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x4e43151b78b5fbb16298C1161fcbF7531d5F8D93": dict(
             address="0x4e43151b78b5fbb16298C1161fcbF7531d5F8D93",
@@ -2614,7 +2614,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x8fdb0bB9365a46B145Db80D0B1C5C5e979C84190": dict(
             address="0x8fdb0bB9365a46B145Db80D0B1C5C5e979C84190",
@@ -2630,7 +2630,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x50C8F34CEA0E65535fC2525B637ccd8a07c90896": dict(
             address="0x50C8F34CEA0E65535fC2525B637ccd8a07c90896",
@@ -2647,7 +2647,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x642562115cf5A5e72Ab517E6448EC8b61843dac9": dict(
             address="0x642562115cf5A5e72Ab517E6448EC8b61843dac9",
@@ -2664,7 +2664,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x33baeDa08b8afACc4d3d07cf31d49FC1F1f3E893": dict(
             address="0x33baeDa08b8afACc4d3d07cf31d49FC1F1f3E893",
@@ -2680,7 +2680,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0xe7A3b38c39F97E977723bd1239C3470702568e7B": dict(
             address="0xe7A3b38c39F97E977723bd1239C3470702568e7B",
@@ -2721,7 +2721,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0xF70c5c65CF6A28E7a4483F52511e5a29678e4fFD": dict(
             address="0xF70c5c65CF6A28E7a4483F52511e5a29678e4fFD",
@@ -2787,7 +2787,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x48fcFFa86fb24bDEB45B5739F7Ced24095A7c8e8": dict(
             address="0x48fcFFa86fb24bDEB45B5739F7Ced24095A7c8e8",
@@ -2804,7 +2804,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xb3bC1833aC51aAcEA92acd551FBe1Ab7eDc59EdF": dict(
             address="0xb3bC1833aC51aAcEA92acd551FBe1Ab7eDc59EdF",
@@ -2820,7 +2820,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x7c0316C925E12eBfC55e0f325794B43eaD425157": dict(
             address="0x7c0316C925E12eBfC55e0f325794B43eaD425157",
@@ -2860,7 +2860,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x92Da88e2e6f96cC7c667Cd1367BD090ADF3c6053": dict(
             address="0x92Da88e2e6f96cC7c667Cd1367BD090ADF3c6053",
@@ -2877,7 +2877,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x85F102bE3a76165Be9668bE0bF36E906a488FD33": dict(
             address="0x85F102bE3a76165Be9668bE0bF36E906a488FD33",
@@ -2894,7 +2894,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x87872BE0c56Ef97156f2617b3083D22423Fc62E9": dict(
             address="0x87872BE0c56Ef97156f2617b3083D22423Fc62E9",
@@ -2911,7 +2911,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xc5481720517e1B170CF1d19cEaaBE07c37896Eb2": dict(
             address="0xc5481720517e1B170CF1d19cEaaBE07c37896Eb2",
@@ -2928,7 +2928,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x8b3138DF9aA1F60648C65C67D6Ff646BE305788B": dict(
             address="0x8b3138DF9aA1F60648C65C67D6Ff646BE305788B",
@@ -2945,7 +2945,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xBA866791F98098df41C3187D4D5433be29215c79": dict(
             address="0xBA866791F98098df41C3187D4D5433be29215c79",
@@ -3010,7 +3010,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x3DcC3AC50cB42F7e443d7F548DD2c48EDaa8f59a": dict(
             address="0x3DcC3AC50cB42F7e443d7F548DD2c48EDaa8f59a",
@@ -3027,7 +3027,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x172A54Ba45783049216F90F85FE5E5f6BC1c08fe": dict(
             address="0x172A54Ba45783049216F90F85FE5E5f6BC1c08fe",
@@ -3044,7 +3044,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xF08dBD81Fcc712004e6943454c83C52DE963cdEC": dict(
             address="0xF08dBD81Fcc712004e6943454c83C52DE963cdEC",
@@ -3061,7 +3061,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x6788f608CfE5CfCD02e6152eC79505341E0774be": dict(
             address="0x6788f608CfE5CfCD02e6152eC79505341E0774be",
@@ -3089,7 +3089,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0xb2111b55Edd1Cb5D2C18a6817e21D473FE0E5Ba1": dict(
             address="0xb2111b55Edd1Cb5D2C18a6817e21D473FE0E5Ba1",
@@ -3106,7 +3106,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xC47EBd6c0f68fD5963005D28D0ba533750E5C11B": dict(
             address="0xC47EBd6c0f68fD5963005D28D0ba533750E5C11B",
@@ -3122,7 +3122,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x66E335622ad7a6C9c72c98dbfCCE684996a20Ef9": dict(
             address="0x66E335622ad7a6C9c72c98dbfCCE684996a20Ef9",
@@ -3138,7 +3138,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0xE57180685E3348589E9521aa53Af0BCD497E884d": dict(
             address="0xE57180685E3348589E9521aa53Af0BCD497E884d",
@@ -3154,7 +3154,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x9d259cA698746586107C234e9E9461d385ca1041": dict(
             address="0x9d259cA698746586107C234e9E9461d385ca1041",
@@ -3183,7 +3183,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xCF95Ac3dAecDBf60152A16BDa8D8f8dB7d175B88": dict(
             address="0xCF95Ac3dAecDBf60152A16BDa8D8f8dB7d175B88",
@@ -3212,7 +3212,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x9d0De74dE698D1BA7273D09193EC20a1F6cb7d6a": dict(
             address="0x9d0De74dE698D1BA7273D09193EC20a1F6cb7d6a",
@@ -3229,7 +3229,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xEc4ACC9322FC4dc853e8f72631d2C95556C68Ec0": dict(
             address="0xEc4ACC9322FC4dc853e8f72631d2C95556C68Ec0",
@@ -3246,7 +3246,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x3d675A52F5B572EB5c61FC5088203Ac9B16BFC70": dict(
             address="0x3d675A52F5B572EB5c61FC5088203Ac9B16BFC70",
@@ -3263,7 +3263,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x0309A528bBa0394dC4A2Ce59123C52E317A54604": dict(
             address="0x0309A528bBa0394dC4A2Ce59123C52E317A54604",
@@ -3304,7 +3304,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x0B049eB31878176b278ef84A66810d311353dc94": dict(
             address="0x0B049eB31878176b278ef84A66810d311353dc94",
@@ -3321,7 +3321,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x5239063A86e1E251eE6FB3AB4fb67DEA3A8E1fd2": dict(
             address="0x5239063A86e1E251eE6FB3AB4fb67DEA3A8E1fd2",
@@ -3338,7 +3338,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x930792bd0fb4593063Ad2ee12E86d768bD8DF7a1": dict(
             address="0x930792bd0fb4593063Ad2ee12E86d768bD8DF7a1",
@@ -3355,7 +3355,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xb5FC990637F15bE6420341845a64101b6bbE365D": dict(
             address="0xb5FC990637F15bE6420341845a64101b6bbE365D",
@@ -3372,7 +3372,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xabE43B60F8337818c21101AB78b5B216789e19DD": dict(
             address="0xabE43B60F8337818c21101AB78b5B216789e19DD",
@@ -3389,7 +3389,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x453D92C7d4263201C69aACfaf589Ed14202d83a4": dict(
             address="0x453D92C7d4263201C69aACfaf589Ed14202d83a4",
@@ -3442,7 +3442,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x62CEc7899A9910E48F0dEeaB755429887b6e1979": dict(
             address="0x62CEc7899A9910E48F0dEeaB755429887b6e1979",
@@ -3459,7 +3459,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x00f93fBf00F97170B6cf295DC58888073CB5c2b8": dict(
             address="0x00f93fBf00F97170B6cf295DC58888073CB5c2b8",
@@ -3476,7 +3476,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x982Da76F0ccF868B558BD46D7a3B58bC2662D7cc": dict(
             address="0x982Da76F0ccF868B558BD46D7a3B58bC2662D7cc",
@@ -3493,7 +3493,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x578B27E257050B6011DfDCD69F67696eF24279FC": dict(
             address="0x578B27E257050B6011DfDCD69F67696eF24279FC",
@@ -3510,7 +3510,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xB4698193bCBC49Be01Fcfc67C144eA4927166355": dict(
             address="0xB4698193bCBC49Be01Fcfc67C144eA4927166355",
@@ -3527,7 +3527,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x26c5A2f9b97f4B5FC74B05944B3Bb1679d803709": dict(
             address="0x26c5A2f9b97f4B5FC74B05944B3Bb1679d803709",
@@ -3544,7 +3544,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x188aBea43270791F96dC9209e239f7B79E61203B": dict(
             address="0x188aBea43270791F96dC9209e239f7B79E61203B",
@@ -3561,7 +3561,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x8E27f0821873B6f5421b6ca75A4C5e1e83d3E77a": dict(
             address="0x8E27f0821873B6f5421b6ca75A4C5e1e83d3E77a",
@@ -3578,7 +3578,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x6A0861625937cB3629066CC6Db88808a590B9C68": dict(
             address="0x6A0861625937cB3629066CC6Db88808a590B9C68",
@@ -3595,7 +3595,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x63a1eC86cD45425f1409faBe4c1cF8C5FD32A3B1": dict(
             address="0x63a1eC86cD45425f1409faBe4c1cF8C5FD32A3B1",
@@ -3660,7 +3660,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xA4C231fA5a02992b740e6169F1fbfCD35d5719e1": dict(
             address="0xA4C231fA5a02992b740e6169F1fbfCD35d5719e1",
@@ -3677,7 +3677,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xd6B03059C882f63268dD3e1a98d8E3cDEe26919C": dict(
             address="0xd6B03059C882f63268dD3e1a98d8E3cDEe26919C",
@@ -3694,7 +3694,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xC0Ec468c1B6B94a107B0A83c7a0f6529B388f43A": dict(
             address="0xC0Ec468c1B6B94a107B0A83c7a0f6529B388f43A",
@@ -3711,7 +3711,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xa15e8f7E1e031e4F6f11053c6d320B2A8dc6742c": dict(
             address="0xa15e8f7E1e031e4F6f11053c6d320B2A8dc6742c",
@@ -3728,7 +3728,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x6A52e339A4b8ABD15707f882D6ADC05875Ec5223": dict(
             address="0x6A52e339A4b8ABD15707f882D6ADC05875Ec5223",
@@ -3745,7 +3745,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xa98794Accdb3996c7Ef015A354B6e1aDd2D2ce3e": dict(
             address="0xa98794Accdb3996c7Ef015A354B6e1aDd2D2ce3e",
@@ -3762,7 +3762,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xe82805a9b880E6DC520b6F017537F7781D55217F": dict(
             address="0xe82805a9b880E6DC520b6F017537F7781D55217F",
@@ -3779,7 +3779,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xbeDca4252b27cc12ed7DaF393F331886F86cd3CE": dict(
             address="0xbeDca4252b27cc12ed7DaF393F331886F86cd3CE",
@@ -3796,7 +3796,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xD511B5c309B2F7256FF7b3D41B029aFb96C7a331": dict(
             address="0xD511B5c309B2F7256FF7b3D41B029aFb96C7a331",
@@ -3813,7 +3813,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x8D35ECe39566d65d06c9207C571934DD3C3a3916": dict(
             address="0x8D35ECe39566d65d06c9207C571934DD3C3a3916",
@@ -3830,7 +3830,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xA77B5d170F3AEC2F72ca06490a7B9383A70ae5EB": dict(
             address="0xA77B5d170F3AEC2F72ca06490a7B9383A70ae5EB",
@@ -3847,7 +3847,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x1400E08f1d9f5Bc90ae19ACd4bf81BEaBC9e79de": dict(
             address="0x1400E08f1d9f5Bc90ae19ACd4bf81BEaBC9e79de",
@@ -3863,7 +3863,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x326290A1B0004eeE78fa6ED4F1d8f4b2523ab669": dict(
             address="0x326290A1B0004eeE78fa6ED4F1d8f4b2523ab669",
@@ -3879,7 +3879,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x9FD7e5B614FA071fF3543b44B68ef7699CEc4AF5": dict(
             address="0x9FD7e5B614FA071fF3543b44B68ef7699CEc4AF5",
@@ -3896,7 +3896,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x166BDDEA59c13179796653B8afF13eeA1bd81a97": dict(
             address="0x166BDDEA59c13179796653B8afF13eeA1bd81a97",
@@ -3913,7 +3913,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x613398AEcdAf6bCB6eDB8e61e5956794D23f7412": dict(
             address="0x613398AEcdAf6bCB6eDB8e61e5956794D23f7412",
@@ -3930,7 +3930,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xc8FBb1CCdF2f94Ba01c8B75E0A4FA4c5E1eD6791": dict(
             address="0xc8FBb1CCdF2f94Ba01c8B75E0A4FA4c5E1eD6791",
@@ -3947,7 +3947,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xA500Cd4E520682e1B1113e1055D55bAceAD61122": dict(
             address="0xA500Cd4E520682e1B1113e1055D55bAceAD61122",
@@ -3963,7 +3963,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0xA77d09743F77052950C4eb4e6547E9665299BecD": dict(
             address="0xA77d09743F77052950C4eb4e6547E9665299BecD",
@@ -3980,7 +3980,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xFd46B54FcFF753bA058A5E9BbB45dCedc9A71FAb": dict(
             address="0xFd46B54FcFF753bA058A5E9BbB45dCedc9A71FAb",
@@ -3997,7 +3997,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x413928a25D6ea1A26F2625d633207755f67Bf97c": dict(
             address="0x413928a25D6ea1A26F2625d633207755f67Bf97c",
@@ -4026,7 +4026,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x066B6e1E93FA7dcd3F0Eb7f8baC7D5A747CE0BF9": dict(
             address="0x066B6e1E93FA7dcd3F0Eb7f8baC7D5A747CE0BF9",
@@ -4043,7 +4043,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xAf25fFe6bA5A8a29665adCfA6D30C5Ae56CA0Cd3": dict(
             address="0xAf25fFe6bA5A8a29665adCfA6D30C5Ae56CA0Cd3",
@@ -4073,7 +4073,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x84C333e94AEA4a51a21F6cf0C7F528C50Dc7592C": dict(
             address="0x84C333e94AEA4a51a21F6cf0C7F528C50Dc7592C",
@@ -4089,7 +4089,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0xf275CADbE0343541ce49A03E385f8B234544CDa8": dict(
             address="0xf275CADbE0343541ce49A03E385f8B234544CDa8",
@@ -4106,7 +4106,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x79E281BC69A03DaBCcD66858c65EF6724e50aebe": dict(
             address="0x79E281BC69A03DaBCcD66858c65EF6724e50aebe",
@@ -4158,7 +4158,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0xF253F83ACA21AABD2A20553AE0BF7F65C755A07F,
+            base_pool_address="0xF253F83ACA21AABD2A20553AE0BF7F65C755A07F",
         ),
         "0xddA1B81690b530DE3C48B3593923DF0A6C5fe92E": dict(
             address="0xddA1B81690b530DE3C48B3593923DF0A6C5fe92E",
@@ -4199,7 +4199,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0xF253F83ACA21AABD2A20553AE0BF7F65C755A07F,
+            base_pool_address="0xF253F83ACA21AABD2A20553AE0BF7F65C755A07F",
         ),
         "0x08f9Dd845D0c91B918bB90cc5B124f3fd3e98f3A": dict(
             address="0x08f9Dd845D0c91B918bB90cc5B124f3fd3e98f3A",
@@ -4216,7 +4216,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xF95AAa7EBB1620e46221B73588502960Ef63dBa0": dict(
             address="0xF95AAa7EBB1620e46221B73588502960Ef63dBa0",
@@ -4232,7 +4232,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xfE18be6b3Bd88A2D2A7f928d00292E7a9963CfC6",
             ],
             is_metapool=True,
-            base_pool_address=0xF253F83ACA21AABD2A20553AE0BF7F65C755A07F,
+            base_pool_address="0xF253F83ACA21AABD2A20553AE0BF7F65C755A07F",
         ),
         "0x1CC1772C8899ad2A35aDe9B9978a56254cfc64a0": dict(
             address="0x1CC1772C8899ad2A35aDe9B9978a56254cfc64a0",
@@ -4249,7 +4249,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x968DeE60C67c184f9808510ec92D990e7E6616C2": dict(
             address="0x968DeE60C67c184f9808510ec92D990e7E6616C2",
@@ -4266,7 +4266,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x23afFc32cBe3c1a2a79376361A2D6f51CA7C9005": dict(
             address="0x23afFc32cBe3c1a2a79376361A2D6f51CA7C9005",
@@ -4283,7 +4283,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xc3b19502F8c02be75F3f77fd673503520DEB51dD": dict(
             address="0xc3b19502F8c02be75F3f77fd673503520DEB51dD",
@@ -4299,7 +4299,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0xc897b98272AA23714464Ea2A0Bd5180f1B8C0025": dict(
             address="0xc897b98272AA23714464Ea2A0Bd5180f1B8C0025",
@@ -4340,7 +4340,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x83fc85F144bbeC4234E690B6451B105F3d7c60e4": dict(
             address="0x83fc85F144bbeC4234E690B6451B105F3d7c60e4",
@@ -4357,7 +4357,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x0245918fA513E0641509bb519389A49258A2699F": dict(
             address="0x0245918fA513E0641509bb519389A49258A2699F",
@@ -4374,7 +4374,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x37F1D67A5Ac27B7C2D0F664E73cCBb82627Ac4a5": dict(
             address="0x37F1D67A5Ac27B7C2D0F664E73cCBb82627Ac4a5",
@@ -4391,7 +4391,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x27f715999252a6E4d4794b4c9ff2Ce3D6ea8Fd9B": dict(
             address="0x27f715999252a6E4d4794b4c9ff2Ce3D6ea8Fd9B",
@@ -4420,7 +4420,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xcD0148e3f3350f4B98A48535f63A38fC630e80f1": dict(
             address="0xcD0148e3f3350f4B98A48535f63A38fC630e80f1",
@@ -4437,7 +4437,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x1F98249637bB42edB072DD2a8AdD44Aeb80dA218": dict(
             address="0x1F98249637bB42edB072DD2a8AdD44Aeb80dA218",
@@ -4454,7 +4454,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x7B42d77bd2feE3c98baA58D559B83Ff3bB4702cf": dict(
             address="0x7B42d77bd2feE3c98baA58D559B83Ff3bB4702cf",
@@ -4471,7 +4471,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x50122108f7b3B10ac219d066275087D37E4F4a61": dict(
             address="0x50122108f7b3B10ac219d066275087D37E4F4a61",
@@ -4488,7 +4488,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xfC8c34a3B3CFE1F1Dd6DBCCEC4BC5d3103b80FF0": dict(
             address="0xfC8c34a3B3CFE1F1Dd6DBCCEC4BC5d3103b80FF0",
@@ -4528,7 +4528,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0xC61557C5d177bd7DC889A3b621eEC333e168f68A": dict(
             address="0xC61557C5d177bd7DC889A3b621eEC333e168f68A",
@@ -4545,7 +4545,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xe9123CBC5d1EA65301D417193c40A72Ac8D53501": dict(
             address="0xe9123CBC5d1EA65301D417193c40A72Ac8D53501",
@@ -4562,7 +4562,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x3685646651FCcC80e7CCE7Ee24c5f47Ed9b434ac": dict(
             address="0x3685646651FCcC80e7CCE7Ee24c5f47Ed9b434ac",
@@ -4579,7 +4579,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x110cc323ca53d622469EdD217387E2E6B33F1dF5": dict(
             address="0x110cc323ca53d622469EdD217387E2E6B33F1dF5",
@@ -4596,7 +4596,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xfFc78332F0dA6FbaabdAcFE8054CCbc501eED432": dict(
             address="0xfFc78332F0dA6FbaabdAcFE8054CCbc501eED432",
@@ -4613,7 +4613,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xC71Bc7e33510Aea215E4776867148fa25c368795": dict(
             address="0xC71Bc7e33510Aea215E4776867148fa25c368795",
@@ -4630,7 +4630,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x8B8DBc5b2A0D07dF180B1186F179F1c6a97C8AaE": dict(
             address="0x8B8DBc5b2A0D07dF180B1186F179F1c6a97C8AaE",
@@ -4694,7 +4694,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x428D03774F976F625380403E0C0AD38980943573": dict(
             address="0x428D03774F976F625380403E0C0AD38980943573",
@@ -4723,7 +4723,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x99f5aCc8EC2Da2BC0771c32814EFF52b712de1E5": dict(
             address="0x99f5aCc8EC2Da2BC0771c32814EFF52b712de1E5",
@@ -4751,7 +4751,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x5007c634BD59dd211875346A5D0cfd10DFD1CdC0": dict(
             address="0x5007c634BD59dd211875346A5D0cfd10DFD1CdC0",
@@ -4791,7 +4791,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0xfBB481A443382416357fA81F16dB5A725DC6ceC8": dict(
             address="0xfBB481A443382416357fA81F16dB5A725DC6ceC8",
@@ -4904,7 +4904,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x4424b4A37ba0088D8a718b8fc2aB7952C7e695F5": dict(
             address="0x4424b4A37ba0088D8a718b8fc2aB7952C7e695F5",
@@ -5042,7 +5042,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x400d4C984779A747462e88373c3fE369EF9F5b50": dict(
             address="0x400d4C984779A747462e88373c3fE369EF9F5b50",
@@ -5058,7 +5058,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x26f3f26F46cBeE59d1F8860865e13Aa39e36A8c0": dict(
             address="0x26f3f26F46cBeE59d1F8860865e13Aa39e36A8c0",
@@ -5098,7 +5098,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x5D489d45c56E40B971E601CCbc506112A2004DA2": dict(
             address="0x5D489d45c56E40B971E601CCbc506112A2004DA2",
@@ -5151,7 +5151,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xB00eA2Bcad321850Bc8055e7C311b05d54875CaD": dict(
             address="0xB00eA2Bcad321850Bc8055e7C311b05d54875CaD",
@@ -5168,7 +5168,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x35dd22fC3eC5a82D207BEDd8FA1F658915F97C33": dict(
             address="0x35dd22fC3eC5a82D207BEDd8FA1F658915F97C33",
@@ -5185,7 +5185,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xD0A5Ca7b57780240db17BB89773fda8F0eFCE274": dict(
             address="0xD0A5Ca7b57780240db17BB89773fda8F0eFCE274",
@@ -5274,7 +5274,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xC73151DcA19ffF7A16aE421a9fb35455832d66d3": dict(
             address="0xC73151DcA19ffF7A16aE421a9fb35455832d66d3",
@@ -5290,7 +5290,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x4029f7DcBdF6059ed80DA6856526E7510D64fA21": dict(
             address="0x4029f7DcBdF6059ed80DA6856526E7510D64fA21",
@@ -5342,7 +5342,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x48C6b29893ec0320e1cd10227B8C2F26EB342a83": dict(
             address="0x48C6b29893ec0320e1cd10227B8C2F26EB342a83",
@@ -5359,7 +5359,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x5D4D6836260c116B959E7E25a1735B6C7C328f47": dict(
             address="0x5D4D6836260c116B959E7E25a1735B6C7C328f47",
@@ -5400,7 +5400,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xa4c567c662349BeC3D0fB94C4e7f85bA95E208e4": dict(
             address="0xa4c567c662349BeC3D0fB94C4e7f85bA95E208e4",
@@ -5441,7 +5441,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x9A64DEc8DA8cE892fF711D715d9A8Fc82e966A44": dict(
             address="0x9A64DEc8DA8cE892fF711D715d9A8Fc82e966A44",
@@ -5458,7 +5458,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x1C5F80b6B68A9E1Ef25926EeE00b5255791b996B": dict(
             address="0x1C5F80b6B68A9E1Ef25926EeE00b5255791b996B",
@@ -5487,7 +5487,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x80FB33FcE06F5E9d9E4bB7C90C7BC19B99a18827": dict(
             address="0x80FB33FcE06F5E9d9E4bB7C90C7BC19B99a18827",
@@ -5551,7 +5551,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x0CFe5C777A7438C9Dd8Add53ed671cEc7A5FAeE5": dict(
             address="0x0CFe5C777A7438C9Dd8Add53ed671cEc7A5FAeE5",
@@ -5567,7 +5567,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0xefd6746633F658953c10c34f570751377cCd5686": dict(
             address="0xefd6746633F658953c10c34f570751377cCd5686",
@@ -5596,7 +5596,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x9978c6B08d28d3B74437c917c5dD7C026df9d55C": dict(
             address="0x9978c6B08d28d3B74437c917c5dD7C026df9d55C",
@@ -5722,7 +5722,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xFFa66f6985215fDd2907B21145d1F9C91aC62f80": dict(
             address="0xFFa66f6985215fDd2907B21145d1F9C91aC62f80",
@@ -5750,7 +5750,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x8e9De7E69424c848972870798286E8bc5EcB295F": dict(
             address="0x8e9De7E69424c848972870798286E8bc5EcB295F",
@@ -5766,7 +5766,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             ],
             is_metapool=True,
-            base_pool_address=0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2,
+            base_pool_address="0xDCEF968D416A41CDAC0ED8702FAC8128A64241A2",
         ),
         "0x1062FD8eD633c1f080754c19317cb3912810B5e5": dict(
             address="0x1062FD8eD633c1f080754c19317cb3912810B5e5",
@@ -5831,7 +5831,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xB6038C73C9D97dd30B869461Fd286913e82d7F70": dict(
             address="0xB6038C73C9D97dd30B869461Fd286913e82d7F70",
@@ -5860,7 +5860,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x2237Ea7577cdE4c818c99a2e2A1C92794cBA2b7E": dict(
             address="0x2237Ea7577cdE4c818c99a2e2A1C92794cBA2b7E",
@@ -5877,7 +5877,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xB4c73D52072DDe93b181c037eaaA9B0124d6Ebc9": dict(
             address="0xB4c73D52072DDe93b181c037eaaA9B0124d6Ebc9",
@@ -5918,7 +5918,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0xDd9E687c73A2031A8f5058B596d740f53c1cb220": dict(
             address="0xDd9E687c73A2031A8f5058B596d740f53c1cb220",
@@ -6007,7 +6007,7 @@ CURVE_V1_POOL_ATTRIBUTES: Dict[
                 "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             ],
             is_metapool=True,
-            base_pool_address=0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7,
+            base_pool_address="0xBEBC44782C7DB0A1A60CB6FE97D0B483032FF1C7",
         ),
         "0x270d74e9Cc8DC75ef55d91c0D469E3285E581E77": dict(
             address="0x270d74e9Cc8DC75ef55d91c0D469E3285E581E77",
