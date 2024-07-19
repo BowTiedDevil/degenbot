@@ -44,8 +44,6 @@ def test_isInitialized():
     TickBitmap.flipTick(tick_bitmap, 1, tick_spacing=1)
     assert is_initialized(tick_bitmap, 1) is True
 
-    # TODO: The repo flips this tick twice, which may be a mistake
-    # TickBitmap.flipTick(tick_bitmap, 1, tick_spacing=1)
     TickBitmap.flipTick(tick_bitmap, tick=1, tick_spacing=1)
     assert is_initialized(tick_bitmap, 1) is False
 

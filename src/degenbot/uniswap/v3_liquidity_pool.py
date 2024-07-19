@@ -209,6 +209,14 @@ class V3LiquidityPool(BaseLiquidityPool):
                 for word, bitmap_at_word in tick_bitmap.items()
             }
 
+            # Add empty regions to mapping
+            min_word_position, _ = self._get_tick_bitmap_word_and_bit_position(TickMath.MIN_TICK)
+            max_word_position, _ = self._get_tick_bitmap_word_and_bit_position(TickMath.MAX_TICK)
+            known_empty_words = (
+                set(range(min_word_position, max_word_position + 1)) - self.tick_bitmap.keys()
+            )
+            self.tick_bitmap.update({word: UniswapV3BitmapAtWord() for word in known_empty_words})
+
         if tick_data is not None:
             # transform dict to LiquidityAtTick
             self.tick_data = {
@@ -379,10 +387,7 @@ class V3LiquidityPool(BaseLiquidityPool):
 
             while True:
                 try:
-                    (
-                        step.tick_next,
-                        step.initialized,
-                    ) = TickBitmap.nextInitializedTickWithinOneWord(
+                    step.tick_next, step.initialized = TickBitmap.nextInitializedTickWithinOneWord(
                         _tick_bitmap,
                         state.tick,
                         self._tick_spacing,
@@ -480,13 +485,7 @@ class V3LiquidityPool(BaseLiquidityPool):
             )
         )
 
-        return (
-            amount0,
-            amount1,
-            state.sqrt_price_x96,
-            state.liquidity,
-            state.tick,
-        )
+        return amount0, amount1, state.sqrt_price_x96, state.liquidity, state.tick
 
     def _fetch_tick_data_at_word(
         self,
