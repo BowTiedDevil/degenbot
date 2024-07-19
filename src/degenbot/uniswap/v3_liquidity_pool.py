@@ -8,7 +8,7 @@ from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
-from eth_typing import ChecksumAddress
+from eth_typing import ChecksumAddress, HexStr
 from eth_utils.address import to_checksum_address
 from web3.contract.contract import Contract
 
@@ -107,11 +107,11 @@ class V3LiquidityPool(BaseLiquidityPool):
         self.address = to_checksum_address(address)
         self.abi = abi if abi is not None else UNISWAP_V3_POOL_ABI
 
-        _w3 = config.get_web3()
-        _w3_contract = self._w3_contract
+        w3 = config.get_web3()
+        w3_contract = self._w3_contract
 
         if state_block is None:
-            state_block = _w3.eth.block_number
+            state_block = w3.eth.block_number
         self._update_block = state_block
 
         self.state: UniswapV3PoolState = UniswapV3PoolState(
@@ -119,8 +119,8 @@ class V3LiquidityPool(BaseLiquidityPool):
             liquidity=0,
             sqrt_price_x96=0,
             tick=0,
-            tick_bitmap=dict(),
-            tick_data=dict(),
+            tick_bitmap={},
+            tick_data={},
         )
 
         # held for operations that manipulate state data
@@ -136,7 +136,7 @@ class V3LiquidityPool(BaseLiquidityPool):
         if factory_address:
             self.factory = to_checksum_address(factory_address)
         else:
-            self.factory = to_checksum_address(_w3_contract.functions.factory().call())
+            self.factory = to_checksum_address(w3_contract.functions.factory().call())
 
         if deployer_address:
             self.deployer = to_checksum_address(deployer_address)
@@ -146,19 +146,14 @@ class V3LiquidityPool(BaseLiquidityPool):
         if lens:
             self.lens = lens
         else:
-            # Use the singleton TickLens helper if available
             try:
-                self.lens = self._lens_contracts[(_w3.eth.chain_id, self.factory)]
+                self.lens = self._lens_contracts[(w3.eth.chain_id, self.factory)]
             except KeyError:
-                self.lens = TickLens(address=TICKLENS_ADDRESSES[_w3.eth.chain_id][self.factory])
-                self._lens_contracts[(_w3.eth.chain_id, self.factory)] = self.lens
+                self.lens = TickLens(address=TICKLENS_ADDRESSES[w3.eth.chain_id][self.factory])
+                self._lens_contracts[(w3.eth.chain_id, self.factory)] = self.lens
 
-        token0_address: ChecksumAddress = to_checksum_address(
-            _w3_contract.functions.token0().call()
-        )
-        token1_address: ChecksumAddress = to_checksum_address(
-            _w3_contract.functions.token1().call()
-        )
+        token0_address: HexStr = w3_contract.functions.token0().call()
+        token1_address: HexStr = w3_contract.functions.token1().call()
 
         if tokens is not None:
             if len(tokens) != 2:
@@ -167,27 +162,27 @@ class V3LiquidityPool(BaseLiquidityPool):
             self.token0 = min(tokens)
             self.token1 = max(tokens)
 
-            if not (self.token0 == token0_address and self.token1 == token1_address):
-                raise ValueError("Token addresses do not match tokens recorded at contract")
+            if self.token0 != token0_address or self.token1 != token1_address:
+                raise ValueError("Provided tokens do not match the contract.")
         else:
-            _token_manager = Erc20TokenHelperManager(_w3.eth.chain_id)
-            self.token0 = _token_manager.get_erc20token(
+            token_manager = Erc20TokenHelperManager(w3.eth.chain_id)
+            self.token0 = token_manager.get_erc20token(
                 address=token0_address,
                 silent=silent,
             )
-            self.token1 = _token_manager.get_erc20token(
+            self.token1 = token_manager.get_erc20token(
                 address=token1_address,
                 silent=silent,
             )
 
         self.tokens = (self.token0, self.token1)
 
-        self._fee: int = fee if fee is not None else _w3_contract.functions.fee().call()
+        self._fee: int = fee if fee is not None else w3_contract.functions.fee().call()
         self._tick_spacing = TICK_SPACING_BY_FEE[self._fee]  # immutable
 
         if self.deployer is not None and init_hash is not None:
             computed_pool_address = generate_v3_pool_address(
-                token_addresses=[self.token0.address, self.token1.address],
+                token_addresses=(self.token0.address, self.token1.address),
                 fee=self._fee,
                 factory_or_deployer_address=self.deployer,
                 init_hash=init_hash,
@@ -209,17 +204,13 @@ class V3LiquidityPool(BaseLiquidityPool):
             self._update_method = update_method
         self._extra_words = extra_words
 
-        # default to an empty, sparse bitmap with no tick data
-        self._sparse_bitmap = True
-
         if (tick_bitmap is not None) != (tick_data is not None):
             raise ValueError(
                 f"Must provide both tick_bitmap and tick_data! Got {tick_bitmap=}, {tick_data=}"
             )
 
-        if tick_bitmap is not None and tick_data is not None:
-            # if a snapshot was provided, assume it is complete
-            self._sparse_bitmap = False
+        # If a snapshot was provided, assume it is complete.
+        self._sparse_bitmap = False if tick_bitmap is not None and tick_data is not None else True
 
         if tick_bitmap is not None:
             # transform dict to UniswapV3BitmapAtWord
@@ -266,21 +257,17 @@ class V3LiquidityPool(BaseLiquidityPool):
                 block_number=self._update_block,
             )
 
-        self.liquidity = _w3_contract.functions.liquidity().call(
+        self.liquidity = w3_contract.functions.liquidity().call(block_identifier=self._update_block)
+
+        self.sqrt_price_x96, self.tick, *_ = w3_contract.functions.slot0().call(
             block_identifier=self._update_block
         )
-
-        (
-            self.sqrt_price_x96,
-            self.tick,
-            *_,
-        ) = _w3_contract.functions.slot0().call(block_identifier=self._update_block)
 
         self._pool_state_archive: Dict[int, UniswapV3PoolState] = {}
         if archive_states:
             self._pool_state_archive[self._update_block] = self.state
 
-        AllPools(_w3.eth.chain_id)[self.address] = self
+        AllPools(w3.eth.chain_id)[self.address] = self
 
         self._subscribers = set()
 
@@ -420,33 +407,32 @@ class V3LiquidityPool(BaseLiquidityPool):
 
                     break
 
-            # ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
+            # Ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
             if step.tick_next < TickMath.MIN_TICK:
                 step.tick_next = TickMath.MIN_TICK
             elif step.tick_next > TickMath.MAX_TICK:
                 step.tick_next = TickMath.MAX_TICK
 
-            # get the price for the next tick
             step.sqrt_price_next_x96 = TickMath.getSqrtRatioAtTick(step.tick_next)
 
             # compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
-            (
-                state.sqrt_price_x96,
-                step.amount_in,
-                step.amount_out,
-                step.fee_amount,
-            ) = SwapMath.computeSwapStep(
-                state.sqrt_price_x96,
-                sqrt_price_limit_x96
-                if (
-                    step.sqrt_price_next_x96 < sqrt_price_limit_x96
-                    if zero_for_one
-                    else step.sqrt_price_next_x96 > sqrt_price_limit_x96
+
+            state.sqrt_price_x96, step.amount_in, step.amount_out, step.fee_amount = (
+                SwapMath.computeSwapStep(
+                    state.sqrt_price_x96,
+                    sqrt_price_limit_x96
+                    if (
+                        (zero_for_one is True and step.sqrt_price_next_x96 < sqrt_price_limit_x96)
+                        or (
+                            zero_for_one is False
+                            and step.sqrt_price_next_x96 > sqrt_price_limit_x96
+                        )
+                    )
+                    else step.sqrt_price_next_x96,
+                    state.liquidity,
+                    state.amount_specified_remaining,
+                    self._fee,
                 )
-                else step.sqrt_price_next_x96,
-                state.liquidity,
-                state.amount_specified_remaining,
-                self._fee,
             )
 
             if exact_input:
@@ -462,14 +448,12 @@ class V3LiquidityPool(BaseLiquidityPool):
             if state.sqrt_price_x96 == step.sqrt_price_next_x96:  # pragma: no branch
                 # if the tick is initialized, run the tick transition
                 if step.initialized:
-                    tick_next = step.tick_next
-                    liquidityNet = _tick_data[tick_next].liquidityNet
-
+                    liquidity_net_at_next_tick = _tick_data[step.tick_next].liquidityNet
                     if zero_for_one:
-                        liquidityNet = -liquidityNet
-
-                    state.liquidity = LiquidityMath.addDelta(state.liquidity, liquidityNet)
-
+                        liquidity_net_at_next_tick = -liquidity_net_at_next_tick
+                    state.liquidity = LiquidityMath.addDelta(
+                        state.liquidity, liquidity_net_at_next_tick
+                    )
                 state.tick = step.tick_next - 1 if zero_for_one else step.tick_next
 
             elif state.sqrt_price_x96 != step.sqrt_price_start_x96:  # pragma: no branch
