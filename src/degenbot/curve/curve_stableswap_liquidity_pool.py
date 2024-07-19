@@ -25,7 +25,7 @@ from ..baseclasses import BaseLiquidityPool
 from ..constants import ZERO_ADDRESS
 from ..dex.curve import (
     BROKEN_CURVE_V1_POOLS,
-    CACHED_CURVE_V1_POOL_ATTRIBUTES,
+    CURVE_V1_POOL_ATTRIBUTES,
     CURVE_V1_FACTORY_ADDRESS,
     CURVE_V1_REGISTRY_ADDRESS,
 )
@@ -276,7 +276,7 @@ class CurveStableswapPool(BaseLiquidityPool):
         try:
             # if chain_id in POOL_ATTRIBUTES and self.address in POOL_ATTRIBUTES[chain_id]:
             cached_pool_attributes = CurveStableSwapPoolAttributes(
-                **CACHED_CURVE_V1_POOL_ATTRIBUTES[chain_id][self.address]
+                **CURVE_V1_POOL_ATTRIBUTES[chain_id][self.address]
             )
         except KeyError:
             pass
@@ -330,16 +330,8 @@ class CurveStableswapPool(BaseLiquidityPool):
             pass
 
         # fee setup
-        self.fee: int = (
-            cached_pool_attributes.fee
-            if cached_pool_attributes is not None and cached_pool_attributes.fee is not None
-            else _w3_contract.functions.fee().call(block_identifier=state_block)
-        )
-        self.admin_fee: int = (
-            cached_pool_attributes.admin_fee
-            if cached_pool_attributes is not None
-            else _w3_contract.functions.admin_fee().call(block_identifier=state_block)
-        )
+        self.fee: int = _w3_contract.functions.fee().call(block_identifier=state_block)
+        self.admin_fee: int = _w3_contract.functions.admin_fee().call(block_identifier=state_block)
 
         # token setup
         self._coin_index_type: str = (

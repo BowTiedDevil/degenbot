@@ -27,8 +27,6 @@ class CurveStableSwapPoolAttributes:
     lp_token_address: HexAddress
     coin_addresses: List[HexAddress]
     coin_index_type: str
-    fee: int
-    admin_fee: int
     is_metapool: bool
     underlying_coin_addresses: List[HexAddress] | None = dataclasses.field(default=None)
     base_pool_address: HexAddress | None = dataclasses.field(default=None)
