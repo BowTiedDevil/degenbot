@@ -1,11 +1,12 @@
 import itertools
 from typing import TYPE_CHECKING, Iterable, List, Sequence
 
-import eth_abi.packed
 from eth_typing import ChecksumAddress
+from eth_utils import keccak
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
-from web3 import Web3
+
+from ..functions import create2_salt
 
 if TYPE_CHECKING:
     from .managers import UniswapV2LiquidityPoolManager
@@ -26,14 +27,12 @@ def generate_v2_pool_address(
     token_addresses = sorted([address.lower() for address in token_addresses])
 
     return to_checksum_address(
-        Web3.keccak(
+        keccak(
             HexBytes(0xFF)
             + HexBytes(factory_address)
-            + Web3.keccak(
-                eth_abi.packed.encode_packed(
-                    ["address", "address"],
-                    [*token_addresses],
-                )
+            + create2_salt(
+                salt_types=["address", "address"],
+                salt_values=token_addresses,
             )
             + HexBytes(init_hash)
         )[-20:]

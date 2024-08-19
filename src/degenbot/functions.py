@@ -1,10 +1,30 @@
+from typing import Any, Iterable
+
+import eth_abi.packed
 import eth_account.messages
 import web3
 from eth_account.datastructures import SignedMessage
+from eth_typing import ChecksumAddress
 from web3.types import BlockIdentifier
 
 from . import config
 from .constants import MAX_UINT256
+
+
+def create2_salt(
+    salt_types: Iterable[str],
+    salt_values: Iterable[Any],
+) -> ChecksumAddress:
+    """
+    Generate the 32 byte salt used by CREATE2 calls.
+    """
+
+    return web3.Web3.keccak(
+        eth_abi.packed.encode_packed(
+            salt_types,
+            salt_values,
+        )
+    )
 
 
 def eip_191_hash(message: str, private_key: str) -> str:
