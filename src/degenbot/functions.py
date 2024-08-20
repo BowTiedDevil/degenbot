@@ -5,8 +5,8 @@ import eth_account.messages
 import web3
 from eth_account.datastructures import SignedMessage
 from eth_typing import ChecksumAddress
-from eth_utils import keccak
 from eth_utils.address import to_checksum_address
+from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 from web3.types import BlockIdentifier
 
@@ -14,7 +14,9 @@ from . import config
 from .constants import MAX_UINT256
 
 
-def create2_address(deployer: ChecksumAddress | str, salt: bytes | str, bytecode: bytes | str):
+def create2_address(
+    deployer: ChecksumAddress | str, salt: bytes | str, bytecode: bytes | str
+) -> ChecksumAddress:
     return to_checksum_address(
         keccak(
             HexBytes(0xFF) + HexBytes(deployer) + HexBytes(salt) + HexBytes(bytecode),
@@ -25,7 +27,7 @@ def create2_address(deployer: ChecksumAddress | str, salt: bytes | str, bytecode
 def create2_salt(
     salt_types: Iterable[str],
     salt_values: Iterable[Any],
-) -> ChecksumAddress:
+) -> HexBytes:
     """
     Generate the 32 byte salt used by CREATE2 calls.
     """
