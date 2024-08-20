@@ -26,7 +26,6 @@ class AnvilFork:
         fork_url: str,
         fork_block: int | None = None,
         hardfork: str = "latest",
-        gas_limit: int = 30_000_000,
         port: int | None = None,
         chain_id: int | None = None,
         mining_mode: Literal["auto", "interval", "none"] = "auto",
@@ -47,16 +46,17 @@ class AnvilFork:
         prune_history: bool = False,
     ):
         def build_anvil_command() -> List[str]:  # pragma: no cover
-            command = ["anvil"]
-            command.append("--silent")
-            command.append("--auto-impersonate")
-            command.append("--no-rate-limit")
-            command.append(f"--fork-url={fork_url}")
-            command.append(f"--hardfork={hardfork}")
-            command.append(f"--gas-limit={gas_limit}")
-            command.append(f"--port={self.port}")
-            command.append(f"--ipc={ipc_path}")
-            command.append(f"--mnemonic={mnemonic}")
+            command = [
+                "anvil",
+                "--silent",
+                "--auto-impersonate",
+                "--no-rate-limit",
+                f"--fork-url={fork_url}",
+                f"--hardfork={hardfork}",
+                f"--port={self.port}",
+                f"--ipc={ipc_path}",
+                f"--mnemonic={mnemonic}",
+            ]
             if fork_block:
                 command.append(f"--fork-block-number={fork_block}")
             if chain_id:
