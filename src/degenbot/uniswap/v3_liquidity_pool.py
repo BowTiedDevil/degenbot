@@ -383,7 +383,10 @@ class V3LiquidityPool(BaseLiquidityPool):
             except BitmapWordUnavailableError as exc:
                 missing_word = exc.args[1]
                 if self._sparse_bitmap:
-                    self._fetch_tick_data_at_word(word_position=missing_word)
+                    self._fetch_tick_data_at_word(
+                        word_position=missing_word,
+                        block_number=self._update_block,
+                    )
                 continue
 
             # Ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
@@ -395,7 +398,6 @@ class V3LiquidityPool(BaseLiquidityPool):
             step.sqrt_price_next_x96 = TickMath.getSqrtRatioAtTick(step.tick_next)
 
             # compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
-
             state.sqrt_price_x96, step.amount_in, step.amount_out, step.fee_amount = (
                 SwapMath.computeSwapStep(
                     state.sqrt_price_x96,
