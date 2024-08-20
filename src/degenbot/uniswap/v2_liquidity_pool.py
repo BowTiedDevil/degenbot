@@ -910,7 +910,7 @@ class CamelotLiquidityPool(LiquidityPool):
             return 3 * x_0 * (y * y // 10**18) // 10**18 + (x_0 * x_0 // 10**18 * x_0 // 10**18)
 
         fee_percent = self.fee_denominator * (
-            self.fee_token0 if token_in is self.token0 else self.fee_token1
+            self.fee_token0 if token_in == self.token0 else self.fee_token1
         )
 
         reserves_token0 = (
@@ -927,12 +927,12 @@ class CamelotLiquidityPool(LiquidityPool):
         reserves_token1 = reserves_token1 * 10**18 // precision_multiplier_token1
         reserve_a, reserve_b = (
             (reserves_token0, reserves_token1)
-            if token_in is self.token0
+            if token_in == self.token0
             else (reserves_token1, reserves_token0)
         )
         token_in_quantity = (
             token_in_quantity * 10**18 // precision_multiplier_token0
-            if token_in is self.token0
+            if token_in == self.token0
             else token_in_quantity * 10**18 // precision_multiplier_token1
         )
         y = reserve_b - _get_y(token_in_quantity + reserve_a, xy, reserve_b)
@@ -941,7 +941,7 @@ class CamelotLiquidityPool(LiquidityPool):
             y
             * (
                 precision_multiplier_token1
-                if token_in is self.token0
+                if token_in == self.token0
                 else precision_multiplier_token0
             )
             // 10**18
