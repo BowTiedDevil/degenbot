@@ -27,7 +27,11 @@ from .v2_dataclasses import (
     UniswapV2PoolState,
     UniswapV2PoolStateUpdated,
 )
-from .v2_functions import generate_v2_pool_address
+from .v2_functions import (
+    constant_product_calc_exact_in,
+    constant_product_calc_exact_out,
+    generate_v2_pool_address,
+)
 
 
 class LiquidityPool(BaseLiquidityPool):
@@ -373,9 +377,12 @@ class LiquidityPool(BaseLiquidityPool):
                 f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})"
             )
 
-        numerator = reserves_in * token_out_quantity * fee.denominator
-        denominator = (reserves_out - token_out_quantity) * (fee.denominator - fee.numerator)
-        return numerator // denominator + 1
+        return constant_product_calc_exact_out(
+            amount_out=token_out_quantity,
+            reserves_in=reserves_in,
+            reserves_out=reserves_out,
+            fee=fee,
+        )
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -422,11 +429,12 @@ class LiquidityPool(BaseLiquidityPool):
                 f"Could not identify token_in: {token_in}! Pool holds: {self.token0} {self.token1}"
             )
 
-        amount_in_with_fee = token_in_quantity * (fee.denominator - fee.numerator)
-        numerator = amount_in_with_fee * reserves_out
-        denominator = reserves_in * fee.denominator + amount_in_with_fee
-
-        return numerator // denominator
+        return constant_product_calc_exact_in(
+            amount_in=token_in_quantity,
+            reserves_in=reserves_in,
+            reserves_out=reserves_out,
+            fee=fee,
+        )
 
     def external_update(
         self,

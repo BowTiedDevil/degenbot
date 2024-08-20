@@ -1,4 +1,5 @@
 import itertools
+from fractions import Fraction
 from typing import TYPE_CHECKING, Iterable, List, Sequence
 
 from eth_typing import ChecksumAddress
@@ -44,3 +45,33 @@ def get_v2_pools_from_token_path(
         )
         for token_addresses in itertools.pairwise(tx_path)
     ]
+
+
+def constant_product_calc_exact_in(
+    amount_in: int,
+    reserves_in: int,
+    reserves_out: int,
+    fee: Fraction,
+) -> int:
+    """
+    Calculate the amount out for an exact input from a constant product (x*y=k) invariant pool.
+    """
+
+    return (amount_in * (fee.denominator - fee.numerator) * reserves_out) // (
+        reserves_in * fee.denominator + amount_in * (fee.denominator - fee.numerator)
+    )
+
+
+def constant_product_calc_exact_out(
+    amount_out: int,
+    reserves_in: int,
+    reserves_out: int,
+    fee: Fraction,
+) -> int:
+    """
+    Calculate the amount in necessary for an exact output swap through a constant product (x*y=k) invariant pool.
+    """
+
+    return 1 + (reserves_in * amount_out * fee.denominator) // (
+        (reserves_out - amount_out) * (fee.denominator - fee.numerator)
+    )
