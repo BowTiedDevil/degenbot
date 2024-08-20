@@ -27,11 +27,11 @@ ARBITRUM_ARCHIVE_NODE_HTTP_URI = f"https://rpc.ankr.com/arbitrum/{env_values['AN
 # ARBITRUM_FULL_NODE_HTTP_URI = "http://localhost:8547"
 ARBITRUM_FULL_NODE_HTTP_URI = f"https://rpc.ankr.com/arbitrum/{env_values['ANKR_API_KEY']}"
 
-ETHEREUM_ARCHIVE_NODE_HTTP_URI = "http://localhost:8543"
+ETHEREUM_ARCHIVE_NODE_HTTP_URI = "http://localhost:8544"
 # ETHEREUM_ARCHIVE_NODE_HTTP_URI = f"https://rpc.ankr.com/eth/{env_values['ANKR_API_KEY']}"
 ETHEREUM_FULL_NODE_HTTP_URI = "http://localhost:8545"
 
-BASE_FULL_NODE_HTTP_URI = "http://localhost:8547"
+BASE_FULL_NODE_HTTP_URI = "http://localhost:8543"
 
 
 # Set up a web3 connection to a Base full node
