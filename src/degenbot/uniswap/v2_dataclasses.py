@@ -2,11 +2,11 @@ import dataclasses
 
 from eth_typing import ChecksumAddress
 
-from ..baseclasses import BasePoolState, Message, UniswapSimulationResult
+from ..baseclasses import AbstractPoolState, Message, UniswapSimulationResult
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV2PoolState(BasePoolState):
+class UniswapV2PoolState(AbstractPoolState):
     pool: ChecksumAddress
     reserves_token0: int
     reserves_token1: int

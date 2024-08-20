@@ -13,7 +13,7 @@ from eth_utils.address import to_checksum_address
 from web3.contract.contract import Contract
 
 from .. import config
-from ..baseclasses import BaseLiquidityPool
+from ..baseclasses import AbstractLiquidityPool
 from ..dex.uniswap import TICKLENS_ADDRESSES
 from ..erc20_token import Erc20Token
 from ..exceptions import (
@@ -50,7 +50,7 @@ TICK_SPACING_BY_FEE = {
 }
 
 
-class V3LiquidityPool(BaseLiquidityPool):
+class V3LiquidityPool(AbstractLiquidityPool):
     @dataclasses.dataclass(slots=True, repr=False, eq=False)
     class SwapCache:
         liquidity_start: int
@@ -177,13 +177,13 @@ class V3LiquidityPool(BaseLiquidityPool):
 
         self.tokens = (self.token0, self.token1)
 
-        self._fee: int = fee if fee is not None else w3_contract.functions.fee().call()
-        self._tick_spacing = TICK_SPACING_BY_FEE[self._fee]  # immutable
+        self.fee: int = fee if fee is not None else w3_contract.functions.fee().call()
+        self.tick_spacing = TICK_SPACING_BY_FEE[self.fee]  # immutable
 
         if self.deployer is not None and init_hash is not None:
             computed_pool_address = generate_v3_pool_address(
                 token_addresses=(self.token0.address, self.token1.address),
-                fee=self._fee,
+                fee=self.fee,
                 factory_or_deployer_address=self.deployer,
                 init_hash=init_hash,
             )
@@ -195,7 +195,7 @@ class V3LiquidityPool(BaseLiquidityPool):
         if name:  # pragma: no cover
             self.name = name
         else:
-            self.name = f"{self.token0}-{self.token1} (V3, {self._fee/10000:.2f}%)"
+            self.name = f"{self.token0}-{self.token1} (V3, {self.fee / 10000:.2f}%)"
 
         if update_method is not None:  # pragma: no cover
             warnings.warn(
@@ -210,7 +210,7 @@ class V3LiquidityPool(BaseLiquidityPool):
             )
 
         # If a snapshot was provided, assume it is complete.
-        self._sparse_bitmap = False if tick_bitmap is not None and tick_data is not None else True
+        self.sparse_bitmap = False if tick_bitmap is not None and tick_data is not None else True
 
         if tick_bitmap is not None:
             # transform dict to UniswapV3BitmapAtWord
@@ -275,7 +275,7 @@ class V3LiquidityPool(BaseLiquidityPool):
             logger.info(self.name)
             logger.info(f"• Token 0: {self.token0}")
             logger.info(f"• Token 1: {self.token1}")
-            logger.info(f"• Fee: {self._fee}")
+            logger.info(f"• Fee: {self.fee}")
             logger.info(f"• Liquidity: {self.liquidity}")
             logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
             logger.info(f"• Tick: {self.tick}")
@@ -303,7 +303,7 @@ class V3LiquidityPool(BaseLiquidityPool):
             }
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self._fee})"
+        return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self.fee})"
 
     def __str__(self) -> str:
         return self.name
@@ -377,12 +377,12 @@ class V3LiquidityPool(BaseLiquidityPool):
                 step.tick_next, step.initialized = TickBitmap.nextInitializedTickWithinOneWord(
                     _tick_bitmap,
                     state.tick,
-                    self._tick_spacing,
+                    self.tick_spacing,
                     zero_for_one,
                 )
             except BitmapWordUnavailableError as exc:
                 missing_word = exc.args[1]
-                if self._sparse_bitmap:
+                if self.sparse_bitmap:
                     self._fetch_tick_data_at_word(
                         word_position=missing_word,
                         block_number=self._update_block,
@@ -412,7 +412,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                     else step.sqrt_price_next_x96,
                     state.liquidity,
                     state.amount_specified_remaining,
-                    self._fee,
+                    self.fee,
                 )
             )
 
@@ -474,7 +474,7 @@ class V3LiquidityPool(BaseLiquidityPool):
             _tick_bitmap = _w3_contract.functions.tickBitmap(word_position).call(
                 block_identifier=block_number,
             )
-            _tick_data = self.lens._w3_contract.functions.getPopulatedTicksInWord(
+            _tick_data = self.lens.w3_contract.functions.getPopulatedTicksInWord(
                 self.address, word_position
             ).call(block_identifier=block_number)
         except Exception as e:
@@ -497,7 +497,7 @@ class V3LiquidityPool(BaseLiquidityPool):
         """
         Retrieves the word and bit position (both zero indexed) for the tick. Accounts for the pool spacing.
         """
-        return TickBitmap.position(int(Decimal(tick) // self._tick_spacing))
+        return TickBitmap.position(int(Decimal(tick) // self.tick_spacing))
 
     @property
     def liquidity(self) -> int:
@@ -662,7 +662,7 @@ class V3LiquidityPool(BaseLiquidityPool):
             sqrt_price_limitX96 = 0
         )` which returns the value `amountOut`
 
-        Note that this wrapper function always assumes that the sqrt_price_limitx96 argument is unset,
+        Note that this wrapper function always assumes that the sqrt_price_limit_x96 argument is unset,
         thus the swap calculation will continue until the target amount is satisfied, regardless of
         price impact.
 
@@ -845,7 +845,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                         # The tick bitmap must be known for the word prior to changing the
                         # initialized status of any tick
 
-                        if self._sparse_bitmap:
+                        if self.sparse_bitmap:
                             logger.debug(
                                 f"(external_update) {tick_word=} not found in tick_bitmap {self.tick_bitmap.keys()=}"
                             )
@@ -872,7 +872,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                         TickBitmap.flipTick(
                             self.tick_bitmap,
                             tick,
-                            self._tick_spacing,
+                            self.tick_spacing,
                             update_block=update.block_number,
                         )
 
@@ -893,7 +893,7 @@ class V3LiquidityPool(BaseLiquidityPool):
                         TickBitmap.flipTick(
                             self.tick_bitmap,
                             tick,
-                            self._tick_spacing,
+                            self.tick_spacing,
                             update_block=update.block_number,
                         )
                     else:

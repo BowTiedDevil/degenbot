@@ -10,7 +10,7 @@ from web3.exceptions import BadFunctionCallOutput, ContractLogicError
 from web3.types import BlockIdentifier
 
 from . import config
-from .baseclasses import BaseToken
+from .baseclasses import AbstractErc20Token
 from .chainlink import ChainlinkPriceContract
 from .functions import get_number_for_block_identifier
 from .logging import logger
@@ -23,7 +23,7 @@ ERC20_ABI_MINIMAL = ujson.loads(
 )
 
 
-class Erc20Token(BaseToken):
+class Erc20Token(AbstractErc20Token):
     """
     An ERC-20 token contract.
 

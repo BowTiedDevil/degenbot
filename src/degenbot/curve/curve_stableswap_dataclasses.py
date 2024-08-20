@@ -3,11 +3,11 @@ from typing import List
 
 from eth_typing import ChecksumAddress, HexAddress
 
-from ..baseclasses import BasePoolState, Message
+from ..baseclasses import AbstractPoolState, Message
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class CurveStableswapPoolState(BasePoolState):
+class CurveStableswapPoolState(AbstractPoolState):
     pool: ChecksumAddress
     balances: List[int]
     base: "CurveStableswapPoolState | None" = dataclasses.field(default=None)

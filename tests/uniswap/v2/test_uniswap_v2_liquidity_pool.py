@@ -179,7 +179,7 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_archive: AnvilFork):
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
 
     # Test that the swap output from the pool contract matches the off-chain calculation
-    contract_amount = lp._w3_contract.functions.getAmountOut(
+    contract_amount = lp.w3_contract.functions.getAmountOut(
         amountIn=amount_in, tokenIn=token_in.address
     ).call()
     assert contract_amount == lp.calculate_tokens_out_from_tokens_in(
@@ -189,13 +189,13 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_archive: AnvilFork):
     current_reserves = lp.reserves_token0, lp.reserves_token1
 
     rewind_block_length = 500_000
-    contract_amount_old = lp._w3_contract.functions.getAmountOut(
+    contract_amount_old = lp.w3_contract.functions.getAmountOut(
         amountIn=amount_in, tokenIn=token_in.address
     ).call(block_identifier=FORK_BLOCK - rewind_block_length)
 
     assert contract_amount != contract_amount_old
 
-    old_reserves = lp._w3_contract.functions.getReserves().call(
+    old_reserves = lp.w3_contract.functions.getReserves().call(
         block_identifier=FORK_BLOCK - rewind_block_length
     )
     lp.state = UniswapV2PoolState(
@@ -230,7 +230,7 @@ def test_create_camelot_v2_pool(fork_arbitrum: AnvilFork):
     token_in = lp.token1
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
 
-    assert lp._w3_contract.functions.getAmountOut(
+    assert lp.w3_contract.functions.getAmountOut(
         amountIn=amount_in, tokenIn=token_in.address
     ).call() == lp.calculate_tokens_out_from_tokens_in(
         token_in=token_in,

@@ -12,7 +12,7 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from .. import config
-from ..baseclasses import BaseSimulationResult, BaseTransaction
+from ..baseclasses import AbstractSimulationResult, AbstractTransaction
 from ..constants import WRAPPED_NATIVE_TOKENS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
@@ -126,7 +126,7 @@ class V3RouterSpecialValues:
     USE_CONTRACT_BALANCE = 0
 
 
-class UniswapTransaction(BaseTransaction):
+class UniswapTransaction(AbstractTransaction):
     class LeftoverRouterBalance(LedgerError):
         pass
 
@@ -2161,7 +2161,7 @@ class UniswapTransaction(BaseTransaction):
 
                         # V3 Router enforces a maximum input
                         if first_swap:
-                            _sim_result: BaseSimulationResult
+                            _sim_result: AbstractSimulationResult
                             _, _sim_result = self.simulated_pool_states[-1]
 
                             amount_deposited = max(

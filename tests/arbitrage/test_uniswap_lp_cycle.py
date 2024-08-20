@@ -2206,14 +2206,14 @@ def test_arbitrage_with_overrides(
     )
     irrelevant_v3_pool.name = "WBTC-WETH (V3, 0.30%)"
     irrelevant_v3_pool.factory = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
-    irrelevant_v3_pool._fee = 3000
+    irrelevant_v3_pool.fee = 3000
     irrelevant_v3_pool.token0 = wbtc_token
     irrelevant_v3_pool.token1 = weth_token
     irrelevant_v3_pool.liquidity = 1612978974357835825
     irrelevant_v3_pool.sqrt_price_x96 = 31549217861118002279483878013792428
-    irrelevant_v3_pool._sparse_bitmap = False
+    irrelevant_v3_pool.sparse_bitmap = False
     irrelevant_v3_pool.tick = 257907
-    irrelevant_v3_pool._tick_spacing = 60
+    irrelevant_v3_pool.tick_spacing = 60
 
     overrides = [
         (irrelevant_v2_pool, v2_pool_state_override),  # Should be ignored

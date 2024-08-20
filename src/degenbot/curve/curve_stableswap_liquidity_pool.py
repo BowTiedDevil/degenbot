@@ -21,7 +21,7 @@ from web3.contract.contract import Contract
 from web3.types import BlockIdentifier
 
 from .. import config
-from ..baseclasses import BaseLiquidityPool
+from ..baseclasses import AbstractLiquidityPool
 from ..constants import ZERO_ADDRESS
 from ..dex.curve import (
     BROKEN_CURVE_V1_POOLS,
@@ -43,7 +43,7 @@ from .curve_stableswap_dataclasses import (
 )
 
 
-class CurveStableswapPool(BaseLiquidityPool):
+class CurveStableswapPool(AbstractLiquidityPool):
     # Constants from contract
     # ref: https://github.com/curvefi/curve-contract/blob/master/contracts/pool-templates/base/SwapTemplateBase.vy
     PRECISION_DECIMALS = 18

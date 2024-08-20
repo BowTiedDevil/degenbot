@@ -9,7 +9,7 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
-from ..baseclasses import BaseArbitrage, PlaintextMessage, Publisher, Subscriber
+from ..baseclasses import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
 from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
@@ -34,7 +34,7 @@ from .arbitrage_dataclasses import (
 )
 
 
-class UniswapLpCycle(Subscriber, BaseArbitrage):
+class UniswapLpCycle(Subscriber, AbstractArbitrage):
     def __init__(
         self,
         input_token: Erc20Token,
@@ -344,7 +344,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
                     _check_v3_pool_liquidity(pool, vector, pool_state)
                     exchange_rate = Fraction(pool_state.sqrt_price_x96**2, 2**192)
                     fee = Fraction(
-                        pool._fee, 1000000
+                        pool.fee, 1000000
                     )  # V3 fees are in hundredths of a bip (0.0001), e.g. 3000 == 0.3%
 
             net_rate_of_exchange *= (
@@ -510,6 +510,9 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         override_state : StateOverrideTypes, optional
             An sequence of tuples, representing an ordered pair of helper
             objects for Uniswap V2 / V3 pools and their overridden states.
+        min_rate_of_exchange : Fraction, optional
+            The minimum net rate of exchange for the arbitrage path. Rates
+            below this minimum will trigger an exception.
 
         Returns
         -------
@@ -522,7 +525,7 @@ class UniswapLpCycle(Subscriber, BaseArbitrage):
         """
 
         if any(
-            [pool._sparse_bitmap for pool in self.swap_pools if isinstance(pool, V3LiquidityPool)]
+            [pool.sparse_bitmap for pool in self.swap_pools if isinstance(pool, V3LiquidityPool)]
         ):
             raise ValueError(
                 f"Cannot calculate {self} with executor. One or more V3 pools has a sparse bitmap."

@@ -42,10 +42,10 @@ class Subscriber(Protocol):
         """
 
 
-class BaseArbitrage:
+class AbstractArbitrage:
     id: str
     gas_estimate: int
-    swap_pools: Sequence["BaseLiquidityPool"]
+    swap_pools: Sequence["AbstractLiquidityPool"]
 
     def _notify_subscribers(self: Publisher, message: Message) -> None:
         for subscriber in self._subscribers:
@@ -58,39 +58,39 @@ class BaseArbitrage:
         self._subscribers.discard(subscriber)
 
 
-class BaseManager:
+class AbstractManager:
     """
     Base class for managers that generate, track and distribute various helper classes
     """
 
 
-class BasePoolUpdate: ...
+class AbstractPoolUpdate: ...
 
 
-class BasePoolState:
+class AbstractPoolState:
     pool: ChecksumAddress
 
 
-class BaseSimulationResult: ...
+class AbstractSimulationResult: ...
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class UniswapSimulationResult(BaseSimulationResult):
+class UniswapSimulationResult(AbstractSimulationResult):
     amount0_delta: int
     amount1_delta: int
-    initial_state: BasePoolState
-    final_state: BasePoolState
+    initial_state: AbstractPoolState
+    final_state: AbstractPoolState
 
 
-class BaseLiquidityPool(abc.ABC, Publisher):
+class AbstractLiquidityPool(abc.ABC, Publisher):
     address: ChecksumAddress
     name: str
-    state: BasePoolState
+    state: AbstractPoolState
     tokens: Sequence["Erc20Token"]
     _subscribers: Set[Subscriber]
 
     def __eq__(self, other: Any) -> bool:
-        if isinstance(other, BaseLiquidityPool):
+        if isinstance(other, AbstractLiquidityPool):
             return self.address == other.address
         elif isinstance(other, bytes):
             return self.address.lower() == other.hex().lower()
@@ -100,7 +100,7 @@ class BaseLiquidityPool(abc.ABC, Publisher):
             return NotImplemented
 
     def __lt__(self, other: Any) -> bool:
-        if isinstance(other, BaseLiquidityPool):
+        if isinstance(other, AbstractLiquidityPool):
             return self.address < other.address
         elif isinstance(other, bytes):
             return self.address.lower() < other.hex().lower()
@@ -110,7 +110,7 @@ class BaseLiquidityPool(abc.ABC, Publisher):
             return NotImplemented
 
     def __gt__(self, other: Any) -> bool:
-        if isinstance(other, BaseLiquidityPool):
+        if isinstance(other, AbstractLiquidityPool):
             return self.address > other.address
         elif isinstance(other, bytes):
             return self.address.lower() > other.hex().lower()
@@ -129,11 +129,11 @@ class BaseLiquidityPool(abc.ABC, Publisher):
         for subscriber in self._subscribers:
             subscriber.notify(self, message)
 
-    def get_arbitrage_helpers(self: Publisher) -> Iterator[BaseArbitrage]:
+    def get_arbitrage_helpers(self: Publisher) -> Iterator[AbstractArbitrage]:
         return (
             subscriber
             for subscriber in self._subscribers
-            if isinstance(subscriber, (BaseArbitrage))
+            if isinstance(subscriber, AbstractArbitrage)
         )
 
     def subscribe(self: Publisher, subscriber: Subscriber) -> None:
@@ -143,14 +143,14 @@ class BaseLiquidityPool(abc.ABC, Publisher):
         self._subscribers.discard(subscriber)
 
 
-class BaseToken:
+class AbstractErc20Token:
     address: ChecksumAddress
     symbol: str
     name: str
     decimals: int
 
     def __eq__(self, other: Any) -> bool:
-        if isinstance(other, BaseToken):
+        if isinstance(other, AbstractErc20Token):
             return self.address == other.address
         elif isinstance(other, bytes):
             return self.address.lower() == other.hex().lower()
@@ -160,7 +160,7 @@ class BaseToken:
             return NotImplemented
 
     def __lt__(self, other: Any) -> bool:
-        if isinstance(other, BaseToken):
+        if isinstance(other, AbstractErc20Token):
             return self.address < other.address
         elif isinstance(other, bytes):
             return self.address.lower() < other.hex().lower()
@@ -170,7 +170,7 @@ class BaseToken:
             return NotImplemented
 
     def __gt__(self, other: Any) -> bool:
-        if isinstance(other, BaseToken):
+        if isinstance(other, AbstractErc20Token):
             return self.address > other.address
         elif isinstance(other, bytes):
             return self.address.lower() > other.hex().lower()
@@ -186,4 +186,4 @@ class BaseToken:
         return self.symbol
 
 
-class BaseTransaction: ...
+class AbstractTransaction: ...

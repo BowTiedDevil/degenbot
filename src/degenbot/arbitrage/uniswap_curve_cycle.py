@@ -10,9 +10,9 @@ from scipy.optimize import minimize_scalar
 from web3 import Web3
 
 from ..baseclasses import (
-    BaseArbitrage,
-    BaseLiquidityPool,
-    BasePoolState,
+    AbstractArbitrage,
+    AbstractLiquidityPool,
+    AbstractPoolState,
     Publisher,
     Subscriber,
     UniswapSimulationResult,
@@ -48,11 +48,11 @@ SwapAmount: TypeAlias = (
 CURVE_V1_DEFAULT_DISCOUNT_FACTOR = 0.9999
 
 
-class UniswapCurveCycle(Subscriber, BaseArbitrage):
+class UniswapCurveCycle(Subscriber, AbstractArbitrage):
     def __init__(
         self,
         input_token: Erc20Token,
-        swap_pools: Iterable[BaseLiquidityPool],
+        swap_pools: Iterable[AbstractLiquidityPool],
         id: str,
         max_input: int | None = None,
     ):
@@ -67,7 +67,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
         self.swap_pools = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
 
-        self.pool_states: Dict[ChecksumAddress, BasePoolState] = {}
+        self.pool_states: Dict[ChecksumAddress, AbstractPoolState] = {}
         self._update_pool_states(self.swap_pools)
         self.curve_discount_factor = CURVE_V1_DEFAULT_DISCOUNT_FACTOR
 
@@ -169,12 +169,12 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
         self,
         overrides: Sequence[
             Tuple[
-                BaseLiquidityPool,
-                BasePoolState | UniswapSimulationResult,
+                AbstractLiquidityPool,
+                AbstractPoolState | UniswapSimulationResult,
             ]
         ]
         | None,
-    ) -> Dict[ChecksumAddress, BasePoolState]:
+    ) -> Dict[ChecksumAddress, AbstractPoolState]:
         """
         Validate the overrides, extract and insert the resulting pool states
         into a dictionary.
@@ -183,7 +183,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
         if overrides is None:
             return {}
 
-        sorted_overrides: Dict[ChecksumAddress, BasePoolState] = {}
+        sorted_overrides: Dict[ChecksumAddress, AbstractPoolState] = {}
 
         for pool, override in overrides:
             if isinstance(
@@ -215,7 +215,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_state_overrides: Dict[ChecksumAddress, BasePoolState] | None = None,
+        pool_state_overrides: Dict[ChecksumAddress, AbstractPoolState] | None = None,
         block_number: int | None = None,
     ) -> List[SwapAmount]:
         """
@@ -349,7 +349,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
 
         return pools_amounts_out
 
-    def _update_pool_states(self, pools: Iterable[BaseLiquidityPool]) -> None:
+    def _update_pool_states(self, pools: Iterable[AbstractLiquidityPool]) -> None:
         """
         Update `self.pool_states` with state values from the `pools` iterable
         """
@@ -359,8 +359,8 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
         self,
         override_state: Sequence[
             Tuple[
-                BaseLiquidityPool,
-                BasePoolState | UniswapSimulationResult,
+                AbstractLiquidityPool,
+                AbstractPoolState | UniswapSimulationResult,
             ]
         ]
         | None = None,
@@ -441,7 +441,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
                     price = pool_state.sqrt_price_x96**2 / (2**192)
                     # V3 fees are integer values representing hundredths of a bip (0.0001)
                     # e.g. fee=3000 represents 0.3%
-                    fee = Fraction(pool._fee, 1000000)
+                    fee = Fraction(pool.fee, 1000000)
                     profit_factor *= (price if vector.zero_for_one else 1 / price) * (
                         (fee.denominator - fee.numerator) / fee.denominator
                     )
@@ -462,8 +462,8 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
         self,
         override_state: Sequence[
             Tuple[
-                BaseLiquidityPool,
-                BasePoolState | UniswapSimulationResult,
+                AbstractLiquidityPool,
+                AbstractPoolState | UniswapSimulationResult,
             ]
         ]
         | None = None,
@@ -587,8 +587,8 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
         self,
         override_state: Sequence[
             Tuple[
-                BaseLiquidityPool,
-                BasePoolState | UniswapSimulationResult,
+                AbstractLiquidityPool,
+                AbstractPoolState | UniswapSimulationResult,
             ]
         ]
         | None = None,
@@ -606,8 +606,8 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
         override_state: Sequence[
             Tuple[
-                BaseLiquidityPool,
-                BasePoolState | UniswapSimulationResult,
+                AbstractLiquidityPool,
+                AbstractPoolState | UniswapSimulationResult,
             ]
         ]
         | None = None,
@@ -639,7 +639,7 @@ class UniswapCurveCycle(Subscriber, BaseArbitrage):
         self._pre_calculation_check(override_state)
 
         if any(
-            [pool._sparse_bitmap for pool in self.swap_pools if isinstance(pool, V3LiquidityPool)]
+            [pool.sparse_bitmap for pool in self.swap_pools if isinstance(pool, V3LiquidityPool)]
         ):
             raise ValueError(
                 f"Cannot calculate {self} with executor. One or more V3 pools has a sparse bitmap."

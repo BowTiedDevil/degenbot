@@ -6,7 +6,7 @@ from eth_utils.address import to_checksum_address
 from web3.contract.contract import Contract
 
 from .. import config
-from ..baseclasses import BaseManager
+from ..baseclasses import AbstractManager
 from ..constants import ZERO_ADDRESS
 from ..dex.uniswap import FACTORY_ADDRESSES, TICKLENS_ADDRESSES
 from ..erc20_token import Erc20Token
@@ -22,7 +22,7 @@ from .v3_snapshot import UniswapV3LiquiditySnapshot
 from .v3_tick_lens import TickLens
 
 
-class UniswapLiquidityPoolManager(BaseManager):
+class UniswapLiquidityPoolManager(AbstractManager):
     """
     Single-concern base class to allow derived classes to share state
     """

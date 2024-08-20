@@ -86,7 +86,7 @@ def test_creation(ethereum_full_node_web3: Web3) -> None:
     assert (
         V3LiquidityPool(
             address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={}, tick_data={}
-        )._sparse_bitmap
+        ).sparse_bitmap
         is False
     )
 
@@ -534,7 +534,7 @@ def test_swap_for_all(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> N
 def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
     _START_BLOCK = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
 
-    wbtc_weth_v3_lp_at_block_17_600_000._sparse_bitmap = False
+    wbtc_weth_v3_lp_at_block_17_600_000.sparse_bitmap = False
 
     wbtc_weth_v3_lp_at_block_17_600_000.external_update(
         update=UniswapV3PoolExternalUpdate(

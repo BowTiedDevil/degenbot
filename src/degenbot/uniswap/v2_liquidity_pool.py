@@ -9,7 +9,7 @@ from typing_extensions import override
 from web3.contract.contract import Contract
 
 from .. import config
-from ..baseclasses import BaseLiquidityPool
+from ..baseclasses import AbstractLiquidityPool
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     ExternalUpdateError,
@@ -34,7 +34,7 @@ from .v2_functions import (
 )
 
 
-class LiquidityPool(BaseLiquidityPool):
+class LiquidityPool(AbstractLiquidityPool):
     """
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
@@ -115,7 +115,7 @@ class LiquidityPool(BaseLiquidityPool):
         self.abi = abi if abi is not None else UNISWAP_V2_POOL_ABI
 
         _w3 = config.get_web3()
-        _w3_contract = self._w3_contract
+        _w3_contract = self.w3_contract
         chain_id = _w3.eth.chain_id
 
         if state_block is None:
@@ -233,7 +233,7 @@ class LiquidityPool(BaseLiquidityPool):
         return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1})"
 
     @property
-    def _w3_contract(self) -> Contract:
+    def w3_contract(self) -> Contract:
         if "_contract" not in self.__dict__:
             self._contract = config.get_web3().eth.contract(address=self.address, abi=self.abi)
         return self._contract
@@ -256,7 +256,7 @@ class LiquidityPool(BaseLiquidityPool):
         if self._state is None:
             current_block = config.get_web3().eth.get_block_number()
             logger.debug(f"Getting initial state for {self} at block {current_block}")
-            reserves0, reserves1, *_ = self._w3_contract.functions.getReserves().call(
+            reserves0, reserves1, *_ = self.w3_contract.functions.getReserves().call(
                 block_identifier=current_block
             )
             self._update_block = current_block
@@ -717,7 +717,7 @@ class LiquidityPool(BaseLiquidityPool):
         contract values. If set to "external", uses the provided reserves without verification.
         """
 
-        _w3_contract = self._w3_contract
+        _w3_contract = self.w3_contract
 
         update_method = override_update_method or self._update_method
 

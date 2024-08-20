@@ -3,7 +3,7 @@ from typing import Any, Dict, Tuple
 
 from eth_typing import ChecksumAddress
 
-from ..baseclasses import BasePoolState, Message, UniswapSimulationResult
+from ..baseclasses import AbstractPoolState, Message, UniswapSimulationResult
 
 
 @dataclasses.dataclass(slots=True)
@@ -52,7 +52,7 @@ class UniswapV3PoolExternalUpdate:
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV3PoolState(BasePoolState):
+class UniswapV3PoolState(AbstractPoolState):
     pool: ChecksumAddress
     liquidity: int
     sqrt_price_x96: int

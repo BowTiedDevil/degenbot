@@ -18,7 +18,7 @@ class TickLens:
         self.abi = abi if abi is not None else UNISWAP_V3_TICKLENS_ABI
 
     @property
-    def _w3_contract(self) -> Contract:
+    def w3_contract(self) -> Contract:
         return config.get_web3().eth.contract(
             address=self.address,
             abi=self.abi,
