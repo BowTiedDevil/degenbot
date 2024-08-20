@@ -1674,11 +1674,11 @@ class UniswapTransaction(BaseTransaction):
                         except ManagerError:
                             _pool = UnregisteredLiquidityPool(
                                 address=generate_v2_pool_address(
-                                    token_addresses=(
+                                    tokens=(
                                         token0_address,
                                         token1_address,
                                     ),
-                                    factory_address=self.v2_pool_manager._factory_address,
+                                    deployer=self.v2_pool_manager._factory_address,
                                     init_hash=self.v2_pool_manager._factory_init_hash,
                                 ),
                                 tokens=[

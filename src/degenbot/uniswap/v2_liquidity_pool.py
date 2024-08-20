@@ -170,8 +170,8 @@ class LiquidityPool(BaseLiquidityPool):
 
         if factory_address is not None and factory_init_hash is not None:
             computed_pool_address = generate_v2_pool_address(
-                token_addresses=[self.token0.address, self.token1.address],
-                factory_address=factory_address,
+                tokens=[self.token0.address, self.token1.address],
+                deployer=factory_address,
                 init_hash=factory_init_hash,
             )
             if computed_pool_address != self.address:
