@@ -581,10 +581,6 @@ class V3LiquidityPool(BaseLiquidityPool):
         if "_contract" not in self.__dict__:
             self._contract = config.get_web3().eth.contract(address=self.address, abi=self.abi)
         return self._contract
-        # return config.get_web3().eth.contract(
-        #     address=self.address,
-        #     abi=self.abi,
-        # )
 
     def auto_update(
         self,
