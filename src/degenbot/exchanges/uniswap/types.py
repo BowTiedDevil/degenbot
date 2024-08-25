@@ -3,7 +3,7 @@ from typing import Any, List
 
 from eth_typing import ChecksumAddress
 
-from ..dataclasses import AbstractExchangeDeployment
+from ..types import AbstractExchangeDeployment
 
 
 @dataclass(slots=True, frozen=True)

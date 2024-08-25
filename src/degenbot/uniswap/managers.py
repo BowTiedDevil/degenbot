@@ -9,8 +9,8 @@ from .. import config
 from ..baseclasses import AbstractManager
 from ..constants import ZERO_ADDRESS
 from ..exceptions import ManagerError, PoolNotAssociated
-from ..exchanges.uniswap.dataclasses import UniswapV2ExchangeDeployment, UniswapV3ExchangeDeployment
 from ..exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
+from ..exchanges.uniswap.types import UniswapV2ExchangeDeployment, UniswapV3ExchangeDeployment
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools

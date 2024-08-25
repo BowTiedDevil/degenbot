@@ -11,7 +11,7 @@ from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
 
-from degenbot.exchanges.uniswap.dataclasses import (
+from degenbot.exchanges.uniswap.types import (
     UniswapRouterDeployment,
     UniswapV2ExchangeDeployment,
     UniswapV3ExchangeDeployment,

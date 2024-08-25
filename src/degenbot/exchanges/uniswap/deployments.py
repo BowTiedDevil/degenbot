@@ -9,7 +9,7 @@ from ...uniswap.abi import (
     UNISWAP_V3_POOL_ABI,
     UNISWAP_V3_TICKLENS_ABI,
 )
-from .dataclasses import (
+from .types import (
     UniswapFactoryDeployment,
     UniswapRouterDeployment,
     UniswapTickLensDeployment,

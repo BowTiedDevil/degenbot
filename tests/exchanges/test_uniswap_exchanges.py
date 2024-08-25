@@ -1,6 +1,6 @@
 import random
 
-from degenbot.exchanges.uniswap.dataclasses import (
+from degenbot.exchanges.uniswap.types import (
     UniswapFactoryDeployment,
     UniswapRouterDeployment,
     UniswapTickLensDeployment,

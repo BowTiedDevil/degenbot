@@ -1,7 +1,7 @@
 import pytest
 from degenbot.config import set_web3
 from degenbot.exceptions import ManagerError, PoolNotAssociated
-from degenbot.exchanges.uniswap.dataclasses import (
+from degenbot.exchanges.uniswap.types import (
     UniswapFactoryDeployment,
     UniswapTickLensDeployment,
     UniswapV3ExchangeDeployment,

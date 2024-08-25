@@ -24,8 +24,8 @@ from ..exceptions import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from ..exchanges.uniswap.dataclasses import UniswapV3ExchangeDeployment
 from ..exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
+from ..exchanges.uniswap.types import UniswapV3ExchangeDeployment
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
