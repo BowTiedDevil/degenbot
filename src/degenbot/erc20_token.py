@@ -12,6 +12,7 @@ from web3.types import BlockIdentifier
 from . import config
 from .baseclasses import AbstractErc20Token
 from .chainlink import ChainlinkPriceContract
+from .exceptions import NoPriceOracle
 from .functions import get_number_for_block_identifier
 from .logging import logger
 from .registry.all_tokens import AllTokens
@@ -165,12 +166,10 @@ class Erc20Token(AbstractErc20Token):
                 f"Token contract at {self.address} does not implement a 'decimals' function. Setting to 0."
             )
 
-        self.price: float | None = None
-        if oracle_address:
-            self._price_oracle = ChainlinkPriceContract(address=oracle_address)
-            self.price = self._price_oracle.price
-        else:
-            self.price = None
+        self._price_oracle: ChainlinkPriceContract | None
+        self._price_oracle = (
+            ChainlinkPriceContract(address=oracle_address) if oracle_address else None
+        )
 
         AllTokens(chain_id=_w3.eth.chain_id)[self.address] = self
 
@@ -303,9 +302,12 @@ class Erc20Token(AbstractErc20Token):
             block_number=get_number_for_block_identifier(block_identifier)
         )
 
-    def update_price(self) -> None:
-        self._price_oracle.update_price()
-        self.price = self._price_oracle.price
+    @property
+    def price(self) -> float:
+        if self._price_oracle is not None:
+            return self._price_oracle.price
+        else:
+            raise NoPriceOracle(f"{self} does not have a price oracle.")
 
 
 class EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE(Erc20Token):
