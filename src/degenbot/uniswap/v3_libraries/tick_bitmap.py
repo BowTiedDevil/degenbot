@@ -33,7 +33,7 @@ def flipTick(
 def position(tick: int) -> Tuple[int, int]:
     word_pos: int = tick >> 8
     bit_pos: int = tick % 256
-    return (word_pos, bit_pos)
+    return word_pos, bit_pos
 
 
 def nextInitializedTickWithinOneWord(
@@ -66,7 +66,7 @@ def nextInitializedTickWithinOneWord(
         next_tick = (
             (compressed - (bit_pos - BitMath.mostSignificantBit(masked))) * tick_spacing
             if initialized_status
-            else (compressed - (bit_pos)) * tick_spacing
+            else (compressed - bit_pos) * tick_spacing
         )
     else:
         # start from the word of the next tick, since the current tick state doesn't matter
