@@ -124,10 +124,7 @@ class UniswapTransaction(AbstractTransaction):
             for exchange in router.exchanges:
                 match exchange:
                     case UniswapV2ExchangeDeployment():
-                        self.v2_pool_manager = UniswapV2LiquidityPoolManager(
-                            factory_address=exchange.factory.address,
-                            exchange=exchange,
-                        )
+                        self.v2_pool_manager = UniswapV2LiquidityPoolManager.from_exchange(exchange)
                     case UniswapV3ExchangeDeployment():
                         self.v3_pool_manager = UniswapV3LiquidityPoolManager.from_exchange(exchange)
                     case _:

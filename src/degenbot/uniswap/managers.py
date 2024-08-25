@@ -73,21 +73,21 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         self,
         factory_address: str,
         chain_id: int | None = None,
-        exchange: UniswapV2ExchangeDeployment | None = None,
         pool_init_hash: str | None = None,
+        pool_abi: List[Any] | None = None,
     ):
-        if exchange is not None:
-            chain_id = exchange.chain_id
-            factory_address = exchange.factory.address
-            pool_init_hash = exchange.factory.pool_init_hash
-        else:
-            chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
-            factory_address = to_checksum_address(factory_address)
-            if factory_address not in FACTORY_DEPLOYMENTS[chain_id]:
+        chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
+        factory_address = to_checksum_address(factory_address)
+
+        try:
+            factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
+            pool_init_hash = factory_deployment.pool_init_hash
+            pool_abi = factory_deployment.pool_abi
+        except KeyError:
+            if pool_abi is None or pool_init_hash is None:
                 raise ManagerError(
-                    f"Pool manager could not be initialized from unknown factory address {factory_address}. {FACTORY_DEPLOYMENTS[chain_id].keys()}"
+                    "Cannot create pool manager without factory address, pool ABI, and pool init hash."
                 )
-            pool_init_hash = FACTORY_DEPLOYMENTS[chain_id][factory_address].pool_init_hash
 
         super().__init__(
             factory_address=factory_address,
@@ -98,14 +98,15 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         if self.__dict__ == {}:
             try:
-                self.chain_id = chain_id
-                self._factory_address = factory_address
                 self._lock = Lock()
-                self._tracked_pools: Dict[ChecksumAddress, LiquidityPool] = dict()
+                self._chain_id = chain_id
+                self._factory_address = factory_address
                 self._token_manager: Erc20TokenHelperManager = self._state[chain_id][
                     "erc20token_manager"
                 ]
+                self._pool_abi = pool_abi
                 self._pool_init_hash = pool_init_hash
+                self._tracked_pools: Dict[ChecksumAddress, LiquidityPool] = dict()
                 self._untracked_pools: Set[ChecksumAddress] = set()
             except Exception as e:
                 self._state[chain_id][factory_address] = {}
@@ -194,7 +195,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             pass
 
         # Check if the AllPools collection already has this pool
-        pool_helper = AllPools(self.chain_id).get(pool_address)
+        pool_helper = AllPools(self._chain_id).get(pool_address)
         if pool_helper:
             if TYPE_CHECKING:
                 assert isinstance(pool_helper, LiquidityPool)
@@ -251,29 +252,38 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
     def __init__(
         self,
         factory_address: ChecksumAddress | str,
+        ticklens_address: ChecksumAddress | str | None = None,
         deployer_address: ChecksumAddress | str | None = None,
         chain_id: int | None = None,
-        snapshot: UniswapV3LiquiditySnapshot | None = None,
+        pool_init_hash: str | None = None,
         pool_abi: List[Any] | None = None,
+        snapshot: UniswapV3LiquiditySnapshot | None = None,
     ):
         chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
         factory_address = to_checksum_address(factory_address)
-        if any(
-            [
-                factory_address not in FACTORY_DEPLOYMENTS[chain_id],
-                factory_address not in TICKLENS_DEPLOYMENTS[chain_id],
-            ]
-        ):
-            raise ManagerError(
-                f"Pool manager could not be initialized from unknown factory address {factory_address}. Provide a UniswapV3DexDeployment with the `exchange` argument, or load the deployment using degenbot.exchanges.uniswap.register.register_exchange()"
-            )
-        tick_lens_address = TICKLENS_DEPLOYMENTS[chain_id][factory_address].address
-        pool_init_hash = FACTORY_DEPLOYMENTS[chain_id][factory_address].pool_init_hash
 
-        if deployer_address is not None:
-            deployer_address = to_checksum_address(deployer_address)
-        else:
-            deployer_address = factory_address
+        try:
+            factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
+            ticklens_deployment = TICKLENS_DEPLOYMENTS[chain_id][factory_address]
+            deployer_address = (
+                factory_deployment.deployer
+                if factory_deployment.deployer is not None
+                else factory_address
+            )
+            ticklens_address = ticklens_deployment.address
+            pool_init_hash = factory_deployment.pool_init_hash
+            pool_abi = factory_deployment.pool_abi
+        except KeyError:
+            if pool_abi is None or ticklens_address is None or pool_init_hash is None:
+                raise ManagerError(
+                    "Cannot create pool manager without factory address, ticklens address, pool ABI, and pool init hash."
+                )
+            ticklens_address = to_checksum_address(ticklens_address)
+            deployer_address = (
+                to_checksum_address(deployer_address)
+                if deployer_address is not None
+                else factory_address
+            )
 
         super().__init__(
             factory_address=factory_address,
@@ -284,19 +294,19 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         if self.__dict__ == {}:
             try:
-                self.chain_id = chain_id
+                self._lock = Lock()
+                self._chain_id = chain_id
                 self._factory_address = factory_address
                 self._deployer_address = deployer_address
-                self._ticklens_address = tick_lens_address
-                self._lock = Lock()
-                self._tracked_pools: Dict[ChecksumAddress, V3LiquidityPool] = {}
+                self._ticklens_address = ticklens_address
                 self._token_manager: Erc20TokenHelperManager = self._state[chain_id][
                     "erc20token_manager"
                 ]
+                self._pool_abi = pool_abi
                 self._pool_init_hash = pool_init_hash
                 self._snapshot = snapshot
+                self._tracked_pools: Dict[ChecksumAddress, V3LiquidityPool] = {}
                 self._untracked_pools: Set[ChecksumAddress] = set()
-                self._pool_abi = pool_abi
             except Exception as e:
                 self._state[chain_id][factory_address] = {}
                 logger.exception("debug")
@@ -372,7 +382,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 assert isinstance(v3liquiditypool_kwargs, dict)
 
             # Check if the AllPools collection already has this pool
-            if pool_helper := AllPools(self.chain_id).get(pool_address):
+            if pool_helper := AllPools(self._chain_id).get(pool_address):
                 if TYPE_CHECKING:
                     assert isinstance(pool_helper, V3LiquidityPool)
                 if pool_helper.factory == self._factory_address:
