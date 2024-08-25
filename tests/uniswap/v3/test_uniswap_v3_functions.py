@@ -31,7 +31,7 @@ def test_v3_address_generator() -> None:
     wbtc_weth_address = generate_v3_pool_address(
         token_addresses=[MAINNET_WBTC_ADDRESS, MAINNET_WETH_ADDRESS],
         fee=MAINNET_UNISWAP_V3_WBTC_WETH_LP_FEE,
-        factory_or_deployer_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        deployer_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
         init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
     )
     assert wbtc_weth_address == MAINNET_UNISWAP_V3_WBTC_WETH_LP_ADDRESS
@@ -47,7 +47,7 @@ def test_v3_address_generator() -> None:
                 BASE_CBETH_ADDRESS,
             ],
             fee=BASE_CBETH_WETH_V3_POOL_FEE,
-            factory_or_deployer_address=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
+            deployer_address=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
             init_hash="0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2",
         )
         == BASE_PANCAKESWAP_V3_WETH_CBETH_ADDRESS

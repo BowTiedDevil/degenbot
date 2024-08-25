@@ -1,15 +1,17 @@
 import pytest
 from degenbot.config import set_web3
-from degenbot.dex.uniswap import FACTORY_ADDRESSES, TICKLENS_ADDRESSES
 from degenbot.exceptions import ManagerError, PoolNotAssociated
+from degenbot.exchanges.uniswap.dataclasses import (
+    UniswapFactoryDeployment,
+    UniswapTickLensDeployment,
+    UniswapV3ExchangeDeployment,
+)
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.registry.all_pools import AllPools
-from degenbot.uniswap.managers import (
-    UniswapLiquidityPoolManager,
-    UniswapV2LiquidityPoolManager,
-    UniswapV3LiquidityPoolManager,
-)
+from degenbot.uniswap.abi import PANCAKESWAP_V3_POOL_ABI, UNISWAP_V3_TICKLENS_ABI
+from degenbot.uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
+from eth_typing import ChainId
 from eth_utils.address import to_checksum_address
 from web3 import Web3
 
@@ -53,38 +55,41 @@ BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS = to_checksum_address(
 BASE_CBETH_WETH_V3_POOL_ADDRESS = to_checksum_address("0x257fcbae4ac6b26a02e4fc5e1a11e4174b5ce395")
 BASE_CBETH_ADDRESS = to_checksum_address("0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22")
 
+BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
+    name="PancakeSwap V3",
+    chain_id=ChainId.BASE,
+    factory=UniswapFactoryDeployment(
+        address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
+        deployer=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
+        pool_init_hash="0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2",
+        pool_abi=PANCAKESWAP_V3_POOL_ABI,
+    ),
+    tick_lens=UniswapTickLensDeployment(
+        address=to_checksum_address("0x9a489505a00cE272eAa5e07Dba6491314CaE3796"),
+        abi=UNISWAP_V3_TICKLENS_ABI,
+    ),
+)
 
-def test_create_base_managers(base_full_node_web3: Web3):
+
+def test_create_base_chain_managers(base_full_node_web3: Web3):
     set_web3(base_full_node_web3)
-
-    UniswapLiquidityPoolManager.add_pool_init_hash(
-        chain_id=base_full_node_web3.eth.chain_id,
-        factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS,
-        pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
-    )
 
     uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
         factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS
     )
-
     assert uniswap_v2_pool_manager._factory_address == BASE_UNISWAP_V2_FACTORY_ADDRESS
 
     # Create a pool manager with an invalid address
     with pytest.raises(
         ManagerError,
-        match=f"Pool manager could not be initialized from unknown factory address {BASE_WETH_ADDRESS}. Add the factory address and pool init hash with `add_factory`, followed by `add_pool_init_hash`",
+        match=f"Pool manager could not be initialized from unknown factory address {BASE_WETH_ADDRESS}.",
     ):
         UniswapV2LiquidityPoolManager(factory_address=BASE_WETH_ADDRESS)
-
-    UniswapLiquidityPoolManager.add_pool_init_hash(
-        chain_id=base_full_node_web3.eth.chain_id,
-        factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS,
-        pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
-    )
 
     uniswap_v3_pool_manager = UniswapV3LiquidityPoolManager(
         factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS
     )
+    assert uniswap_v3_pool_manager._factory_address == BASE_UNISWAP_V3_FACTORY_ADDRESS
 
     # Get known pairs
     uniswap_v2_lp = uniswap_v2_pool_manager.get_pool(
@@ -123,31 +128,17 @@ def test_create_base_managers(base_full_node_web3: Web3):
 def test_base_pancakeswap_v3(base_full_node_web3: Web3):
     set_web3(base_full_node_web3)
 
-    UniswapLiquidityPoolManager.add_pool_init_hash(
-        chain_id=base_full_node_web3.eth.chain_id,
-        factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
-        pool_init_hash="0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2",
-    )
-    assert (
-        BASE_PANCAKESWAP_V3_FACTORY_ADDRESS in FACTORY_ADDRESSES[base_full_node_web3.eth.chain_id]
-    )
-
-    UniswapLiquidityPoolManager.add_ticklens(
-        chain_id=base_full_node_web3.eth.chain_id,
-        factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
-        ticklens_address="0x9a489505a00cE272eAa5e07Dba6491314CaE3796",
-    )
-    assert (
-        "0x9a489505a00cE272eAa5e07Dba6491314CaE3796"
-        in TICKLENS_ADDRESSES[base_full_node_web3.eth.chain_id][BASE_PANCAKESWAP_V3_FACTORY_ADDRESS]
-    )
-
-    from degenbot.uniswap.abi import PANCAKESWAP_V3_POOL_ABI
     from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
 
+    # Exchange provided explicitly
+    v3_pool = V3LiquidityPool.from_exchange(
+        address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
+        exchange=BASE_PANCAKESWAP_V3_EXCHANGE,
+    )
+
+    # Exchange looked up implicitly from degenbot deployment module
     v3_pool = V3LiquidityPool(
         address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
-        abi=PANCAKESWAP_V3_POOL_ABI,
     )
 
     pancakev3_lp_manager = UniswapV3LiquidityPoolManager(
@@ -181,7 +172,7 @@ def test_create_mainnet_managers(ethereum_full_node_web3: Web3):
     # Create a pool manager with an invalid address
     with pytest.raises(
         ManagerError,
-        match=f"Pool manager could not be initialized from unknown factory address {MAINNET_WETH_ADDRESS}. Add the factory address and pool init hash with `add_factory`, followed by `add_pool_init_hash`",
+        match=f"Pool manager could not be initialized from unknown factory address {MAINNET_WETH_ADDRESS}.",
     ):
         UniswapV2LiquidityPoolManager(factory_address=MAINNET_WETH_ADDRESS)
 

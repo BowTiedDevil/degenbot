@@ -13,4 +13,3 @@ from .v3_dataclasses import (
 )
 from .v3_liquidity_pool import V3LiquidityPool
 from .v3_snapshot import UniswapV3LiquiditySnapshot
-from .v3_tick_lens import TickLens

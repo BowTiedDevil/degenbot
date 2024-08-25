@@ -11,7 +11,6 @@ import dotenv
 import pytest
 import web3
 from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
 
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
@@ -71,7 +70,6 @@ def initialize_and_reset_after_each_test(ethereum_full_node_web3):
     degenbot.registry.all_tokens._all_tokens.clear()
     degenbot.manager.token_manager.Erc20TokenHelperManager._state.clear()
     degenbot.uniswap.managers.UniswapLiquidityPoolManager._state.clear()
-    V3LiquidityPool._lens_contracts.clear()
 
 
 @pytest.fixture(autouse=True)

@@ -1,20 +1,20 @@
 # TODO: add event prototype exporter method and handler for callbacks
 
 import dataclasses
-import warnings
 from bisect import bisect_left
 from decimal import Decimal
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Tuple
 
-from eth_typing import ChecksumAddress, HexStr
+import eth_abi.abi
+from eth_typing import HexStr
 from eth_utils.address import to_checksum_address
+from eth_utils.crypto import keccak
 from web3.contract.contract import Contract
 
 from .. import config
 from ..baseclasses import AbstractLiquidityPool
-from ..dex.uniswap import TICKLENS_ADDRESSES
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     BitmapWordUnavailableError,
@@ -24,10 +24,12 @@ from ..exceptions import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
+from ..exchanges.uniswap.dataclasses import UniswapV3ExchangeDeployment
+from ..exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
-from .abi import UNISWAP_V3_POOL_ABI
+from .abi import UNISWAP_V3_POOL_ABI, UNISWAP_V3_TICKLENS_ABI
 from .v3_dataclasses import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
@@ -39,7 +41,6 @@ from .v3_dataclasses import (
 from .v3_functions import exchange_rate_from_sqrt_price_x96, generate_v3_pool_address
 from .v3_libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
 from .v3_libraries.functions import to_int256
-from .v3_tick_lens import TickLens
 
 TICK_SPACING_BY_FEE = {
     100: 1,
@@ -48,6 +49,10 @@ TICK_SPACING_BY_FEE = {
     3000: 60,
     10000: 200,
 }
+
+UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
+    "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
+)
 
 
 class V3LiquidityPool(AbstractLiquidityPool):
@@ -74,28 +79,17 @@ class V3LiquidityPool(AbstractLiquidityPool):
         amount_out: int = 0
         fee_amount: int = 0
 
-    # Holds references to TickLens contract objects. The TickLens contract is a singleton and can
-    # be used for all pools deployed by a factory.
-    _lens_contracts: Dict[
-        Tuple[
-            int,  # chainID
-            ChecksumAddress,  # Factory
-        ],
-        TickLens,
-    ] = dict()
-
     def __init__(
         self,
         address: str,
-        fee: int | None = None,
-        lens: TickLens | None = None,
+        fee: Literal[100, 500, 2500, 3000, 10000] | None = None,
+        tick_spacing: int | None = None,
         tokens: List[Erc20Token] | None = None,
-        name: str = "",
-        update_method: str | None = None,
         abi: List[Any] | None = None,
         factory_address: str | None = None,
-        factory_init_hash: str | None = None,
         deployer_address: str | None = None,
+        ticklens_address: str | None = None,
+        ticklens_abi: List[Any] | None = None,
         init_hash: str | None = None,
         extra_words: int = 10,
         silent: bool = False,
@@ -103,12 +97,59 @@ class V3LiquidityPool(AbstractLiquidityPool):
         tick_bitmap: Dict[int, Dict[str, Any] | UniswapV3BitmapAtWord] | None = None,
         state_block: int | None = None,
         archive_states: bool = True,
+        verify_address: bool = True,
     ):
+        w3 = config.get_web3()
         self.address = to_checksum_address(address)
+
         self.abi = abi if abi is not None else UNISWAP_V3_POOL_ABI
 
-        w3 = config.get_web3()
-        w3_contract = self._w3_contract
+        if factory_address is not None:
+            self.factory = to_checksum_address(factory_address)
+        else:
+            # Get the factory address via eth_call because the ABI has not been determined yet
+            contract_call_result: str
+            contract_call_result, *_ = eth_abi.abi.decode(
+                types=["address"],
+                data=w3.eth.call(
+                    transaction={
+                        "to": self.address,
+                        "data": keccak(text="factory()")[:4],
+                    },
+                    block_identifier=state_block,
+                ),
+            )
+            self.factory = to_checksum_address(contract_call_result)
+
+        if deployer_address is None:
+            deployer_address = self.factory
+
+        try:
+            # Use degenbot deployment values if available
+            factory_deployment = FACTORY_DEPLOYMENTS[w3.eth.chain_id][self.factory]
+            ticklens_deployment = TICKLENS_DEPLOYMENTS[w3.eth.chain_id][self.factory]
+            self.abi = factory_deployment.pool_abi
+            self.init_hash = factory_deployment.pool_init_hash
+            self.ticklens_address = ticklens_deployment.address
+            self.ticklens_abi = ticklens_deployment.abi
+            if factory_deployment.deployer is not None:
+                deployer_address = factory_deployment.deployer
+        except KeyError:
+            print("no deployment found")
+            # Deployment is unknown. Uses any inputs provided, otherwise use default values from
+            # original Uniswap contracts
+            self.abi = abi if abi is not None else UNISWAP_V3_POOL_ABI
+            self.init_hash = (
+                init_hash if init_hash is not None else UNISWAP_V3_MAINNET_POOL_INIT_HASH
+            )
+            print(f"{init_hash=}")
+
+            if ticklens_address is None:
+                raise ValueError("TickLens address for pool is unknown.")
+            self.ticklens_address = to_checksum_address(ticklens_address)
+            self.ticklens_abi = (
+                ticklens_abi if ticklens_abi is not None else UNISWAP_V3_TICKLENS_ABI
+            )
 
         if state_block is None:
             state_block = w3.eth.block_number
@@ -126,45 +167,12 @@ class V3LiquidityPool(AbstractLiquidityPool):
         # held for operations that manipulate state data
         self._state_lock = Lock()
 
-        self.init_hash: str | None = None
-        if factory_init_hash is not None:  # pragma: no cover
-            logger.warning(
-                "factory_init_hash has been renamed to init_hash. It has been automatically converted, but will be removed in a future release. Provide the init_hash argument to remove this warning."
-            )
-            self.init_hash = factory_init_hash
-
-        if factory_address:
-            self.factory = to_checksum_address(factory_address)
-        else:
-            self.factory = to_checksum_address(w3_contract.functions.factory().call())
-
-        if deployer_address:
-            self.deployer = to_checksum_address(deployer_address)
-        else:
-            self.deployer = self.factory
-
-        if lens:
-            self.lens = lens
-        else:
-            try:
-                self.lens = self._lens_contracts[(w3.eth.chain_id, self.factory)]
-            except KeyError:
-                self.lens = TickLens(address=TICKLENS_ADDRESSES[w3.eth.chain_id][self.factory])
-                self._lens_contracts[(w3.eth.chain_id, self.factory)] = self.lens
-
-        token0_address: HexStr = w3_contract.functions.token0().call()
-        token1_address: HexStr = w3_contract.functions.token1().call()
-
         if tokens is not None:
-            if len(tokens) != 2:
-                raise ValueError(f"Expected exactly two tokens, found {len(tokens)}")
-
-            self.token0 = min(tokens)
-            self.token1 = max(tokens)
-
-            if self.token0 != token0_address or self.token1 != token1_address:
-                raise ValueError("Provided tokens do not match the contract.")
+            self.token0, self.token1 = sorted(tokens)
         else:
+            token0_address: HexStr = self.w3_contract.functions.token0().call()
+            token1_address: HexStr = self.w3_contract.functions.token1().call()
+
             token_manager = Erc20TokenHelperManager(w3.eth.chain_id)
             self.token0 = token_manager.get_erc20token(
                 address=token0_address,
@@ -176,32 +184,26 @@ class V3LiquidityPool(AbstractLiquidityPool):
             )
 
         self.tokens = (self.token0, self.token1)
+        self.fee: int = fee if fee is not None else self.w3_contract.functions.fee().call()
+        self.tick_spacing = (
+            tick_spacing if tick_spacing is not None else TICK_SPACING_BY_FEE[self.fee]
+        )
 
-        self.fee: int = fee if fee is not None else w3_contract.functions.fee().call()
-        self.tick_spacing = TICK_SPACING_BY_FEE[self.fee]  # immutable
-
-        if self.deployer is not None and init_hash is not None:
+        if verify_address:
             computed_pool_address = generate_v3_pool_address(
                 token_addresses=(self.token0.address, self.token1.address),
                 fee=self.fee,
-                factory_or_deployer_address=self.deployer,
-                init_hash=init_hash,
+                deployer_address=deployer_address,
+                init_hash=self.init_hash,
             )
+            print(f"{computed_pool_address=}")
+            print(f"{self.address=}")
             if computed_pool_address != self.address:
                 raise ValueError(
-                    f"Pool address {self.address} does not match deterministic address {computed_pool_address} from factory"
+                    f"Pool address {self.address} does not match deterministic address {computed_pool_address} from deployer {deployer_address}"
                 )
 
-        if name:  # pragma: no cover
-            self.name = name
-        else:
-            self.name = f"{self.token0}-{self.token1} (V3, {self.fee / 10000:.2f}%)"
-
-        if update_method is not None:  # pragma: no cover
-            warnings.warn(
-                "The `update_method` argument to `V3LiquidityPool()` is unused and otherwise ignored. Remove it to stop seeing this message."
-            )
-            self._update_method = update_method
+        self.name = f"{self.token0}-{self.token1} (V3, {self.fee / 10000:.2f}%)"
         self._extra_words = extra_words
 
         if (tick_bitmap is not None) != (tick_data is not None):
@@ -257,9 +259,11 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 block_number=self._update_block,
             )
 
-        self.liquidity = w3_contract.functions.liquidity().call(block_identifier=self._update_block)
+        self.liquidity = self.w3_contract.functions.liquidity().call(
+            block_identifier=self._update_block
+        )
 
-        self.sqrt_price_x96, self.tick, *_ = w3_contract.functions.slot0().call(
+        self.sqrt_price_x96, self.tick, *_ = self.w3_contract.functions.slot0().call(
             block_identifier=self._update_block
         )
 
@@ -279,6 +283,26 @@ class V3LiquidityPool(AbstractLiquidityPool):
             logger.info(f"• Liquidity: {self.liquidity}")
             logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
             logger.info(f"• Tick: {self.tick}")
+
+    @classmethod
+    def from_exchange(
+        cls,
+        address: str,
+        exchange: UniswapV3ExchangeDeployment,
+        **kwargs: Any,
+    ) -> "V3LiquidityPool":
+        """
+        Create a new `V3LiquidityPool` with exchange information taken from the provided deployment.
+        """
+
+        return cls(
+            address=address,
+            factory_address=exchange.factory.address,
+            deployer_address=exchange.factory.deployer,
+            abi=exchange.factory.pool_abi,
+            init_hash=exchange.factory.pool_init_hash,
+            **kwargs,
+        )
 
     def __getstate__(self) -> Dict[str, Any]:
         # Remove objects that cannot be pickled and are unnecessary to perform
@@ -465,7 +489,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
         256 ticks, spaced per the tickSpacing interval.
         """
 
-        _w3_contract = self._w3_contract
+        _w3_contract = self.w3_contract
 
         if block_number is None:
             block_number = config.get_web3().eth.get_block_number()
@@ -474,7 +498,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             _tick_bitmap = _w3_contract.functions.tickBitmap(word_position).call(
                 block_identifier=block_number,
             )
-            _tick_data = self.lens.w3_contract.functions.getPopulatedTicksInWord(
+            _tick_data = self.ticklens_contract.functions.getPopulatedTicksInWord(
                 self.address, word_position
             ).call(block_identifier=block_number)
         except Exception as e:
@@ -579,10 +603,18 @@ class V3LiquidityPool(AbstractLiquidityPool):
         )
 
     @property
-    def _w3_contract(self) -> Contract:
-        if "_contract" not in self.__dict__:
-            self._contract = config.get_web3().eth.contract(address=self.address, abi=self.abi)
-        return self._contract
+    def w3_contract(self) -> Contract:
+        return config.get_web3().eth.contract(
+            address=self.address,
+            abi=self.abi,
+        )
+
+    @property
+    def ticklens_contract(self) -> Contract:
+        return config.get_web3().eth.contract(
+            address=self.ticklens_address,
+            abi=self.ticklens_abi,
+        )
 
     def auto_update(
         self,
@@ -601,8 +633,6 @@ class V3LiquidityPool(AbstractLiquidityPool):
         when used with threads.
         """
 
-        _w3_contract = self._w3_contract
-
         with self._state_lock:
             updated = False
 
@@ -610,10 +640,10 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 config.get_web3().eth.get_block_number() if block_number is None else block_number
             )
 
-            _sqrt_price_x96, _tick, *_ = _w3_contract.functions.slot0().call(
+            _sqrt_price_x96, _tick, *_ = self.w3_contract.functions.slot0().call(
                 block_identifier=block_number
             )
-            _liquidity = _w3_contract.functions.liquidity().call(block_identifier=block_number)
+            _liquidity = self.w3_contract.functions.liquidity().call(block_identifier=block_number)
 
             if self.sqrt_price_x96 != _sqrt_price_x96:
                 updated = True

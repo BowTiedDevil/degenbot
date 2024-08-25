@@ -10,24 +10,26 @@ from degenbot.exceptions import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
+from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.uniswap.v3_dataclasses import (
+    UniswapV3BitmapAtWord,
+    UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
 )
-from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
+from degenbot.uniswap.v3_liquidity_pool import UNISWAP_V3_MAINNET_POOL_INIT_HASH, V3LiquidityPool
+from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
 
-WBTC_WETH_V3_POOL_ADDRESS = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
-WETH_CONTRACT_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-WBTC_CONTRACT_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
-DAI_CONTRACT_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
-UNISWAP_V3_FACTORY_ADDRESS = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-UNISWAP_V3_POOL_INIT_HASH = "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
+WBTC_WETH_V3_POOL_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
+WETH_CONTRACT_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+WBTC_CONTRACT_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
+DAI_CONTRACT_ADDRESS = to_checksum_address("0x6B175474E89094C44Da98b954EedeAC495271d0F")
+UNISWAP_V3_FACTORY_ADDRESS = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
+UNISWAP_V3_TICKLENS_ADDRESS = to_checksum_address("0xbfd8137f7d1516D3ea5cA83523914859ec47F573")
 
 
 @pytest.fixture
@@ -81,7 +83,7 @@ def test_creation(ethereum_full_node_web3: Web3) -> None:
     V3LiquidityPool(
         address=WBTC_WETH_V3_POOL_ADDRESS,
         deployer_address=UNISWAP_V3_FACTORY_ADDRESS,
-        init_hash=UNISWAP_V3_POOL_INIT_HASH,
+        init_hash=UNISWAP_V3_MAINNET_POOL_INIT_HASH,
     )
     assert (
         V3LiquidityPool(
@@ -90,37 +92,74 @@ def test_creation(ethereum_full_node_web3: Web3) -> None:
         is False
     )
 
-    with pytest.raises(ValueError, match="does not match deterministic address"):
-        V3LiquidityPool(
-            address=WBTC_WETH_V3_POOL_ADDRESS,
-            deployer_address=UNISWAP_V3_FACTORY_ADDRESS,
-            init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b53",  # <--- Bad hash (last byte changed)
-        )
 
-    with pytest.raises(ValueError, match="Expected exactly two tokens"):
+def test_creation_with_bad_tokens(ethereum_full_node_web3: Web3) -> None:
+    set_web3(ethereum_full_node_web3)
+    with pytest.raises(ValueError, match="too many values to unpack"):
         V3LiquidityPool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
             tokens=[
                 Erc20Token(WBTC_CONTRACT_ADDRESS),
                 Erc20Token(WETH_CONTRACT_ADDRESS),
-                Erc20Token(DAI_CONTRACT_ADDRESS),  # <---- extra address (DAI)
+                Erc20Token(DAI_CONTRACT_ADDRESS),  # <---- extra token
             ],
         )
 
-    with pytest.raises(ValueError, match="Provided tokens do not match the contract."):
+    with pytest.raises(ValueError, match="does not match deterministic address"):
+        # The bad token adddress will result in a mismatched CREATE2 address, so pool is implicitly
+        # protected against incorrectly-overridden tokens
         V3LiquidityPool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
             tokens=[
                 Erc20Token(WBTC_CONTRACT_ADDRESS),
-                Erc20Token(DAI_CONTRACT_ADDRESS),  # <---- bad address (DAI)
+                Erc20Token(DAI_CONTRACT_ADDRESS),  # <---- wrong token
             ],
         )
 
+
+def test_creation_with_bad_liquidity_overrides(ethereum_full_node_web3: Web3) -> None:
+    set_web3(ethereum_full_node_web3)
     with pytest.raises(ValueError, match="Must provide both tick_bitmap and tick_data"):
         V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={0: {}})
 
     with pytest.raises(ValueError, match="Must provide both tick_bitmap and tick_data"):
         V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_data={0: {}})
+
+
+def test_creation_with_invalid_hash(ethereum_full_node_web3: Web3) -> None:
+    set_web3(ethereum_full_node_web3)
+
+    # Delete the preset deployment for this factory so the test uses the provided override instead of preferring the known valid deployment data
+    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][
+        UNISWAP_V3_FACTORY_ADDRESS
+    ]
+    ticklens_deployment = TICKLENS_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][
+        UNISWAP_V3_FACTORY_ADDRESS
+    ]
+    del FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
+    del TICKLENS_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
+
+    # Change last byte of true init hash
+    BAD_INIT_HASH = UNISWAP_V3_MAINNET_POOL_INIT_HASH[:-1] + "f"
+
+    with pytest.raises(
+        ValueError,
+        match="does not match deterministic address",
+    ):
+        V3LiquidityPool(
+            address=WBTC_WETH_V3_POOL_ADDRESS,
+            factory_address=UNISWAP_V3_FACTORY_ADDRESS,
+            ticklens_address=UNISWAP_V3_TICKLENS_ADDRESS,
+            init_hash=BAD_INIT_HASH,
+        )
+
+    # Restore the preset deployments
+    FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
+        factory_deployment
+    )
+    TICKLENS_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
+        ticklens_deployment
+    )
 
 
 def test_reorg(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:

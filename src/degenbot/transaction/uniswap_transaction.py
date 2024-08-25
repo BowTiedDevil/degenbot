@@ -11,6 +11,13 @@ from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
 
+from degenbot.exchanges.uniswap.dataclasses import (
+    UniswapRouterDeployment,
+    UniswapV2ExchangeDeployment,
+    UniswapV3ExchangeDeployment,
+)
+from degenbot.exchanges.uniswap.deployments import ROUTER_DEPLOYMENTS
+
 from .. import config
 from ..baseclasses import AbstractSimulationResult, AbstractTransaction
 from ..constants import WRAPPED_NATIVE_TOKENS
@@ -33,69 +40,6 @@ from ..uniswap.v3_dataclasses import UniswapV3PoolSimulationResult, UniswapV3Poo
 from ..uniswap.v3_functions import decode_v3_path
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
 from .simulation_ledger import SimulationLedger
-
-# Internal dict of known router contracts by chain ID. Pre-populated with
-# mainnet addresses. New routers can be added by class method `add_router`
-_ROUTERS: Dict[
-    int,  # chain ID
-    Dict[ChecksumAddress, Dict[str, Any]],
-]
-_ROUTERS = {
-    ChainId.ETH: {
-        to_checksum_address("0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"): {
-            "name": "Sushiswap: Router",
-            "factory_address": {
-                2: to_checksum_address("0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac")
-            },
-        },
-        to_checksum_address("0xf164fC0Ec4E93095b804a4795bBe1e041497b92a"): {
-            "name": "UniswapV2: Router",
-            "factory_address": {
-                2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-            },
-        },
-        to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"): {
-            "name": "UniswapV2: Router 2",
-            "factory_address": {
-                2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-            },
-        },
-        to_checksum_address("0xE592427A0AEce92De3Edee1F18E0157C05861564"): {
-            "name": "UniswapV3: Router",
-            "factory_address": {
-                3: to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
-            },
-        },
-        to_checksum_address("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"): {
-            "name": "UniswapV3: Router 2",
-            "factory_address": {
-                2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
-                3: to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
-            },
-        },
-        to_checksum_address("0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B"): {
-            "name": "Uniswap Universal Router",
-            "factory_address": {
-                2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
-                3: to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
-            },
-        },
-        to_checksum_address("0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"): {
-            "name": "Universal Universal Router (V1_2)",
-            "factory_address": {
-                2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
-                3: to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
-            },
-        },
-        to_checksum_address("0x3F6328669a86bef431Dc6F9201A5B90F7975a023"): {
-            "name": "Universal Universal Router (V1_3)",
-            "factory_address": {
-                2: to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
-                3: to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
-            },
-        },
-    }
-}
 
 
 class UniversalRouterSpecialAddress:
@@ -130,63 +74,6 @@ class UniswapTransaction(AbstractTransaction):
     class LeftoverRouterBalance(LedgerError):
         pass
 
-    @classmethod
-    def add_chain(cls, chain_id: int) -> None:
-        try:
-            _ROUTERS[chain_id]
-        except Exception:
-            _ROUTERS[chain_id] = {}
-
-    @classmethod
-    def add_router(cls, chain_id: int, router_address: str, router_dict: Dict[Any, Any]) -> None:
-        """
-        Add a new router address for a given chain ID.
-
-        The `router_dict` argument should contain at minimum the following key-value pairs:
-            - 'name': [str]
-            - 'factory_address': {
-                [int]: [address],
-                [int]: [address],
-            }
-
-            The dicts inside 'factory_address' are keyed by the Uniswap version associated with their contracts, e.g.
-            router_dict = {
-                'name': 'SomeDEX',
-                'factory_address': {
-                    2: '0x...',
-                    3: '0x...',
-                }
-            }
-        """
-        router_address = to_checksum_address(router_address)
-
-        for key in [
-            "name",
-            "factory_address",
-        ]:
-            if key not in router_dict:
-                raise ValueError(f"{key} not found in router_dict")
-
-        try:
-            _ROUTERS[chain_id][router_address]
-        except Exception:
-            _ROUTERS[chain_id][router_address] = router_dict
-
-    @classmethod
-    def add_wrapped_token(cls, chain_id: int, token_address: str) -> None:
-        """
-        Add a wrapped token address for a given chain ID.
-
-        The method checksums the token address.
-        """
-
-        _token_address = to_checksum_address(token_address)
-
-        try:
-            WRAPPED_NATIVE_TOKENS[chain_id]
-        except KeyError:
-            WRAPPED_NATIVE_TOKENS[chain_id] = _token_address
-
     def __init__(
         self,
         chain_id: int | str,
@@ -196,7 +83,8 @@ class UniswapTransaction(AbstractTransaction):
         tx_sender: str,
         func_name: str,
         func_params: Dict[str, Any],
-        router_address: str,
+        router: UniswapRouterDeployment | None = None,
+        router_address: str | None = None,
     ):
         """
         Build a standalone representation of a transaction submitted to a known Uniswap-based
@@ -224,34 +112,53 @@ class UniswapTransaction(AbstractTransaction):
         # end to confirm that all balances have been accounted for.
 
         self.ledger = SimulationLedger()
-
-        self.chain_id = int(chain_id, 16) if isinstance(chain_id, str) else chain_id
-        self.routers = _ROUTERS[self.chain_id]
-        self.sender = to_checksum_address(tx_sender)
-        self.recipients: Set[ChecksumAddress] = set()
-
-        router_address = to_checksum_address(router_address)
-        if router_address not in self.routers:
-            raise ValueError(f"Router address {router_address} unknown!")
-
-        self.router_address = router_address
+        self.chain_id: int
 
         self.v2_pool_manager: UniswapV2LiquidityPoolManager | None = None
         self.v3_pool_manager: UniswapV3LiquidityPoolManager | None = None
 
-        try:
-            self.v2_pool_manager = UniswapV2LiquidityPoolManager(
-                factory_address=self.routers[router_address]["factory_address"][2]
-            )
-        except KeyError:
-            pass
+        if router is not None:
+            self.chain_id = router.exchanges[0].chain_id
+            self.router_address = router.address
 
-        try:
-            self.v3_pool_manager = UniswapV3LiquidityPoolManager(
-                factory_address=self.routers[router_address]["factory_address"][3]
-            )
-        except KeyError:
-            pass
+            for exchange in router.exchanges:
+                match exchange:
+                    case UniswapV2ExchangeDeployment():
+                        self.v2_pool_manager = UniswapV2LiquidityPoolManager(
+                            factory_address=exchange.factory.address,
+                            exchange=exchange,
+                        )
+                    case UniswapV3ExchangeDeployment():
+                        self.v3_pool_manager = UniswapV3LiquidityPoolManager.from_exchange(exchange)
+                    case _:
+                        raise ValueError(f"Could not identify DEX type for {exchange}")
+        else:
+            if router_address is None:
+                raise ValueError("Router address not provided")
+            self.chain_id = int(chain_id, 16) if isinstance(chain_id, str) else chain_id
+
+            self.router_address = to_checksum_address(router_address)
+            if self.router_address not in ROUTER_DEPLOYMENTS[self.chain_id]:
+                raise ValueError(f"Router address {router_address} unknown!")
+
+            router_deployment = ROUTER_DEPLOYMENTS[self.chain_id][self.router_address]
+
+            # Create pool managers for the supported exchanges
+            for exchange in router_deployment.exchanges:
+                match exchange:
+                    case UniswapV2ExchangeDeployment():
+                        self.v2_pool_manager = UniswapV2LiquidityPoolManager(
+                            factory_address=exchange.factory.address
+                        )
+                    case UniswapV3ExchangeDeployment():
+                        self.v3_pool_manager = UniswapV3LiquidityPoolManager(
+                            factory_address=exchange.factory.address
+                        )
+                    case _:
+                        raise ValueError(f"Could not identify DEX type for {exchange}")
+
+        self.sender = to_checksum_address(tx_sender)
+        self.recipients: Set[ChecksumAddress] = set()
 
         self.hash = HexBytes(tx_hash)
         self.nonce = int(tx_nonce, 16) if isinstance(tx_nonce, str) else tx_nonce
@@ -1674,12 +1581,12 @@ class UniswapTransaction(AbstractTransaction):
                         except ManagerError:
                             _pool = UnregisteredLiquidityPool(
                                 address=generate_v2_pool_address(
-                                    tokens=(
+                                    token_addresses=(
                                         token0_address,
                                         token1_address,
                                     ),
-                                    deployer=self.v2_pool_manager._factory_address,
-                                    init_hash=self.v2_pool_manager._factory_init_hash,
+                                    deployer_address=self.v2_pool_manager._factory_address,
+                                    init_hash=self.v2_pool_manager._pool_init_hash,
                                 ),
                                 tokens=[
                                     self.v2_pool_manager._token_manager.get_erc20token(

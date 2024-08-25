@@ -124,7 +124,22 @@ class UniswapV3LiquiditySnapshot:
                     toBlock=end_block,
                 )
 
-                event_logs = config.get_web3().eth.get_logs(event_filter_params)
+                attempts = 0
+                max_attempts = 3
+                while True:
+                    if attempts == max_attempts:
+                        raise Exception("Timeout")
+                    try:
+                        attempts += 1
+                        logger.info(f"Fetching logs from {start_block} to {end_block}")
+                        event_logs = config.get_web3().eth.get_logs(event_filter_params)
+                        break
+                    except TimeoutError:
+                        end_block = max(start_block + 1, end_block - span // max_attempts)
+                        logger.info(
+                            f"Timeout. Reduced range to {start_block}-{end_block} and retrying..."
+                        )
+                        continue
 
                 for log in event_logs:
                     pool_address, liquidity_event = _process_log()

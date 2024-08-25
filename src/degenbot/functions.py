@@ -1,6 +1,3 @@
-from typing import Any, Iterable
-
-import eth_abi.packed
 import eth_account.messages
 import web3
 from eth_account.datastructures import SignedMessage
@@ -15,28 +12,23 @@ from .constants import MAX_UINT256
 
 
 def create2_address(
-    deployer: ChecksumAddress | str, salt: bytes | str, bytecode: bytes | str
+    deployer: str | bytes,
+    salt: bytes | str,
+    bytecode: bytes | str,
 ) -> ChecksumAddress:
+    """
+    Generate the deterministic CREATE2 address for a given deployer, salt, and contract creation
+    bytecode.
+
+    Reference: https://docs.openzeppelin.com/cli/2.8/deploying-with-create2
+    """
+
+    CREATE2_PREFIX = 0xFF
+
     return to_checksum_address(
         keccak(
-            HexBytes(0xFF) + HexBytes(deployer) + HexBytes(salt) + HexBytes(bytecode),
+            HexBytes(CREATE2_PREFIX) + HexBytes(deployer) + HexBytes(salt) + HexBytes(bytecode),
         )[-20:],  # Contract address is the last 20 bytes from the 32 byte hash
-    )
-
-
-def create2_salt(
-    salt_types: Iterable[str],
-    salt_values: Iterable[Any],
-) -> HexBytes:
-    """
-    Generate the 32 byte salt used by CREATE2 calls.
-    """
-
-    return web3.Web3.keccak(
-        eth_abi.packed.encode_packed(
-            salt_types,
-            salt_values,
-        )
     )
 
 

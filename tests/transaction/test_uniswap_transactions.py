@@ -1,66 +1,11 @@
 from typing import Any, Dict
+
 import pytest
-import web3
-import web3.middleware
-from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.uniswap.managers import UniswapV2LiquidityPoolManager
 from degenbot.config import set_web3
-from degenbot.dex.uniswap import FACTORY_ADDRESSES
-from degenbot.transaction.uniswap_transaction import _ROUTERS, UniswapTransaction
 from degenbot.exceptions import TransactionError
-from eth_typing import ChainId
-from eth_utils.address import to_checksum_address
+from degenbot.fork.anvil_fork import AnvilFork
+from degenbot.transaction.uniswap_transaction import UniswapTransaction
 from hexbytes import HexBytes
-
-
-def test_router_additions() -> None:
-    # Create a new chain
-    UniswapTransaction.add_chain(chain_id=69)
-
-    # Add a new Uniswap V2/V3 compatible router on chain ID 69
-    UniswapTransaction.add_router(
-        chain_id=69,
-        router_address="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-        router_dict={
-            "name": "Shitcoins R Us",
-            "factory_address": {
-                2: "0x02",
-                3: "0x03",
-            },
-        },
-    )
-
-    # Test validations for bad router dicts
-    with pytest.raises(ValueError, match="not found in router_dict"):
-        UniswapTransaction.add_router(
-            chain_id=69,
-            router_address="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-            router_dict={
-                # "name": "Shitcoins R Us",
-                "factory_address": {
-                    2: "0x02",
-                    3: "0x03",
-                },
-            },
-        )
-    with pytest.raises(ValueError, match="not found in router_dict"):
-        UniswapTransaction.add_router(
-            chain_id=69,
-            router_address="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-            router_dict={
-                "name": "Shitcoins R Us",
-                # "factory_address": {
-                #     2: "0x02",
-                #     3: "0x03",
-                # },
-            },
-        )
-
-    # Add a new wrapped token
-    UniswapTransaction.add_wrapped_token(
-        chain_id=69,
-        token_address="0x6969696969696969696969696969696969696969",
-    )
 
 
 @pytest.mark.parametrize(
@@ -1075,68 +1020,6 @@ def test_universal_router_transactions(
             tx.simulate()
     else:
         tx.simulate()
-
-
-def test_adding_new_router_and_chain():
-    QUICKSWAP_CHAIN = ChainId.MATIC
-    QUICKSWAP_ROUTER_ADDRESS = to_checksum_address("0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff")
-    QUICKSWAP_V2_FACTORY_ADDRESS = to_checksum_address("0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32")
-    QUICKSWAP_ROUTER_INFO = {
-        "name": "Quickswap: Router",
-        "factory_address": {2: QUICKSWAP_V2_FACTORY_ADDRESS},
-    }
-
-    fork = AnvilFork(
-        fork_url="https://rpc.ankr.com/polygon",
-        fork_block=53178474 - 1,
-        middlewares=[
-            (web3.middleware.geth_poa.geth_poa_middleware, 0),
-        ],
-    )
-    set_web3(fork.w3)
-
-    UniswapTransaction.add_chain(QUICKSWAP_CHAIN)
-    assert QUICKSWAP_CHAIN in _ROUTERS
-
-    UniswapTransaction.add_router(
-        chain_id=QUICKSWAP_CHAIN,
-        router_address=QUICKSWAP_ROUTER_ADDRESS,
-        router_dict=QUICKSWAP_ROUTER_INFO,
-    )
-    assert QUICKSWAP_ROUTER_ADDRESS in _ROUTERS[QUICKSWAP_CHAIN]
-
-    # add the init hash for this factory
-    UniswapV2LiquidityPoolManager.add_factory(
-        chain_id=QUICKSWAP_CHAIN,
-        factory_address=QUICKSWAP_V2_FACTORY_ADDRESS,
-    )
-    UniswapV2LiquidityPoolManager.add_pool_init_hash(
-        chain_id=QUICKSWAP_CHAIN,
-        factory_address=QUICKSWAP_V2_FACTORY_ADDRESS,
-        pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
-    )
-    assert QUICKSWAP_CHAIN in FACTORY_ADDRESSES
-
-    tx = UniswapTransaction(
-        chain_id=QUICKSWAP_CHAIN,
-        tx_hash="0x997cf9f3ebc92f49dd005034220b2ea862d85d82b351bf3f1e4119220f2f9da2",
-        tx_nonce=38834,
-        tx_value=0,
-        tx_sender="0x88fA4057386A787D098710ad0D4438C1e5266EA3",
-        func_name="swapExactTokensForTokens",
-        func_params={
-            "amountIn": 12539452344359326161793,
-            "amountOutMin": 45946433935200195305,
-            "path": [
-                "0x695FC8B80F344411F34bDbCb4E621aA69AdA384b",
-                "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
-            ],
-            "to": "0x88fA4057386A787D098710ad0D4438C1e5266EA3",
-            "deadline": 1707194715,
-        },
-        router_address=QUICKSWAP_ROUTER_ADDRESS,
-    )
-    tx.simulate()
 
 
 def test_invalid_router():

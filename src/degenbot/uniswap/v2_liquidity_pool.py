@@ -1,12 +1,15 @@
 from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Literal, Tuple
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from typing_extensions import override
 from web3.contract.contract import Contract
+
+from degenbot.exchanges.uniswap.dataclasses import UniswapV2ExchangeDeployment
+from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS
 
 from .. import config
 from ..baseclasses import AbstractLiquidityPool
@@ -33,30 +36,57 @@ from .v2_functions import (
     generate_v2_pool_address,
 )
 
+UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
+    "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
+)
+CAMELOT_ARBITRUM_POOL_INIT_HASH = (
+    "0xa856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"
+)
+
 
 class LiquidityPool(AbstractLiquidityPool):
     """
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
 
+    @classmethod
+    def from_exchange(
+        cls,
+        address: str,
+        exchange: UniswapV2ExchangeDeployment,
+        **kwargs: Any,
+    ) -> "LiquidityPool":
+        """
+        Create a new `LiquidityPool` with exchange information taken from the provided deployment.
+        """
+
+        return cls(
+            address=address,
+            factory_address=exchange.factory.address,
+            deployer_address=exchange.factory.deployer,
+            abi=exchange.factory.pool_abi,
+            init_hash=exchange.factory.pool_init_hash,
+            **kwargs,
+        )
+
     def __init__(
         self,
         address: ChecksumAddress | str,
         tokens: List[Erc20Token] | None = None,
         name: str | None = None,
-        update_method: str = "polling",
+        update_method: Literal["polling", "external"] = "polling",
         abi: List[Any] | None = None,
         factory_address: str | None = None,
-        factory_init_hash: str | None = None,
+        deployer_address: str | None = None,
+        init_hash: str | None = None,
         fee: Fraction | Iterable[Fraction] = Fraction(3, 1000),
         silent: bool = False,
         state_block: int | None = None,
-        empty: bool = False,
         archive_states: bool = True,
+        verify_address: bool = True,
     ) -> None:
         """
-        Create a new `LiquidityPool` object for interaction with a Uniswap
-        V2 pool.
+        An abstract representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
 
         Arguments
         ---------
@@ -67,45 +97,32 @@ class LiquidityPool(AbstractLiquidityPool):
         name : str, optional
             Name of the contract, e.g. "DAI-WETH".
         update_method : str
-            A string that sets the method used to fetch updates to the pool.
-            Can be "polling", which fetches updates from the chain object
-            using the contract object, or "external" which relies on updates
-            being provided from outside the object.
+            A string that sets the method used to fetch updates to the pool. Can be "polling",
+            which fetches updates from the chain object using the contract object, or "external"
+            which relies on updates being provided from outside the object.
         abi : list, optional
             Contract ABI.
         factory_address : str, optional
-            The address for the factory contract. The default assumes a
-            mainnet Uniswap V2 factory contract. If creating a
-            `LiquidityPool` object based on another ecosystem, provide this
-            value or the address check will fail.
-        factory_init_hash : str, optional
-            The init hash for the factory contract. The default assumes a
-            mainnet Uniswap V2 factory contract.
-        fee : Fraction | (Fraction, Fraction)
-            The swap fee imposed by the pool. Defaults to `Fraction(3,1000)`
-            which is equivalent to 0.3%. For split-fee pools of unequal value,
-            provide an iterable with `Fraction` fees in order of their position.
+            The address for the factory contract.
+        deployer_address : str, optional
+            The address for the deployment contract.
+        init_hash : str, optional
+            The init hash for the factory contract. If one is not provided, the deployments in
+            `degenbot.exchanges` will be searched first. If no matching deployment is found, the
+            default Uniswap V2 hash will be used.
+        fee : Fraction | Iterable[Fraction, Fraction]
+            The swap fee imposed by the pool. Defaults to `Fraction(3,1000)` which is equivalent
+            to 0.3%. For split-fee pools of unequal value, provide an iterable with `Fraction`
+            fees ordered by token position.
         silent : bool
             Suppress status output.
-        state_block: int, optional
-            Fetch initial state values from the chain at a particular block
-            height. Defaults to the latest block if omitted.
-        empty: bool
-            Set to `True` to initialize the pool without initial values
-            retrieved from chain, and skipping some validation. Useful for
-            simulating transactions through pools that do not exist.
+        state_block : int, optional
+            Fetch initial state values from the chain at a particular block height. Defaults to
+            the latest block if omitted.
+        verify_address: bool
+            Control if the pool address is verified against the deterministic CREATE2 address.
+            The deployer address, token addresses, and pool init code hash must be known.
         """
-
-        if empty and any(
-            [
-                address is None,
-                factory_address is None,
-                tokens is None,
-            ]
-        ):
-            raise ValueError(
-                "Empty LiquidityPool cannot be created without pool, factory, and token addresses"
-            )
 
         self.factory: ChecksumAddress
         self._state: UniswapV2PoolState | None = None
@@ -122,43 +139,30 @@ class LiquidityPool(AbstractLiquidityPool):
             state_block = _w3.eth.block_number
         self._update_block = state_block
 
-        if factory_address:
-            if factory_init_hash is None:
-                raise ValueError(f"Init hash not provided for factory {factory_address}")
-            self.factory = to_checksum_address(factory_address)
-
-        if isinstance(fee, Iterable):
-            self.fee_token0, self.fee_token1 = fee
-            if not isinstance(self.fee_token0, Fraction) or not isinstance(
-                self.fee_token1, Fraction
-            ):
-                raise TypeError(
-                    f"LP fee was not correctly passed! "
-                    f"Expected '{Fraction().__class__.__name__}', "
-                    f"was '{self.fee_token0.__class__.__name__}' and '{self.fee_token1.__class__.__name__}'"
-                )
-        else:
-            self.fee_token0 = fee
-            self.fee_token1 = fee
-            if not isinstance(fee, Fraction):
-                raise TypeError(
-                    f"LP fee was not correctly passed! "
-                    f"Expected '{Fraction().__class__.__name__}', "
-                    f"was '{fee.__class__.__name__}'"
-                )
-
-        self._update_method = update_method
         self.factory = (
             to_checksum_address(factory_address)
             if factory_address is not None
             else _w3_contract.functions.factory().call()
         )
+        self.deployer = (
+            to_checksum_address(deployer_address) if deployer_address is not None else self.factory
+        )
+
+        if init_hash is None:
+            try:
+                init_hash = FACTORY_DEPLOYMENTS[_w3.eth.chain_id][self.factory].pool_init_hash
+            except KeyError:
+                init_hash = UNISWAP_V2_MAINNET_POOL_INIT_HASH
+
+        if isinstance(fee, Iterable):
+            self.fee_token0, self.fee_token1 = fee
+        else:
+            self.fee_token0 = self.fee_token1 = fee
+
+        self._update_method = update_method
 
         if tokens is not None:
-            if len(tokens) != 2:
-                raise ValueError(f"Expected 2 tokens, found {len(tokens)}")
-            self.token0 = min(tokens)
-            self.token1 = max(tokens)
+            self.token0, self.token1 = sorted(tokens)
         else:
             _token_manager = Erc20TokenHelperManager(chain_id)
             self.token0 = _token_manager.get_erc20token(
@@ -172,15 +176,15 @@ class LiquidityPool(AbstractLiquidityPool):
 
         self.tokens = (self.token0, self.token1)
 
-        if factory_address is not None and factory_init_hash is not None:
+        if verify_address:
             computed_pool_address = generate_v2_pool_address(
-                tokens=[self.token0.address, self.token1.address],
-                deployer=factory_address,
-                init_hash=factory_init_hash,
+                token_addresses=(self.token0.address, self.token1.address),
+                deployer_address=self.deployer,
+                init_hash=init_hash,
             )
             if computed_pool_address != self.address:
                 raise ValueError(
-                    f"Pool address {self.address} does not match deterministic address {computed_pool_address} from factory"
+                    f"Pool address {self.address} does not match deterministic address {computed_pool_address} from deployer {self.deployer}"
                 )
 
         if name is not None:
@@ -193,11 +197,6 @@ class LiquidityPool(AbstractLiquidityPool):
             )
             self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
 
-        if self._update_method == "event":  # pragma: no cover
-            raise ValueError(
-                "The 'event' update method is inaccurate and unsupported, please update your bot to use the default 'polling' method"
-            )
-
         self._pool_state_archive: Dict[int, UniswapV2PoolState] = {}
         if archive_states:
             self._pool_state_archive[self._update_block] = self.state
@@ -208,9 +207,8 @@ class LiquidityPool(AbstractLiquidityPool):
 
         if not silent:  # pragma: no cover
             logger.info(self.name)
-            if not empty:
-                logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
-                logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
+            logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
+            logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
 
     def __getstate__(self) -> Dict[str, Any]:
         # Remove objects that either cannot be pickled or are unnecessary to perform the calculation
@@ -817,7 +815,7 @@ class CamelotLiquidityPool(LiquidityPool):
         address: str,
         tokens: List[Erc20Token] | None = None,
         name: str | None = None,
-        update_method: str = "polling",
+        update_method: Literal["polling", "external"] = "polling",
         abi: List[Any] | None = None,
         silent: bool = False,
     ) -> None:
@@ -846,6 +844,7 @@ class CamelotLiquidityPool(LiquidityPool):
             name=name,
             update_method=update_method,
             abi=abi or CAMELOT_POOL_ABI,
+            init_hash=CAMELOT_ARBITRUM_POOL_INIT_HASH,
             fee=(fee_token0, fee_token1),
             silent=silent,
             state_block=state_block,
