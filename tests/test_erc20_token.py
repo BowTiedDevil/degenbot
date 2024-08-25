@@ -1,7 +1,6 @@
 import pytest
 from degenbot.config import set_web3
 from degenbot.erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE, Erc20Token
-from degenbot.fork.anvil_fork import AnvilFork
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 

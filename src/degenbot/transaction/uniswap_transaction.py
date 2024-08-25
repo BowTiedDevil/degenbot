@@ -6,7 +6,7 @@
 from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple, cast
 
 import eth_abi.abi
-from eth_typing import BlockNumber, ChainId, ChecksumAddress
+from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
