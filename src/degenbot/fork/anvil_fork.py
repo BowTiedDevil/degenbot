@@ -226,7 +226,6 @@ class AnvilFork:
             method=RPCEndpoint("anvil_setNextBlockBaseFeePerGas"),
             params=[hex(fee)],
         )
-        self.base_fee_next = fee
 
     def set_nonce(self, address: str, nonce: int) -> None:
         self.w3.provider.make_request(
