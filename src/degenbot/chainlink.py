@@ -29,4 +29,4 @@ class ChainlinkPriceContract:
 
     @property
     def price(self) -> float:
-        return self._w3_contract.functions.latestRoundData().call()[1] / (10**self._decimals)
+        return float(self._w3_contract.functions.latestRoundData().call()[1] / (10**self._decimals))
