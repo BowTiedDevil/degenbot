@@ -19,7 +19,6 @@ class ChainlinkPriceContract:
     def __init__(self, address: str):
         self.address = to_checksum_address(address)
         self._decimals: int = self._w3_contract.functions.decimals().call()
-        self.update_price()
 
     @property
     def _w3_contract(self) -> Contract:
@@ -28,10 +27,6 @@ class ChainlinkPriceContract:
             abi=CHAINLINK_PRICE_FEED_ABI,
         )
 
-    def update_price(
-        self,
-    ) -> float:
-        self.price: float = self._w3_contract.functions.latestRoundData().call()[1] / (
-            10**self._decimals
-        )
-        return self.price
+    @property
+    def price(self) -> float:
+        return self._w3_contract.functions.latestRoundData().call()[1] / (10**self._decimals)
