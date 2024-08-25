@@ -78,6 +78,13 @@ class ZeroLiquidityError(ArbitrageError):
     """
 
 
+# 2nd level exceptions for Erc20Token classes
+class NoPriceOracle(Erc20TokenError):
+    """
+    Raised when `.price` is called on a token without a price oracle.
+    """
+
+
 # 2nd level exceptions for Liquidity Pool classes
 class BitmapWordUnavailableError(LiquidityPoolError):
     """
