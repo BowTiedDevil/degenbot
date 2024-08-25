@@ -86,7 +86,7 @@ def test_erc20token_functions(ethereum_full_node_web3):
     weth.get_total_supply()
     weth.get_approval(VITALIK_ADDRESS, weth.address)
     weth.get_balance(VITALIK_ADDRESS)
-    weth.update_price()
+    weth.price
 
 
 def test_ether_placeholder(ethereum_full_node_web3):
