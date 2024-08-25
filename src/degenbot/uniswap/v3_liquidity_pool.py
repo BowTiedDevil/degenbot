@@ -256,20 +256,20 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
             self._fetch_tick_data_at_word(
                 word_position,
-                block_number=self._update_block,
+                block_number=self.update_block,
             )
 
         self.liquidity = self.w3_contract.functions.liquidity().call(
-            block_identifier=self._update_block
+            block_identifier=self.update_block
         )
 
         self.sqrt_price_x96, self.tick, *_ = self.w3_contract.functions.slot0().call(
-            block_identifier=self._update_block
+            block_identifier=self.update_block
         )
 
         self._pool_state_archive: Dict[int, UniswapV3PoolState] = {}
         if archive_states:
-            self._pool_state_archive[self._update_block] = self.state
+            self._pool_state_archive[self.update_block] = self.state
 
         AllPools(w3.eth.chain_id)[self.address] = self
 
@@ -409,7 +409,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 if self.sparse_bitmap:
                     self._fetch_tick_data_at_word(
                         word_position=missing_word,
-                        block_number=self._update_block,
+                        block_number=self.update_block,
                     )
                 continue
 
@@ -601,6 +601,10 @@ class V3LiquidityPool(AbstractLiquidityPool):
             tick_bitmap=self.tick_bitmap,
             tick_data=new_tick_data,
         )
+
+    @property
+    def update_block(self) -> int:
+        return self._update_block
 
     @property
     def w3_contract(self) -> Contract:
@@ -836,9 +840,9 @@ class V3LiquidityPool(AbstractLiquidityPool):
         if TYPE_CHECKING:
             assert isinstance(update, UniswapV3PoolExternalUpdate)
 
-        if update.block_number < self._update_block:
+        if update.block_number < self.update_block:
             raise ExternalUpdateError(
-                f"Rejected update for block {update.block_number} in the past, current update block is {self._update_block}"
+                f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"
             )
 
         with self._state_lock:
@@ -944,7 +948,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                     "\n"
                     f"new liquidity: {new_liquidity_net} net, {new_liquidity_gross} gross"
                 )
-                logger.debug(f"update block: {update.block_number} (last={self._update_block})")
+                logger.debug(f"update block: {update.block_number} (last={self.update_block})")
 
             if updated_state:
                 if self._pool_state_archive:

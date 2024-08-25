@@ -332,7 +332,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         if not self._snapshot:
             return
 
-        starting_state_block = pool._update_block
+        starting_state_block = pool.update_block
 
         # Apply liquidity modifications
         for i, liquidity_update in enumerate(
