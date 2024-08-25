@@ -82,7 +82,7 @@ def test_create_base_chain_managers(base_full_node_web3: Web3):
     # Create a pool manager with an invalid address
     with pytest.raises(
         ManagerError,
-        match=f"Pool manager could not be initialized from unknown factory address {BASE_WETH_ADDRESS}.",
+        match="Cannot create pool manager without factory address, pool ABI, and pool init hash.",
     ):
         UniswapV2LiquidityPoolManager(factory_address=BASE_WETH_ADDRESS)
 
@@ -172,7 +172,7 @@ def test_create_mainnet_managers(ethereum_full_node_web3: Web3):
     # Create a pool manager with an invalid address
     with pytest.raises(
         ManagerError,
-        match=f"Pool manager could not be initialized from unknown factory address {MAINNET_WETH_ADDRESS}.",
+        match="Cannot create pool manager without factory address, pool ABI, and pool init hash.",
     ):
         UniswapV2LiquidityPoolManager(factory_address=MAINNET_WETH_ADDRESS)
 
