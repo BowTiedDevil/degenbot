@@ -849,11 +849,11 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     else:
                         y = y_plus - y_minus
 
-                    diff = 0
                     if y > y_prev:
                         diff = y - y_prev
                     else:
                         diff = y_prev - y
+
                     if diff < max(convergence_limit, y // 10**14):
                         frac = y * 10**18 // D
                         assert (frac > 10**16 - 1) and (frac < 10**20 + 1), "unsafe value for y"
@@ -1203,7 +1203,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
             if base_j < 0:
                 meta_j = j
 
-            x = 0
             if base_i < 0:
                 x = xp[i] + (
                     dx
@@ -1272,7 +1271,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
             rates = [self.PRECISION, self._get_virtual_price(block_number=block_number)]
             xp = self._xp(rates=rates, balances=pool_balances)
 
-            x = 0
             base_i = 0
             base_j = 0
             meta_i = 0
@@ -1348,7 +1346,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
             rates = [self.PRECISION, self._get_virtual_price(block_number=block_number)]
             xp = self._xp(rates=rates, balances=pool_balances)
 
-            x = 0
             base_i = 0
             base_j = 0
             meta_i = 0
@@ -1642,7 +1639,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
         xp_reduced = xp.copy()
         _fee = self.fee * N_COINS // (4 * (N_COINS - 1))
         for j in range(N_COINS):
-            dx_expected = 0
             if j == i:
                 dx_expected = xp[j] * D1 // D0 - new_y
             else:
@@ -1937,7 +1933,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
             c = D
             S = 0
             _x = 0
-            y_prev = 0
 
             for _i in range(N_COINS):
                 if _i != i:
