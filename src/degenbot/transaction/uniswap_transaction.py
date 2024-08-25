@@ -2391,9 +2391,9 @@ class UniswapTransaction(AbstractTransaction):
         except ValueError as e:
             raise TransactionError(e)
 
-        if self.router_address in self.ledger._balances:
+        if self.router_address in self.ledger.balances:
             raise self.LeftoverRouterBalance(
-                "Unaccounted router balance", self.ledger._balances[self.router_address]
+                "Unaccounted router balance", self.ledger.balances[self.router_address]
             )
 
         # if not silent:

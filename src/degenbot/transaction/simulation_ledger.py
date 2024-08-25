@@ -18,7 +18,7 @@ class SimulationLedger:
     def __init__(self) -> None:
         # Entries are recorded as a dict-of-dicts, keyed by address, then by
         # token address
-        self._balances: Dict[
+        self.balances: Dict[
             ChecksumAddress,  # address holding balance
             Dict[
                 ChecksumAddress,  # token address
@@ -67,10 +67,10 @@ class SimulationLedger:
 
         address_balance: Dict[ChecksumAddress, int]
         try:
-            address_balance = self._balances[_address]
+            address_balance = self.balances[_address]
         except KeyError:
             address_balance = {}
-            self._balances[_address] = address_balance
+            self.balances[_address] = address_balance
 
         logger.debug(f"BALANCE: {_address} {'+' if amount > 0 else ''}{amount} {_token_address}")
 
@@ -83,7 +83,7 @@ class SimulationLedger:
             if address_balance[_token_address] == 0:
                 del address_balance[_token_address]
             if not address_balance:
-                del self._balances[_address]
+                del self.balances[_address]
 
     def token_balance(
         self,
@@ -122,7 +122,7 @@ class SimulationLedger:
 
         address_balances: Dict[ChecksumAddress, int]
         try:
-            address_balances = self._balances[_address]
+            address_balances = self.balances[_address]
         except KeyError:
             address_balances = {}
 
