@@ -174,13 +174,14 @@ class UniswapTransaction(AbstractTransaction):
         ):
             raise TransactionError("Deadline expired")
 
-    def _raise_if_block_hash_mismatch(self, block_hash: HexBytes) -> None:
+    @staticmethod
+    def _raise_if_block_hash_mismatch(block_hash: HexBytes) -> None:
         logger.info(f"Checking previousBlockhash: {block_hash!r}")
         if config.get_web3().eth.get_block("latest")["hash"] != block_hash:
             raise TransactionError("Previous block hash mismatch")
 
+    @staticmethod
     def _show_pool_states(
-        self,
         pool: LiquidityPool | V3LiquidityPool,
         sim_result: UniswapV2PoolSimulationResult | UniswapV3PoolSimulationResult,
     ) -> None:
@@ -308,8 +309,8 @@ class UniswapTransaction(AbstractTransaction):
 
         return pool, sim_result
 
+    @staticmethod
     def _simulate_v2_add_liquidity(
-        self,
         pool: LiquidityPool,
         added_reserves_token0: int,
         added_reserves_token1: int,
@@ -2321,8 +2322,8 @@ class UniswapTransaction(AbstractTransaction):
                 tx_commands = func_params["commands"]
                 tx_inputs = func_params["inputs"]
 
-                for command, input in zip(tx_commands, tx_inputs):
-                    _process_universal_router_command(command, input)
+                for tx_command, tx_input in zip(tx_commands, tx_inputs):
+                    _process_universal_router_command(tx_command, tx_input)
 
             # bugfix: prevents nested multicalls from spamming exception
             # message.

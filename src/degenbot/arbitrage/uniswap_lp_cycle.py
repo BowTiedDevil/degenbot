@@ -119,8 +119,8 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
     def __str__(self) -> str:
         return self.name
 
+    @staticmethod
     def _sort_overrides(
-        self,
         overrides: Sequence[
             Tuple[LiquidityPool, UniswapV2PoolState]
             | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
