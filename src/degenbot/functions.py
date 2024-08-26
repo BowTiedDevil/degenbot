@@ -49,7 +49,7 @@ def get_number_for_block_identifier(identifier: BlockIdentifier | None) -> int:
     match identifier:
         case None:
             return config.get_web3().eth.get_block_number()
-        case int() if 1 <= identifier <= MAX_UINT256:
+        case int():
             return identifier
         case bytes():
             return int.from_bytes(identifier, byteorder="big")

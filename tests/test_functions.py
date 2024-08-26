@@ -1,5 +1,4 @@
 from degenbot.functions import next_base_fee, get_number_for_block_identifier
-from degenbot.constants import MAX_UINT256
 import pytest
 import degenbot.config
 from eth_typing import (
@@ -49,10 +48,6 @@ def test_converting_block_identifier_to_int(fork_mainnet_archive):
 
     # int
     assert isinstance(get_number_for_block_identifier(1), int)
-
-    for invalid_block_number in [-1, MAX_UINT256 + 1]:
-        with pytest.raises(ValueError):
-            get_number_for_block_identifier(invalid_block_number)
 
     for invalid_tag in ["Latest", "latest ", "next", "previous"]:
         with pytest.raises(ValueError):
