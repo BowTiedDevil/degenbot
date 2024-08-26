@@ -18,7 +18,7 @@ class ChainlinkPriceContract:
 
     def __init__(self, address: str):
         self.address = to_checksum_address(address)
-        self._decimals: int = self._w3_contract.functions.decimals().call()
+        self.decimals: int = self.w3_contract.functions.decimals().call()
 
     @property
     def w3_contract(self) -> Contract:
