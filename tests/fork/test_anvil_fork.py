@@ -143,6 +143,17 @@ def test_balance_overrides_in_constructor():
     assert fork.w3.eth.get_balance(VITALIK_ADDRESS) == FAKE_BALANCE
 
 
+def test_nonce_overrides_in_constructor():
+    FAKE_NONCE = 69
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        nonce_overrides=[
+            (VITALIK_ADDRESS, FAKE_NONCE),
+        ],
+    )
+    assert fork.w3.eth.get_transaction_count(VITALIK_ADDRESS) == FAKE_NONCE
+
+
 def test_bytecode_overrides_in_constructor():
     FAKE_ADDRESS = to_checksum_address("0x6969696969696969696969696969696969696969")
     FAKE_BYTECODE = HexBytes("0x0420")
