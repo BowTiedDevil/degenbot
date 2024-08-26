@@ -137,7 +137,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             return token_addresses
 
         def _get_lp_token_address() -> ChecksumAddress:
-            for contract in [_w3_registry_contract, _w3_factory_contract]:
+            for contract in [w3_registry_contract, w3_factory_contract]:
                 lp_token_address, *_ = eth_abi.abi.decode(
                     types=["address"],
                     data=_w3.eth.call(
@@ -161,7 +161,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 types=["address"],
                 data=_w3.eth.call(
                     transaction={
-                        "to": _w3_registry_contract.address,
+                        "to": w3_registry_contract.address,
                         "data": Web3.keccak(text="get_pool_from_lp_token(address)")[:4]
                         + eth_abi.abi.encode(
                             types=["address"],
@@ -174,7 +174,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             return to_checksum_address(pool_address)
 
         def _is_metapool() -> bool:
-            for contract in [_w3_factory_contract, _w3_registry_contract]:
+            for contract in [w3_factory_contract, w3_registry_contract]:
                 try:
                     is_meta, *_ = eth_abi.abi.decode(
                         types=["bool"],
@@ -281,11 +281,11 @@ class CurveStableswapPool(AbstractLiquidityPool):
         except KeyError:
             pass
 
-        _w3_contract = self._w3_contract
-        _w3_registry_contract = _w3.eth.contract(
+        w3_contract = self.w3_contract
+        w3_registry_contract = _w3.eth.contract(
             address=CURVE_V1_REGISTRY_ADDRESS, abi=CURVE_V1_REGISTRY_ABI
         )
-        _w3_factory_contract = _w3.eth.contract(
+        w3_factory_contract = _w3.eth.contract(
             address=CURVE_V1_FACTORY_ADDRESS,
             abi=CURVE_V1_FACTORY_ABI,
         )
@@ -307,31 +307,31 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self._cached_scaled_redemption_price: Dict[int, int] = {}
         self._cached_virtual_price: Dict[int, int] = {}
 
-        self.a_coefficient: int = _w3_contract.functions.A().call(block_identifier=state_block)
+        self.a_coefficient: int = w3_contract.functions.A().call(block_identifier=state_block)
         self.initial_a_coefficient: int | None = None
         self.initial_a_coefficient_time: int | None = None
         self.future_a_coefficient: int | None = None
         self.future_a_coefficient_time: int | None = None
 
         try:
-            self.initial_a_coefficient = _w3_contract.functions.initial_A().call(
+            self.initial_a_coefficient = w3_contract.functions.initial_A().call(
                 block_identifier=state_block
             )
-            self.initial_a_coefficient_time = _w3_contract.functions.initial_A_time().call(
+            self.initial_a_coefficient_time = w3_contract.functions.initial_A_time().call(
                 block_identifier=state_block
             )
-            self.future_a_coefficient = _w3_contract.functions.future_A().call(
+            self.future_a_coefficient = w3_contract.functions.future_A().call(
                 block_identifier=state_block
             )
-            self.future_a_coefficient_time = _w3_contract.functions.future_A_time().call(
+            self.future_a_coefficient_time = w3_contract.functions.future_A_time().call(
                 block_identifier=state_block
             )
         except Exception:
             pass
 
         # fee setup
-        self.fee: int = _w3_contract.functions.fee().call(block_identifier=state_block)
-        self.admin_fee: int = _w3_contract.functions.admin_fee().call(block_identifier=state_block)
+        self.fee: int = w3_contract.functions.fee().call(block_identifier=state_block)
+        self.admin_fee: int = w3_contract.functions.admin_fee().call(block_identifier=state_block)
 
         # token setup
         self._coin_index_type: str = (
@@ -506,7 +506,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         )
 
     @property
-    def _w3_contract(self) -> Contract:
+    def w3_contract(self) -> Contract:
         return config.get_web3().eth.contract(
             address=self.address,
             abi=self.abi,
@@ -1657,7 +1657,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             pass
 
         admin_balance: int
-        admin_balance = self._w3_contract.functions.admin_balances(token_index).call(
+        admin_balance = self.w3_contract.functions.admin_balances(token_index).call(
             block_identifier=block_number
         )
         self._cached_admin_balance[block_number, token_index] = admin_balance

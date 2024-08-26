@@ -62,7 +62,7 @@ def _test_calculations(lp: CurveStableswapPool):
                     types=["uint256"],
                 )
             else:
-                contract_amount = lp._w3_contract.functions.get_dy(
+                contract_amount = lp.w3_contract.functions.get_dy(
                     token_in_index,
                     token_out_index,
                     amount,
@@ -96,7 +96,7 @@ def _test_calculations(lp: CurveStableswapPool):
                 except (ZeroSwapError, ZeroLiquidityError):
                     continue
 
-                contract_amount = lp._w3_contract.functions.get_dy_underlying(
+                contract_amount = lp.w3_contract.functions.get_dy_underlying(
                     token_in_index,
                     token_out_index,
                     amount,

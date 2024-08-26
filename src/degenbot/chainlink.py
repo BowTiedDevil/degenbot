@@ -21,7 +21,7 @@ class ChainlinkPriceContract:
         self._decimals: int = self._w3_contract.functions.decimals().call()
 
     @property
-    def _w3_contract(self) -> Contract:
+    def w3_contract(self) -> Contract:
         return config.get_web3().eth.contract(
             address=self.address,
             abi=CHAINLINK_PRICE_FEED_ABI,
@@ -29,4 +29,4 @@ class ChainlinkPriceContract:
 
     @property
     def price(self) -> float:
-        return float(self._w3_contract.functions.latestRoundData().call()[1] / (10**self._decimals))
+        return float(self.w3_contract.functions.latestRoundData().call()[1] / (10**self.decimals))

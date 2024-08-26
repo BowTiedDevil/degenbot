@@ -62,18 +62,18 @@ class Erc20Token(AbstractErc20Token):
         self.address: ChecksumAddress = to_checksum_address(address)
         self.abi = abi if abi is not None else ERC20_ABI_MINIMAL
 
-        _w3 = config.get_web3()
-        _w3_contract = self._w3_contract
+        w3 = config.get_web3()
+        w3_contract = self.w3_contract
 
         try:
             self.name: str
-            self.name = _w3_contract.functions.name().call()
+            self.name = w3_contract.functions.name().call()
         except (ContractLogicError, OverflowError, BadFunctionCallOutput):
             # Workaround for non-ERC20 compliant tokens
             for func in ("name", "NAME"):
                 try:
                     self.name = (
-                        _w3.eth.call(
+                        w3.eth.call(
                             {
                                 "to": self.address,
                                 "data": Web3.keccak(text=f"{func}()"),
@@ -91,7 +91,7 @@ class Erc20Token(AbstractErc20Token):
         try:
             self.name
         except AttributeError:
-            if not _w3.eth.get_code(self.address):  # pragma: no cover
+            if not w3.eth.get_code(self.address):  # pragma: no cover
                 raise ValueError("No contract deployed at this address")
             self.name = "Unknown"
             self.name = self.name.strip("\x00")
@@ -101,13 +101,13 @@ class Erc20Token(AbstractErc20Token):
 
         try:
             self.symbol: str
-            self.symbol = _w3_contract.functions.symbol().call()
+            self.symbol = w3_contract.functions.symbol().call()
         except (ContractLogicError, OverflowError, BadFunctionCallOutput):
             for func in ("symbol", "SYMBOL"):
                 # Workaround for non-ERC20 compliant tokens
                 try:
                     self.symbol = (
-                        _w3.eth.call(
+                        w3.eth.call(
                             {
                                 "to": self.address,
                                 "data": Web3.keccak(text=f"{func}()"),
@@ -125,7 +125,7 @@ class Erc20Token(AbstractErc20Token):
         try:
             self.symbol
         except AttributeError:
-            if not _w3.eth.get_code(self.address):  # pragma: no cover
+            if not w3.eth.get_code(self.address):  # pragma: no cover
                 raise ValueError("No contract deployed at this address")
             self.symbol = "UNKN"
             logger.warning(
@@ -134,13 +134,13 @@ class Erc20Token(AbstractErc20Token):
 
         try:
             self.decimals: int
-            self.decimals = _w3_contract.functions.decimals().call()
+            self.decimals = w3_contract.functions.decimals().call()
         except (ContractLogicError, OverflowError, BadFunctionCallOutput):
             for func in ("decimals", "DECIMALS"):
                 try:
                     # Workaround for non-ERC20 compliant tokens
                     self.decimals = int.from_bytes(
-                        bytes=_w3.eth.call(
+                        bytes=w3.eth.call(
                             {
                                 "to": self.address,
                                 "data": Web3.keccak(text=f"{func}()"),
@@ -159,7 +159,7 @@ class Erc20Token(AbstractErc20Token):
         try:
             self.decimals
         except Exception:
-            if not _w3.eth.get_code(self.address):  # pragma: no cover
+            if not w3.eth.get_code(self.address):  # pragma: no cover
                 raise ValueError("No contract deployed at this address")
             self.decimals = 0
             logger.warning(
@@ -171,7 +171,7 @@ class Erc20Token(AbstractErc20Token):
             ChainlinkPriceContract(address=oracle_address) if oracle_address else None
         )
 
-        AllTokens(chain_id=_w3.eth.chain_id)[self.address] = self
+        AllTokens(chain_id=w3.eth.chain_id)[self.address] = self
 
         self._cached_approval: Dict[Tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
         self._cached_balance: Dict[Tuple[int, ChecksumAddress], int] = {}
@@ -184,7 +184,7 @@ class Erc20Token(AbstractErc20Token):
         return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"
 
     @property
-    def _w3_contract(self) -> Contract:
+    def w3_contract(self) -> Contract:
         return config.get_web3().eth.contract(
             address=self.address,
             abi=self.abi,

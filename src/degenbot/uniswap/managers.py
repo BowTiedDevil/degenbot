@@ -132,7 +132,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         return f"UniswapV2LiquidityPoolManager(factory={self._factory_address})"
 
     @property
-    def _w3_contract(self) -> Contract:
+    def w3_contract(self) -> Contract:
         return config.get_web3().eth.contract(
             address=self._factory_address,
             abi=UNISWAP_V2_FACTORY_ABI,
@@ -174,7 +174,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 raise ManagerError("Could not get both Erc20Token helpers")
 
             pool_address = to_checksum_address(
-                self._w3_contract.functions.getPair(*checksummed_token_addresses).call()
+                self.w3_contract.functions.getPair(*checksummed_token_addresses).call()
             )
             if pool_address == ZERO_ADDRESS:
                 raise ManagerError("No V2 LP available")
