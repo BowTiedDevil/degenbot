@@ -17,11 +17,19 @@ def test_converting_block_identifier_to_int(fork_mainnet_archive):
     degenbot.config.set_web3(fork_mainnet_archive.w3)
 
     # Known string literals
-    assert isinstance(get_number_for_block_identifier("latest"), int)
-    assert isinstance(get_number_for_block_identifier("earliest"), int)
-    assert isinstance(get_number_for_block_identifier("pending"), int)
-    assert isinstance(get_number_for_block_identifier("safe"), int)
-    assert isinstance(get_number_for_block_identifier("finalized"), int)
+    latest_block = get_number_for_block_identifier("latest")
+    earliest_block = get_number_for_block_identifier("earliest")
+    pending_block = get_number_for_block_identifier("pending")
+    safe_block = get_number_for_block_identifier("safe")
+    finalized_block = get_number_for_block_identifier("finalized")
+
+    assert isinstance(latest_block, int)
+    assert isinstance(earliest_block, int)
+    assert isinstance(pending_block, int)
+    assert isinstance(safe_block, int)
+    assert isinstance(finalized_block, int)
+
+    assert latest_block != earliest_block != pending_block != safe_block != finalized_block
 
     # BlockNumber
     assert isinstance(
