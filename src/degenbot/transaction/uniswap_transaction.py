@@ -1332,12 +1332,12 @@ class UniswapTransaction(AbstractTransaction):
                     except KeyError:
                         pass
 
-                    for payload in payload_args["data"]:
+                    for function_input in payload_args["data"]:
                         try:
                             _func, _params = (
                                 Web3()
                                 .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
-                                .decode_function_input(payload)
+                                .decode_function_input(function_input)
                             )
                         except Exception:
                             pass
@@ -1346,7 +1346,7 @@ class UniswapTransaction(AbstractTransaction):
                             _func, _params = (
                                 Web3()
                                 .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
-                                .decode_function_input(payload)
+                                .decode_function_input(function_input)
                             )
                         except Exception:
                             pass
