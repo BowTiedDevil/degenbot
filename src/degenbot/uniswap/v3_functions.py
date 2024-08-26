@@ -80,7 +80,7 @@ def generate_v3_pool_address(
     token_addresses = sorted([HexBytes(address) for address in token_addresses])
 
     salt = keccak(
-        eth_abi.encode(
+        eth_abi.abi.encode(
             ("address", "address", "uint24"),
             (*token_addresses, fee),
         )
