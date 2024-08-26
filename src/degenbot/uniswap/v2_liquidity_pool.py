@@ -8,8 +8,8 @@ from eth_utils.address import to_checksum_address
 from typing_extensions import override
 from web3.contract.contract import Contract
 
-from degenbot.exchanges.uniswap.types import UniswapV2ExchangeDeployment
 from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS
+from degenbot.exchanges.uniswap.types import UniswapV2ExchangeDeployment
 
 from .. import config
 from ..baseclasses import AbstractLiquidityPool
