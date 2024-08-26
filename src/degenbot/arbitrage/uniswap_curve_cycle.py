@@ -11,8 +11,6 @@ from web3 import Web3
 
 from ..baseclasses import (
     AbstractArbitrage,
-    AbstractLiquidityPool,
-    AbstractPoolState,
     Publisher,
     Subscriber,
     UniswapSimulationResult,
@@ -38,7 +36,9 @@ from .arbitrage_dataclasses import (
     UniswapV3PoolSwapAmounts,
 )
 
-SwapAmount: TypeAlias = (
+PoolStates: TypeAlias = UniswapV2PoolState | UniswapV3PoolState | CurveStableswapPoolState
+PoolTypes: TypeAlias = LiquidityPool | V3LiquidityPool | CurveStableswapPool
+SwapAmounts: TypeAlias = (
     CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
 )
 
@@ -52,7 +52,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
     def __init__(
         self,
         input_token: Erc20Token,
-        swap_pools: Iterable[AbstractLiquidityPool],
+        swap_pools: Sequence[PoolTypes],
         id: str,
         max_input: int | None = None,
     ):
@@ -64,10 +64,10 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         ):
             raise ValueError("Must provide only Curve StableSwap or Uniswap liquidity pools.")
 
-        self.swap_pools = tuple(swap_pools)
+        self.swap_pools: Tuple[PoolTypes, ...] = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
 
-        self.pool_states: Dict[ChecksumAddress, AbstractPoolState] = {}
+        self.pool_states: Dict[ChecksumAddress, PoolStates] = {}
         self._update_pool_states(self.swap_pools)
         self.curve_discount_factor = CURVE_V1_DEFAULT_DISCOUNT_FACTOR
 
@@ -169,12 +169,12 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         self,
         overrides: Sequence[
             Tuple[
-                AbstractLiquidityPool,
-                AbstractPoolState | UniswapSimulationResult,
+                PoolTypes,
+                PoolStates | UniswapSimulationResult,
             ]
         ]
         | None,
-    ) -> Dict[ChecksumAddress, AbstractPoolState]:
+    ) -> Dict[ChecksumAddress, PoolStates]:
         """
         Validate the overrides, extract and insert the resulting pool states
         into a dictionary.
@@ -183,7 +183,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         if overrides is None:
             return {}
 
-        sorted_overrides: Dict[ChecksumAddress, AbstractPoolState] = {}
+        sorted_overrides: Dict[ChecksumAddress, PoolStates] = {}
 
         for pool, override in overrides:
             if isinstance(
@@ -215,9 +215,9 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_state_overrides: Dict[ChecksumAddress, AbstractPoolState] | None = None,
+        pool_state_overrides: Dict[ChecksumAddress, PoolStates] | None = None,
         block_number: int | None = None,
-    ) -> List[SwapAmount]:
+    ) -> List[SwapAmounts]:
         """
         Generate human-readable inputs for a complete swap along the arbitrage
         path, starting with `token_in_quantity` amount of `token_in`.
@@ -226,7 +226,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         if pool_state_overrides is None:
             pool_state_overrides = {}
 
-        pools_amounts_out: List[SwapAmount] = []
+        pools_amounts_out: List[SwapAmounts] = []
 
         _token_in_quantity: int = 0
         _token_out_quantity: int = 0
@@ -349,7 +349,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
 
         return pools_amounts_out
 
-    def _update_pool_states(self, pools: Iterable[AbstractLiquidityPool]) -> None:
+    def _update_pool_states(self, pools: Iterable[PoolTypes]) -> None:
         """
         Update `self.pool_states` with state values from the `pools` iterable
         """
@@ -359,8 +359,8 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         self,
         override_state: Sequence[
             Tuple[
-                AbstractLiquidityPool,
-                AbstractPoolState | UniswapSimulationResult,
+                PoolTypes,
+                PoolStates | UniswapSimulationResult,
             ]
         ]
         | None = None,
@@ -462,8 +462,8 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         self,
         override_state: Sequence[
             Tuple[
-                AbstractLiquidityPool,
-                AbstractPoolState | UniswapSimulationResult,
+                PoolTypes,
+                PoolStates | UniswapSimulationResult,
             ]
         ]
         | None = None,
@@ -587,8 +587,8 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         self,
         override_state: Sequence[
             Tuple[
-                AbstractLiquidityPool,
-                AbstractPoolState | UniswapSimulationResult,
+                PoolTypes,
+                PoolStates | UniswapSimulationResult,
             ]
         ]
         | None = None,
@@ -606,8 +606,8 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
         override_state: Sequence[
             Tuple[
-                AbstractLiquidityPool,
-                AbstractPoolState | UniswapSimulationResult,
+                PoolTypes,
+                PoolStates | UniswapSimulationResult,
             ]
         ]
         | None = None,
@@ -675,9 +675,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         self,
         from_address: ChecksumAddress | str,
         swap_amount: int,
-        pool_swap_amounts: Sequence[
-            CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
-        ],
+        pool_swap_amounts: Sequence[SwapAmounts],
         infinite_approval: bool = False,
     ) -> List[Tuple[ChecksumAddress, bytes, int]]:
         """
