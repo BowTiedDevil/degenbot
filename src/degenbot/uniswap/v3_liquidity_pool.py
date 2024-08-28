@@ -8,7 +8,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Tuple
 
 import eth_abi.abi
-from eth_typing import HexStr
+from eth_typing import ChecksumAddress, HexStr
 from eth_utils.address import to_checksum_address
 from eth_utils.crypto import keccak
 from web3.contract.contract import Contract
@@ -128,8 +128,8 @@ class V3LiquidityPool(AbstractLiquidityPool):
             # Use degenbot deployment values if available
             factory_deployment = FACTORY_DEPLOYMENTS[w3.eth.chain_id][self.factory]
             ticklens_deployment = TICKLENS_DEPLOYMENTS[w3.eth.chain_id][self.factory]
+            init_hash = factory_deployment.pool_init_hash
             self.abi = factory_deployment.pool_abi
-            self.init_hash = factory_deployment.pool_init_hash
             self.ticklens_address = ticklens_deployment.address
             self.ticklens_abi = ticklens_deployment.abi
             if factory_deployment.deployer is not None:
@@ -138,10 +138,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             # Deployment is unknown. Uses any inputs provided, otherwise use default values from
             # original Uniswap contracts
             self.abi = abi if abi is not None else UNISWAP_V3_POOL_ABI
-            self.init_hash = (
-                init_hash if init_hash is not None else UNISWAP_V3_MAINNET_POOL_INIT_HASH
-            )
-
+            init_hash = init_hash if init_hash is not None else UNISWAP_V3_MAINNET_POOL_INIT_HASH
             if ticklens_address is None:
                 raise ValueError("TickLens address for pool is unknown.")
             self.ticklens_address = to_checksum_address(ticklens_address)
@@ -190,16 +187,12 @@ class V3LiquidityPool(AbstractLiquidityPool):
         )
 
         if verify_address:
-            computed_pool_address = generate_v3_pool_address(
+            self._verify_address(
+                deployer_address=deployer_address,
                 token_addresses=(self.token0.address, self.token1.address),
                 fee=self.fee,
-                deployer_address=deployer_address,
-                init_hash=self.init_hash,
+                init_hash=init_hash,
             )
-            if computed_pool_address != self.address:
-                raise ValueError(
-                    f"Pool address {self.address} does not match deterministic address {computed_pool_address} from deployer {deployer_address}"
-                )
 
         self.name = f"{self.token0}-{self.token1} (V3, {self.fee / 10000:.2f}%)"
         self._extra_words = extra_words
@@ -518,6 +511,24 @@ class V3LiquidityPool(AbstractLiquidityPool):
         Retrieves the word and bit position (both zero indexed) for the tick. Accounts for the pool spacing.
         """
         return TickBitmap.position(int(Decimal(tick) // self.tick_spacing))
+
+    def _verify_address(
+        self,
+        deployer_address: ChecksumAddress | str,
+        token_addresses: Tuple[ChecksumAddress, ChecksumAddress],
+        fee: int,
+        init_hash: str,
+    ) -> None:
+        computed_pool_address = generate_v3_pool_address(
+            deployer_address=deployer_address,
+            token_addresses=token_addresses,
+            fee=fee,
+            init_hash=init_hash,
+        )
+        if computed_pool_address != self.address:
+            raise ValueError(
+                f"Pool address {self.address} does not match deterministic address {computed_pool_address} from deployer {deployer_address}"
+            )
 
     @property
     def liquidity(self) -> int:

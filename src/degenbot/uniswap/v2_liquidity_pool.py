@@ -144,7 +144,7 @@ class LiquidityPool(AbstractLiquidityPool):
             if factory_address is not None
             else w3_contract.functions.factory().call()
         )
-        self.deployer = (
+        deployer_address = (
             to_checksum_address(deployer_address) if deployer_address is not None else self.factory
         )
 
@@ -177,15 +177,11 @@ class LiquidityPool(AbstractLiquidityPool):
         self.tokens = (self.token0, self.token1)
 
         if verify_address:
-            computed_pool_address = generate_v2_pool_address(
+            self._verify_address(
+                deployer_address=deployer_address,
                 token_addresses=(self.token0.address, self.token1.address),
-                deployer_address=self.deployer,
                 init_hash=init_hash,
             )
-            if computed_pool_address != self.address:
-                raise ValueError(
-                    f"Pool address {self.address} does not match deterministic address {computed_pool_address} from deployer {self.deployer}"
-                )
 
         if name is not None:
             self.name = name
@@ -229,6 +225,22 @@ class LiquidityPool(AbstractLiquidityPool):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1})"
+
+    def _verify_address(
+        self,
+        deployer_address: ChecksumAddress | str,
+        token_addresses: Tuple[ChecksumAddress, ChecksumAddress],
+        init_hash: str,
+    ) -> None:
+        computed_pool_address = generate_v2_pool_address(
+            deployer_address=deployer_address,
+            token_addresses=token_addresses,
+            init_hash=init_hash,
+        )
+        if computed_pool_address != self.address:
+            raise ValueError(
+                f"Pool address {self.address} does not match deterministic address {computed_pool_address} from deployer {deployer_address}"
+            )
 
     @property
     def w3_contract(self) -> Contract:
