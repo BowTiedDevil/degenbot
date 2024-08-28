@@ -179,10 +179,10 @@ class LiquidityPool(AbstractLiquidityPool):
         self.tokens = (self.token0, self.token1)
 
         if verify_address:
-            verified_addresss = self._verified_address()
-            if verified_addresss != self.address:
+            verified_address = self._verified_address()
+            if verified_address != self.address:
                 raise ValueError(
-                    f"Pool address verification failed. Provided: {self.address}, expected: {verified_addresss}"
+                    f"Pool address verification failed. Provided: {self.address}, expected: {verified_address}"
                 )
 
         if name is not None:
