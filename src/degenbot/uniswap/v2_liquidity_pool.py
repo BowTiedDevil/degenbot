@@ -981,31 +981,13 @@ class UnregisteredLiquidityPool(LiquidityPool):
         fee: Fraction | Iterable[Fraction] = Fraction(3, 1000),
     ) -> None:
         self._state_lock = Lock()
+        self.abi = abi if abi is not None else UNISWAP_V2_POOL_ABI
         self.address = to_checksum_address(address)
         self.token0 = min(tokens)
         self.token1 = max(tokens)
         self.tokens = (self.token0, self.token1)
 
-        if abi is None:
-            abi = UNISWAP_V2_POOL_ABI
-        self.abi = abi
-
         if isinstance(fee, Iterable):
             self.fee_token0, self.fee_token1 = fee
-            if not isinstance(self.fee_token0, Fraction) or not isinstance(
-                self.fee_token1, Fraction
-            ):
-                raise TypeError(
-                    f"LP fee was not correctly passed! "
-                    f"Expected '{Fraction().__class__.__name__}', "
-                    f"was '{self.fee_token0.__class__.__name__}' and '{self.fee_token1.__class__.__name__}'"
-                )
         else:
-            self.fee_token0 = fee
-            self.fee_token1 = fee
-            if not isinstance(fee, Fraction):
-                raise TypeError(
-                    f"LP fee was not correctly passed! "
-                    f"Expected '{Fraction().__class__.__name__}', "
-                    f"was '{fee.__class__.__name__}'"
-                )
+            self.fee_token0 = self.fee_token1 = fee
