@@ -131,18 +131,18 @@ class LiquidityPool(AbstractLiquidityPool):
         self.address: ChecksumAddress = to_checksum_address(address)
         self.abi = abi if abi is not None else UNISWAP_V2_POOL_ABI
 
-        _w3 = config.get_web3()
-        _w3_contract = self.w3_contract
-        chain_id = _w3.eth.chain_id
+        w3 = config.get_web3()
+        w3_contract = self.w3_contract
+        chain_id = w3.eth.chain_id
 
         if state_block is None:
-            state_block = _w3.eth.block_number
+            state_block = w3.eth.block_number
         self._update_block = state_block
 
         self.factory = (
             to_checksum_address(factory_address)
             if factory_address is not None
-            else _w3_contract.functions.factory().call()
+            else w3_contract.functions.factory().call()
         )
         self.deployer = (
             to_checksum_address(deployer_address) if deployer_address is not None else self.factory
@@ -150,7 +150,7 @@ class LiquidityPool(AbstractLiquidityPool):
 
         if init_hash is None:
             try:
-                init_hash = FACTORY_DEPLOYMENTS[_w3.eth.chain_id][self.factory].pool_init_hash
+                init_hash = FACTORY_DEPLOYMENTS[chain_id][self.factory].pool_init_hash
             except KeyError:
                 init_hash = UNISWAP_V2_MAINNET_POOL_INIT_HASH
 
@@ -166,11 +166,11 @@ class LiquidityPool(AbstractLiquidityPool):
         else:
             _token_manager = Erc20TokenHelperManager(chain_id)
             self.token0 = _token_manager.get_erc20token(
-                address=_w3_contract.functions.token0().call(),
+                address=w3_contract.functions.token0().call(),
                 silent=silent,
             )
             self.token1 = _token_manager.get_erc20token(
-                address=_w3_contract.functions.token1().call(),
+                address=w3_contract.functions.token1().call(),
                 silent=silent,
             )
 
