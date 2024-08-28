@@ -1,8 +1,8 @@
-from .deployments import TICKLENS_DEPLOYMENTS, FACTORY_DEPLOYMENTS, ROUTER_DEPLOYMENTS
+from .deployments import FACTORY_DEPLOYMENTS, ROUTER_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
 from .types import (
+    UniswapRouterDeployment,
     UniswapV2ExchangeDeployment,
     UniswapV3ExchangeDeployment,
-    UniswapRouterDeployment,
 )
 
 
