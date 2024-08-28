@@ -1,5 +1,7 @@
 import random
 
+import pytest
+
 from degenbot.exchanges.uniswap.types import (
     UniswapFactoryDeployment,
     UniswapRouterDeployment,
@@ -38,6 +40,8 @@ def test_register_v2_exchange() -> None:
     )
 
     register_exchange(exchange)
+    with pytest.raises(ValueError):
+        register_exchange(exchange)
     assert DEPLOYMENT_CHAIN in FACTORY_DEPLOYMENTS
     assert FACTORY_DEPLOYMENT_ADDRESS in FACTORY_DEPLOYMENTS[DEPLOYMENT_CHAIN]
     assert FACTORY_DEPLOYMENTS[DEPLOYMENT_CHAIN][FACTORY_DEPLOYMENT_ADDRESS] is exchange.factory
@@ -100,6 +104,8 @@ def test_register_router() -> None:
     )
 
     register_router(router)
+    with pytest.raises(ValueError):
+        register_router(router)
     assert DEPLOYMENT_CHAIN in ROUTER_DEPLOYMENTS
     assert router.address in ROUTER_DEPLOYMENTS[DEPLOYMENT_CHAIN]
     assert ROUTER_DEPLOYMENTS[DEPLOYMENT_CHAIN][router.address] is router
