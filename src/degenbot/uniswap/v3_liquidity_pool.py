@@ -135,14 +135,12 @@ class V3LiquidityPool(AbstractLiquidityPool):
             if factory_deployment.deployer is not None:
                 deployer_address = factory_deployment.deployer
         except KeyError:
-            print("no deployment found")
             # Deployment is unknown. Uses any inputs provided, otherwise use default values from
             # original Uniswap contracts
             self.abi = abi if abi is not None else UNISWAP_V3_POOL_ABI
             self.init_hash = (
                 init_hash if init_hash is not None else UNISWAP_V3_MAINNET_POOL_INIT_HASH
             )
-            print(f"{init_hash=}")
 
             if ticklens_address is None:
                 raise ValueError("TickLens address for pool is unknown.")
@@ -196,8 +194,6 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 deployer_address=deployer_address,
                 init_hash=self.init_hash,
             )
-            print(f"{computed_pool_address=}")
-            print(f"{self.address=}")
             if computed_pool_address != self.address:
                 raise ValueError(
                     f"Pool address {self.address} does not match deterministic address {computed_pool_address} from deployer {deployer_address}"
