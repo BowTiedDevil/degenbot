@@ -165,11 +165,13 @@ class V3LiquidityPool(AbstractLiquidityPool):
         # held for operations that manipulate state data
         self._state_lock = Lock()
 
+        w3_contract = self.w3_contract
+
         if tokens is not None:
             self.token0, self.token1 = sorted(tokens)
         else:
-            token0_address: HexStr = self.w3_contract.functions.token0().call()
-            token1_address: HexStr = self.w3_contract.functions.token1().call()
+            token0_address: HexStr = w3_contract.functions.token0().call()
+            token1_address: HexStr = w3_contract.functions.token1().call()
 
             token_manager = Erc20TokenHelperManager(w3.eth.chain_id)
             self.token0 = token_manager.get_erc20token(
@@ -182,7 +184,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             )
 
         self.tokens = (self.token0, self.token1)
-        self.fee: int = fee if fee is not None else self.w3_contract.functions.fee().call()
+        self.fee: int = fee if fee is not None else w3_contract.functions.fee().call()
         self.tick_spacing = (
             tick_spacing if tick_spacing is not None else TICK_SPACING_BY_FEE[self.fee]
         )
@@ -255,11 +257,9 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 block_number=self.update_block,
             )
 
-        self.liquidity = self.w3_contract.functions.liquidity().call(
-            block_identifier=self.update_block
-        )
+        self.liquidity = w3_contract.functions.liquidity().call(block_identifier=self.update_block)
 
-        self.sqrt_price_x96, self.tick, *_ = self.w3_contract.functions.slot0().call(
+        self.sqrt_price_x96, self.tick, *_ = w3_contract.functions.slot0().call(
             block_identifier=self.update_block
         )
 
@@ -485,13 +485,13 @@ class V3LiquidityPool(AbstractLiquidityPool):
         256 ticks, spaced per the tickSpacing interval.
         """
 
-        _w3_contract = self.w3_contract
+        w3_contract = self.w3_contract
 
         if block_number is None:
             block_number = config.get_web3().eth.get_block_number()
 
         try:
-            _tick_bitmap = _w3_contract.functions.tickBitmap(word_position).call(
+            _tick_bitmap = w3_contract.functions.tickBitmap(word_position).call(
                 block_identifier=block_number,
             )
             _tick_data = self.ticklens_contract.functions.getPopulatedTicksInWord(
@@ -634,16 +634,17 @@ class V3LiquidityPool(AbstractLiquidityPool):
         """
 
         with self._state_lock:
+            w3_contract = self.w3_contract
             updated = False
 
             block_number = (
                 config.get_web3().eth.get_block_number() if block_number is None else block_number
             )
 
-            _sqrt_price_x96, _tick, *_ = self.w3_contract.functions.slot0().call(
+            _sqrt_price_x96, _tick, *_ = w3_contract.functions.slot0().call(
                 block_identifier=block_number
             )
-            _liquidity = self.w3_contract.functions.liquidity().call(block_identifier=block_number)
+            _liquidity = w3_contract.functions.liquidity().call(block_identifier=block_number)
 
             if self.sqrt_price_x96 != _sqrt_price_x96:
                 updated = True
