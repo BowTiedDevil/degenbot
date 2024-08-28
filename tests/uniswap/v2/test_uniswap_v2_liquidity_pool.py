@@ -622,6 +622,53 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: 
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state == starting_state
 
 
+def test_discard_before_finalized(
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+):
+    starting_state = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state
+    starting_block = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block
+
+    _FIRST_UPDATE_BLOCK = (
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block + 1
+    )
+    _LAST_UPDATE_BLOCK = (
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block + 10
+    )
+
+    starting_token0_reserves = starting_state.reserves_token0
+    starting_token1_reserves = starting_state.reserves_token1
+
+    expected_block_states: Dict[int, UniswapV2PoolState] = {starting_block: starting_state}
+
+    # Provide some dummy updates, then simulate a reorg back to the starting state
+    for block_number in range(_FIRST_UPDATE_BLOCK, _LAST_UPDATE_BLOCK + 1):
+        assert block_number not in expected_block_states
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_reserves(
+            external_token0_reserves=starting_token0_reserves
+            + 10_000 * (1 + block_number - _FIRST_UPDATE_BLOCK),
+            external_token1_reserves=starting_token1_reserves
+            + 10_000 * (1 + block_number - _FIRST_UPDATE_BLOCK),
+            print_ratios=False,
+            print_reserves=False,
+            update_block=block_number,
+        )
+        assert (
+            block_number
+            in ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive
+        )
+        expected_block_states[block_number] = (
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state
+        )
+
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.discard_states_before_block(
+        _LAST_UPDATE_BLOCK
+    )
+    assert (
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive.keys()
+        == set([_LAST_UPDATE_BLOCK])
+    )
+
+
 def test_simulations(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
 ):

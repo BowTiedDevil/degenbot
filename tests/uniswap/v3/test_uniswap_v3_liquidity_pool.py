@@ -204,6 +204,32 @@ def test_reorg(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
     assert lp.state == starting_state
 
 
+def test_discard_before_finalized(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
+    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+
+    _START_BLOCK = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
+    _END_BLOCK = _START_BLOCK + 10
+
+    # Provide some dummy updates, then simulate a reorg back to the starting state
+    starting_liquidity = lp.liquidity
+
+    block_states: Dict[int, UniswapV3PoolState] = {
+        wbtc_weth_v3_lp_at_block_17_600_000._update_block: lp.state
+    }
+
+    for block_number in range(_START_BLOCK, _END_BLOCK + 1, 1):
+        lp.external_update(
+            update=UniswapV3PoolExternalUpdate(
+                block_number=block_number,
+                liquidity=starting_liquidity + 10_000 * (block_number - _START_BLOCK),
+            ),
+        )
+        block_states[block_number] = lp.state
+
+    wbtc_weth_v3_lp_at_block_17_600_000.discard_states_before_block(_END_BLOCK)
+    assert wbtc_weth_v3_lp_at_block_17_600_000._pool_state_archive.keys() == set([_END_BLOCK])
+
+
 def test_tick_bitmap_equality() -> None:
     with pytest.raises(AssertionError):
         assert UniswapV3BitmapAtWord(bitmap=1) == UniswapV3BitmapAtWord(bitmap=2)

@@ -529,6 +529,9 @@ class LiquidityPool(AbstractLiquidityPool):
             if block_index == len(known_blocks):
                 raise NoPoolStateAvailable(f"No pool state known prior to block {block}")
 
+            for block in known_blocks[:block_index]:
+                del self._pool_state_archive[block]
+
     def restore_state_before_block(
         self,
         block: int,
