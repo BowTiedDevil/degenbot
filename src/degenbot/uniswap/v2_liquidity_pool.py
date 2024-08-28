@@ -290,7 +290,6 @@ class LiquidityPool(AbstractLiquidityPool):
     ) -> tuple[bool, UniswapV2PoolState]:
         found_updates = self.update_reserves(
             silent=silent,
-            print_ratios=not silent,
             print_reserves=not silent,
             update_block=block_number,
             override_update_method="polling",
@@ -457,7 +456,6 @@ class LiquidityPool(AbstractLiquidityPool):
             external_token0_reserves=update.reserves_token0,
             external_token1_reserves=update.reserves_token1,
             print_reserves=not silent,
-            print_ratios=not silent,
             override_update_method="external",
         )
 

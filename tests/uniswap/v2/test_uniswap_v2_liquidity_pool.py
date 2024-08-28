@@ -579,7 +579,6 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: 
             + 10_000 * (1 + block_number - _FIRST_UPDATE_BLOCK),
             external_token1_reserves=starting_token1_reserves
             + 10_000 * (1 + block_number - _FIRST_UPDATE_BLOCK),
-            print_ratios=False,
             print_reserves=False,
             update_block=block_number,
         )
@@ -648,7 +647,6 @@ def test_discard_before_finalized(
             + 10_000 * (1 + block_number - _FIRST_UPDATE_BLOCK),
             external_token1_reserves=starting_token1_reserves
             + 10_000 * (1 + block_number - _FIRST_UPDATE_BLOCK),
-            print_ratios=False,
             print_reserves=False,
             update_block=block_number,
         )
