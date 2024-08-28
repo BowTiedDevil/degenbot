@@ -517,7 +517,7 @@ class LiquidityPool(AbstractLiquidityPool):
             raise NoPoolStateAvailable("No archived states are available")
 
         with self._state_lock:
-            known_blocks = list(self._pool_state_archive.keys())
+            known_blocks = sorted(list(self._pool_state_archive.keys()))
 
             # Finds the index prior to the requested block number
             block_index = bisect_left(known_blocks, block)
@@ -546,7 +546,7 @@ class LiquidityPool(AbstractLiquidityPool):
             raise NoPoolStateAvailable("No archived states are available")
 
         with self._state_lock:
-            known_blocks = list(self._pool_state_archive.keys())
+            known_blocks = sorted(list(self._pool_state_archive.keys()))
 
             # Finds the index prior to the requested block number
             block_index = bisect_left(known_blocks, block)

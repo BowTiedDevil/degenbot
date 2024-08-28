@@ -1069,7 +1069,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             raise NoPoolStateAvailable("No archived states are available")
 
         with self._state_lock:
-            known_blocks = list(self._pool_state_archive.keys())
+            known_blocks = sorted(list(self._pool_state_archive.keys()))
             block_index = bisect_left(known_blocks, block)
 
             if block_index == 0:
