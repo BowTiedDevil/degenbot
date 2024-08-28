@@ -33,10 +33,39 @@ def test_create_arb(ethereum_full_node_web3):
     weth = Erc20Token(WETH_ADDRESS)
     UniswapCurveCycle(
         input_token=weth,
-        swap_pools=[uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp],
+        swap_pools=[
+            uniswap_v2_weth_dai_lp,
+            curve_tripool,
+            uniswap_v2_weth_usdc_lp,
+        ],
         id="test",
         max_input=10 * 10**18,
     )
+
+    dai = Erc20Token(DAI_ADDRESS)
+    with pytest.raises(ValueError, match="Not implemented for Curve pools at position != 1"):
+        UniswapCurveCycle(
+            input_token=dai,
+            swap_pools=[
+                curve_tripool,  # <--- Curve pool in position 0
+                uniswap_v2_weth_dai_lp,
+                uniswap_v2_weth_usdc_lp,
+            ],
+            id="test",
+            max_input=10 * 10**18,
+        )
+
+    with pytest.raises(ValueError, match="Not implemented for Curve pools at position != 1"):
+        UniswapCurveCycle(
+            input_token=dai,
+            swap_pools=[
+                uniswap_v2_weth_dai_lp,
+                uniswap_v2_weth_usdc_lp,
+                curve_tripool,  # <--- Curve pool in position 2
+            ],
+            id="test",
+            max_input=10 * 10**18,
+        )
 
 
 def test_pickle_arb(ethereum_full_node_web3):

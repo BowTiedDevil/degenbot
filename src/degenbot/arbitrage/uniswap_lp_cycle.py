@@ -138,7 +138,6 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             return {}
 
         sorted_overrides: Dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState] = {}
-
         for pool, override in overrides:
             match override:
                 case UniswapV2PoolState() | UniswapV3PoolState():
@@ -148,7 +147,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                     logger.debug(f"Applying override {override.final_state} to {pool}")
                     sorted_overrides[pool.address] = override.final_state
                 case _:  # pragma: no cover
-                    raise ValueError(f"Override for {pool} has unsupported type {type(override)}")
+                    raise ValueError(f"Unsupported override {override} for pool {pool}.")
 
         return sorted_overrides
 
@@ -156,17 +155,12 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_state_overrides: Dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState]
-        | None = None,
+        pool_state_overrides: Dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState],
     ) -> List[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts]:
         """
         Generate human-readable inputs for a swap along the arbitrage path, starting with the
         specified amount of the given input token.
         """
-
-        if pool_state_overrides is None:
-            pool_state_overrides = {}
-
         pools_amounts_out: List[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts] = []
 
         _token_in_quantity: int = 0
@@ -256,52 +250,35 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         """
 
         def _check_v2_pool_liquidity(
-            pool: LiquidityPool,
-            vector: UniswapPoolSwapVector,
             pool_state: UniswapV2PoolState,
+            vector: UniswapPoolSwapVector,
         ) -> None:
             if TYPE_CHECKING:
                 assert isinstance(pool_state, UniswapV2PoolState)
 
-            if all(
-                [
-                    pool_state.reserves_token0 > 1,
-                    pool_state.reserves_token1 > 1,
-                ]
-            ):
+            if pool_state.reserves_token0 > 1 and pool_state.reserves_token1 > 1:
                 return  # No liquidity issues
-            elif pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:
-                raise ZeroLiquidityError(f"V2 pool {pool.address} has no liquidity")
-            elif pool_state.reserves_token1 == 1 and vector.zero_for_one is True:
-                raise ZeroLiquidityError(
-                    f"V2 pool {pool.address} has no liquidity for a 0 -> 1 swap"
-                )
-            elif pool_state.reserves_token0 == 1 and vector.zero_for_one is False:
-                raise ZeroLiquidityError(
-                    f"V2 pool {pool.address} has no liquidity for a 1 -> 0 swap"
-                )
+            if pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:
+                raise ZeroLiquidityError("Pool has no liquidity")
+            if pool_state.reserves_token1 == 1 and vector.zero_for_one is True:
+                raise ZeroLiquidityError("Pool has no liquidity for a 0 -> 1 swap")
+            if pool_state.reserves_token0 == 1 and vector.zero_for_one is False:
+                raise ZeroLiquidityError("Pool has no liquidity for a 1 -> 0 swap")
 
         def _check_v3_pool_liquidity(
-            pool: V3LiquidityPool,
-            vector: UniswapPoolSwapVector,
             pool_state: UniswapV3PoolState,
+            vector: UniswapPoolSwapVector,
         ) -> None:
             if TYPE_CHECKING:
                 assert isinstance(pool_state, UniswapV3PoolState)
 
-            if pool_state.sqrt_price_x96 == 0:
-                raise ZeroLiquidityError(
-                    f"V3 pool {pool.address} has no liquidity (not initialized)"
-                )
-
-            if pool_state.tick_bitmap == {}:
+            if (
+                pool_state.sqrt_price_x96 == 0
+                or pool_state.tick_bitmap == {}
+                or pool_state.tick_data == {}
+            ):
                 # TODO: add housekeeping to `V3LiquidityPool` to remove tick_bitmaps set to 0
-                raise ZeroLiquidityError(f"V3 pool {pool.address} has no liquidity (empty bitmap)")
-
-            if pool_state.tick_data == {}:
-                raise ZeroLiquidityError(
-                    f"V3 pool {pool.address} has no liquidity (no initialized ticks)"
-                )
+                raise ZeroLiquidityError("Pool is not uninitialized.")
 
             if pool_state.liquidity == 0:
                 if (
@@ -309,13 +286,13 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                     and vector.zero_for_one is True
                 ):
                     # Swap is 0 -> 1 and cannot swap any more token0 for token1
-                    raise ZeroLiquidityError(f"{pool} has no liquidity for a 0 -> 1 swap")
+                    raise ZeroLiquidityError("Pool has no liquidity for a 0 -> 1 swap")
                 elif (
                     pool_state.sqrt_price_x96 == TickMath.MAX_SQRT_RATIO - 1
                     and vector.zero_for_one is False
                 ):
                     # Swap is 1 -> 0  and cannot swap any more token1 for token0
-                    raise ZeroLiquidityError(f"{pool} has no liquidity for a 1 -> 0 swap")
+                    raise ZeroLiquidityError("Pool has no liquidity for a 1 -> 0 swap")
 
         state_overrides = self._sort_overrides(override_state)
 
@@ -330,18 +307,14 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         for pool, vector in zip(self.swap_pools, self._swap_vectors):
             pool_state = state_overrides.get(pool.address) or pool.state
 
-            match pool:
-                case LiquidityPool():
-                    if TYPE_CHECKING:
-                        assert isinstance(pool_state, UniswapV2PoolState)
-                    _check_v2_pool_liquidity(pool, vector, pool_state)
+            match pool, pool_state:
+                case LiquidityPool(), UniswapV2PoolState():
+                    _check_v2_pool_liquidity(pool_state, vector)
                     exchange_rate = Fraction(pool_state.reserves_token1, pool_state.reserves_token0)
                     fee = pool.fee_token0 if vector.zero_for_one else pool.fee_token1
 
-                case V3LiquidityPool():
-                    if TYPE_CHECKING:
-                        assert isinstance(pool_state, UniswapV3PoolState)
-                    _check_v3_pool_liquidity(pool, vector, pool_state)
+                case V3LiquidityPool(), UniswapV3PoolState():
+                    _check_v3_pool_liquidity(pool_state, vector)
                     exchange_rate = Fraction(pool_state.sqrt_price_x96**2, 2**192)
                     fee = Fraction(
                         pool.fee, 1000000
@@ -388,12 +361,8 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                 pool_override = state_overrides.get(pool.address)
 
                 try:
-                    match pool:
-                        case LiquidityPool():
-                            if TYPE_CHECKING:
-                                assert pool_override is None or isinstance(
-                                    pool_override, UniswapV2PoolState
-                                )
+                    match pool, pool_override:
+                        case LiquidityPool(), UniswapV2PoolState() | None:
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
@@ -401,17 +370,17 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                                 else token_out_quantity,
                                 override_state=pool_override,
                             )
-                        case V3LiquidityPool():
-                            if TYPE_CHECKING:
-                                assert pool_override is None or isinstance(
-                                    pool_override, UniswapV3PoolState
-                                )
+                        case V3LiquidityPool(), UniswapV3PoolState() | None:
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
                                 if i == 0
                                 else token_out_quantity,
                                 override_state=pool_override,
+                            )
+                        case _:  # pragma: no cover
+                            raise ValueError(
+                                f"Override {pool_override} is not valid for pool {pool}."
                             )
                 except (EVMRevertError, LiquidityPoolError):
                     # The optimizer might send invalid amounts into the swap
@@ -839,19 +808,16 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         return payloads
 
     def notify(self, publisher: Publisher, message: Any) -> None:
-        match publisher:
-            case LiquidityPool() | V3LiquidityPool():
-                match message:
-                    case UniswapV2PoolStateUpdated() | UniswapV3PoolStateUpdated():
-                        if message.state.pool in self.swap_pools:
-                            self._notify_subscribers(
-                                PlaintextMessage(f"Received update from pool {message.state.pool}")
-                            )
-                    case _:  # pragma: no cover
-                        logger.info(
-                            f"{self} unhandled message {message} from subscriber {publisher}"
-                        )
+        match publisher, message:
+            case (
+                LiquidityPool()
+                | V3LiquidityPool(),
+                UniswapV2PoolStateUpdated()
+                | UniswapV3PoolStateUpdated(),
+            ):
+                if message.state.pool in self.swap_pools:
+                    self._notify_subscribers(
+                        PlaintextMessage(f"Received update from pool {message.state.pool}")
+                    )
             case _:  # pragma: no cover
-                logger.info(
-                    f"{self} unhandled message {message} from unsupported subscriber {publisher}"
-                )
+                logger.info(f"Unhandled message {message} from publisher {publisher}")

@@ -19,7 +19,7 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError
 from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.uniswap.v2_dataclasses import UniswapV2PoolState
+from degenbot.uniswap.v2_dataclasses import UniswapV2PoolState, UniswapV2PoolStateUpdated
 from degenbot.uniswap.v2_liquidity_pool import (
     CamelotLiquidityPool,
     LiquidityPool,
@@ -28,6 +28,7 @@ from degenbot.uniswap.v3_dataclasses import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
+    UniswapV3PoolStateUpdated,
 )
 from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
 from eth_utils.address import to_checksum_address
@@ -2472,8 +2473,56 @@ def test_zero_max_input(
         )
 
 
-def test_arbitrage_helper_subscribes_to_pool_state_updates(
+def test_arbitrage_helper_subscriptions(
     wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool
 ):
     assert wbtc_weth_arb in wbtc_weth_v2_lp._subscribers
     assert wbtc_weth_arb in wbtc_weth_v3_lp._subscribers
+
+    class TestSubscriber:
+        def __init__(self):
+            self.inbox = list()
+
+        def notify(self, publisher, message) -> None:
+            self.inbox.append(message)
+
+    subscriber = TestSubscriber()
+    wbtc_weth_arb.subscribe(subscriber=subscriber)
+
+    # Send two pool state updates
+    wbtc_weth_arb.notify(
+        publisher=wbtc_weth_v2_lp,
+        message=UniswapV2PoolStateUpdated(
+            state=UniswapV2PoolState(
+                pool=wbtc_weth_v2_lp.address,
+                reserves_token0=69,
+                reserves_token1=420,
+            )
+        ),
+    )
+    wbtc_weth_arb.notify(
+        publisher=wbtc_weth_v3_lp,
+        message=UniswapV3PoolStateUpdated(
+            state=UniswapV3PoolState(
+                pool=wbtc_weth_v3_lp.address,
+                liquidity=69_420,
+                sqrt_price_x96=1,
+                tick=-1,
+            ),
+        ),
+    )
+    assert len(subscriber.inbox) == 2
+    wbtc_weth_arb.unsubscribe(subscriber=subscriber)
+
+
+def test_pool_helper_unsubscriptions(
+    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool
+):
+    assert wbtc_weth_arb in wbtc_weth_v2_lp._subscribers
+    assert wbtc_weth_arb in wbtc_weth_v3_lp._subscribers
+
+    wbtc_weth_v2_lp.unsubscribe(wbtc_weth_arb)
+    wbtc_weth_v3_lp.unsubscribe(wbtc_weth_arb)
+
+    assert wbtc_weth_arb not in wbtc_weth_v2_lp._subscribers
+    assert wbtc_weth_arb not in wbtc_weth_v3_lp._subscribers
