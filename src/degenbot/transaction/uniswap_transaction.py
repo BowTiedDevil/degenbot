@@ -1,9 +1,10 @@
 # TODO: use tx_payer_is_user to simplify accounting
 # TODO: implement "blank" V3 pools and incorporate try/except for all V3 pool manager get_pool calls
 # TODO: add state block argument for pool simulation calls
-# TODO: instead of appending pool states to list, replace with dict and only return final state state
+# TODO: instead of appending pool states to list, replace with dict and only return final state
 
-from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple, cast
+import contextlib
+from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 from eth_typing import BlockNumber, ChecksumAddress
@@ -11,12 +12,12 @@ from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
 
+from degenbot.exchanges.uniswap.deployments import ROUTER_DEPLOYMENTS
 from degenbot.exchanges.uniswap.types import (
     UniswapRouterDeployment,
     UniswapV2ExchangeDeployment,
     UniswapV3ExchangeDeployment,
 )
-from degenbot.exchanges.uniswap.deployments import ROUTER_DEPLOYMENTS
 
 from .. import config
 from ..baseclasses import AbstractSimulationResult, AbstractTransaction
@@ -82,7 +83,7 @@ class UniswapTransaction(AbstractTransaction):
         tx_value: int | str,
         tx_sender: str,
         func_name: str,
-        func_params: Dict[str, Any],
+        func_params: dict[str, Any],
         router: UniswapRouterDeployment | None = None,
         router_address: str | None = None,
     ):
@@ -155,7 +156,7 @@ class UniswapTransaction(AbstractTransaction):
                         raise ValueError(f"Could not identify DEX type for {exchange}")
 
         self.sender = to_checksum_address(tx_sender)
-        self.recipients: Set[ChecksumAddress] = set()
+        self.recipients: set[ChecksumAddress] = set()
 
         self.hash = HexBytes(tx_hash)
         self.nonce = int(tx_nonce, 16) if isinstance(tx_nonce, str) else tx_nonce
@@ -236,7 +237,7 @@ class UniswapTransaction(AbstractTransaction):
         amount_out_min: int | None = None,
         first_swap: bool = False,
         last_swap: bool = False,
-    ) -> Tuple[
+    ) -> tuple[
         LiquidityPool,
         UniswapV2PoolSimulationResult,
     ]:
@@ -301,7 +302,8 @@ class UniswapTransaction(AbstractTransaction):
 
         if last_swap and amount_out_min is not None and _amount_out < amount_out_min:
             raise TransactionError(
-                f"Insufficient output for swap! {_amount_out} {token_out} received, {amount_out_min} required"
+                f"Insufficient output for swap! {_amount_out} {token_out} received, \
+                {amount_out_min} required"
             )
 
         if not silent:
@@ -330,7 +332,7 @@ class UniswapTransaction(AbstractTransaction):
         amount_out: int,
         amount_in_max: int | None = None,
         first_swap: bool = False,
-    ) -> Tuple[LiquidityPool, UniswapV2PoolSimulationResult]:
+    ) -> tuple[LiquidityPool, UniswapV2PoolSimulationResult]:
         assert isinstance(pool, LiquidityPool), f"Called _simulate_v2_swap_exact_out on pool {pool}"
 
         silent = self.silent
@@ -388,7 +390,7 @@ class UniswapTransaction(AbstractTransaction):
         amount_out_min: int | None = None,
         sqrt_price_limit_x96: int | None = None,
         first_swap: bool = False,
-    ) -> Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]:
+    ) -> tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]:
         assert isinstance(
             pool, V3LiquidityPool
         ), f"Called _simulate_v3_swap_exact_in on pool {pool}"
@@ -423,8 +425,8 @@ class UniswapTransaction(AbstractTransaction):
                 token_in_quantity=amount_in,
                 sqrt_price_limit_x96=sqrt_price_limit_x96,
             )
-        except EVMRevertError as e:
-            raise TransactionError(f"V3 revert: {e}")
+        except EVMRevertError as exc:
+            raise TransactionError(f"V3 revert: {exc}") from exc
 
         _amount_out = -min(
             _sim_result.amount0_delta,
@@ -458,7 +460,8 @@ class UniswapTransaction(AbstractTransaction):
 
         if amount_out_min is not None and _amount_out < amount_out_min:
             raise TransactionError(
-                f"Insufficient output for swap! {_amount_out} {token_out} received, {amount_out_min} required"
+                f"Insufficient output for swap! {_amount_out} {token_out} received, \
+                {amount_out_min} required"
             )
 
         if not silent:
@@ -476,7 +479,7 @@ class UniswapTransaction(AbstractTransaction):
         sqrt_price_limit_x96: int | None = None,
         first_swap: bool = False,
         last_swap: bool = False,
-    ) -> Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]:
+    ) -> tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]:
         assert isinstance(
             pool, V3LiquidityPool
         ), f"Called _simulate_v3_swap_exact_out on pool {pool}"
@@ -496,8 +499,8 @@ class UniswapTransaction(AbstractTransaction):
                 token_out_quantity=amount_out,
                 sqrt_price_limit_x96=sqrt_price_limit_x96,
             )
-        except EVMRevertError as e:
-            raise TransactionError(f"V3 revert: {e}")
+        except EVMRevertError as exc:
+            raise TransactionError(f"V3 revert: {exc}") from exc
 
         _amount_in = max(
             _sim_result.amount0_delta,
@@ -540,7 +543,8 @@ class UniswapTransaction(AbstractTransaction):
 
             if amount_in_max is not None and amount_in_max < _amount_in:
                 raise TransactionError(
-                    f"Insufficient input for exact output swap! {_amount_in} {token_in} required, {amount_in_max} provided"
+                    f"Insufficient input for exact output swap! {_amount_in} {token_in} required, \
+                    {amount_in_max} provided"
                 )
 
         if last_swap:
@@ -598,7 +602,7 @@ class UniswapTransaction(AbstractTransaction):
     def _simulate(
         self,
         func_name: str,
-        func_params: Dict[str, Any],
+        func_params: dict[str, Any],
     ) -> None:
         """
         Take a Uniswap V2 / V3 transaction (specified by name and a dictionary
@@ -674,7 +678,7 @@ class UniswapTransaction(AbstractTransaction):
             inputs: bytes,
         ) -> None:
             # ref: https://github.com/Uniswap/universal-router/blob/main/contracts/libraries/Commands.sol
-            UNIVERSAL_ROUTER_COMMAND_VALUES: Dict[int, str | None] = {
+            UNIVERSAL_ROUTER_COMMAND_VALUES: dict[int, str | None] = {
                 0x00: "V3_SWAP_EXACT_IN",
                 0x01: "V3_SWAP_EXACT_OUT",
                 0x02: "PERMIT2_TRANSFER_FROM",
@@ -781,20 +785,14 @@ class UniswapTransaction(AbstractTransaction):
             match command:
                 case "SWEEP":
                     """
-                    This function transfers the current token balance held by the contract to `recipient`
+                    This function transfers the current token balance held by the contract to 
+                    `recipient`
                     """
 
-                    try:
-                        (
-                            sweep_token_address,
-                            sweep_recipient,
-                            sweep_amount_min,
-                        ) = eth_abi.abi.decode(
-                            types=("address", "address", "uint256"),
-                            data=inputs,
-                        )
-                    except Exception:
-                        raise ValueError(f"Could not decode input for {command}")
+                    sweep_token_address, sweep_recipient, sweep_amount_min = eth_abi.abi.decode(
+                        types=("address", "address", "uint256"),
+                        data=inputs,
+                    )
 
                     match sweep_recipient:
                         case UniversalRouterSpecialAddress.MSG_SENDER:
@@ -808,7 +806,8 @@ class UniswapTransaction(AbstractTransaction):
 
                     if sweep_token_balance < sweep_amount_min:
                         raise TransactionError(
-                            f"Requested sweep of min. {sweep_amount_min} WETH, received {sweep_token_balance}"
+                            f"Requested sweep of min. {sweep_amount_min} WETH, received \
+                            {sweep_token_balance}"
                         )
 
                     self._simulate_sweep(sweep_token_address, sweep_recipient)
@@ -819,17 +818,12 @@ class UniswapTransaction(AbstractTransaction):
                     contract to `recipient`
                     """
 
-                    try:
-                        (
-                            _pay_portion_token_address,
-                            _pay_portion_recipient,
-                            _pay_portion_bips,
-                        ) = eth_abi.abi.decode(
+                    _pay_portion_token_address, _pay_portion_recipient, _pay_portion_bips = (
+                        eth_abi.abi.decode(
                             types=("address", "address", "uint256"),
                             data=inputs,
                         )
-                    except Exception:
-                        raise ValueError(f"Could not decode input for {command}")
+                    )
 
                     # ref: https://docs.uniswap.org/contracts/universal-router/technical-reference#pay_portion
                     # ref: https://github.com/Uniswap/universal-router/blob/main/contracts/libraries/Constants.sol
@@ -862,13 +856,11 @@ class UniswapTransaction(AbstractTransaction):
                     """
 
                     tx_recipient: ChecksumAddress
-                    try:
-                        _tx_recipient, _wrap_amount_min = eth_abi.abi.decode(
-                            types=("address", "uint256"),
-                            data=inputs,
-                        )
-                    except Exception:
-                        raise ValueError(f"Could not decode input for {command}")
+
+                    _tx_recipient, _wrap_amount_min = eth_abi.abi.decode(
+                        types=("address", "uint256"),
+                        data=inputs,
+                    )
 
                     match _tx_recipient:
                         case UniversalRouterSpecialAddress.ROUTER:
@@ -901,13 +893,10 @@ class UniswapTransaction(AbstractTransaction):
 
                     # TODO: process ETH balance in ledger if needed
 
-                    try:
-                        _unwrap_recipient, _unwrap_amount_min = eth_abi.abi.decode(
-                            types=("address", "uint256"),
-                            data=inputs,
-                        )
-                    except Exception:
-                        raise ValueError(f"Could not decode input for {command}")
+                    _unwrap_recipient, _unwrap_amount_min = eth_abi.abi.decode(
+                        types=("address", "uint256"),
+                        data=inputs,
+                    )
 
                     _wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
                     _wrapped_token_balance = self.ledger.token_balance(
@@ -916,7 +905,8 @@ class UniswapTransaction(AbstractTransaction):
 
                     if _wrapped_token_balance < _unwrap_amount_min:
                         raise TransactionError(
-                            f"Requested unwrap of min. {_unwrap_amount_min} WETH, received {_wrapped_token_balance}"
+                            f"Requested unwrap of min. {_unwrap_amount_min} WETH, received \
+                            {_wrapped_token_balance}"
                         )
 
                     self._simulate_unwrap(_wrapped_token_address)
@@ -929,14 +919,8 @@ class UniswapTransaction(AbstractTransaction):
                     final state of the pool after the swap completes.
                     """
 
-                    try:
-                        (
-                            tx_recipient,
-                            tx_amount_in,
-                            tx_amount_out_min,
-                            tx_path,
-                            tx_payer_is_user,
-                        ) = eth_abi.abi.decode(
+                    tx_recipient, tx_amount_in, tx_amount_out_min, tx_path, tx_payer_is_user = (
+                        eth_abi.abi.decode(
                             types=(
                                 "address",
                                 "uint256",
@@ -946,8 +930,7 @@ class UniswapTransaction(AbstractTransaction):
                             ),
                             data=inputs,
                         )
-                    except Exception:
-                        raise ValueError(f"Could not decode input for {command}")
+                    )
 
                     try:
                         if TYPE_CHECKING:
@@ -956,7 +939,7 @@ class UniswapTransaction(AbstractTransaction):
                     except (LiquidityPoolError, ManagerError):
                         raise TransactionError(
                             f"LiquidityPool could not be built for all steps in path {tx_path}"
-                        )
+                        ) from None
 
                     last_pool_pos = len(tx_path) - 2
 
@@ -1002,14 +985,8 @@ class UniswapTransaction(AbstractTransaction):
                     final state of the pool after the swap completes.
                     """
 
-                    try:
-                        (
-                            tx_recipient,
-                            tx_amount_out,
-                            tx_amount_in_max,
-                            tx_path,
-                            tx_payer_is_user,
-                        ) = eth_abi.abi.decode(
+                    tx_recipient, tx_amount_out, tx_amount_in_max, tx_path, tx_payer_is_user = (
+                        eth_abi.abi.decode(
                             types=(
                                 "address",
                                 "uint256",
@@ -1019,8 +996,7 @@ class UniswapTransaction(AbstractTransaction):
                             ),
                             data=inputs,
                         )
-                    except Exception:
-                        raise ValueError(f"Could not decode input for {command}")
+                    )
 
                     match tx_recipient:
                         case UniversalRouterSpecialAddress.ROUTER:
@@ -1037,7 +1013,7 @@ class UniswapTransaction(AbstractTransaction):
                     except (LiquidityPoolError, ManagerError):
                         raise TransactionError(
                             f"LiquidityPool could not be built for all steps in path {tx_path}"
-                        )
+                        ) from None
 
                     last_pool_pos = len(pools) - 1
 
@@ -1086,17 +1062,12 @@ class UniswapTransaction(AbstractTransaction):
                     """
                     Decode an exact input swap through Uniswap V3 liquidity pools.
 
-                    Returns: a list of tuples representing the pool object and the final state of the pool after the swap completes.
+                    Returns: a list of tuples representing the pool object and the final state of 
+                    the pool after the swap completes.
                     """
 
-                    try:
-                        (
-                            tx_recipient,
-                            tx_amount_in,
-                            tx_amount_out_min,
-                            tx_path,
-                            tx_payer_is_user,
-                        ) = eth_abi.abi.decode(
+                    tx_recipient, tx_amount_in, tx_amount_out_min, tx_path, tx_payer_is_user = (
+                        eth_abi.abi.decode(
                             types=(
                                 "address",
                                 "uint256",
@@ -1106,8 +1077,7 @@ class UniswapTransaction(AbstractTransaction):
                             ),
                             data=inputs,
                         )
-                    except Exception:
-                        raise ValueError(f"Could not decode input for {command}")
+                    )
 
                     tx_path_decoded = decode_v3_path(tx_path)
 
@@ -1181,14 +1151,8 @@ class UniswapTransaction(AbstractTransaction):
                     final state of the pool after the swap completes.
                     """
 
-                    try:
-                        (
-                            tx_recipient,
-                            tx_amount_out,
-                            tx_amount_in_max,
-                            tx_path,
-                            tx_payer_is_user,
-                        ) = eth_abi.abi.decode(
+                    tx_recipient, tx_amount_out, tx_amount_in_max, tx_path, tx_payer_is_user = (
+                        eth_abi.abi.decode(
                             types=(
                                 "address",
                                 "uint256",
@@ -1198,8 +1162,7 @@ class UniswapTransaction(AbstractTransaction):
                             ),
                             data=inputs,
                         )
-                    except Exception:
-                        raise ValueError(f"Could not decode input for {command}")
+                    )
 
                     tx_path_decoded = decode_v3_path(tx_path)
 
@@ -1272,7 +1235,7 @@ class UniswapTransaction(AbstractTransaction):
                             if TYPE_CHECKING:
                                 assert isinstance(
                                     _last_sim_result,
-                                    (UniswapV2PoolSimulationResult, UniswapV2PoolSimulationResult),
+                                    UniswapV2PoolSimulationResult | UniswapV2PoolSimulationResult,
                                 )
 
                             _last_amount_in = max(
@@ -1282,7 +1245,8 @@ class UniswapTransaction(AbstractTransaction):
 
                             if _amount_out != _last_amount_in:
                                 raise TransactionError(
-                                    f"Insufficient swap amount through requested pool {v3_pool}. Needed {_last_amount_in}, received {_amount_out}"
+                                    f"Insufficient swap amount through requested pool {v3_pool}. "
+                                    f"Needed {_last_amount_in}, received {_amount_out}"
                                 )
 
                         self.simulated_pool_states.append((v3_pool, v3_sim_result))
@@ -1294,12 +1258,10 @@ class UniswapTransaction(AbstractTransaction):
                         raise ValueError(f"Invalid command {command}")
 
         def _process_v3_multicall(
-            params: Dict[str, Any],
+            params: dict[str, Any],
         ) -> None:
-            try:
+            with contextlib.suppress(KeyError):
                 self._raise_if_block_hash_mismatch(params["previousBlockhash"])
-            except KeyError:
-                pass
 
             for payload in params["data"]:
                 try:
@@ -1309,8 +1271,14 @@ class UniswapTransaction(AbstractTransaction):
                         .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
                         .decode_function_input(payload)
                     )
-                except Exception:
+                except ValueError:
                     pass
+                except Exception as exc:
+                    print(f"{payload=}")
+                    print(f"{type(exc)}: {exc}")
+                    import sys
+
+                    sys.exit(0)
 
                 try:
                     # decode with Router2 ABI
@@ -1319,18 +1287,22 @@ class UniswapTransaction(AbstractTransaction):
                         .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
                         .decode_function_input(payload)
                     )
-                except Exception:
+                except ValueError:
                     pass
+                except Exception as exc:
+                    print(f"{payload=}")
+                    print(f"{type(exc)}: {exc}")
+                    import sys
+
+                    sys.exit(0)
 
                 # special case to handle a multicall encoded within
                 # another multicall
                 if payload_func.fn_name == "multicall":
                     logger.debug("Unwrapping nested multicall")
 
-                    try:
+                    with contextlib.suppress(KeyError):
                         self._raise_if_block_hash_mismatch(params["previousBlockhash"])
-                    except KeyError:
-                        pass
 
                     for function_input in payload_args["data"]:
                         try:
@@ -1339,8 +1311,14 @@ class UniswapTransaction(AbstractTransaction):
                                 .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
                                 .decode_function_input(function_input)
                             )
-                        except Exception:
+                        except ValueError:
                             pass
+                        except Exception as exc:
+                            print(f"{payload=}")
+                            print(f"{type(exc)}: {exc}")
+                            import sys
+
+                            sys.exit(0)
 
                         try:
                             _func, _params = (
@@ -1348,29 +1326,25 @@ class UniswapTransaction(AbstractTransaction):
                                 .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
                                 .decode_function_input(function_input)
                             )
-                        except Exception:
+                        except ValueError:
                             pass
+                        except Exception as exc:
+                            print(f"{payload=}")
+                            print(f"{type(exc)}: {exc}")
+                            import sys
 
-                        try:
-                            self._simulate(
-                                func_name=_func.fn_name,
-                                func_params=_params,
-                            )
-                        except Exception as e:
-                            raise ValueError(f"Could not decode nested multicall: {e}") from e
-                else:
-                    try:
+                            sys.exit(0)
+
                         self._simulate(
-                            func_name=payload_func.fn_name,
-                            func_params=payload_args,
+                            func_name=_func.fn_name,
+                            func_params=_params,
                         )
-                    except TransactionError:
-                        raise
-                    except Exception as e:
-                        import traceback
 
-                        traceback.print_exc()
-                        raise ValueError(f"Could not decode multicall: {e}")
+                else:
+                    self._simulate(
+                        func_name=payload_func.fn_name,
+                        func_params=payload_args,
+                    )
 
         def _process_uniswap_v2_transaction() -> None:
             if TYPE_CHECKING:
@@ -1414,7 +1388,7 @@ class UniswapTransaction(AbstractTransaction):
                         except (LiquidityPoolError, ManagerError):
                             raise TransactionError(
                                 f"LiquidityPool could not be built for all steps in path {tx_path}"
-                            )
+                            ) from None
 
                         last_pool_pos = len(tx_path) - 2
 
@@ -1476,7 +1450,7 @@ class UniswapTransaction(AbstractTransaction):
                         except (LiquidityPoolError, ManagerError):
                             raise TransactionError(
                                 f"LiquidityPool could not be built for all steps in path {tx_path}"
-                            )
+                            ) from None
 
                         last_pool_pos = len(pools) - 1
 
@@ -1676,11 +1650,13 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_deadline = None
                             else:
                                 raise ValueError(
-                                    f"Could not extract parameters for function {func_name} with parameters {func_params['params']}"
+                                    f"Could not extract parameters for function {func_name} with \
+                                        parameters {func_params['params']}"
                                 )
                         else:
                             raise ValueError(
-                                f'Could not identify type for function params. Expected tuple or dict, got {type(func_params["params"])}'
+                                f'Could not identify type for function params. Expected tuple or \
+                                    dict, got {type(func_params["params"])}'
                             )
 
                         if tx_deadline:
@@ -1750,11 +1726,13 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_deadline = None
                             else:
                                 raise ValueError(
-                                    f"Could not extract parameters for function {func_name} with parameters {func_params['params']}"
+                                    f"Could not extract parameters for function {func_name} with "
+                                    f"parameters {func_params['params']}"
                                 )
                         else:
                             raise ValueError(
-                                f'Could not identify type for function params. Expected tuple or dict, got {type(func_params["params"])}'
+                                f'Could not identify type for function params. Expected tuple or \
+                                    dict, got {type(func_params["params"])}'
                             )
 
                         if tx_deadline:
@@ -1765,11 +1743,7 @@ class UniswapTransaction(AbstractTransaction):
                         if not silent:
                             logger.info(f" • path = {tx_path_decoded}")
                             logger.info(f" • recipient = {tx_recipient}")
-                            try:
-                                tx_deadline
-                            except Exception:
-                                pass
-                            else:
+                            if tx_deadline is not None:
                                 logger.info(f" • deadline = {tx_deadline}")
                             logger.info(f" • amountIn = {tx_amount_in}")
                             logger.info(f" • amountOutMinimum = {tx_amount_out_minimum}")
@@ -1869,11 +1843,13 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_deadline = None
                             else:
                                 raise ValueError(
-                                    f"Could not extract parameters for function {func_name} with parameters {func_params['params']}"
+                                    f"Could not extract parameters for function {func_name} with \
+                                        parameters {func_params['params']}"
                                 )
                         else:
                             raise ValueError(
-                                f'Could not identify type for function params. Expected tuple or dict, got {type(func_params["params"])}'
+                                f'Could not identify type for function params. Expected tuple or \
+                                    dict, got {type(func_params["params"])}'
                             )
 
                         if tx_deadline:
@@ -1911,7 +1887,8 @@ class UniswapTransaction(AbstractTransaction):
 
                         if amount_deposited > tx_amount_in_max:
                             raise TransactionError(
-                                f"Maximum input exceeded. Specified {tx_amount_in_max}, {amount_deposited} required."
+                                f"Maximum input exceeded. Specified {tx_amount_in_max}, \
+                                    {amount_deposited} required."
                             )
 
                     case "exactOutput":
@@ -1946,11 +1923,13 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_deadline = None
                             else:
                                 raise ValueError(
-                                    f"Could not extract parameters for function {func_name} with parameters {func_params['params']}"
+                                    f"Could not extract parameters for function {func_name} with \
+                                        parameters {func_params['params']}"
                                 )
                         else:
                             raise ValueError(
-                                f'Could not identify type for function params. Expected tuple or dict, got {type(func_params["params"])}'
+                                f'Could not identify type for function params. Expected tuple or \
+                                    dict, got {type(func_params["params"])}'
                             )
 
                         if tx_deadline:
@@ -1961,11 +1940,7 @@ class UniswapTransaction(AbstractTransaction):
                         if not silent:
                             logger.info(f" • path = {tx_path_decoded}")
                             logger.info(f" • recipient = {tx_recipient}")
-                            try:
-                                tx_deadline
-                            except Exception:
-                                pass
-                            else:
+                            if tx_deadline is not None:
                                 logger.info(f" • deadline = {tx_deadline}")
                             logger.info(f" • amountOut = {tx_amount_out}")
                             logger.info(f" • amountInMaximum = {tx_amount_in_max}")
@@ -2046,10 +2021,8 @@ class UniswapTransaction(AbstractTransaction):
                                 if TYPE_CHECKING:
                                     assert isinstance(
                                         _last_sim_result,
-                                        (
-                                            UniswapV2PoolSimulationResult,
-                                            UniswapV2PoolSimulationResult,
-                                        ),
+                                        UniswapV2PoolSimulationResult
+                                        | UniswapV2PoolSimulationResult,
                                     )
 
                                 _last_amount_in = max(
@@ -2059,7 +2032,9 @@ class UniswapTransaction(AbstractTransaction):
 
                                 if _amount_out != _last_amount_in:
                                     raise TransactionError(
-                                        f"Insufficient swap amount through requested pool {v3_pool}. Needed {_last_amount_in}, received {_amount_out}"
+                                        f"Insufficient swap amount through requested pool \
+                                        {v3_pool}. Needed {_last_amount_in}, received \
+                                        {_amount_out}"
                                     )
 
                             self.simulated_pool_states.append((v3_pool, v3_sim_result))
@@ -2076,7 +2051,8 @@ class UniswapTransaction(AbstractTransaction):
 
                             if amount_deposited > tx_amount_in_max:
                                 raise TransactionError(
-                                    f"Maximum input exceeded. Specified {tx_amount_in_max}, {amount_deposited} required."
+                                    f"Maximum input exceeded. Specified {tx_amount_in_max}, \
+                                    {amount_deposited} required."
                                 )
 
                     case "unwrapWETH9":
@@ -2089,7 +2065,8 @@ class UniswapTransaction(AbstractTransaction):
                         )
                         if wrapped_token_balance < amountMin:
                             raise TransactionError(
-                                f"Requested unwrap of min. {amountMin} WETH, received {wrapped_token_balance}"
+                                f"Requested unwrap of min. {amountMin} WETH, received \
+                                {wrapped_token_balance}"
                             )
 
                         self._simulate_unwrap(wrapped_token_address)
@@ -2108,7 +2085,8 @@ class UniswapTransaction(AbstractTransaction):
                         )
                         if wrapped_token_balance < _amount_in:
                             raise TransactionError(
-                                f"Requested unwrap of min. {_amount_in} WETH, received {wrapped_token_balance}"
+                                f"Requested unwrap of min. {_amount_in} WETH, received \
+                                {wrapped_token_balance}"
                             )
 
                         self._simulate_unwrap(wrapped_token_address)
@@ -2119,25 +2097,23 @@ class UniswapTransaction(AbstractTransaction):
                         held by the contract to `recipient`
                         """
 
-                        try:
-                            tx_token_address = func_params["token"]
-                            tx_amount_out_minimum = func_params["amountMinimum"]
-                            tx_recipient = func_params.get("recipient")
-                        except Exception as e:
-                            print(e)
+                        tx_token_address = func_params["token"]
+                        tx_amount_out_minimum = func_params["amountMinimum"]
+                        tx_recipient = func_params.get("recipient")
+
+                        # Router2 ABI omits `recipient`, always uses
+                        # `msg.sender`
+                        if tx_recipient is None:
+                            tx_recipient = self.sender
                         else:
-                            # Router2 ABI omits `recipient`, always uses
-                            # `msg.sender`
-                            if tx_recipient is None:
-                                tx_recipient = self.sender
-                            else:
-                                self.recipients.add(tx_recipient)
+                            self.recipients.add(tx_recipient)
 
                         _balance = self.ledger.token_balance(self.router_address, tx_token_address)
 
                         if _balance < tx_amount_out_minimum:
                             raise TransactionError(
-                                f"Requested sweep of min. {tx_amount_out_minimum} {tx_token_address}, received {_balance}"
+                                f"Requested sweep of min. {tx_amount_out_minimum} \
+                                    {tx_token_address}, received {_balance}"
                             )
 
                         self._simulate_sweep(tx_token_address, tx_recipient)
@@ -2153,6 +2129,7 @@ class UniswapTransaction(AbstractTransaction):
 
                     case "increaseLiquidity":
                         import json
+
                         from degenbot.uniswap.v3_libraries import FullMath, TickMath, constants
 
                         def getLiquidityForAmount0(
@@ -2241,11 +2218,12 @@ class UniswapTransaction(AbstractTransaction):
                             abi=json.loads(
                                 """
                                 [{"inputs":[{"internalType":"address","name":"_factory","type":"address"},{"internalType":"address","name":"_WETH9","type":"address"},{"internalType":"address","name":"_tokenDescriptor_","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"owner","type":"address"},{"indexed":true,"internalType":"address","name":"approved","type":"address"},{"indexed":true,"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"Approval","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"owner","type":"address"},{"indexed":true,"internalType":"address","name":"operator","type":"address"},{"indexed":false,"internalType":"bool","name":"approved","type":"bool"}],"name":"ApprovalForAll","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"tokenId","type":"uint256"},{"indexed":false,"internalType":"address","name":"recipient","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount0","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"amount1","type":"uint256"}],"name":"Collect","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"tokenId","type":"uint256"},{"indexed":false,"internalType":"uint128","name":"liquidity","type":"uint128"},{"indexed":false,"internalType":"uint256","name":"amount0","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"amount1","type":"uint256"}],"name":"DecreaseLiquidity","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"tokenId","type":"uint256"},{"indexed":false,"internalType":"uint128","name":"liquidity","type":"uint128"},{"indexed":false,"internalType":"uint256","name":"amount0","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"amount1","type":"uint256"}],"name":"IncreaseLiquidity","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"from","type":"address"},{"indexed":true,"internalType":"address","name":"to","type":"address"},{"indexed":true,"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"Transfer","type":"event"},{"inputs":[],"name":"DOMAIN_SEPARATOR","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"PERMIT_TYPEHASH","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"WETH9","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"approve","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"baseURI","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"pure","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"burn","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"components":[{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"address","name":"recipient","type":"address"},{"internalType":"uint128","name":"amount0Max","type":"uint128"},{"internalType":"uint128","name":"amount1Max","type":"uint128"}],"internalType":"struct INonfungiblePositionManager.CollectParams","name":"params","type":"tuple"}],"name":"collect","outputs":[{"internalType":"uint256","name":"amount0","type":"uint256"},{"internalType":"uint256","name":"amount1","type":"uint256"}],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"token0","type":"address"},{"internalType":"address","name":"token1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint160","name":"sqrtPriceX96","type":"uint160"}],"name":"createAndInitializePoolIfNecessary","outputs":[{"internalType":"address","name":"pool","type":"address"}],"stateMutability":"payable","type":"function"},{"inputs":[{"components":[{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"uint128","name":"liquidity","type":"uint128"},{"internalType":"uint256","name":"amount0Min","type":"uint256"},{"internalType":"uint256","name":"amount1Min","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"internalType":"struct INonfungiblePositionManager.DecreaseLiquidityParams","name":"params","type":"tuple"}],"name":"decreaseLiquidity","outputs":[{"internalType":"uint256","name":"amount0","type":"uint256"},{"internalType":"uint256","name":"amount1","type":"uint256"}],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"factory","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"getApproved","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"components":[{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"uint256","name":"amount0Desired","type":"uint256"},{"internalType":"uint256","name":"amount1Desired","type":"uint256"},{"internalType":"uint256","name":"amount0Min","type":"uint256"},{"internalType":"uint256","name":"amount1Min","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"internalType":"struct INonfungiblePositionManager.IncreaseLiquidityParams","name":"params","type":"tuple"}],"name":"increaseLiquidity","outputs":[{"internalType":"uint128","name":"liquidity","type":"uint128"},{"internalType":"uint256","name":"amount0","type":"uint256"},{"internalType":"uint256","name":"amount1","type":"uint256"}],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"owner","type":"address"},{"internalType":"address","name":"operator","type":"address"}],"name":"isApprovedForAll","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"components":[{"internalType":"address","name":"token0","type":"address"},{"internalType":"address","name":"token1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickLower","type":"int24"},{"internalType":"int24","name":"tickUpper","type":"int24"},{"internalType":"uint256","name":"amount0Desired","type":"uint256"},{"internalType":"uint256","name":"amount1Desired","type":"uint256"},{"internalType":"uint256","name":"amount0Min","type":"uint256"},{"internalType":"uint256","name":"amount1Min","type":"uint256"},{"internalType":"address","name":"recipient","type":"address"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"internalType":"struct INonfungiblePositionManager.MintParams","name":"params","type":"tuple"}],"name":"mint","outputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"uint128","name":"liquidity","type":"uint128"},{"internalType":"uint256","name":"amount0","type":"uint256"},{"internalType":"uint256","name":"amount1","type":"uint256"}],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"bytes[]","name":"data","type":"bytes[]"}],"name":"multicall","outputs":[{"internalType":"bytes[]","name":"results","type":"bytes[]"}],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"name","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"ownerOf","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"permit","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"positions","outputs":[{"internalType":"uint96","name":"nonce","type":"uint96"},{"internalType":"address","name":"operator","type":"address"},{"internalType":"address","name":"token0","type":"address"},{"internalType":"address","name":"token1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickLower","type":"int24"},{"internalType":"int24","name":"tickUpper","type":"int24"},{"internalType":"uint128","name":"liquidity","type":"uint128"},{"internalType":"uint256","name":"feeGrowthInside0LastX128","type":"uint256"},{"internalType":"uint256","name":"feeGrowthInside1LastX128","type":"uint256"},{"internalType":"uint128","name":"tokensOwed0","type":"uint128"},{"internalType":"uint128","name":"tokensOwed1","type":"uint128"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"refundETH","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"from","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"safeTransferFrom","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"from","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"bytes","name":"_data","type":"bytes"}],"name":"safeTransferFrom","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"value","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"selfPermit","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"nonce","type":"uint256"},{"internalType":"uint256","name":"expiry","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"selfPermitAllowed","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"nonce","type":"uint256"},{"internalType":"uint256","name":"expiry","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"selfPermitAllowedIfNecessary","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"value","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"selfPermitIfNecessary","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"operator","type":"address"},{"internalType":"bool","name":"approved","type":"bool"}],"name":"setApprovalForAll","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes4","name":"interfaceId","type":"bytes4"}],"name":"supportsInterface","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"amountMinimum","type":"uint256"},{"internalType":"address","name":"recipient","type":"address"}],"name":"sweepToken","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"symbol","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"index","type":"uint256"}],"name":"tokenByIndex","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"owner","type":"address"},{"internalType":"uint256","name":"index","type":"uint256"}],"name":"tokenOfOwnerByIndex","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"tokenURI","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"totalSupply","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"from","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"transferFrom","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"amount0Owed","type":"uint256"},{"internalType":"uint256","name":"amount1Owed","type":"uint256"},{"internalType":"bytes","name":"data","type":"bytes"}],"name":"uniswapV3MintCallback","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"amountMinimum","type":"uint256"},{"internalType":"address","name":"recipient","type":"address"}],"name":"unwrapWETH9","outputs":[],"stateMutability":"payable","type":"function"},{"stateMutability":"payable","type":"receive"}]
-                                """
+                                """  # noqa: E501
                             ),
                         )
 
-                        # Look up liquidity position (NFT positions recorded by 0xC36442b4a4522E871399CD717aBDD847Ab11FE88)
+                        # Look up liquidity position (NFT positions recorded by
+                        # 0xC36442b4a4522E871399CD717aBDD847Ab11FE88)
                         (
                             _nonce,
                             _operator,
@@ -2296,9 +2274,10 @@ class UniswapTransaction(AbstractTransaction):
                         # Simulate mint
                         ...
 
-            # Catch and re-raise without special handling. These are raised by this class, so short-circuit if one has bubbled up.
-            # This prevents nested multicalls from adding redundant strings to exception message.
-            # e.g. 'Simulation failed: Simulation failed: Simulation failed: Simulation failed: {error}'
+            # Catch and re-raise without special handling. These are raised by this class, so
+            # short-circuit if one has bubbled up. This prevents nested multicalls from adding
+            # redundant strings to exception message.
+            # e.g. 'Simulation failed: Simulation failed: Simulation failed: {error}'
             except TransactionError:
                 raise
             # Catch errors from pool helper simulation attempts
@@ -2322,7 +2301,7 @@ class UniswapTransaction(AbstractTransaction):
                 tx_commands = func_params["commands"]
                 tx_inputs = func_params["inputs"]
 
-                for tx_command, tx_input in zip(tx_commands, tx_inputs):
+                for tx_command, tx_input in zip(tx_commands, tx_inputs, strict=False):
                     _process_universal_router_command(tx_command, tx_input)
 
             # bugfix: prevents nested multicalls from spamming exception
@@ -2353,9 +2332,9 @@ class UniswapTransaction(AbstractTransaction):
         self,
         silent: bool = False,
         state_block: BlockNumber | int | None = None,
-    ) -> List[
-        Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
-        | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
+    ) -> list[
+        tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+        | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
     ]:
         """
         Execute a simulation of a transaction, using the attributes
@@ -2376,18 +2355,15 @@ class UniswapTransaction(AbstractTransaction):
         else:
             self.state_block = cast(BlockNumber, state_block)
 
-        self.simulated_pool_states: List[
-            Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
-            | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
+        self.simulated_pool_states: list[
+            tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+            | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ] = []
 
-        try:
-            self._simulate(
-                self.func_name,
-                self.func_params,
-            )
-        except ValueError as e:
-            raise TransactionError(e)
+        self._simulate(
+            self.func_name,
+            self.func_params,
+        )
 
         if self.router_address in self.ledger.balances:
             raise self.LeftoverRouterBalance(

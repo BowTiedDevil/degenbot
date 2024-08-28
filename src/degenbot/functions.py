@@ -8,7 +8,6 @@ from hexbytes import HexBytes
 from web3.types import BlockIdentifier
 
 from . import config
-from .constants import MAX_UINT256
 
 
 def create2_address(
@@ -69,7 +68,7 @@ def next_base_fee(
     parent_gas_used: int,
     parent_gas_limit: int,
     min_base_fee: int | None = None,
-    base_fee_max_change_denominator: int = 8,  # limits the maximum base fee increase per block to 1/8 (12.5%)
+    base_fee_max_change_denominator: int = 8,
     elasticity_multiplier: int = 2,
 ) -> int:
     """

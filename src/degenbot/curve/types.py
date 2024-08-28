@@ -1,5 +1,4 @@
 import dataclasses
-from typing import List
 
 from eth_typing import ChecksumAddress, HexAddress
 
@@ -9,7 +8,7 @@ from ..baseclasses import AbstractPoolState, Message
 @dataclasses.dataclass(slots=True, frozen=True)
 class CurveStableswapPoolState(AbstractPoolState):
     pool: ChecksumAddress
-    balances: List[int]
+    balances: list[int]
     base: "CurveStableswapPoolState | None" = dataclasses.field(default=None)
 
 
@@ -25,10 +24,10 @@ class CurveStableswapPoolSimulationResult:
 class CurveStableSwapPoolAttributes:
     address: HexAddress
     lp_token_address: HexAddress
-    coin_addresses: List[HexAddress]
+    coin_addresses: list[HexAddress]
     coin_index_type: str
     is_metapool: bool
-    underlying_coin_addresses: List[HexAddress] | None = dataclasses.field(default=None)
+    underlying_coin_addresses: list[HexAddress] | None = dataclasses.field(default=None)
     base_pool_address: HexAddress | None = dataclasses.field(default=None)
 
 

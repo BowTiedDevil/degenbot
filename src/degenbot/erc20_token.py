@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import eth_abi.abi
 import ujson
@@ -20,7 +20,9 @@ from .registry.all_tokens import AllTokens
 # Taken from OpenZeppelin's ERC-20 implementation
 # ref: https://www.npmjs.com/package/@openzeppelin/contracts?activeTab=code
 ERC20_ABI_MINIMAL = ujson.loads(
-    '[{"inputs": [{"internalType": "string", "name": "name_", "type": "string"}, {"internalType": "string", "name": "symbol_", "type": "string"}], "stateMutability": "nonpayable", "type": "constructor"}, {"anonymous": false, "inputs": [{"indexed": true, "internalType": "address", "name": "owner", "type": "address"}, {"indexed": true, "internalType": "address", "name": "spender", "type": "address"}, {"indexed": false, "internalType": "uint256", "name": "value", "type": "uint256"}], "name": "Approval", "type": "event"}, {"anonymous": false, "inputs": [{"indexed": true, "internalType": "address", "name": "from", "type": "address"}, {"indexed": true, "internalType": "address", "name": "to", "type": "address"}, {"indexed": false, "internalType": "uint256", "name": "value", "type": "uint256"}], "name": "Transfer", "type": "event"}, {"inputs": [{"internalType": "address", "name": "owner", "type": "address"}, {"internalType": "address", "name": "spender", "type": "address"}], "name": "allowance", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}, {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "amount", "type": "uint256"}], "name": "approve", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}, {"inputs": [{"internalType": "address", "name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}, {"inputs": [], "name": "decimals", "outputs": [{"internalType": "uint8", "name": "", "type": "uint8"}], "stateMutability": "view", "type": "function"}, {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "subtractedValue", "type": "uint256"}], "name": "decreaseAllowance", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}, {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "addedValue", "type": "uint256"}], "name": "increaseAllowance", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}, {"inputs": [], "name": "name", "outputs": [{"internalType": "string", "name": "", "type": "string"}], "stateMutability": "view", "type": "function"}, {"inputs": [], "name": "symbol", "outputs": [{"internalType": "string", "name": "", "type": "string"}], "stateMutability": "view", "type": "function"}, {"inputs": [], "name": "totalSupply", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}, {"inputs": [{"internalType": "address", "name": "to", "type": "address"}, {"internalType": "uint256", "name": "amount", "type": "uint256"}], "name": "transfer", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}, {"inputs": [{"internalType": "address", "name": "from", "type": "address"}, {"internalType": "address", "name": "to", "type": "address"}, {"internalType": "uint256", "name": "amount", "type": "uint256"}], "name": "transferFrom", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}]'
+    """
+    [{"inputs": [{"internalType": "string", "name": "name_", "type": "string"}, {"internalType": "string", "name": "symbol_", "type": "string"}], "stateMutability": "nonpayable", "type": "constructor"}, {"anonymous": false, "inputs": [{"indexed": true, "internalType": "address", "name": "owner", "type": "address"}, {"indexed": true, "internalType": "address", "name": "spender", "type": "address"}, {"indexed": false, "internalType": "uint256", "name": "value", "type": "uint256"}], "name": "Approval", "type": "event"}, {"anonymous": false, "inputs": [{"indexed": true, "internalType": "address", "name": "from", "type": "address"}, {"indexed": true, "internalType": "address", "name": "to", "type": "address"}, {"indexed": false, "internalType": "uint256", "name": "value", "type": "uint256"}], "name": "Transfer", "type": "event"}, {"inputs": [{"internalType": "address", "name": "owner", "type": "address"}, {"internalType": "address", "name": "spender", "type": "address"}], "name": "allowance", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}, {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "amount", "type": "uint256"}], "name": "approve", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}, {"inputs": [{"internalType": "address", "name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}, {"inputs": [], "name": "decimals", "outputs": [{"internalType": "uint8", "name": "", "type": "uint8"}], "stateMutability": "view", "type": "function"}, {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "subtractedValue", "type": "uint256"}], "name": "decreaseAllowance", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}, {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "addedValue", "type": "uint256"}], "name": "increaseAllowance", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}, {"inputs": [], "name": "name", "outputs": [{"internalType": "string", "name": "", "type": "string"}], "stateMutability": "view", "type": "function"}, {"inputs": [], "name": "symbol", "outputs": [{"internalType": "string", "name": "", "type": "string"}], "stateMutability": "view", "type": "function"}, {"inputs": [], "name": "totalSupply", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}, {"inputs": [{"internalType": "address", "name": "to", "type": "address"}, {"internalType": "uint256", "name": "amount", "type": "uint256"}], "name": "transfer", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}, {"inputs": [{"internalType": "address", "name": "from", "type": "address"}, {"internalType": "address", "name": "to", "type": "address"}, {"internalType": "uint256", "name": "amount", "type": "uint256"}], "name": "transferFrom", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}]
+    """  # noqa: E501
 )
 
 
@@ -55,7 +57,7 @@ class Erc20Token(AbstractErc20Token):
     def __init__(
         self,
         address: str,
-        abi: List[Any] | None = None,
+        abi: list[Any] | None = None,
         oracle_address: str | None = None,
         silent: bool = False,
     ) -> None:
@@ -89,14 +91,15 @@ class Erc20Token(AbstractErc20Token):
             raise
 
         try:
-            self.name
+            _ = self.name
         except AttributeError:
             if not w3.eth.get_code(self.address):  # pragma: no cover
-                raise ValueError("No contract deployed at this address")
+                raise ValueError("No contract deployed at this address") from None
             self.name = "Unknown"
             self.name = self.name.strip("\x00")
             logger.warning(
-                f"Token contract at {self.address} does not implement a 'name' function. Setting to '{self.name}'"
+                f"Token contract at {self.address} does not implement a 'name' function. Setting "
+                f"to '{self.name}'"
             )
 
         try:
@@ -123,13 +126,14 @@ class Erc20Token(AbstractErc20Token):
             raise
 
         try:
-            self.symbol
+            _ = self.symbol
         except AttributeError:
             if not w3.eth.get_code(self.address):  # pragma: no cover
-                raise ValueError("No contract deployed at this address")
+                raise ValueError("No contract deployed at this address") from None
             self.symbol = "UNKN"
             logger.warning(
-                f"Token contract at {self.address} does not implement a 'symbol' function. Setting to {self.symbol}"
+                f"Token contract at {self.address} does not implement a 'symbol' function. Setting "
+                f"to {self.symbol}"
             )
 
         try:
@@ -157,13 +161,14 @@ class Erc20Token(AbstractErc20Token):
             raise
 
         try:
-            self.decimals
+            _ = self.decimals
         except Exception:
             if not w3.eth.get_code(self.address):  # pragma: no cover
-                raise ValueError("No contract deployed at this address")
+                raise ValueError("No contract deployed at this address") from None
             self.decimals = 0
             logger.warning(
-                f"Token contract at {self.address} does not implement a 'decimals' function. Setting to 0."
+                f"Token contract at {self.address} does not implement a 'decimals' function. "
+                f"Setting to 0."
             )
 
         self._price_oracle: ChainlinkPriceContract | None
@@ -173,15 +178,16 @@ class Erc20Token(AbstractErc20Token):
 
         AllTokens(chain_id=w3.eth.chain_id)[self.address] = self
 
-        self._cached_approval: Dict[Tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
-        self._cached_balance: Dict[Tuple[int, ChecksumAddress], int] = {}
-        self._cached_total_supply: Dict[int, int] = {}
+        self._cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
+        self._cached_balance: dict[tuple[int, ChecksumAddress], int] = {}
+        self._cached_total_supply: dict[int, int] = {}
 
         if not silent:  # pragma: no cover
             logger.info(f"• {self.symbol} ({self.name})")
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"
+        return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', \
+            decimals={self.decimals})"
 
     @property
     def w3_contract(self) -> Contract:
@@ -321,7 +327,7 @@ class EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE(Erc20Token):
     decimals = 18
 
     def __init__(self) -> None:
-        self._cached_balance: Dict[Tuple[int, ChecksumAddress], int] = {}
+        self._cached_balance: dict[tuple[int, ChecksumAddress], int] = {}
         AllTokens(chain_id=config.get_web3().eth.chain_id)[self.address] = self
 
     def _get_balance_cachable(

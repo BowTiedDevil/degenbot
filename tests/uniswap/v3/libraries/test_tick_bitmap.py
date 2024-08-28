@@ -1,6 +1,7 @@
-from typing import Any, Dict
+from typing import Any
 
 import pytest
+
 from degenbot.exceptions import EVMRevertError, MissingTickWordError
 from degenbot.uniswap.v3_dataclasses import UniswapV3BitmapAtWord
 from degenbot.uniswap.v3_libraries import TickBitmap, TickMath
@@ -9,7 +10,7 @@ from degenbot.uniswap.v3_libraries import TickBitmap, TickMath
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/TickBitmap.spec.ts
 
 
-def is_initialized(tick_bitmap: Dict[int, UniswapV3BitmapAtWord], tick: int) -> bool:
+def is_initialized(tick_bitmap: dict[int, UniswapV3BitmapAtWord], tick: int) -> bool:
     # Adapted from Uniswap test contract
     # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/test/TickBitmapTest.sol
 
@@ -17,7 +18,7 @@ def is_initialized(tick_bitmap: Dict[int, UniswapV3BitmapAtWord], tick: int) -> 
     return next == tick if initialized else False
 
 
-def empty_full_bitmap(spacing: int = 1) -> Dict[int, UniswapV3BitmapAtWord]:
+def empty_full_bitmap(spacing: int = 1) -> dict[int, UniswapV3BitmapAtWord]:
     """
     Generate a empty tick bitmap, maximum size, with the given tick spacing
     """
@@ -98,7 +99,7 @@ def test_incorrect_tick_spacing_flip() -> None:
 
 
 def test_nextInitializedTickWithinOneWord() -> None:
-    tick_bitmap: Dict[int, UniswapV3BitmapAtWord] = {}
+    tick_bitmap: dict[int, UniswapV3BitmapAtWord] = {}
 
     # set up a full-sized empty tick bitmap
     for tick in range(TickMath.MIN_TICK, TickMath.MAX_TICK):

@@ -1,10 +1,11 @@
 import pickle
 from fractions import Fraction
-from typing import Dict
 
-import degenbot
 import pytest
 import web3
+from eth_utils.address import to_checksum_address
+
+import degenbot
 from degenbot.config import set_web3
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
@@ -21,7 +22,6 @@ from degenbot.uniswap.v2_liquidity_pool import (
     LiquidityPool,
     UnregisteredLiquidityPool,
 )
-from eth_utils.address import to_checksum_address
 
 UNISWAP_V2_ROUTER02 = to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
 UNISWAP_V2_WBTC_WETH_POOL = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
@@ -568,7 +568,7 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: 
     starting_token0_reserves = starting_state.reserves_token0
     starting_token1_reserves = starting_state.reserves_token1
 
-    expected_block_states: Dict[int, UniswapV2PoolState] = {starting_block: starting_state}
+    expected_block_states: dict[int, UniswapV2PoolState] = {starting_block: starting_state}
 
     # Provide some dummy updates, then simulate a reorg back to the starting state
     for block_number in range(_FIRST_UPDATE_BLOCK, _LAST_UPDATE_BLOCK + 1):
@@ -638,7 +638,7 @@ def test_discard_before_finalized(
     starting_token0_reserves = starting_state.reserves_token0
     starting_token1_reserves = starting_state.reserves_token1
 
-    expected_block_states: Dict[int, UniswapV2PoolState] = {starting_block: starting_state}
+    expected_block_states: dict[int, UniswapV2PoolState] = {starting_block: starting_state}
 
     # Provide some dummy updates, then simulate a reorg back to the starting state
     for block_number in range(_FIRST_UPDATE_BLOCK, _LAST_UPDATE_BLOCK + 1):

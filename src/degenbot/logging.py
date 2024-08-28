@@ -1,7 +1,7 @@
 import logging
 
 """
-Create a shared logger instance for this module. Set default level to INFO and send to stdout with StreamHandler
+Create a global logger instance for this module.
 """
 
 logger = logging.getLogger("degenbot")

@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 from eth_typing import ChainId
 from eth_utils.address import to_checksum_address
@@ -21,11 +21,11 @@ BROKEN_CURVE_V1_POOLS = [
 ]
 
 
-CURVE_V1_POOL_ATTRIBUTES: Dict[
+CURVE_V1_POOL_ATTRIBUTES: dict[
     int,  # Chain ID
-    Dict[
+    dict[
         str,  # Pool address
-        Dict[str, Any],  # Parameter dict, passed into CurveStableswapPool constructor
+        dict[str, Any],  # Parameter dict, passed into CurveStableswapPool constructor
     ],
 ] = {
     ChainId.ETH: {

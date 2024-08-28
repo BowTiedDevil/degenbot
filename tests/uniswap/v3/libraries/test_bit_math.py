@@ -1,4 +1,5 @@
 import pytest
+
 from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3_libraries import bit_math as BitMath
 

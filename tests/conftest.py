@@ -1,15 +1,16 @@
 import logging
 from typing import Any
 
+import dotenv
+import pytest
+import web3
+
 import degenbot
 import degenbot.config
 import degenbot.logging
 import degenbot.manager
 import degenbot.registry
 import degenbot.uniswap.managers
-import dotenv
-import pytest
-import web3
 from degenbot.fork.anvil_fork import AnvilFork
 
 env_file = dotenv.find_dotenv("tests.env")

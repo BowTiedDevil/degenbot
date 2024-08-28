@@ -1,10 +1,11 @@
+from eth_utils.address import to_checksum_address
+
 from degenbot.config import set_web3
 from degenbot.erc20_token import Erc20Token
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.registry.all_pools import AllPools
 from degenbot.registry.all_tokens import AllTokens
 from degenbot.uniswap.v2_liquidity_pool import LiquidityPool
-from eth_utils.address import to_checksum_address
 
 UNISWAP_V2_WBTC_WETH_POOL = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
 

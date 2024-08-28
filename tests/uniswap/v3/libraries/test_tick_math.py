@@ -2,6 +2,7 @@ from decimal import Decimal, getcontext
 from math import floor, log
 
 import pytest
+
 from degenbot.constants import MAX_UINT160, MIN_UINT160
 from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3_libraries import TickMath

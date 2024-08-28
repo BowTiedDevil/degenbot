@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, List
+from typing import Any
 
 from eth_typing import ChecksumAddress
 
@@ -11,13 +11,13 @@ class UniswapFactoryDeployment:
     address: ChecksumAddress
     deployer: ChecksumAddress | None
     pool_init_hash: str
-    pool_abi: List[Any]
+    pool_abi: list[Any]
 
 
 @dataclass(slots=True, frozen=True)
 class UniswapTickLensDeployment:
     address: ChecksumAddress
-    abi: List[Any]
+    abi: list[Any]
 
 
 @dataclass(slots=True, frozen=True)
@@ -36,4 +36,4 @@ class UniswapRouterDeployment:
     address: ChecksumAddress
     chain_id: int
     name: str
-    exchanges: List[UniswapV2ExchangeDeployment | UniswapV3ExchangeDeployment]
+    exchanges: list[UniswapV2ExchangeDeployment | UniswapV3ExchangeDeployment]

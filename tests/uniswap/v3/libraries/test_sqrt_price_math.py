@@ -1,7 +1,8 @@
 from decimal import Decimal, getcontext
 
 import pytest
-from degenbot.constants import MIN_UINT128, MAX_UINT128, MAX_UINT256
+
+from degenbot.constants import MAX_UINT128, MAX_UINT256, MIN_UINT128
 from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3_libraries import SqrtPriceMath
 

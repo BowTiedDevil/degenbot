@@ -1,6 +1,7 @@
 import itertools
+from collections.abc import Iterable, Sequence
 from fractions import Fraction
-from typing import TYPE_CHECKING, Iterable, List, Sequence
+from typing import TYPE_CHECKING
 
 import eth_abi.packed
 from eth_typing import ChecksumAddress
@@ -45,7 +46,7 @@ def generate_v2_pool_address(
 def get_v2_pools_from_token_path(
     tx_path: Iterable[ChecksumAddress | str],
     pool_manager: "UniswapV2LiquidityPoolManager",
-) -> List["LiquidityPool"]:
+) -> list["LiquidityPool"]:
     return [
         pool_manager.get_pool(
             token_addresses=token_addresses,
@@ -77,7 +78,8 @@ def constant_product_calc_exact_out(
     fee: Fraction,
 ) -> int:
     """
-    Calculate the amount in necessary for an exact output swap through a constant product (x*y=k) invariant pool.
+    Calculate the amount in necessary for an exact output swap through a constant product (x*y=k)
+    invariant pool.
     """
 
     return 1 + (reserves_in * amount_out * fee.denominator) // (

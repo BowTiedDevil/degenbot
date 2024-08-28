@@ -16,7 +16,7 @@ def get_web3() -> web3.Web3:
         return _web3
     except NameError:
         try:
-            _endpoint_uri
+            _ = _endpoint_uri
         except NameError:
             _web3 = web3.Web3(web3.IPCProvider(_ipc_path))
             return _web3

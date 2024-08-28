@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import eth_account.datastructures
@@ -15,7 +16,8 @@ from .functions import eip_191_hash
 
 class BuilderEndpoint:
     """
-    An external HTTP endpoint with one or more bundle-related methods defined by the Flashbots RPC specification at https://docs.flashbots.net/flashbots-auction/advanced/rpc-endpoint
+    An external HTTP endpoint with one or more bundle-related methods defined by the Flashbots RPC
+    specification at https://docs.flashbots.net/flashbots-auction/advanced/rpc-endpoint
     """
 
     def __init__(
@@ -36,7 +38,7 @@ class BuilderEndpoint:
         payload: str,
         header_label: str | None,
         signer_key: str | None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Build a MIME type header with an optional EIP-191 signature of the provided payload.
         """
@@ -62,7 +64,7 @@ class BuilderEndpoint:
     @staticmethod
     async def send_payload(
         url: str,
-        headers: Dict[str, Any],
+        headers: dict[str, Any],
         data: str,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
@@ -103,7 +105,8 @@ class BuilderEndpoint:
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
         """
-        Send a formatted bundle to the eth_callBundle endpoint for simulation against some block state
+        Send a formatted bundle to the eth_callBundle endpoint for simulation against some block
+        state
         """
 
         ENDPOINT_METHOD = "eth_callBundle"
@@ -113,7 +116,7 @@ class BuilderEndpoint:
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
-        bundle_params: Dict[str, Any] = {
+        bundle_params: dict[str, Any] = {
             "txs": (
                 # Array[String], A list of signed transactions to execute in an atomic bundle
                 [tx.hex() for tx in bundle]
@@ -130,7 +133,8 @@ class BuilderEndpoint:
             bundle_params["stateBlockNumber"] = state_block
         elif isinstance(state_block, int):
             bundle_params[
-                # String, either a hex encoded number or a block tag for which state to base this simulation on. Can use "latest"
+                # String, either a hex encoded number or a block tag for which state to base this
+                # simulation on. Can use "latest"
                 "stateBlockNumber"
             ] = hex(state_block)
 
@@ -179,7 +183,8 @@ class BuilderEndpoint:
 
         if self.authentication_header_label is not None and signer_key is None:
             raise ValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"
+                f"Must provide signing address and key for required header \
+                    {self.authentication_header_label}"
             )
 
         payload = ujson.dumps(
@@ -230,7 +235,8 @@ class BuilderEndpoint:
 
         if self.authentication_header_label is not None and signer_key is None:
             raise ValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"
+                f"Must provide signing address and key for required header \
+                    {self.authentication_header_label}"
             )
 
         if isinstance(tx_hash, bytes):
@@ -282,7 +288,8 @@ class BuilderEndpoint:
 
         if self.authentication_header_label is not None and signer_key is None:
             raise ValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"
+                f"Must provide signing address and key for required header \
+                    {self.authentication_header_label}"
             )
 
         if block_number is None:
@@ -367,7 +374,7 @@ class BuilderEndpoint:
         block_number: int,
         min_timestamp: int | None = None,
         max_timestamp: int | None = None,
-        reverting_hashes: List[str] | None = None,
+        reverting_hashes: list[str] | None = None,
         uuid: str | None = None,
         signer_key: str | None = None,
         http_session: aiohttp.ClientSession | None = None,
@@ -385,10 +392,11 @@ class BuilderEndpoint:
 
         if self.authentication_header_label is not None and signer_key is None:
             raise ValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"
+                f"Must provide signing address and key for required header \
+                    {self.authentication_header_label}"
             )
 
-        bundle_params: Dict[str, Any] = {
+        bundle_params: dict[str, Any] = {
             "txs": (
                 # Array[String], A list of signed transactions to execute in an atomic bundle
                 [tx.hex() for tx in bundle]
@@ -401,13 +409,15 @@ class BuilderEndpoint:
 
         if min_timestamp is not None:
             bundle_params[
-                # (Optional) Number, the minimum timestamp for which this bundle is valid, in seconds since the unix epoch
+                # (Optional) Number, the minimum timestamp for which this bundle is valid, in
+                # seconds since the unix epoch
                 "minTimestamp"
             ] = min_timestamp
 
         if max_timestamp is not None:
             bundle_params[
-                # (Optional) Number, the maximum timestamp for which this bundle is valid, in seconds since the unix epoch
+                # (Optional) Number, the maximum timestamp for which this bundle is valid, in
+                # seconds since the unix epoch
                 "maxTimestamp"
             ] = max_timestamp
 
@@ -451,7 +461,7 @@ class BuilderEndpoint:
         raw_transaction: bytes | str,
         signer_key: str,
         max_block_number: int | None = None,
-        preferences: Dict[str, Any] | None = None,
+        preferences: dict[str, Any] | None = None,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
         """
@@ -467,13 +477,14 @@ class BuilderEndpoint:
 
         if self.authentication_header_label is not None and signer_key is None:
             raise ValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"
+                f"Must provide signing address and key for required header \
+                    {self.authentication_header_label}"
             )
 
         if isinstance(raw_transaction, bytes):
             raw_transaction = raw_transaction.hex()
 
-        params_dict: Dict[str, Any] = {
+        params_dict: dict[str, Any] = {
             "tx": raw_transaction,
         }
 
@@ -512,7 +523,7 @@ class BuilderEndpoint:
         self,
         raw_transaction: bytes | str,
         signer_key: str,
-        preferences: Dict[str, Any] | None = None,
+        preferences: dict[str, Any] | None = None,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
         """
@@ -528,13 +539,14 @@ class BuilderEndpoint:
 
         if self.authentication_header_label is not None and signer_key is None:
             raise ValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"
+                f"Must provide signing address and key for required header \
+                    {self.authentication_header_label}"
             )
 
         if isinstance(raw_transaction, bytes):
             raw_transaction = raw_transaction.hex()
 
-        params: List[str | Dict[str, Any]] = [
+        params: list[str | dict[str, Any]] = [
             raw_transaction,
         ]
 

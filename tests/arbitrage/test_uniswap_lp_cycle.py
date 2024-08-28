@@ -1,14 +1,18 @@
 import asyncio
 import concurrent.futures
+import contextlib
 import multiprocessing
 import pickle
 import time
+from collections.abc import Sequence
 from fractions import Fraction
 from threading import Lock
-from typing import Any, List, Sequence, Tuple
+from typing import Any
 
 import pytest
-from degenbot.arbitrage.arbitrage_dataclasses import (
+from eth_utils.address import to_checksum_address
+
+from degenbot.arbitrage.types import (
     ArbitrageCalculationResult,
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
@@ -31,7 +35,6 @@ from degenbot.uniswap.v3_dataclasses import (
     UniswapV3PoolStateUpdated,
 )
 from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
-from eth_utils.address import to_checksum_address
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -2150,7 +2153,7 @@ def test_arbitrage_with_overrides(
     )
 
     overrides: Sequence[
-        Tuple[LiquidityPool, UniswapV2PoolState] | Tuple[V3LiquidityPool, UniswapV3PoolState]
+        tuple[LiquidityPool, UniswapV2PoolState] | tuple[V3LiquidityPool, UniswapV3PoolState]
     ]
 
     # Override both pools
@@ -2269,15 +2272,11 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum: AnvilFor
             )
 
         for task in asyncio.as_completed(_tasks):
-            try:
+            with contextlib.suppress(ArbitrageError):
                 await task
-            except ArbitrageError:
-                pass
 
-    try:
+    with contextlib.suppress(ArbitrageError):
         arb.calculate_arbitrage_return_best()
-    except ArbitrageError:
-        pass
 
 
 async def test_process_pool_calculation(
@@ -2481,7 +2480,7 @@ def test_arbitrage_helper_subscriptions(
 
     class TestSubscriber:
         def __init__(self) -> None:
-            self.inbox: List[Any] = list()
+            self.inbox: list[Any] = list()
 
         def notify(self, publisher, message) -> None:
             self.inbox.append(message)

@@ -1,4 +1,3 @@
-from typing import Tuple
 
 from . import full_math as FullMath
 from . import sqrt_price_math as SqrtPriceMath
@@ -10,7 +9,7 @@ def computeSwapStep(
     liquidity: int,
     amountRemaining: int,
     feePips: int,
-) -> Tuple[int, int, int, int]:
+) -> tuple[int, int, int, int]:
     zeroForOne: bool = sqrtRatioCurrentX96 >= sqrtRatioTargetX96
     exactIn: bool = amountRemaining >= 0
 

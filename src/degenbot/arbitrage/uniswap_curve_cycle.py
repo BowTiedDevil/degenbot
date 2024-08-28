@@ -1,7 +1,8 @@
 import asyncio
+from collections.abc import Awaitable, Iterable, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, Awaitable, Dict, Iterable, List, Sequence, Tuple, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -17,8 +18,8 @@ from ..baseclasses import (
 )
 from ..config import get_web3
 from ..constants import MAX_UINT256
-from ..curve.curve_stableswap_dataclasses import CurveStableswapPoolState
 from ..curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from ..curve.types import CurveStableswapPoolState
 from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
@@ -27,7 +28,7 @@ from ..uniswap.v2_liquidity_pool import LiquidityPool
 from ..uniswap.v3_dataclasses import UniswapV3PoolSimulationResult, UniswapV3PoolState
 from ..uniswap.v3_libraries import TickMath
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
-from .arbitrage_dataclasses import (
+from .types import (
     ArbitrageCalculationResult,
     CurveStableSwapPoolSwapAmounts,
     CurveStableSwapPoolVector,
@@ -56,18 +57,13 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         id: str,
         max_input: int | None = None,
     ):
-        if any(
-            [
-                not isinstance(pool, (CurveStableswapPool, LiquidityPool, V3LiquidityPool))
-                for pool in swap_pools
-            ]
-        ):
+        if any([not isinstance(pool, PoolTypes) for pool in swap_pools]):
             raise ValueError("Must provide only Curve StableSwap or Uniswap liquidity pools.")
 
-        self.swap_pools: Tuple[PoolTypes, ...] = tuple(swap_pools)
+        self.swap_pools: tuple[PoolTypes, ...] = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
 
-        self.pool_states: Dict[ChecksumAddress, PoolStates] = {}
+        self.pool_states: dict[ChecksumAddress, PoolStates] = {}
         self._update_pool_states(self.swap_pools)
         self.curve_discount_factor = CURVE_V1_DEFAULT_DISCOUNT_FACTOR
 
@@ -89,7 +85,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
 
         # Set up pre-determined "swap vectors", which allows the helper
         # to identify the tokens and direction of each swap along the path
-        _swap_vectors: List[CurveStableSwapPoolVector | UniswapPoolSwapVector] = []
+        _swap_vectors: list[CurveStableSwapPoolVector | UniswapPoolSwapVector] = []
         for i, pool in enumerate(self.swap_pools):
             match pool:
                 case LiquidityPool() | V3LiquidityPool():
@@ -129,9 +125,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                     # token0/token1 choice, determine the forward token by comparing
                     # current and next pool
                     if i != 1:
-                        raise ValueError(
-                            f"Not implemented for Curve pools at position != 1, {i=}, {pool=}, {self.id=}"
-                        )
+                        raise ValueError("Not implemented for Curve pools at position != 1.")
                     token_in = token_out
                     next_pool = self.swap_pools[i + 1]
                     shared_tokens = list(
@@ -152,7 +146,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
 
         self._swap_vectors = tuple(_swap_vectors)
 
-    def __getstate__(self) -> Dict[str, Any]:
+    def __getstate__(self) -> dict[str, Any]:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
         dropped_attributes = (
@@ -168,13 +162,13 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
     @staticmethod
     def _sort_overrides(
         overrides: Sequence[
-            Tuple[
+            tuple[
                 PoolTypes,
                 PoolStates | UniswapSimulationResult,
             ]
         ]
         | None,
-    ) -> Dict[ChecksumAddress, PoolStates]:
+    ) -> dict[ChecksumAddress, PoolStates]:
         """
         Validate the overrides, extract and insert the resulting pool states into a dictionary
         keyed by the pool address.
@@ -183,7 +177,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         if overrides is None:
             return {}
 
-        sorted_overrides: Dict[ChecksumAddress, PoolStates] = {}
+        sorted_overrides: dict[ChecksumAddress, PoolStates] = {}
         for pool, override in overrides:
             match override:
                 case CurveStableswapPoolState() | UniswapV2PoolState() | UniswapV3PoolState():
@@ -205,9 +199,9 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_state_overrides: Dict[ChecksumAddress, PoolStates] | None = None,
+        pool_state_overrides: dict[ChecksumAddress, PoolStates] | None = None,
         block_number: int | None = None,
-    ) -> List[SwapAmounts]:
+    ) -> list[SwapAmounts]:
         """
         Generate human-readable inputs for a complete swap along the arbitrage
         path, starting with `token_in_quantity` amount of `token_in`.
@@ -216,12 +210,14 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         if pool_state_overrides is None:
             pool_state_overrides = {}
 
-        pools_amounts_out: List[SwapAmounts] = []
+        pools_amounts_out: list[SwapAmounts] = []
 
         _token_in_quantity: int = 0
         _token_out_quantity: int = 0
 
-        for i, (pool, swap_vector) in enumerate(zip(self.swap_pools, self._swap_vectors)):
+        for i, (pool, swap_vector) in enumerate(
+            zip(self.swap_pools, self._swap_vectors, strict=False)
+        ):
             match pool:
                 case LiquidityPool() | V3LiquidityPool():
                     assert isinstance(swap_vector, UniswapPoolSwapVector)
@@ -233,10 +229,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                     token_in = swap_vector.token_in
                     token_out = swap_vector.token_out
 
-            if i == 0:
-                _token_in_quantity = token_in_quantity
-            else:
-                _token_in_quantity = _token_out_quantity
+            _token_in_quantity = token_in_quantity if i == 0 else _token_out_quantity
 
             try:
                 pool_state_override = pool_state_overrides.get(pool.address)
@@ -271,7 +264,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                             f"Could not process pool {pool} and override {pool_state_override} "
                         )
             except LiquidityPoolError as e:
-                raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}")
+                raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}") from None
             else:
                 if _token_out_quantity == 0:
                     raise ArbitrageError(f"Zero-output swap through pool {pool} @ {pool.address}")
@@ -311,16 +304,14 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                             token_out_index=pool.tokens.index(token_out),
                             amount_in=_token_in_quantity,
                             min_amount_out=_token_out_quantity,
-                            underlying=True
-                            if (
+                            underlying=(
                                 pool.is_metapool
                                 and (
                                     token_in in pool.tokens_underlying
                                     or token_out in pool.tokens_underlying
                                 )
-                            )
-                            else False,
-                        )
+                            ),
+                        ),
                     )
 
         return pools_amounts_out
@@ -334,7 +325,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
     def _pre_calculation_check(
         self,
         override_state: Sequence[
-            Tuple[
+            tuple[
                 PoolTypes,
                 PoolStates | UniswapSimulationResult,
             ]
@@ -348,11 +339,15 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         # profit_factor > 1.0 indicates a profitable trade.
         profit_factor: float = 1.0
 
-        # Check each pool for liquidity in the direction of the trade and account for its current price and fee
-        # The prices are absolute (not decimal-corrected) since the decimals for intermediate tokens cancel out
+        # Check each pool for liquidity in the direction of the trade and account for its current
+        # price and fee. The prices are absolute (not decimal-corrected) since the decimals for
+        # intermediate tokens cancel out.
         # e.g. for a WETH -> USDC -> USDT -> WETH arbitrage,
-        # profit factor: [input: WETH] -> [pool0: USDC/WETH] * [pool1: USDT/USDC] * [pool2: WETH/USDT] == [output: WETH]
-        for pool, vector in zip(self.swap_pools, self._swap_vectors):
+        # profit factor:
+        #   [input: WETH] -> [pool0: USDC/WETH]
+        #   * [pool1: USDT/USDC]
+        #   * [pool2: WETH/USDT] == [output: WETH]
+        for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=False):
             pool_state = state_overrides.get(pool.address) or pool.state
 
             match pool, pool_state, vector:
@@ -431,7 +426,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
     def _calculate(
         self,
         override_state: Sequence[
-            Tuple[
+            tuple[
                 PoolTypes,
                 PoolStates | UniswapSimulationResult,
             ]
@@ -459,7 +454,9 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
             token_in_quantity = int(x)  # round the input down
             token_out_quantity: int = 0
 
-            for i, (pool, swap_vector) in enumerate(zip(self.swap_pools, self._swap_vectors)):
+            for i, (pool, swap_vector) in enumerate(
+                zip(self.swap_pools, self._swap_vectors, strict=False)
+            ):
                 pool_override = state_overrides.get(pool.address)
 
                 try:
@@ -549,7 +546,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
     def calculate(
         self,
         override_state: Sequence[
-            Tuple[
+            tuple[
                 PoolTypes,
                 PoolStates | UniswapSimulationResult,
             ]
@@ -557,7 +554,8 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         | None = None,
     ) -> ArbitrageCalculationResult:
         """
-        Calculate the optimum arbitrage input and intermediate swap values for the current pool states.
+        Calculate the optimum arbitrage input and intermediate swap values for the current pool
+        states.
         """
 
         self._pre_calculation_check(override_state)
@@ -568,7 +566,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         self,
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
         override_state: Sequence[
-            Tuple[
+            tuple[
                 PoolTypes,
                 PoolStates | UniswapSimulationResult,
             ]
@@ -640,7 +638,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         swap_amount: int,
         pool_swap_amounts: Sequence[SwapAmounts],
         infinite_approval: bool = False,
-    ) -> List[Tuple[ChecksumAddress, bytes, int]]:
+    ) -> list[tuple[ChecksumAddress, bytes, int]]:
         """
         TBD
         """
@@ -686,11 +684,10 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                     )
                 )
 
-            for i, (swap_pool, _swap_amounts) in enumerate(zip(self.swap_pools, pool_swap_amounts)):
-                if swap_pool is last_pool:
-                    next_pool = None
-                else:
-                    next_pool = self.swap_pools[i + 1]
+            for i, (swap_pool, _swap_amounts) in enumerate(
+                zip(self.swap_pools, pool_swap_amounts, strict=False)
+            ):
+                next_pool = None if swap_pool is last_pool else self.swap_pools[i + 1]
 
                 if next_pool is not None:
                     # V2 pools require a pre-swap transfer, so the contract
@@ -700,11 +697,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                         swap_destination_address = next_pool.address
                     # V3 pools cannot accept a pre-swap transfer, so the contract
                     # must maintain custody prior to a swap
-                    elif isinstance(next_pool, V3LiquidityPool):
-                        swap_destination_address = from_address
-                    # Curve V1 pools execute a transferFrom on behalf of msg.sender, so the contract
-                    # must maintain custody prior to a swap
-                    elif isinstance(next_pool, CurveStableswapPool):
+                    elif isinstance(next_pool, V3LiquidityPool | CurveStableswapPool):
                         swap_destination_address = from_address
                 else:
                     # Set the destination address for the last swap to the
@@ -807,7 +800,8 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
 
                         if amount_to_approve is not None:
                             logger.debug(
-                                f"PAYLOAD: approve {amount_to_approve} {_swap_amounts.token_in} by {swap_pool} {swap_destination_address}"
+                                f"PAYLOAD: approve {amount_to_approve} {_swap_amounts.token_in} by "
+                                f"{swap_pool} {swap_destination_address}"
                             )
                             payloads.append(
                                 (
@@ -824,7 +818,9 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                             )
 
                         logger.debug(
-                            f"PAYLOAD: exchange {_swap_amounts.amount_in} {_swap_amounts.token_in_index}->{_swap_amounts.token_out_index}, min out = {_swap_amounts.min_amount_out}"
+                            f"PAYLOAD: exchange {_swap_amounts.amount_in} "
+                            f"{_swap_amounts.token_in_index}->{_swap_amounts.token_out_index}, "
+                            f"min out = {_swap_amounts.min_amount_out}"
                         )
                         if _swap_amounts.underlying:
                             payloads.append(
@@ -871,7 +867,8 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                             # does not have to perform intermediate custody and the
                             # swap can send the tokens directly to the next pool
                             logger.debug(
-                                f"PAYLOAD: transferring {_swap_amounts.min_amount_out} {_swap_amounts.token_out} to V2 pool {next_pool}"
+                                f"PAYLOAD: transferring {_swap_amounts.min_amount_out} "
+                                f"{_swap_amounts.token_out} to V2 pool {next_pool}"
                             )
                             payloads.append(
                                 (

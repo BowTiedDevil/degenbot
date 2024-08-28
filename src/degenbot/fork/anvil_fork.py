@@ -1,8 +1,10 @@
+import contextlib
 import os
 import shutil
 import socket
 import subprocess
-from typing import Any, Dict, Iterable, List, Literal, Tuple, cast
+from collections.abc import Iterable
+from typing import Any, Literal, cast
 
 from eth_typing import HexAddress
 from eth_utils.address import to_checksum_address
@@ -38,14 +40,14 @@ class AnvilFork:
             "patient rude simple dog close planet oval animal hunt sketch suspect slim"
         ),
         coinbase: HexAddress | None = None,
-        middlewares: List[Tuple[Middleware, int]] | None = None,
-        balance_overrides: Iterable[Tuple[HexAddress, int]] | None = None,
-        bytecode_overrides: Iterable[Tuple[HexAddress, bytes]] | None = None,
-        nonce_overrides: Iterable[Tuple[HexAddress, int]] | None = None,
-        ipc_provider_kwargs: Dict[str, Any] | None = None,
+        middlewares: list[tuple[Middleware, int]] | None = None,
+        balance_overrides: Iterable[tuple[HexAddress, int]] | None = None,
+        bytecode_overrides: Iterable[tuple[HexAddress, bytes]] | None = None,
+        nonce_overrides: Iterable[tuple[HexAddress, int]] | None = None,
+        ipc_provider_kwargs: dict[str, Any] | None = None,
         prune_history: bool = False,
     ):
-        def build_anvil_command() -> List[str]:  # pragma: no cover
+        def build_anvil_command() -> list[str]:  # pragma: no cover
             command = [
                 "anvil",
                 "--silent",
@@ -133,12 +135,10 @@ class AnvilFork:
     def __del__(self) -> None:
         self._process.terminate()
         self._process.wait()
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.remove(self.ipc_path)
-        except FileNotFoundError:  # pragma: no cover
-            pass
 
-    def create_access_list(self, transaction: Dict[Any, Any]) -> Any:
+    def create_access_list(self, transaction: dict[Any, Any]) -> Any:
         # Exclude transaction values that are irrelevant for the JSON-RPC method
         # ref: https://docs.infura.io/networks/ethereum/json-rpc-methods/eth_createaccesslist
         keys_to_drop = ("gasPrice", "maxFeePerGas", "maxPriorityFeePerGas", "gas", "chainId")
@@ -168,7 +168,7 @@ class AnvilFork:
         block_number: int | None = None,
         base_fee: int | None = None,
     ) -> None:
-        forking_params: Dict[str, Any] = {
+        forking_params: dict[str, Any] = {
             "jsonRpcUrl": fork_url if fork_url is not None else self.fork_url,
             "blockNumber": block_number if block_number is not None else self._initial_block_number,
         }

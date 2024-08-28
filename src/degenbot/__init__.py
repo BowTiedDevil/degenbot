@@ -2,7 +2,7 @@
 
 
 from . import exceptions, uniswap
-from .arbitrage.arbitrage_dataclasses import ArbitrageCalculationResult
+from .arbitrage.types import ArbitrageCalculationResult
 from .arbitrage.uniswap_curve_cycle import UniswapCurveCycle
 from .arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from .builder_endpoint import BuilderEndpoint

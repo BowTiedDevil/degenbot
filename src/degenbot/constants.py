@@ -1,5 +1,3 @@
-from typing import Dict
-
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
@@ -51,7 +49,7 @@ ZERO_ADDRESS: ChecksumAddress = to_checksum_address("0x0000000000000000000000000
 
 
 # Contract addresses for the native blockchain token, keyed by chain ID
-WRAPPED_NATIVE_TOKENS: Dict[int, ChecksumAddress] = {
+WRAPPED_NATIVE_TOKENS: dict[int, ChecksumAddress] = {
     # Ethereum (WETH)
     1: to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
     # Fantom (WFTM)

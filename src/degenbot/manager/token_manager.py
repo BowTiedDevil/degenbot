@@ -1,5 +1,5 @@
 from threading import Lock
-from typing import Any, Dict
+from typing import Any
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -7,7 +7,7 @@ from eth_utils.address import to_checksum_address
 from .. import config
 from ..baseclasses import AbstractManager
 from ..erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE, Erc20Token
-from ..exceptions import ManagerError
+from ..exceptions import Erc20TokenError, ManagerError
 
 
 class Erc20TokenHelperManager(AbstractManager):
@@ -18,7 +18,7 @@ class Erc20TokenHelperManager(AbstractManager):
     ensures that all instances of the class have access to the same state data
     """
 
-    _state: Dict[int, Dict[str, Any]] = {}
+    _state: dict[int, dict[str, Any]] = {}
 
     def __init__(self, chain_id: int | None = None) -> None:
         chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
@@ -32,7 +32,7 @@ class Erc20TokenHelperManager(AbstractManager):
             self.__dict__ = self._state[chain_id]
 
             # initialize internal attributes
-            self._erc20tokens: Dict[ChecksumAddress, Erc20Token] = {}
+            self._erc20tokens: dict[ChecksumAddress, Erc20Token] = {}
             self._lock = Lock()
 
     def get_erc20token(
@@ -56,8 +56,8 @@ class Erc20TokenHelperManager(AbstractManager):
                 token_helper = EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE()
             else:
                 token_helper = Erc20Token(address=address, **kwargs)
-        except Exception:
-            raise ManagerError(f"Could not create Erc20Token helper: {address=}")
+        except Erc20TokenError:
+            raise ManagerError(f"Could not create Erc20Token helper: {address=}") from None
 
         with self._lock:
             self._erc20tokens[address] = token_helper

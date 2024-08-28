@@ -1,7 +1,8 @@
 import asyncio
+from collections.abc import Iterable, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -26,7 +27,7 @@ from ..uniswap.v3_dataclasses import (
 )
 from ..uniswap.v3_libraries import TickMath
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
-from .arbitrage_dataclasses import (
+from .types import (
     ArbitrageCalculationResult,
     UniswapPoolSwapVector,
     UniswapV2PoolSwapAmounts,
@@ -42,10 +43,10 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         id: str,
         max_input: int | None = None,
     ):
-        if any([not isinstance(pool, (LiquidityPool, V3LiquidityPool)) for pool in swap_pools]):
+        if any([not isinstance(pool, LiquidityPool | V3LiquidityPool) for pool in swap_pools]):
             raise ValueError("Must provide only Uniswap liquidity pools.")
 
-        self.swap_pools: Tuple[LiquidityPool | V3LiquidityPool, ...] = tuple(swap_pools)
+        self.swap_pools: tuple[LiquidityPool | V3LiquidityPool, ...] = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
 
         for pool in swap_pools:
@@ -62,7 +63,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             max_input = 100 * 10**18
         self.max_input = max_input
 
-        self._swap_vectors: List[UniswapPoolSwapVector] = []
+        self._swap_vectors: list[UniswapPoolSwapVector] = []
         for i, pool in enumerate(self.swap_pools):
             if i == 0:
                 if self.input_token == pool.token0:
@@ -94,7 +95,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                 )
             )
 
-        self.best: Dict[str, Any] = {
+        self.best: dict[str, Any] = {
             "input_token": self.input_token,
             "last_swap_amount": 0,
             "profit_amount": 0,
@@ -104,9 +105,9 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             "swap_pool_amounts": [],
         }
 
-        self._subscribers: Set[Subscriber] = set()
+        self._subscribers: set[Subscriber] = set()
 
-    def __getstate__(self) -> Dict[str, Any]:
+    def __getstate__(self) -> dict[str, Any]:
         dropped_attributes = ("_subscribers",)
         copied_attributes = ()
 
@@ -122,13 +123,13 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
     @staticmethod
     def _sort_overrides(
         overrides: Sequence[
-            Tuple[LiquidityPool, UniswapV2PoolState]
-            | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
-            | Tuple[V3LiquidityPool, UniswapV3PoolState]
-            | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
+            tuple[LiquidityPool, UniswapV2PoolState]
+            | tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+            | tuple[V3LiquidityPool, UniswapV3PoolState]
+            | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ]
         | None,
-    ) -> Dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState]:
+    ) -> dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState]:
         """
         Validate the overrides, extract and insert the resulting pool states
         into a dictionary.
@@ -137,7 +138,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         if overrides is None:
             return {}
 
-        sorted_overrides: Dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState] = {}
+        sorted_overrides: dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState] = {}
         for pool, override in overrides:
             match override:
                 case UniswapV2PoolState() | UniswapV3PoolState():
@@ -155,26 +156,25 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        pool_state_overrides: Dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState],
-    ) -> List[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts]:
+        pool_state_overrides: dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState],
+    ) -> list[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts]:
         """
         Generate human-readable inputs for a swap along the arbitrage path, starting with the
         specified amount of the given input token.
         """
-        pools_amounts_out: List[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts] = []
+        pools_amounts_out: list[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts] = []
 
         _token_in_quantity: int = 0
         _token_out_quantity: int = 0
 
-        for i, (pool, swap_vector) in enumerate(zip(self.swap_pools, self._swap_vectors)):
+        for i, (pool, swap_vector) in enumerate(
+            zip(self.swap_pools, self._swap_vectors, strict=False)
+        ):
             token_in = swap_vector.token_in
             zero_for_one = swap_vector.zero_for_one
             pool_state_override = pool_state_overrides.get(pool.address)
 
-            if i == 0:
-                _token_in_quantity = token_in_quantity
-            else:
-                _token_in_quantity = _token_out_quantity
+            _token_in_quantity = token_in_quantity if i == 0 else _token_out_quantity
 
             try:
                 match pool:
@@ -201,7 +201,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                             override_state=pool_state_override,
                         )
             except LiquidityPoolError as e:  # pragma: no cover
-                raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}")
+                raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}") from None
             else:
                 if _token_out_quantity == 0:  # pragma: no cover
                     raise ArbitrageError(f"Zero-output swap through pool {pool} @ {pool.address}")
@@ -236,10 +236,10 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
     def _pre_calculation_check(
         self,
         override_state: Sequence[
-            Tuple[LiquidityPool, UniswapV2PoolState]
-            | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
-            | Tuple[V3LiquidityPool, UniswapV3PoolState]
-            | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
+            tuple[LiquidityPool, UniswapV2PoolState]
+            | tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+            | tuple[V3LiquidityPool, UniswapV3PoolState]
+            | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ]
         | None = None,
         min_rate_of_exchange: Fraction | None = None,
@@ -304,7 +304,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         net_rate_of_exchange = Fraction(1, 1)
 
         # Check the pool state liquidity in the direction of the trade
-        for pool, vector in zip(self.swap_pools, self._swap_vectors):
+        for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=False):
             pool_state = state_overrides.get(pool.address) or pool.state
 
             match pool, pool_state:
@@ -326,16 +326,17 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
 
         if net_rate_of_exchange < min_rate_of_exchange:
             raise ArbitrageError(
-                f"No acceptable arbitrage at current rate of exchange ({float(net_rate_of_exchange)}), minimum {float(min_rate_of_exchange)}."
+                f"No acceptable arbitrage at current rate of exchange \
+                    ({float(net_rate_of_exchange)}), minimum {float(min_rate_of_exchange)}."
             )
 
     def _calculate(
         self,
         override_state: Sequence[
-            Tuple[LiquidityPool, UniswapV2PoolState]
-            | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
-            | Tuple[V3LiquidityPool, UniswapV3PoolState]
-            | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
+            tuple[LiquidityPool, UniswapV2PoolState]
+            | tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+            | tuple[V3LiquidityPool, UniswapV3PoolState]
+            | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ]
         | None = None,
     ) -> ArbitrageCalculationResult:
@@ -347,17 +348,19 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
 
         # The bounded Brent optimizer requires bounds for the input amount, and a bracketed guess
         # to initiate the search
-        bounds: Tuple[float, float] = (
+        bounds: tuple[float, float] = (
             1.0,
             float(self.max_input),
         )
-        bracket: Tuple[float, float] = (0.25 * self.max_input, 0.50 * self.max_input)
+        bracket: tuple[float, float] = (0.25 * self.max_input, 0.50 * self.max_input)
 
         def arb_profit(x: float) -> float:
             token_in_quantity = int(x)  # round the input down
             token_out_quantity: int = 0
 
-            for i, (pool, swap_vector) in enumerate(zip(self.swap_pools, self._swap_vectors)):
+            for i, (pool, swap_vector) in enumerate(
+                zip(self.swap_pools, self._swap_vectors, strict=False)
+            ):
                 pool_override = state_overrides.get(pool.address)
 
                 try:
@@ -435,10 +438,10 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
     def calculate(
         self,
         override_state: Sequence[
-            Tuple[LiquidityPool, UniswapV2PoolState]
-            | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
-            | Tuple[V3LiquidityPool, UniswapV3PoolState]
-            | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
+            tuple[LiquidityPool, UniswapV2PoolState]
+            | tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+            | tuple[V3LiquidityPool, UniswapV3PoolState]
+            | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ]
         | None = None,
         min_rate_of_exchange: Fraction | None = None,
@@ -458,10 +461,10 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         self,
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
         override_state: Sequence[
-            Tuple[LiquidityPool, UniswapV2PoolState]
-            | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
-            | Tuple[V3LiquidityPool, UniswapV3PoolState]
-            | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
+            tuple[LiquidityPool, UniswapV2PoolState]
+            | tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+            | tuple[V3LiquidityPool, UniswapV3PoolState]
+            | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ]
         | None = None,
         min_rate_of_exchange: Fraction | None = None,
@@ -514,13 +517,13 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
     def calculate_arbitrage_return_best(
         self,
         override_state: Sequence[
-            Tuple[LiquidityPool, UniswapV2PoolState]
-            | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
-            | Tuple[V3LiquidityPool, UniswapV3PoolState]
-            | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
+            tuple[LiquidityPool, UniswapV2PoolState]
+            | tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+            | tuple[V3LiquidityPool, UniswapV3PoolState]
+            | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ]
         | None = None,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """
         A wrapper over `calculate_arbitrage`, useful for sending the
         calculation into a process pool and retrieving the results after
@@ -533,14 +536,14 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
     def calculate_arbitrage(
         self,
         override_state: Sequence[
-            Tuple[LiquidityPool, UniswapV2PoolState]
-            | Tuple[LiquidityPool, UniswapV2PoolSimulationResult]
-            | Tuple[V3LiquidityPool, UniswapV3PoolState]
-            | Tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
+            tuple[LiquidityPool, UniswapV2PoolState]
+            | tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+            | tuple[V3LiquidityPool, UniswapV3PoolState]
+            | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ]
         | None = None,
         min_rate_of_exchange: Fraction | None = None,
-    ) -> Tuple[bool, Tuple[int, int]]:
+    ) -> tuple[bool, tuple[int, int]]:
         """
         TBD
         """
@@ -578,7 +581,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
     def from_addresses(
         cls,
         input_token_address: str,
-        swap_pool_addresses: Iterable[Tuple[str, str]],
+        swap_pool_addresses: Iterable[tuple[str, str]],
         id: str,
         max_input: int | None = None,
     ) -> "UniswapLpCycle":
@@ -607,7 +610,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
 
         token = Erc20Token(input_token_address)
 
-        pool_objects: List[LiquidityPool | V3LiquidityPool | CamelotLiquidityPool] = []
+        pool_objects: list[LiquidityPool | V3LiquidityPool | CamelotLiquidityPool] = []
         for pool_address, pool_type in swap_pool_addresses:
             match pool_type:
                 case "V2":
@@ -632,7 +635,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         swap_amount: int | None = None,
         pool_swap_amounts: Sequence[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts]
         | None = None,
-    ) -> List[Tuple[ChecksumAddress, bytes, int]]:
+    ) -> list[tuple[ChecksumAddress, bytes, int]]:
         """
         Generate a list of ABI-encoded calldata for each step in the swap path.
 
@@ -714,12 +717,10 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                     )
                 )
 
-            for i, (swap_pool, _swap_amounts) in enumerate(zip(self.swap_pools, pool_swap_amounts)):
-                if swap_pool is last_pool:
-                    next_pool = None
-                else:
-                    next_pool = self.swap_pools[i + 1]
-
+            for i, (swap_pool, _swap_amounts) in enumerate(
+                zip(self.swap_pools, pool_swap_amounts, strict=False)
+            ):
+                next_pool = None if swap_pool is last_pool else self.swap_pools[i + 1]
                 if next_pool is not None:
                     # V2 pools require a pre-swap transfer, so the contract
                     # does not have to perform intermediate custody and the

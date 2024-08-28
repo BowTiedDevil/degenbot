@@ -1,12 +1,13 @@
-from degenbot.functions import next_base_fee, get_number_for_block_identifier
 import pytest
-import degenbot.config
 from eth_typing import (
     BlockNumber,
     Hash32,
     HexStr,
 )
 from hexbytes import HexBytes
+
+import degenbot.config
+from degenbot.functions import get_number_for_block_identifier, next_base_fee
 
 
 def test_converting_block_identifier_to_int(fork_mainnet_archive):
@@ -39,15 +40,13 @@ def test_converting_block_identifier_to_int(fork_mainnet_archive):
 
     # Hash32
     assert isinstance(
-        get_number_for_block_identifier(Hash32(int(1).to_bytes(length=32, byteorder="big"))),
+        get_number_for_block_identifier(Hash32((1).to_bytes(length=32, byteorder="big"))),
         int,
     )
 
     # HexStr
     assert isinstance(
-        get_number_for_block_identifier(
-            HexStr("0x" + int(128).to_bytes(32, byteorder="big").hex())
-        ),
+        get_number_for_block_identifier(HexStr("0x" + (128).to_bytes(32, byteorder="big").hex())),
         int,
     )
 

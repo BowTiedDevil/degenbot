@@ -1,8 +1,9 @@
 import pytest
-from degenbot.config import set_web3
-from degenbot.erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE, Erc20Token
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
+
+from degenbot.config import set_web3
+from degenbot.erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE, Erc20Token
 
 VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
@@ -86,7 +87,7 @@ def test_erc20token_functions(ethereum_full_node_web3):
     weth.get_total_supply()
     weth.get_approval(VITALIK_ADDRESS, weth.address)
     weth.get_balance(VITALIK_ADDRESS)
-    weth.price
+    _ = weth.price
 
 
 def test_ether_placeholder(ethereum_full_node_web3):

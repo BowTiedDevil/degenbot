@@ -5,7 +5,7 @@ from bisect import bisect_left
 from decimal import Decimal
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Tuple
+from typing import TYPE_CHECKING, Any, Literal
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress, HexStr
@@ -84,17 +84,17 @@ class V3LiquidityPool(AbstractLiquidityPool):
         address: str,
         fee: Literal[100, 500, 2500, 3000, 10000] | None = None,
         tick_spacing: int | None = None,
-        tokens: List[Erc20Token] | None = None,
-        abi: List[Any] | None = None,
+        tokens: list[Erc20Token] | None = None,
+        abi: list[Any] | None = None,
         factory_address: str | None = None,
         deployer_address: str | None = None,
         ticklens_address: str | None = None,
-        ticklens_abi: List[Any] | None = None,
+        ticklens_abi: list[Any] | None = None,
         init_hash: str | None = None,
         extra_words: int = 10,
         silent: bool = False,
-        tick_data: Dict[int, Dict[str, Any] | UniswapV3LiquidityAtTick] | None = None,
-        tick_bitmap: Dict[int, Dict[str, Any] | UniswapV3BitmapAtWord] | None = None,
+        tick_data: dict[int, dict[str, Any] | UniswapV3LiquidityAtTick] | None = None,
+        tick_bitmap: dict[int, dict[str, Any] | UniswapV3BitmapAtWord] | None = None,
         state_block: int | None = None,
         archive_states: bool = True,
         verify_address: bool = True,
@@ -144,7 +144,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 init_hash if init_hash is not None else UNISWAP_V3_MAINNET_POOL_INIT_HASH
             )
             if ticklens_address is None:
-                raise ValueError("TickLens address for pool is unknown.")
+                raise ValueError("TickLens address for pool is unknown.") from None
             self.ticklens_address = to_checksum_address(ticklens_address)
             self.ticklens_abi = (
                 ticklens_abi if ticklens_abi is not None else UNISWAP_V3_TICKLENS_ABI
@@ -194,7 +194,8 @@ class V3LiquidityPool(AbstractLiquidityPool):
             verified_address = self._verified_address()
             if verified_address != self.address:
                 raise ValueError(
-                    f"Pool address verification failed. Provided: {self.address}, expected: {verified_address}"
+                    f"Pool address verification failed. Provided: {self.address}, "
+                    f"expected: {verified_address}"
                 )
 
         self.name = f"{self.token0}-{self.token1} (V3, {self.fee / 10000:.2f}%)"
@@ -205,8 +206,8 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 f"Must provide both tick_bitmap and tick_data! Got {tick_bitmap=}, {tick_data=}"
             )
 
-        # If a snapshot was provided, assume it is complete.
-        self.sparse_bitmap = False if tick_bitmap is not None and tick_data is not None else True
+        # If tick info was not provided, treat the bitmap as sparse
+        self.sparse_bitmap = tick_bitmap is None or tick_data is None
 
         if tick_bitmap is not None:
             # transform dict to UniswapV3BitmapAtWord
@@ -259,7 +260,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             block_identifier=self.update_block
         )
 
-        self._pool_state_archive: Dict[int, UniswapV3PoolState] = {}
+        self._pool_state_archive: dict[int, UniswapV3PoolState] = {}
         if archive_states:
             self._pool_state_archive[self.update_block] = self.state
 
@@ -296,7 +297,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             **kwargs,
         )
 
-    def __getstate__(self) -> Dict[str, Any]:
+    def __getstate__(self) -> dict[str, Any]:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
         copied_attributes = (
@@ -319,7 +320,10 @@ class V3LiquidityPool(AbstractLiquidityPool):
             }
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self.fee})"
+        return (
+            f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, "
+            f"fee={self.fee})"
+        )
 
     def __str__(self) -> str:
         return self.name
@@ -332,9 +336,9 @@ class V3LiquidityPool(AbstractLiquidityPool):
         override_start_liquidity: int | None = None,
         override_start_sqrt_price_x96: int | None = None,
         override_start_tick: int | None = None,
-        override_tick_data: Dict[int, Any] | None = None,
-        override_tick_bitmap: Dict[int, Any] | None = None,
-    ) -> Tuple[int, int, int, int, int]:
+        override_tick_data: dict[int, Any] | None = None,
+        override_tick_bitmap: dict[int, Any] | None = None,
+    ) -> tuple[int, int, int, int, int]:
         """
         This function is ported and adapted from the UniswapV3Pool.sol contract at
         https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol
@@ -405,7 +409,8 @@ class V3LiquidityPool(AbstractLiquidityPool):
                     )
                 continue
 
-            # Ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of these bounds
+            # Ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of
+            # these bounds
             if step.tick_next < TickMath.MIN_TICK:
                 step.tick_next = TickMath.MIN_TICK
             elif step.tick_next > TickMath.MAX_TICK:
@@ -413,7 +418,8 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
             step.sqrt_price_next_x96 = TickMath.getSqrtRatioAtTick(step.tick_next)
 
-            # compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
+            # compute values to swap to the target tick, price limit, or point where input/output
+            # amount is exhausted
             state.sqrt_price_x96, step.amount_in, step.amount_out, step.fee_amount = (
                 SwapMath.computeSwapStep(
                     state.sqrt_price_x96,
@@ -441,9 +447,9 @@ class V3LiquidityPool(AbstractLiquidityPool):
                     state.amount_calculated + step.amount_in + step.fee_amount
                 )
 
-            # shift tick if we reached the next price
+            # Shift tick if we reached the next price
             if state.sqrt_price_x96 == step.sqrt_price_next_x96:  # pragma: no branch
-                # if the tick is initialized, run the tick transition
+                # If the tick is initialized, run the tick transition
                 if step.initialized:
                     liquidity_net_at_next_tick = _tick_data[step.tick_next].liquidityNet
                     if zero_for_one:
@@ -454,7 +460,8 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 state.tick = step.tick_next - 1 if zero_for_one else step.tick_next
 
             elif state.sqrt_price_x96 != step.sqrt_price_start_x96:  # pragma: no branch
-                # recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
+                # Recompute unless we're on a lower tick boundary (i.e. already transitioned ticks),
+                # and haven't moved
                 state.tick = TickMath.getTickAtSqrtRatio(state.sqrt_price_x96)
 
         amount0, amount1 = (
@@ -509,9 +516,10 @@ class V3LiquidityPool(AbstractLiquidityPool):
                     block=block_number,
                 )
 
-    def _get_tick_bitmap_word_and_bit_position(self, tick: int) -> Tuple[int, int]:
+    def _get_tick_bitmap_word_and_bit_position(self, tick: int) -> tuple[int, int]:
         """
-        Retrieves the word and bit position (both zero indexed) for the tick. Accounts for the pool spacing.
+        Retrieves the word and bit position (both zero indexed) for the tick. Accounts for the tick
+        spacing.
         """
         return TickBitmap.position(int(Decimal(tick) // self.tick_spacing))
 
@@ -569,13 +577,13 @@ class V3LiquidityPool(AbstractLiquidityPool):
         )
 
     @property
-    def tick_bitmap(self) -> Dict[int, UniswapV3BitmapAtWord]:
+    def tick_bitmap(self) -> dict[int, UniswapV3BitmapAtWord]:
         if TYPE_CHECKING:
             assert self.state.tick_bitmap is not None
         return self.state.tick_bitmap
 
     @tick_bitmap.setter
-    def tick_bitmap(self, new_tick_bitmap: Dict[int, UniswapV3BitmapAtWord]) -> None:
+    def tick_bitmap(self, new_tick_bitmap: dict[int, UniswapV3BitmapAtWord]) -> None:
         self.state = UniswapV3PoolState(
             pool=self.address,
             liquidity=self.liquidity,
@@ -586,13 +594,13 @@ class V3LiquidityPool(AbstractLiquidityPool):
         )
 
     @property
-    def tick_data(self) -> Dict[int, UniswapV3LiquidityAtTick]:
+    def tick_data(self) -> dict[int, UniswapV3LiquidityAtTick]:
         if TYPE_CHECKING:
             assert self.state.tick_data is not None
         return self.state.tick_data
 
     @tick_data.setter
-    def tick_data(self, new_tick_data: Dict[int, UniswapV3LiquidityAtTick]) -> None:
+    def tick_data(self, new_tick_data: dict[int, UniswapV3LiquidityAtTick]) -> None:
         self.state = UniswapV3PoolState(
             pool=self.address,
             liquidity=self.liquidity,
@@ -624,7 +632,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
         self,
         block_number: int | None = None,
         silent: bool = True,
-    ) -> Tuple[bool, UniswapV3PoolState]:
+    ) -> tuple[bool, UniswapV3PoolState]:
         """
         Retrieves the current slot0 and liquidity values from the LP, stores any that have changed,
         and returns a tuple with a status boolean indicating whether any update was found,
@@ -686,7 +694,8 @@ class V3LiquidityPool(AbstractLiquidityPool):
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
-        to calculate the number of tokens withdrawn (out) for a given number of tokens deposited (in).
+        to calculate the number of tokens withdrawn (out) for a given number of tokens deposited
+        (in).
 
         It is similar to calling quoteExactInputSingle using the quoter contract with arguments:
         `quoteExactInputSingle(
@@ -697,17 +706,11 @@ class V3LiquidityPool(AbstractLiquidityPool):
             sqrt_price_limitX96 = 0
         )` which returns the value `amountOut`
 
-        Note that this wrapper function always assumes that the sqrt_price_limit_x96 argument is unset,
-        thus the swap calculation will continue until the target amount is satisfied, regardless of
-        price impact.
+        Note that this wrapper function always assumes that the sqrt_price_limit_x96 argument is
+        unset, thus the swap calculation will continue until the target amount is satisfied,
+        regardless of price impact.
 
-        Accepts a dictionary of state values (`override_state`) to allow calculations beginning from an
-        arbitrary starting point. This dictionary must have one or more of the following keys:
-            - 'liquidity'
-            - 'sqrt_price_x96'
-            - 'tick'
-            - 'tick_data'  (not yet implemented)
-            - 'tick_bitmap'  (not yet implemented)
+        Accepts an override of state values.
         """
 
         if token_in not in self.tokens:  # pragma: no cover
@@ -752,7 +755,8 @@ class V3LiquidityPool(AbstractLiquidityPool):
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_in_from_tokens_out`
-        to calculate the number of tokens deposited (in) for a given number of tokens withdrawn (out).
+        to calculate the number of tokens deposited (in) for a given number of tokens withdrawn
+        (out).
 
         It is similar to calling quoteExactOutputSingle using the quoter contract with arguments:
         `quoteExactOutputSingle(
@@ -763,16 +767,11 @@ class V3LiquidityPool(AbstractLiquidityPool):
             sqrtPriceLimitX96 = 0
         )` which returns the value `amountIn`
 
-        Note that this wrapper function always assumes that the sqrtPriceLimitX96 argument is unset, thus the
-        swap calculation will continue until the target amount is satisfied, regardless of price impact
+        Note that this wrapper function always assumes that the sqrtPriceLimitX96 argument is unset,
+        thus the swap calculation will continue until the target amount is satisfied, regardless of
+        price impact
 
-        Accepts a dictionary of state values (`override_state`) to allow calculations beginning from an
-        arbitrary starting point. This dictionary must have one or more of the following keys:
-            - 'liquidity'
-            - 'sqrt_price_x96'
-            - 'tick'
-            - 'tick_data'
-            - 'tick_bitmap'
+        Accepts an override of state values.
         """
 
         if token_out not in self.tokens:  # pragma: no cover
@@ -829,13 +828,15 @@ class V3LiquidityPool(AbstractLiquidityPool):
             - `liquidity_change`: tuple of (liquidity_delta, lower_tick, upper_tick). The delta can
                 be positive or negative to indicate added or removed liquidity.
 
-        `block_number` is validated against the most recently recorded block prior to recording any changes.
+        `block_number` is validated against the most recently recorded block prior to recording any
+        changes.
 
         If any update is processed, `self.state` and `self.update_block` are updated.
 
         Returns a bool indicating whether any updated state value was recorded.
 
-        @dev This method uses a lock to guard state-modifying methods that might cause race conditions when used with threads.
+        @dev This method uses a lock to guard state-modifying methods that might cause race
+        conditions when used with threads.
         """
 
         if TYPE_CHECKING:
@@ -843,7 +844,8 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
-                f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"
+                f"Rejected update for block {update.block_number} in the past, "
+                f"current update block is {self.update_block}"
             )
 
         with self._state_lock:
@@ -870,7 +872,10 @@ class V3LiquidityPool(AbstractLiquidityPool):
                     liquidity_before = self.liquidity
                     self.liquidity += liquidity_delta
                     logger.debug(
-                        f"Adjusting in-range liquidity, TX {update.tx}, tick range = [{lower_tick},{upper_tick}], current tick = {self.tick}, {self.address=}, previous liquidity = {liquidity_before}, liquidity change = {liquidity_delta}, current liquidity = {self.liquidity}"
+                        f"Adjusting in-range liquidity, TX {update.tx}, "
+                        f"tick range = [{lower_tick},{upper_tick}], current tick = {self.tick}, "
+                        f"{self.address=}, previous liquidity = {liquidity_before}, "
+                        f"liquidity change = {liquidity_delta}, new liquidity = {self.liquidity}"
                     )
 
                 for tick in (lower_tick, upper_tick):
@@ -882,11 +887,12 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
                         if self.sparse_bitmap:
                             logger.debug(
-                                f"(external_update) {tick_word=} not found in tick_bitmap {self.tick_bitmap.keys()=}"
+                                f"(external_update) {tick_word=} not found in tick_bitmap."
                             )
                             self._fetch_tick_data_at_word(
                                 word_position=tick_word,
-                                # Fetch the word using the previous block as a known "good" state snapshot
+                                # Fetch the word using the previous block as a known "good" state
+                                # snapshot
                                 block_number=update.block_number - 1,
                             )
 
@@ -901,7 +907,6 @@ class V3LiquidityPool(AbstractLiquidityPool):
                             self.tick_data[tick].liquidityGross,
                         )
                     except (KeyError, AttributeError):
-                        # if it doesn't exist, initialize the tick and set the current values to zero
                         tick_liquidity_net = 0
                         tick_liquidity_gross = 0
                         TickBitmap.flipTick(
@@ -943,7 +948,8 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 logger.debug(f"SqrtPriceX96: {self.sqrt_price_x96}")
                 logger.debug(f"Tick: {self.tick}")
                 logger.debug(
-                    f"liquidity event: {liquidity_delta} in tick range [{lower_tick},{upper_tick}], pool: {self.name}"
+                    f"liquidity event: {liquidity_delta} in tick range "
+                    f"[{lower_tick},{upper_tick}], pool: {self.name}"
                     "\n"
                     f"old liquidity: {tick_liquidity_net} net, {tick_liquidity_gross} gross"
                     "\n"

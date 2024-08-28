@@ -1,5 +1,3 @@
-from typing import Dict
-
 from eth_typing import ChainId, ChecksumAddress
 from eth_utils.address import to_checksum_address
 
@@ -16,8 +14,6 @@ from .types import (
     UniswapV2ExchangeDeployment,
     UniswapV3ExchangeDeployment,
 )
-
-# TODO add Base exchanges: SwapBased V2, PancakeSwap V2, PancakeSwap V3
 
 # Mainnet DEX --------------- START
 EthereumMainnetUniswapV2 = UniswapV2ExchangeDeployment(
@@ -309,9 +305,9 @@ ArbitrumSushiswapV3Router = UniswapRouterDeployment(
 # ----------------------------- END
 
 
-FACTORY_DEPLOYMENTS: Dict[
+FACTORY_DEPLOYMENTS: dict[
     int,  # chain ID
-    Dict[ChecksumAddress, UniswapFactoryDeployment],
+    dict[ChecksumAddress, UniswapFactoryDeployment],
 ] = {
     ChainId.ETH: {
         EthereumMainnetSushiswapV2.factory.address: EthereumMainnetSushiswapV2.factory,
@@ -336,9 +332,9 @@ FACTORY_DEPLOYMENTS: Dict[
 }
 
 
-ROUTER_DEPLOYMENTS: Dict[
+ROUTER_DEPLOYMENTS: dict[
     int,  # chain ID
-    Dict[
+    dict[
         ChecksumAddress,  # Router Address
         UniswapRouterDeployment,
     ],
@@ -350,8 +346,8 @@ ROUTER_DEPLOYMENTS: Dict[
         EthereumMainnetUniswapV3Router.address: EthereumMainnetUniswapV3Router,
         EthereumMainnetUniswapV3Router2.address: EthereumMainnetUniswapV3Router2,
         EthereumMainnetUniswapUniversalRouter.address: EthereumMainnetUniswapUniversalRouter,
-        EthereumMainnetUniswapUniversalRouterV1_2.address: EthereumMainnetUniswapUniversalRouterV1_2,
-        EthereumMainnetUniswapUniversalRouterV1_3.address: EthereumMainnetUniswapUniversalRouterV1_3,
+        EthereumMainnetUniswapUniversalRouterV1_2.address: EthereumMainnetUniswapUniversalRouterV1_2,  # noqa: E501
+        EthereumMainnetUniswapUniversalRouterV1_3.address: EthereumMainnetUniswapUniversalRouterV1_3,  # noqa: E501
     },
     ChainId.BASE: {
         BaseSushiswapRouter.address: BaseSushiswapRouter,
@@ -364,9 +360,9 @@ ROUTER_DEPLOYMENTS: Dict[
 }
 
 
-TICKLENS_DEPLOYMENTS: Dict[
+TICKLENS_DEPLOYMENTS: dict[
     int,  # Chain ID
-    Dict[
+    dict[
         ChecksumAddress,  # Factory address
         UniswapTickLensDeployment,
     ],

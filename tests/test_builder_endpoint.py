@@ -1,9 +1,10 @@
 import aiohttp
 import eth_account
 import pytest
+from eth_account.signers.local import LocalAccount
+
 from degenbot.builder_endpoint import BuilderEndpoint
 from degenbot.fork.anvil_fork import AnvilFork
-from eth_account.signers.local import LocalAccount
 
 BEAVERBUILD_URL = "https://rpc.beaverbuild.org"
 BUILDER0X69_URL = "https://builder0x69.io"

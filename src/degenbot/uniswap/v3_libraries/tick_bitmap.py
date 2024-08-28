@@ -1,5 +1,4 @@
 from decimal import Decimal
-from typing import Dict, Tuple
 
 from ...constants import MAX_UINT8
 from ...exceptions import BitmapWordUnavailableError, EVMRevertError, MissingTickWordError
@@ -9,7 +8,7 @@ from . import bit_math as BitMath
 
 
 def flipTick(
-    tick_bitmap: Dict[int, "UniswapV3BitmapAtWord"],
+    tick_bitmap: dict[int, "UniswapV3BitmapAtWord"],
     tick: int,
     tick_spacing: int,
     update_block: int | None = None,
@@ -25,26 +24,27 @@ def flipTick(
         tick_bitmap[word_pos].bitmap ^= mask
         tick_bitmap[word_pos].block = update_block
     except KeyError:
-        raise MissingTickWordError(f"Called flipTick on missing word={word_pos}")
+        raise MissingTickWordError(f"Called flipTick on missing word={word_pos}") from None
     else:
         logger.debug(f"Flipped {tick=} @ {word_pos=}, {bit_pos=}")
 
 
-def position(tick: int) -> Tuple[int, int]:
+def position(tick: int) -> tuple[int, int]:
     word_pos: int = tick >> 8
     bit_pos: int = tick % 256
     return word_pos, bit_pos
 
 
 def nextInitializedTickWithinOneWord(
-    tick_bitmap: Dict[int, "UniswapV3BitmapAtWord"],
+    tick_bitmap: dict[int, "UniswapV3BitmapAtWord"],
     tick: int,
     tick_spacing: int,
     less_than_or_equal: bool,
-) -> Tuple[int, bool]:
+) -> tuple[int, bool]:
     compressed = int(
+        # Uses Decimal so floor division of negative ticks round to zero, matching EVM
         Decimal(tick) // tick_spacing
-    )  # tick can be negative, use Decimal so floor division rounds to zero instead of negative infinity
+    )
     if tick < 0 and tick % tick_spacing != 0:
         compressed -= 1  # round towards negative infinity
 
@@ -54,15 +54,15 @@ def nextInitializedTickWithinOneWord(
         try:
             bitmap_at_word = tick_bitmap[word_pos].bitmap
         except KeyError:
-            raise BitmapWordUnavailableError("Bitmap unavailable.", word_pos)
+            raise BitmapWordUnavailableError("Bitmap unavailable.", word_pos) from None
 
         # all the 1s at or to the right of the current bitPos
         mask = 2 * (1 << bit_pos) - 1
         masked = bitmap_at_word & mask
 
-        # if there are no initialized ticks to the right of or at the current tick, return rightmost in the word
+        # If there are no initialized ticks to the right of or at the current tick, return rightmost
+        # in the word
         initialized_status = masked != 0
-        # overflow/underflow is possible, but prevented externally by limiting both tickSpacing and tick
         next_tick = (
             (compressed - (bit_pos - BitMath.mostSignificantBit(masked))) * tick_spacing
             if initialized_status
@@ -75,15 +75,15 @@ def nextInitializedTickWithinOneWord(
         try:
             bitmap_at_word = tick_bitmap[word_pos].bitmap
         except KeyError:
-            raise BitmapWordUnavailableError("Bitmap unavailable.", word_pos)
+            raise BitmapWordUnavailableError("Bitmap unavailable.", word_pos) from None
 
         # all the 1s at or to the left of the bitPos
         mask = ~((1 << bit_pos) - 1)
         masked = bitmap_at_word & mask
 
-        # if there are no initialized ticks to the left of the current tick, return leftmost in the word
+        # If there are no initialized ticks to the left of the current tick, return leftmost in the
+        # word
         initialized_status = masked != 0
-        # overflow/underflow is possible, but prevented externally by limiting both tickSpacing and tick
         next_tick = (
             (compressed + 1 + (BitMath.leastSignificantBit(masked) - bit_pos)) * tick_spacing
             if initialized_status

@@ -1,6 +1,7 @@
 import abc
 import dataclasses
-from typing import TYPE_CHECKING, Any, Iterator, Protocol, Sequence, Set
+from collections.abc import Iterator, Sequence
+from typing import TYPE_CHECKING, Any, Protocol
 
 from eth_typing import ChecksumAddress
 
@@ -27,7 +28,7 @@ class Publisher(Protocol):
     Can publish updates and accept subscriptions.
     """
 
-    _subscribers: Set["Subscriber"]
+    _subscribers: set["Subscriber"]
 
 
 class Subscriber(Protocol):
@@ -87,7 +88,7 @@ class AbstractLiquidityPool(abc.ABC, Publisher):
     name: str
     state: AbstractPoolState
     tokens: Sequence["Erc20Token"]
-    _subscribers: Set[Subscriber]
+    _subscribers: set[Subscriber]
 
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, AbstractLiquidityPool):

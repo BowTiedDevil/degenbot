@@ -1,6 +1,6 @@
+from collections.abc import Callable, Iterable, Iterator
 from fractions import Fraction
 from itertools import cycle
-from typing import Callable, Iterable, Iterator, List, Tuple
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -11,7 +11,7 @@ from hexbytes import HexBytes
 from ..functions import create2_address
 
 
-def decode_v3_path(path: bytes) -> List[ChecksumAddress | int]:
+def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
     """
     Decode the `path` bytes used by the Uniswap V3 Router/Router2 contracts. `path` is a
     close-packed encoding of 20 byte pool addresses, interleaved with 3 byte fees.
@@ -34,7 +34,7 @@ def decode_v3_path(path: bytes) -> List[ChecksumAddress | int]:
         raise ValueError("Invalid path.")
 
     chunk_length_and_decoder_function: Iterator[
-        Tuple[
+        tuple[
             int,
             Callable[
                 [bytes],
@@ -49,7 +49,7 @@ def decode_v3_path(path: bytes) -> List[ChecksumAddress | int]:
     )
 
     path_offset = 0
-    decoded_path: List[ChecksumAddress | int] = []
+    decoded_path: list[ChecksumAddress | int] = []
     while path_offset != len(path):
         byte_length, extraction_func = next(chunk_length_and_decoder_function)
         chunk = HexBytes(path[path_offset : path_offset + byte_length])

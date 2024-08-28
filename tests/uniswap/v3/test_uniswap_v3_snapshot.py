@@ -1,4 +1,7 @@
 import pytest
+from eth_utils.address import to_checksum_address
+from web3 import Web3
+
 from degenbot.config import set_web3
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.uniswap.managers import UniswapV3LiquidityPoolManager
@@ -8,11 +11,12 @@ from degenbot.uniswap.v3_dataclasses import (
     UniswapV3LiquidityEvent,
 )
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
-from eth_utils.address import to_checksum_address
-from web3 import Web3
 
 EMPTY_SNAPSHOT_FILENAME = "tests/uniswap/v3/empty_v3_liquidity_snapshot.json"
-EMPTY_SNAPSHOT_BLOCK = 12_369_620  # Uniswap V3 factory was deployed on the next block, so use this as the initial zero state
+EMPTY_SNAPSHOT_BLOCK = (
+    # Uniswap V3 factory was deployed on the next block, so use this as the initial zero state
+    12_369_620
+)
 
 
 @pytest.fixture

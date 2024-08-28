@@ -71,6 +71,16 @@ ignore_missing_imports = true
 line-length = 100
 indent-width = 4
 
+[tool.ruff.lint]
+select = [    
+    "E",    # pycodestyle    
+    "F",    # Pyflakes    
+    "UP",   # pyupgrade    
+    "B",    # flake8-bugbear    
+    "SIM",  # flake8-simplify    
+    "I",    # isort
+]
+
 [tool.coverage.run]
 source = ["src/degenbot"]
 
@@ -87,6 +97,6 @@ exclude_also = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "--cov --cov-branch --cov-report=html"
+addopts = "--cov --cov-branch --cov-report=html --cov-append"
 python_files = "test_*.py"
 testpaths = "tests"

@@ -1,4 +1,3 @@
-from typing import Dict
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -8,9 +7,9 @@ from ..logging import logger
 
 # Internal state dictionary that maintains a keyed dictionary of all token objects. The top level
 # dict is keyed by chain ID, and sub-dicts are keyed by the checksummed token address.
-_all_tokens: Dict[
+_all_tokens: dict[
     int,
-    Dict[ChecksumAddress, AbstractErc20Token],
+    dict[ChecksumAddress, AbstractErc20Token],
 ] = {}
 
 

@@ -1,7 +1,8 @@
 from bisect import bisect_left
+from collections.abc import Iterable
 from fractions import Fraction
 from threading import Lock
-from typing import Any, Dict, Iterable, List, Literal, Tuple
+from typing import Any, Literal
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -72,10 +73,10 @@ class LiquidityPool(AbstractLiquidityPool):
     def __init__(
         self,
         address: ChecksumAddress | str,
-        tokens: List[Erc20Token] | None = None,
+        tokens: list[Erc20Token] | None = None,
         name: str | None = None,
         update_method: Literal["polling", "external"] = "polling",
-        abi: List[Any] | None = None,
+        abi: list[Any] | None = None,
         factory_address: str | None = None,
         deployer_address: str | None = None,
         init_hash: str | None = None,
@@ -182,7 +183,8 @@ class LiquidityPool(AbstractLiquidityPool):
             verified_address = self._verified_address()
             if verified_address != self.address:
                 raise ValueError(
-                    f"Pool address verification failed. Provided: {self.address}, expected: {verified_address}"
+                    f"Pool address verification failed. Provided: {self.address}, "
+                    f"expected: {verified_address}"
                 )
 
         if name is not None:
@@ -191,11 +193,15 @@ class LiquidityPool(AbstractLiquidityPool):
             fee_string = (
                 f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
                 if self.fee_token0 == self.fee_token1
-                else f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
+                else (
+                    f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
+                    "/"
+                    f"{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
+                )
             )
             self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
 
-        self._pool_state_archive: Dict[int, UniswapV2PoolState] = {}
+        self._pool_state_archive: dict[int, UniswapV2PoolState] = {}
         if archive_states:
             self._pool_state_archive[self._update_block] = self.state
 
@@ -208,7 +214,7 @@ class LiquidityPool(AbstractLiquidityPool):
             logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
             logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
 
-    def __getstate__(self) -> Dict[str, Any]:
+    def __getstate__(self) -> dict[str, Any]:
         # Remove objects that either cannot be pickled or are unnecessary to perform the calculation
         copied_attributes = ()
         dropped_attributes = (
@@ -226,7 +232,10 @@ class LiquidityPool(AbstractLiquidityPool):
             }
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1})"
+        return (
+            f"{self.__class__.__name__}(address={self.address}, "
+            f"token0={self.token0}, token1={self.token1})"
+        )
 
     def _verified_address(self) -> ChecksumAddress:
         return generate_v2_pool_address(
@@ -278,7 +287,7 @@ class LiquidityPool(AbstractLiquidityPool):
         self,
         block_number: int | None = None,
         silent: bool = True,
-    ) -> Tuple[bool, UniswapV2PoolState]:
+    ) -> tuple[bool, UniswapV2PoolState]:
         found_updates = self.update_reserves(
             silent=silent,
             print_ratios=not silent,
@@ -369,7 +378,8 @@ class LiquidityPool(AbstractLiquidityPool):
             fee = self.fee_token1
         else:  # pragma: no cover
             raise ValueError(
-                f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"
+                f"Could not identify token_out: {token_out}! This pool holds: "
+                f"{self.token0} {self.token1}"
             )
 
         # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
@@ -571,11 +581,6 @@ class LiquidityPool(AbstractLiquidityPool):
             self._update_block, self.state = list(self._pool_state_archive.items())[-1]
             self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
 
-    def set_swap_target(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover
-        raise DeprecationWarning(
-            "set_swap_target has been deprecated. Please convert your code to use the calculate_tokens_in_from_ratio_out method directly."
-        )
-
     def simulate_add_liquidity(
         self,
         added_reserves_token0: int,
@@ -710,7 +715,6 @@ class LiquidityPool(AbstractLiquidityPool):
         self,
         silent: bool = False,
         print_reserves: bool = True,
-        print_ratios: bool = True,
         external_token0_reserves: int | None = None,
         external_token1_reserves: int | None = None,
         override_update_method: str | None = None,
@@ -725,14 +729,15 @@ class LiquidityPool(AbstractLiquidityPool):
 
         update_method = override_update_method or self._update_method
 
-        # Fetch the chain height if a specific update_block is not provided
         if update_block is None:
             update_block = config.get_web3().eth.get_block_number()
 
-        # discard stale updates, but allow updating the same pool multiple times per block (necessary if sending sync events individually)
+        # Discard stale updates, but allow updating the same pool multiple times per block
+        # (necessary if sending sync events individually)
         if update_block < self._update_block:
             raise ExternalUpdateError(
-                f"Current state recorded at block {self._update_block}, received update for stale block {update_block}"
+                f"Current state recorded at block {self._update_block}, received update for stale "
+                f"block {update_block}"
             )
         else:
             self._update_block = update_block
@@ -762,13 +767,6 @@ class LiquidityPool(AbstractLiquidityPool):
                         if print_reserves:
                             logger.info(f"{self.token0}: {self.reserves_token0}")
                             logger.info(f"{self.token1}: {self.reserves_token1}")
-                        if print_ratios:
-                            logger.info(
-                                f"{self.token0}/{self.token1}: {(self.reserves_token0/10**self.token0.decimals) / (self.reserves_token1/10**self.token1.decimals)}"
-                            )
-                            logger.info(
-                                f"{self.token1}/{self.token0}: {(self.reserves_token1/10**self.token1.decimals) / (self.reserves_token0/10**self.token0.decimals)}"
-                            )
             except Exception as e:
                 print(f"LiquidityPool: Exception in update_reserves (polling): {e}")
         elif update_method == "external":
@@ -802,13 +800,6 @@ class LiquidityPool(AbstractLiquidityPool):
                 if print_reserves:
                     logger.info(f"{self.token0}: {self.reserves_token0}")
                     logger.info(f"{self.token1}: {self.reserves_token1}")
-                if print_ratios:
-                    logger.info(
-                        f"{self.token0}/{self.token1}: {self.reserves_token0 / self.reserves_token1}"
-                    )
-                    logger.info(
-                        f"{self.token1}/{self.token0}: {self.reserves_token1 / self.reserves_token0}"
-                    )
         else:  # pragma: no cover
             raise ValueError(f"Update method {update_method} is not recognized.")
 
@@ -819,10 +810,10 @@ class CamelotLiquidityPool(LiquidityPool):
     def __init__(
         self,
         address: str,
-        tokens: List[Erc20Token] | None = None,
+        tokens: list[Erc20Token] | None = None,
         name: str | None = None,
         update_method: Literal["polling", "external"] = "polling",
-        abi: List[Any] | None = None,
+        abi: list[Any] | None = None,
         silent: bool = False,
     ) -> None:
         address = to_checksum_address(address)
@@ -984,8 +975,8 @@ class UnregisteredLiquidityPool(LiquidityPool):
     def __init__(
         self,
         address: ChecksumAddress | str,
-        tokens: List[Erc20Token],
-        abi: List[Any] | None = None,
+        tokens: list[Erc20Token],
+        abi: list[Any] | None = None,
         fee: Fraction | Iterable[Fraction] = Fraction(3, 1000),
     ) -> None:
         self._state_lock = Lock()

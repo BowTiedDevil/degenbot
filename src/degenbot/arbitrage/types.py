@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Any, List, Tuple
+from typing import Any
 
 from eth_typing import ChecksumAddress
 
@@ -13,7 +13,7 @@ class ArbitrageCalculationResult:
     profit_token: Erc20Token
     input_amount: int
     profit_amount: int
-    swap_amounts: List[Any]
+    swap_amounts: list[Any]
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -37,8 +37,8 @@ class UniswapPoolSwapVector:
 @dataclasses.dataclass(slots=True)
 class UniswapV2PoolSwapAmounts:
     pool: ChecksumAddress
-    amounts_in: Tuple[int, int]
-    amounts_out: Tuple[int, int]
+    amounts_in: tuple[int, int]
+    amounts_out: tuple[int, int]
     recipient: ChecksumAddress | None = None
 
 

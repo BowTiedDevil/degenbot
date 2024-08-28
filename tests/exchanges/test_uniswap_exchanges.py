@@ -1,7 +1,15 @@
 import random
 
 import pytest
+from eth_typing import ChecksumAddress
+from eth_utils.address import to_checksum_address
 
+from degenbot.exchanges.uniswap.deployments import (
+    FACTORY_DEPLOYMENTS,
+    ROUTER_DEPLOYMENTS,
+    TICKLENS_DEPLOYMENTS,
+)
+from degenbot.exchanges.uniswap.register import register_exchange, register_router
 from degenbot.exchanges.uniswap.types import (
     UniswapFactoryDeployment,
     UniswapRouterDeployment,
@@ -9,15 +17,7 @@ from degenbot.exchanges.uniswap.types import (
     UniswapV2ExchangeDeployment,
     UniswapV3ExchangeDeployment,
 )
-from degenbot.exchanges.uniswap.deployments import (
-    FACTORY_DEPLOYMENTS,
-    ROUTER_DEPLOYMENTS,
-    TICKLENS_DEPLOYMENTS,
-)
-from degenbot.exchanges.uniswap.register import register_exchange, register_router
 from degenbot.uniswap.abi import UNISWAP_V2_POOL_ABI, UNISWAP_V3_POOL_ABI
-from eth_typing import ChecksumAddress
-from eth_utils.address import to_checksum_address
 
 
 def _generate_random_address() -> ChecksumAddress:

@@ -1,4 +1,3 @@
-from typing import Dict
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -8,9 +7,9 @@ from ..logging import logger
 
 # Internal state dictionary that maintains a keyed dictionary of all pool objects. The top level
 # dict is keyed by chain ID, and sub-dicts are keyed by the checksummed pool address.
-_all_pools: Dict[
+_all_pools: dict[
     int,
-    Dict[ChecksumAddress, AbstractLiquidityPool],
+    dict[ChecksumAddress, AbstractLiquidityPool],
 ] = {}
 
 

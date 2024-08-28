@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Any, Dict, Tuple
+from typing import Any
 
 from eth_typing import ChecksumAddress
 
@@ -11,7 +11,7 @@ class UniswapV3BitmapAtWord:
     bitmap: int = 0
     block: int | None = dataclasses.field(compare=False, default=None)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
 
 
@@ -21,7 +21,7 @@ class UniswapV3LiquidityAtTick:
     liquidityGross: int = 0
     block: int | None = dataclasses.field(compare=False, default=None)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
 
 
@@ -41,7 +41,7 @@ class UniswapV3PoolExternalUpdate:
     sqrt_price_x96: int | None = None
     tick: int | None = None
     liquidity_change: (
-        Tuple[
+        tuple[
             int,  # Liquidity
             int,  # TickLower
             int,  # TickUpper
@@ -57,8 +57,8 @@ class UniswapV3PoolState(AbstractPoolState):
     liquidity: int
     sqrt_price_x96: int
     tick: int
-    tick_bitmap: Dict[int, UniswapV3BitmapAtWord] | None = dataclasses.field(default=None)
-    tick_data: Dict[int, UniswapV3LiquidityAtTick] | None = dataclasses.field(default=None)
+    tick_bitmap: dict[int, UniswapV3BitmapAtWord] | None = dataclasses.field(default=None)
+    tick_data: dict[int, UniswapV3LiquidityAtTick] | None = dataclasses.field(default=None)
 
     def copy(self) -> "UniswapV3PoolState":
         return UniswapV3PoolState(

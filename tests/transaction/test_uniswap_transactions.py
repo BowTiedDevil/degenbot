@@ -1,11 +1,12 @@
-from typing import Any, Dict
+from typing import Any
 
 import pytest
+from hexbytes import HexBytes
+
 from degenbot.config import set_web3
 from degenbot.exceptions import TransactionError
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.transaction.uniswap_transaction import UniswapTransaction
-from hexbytes import HexBytes
 
 
 @pytest.mark.parametrize(
@@ -128,7 +129,7 @@ from hexbytes import HexBytes
 def test_v2_router_transactions(
     fork_mainnet_archive: AnvilFork,
     block_number,
-    tx_dict: Dict[str, Any],
+    tx_dict: dict[str, Any],
     exception_match: str | None,
 ) -> None:
     fork_mainnet_archive.reset(block_number=block_number)
@@ -760,7 +761,7 @@ def test_v2_router_transactions(
 def test_v3_router_transactions(
     fork_mainnet_archive: AnvilFork,
     block_number: int,
-    tx_dict: Dict[str, Any],
+    tx_dict: dict[str, Any],
     exception_match: str | None,
 ):
     fork_mainnet_archive.reset(block_number=block_number)

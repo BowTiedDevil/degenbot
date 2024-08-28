@@ -1,4 +1,8 @@
 import pytest
+from eth_typing import ChainId
+from eth_utils.address import to_checksum_address
+from web3 import Web3
+
 from degenbot.config import set_web3
 from degenbot.exceptions import ManagerError, PoolNotAssociated
 from degenbot.exchanges.uniswap.types import (
@@ -11,9 +15,6 @@ from degenbot.registry.all_pools import AllPools
 from degenbot.uniswap.abi import PANCAKESWAP_V3_POOL_ABI, UNISWAP_V3_TICKLENS_ABI
 from degenbot.uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
-from eth_typing import ChainId
-from eth_utils.address import to_checksum_address
-from web3 import Web3
 
 MAINNET_UNISWAP_V2_FACTORY_ADDRESS = to_checksum_address(
     "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"

@@ -1,10 +1,9 @@
-from typing import Dict
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
-from ..logging import logger
 from ..erc20_token import Erc20Token
+from ..logging import logger
 
 
 class SimulationLedger:
@@ -18,9 +17,9 @@ class SimulationLedger:
     def __init__(self) -> None:
         # Entries are recorded as a dict-of-dicts, keyed by address, then by
         # token address
-        self.balances: Dict[
+        self.balances: dict[
             ChecksumAddress,  # address holding balance
-            Dict[
+            dict[
                 ChecksumAddress,  # token address
                 int,  # balance
             ],
@@ -65,7 +64,7 @@ class SimulationLedger:
 
         _address = to_checksum_address(address)
 
-        address_balance: Dict[ChecksumAddress, int]
+        address_balance: dict[ChecksumAddress, int]
         try:
             address_balance = self.balances[_address]
         except KeyError:
@@ -120,7 +119,7 @@ class SimulationLedger:
         else:
             _token_address = to_checksum_address(token)
 
-        address_balances: Dict[ChecksumAddress, int]
+        address_balances: dict[ChecksumAddress, int]
         try:
             address_balances = self.balances[_address]
         except KeyError:

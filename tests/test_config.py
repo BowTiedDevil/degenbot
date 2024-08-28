@@ -1,5 +1,6 @@
 import pytest
 import web3
+
 from degenbot.config import set_web3
 from degenbot.exceptions import DegenbotError
 

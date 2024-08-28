@@ -1,7 +1,10 @@
 import pickle
-from typing import Dict
 
 import pytest
+from eth_utils.address import to_checksum_address
+from hexbytes import HexBytes
+from web3 import Web3
+
 from degenbot.config import set_web3
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
@@ -20,9 +23,6 @@ from degenbot.uniswap.v3_dataclasses import (
     UniswapV3PoolState,
 )
 from degenbot.uniswap.v3_liquidity_pool import UNISWAP_V3_MAINNET_POOL_INIT_HASH, V3LiquidityPool
-from eth_utils.address import to_checksum_address
-from hexbytes import HexBytes
-from web3 import Web3
 
 WBTC_WETH_V3_POOL_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 WETH_CONTRACT_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
@@ -59,7 +59,6 @@ def convert_unsigned_integer_to_signed(num: int):
 
 
 def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool):
-    wbtc_weth_v3_lp_at_block_17_600_000
     word_position, _ = wbtc_weth_v3_lp_at_block_17_600_000._get_tick_bitmap_word_and_bit_position(
         wbtc_weth_v3_lp_at_block_17_600_000.tick
     )
@@ -129,7 +128,8 @@ def test_creation_with_bad_liquidity_overrides(ethereum_full_node_web3: Web3) ->
 def test_creation_with_invalid_hash(ethereum_full_node_web3: Web3) -> None:
     set_web3(ethereum_full_node_web3)
 
-    # Delete the preset deployment for this factory so the test uses the provided override instead of preferring the known valid deployment data
+    # Delete the preset deployment for this factory so the test uses the provided override instead
+    # of preferring the known valid deployment data
     factory_deployment = FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][
         UNISWAP_V3_FACTORY_ADDRESS
     ]
@@ -172,7 +172,7 @@ def test_reorg(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
     starting_state = lp.state
     starting_liquidity = lp.liquidity
 
-    block_states: Dict[int, UniswapV3PoolState] = {
+    block_states: dict[int, UniswapV3PoolState] = {
         wbtc_weth_v3_lp_at_block_17_600_000._update_block: lp.state
     }
 
@@ -213,7 +213,7 @@ def test_discard_before_finalized(wbtc_weth_v3_lp_at_block_17_600_000: V3Liquidi
     # Provide some dummy updates, then simulate a reorg back to the starting state
     starting_liquidity = lp.liquidity
 
-    block_states: Dict[int, UniswapV3PoolState] = {
+    block_states: dict[int, UniswapV3PoolState] = {
         wbtc_weth_v3_lp_at_block_17_600_000._update_block: lp.state
     }
 
@@ -669,7 +669,8 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -
         ),
     )
 
-    # Now repeat the liquidity change for a newer block and check that the in-range liquidity was adjusted
+    # Now repeat the liquidity change for a newer block and check that the in-range liquidity was
+    # adjusted
     wbtc_weth_v3_lp_at_block_17_600_000.external_update(
         update=UniswapV3PoolExternalUpdate(
             block_number=_START_BLOCK + 1,
@@ -705,7 +706,8 @@ def test_auto_update(fork_mainnet_archive: AnvilFork) -> None:
 
 def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
     """
-    Tests transaction 0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d, which executes a complex Burn/Swap/Mint
+    Tests transaction 0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d, which
+    executes a complex Burn/Swap/Mint
 
     State values taken from Tenderly: https://dashboard.tenderly.co/tx/mainnet/0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d/state-diff
     """
@@ -770,7 +772,8 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
 
 def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
     """
-    Tests transaction 0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b, which executes a complex Burn/Swap/Mint
+    Tests transaction 0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b, which
+    executes a complex Burn/Swap/Mint
 
     State values taken from Tenderly: https://dashboard.tenderly.co/tx/mainnet/0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b/state-diff
     """

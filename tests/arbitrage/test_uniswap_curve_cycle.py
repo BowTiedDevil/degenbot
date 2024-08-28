@@ -5,6 +5,7 @@ import pickle
 import time
 
 import pytest
+
 from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
 from degenbot.config import set_web3
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool

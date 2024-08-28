@@ -1,7 +1,8 @@
+from functools import cache
+
 from ...constants import MAX_UINT160, MAX_UINT256, MIN_UINT160
 from ...exceptions import EVMRevertError
 from . import yul_operations as yul
-from functools import cache
 
 MIN_TICK = -887272
 MAX_TICK = -MIN_TICK
@@ -63,9 +64,9 @@ def getSqrtRatioAtTick(tick: int) -> int:
     if tick > 0:
         ratio = MAX_UINT256 // ratio
 
-    # this divides by 1<<32 rounding up to go from a Q128.128 to a Q128.96
-    # we then downcast because we know the result always fits within 160 bits due to our tick input constraint
-    # we round up in the division so getTickAtSqrtRatio of the output price is always consistent
+    # Divide by 1<<32, rounding up, to go from a Q128.128 to a Q128.96. Then downcast because the
+    # result always fits within 160 bits due to tick input constraint. We round up in the division
+    # so getTickAtSqrtRatio of the output price is always consistent.
     return (ratio >> 32) + (0 if (ratio % (1 << 32) == 0) else 1)
 
 
@@ -118,10 +119,7 @@ def getTickAtSqrtRatio(sqrt_price_x96: int) -> int:
     f = yul.gt(r, 0x1)
     msb = yul.or_(msb, f)
 
-    if msb >= 128:
-        r = ratio >> (msb - 127)
-    else:
-        r = ratio << (127 - msb)
+    r = ratio >> msb - 127 if msb >= 128 else ratio << 127 - msb
 
     log_2 = (int(msb) - 128) << 64
 
