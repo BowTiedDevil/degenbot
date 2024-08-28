@@ -302,8 +302,7 @@ class UniswapTransaction(AbstractTransaction):
 
         if last_swap and amount_out_min is not None and _amount_out < amount_out_min:
             raise TransactionError(
-                f"Insufficient output for swap! {_amount_out} {token_out} received, \
-                {amount_out_min} required"
+                f"Insufficient output for swap! {_amount_out} {token_out} received, {amount_out_min} required"  # noqa:E501
             )
 
         if not silent:
@@ -460,8 +459,7 @@ class UniswapTransaction(AbstractTransaction):
 
         if amount_out_min is not None and _amount_out < amount_out_min:
             raise TransactionError(
-                f"Insufficient output for swap! {_amount_out} {token_out} received, \
-                {amount_out_min} required"
+                f"Insufficient output for swap! {_amount_out} {token_out} received, {amount_out_min} required"  # noqa:E501
             )
 
         if not silent:
@@ -543,8 +541,7 @@ class UniswapTransaction(AbstractTransaction):
 
             if amount_in_max is not None and amount_in_max < _amount_in:
                 raise TransactionError(
-                    f"Insufficient input for exact output swap! {_amount_in} {token_in} required, \
-                    {amount_in_max} provided"
+                    f"Insufficient input for exact output swap! {_amount_in} {token_in} required, {amount_in_max} provided"  # noqa:E501
                 )
 
         if last_swap:
@@ -806,8 +803,7 @@ class UniswapTransaction(AbstractTransaction):
 
                     if sweep_token_balance < sweep_amount_min:
                         raise TransactionError(
-                            f"Requested sweep of min. {sweep_amount_min} WETH, received \
-                            {sweep_token_balance}"
+                            f"Requested sweep of min. {sweep_amount_min} WETH, received {sweep_token_balance}"  # noqa:E501
                         )
 
                     self._simulate_sweep(sweep_token_address, sweep_recipient)
@@ -905,8 +901,7 @@ class UniswapTransaction(AbstractTransaction):
 
                     if _wrapped_token_balance < _unwrap_amount_min:
                         raise TransactionError(
-                            f"Requested unwrap of min. {_unwrap_amount_min} WETH, received \
-                            {_wrapped_token_balance}"
+                            f"Requested unwrap of min. {_unwrap_amount_min} WETH, received {_wrapped_token_balance}"  # noqa:E501
                         )
 
                     self._simulate_unwrap(_wrapped_token_address)
@@ -1650,13 +1645,11 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_deadline = None
                             else:
                                 raise ValueError(
-                                    f"Could not extract parameters for function {func_name} with \
-                                        parameters {func_params['params']}"
+                                    f"Could not extract parameters for function {func_name} with parameters {func_params['params']}"  # noqa:E501
                                 )
                         else:
                             raise ValueError(
-                                f'Could not identify type for function params. Expected tuple or \
-                                    dict, got {type(func_params["params"])}'
+                                f'Could not identify type for function params. Expected tuple or dict, got {type(func_params["params"])}'  # noqa:E501
                             )
 
                         if tx_deadline:
@@ -1726,13 +1719,11 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_deadline = None
                             else:
                                 raise ValueError(
-                                    f"Could not extract parameters for function {func_name} with "
-                                    f"parameters {func_params['params']}"
+                                    f"Could not extract parameters for function {func_name} with parameters {func_params['params']}"  # noqa:E501
                                 )
                         else:
                             raise ValueError(
-                                f'Could not identify type for function params. Expected tuple or \
-                                    dict, got {type(func_params["params"])}'
+                                f"Could not identify type for function params. Expected tuple or dict, got {type(func_params['params'])}"  # noqa:E501
                             )
 
                         if tx_deadline:
@@ -1843,13 +1834,11 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_deadline = None
                             else:
                                 raise ValueError(
-                                    f"Could not extract parameters for function {func_name} with \
-                                        parameters {func_params['params']}"
+                                    f"Could not extract parameters for function {func_name} with parameters {func_params['params']}"  # noqa:E501
                                 )
                         else:
                             raise ValueError(
-                                f'Could not identify type for function params. Expected tuple or \
-                                    dict, got {type(func_params["params"])}'
+                                f"Could not identify type for function params. Expected tuple or dict, got {type(func_params['params'])}"  # noqa:E501
                             )
 
                         if tx_deadline:
@@ -1887,8 +1876,7 @@ class UniswapTransaction(AbstractTransaction):
 
                         if amount_deposited > tx_amount_in_max:
                             raise TransactionError(
-                                f"Maximum input exceeded. Specified {tx_amount_in_max}, \
-                                    {amount_deposited} required."
+                                f"Maximum input exceeded. Specified {tx_amount_in_max}, {amount_deposited} required."  # noqa:E501
                             )
 
                     case "exactOutput":
@@ -1923,13 +1911,11 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_deadline = None
                             else:
                                 raise ValueError(
-                                    f"Could not extract parameters for function {func_name} with \
-                                        parameters {func_params['params']}"
+                                    f"Could not extract parameters for function {func_name} with parameters {func_params['params']}"  # noqa:E501
                                 )
                         else:
                             raise ValueError(
-                                f'Could not identify type for function params. Expected tuple or \
-                                    dict, got {type(func_params["params"])}'
+                                f"Could not identify type for function params. Expected tuple or dict, got {type(func_params['params'])}"  # noqa:E501
                             )
 
                         if tx_deadline:
@@ -2032,9 +2018,7 @@ class UniswapTransaction(AbstractTransaction):
 
                                 if _amount_out != _last_amount_in:
                                     raise TransactionError(
-                                        f"Insufficient swap amount through requested pool \
-                                        {v3_pool}. Needed {_last_amount_in}, received \
-                                        {_amount_out}"
+                                        f"Insufficient swap amount through requested pool {v3_pool}. Needed {_last_amount_in}, received {_amount_out}"  # noqa:E501
                                     )
 
                             self.simulated_pool_states.append((v3_pool, v3_sim_result))
@@ -2051,8 +2035,7 @@ class UniswapTransaction(AbstractTransaction):
 
                             if amount_deposited > tx_amount_in_max:
                                 raise TransactionError(
-                                    f"Maximum input exceeded. Specified {tx_amount_in_max}, \
-                                    {amount_deposited} required."
+                                    f"Maximum input exceeded. Specified {tx_amount_in_max}, {amount_deposited} required."  # noqa:E501
                                 )
 
                     case "unwrapWETH9":
@@ -2065,8 +2048,7 @@ class UniswapTransaction(AbstractTransaction):
                         )
                         if wrapped_token_balance < amountMin:
                             raise TransactionError(
-                                f"Requested unwrap of min. {amountMin} WETH, received \
-                                {wrapped_token_balance}"
+                                f"Requested unwrap of min. {amountMin} WETH, received {wrapped_token_balance}"  # noqa:E501
                             )
 
                         self._simulate_unwrap(wrapped_token_address)
@@ -2085,8 +2067,7 @@ class UniswapTransaction(AbstractTransaction):
                         )
                         if wrapped_token_balance < _amount_in:
                             raise TransactionError(
-                                f"Requested unwrap of min. {_amount_in} WETH, received \
-                                {wrapped_token_balance}"
+                                f"Requested unwrap of min. {_amount_in} WETH, received {wrapped_token_balance}"  # noqa:E501
                             )
 
                         self._simulate_unwrap(wrapped_token_address)
@@ -2112,8 +2093,7 @@ class UniswapTransaction(AbstractTransaction):
 
                         if _balance < tx_amount_out_minimum:
                             raise TransactionError(
-                                f"Requested sweep of min. {tx_amount_out_minimum} \
-                                    {tx_token_address}, received {_balance}"
+                                f"Requested sweep of min. {tx_amount_out_minimum} {tx_token_address}, received {_balance}"  # noqa:E501
                             )
 
                         self._simulate_sweep(tx_token_address, tx_recipient)

@@ -98,8 +98,7 @@ class Erc20Token(AbstractErc20Token):
             self.name = "Unknown"
             self.name = self.name.strip("\x00")
             logger.warning(
-                f"Token contract at {self.address} does not implement a 'name' function. Setting "
-                f"to '{self.name}'"
+                f"Token contract at {self.address} does not implement a 'name' function. Setting to '{self.name}'"  # noqa:E501
             )
 
         try:
@@ -186,8 +185,7 @@ class Erc20Token(AbstractErc20Token):
             logger.info(f"• {self.symbol} ({self.name})")
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', \
-            decimals={self.decimals})"
+        return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"  # noqa:E501
 
     @property
     def w3_contract(self) -> Contract:

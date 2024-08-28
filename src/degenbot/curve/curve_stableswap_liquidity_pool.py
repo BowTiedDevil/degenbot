@@ -458,8 +458,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         if not silent:
             logger.info(
-                f"{self.name} @ {self.address}, A={self.a_coefficient}, \
-                    fee={100*self.fee/self.FEE_DENOMINATOR:.2f}%"
+                f"{self.name} @ {self.address}, A={self.a_coefficient}, fee={100*self.fee/self.FEE_DENOMINATOR:.2f}%"  # noqa:E501
             )
             for token_id, (token, balance) in enumerate(
                 zip(self.tokens, self.balances, strict=False)
@@ -479,8 +478,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
     def __repr__(self) -> str:  # pragma: no cover
         token_string = "-".join([token.symbol for token in self.tokens])
-        return f"CurveStableswapPool(address={self.address}, tokens={token_string}, \
-            fee={100*self.fee/self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"
+        return f"CurveStableswapPool(address={self.address}, tokens={token_string}, fee={100*self.fee/self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"  # noqa:E501
 
     def _update_pool_state(self) -> None:
         self.state = CurveStableswapPoolState(pool=self.address, balances=self.balances)

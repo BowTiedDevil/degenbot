@@ -326,8 +326,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
 
         if net_rate_of_exchange < min_rate_of_exchange:
             raise ArbitrageError(
-                f"No acceptable arbitrage at current rate of exchange \
-                    ({float(net_rate_of_exchange)}), minimum {float(min_rate_of_exchange)}."
+                f"No acceptable arbitrage at current rate of exchange ({float(net_rate_of_exchange)}), minimum {float(min_rate_of_exchange)}."  # noqa:E501
             )
 
     def _calculate(

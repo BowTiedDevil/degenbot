@@ -87,8 +87,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         except KeyError:
             if pool_abi is None or pool_init_hash is None:
                 raise ManagerError(
-                    "Cannot create pool manager without factory address, pool ABI, and pool init \
-                    hash."
+                    "Cannot create pool manager without factory address, pool ABI, and pool init hash."  # noqa:E501
                 ) from None
 
         super().__init__(
@@ -273,8 +272,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         except KeyError:
             if pool_abi is None or ticklens_address is None or pool_init_hash is None:
                 raise ManagerError(
-                    "Cannot create pool manager without factory address, ticklens address, pool \
-                    ABI, and pool init hash."
+                    "Cannot create pool manager without factory address, ticklens address, pool ABI, and pool init hash."  # noqa:E501
                 ) from None
             ticklens_address = to_checksum_address(ticklens_address)
             deployer_address = (
@@ -397,8 +395,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 )
             else:
                 logger.info(
-                    f"Initializing pool manager at address {self._factory_address} without \
-                    liquidity snapshot"
+                    f"Initializing pool manager at address {self._factory_address} without liquidity snapshot"  # noqa:E501
                 )
 
             # The pool is unknown, so build and add it
@@ -419,8 +416,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._add_tracked_pool(pool_helper)
                 assert isinstance(
                     pool_helper, V3LiquidityPool
-                ), f"{self} Attempted to return non-V3 pool {pool_helper}! {pool_address=}, \
-                    {token_addresses=}, {pool_fee=}"
+                ), f"{self} Attempted to return non-V3 pool {pool_helper}! {pool_address=}, {token_addresses=}, {pool_fee=}"  # noqa:E501
                 return pool_helper
 
         if not (pool_address is None) ^ (token_addresses is None and pool_fee is None):
@@ -458,6 +454,5 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
 
         assert isinstance(
             pool_helper, V3LiquidityPool
-        ), f"{self} Attempted to return non-V3 pool {pool_helper}! {pool_address=}, \
-            {token_addresses=}, {pool_fee=}"
+        ), f"{self} Attempted to return non-V3 pool {pool_helper}! {pool_address=}, {token_addresses=}, {pool_fee=}"  # noqa:E501
         return pool_helper

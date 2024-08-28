@@ -183,8 +183,7 @@ class BuilderEndpoint:
 
         if self.authentication_header_label is not None and signer_key is None:
             raise ValueError(
-                f"Must provide signing address and key for required header \
-                    {self.authentication_header_label}"
+                f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa: E501
             )
 
         payload = ujson.dumps(
@@ -235,8 +234,7 @@ class BuilderEndpoint:
 
         if self.authentication_header_label is not None and signer_key is None:
             raise ValueError(
-                f"Must provide signing address and key for required header \
-                    {self.authentication_header_label}"
+                f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
         if isinstance(tx_hash, bytes):
@@ -288,8 +286,7 @@ class BuilderEndpoint:
 
         if self.authentication_header_label is not None and signer_key is None:
             raise ValueError(
-                f"Must provide signing address and key for required header \
-                    {self.authentication_header_label}"
+                f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
         if block_number is None:
@@ -392,8 +389,7 @@ class BuilderEndpoint:
 
         if self.authentication_header_label is not None and signer_key is None:
             raise ValueError(
-                f"Must provide signing address and key for required header \
-                    {self.authentication_header_label}"
+                f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
         bundle_params: dict[str, Any] = {
@@ -477,8 +473,7 @@ class BuilderEndpoint:
 
         if self.authentication_header_label is not None and signer_key is None:
             raise ValueError(
-                f"Must provide signing address and key for required header \
-                    {self.authentication_header_label}"
+                f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
         if isinstance(raw_transaction, bytes):
@@ -539,8 +534,7 @@ class BuilderEndpoint:
 
         if self.authentication_header_label is not None and signer_key is None:
             raise ValueError(
-                f"Must provide signing address and key for required header \
-                    {self.authentication_header_label}"
+                f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
         if isinstance(raw_transaction, bytes):
