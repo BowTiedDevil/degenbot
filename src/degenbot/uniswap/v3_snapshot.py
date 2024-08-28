@@ -85,9 +85,12 @@ class UniswapV3LiquiditySnapshot:
         to_block: int,
         span: int = 1000,
     ) -> None:
-        def _process_log() -> Tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
-            decoded_event = get_event_data(config.get_web3().codec, event_abi, log)
-
+        def _process_log(log) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
+            decoded_event = get_event_data(
+                abi_codec=config.get_web3().codec,
+                event_abi=event_abi,
+                log_entry=log,
+            )
             pool_address = to_checksum_address(decoded_event["address"])
             tx_index = decoded_event["transactionIndex"]
             liquidity_block = decoded_event["blockNumber"]
@@ -142,7 +145,7 @@ class UniswapV3LiquiditySnapshot:
                         continue
 
                 for log in event_logs:
-                    pool_address, liquidity_event = _process_log()
+                    pool_address, liquidity_event = _process_log(log)
 
                     if liquidity_event.liquidity == 0:  # pragma: no cover
                         continue
