@@ -5,7 +5,7 @@ import pickle
 import time
 from fractions import Fraction
 from threading import Lock
-from typing import Sequence, Tuple
+from typing import Any, List, Sequence, Tuple
 
 import pytest
 from degenbot.arbitrage.arbitrage_dataclasses import (
@@ -2480,8 +2480,8 @@ def test_arbitrage_helper_subscriptions(
     assert wbtc_weth_arb in wbtc_weth_v3_lp._subscribers
 
     class TestSubscriber:
-        def __init__(self):
-            self.inbox = list()
+        def __init__(self) -> None:
+            self.inbox: List[Any] = list()
 
         def notify(self, publisher, message) -> None:
             self.inbox.append(message)
