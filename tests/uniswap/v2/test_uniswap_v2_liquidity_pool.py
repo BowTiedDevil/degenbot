@@ -288,7 +288,7 @@ def test_create_nonstandard_pools(
     bad_init_hash = UNISWAPV2_FACTORY_POOL_INIT_HASH.replace("a", "b")
     with pytest.raises(
         ValueError,
-        match=f"Pool address {UNISWAP_V2_WBTC_WETH_POOL} does not match deterministic address",
+        match="Pool address verification failed",
     ):
         LiquidityPool(
             address=UNISWAP_V2_WBTC_WETH_POOL,

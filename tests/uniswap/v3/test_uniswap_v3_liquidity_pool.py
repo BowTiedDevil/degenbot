@@ -105,7 +105,7 @@ def test_creation_with_bad_tokens(ethereum_full_node_web3: Web3) -> None:
             ],
         )
 
-    with pytest.raises(ValueError, match="does not match deterministic address"):
+    with pytest.raises(ValueError, match="Pool address verification failed"):
         # The bad token adddress will result in a mismatched CREATE2 address, so pool is implicitly
         # protected against incorrectly-overridden tokens
         V3LiquidityPool(
@@ -144,7 +144,7 @@ def test_creation_with_invalid_hash(ethereum_full_node_web3: Web3) -> None:
 
     with pytest.raises(
         ValueError,
-        match="does not match deterministic address",
+        match="Pool address verification failed",
     ):
         V3LiquidityPool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
