@@ -2306,7 +2306,7 @@ class UniswapTransaction(AbstractTransaction):
         elif func_name in NO_OP_FUNCTIONS:
             logger.debug(f"NON-OP: {func_name}")
         else:
-            raise ValueError(f"UNHANDLED: {func_name}")
+            raise TransactionError(f"Aborting simulation involving unknown function: {func_name}")
 
     def simulate(
         self,

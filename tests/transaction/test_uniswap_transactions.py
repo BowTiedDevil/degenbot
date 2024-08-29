@@ -124,6 +124,20 @@ from degenbot.transaction.uniswap_transaction import UniswapTransaction
             ),
             None,
         ),
+        (
+            20633610 - 1,
+            dict(
+                chain_id=1,
+                tx_hash="0xb73d4d15e0a215debed03950d368542017f1dc95f10ccd97ab9acb08a8129146",
+                tx_nonce=0,
+                tx_value=0,
+                tx_sender="0x9B8371c8F94991582eF84B0190726bFf2D23d5a3",
+                func_name="WETH",
+                func_params={},
+                router_address="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+            ),
+            "Aborting simulation involving unknown function",
+        ),
     ],
 )
 def test_v2_router_transactions(
