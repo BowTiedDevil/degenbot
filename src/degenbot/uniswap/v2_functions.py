@@ -39,7 +39,7 @@ def generate_v2_pool_address(
     return create2_address(
         deployer=deployer_address,
         salt=salt,
-        bytecode=init_hash,
+        init_code_hash=init_hash,
     )
 
 
