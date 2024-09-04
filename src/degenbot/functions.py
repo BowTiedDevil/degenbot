@@ -35,6 +35,35 @@ def create2_address(
     )
 
 
+def eip_1167_clone_address(
+    deployer: ChecksumAddress | str | bytes,
+    implementation_contract: ChecksumAddress | str | bytes,
+    salt: bytes,
+) -> ChecksumAddress:
+    """
+    Calculate the contract address for an EIP-1167 minimal proxy contract deployed by `deployer`,
+    using `salt`, delegating calls to the contract at `implementation` address.
+
+    References:
+        - https://github.com/ethereum/ercs/blob/master/ERCS/erc-1167.md
+        - https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/proxy/Clones.sol
+        - https://www.rareskills.io/post/eip-1167-minimal-proxy-standard-with-initialization-clone-pattern
+    """
+
+    MINIMAL_PROXY_CODE = (
+        HexBytes("0x3d602d80600a3d3981f3")
+        + HexBytes("0x363d3d373d3d3d363d73")
+        + HexBytes(implementation_contract)
+        + HexBytes("0x5af43d82803e903d91602b57fd5bf3")
+    )
+
+    return create2_address(
+        deployer=deployer,
+        salt=salt,
+        init_code=MINIMAL_PROXY_CODE,
+    )
+
+
 def eip_191_hash(message: str, private_key: str) -> str:
     """
     Get the signature hash (a hex-formatted string) for a given message and signing key.
