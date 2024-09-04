@@ -7,7 +7,62 @@ from eth_typing import (
 from hexbytes import HexBytes
 
 import degenbot.config
-from degenbot.functions import get_number_for_block_identifier, next_base_fee
+from degenbot.functions import create2_address, get_number_for_block_identifier, next_base_fee
+
+
+def test_create2():
+    """
+    Tests taken from https://eips.ethereum.org/EIPS/eip-1014
+    """
+
+    assert (
+        create2_address(
+            deployer="0x0000000000000000000000000000000000000000",
+            salt="0x0000000000000000000000000000000000000000000000000000000000000000",
+            init_code="0x00",
+        )
+        == "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38"
+    )
+    assert (
+        create2_address(
+            deployer="0xdeadbeef00000000000000000000000000000000",
+            salt="0x0000000000000000000000000000000000000000000000000000000000000000",
+            init_code="0x00",
+        )
+        == "0xB928f69Bb1D91Cd65274e3c79d8986362984fDA3"
+    )
+    assert (
+        create2_address(
+            deployer="0xdeadbeef00000000000000000000000000000000",
+            salt="0x000000000000000000000000feed000000000000000000000000000000000000",
+            init_code="0x00",
+        )
+        == "0xD04116cDd17beBE565EB2422F2497E06cC1C9833"
+    )
+    assert (
+        create2_address(
+            deployer="0x0000000000000000000000000000000000000000",
+            salt="0x0000000000000000000000000000000000000000000000000000000000000000",
+            init_code="0xdeadbeef",
+        )
+        == "0x70f2b2914A2a4b783FaEFb75f459A580616Fcb5e"
+    )
+    assert (
+        create2_address(
+            deployer="0x00000000000000000000000000000000deadbeef",
+            salt="0x00000000000000000000000000000000000000000000000000000000cafebabe",
+            init_code="0xdeadbeef",
+        )
+        == "0x60f3f640a8508fC6a86d45DF051962668E1e8AC7"
+    )
+    assert (
+        create2_address(
+            deployer="0x00000000000000000000000000000000deadbeef",
+            salt="0x00000000000000000000000000000000000000000000000000000000cafebabe",
+            init_code="0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        )
+        == "0x1d8bfDC5D46DC4f61D6b6115972536eBE6A8854C"
+    )
 
 
 def test_converting_block_identifier_to_int(fork_mainnet_archive):

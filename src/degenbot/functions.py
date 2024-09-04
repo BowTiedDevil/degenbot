@@ -13,21 +13,25 @@ from . import config
 def create2_address(
     deployer: str | bytes,
     salt: bytes | str,
-    bytecode: bytes | str,
+    init_code: bytes | str | None = None,
+    init_code_hash: bytes | str | None = None,
 ) -> ChecksumAddress:
     """
     Generate the deterministic CREATE2 address for a given deployer, salt, and contract creation
-    bytecode.
+    (init) bytecode or the hash of that init code.
 
-    Reference: https://docs.openzeppelin.com/cli/2.8/deploying-with-create2
+    References:
+        - https://eips.ethereum.org/EIPS/eip-1014
+        - https://docs.openzeppelin.com/cli/2.8/deploying-with-create2
     """
-
-    CREATE2_PREFIX = 0xFF
 
     return to_checksum_address(
         keccak(
-            HexBytes(CREATE2_PREFIX) + HexBytes(deployer) + HexBytes(salt) + HexBytes(bytecode),
-        )[-20:],  # Contract address is the last 20 bytes from the 32 byte hash
+            HexBytes(0xFF)
+            + HexBytes(deployer)
+            + HexBytes(salt)
+            + (keccak(HexBytes(init_code)) if init_code is not None else HexBytes(init_code_hash)),
+        )[-20:],  # Contract address is the least significant 20 bytes from the 32 byte hash
     )
 
 
