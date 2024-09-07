@@ -71,14 +71,11 @@ MAX_UINT256 = _max_uint(256)
 ZERO_ADDRESS: ChecksumAddress = to_checksum_address("0x0000000000000000000000000000000000000000")
 
 
-# Contract addresses for the native blockchain token, keyed by chain ID
+# Contract addresses for the wrapped native token, keyed by chain ID
 WRAPPED_NATIVE_TOKENS: dict[int, ChecksumAddress] = {
-    # Ethereum (WETH)
-    1: to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-    # Fantom (WFTM)
-    250: to_checksum_address("0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83"),
-    # Arbitrum (AETH)
-    42161: to_checksum_address("0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"),
-    # Avalanche (WAVAX)
-    43114: to_checksum_address("0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7"),
+    ChainId.ETH: to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+    ChainId.BASE: to_checksum_address("0x4200000000000000000000000000000000000006"),
+    ChainId.FTM: to_checksum_address("0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83"),
+    ChainId.ARB1: to_checksum_address("0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"),
+    ChainId.AVAX: to_checksum_address("0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7"),
 }
