@@ -79,7 +79,11 @@ select = [
     "B",    # flake8-bugbear    
     "SIM",  # flake8-simplify    
     "I",    # isort
+    "PL",   # pylint
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLR2004"]   # many swap amount tests compare "magic" values
 
 [tool.coverage.run]
 source = ["src/degenbot"]
