@@ -115,6 +115,9 @@ def test_converting_block_identifier_to_int(fork_mainnet_archive):
         with pytest.raises(ValueError):
             get_number_for_block_identifier(invalid_tag)  # type: ignore[arg-type]
 
+    with pytest.raises(ValueError):
+        get_number_for_block_identifier(1.0)  # type: ignore[arg-type]
+
 
 def test_fee_calcs():
     BASE_FEE = 100 * 10**9

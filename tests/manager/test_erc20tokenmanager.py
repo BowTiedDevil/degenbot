@@ -1,7 +1,9 @@
+import pytest
 import web3
 from eth_utils.address import to_checksum_address
 
 from degenbot.config import set_web3
+from degenbot.constants import ZERO_ADDRESS
 from degenbot.manager.token_manager import Erc20TokenHelperManager
 from degenbot.registry.all_tokens import AllTokens
 
@@ -10,10 +12,10 @@ WBTC_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 ETHER_PLACEHOLDER_ADDRESS = to_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
 
 
-def test_get_erc20tokens(ethereum_full_node_web3: web3.Web3):
-    set_web3(ethereum_full_node_web3)
-    token_manager = Erc20TokenHelperManager(chain_id=ethereum_full_node_web3.eth.chain_id)
-    token_registry = AllTokens(chain_id=ethereum_full_node_web3.eth.chain_id)
+def test_get_erc20tokens(ethereum_archive_node_web3: web3.Web3):
+    set_web3(ethereum_archive_node_web3)
+    token_manager = Erc20TokenHelperManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
+    token_registry = AllTokens(chain_id=ethereum_archive_node_web3.eth.chain_id)
 
     weth = token_manager.get_erc20token(address=WETH_ADDRESS)
     assert weth.symbol == "WETH"
@@ -32,10 +34,17 @@ def test_get_erc20tokens(ethereum_full_node_web3: web3.Web3):
     assert token_registry.get(WBTC_ADDRESS) is wbtc
 
 
-def test_get_ether_placeholder(ethereum_full_node_web3: web3.Web3):
-    set_web3(ethereum_full_node_web3)
-    token_manager = Erc20TokenHelperManager(chain_id=ethereum_full_node_web3.eth.chain_id)
-    token_registry = AllTokens(chain_id=ethereum_full_node_web3.eth.chain_id)
+def test_get_bad_token(ethereum_archive_node_web3: web3.Web3):
+    set_web3(ethereum_archive_node_web3)
+    token_manager = Erc20TokenHelperManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
+    with pytest.raises(ValueError):
+        token_manager.get_erc20token(address=ZERO_ADDRESS)
+
+
+def test_get_ether_placeholder(ethereum_archive_node_web3: web3.Web3):
+    set_web3(ethereum_archive_node_web3)
+    token_manager = Erc20TokenHelperManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
+    token_registry = AllTokens(chain_id=ethereum_archive_node_web3.eth.chain_id)
 
     ether_placeholder = token_manager.get_erc20token(address=ETHER_PLACEHOLDER_ADDRESS)
     assert ether_placeholder.symbol == "ETH"
