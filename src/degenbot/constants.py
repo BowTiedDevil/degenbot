@@ -30,18 +30,15 @@ def _min_uint(_: int) -> int:
 
 
 def _max_uint(bits: int) -> int:
-    result: int = 2**bits - 1
-    return result
+    return typing.cast(int, 2**bits - 1)
 
 
 def _min_int(bits: int) -> int:
-    result: int = -(2 ** (bits - 1))
-    return result
+    return typing.cast(int, -(2 ** (bits - 1)))
 
 
 def _max_int(bits: int) -> int:
-    result: int = (2 ** (bits - 1)) - 1
-    return result
+    return typing.cast(int, (2 ** (bits - 1)) - 1)
 
 
 MIN_INT16 = _min_int(16)
