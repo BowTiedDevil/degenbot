@@ -15,14 +15,14 @@ from degenbot.exceptions import (
 )
 from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
 from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.uniswap.v3_dataclasses import (
+from degenbot.uniswap.v3_liquidity_pool import UNISWAP_V3_MAINNET_POOL_INIT_HASH, V3LiquidityPool
+from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
-from degenbot.uniswap.v3_liquidity_pool import UNISWAP_V3_MAINNET_POOL_INIT_HASH, V3LiquidityPool
 
 WBTC_WETH_V3_POOL_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 WETH_CONTRACT_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")

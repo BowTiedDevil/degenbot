@@ -16,12 +16,12 @@ from degenbot.exceptions import (
 )
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.registry.all_pools import AllPools
-from degenbot.uniswap.v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from degenbot.uniswap.v2_liquidity_pool import (
     CamelotLiquidityPool,
     LiquidityPool,
     UnregisteredLiquidityPool,
 )
+from degenbot.uniswap.v2_types import UniswapV2PoolSimulationResult, UniswapV2PoolState
 
 UNISWAP_V2_ROUTER02 = to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
 UNISWAP_V2_WBTC_WETH_POOL = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")

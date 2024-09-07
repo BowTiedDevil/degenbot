@@ -34,12 +34,12 @@ from ..exceptions import (
 from ..logging import logger
 from ..uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from ..uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
-from ..uniswap.v2_dataclasses import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from ..uniswap.v2_functions import generate_v2_pool_address, get_v2_pools_from_token_path
 from ..uniswap.v2_liquidity_pool import LiquidityPool, UnregisteredLiquidityPool
-from ..uniswap.v3_dataclasses import UniswapV3PoolSimulationResult, UniswapV3PoolState
+from ..uniswap.v2_types import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from ..uniswap.v3_functions import decode_v3_path
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
+from ..uniswap.v3_types import UniswapV3PoolSimulationResult, UniswapV3PoolState
 from .simulation_ledger import SimulationLedger
 
 

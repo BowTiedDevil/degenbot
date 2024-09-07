@@ -30,7 +30,10 @@ from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
 from .abi import UNISWAP_V3_POOL_ABI, UNISWAP_V3_TICKLENS_ABI
-from .v3_dataclasses import (
+from .v3_functions import exchange_rate_from_sqrt_price_x96, generate_v3_pool_address
+from .v3_libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
+from .v3_libraries.functions import to_int256
+from .v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
@@ -38,9 +41,6 @@ from .v3_dataclasses import (
     UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
-from .v3_functions import exchange_rate_from_sqrt_price_x96, generate_v3_pool_address
-from .v3_libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
-from .v3_libraries.functions import to_int256
 
 TICK_SPACING_BY_FEE = {
     100: 1,

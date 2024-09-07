@@ -14,7 +14,7 @@ from web3._utils.filters import construct_event_filter_params
 from .. import config
 from ..logging import logger
 from .abi import UNISWAP_V3_POOL_ABI
-from .v3_dataclasses import (
+from .v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3LiquidityEvent,

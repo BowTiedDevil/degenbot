@@ -25,16 +25,16 @@ from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
 from .abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
-from .v2_dataclasses import (
-    UniswapV2PoolExternalUpdate,
-    UniswapV2PoolSimulationResult,
-    UniswapV2PoolState,
-    UniswapV2PoolStateUpdated,
-)
 from .v2_functions import (
     constant_product_calc_exact_in,
     constant_product_calc_exact_out,
     generate_v2_pool_address,
+)
+from .v2_types import (
+    UniswapV2PoolExternalUpdate,
+    UniswapV2PoolSimulationResult,
+    UniswapV2PoolState,
+    UniswapV2PoolStateUpdated,
 )
 
 UNISWAP_V2_MAINNET_POOL_INIT_HASH = (

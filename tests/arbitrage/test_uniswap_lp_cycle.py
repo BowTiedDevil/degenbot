@@ -23,18 +23,18 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError
 from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.uniswap.v2_dataclasses import UniswapV2PoolState, UniswapV2PoolStateUpdated
 from degenbot.uniswap.v2_liquidity_pool import (
     CamelotLiquidityPool,
     LiquidityPool,
 )
-from degenbot.uniswap.v3_dataclasses import (
+from degenbot.uniswap.v2_types import UniswapV2PoolState, UniswapV2PoolStateUpdated
+from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
+from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
-from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"

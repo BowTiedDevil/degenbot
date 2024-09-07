@@ -1,4 +1,4 @@
-from degenbot.uniswap.v3_dataclasses import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
+from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
 
 
 def test_tick_bitmap() -> None:

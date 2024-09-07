@@ -14,19 +14,19 @@ from ..baseclasses import AbstractArbitrage, PlaintextMessage, Publisher, Subscr
 from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
-from ..uniswap.v2_dataclasses import (
+from ..uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
+from ..uniswap.v2_types import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
     UniswapV2PoolStateUpdated,
 )
-from ..uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
-from ..uniswap.v3_dataclasses import (
+from ..uniswap.v3_libraries import TickMath
+from ..uniswap.v3_liquidity_pool import V3LiquidityPool
+from ..uniswap.v3_types import (
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
-from ..uniswap.v3_libraries import TickMath
-from ..uniswap.v3_liquidity_pool import V3LiquidityPool
 from .types import (
     ArbitrageCalculationResult,
     UniswapPoolSwapVector,

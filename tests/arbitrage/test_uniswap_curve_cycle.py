@@ -11,8 +11,8 @@ from degenbot.config import set_web3
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError
-from degenbot.uniswap.v2_dataclasses import UniswapV2PoolState
 from degenbot.uniswap.v2_liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
