@@ -90,43 +90,53 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
             match pool:
                 case LiquidityPool() | V3LiquidityPool():
                     if i == 0:
-                        if self.input_token == pool.token0:
-                            token_in = pool.token0
-                            token_out = pool.token1
-                            zero_for_one = True
-                        elif self.input_token == pool.token1:
-                            token_in = pool.token1
-                            token_out = pool.token0
-                            zero_for_one = False
-                        else:  # pragma: no cover
-                            raise ValueError("Input token could not be identified!")
+                        match self.input_token:
+                            case pool.token0:
+                                _swap_vectors.append(
+                                    UniswapPoolSwapVector(
+                                        token_in=pool.token0,
+                                        token_out=pool.token1,
+                                        zero_for_one=True,
+                                    )
+                                )
+                            case pool.token1:
+                                _swap_vectors.append(
+                                    UniswapPoolSwapVector(
+                                        token_in=pool.token1,
+                                        token_out=pool.token0,
+                                        zero_for_one=False,
+                                    )
+                                )
+                            case _:
+                                raise ValueError("Input token could not be identified!")
                     else:
-                        if token_out == pool.token0:
-                            token_in = pool.token0
-                            token_out = pool.token1
-                            zero_for_one = True
-                        elif token_out == pool.token1:
-                            token_in = pool.token1
-                            token_out = pool.token0
-                            zero_for_one = False
-                        else:  # pragma: no cover
-                            raise ValueError("Input token could not be identified!")
-
-                    _swap_vectors.append(
-                        UniswapPoolSwapVector(
-                            token_in=token_in,
-                            token_out=token_out,
-                            zero_for_one=zero_for_one,
-                        )
-                    )
-
+                        match _swap_vectors[-1].token_out:
+                            case pool.token0:
+                                _swap_vectors.append(
+                                    UniswapPoolSwapVector(
+                                        token_in=pool.token0,
+                                        token_out=pool.token1,
+                                        zero_for_one=True,
+                                    )
+                                )
+                            case pool.token1:
+                                _swap_vectors.append(
+                                    UniswapPoolSwapVector(
+                                        token_in=pool.token1,
+                                        token_out=pool.token0,
+                                        zero_for_one=False,
+                                    )
+                                )
+                            case _:
+                                raise ValueError("Input token could not be identified!")
                 case CurveStableswapPool():
                     # A Curve pool may have 3 or more tokens, so instead of a binary
                     # token0/token1 choice, determine the forward token by comparing
                     # current and next pool
                     if i != 1:
                         raise ValueError("Not implemented for Curve pools at position != 1.")
-                    token_in = token_out
+
+                    token_in = _swap_vectors[-1].token_out
                     next_pool = self.swap_pools[i + 1]
                     shared_tokens = list(
                         set(pool.tokens).intersection(next_pool.tokens),
@@ -139,10 +149,8 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                     _swap_vectors.append(
                         CurveStableSwapPoolVector(token_in=token_in, token_out=token_out)
                     )
-
                 case _:  # pragma: no cover
                     raise ValueError("Pool type could not be identified")
-
         self._swap_vectors = tuple(_swap_vectors)
 
     def __getstate__(self) -> dict[str, Any]:
@@ -217,16 +225,16 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         for i, (pool, swap_vector) in enumerate(
             zip(self.swap_pools, self._swap_vectors, strict=True)
         ):
-            match pool:
-                case LiquidityPool() | V3LiquidityPool():
-                    assert isinstance(swap_vector, UniswapPoolSwapVector)
+            match pool, swap_vector:
+                case LiquidityPool() | V3LiquidityPool(), UniswapPoolSwapVector():
                     token_in = swap_vector.token_in
                     token_out = swap_vector.token_out
                     zero_for_one = swap_vector.zero_for_one
-                case CurveStableswapPool():
-                    assert isinstance(swap_vector, CurveStableSwapPoolVector)
+                case CurveStableswapPool(), CurveStableSwapPoolVector():
                     token_in = swap_vector.token_in
                     token_out = swap_vector.token_out
+                case _:  # pragma: no cover
+                    raise ValueError(f"Could not process pool {pool} and vector {swap_vector}")
 
             _token_in_quantity = token_in_quantity if i == 0 else _token_out_quantity
 

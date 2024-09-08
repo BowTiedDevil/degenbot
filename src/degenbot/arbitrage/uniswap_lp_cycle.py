@@ -63,37 +63,47 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             max_input = 100 * 10**18
         self.max_input = max_input
 
-        self._swap_vectors: list[UniswapPoolSwapVector] = []
+        _swap_vectors: list[UniswapPoolSwapVector] = []
         for i, pool in enumerate(self.swap_pools):
             if i == 0:
-                if self.input_token == pool.token0:
-                    token_in = pool.token0
-                    token_out = pool.token1
-                    zero_for_one = True
-                elif self.input_token == pool.token1:
-                    token_in = pool.token1
-                    token_out = pool.token0
-                    zero_for_one = False
-                else:  # pragma: no cover
-                    raise ValueError("Input token could not be identified!")
+                match self.input_token:
+                    case pool.token0:
+                        _swap_vectors.append(
+                            UniswapPoolSwapVector(
+                                token_in=pool.token0,
+                                token_out=pool.token1,
+                                zero_for_one=True,
+                            )
+                        )
+                    case pool.token1:
+                        _swap_vectors.append(
+                            UniswapPoolSwapVector(
+                                token_in=pool.token1,
+                                token_out=pool.token0,
+                                zero_for_one=False,
+                            )
+                        )
+                    case _:
+                        raise ValueError("Input token could not be identified!")
             else:
-                # token_out references the output from the previous pool
-                if token_out == pool.token0:
-                    token_in = pool.token0
-                    token_out = pool.token1
-                    zero_for_one = True
-                elif token_out == pool.token1:
-                    token_in = pool.token1
-                    token_out = pool.token0
-                    zero_for_one = False
-
-            self._swap_vectors.append(
-                UniswapPoolSwapVector(
-                    token_in=token_in,
-                    token_out=token_out,
-                    zero_for_one=zero_for_one,
-                )
-            )
+                match _swap_vectors[-1].token_out:
+                    case pool.token0:
+                        _swap_vectors.append(
+                            UniswapPoolSwapVector(
+                                token_in=pool.token0,
+                                token_out=pool.token1,
+                                zero_for_one=True,
+                            )
+                        )
+                    case pool.token1:
+                        UniswapPoolSwapVector(
+                            token_in=pool.token1,
+                            token_out=pool.token0,
+                            zero_for_one=False,
+                        )
+                    case _:
+                        raise ValueError("Input token could not be identified!")
+        self._swap_vectors = tuple(_swap_vectors)
 
         self.best: dict[str, Any] = {
             "input_token": self.input_token,
