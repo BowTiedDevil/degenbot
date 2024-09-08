@@ -32,6 +32,7 @@ from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
+    UniswapV3PoolExternalUpdate,
     UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
@@ -2477,6 +2478,8 @@ def test_arbitrage_helper_subscriptions(
 ):
     assert wbtc_weth_arb in wbtc_weth_v2_lp._subscribers
     assert wbtc_weth_arb in wbtc_weth_v3_lp._subscribers
+    assert wbtc_weth_arb in wbtc_weth_v2_lp.get_arbitrage_helpers()
+    assert wbtc_weth_arb in wbtc_weth_v3_lp.get_arbitrage_helpers()
 
     class TestSubscriber:
         def __init__(self) -> None:
@@ -2511,6 +2514,14 @@ def test_arbitrage_helper_subscriptions(
         ),
     )
     assert len(subscriber.inbox) == 2
+
+    # Deliver a subscriber update indirectly, by updating the LP
+    wbtc_weth_v3_lp.external_update(
+        update=UniswapV3PoolExternalUpdate(
+            block_number=wbtc_weth_v3_lp.update_block + 1, liquidity=420_690_000
+        )
+    )
+    assert len(subscriber.inbox) == 3
     wbtc_weth_arb.unsubscribe(subscriber=subscriber)
 
 

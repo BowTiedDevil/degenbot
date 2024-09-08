@@ -4,9 +4,11 @@ from fractions import Fraction
 import pytest
 import web3
 from eth_utils.address import to_checksum_address
+from hexbytes import HexBytes
 
 import degenbot
 from degenbot.config import set_web3
+from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
     ExternalUpdateError,
@@ -346,6 +348,36 @@ def test_dunder_methods(
 ):
     ethereum_uniswap_v2_wbtc_weth_liquiditypool.__str__()
     ethereum_uniswap_v2_wbtc_weth_liquiditypool.__hash__()
+
+    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool == HexBytes(
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool.address
+    )
+    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool > ZERO_ADDRESS
+    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool > HexBytes(ZERO_ADDRESS)
+
+    assert (
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool > ethereum_uniswap_v2_wbtc_weth_liquiditypool
+    ) is False
+    assert (
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool
+        > HexBytes(ethereum_uniswap_v2_wbtc_weth_liquiditypool.address)
+    ) is False
+    assert (
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool
+        > ethereum_uniswap_v2_wbtc_weth_liquiditypool.address
+    ) is False
+
+    assert (
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool < ethereum_uniswap_v2_wbtc_weth_liquiditypool
+    ) is False
+    assert (
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool
+        < HexBytes(ethereum_uniswap_v2_wbtc_weth_liquiditypool.address)
+    ) is False
+    assert (
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool
+        < ethereum_uniswap_v2_wbtc_weth_liquiditypool.address
+    ) is False
 
 
 def test_pickle_pool(ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool):
