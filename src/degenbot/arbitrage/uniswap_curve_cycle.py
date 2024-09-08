@@ -133,8 +133,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                     )
                     assert len(shared_tokens) > 0, f"this: {pool.tokens}, next: {next_pool.tokens}"
 
-                    # @dev
-                    # This assumes the first shared token is the correct one to continue
+                    # @dev this assumes the first shared token is the correct one to continue
                     token_out = shared_tokens[0]
 
                     _swap_vectors.append(
@@ -216,7 +215,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         _token_out_quantity: int = 0
 
         for i, (pool, swap_vector) in enumerate(
-            zip(self.swap_pools, self._swap_vectors, strict=False)
+            zip(self.swap_pools, self._swap_vectors, strict=True)
         ):
             match pool:
                 case LiquidityPool() | V3LiquidityPool():
@@ -261,7 +260,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                         )
                     case _:  # pragma: no cover
                         raise ValueError(
-                            f"Could not process pool {pool} and override {pool_state_override} "
+                            f"Could not process pool {pool} and override {pool_state_override}"
                         )
             except LiquidityPoolError as e:
                 raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}") from None
@@ -347,7 +346,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         #   [input: WETH] -> [pool0: USDC/WETH]
         #   * [pool1: USDT/USDC]
         #   * [pool2: WETH/USDT] == [output: WETH]
-        for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=False):
+        for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=True):
             pool_state = state_overrides.get(pool.address) or pool.state
 
             match pool, pool_state, vector:
@@ -455,7 +454,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
             token_out_quantity: int = 0
 
             for i, (pool, swap_vector) in enumerate(
-                zip(self.swap_pools, self._swap_vectors, strict=False)
+                zip(self.swap_pools, self._swap_vectors, strict=True)
             ):
                 pool_override = state_overrides.get(pool.address)
 
@@ -685,7 +684,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                 )
 
             for i, (swap_pool, _swap_amounts) in enumerate(
-                zip(self.swap_pools, pool_swap_amounts, strict=False)
+                zip(self.swap_pools, pool_swap_amounts, strict=True)
             ):
                 next_pool = None if swap_pool is last_pool else self.swap_pools[i + 1]
 

@@ -1053,8 +1053,8 @@ class V3LiquidityPool(AbstractLiquidityPool):
             if block_index == len(known_blocks):
                 raise NoPoolStateAvailable(f"No pool state known prior to block {block}")
 
-            for block in known_blocks[:block_index]:
-                del self._pool_state_archive[block]
+            for known_block in known_blocks[:block_index]:
+                del self._pool_state_archive[known_block]
 
     def restore_state_before_block(
         self,
@@ -1090,8 +1090,8 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 return
 
             # Remove states at and after the specified block
-            for block in known_blocks[block_index:]:
-                del self._pool_state_archive[block]
+            for known_block in known_blocks[block_index:]:
+                del self._pool_state_archive[known_block]
 
             restored_block, restored_state = list(self._pool_state_archive.items())[-1]
 

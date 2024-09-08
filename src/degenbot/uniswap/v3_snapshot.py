@@ -10,6 +10,7 @@ from eth_utils.address import to_checksum_address
 from web3 import Web3
 from web3._utils.events import get_event_data
 from web3._utils.filters import construct_event_filter_params
+from web3.types import LogReceipt
 
 from .. import config
 from ..logging import logger
@@ -37,7 +38,6 @@ class UniswapV3LiquiditySnapshot:
 
         match file:
             case TextIOWrapper():
-                file_handle = file
                 json_liquidity_snapshot = ujson.load(file)
             case str():
                 with open(file) as file_handle:
@@ -85,13 +85,13 @@ class UniswapV3LiquiditySnapshot:
         to_block: int,
         span: int = 1000,
     ) -> None:
-        def _process_log(log) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
+        def _process_log(log: LogReceipt) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
             decoded_event = get_event_data(
                 abi_codec=config.get_web3().codec,
                 event_abi=event_abi,
                 log_entry=log,
             )
-            pool_address = to_checksum_address(decoded_event["address"])
+            address = to_checksum_address(decoded_event["address"])
             tx_index = decoded_event["transactionIndex"]
             liquidity_block = decoded_event["blockNumber"]
             liquidity = decoded_event["args"]["amount"] * (
@@ -100,7 +100,7 @@ class UniswapV3LiquiditySnapshot:
             tick_lower = decoded_event["args"]["tickLower"]
             tick_upper = decoded_event["args"]["tickUpper"]
 
-            return pool_address, UniswapV3LiquidityEvent(
+            return address, UniswapV3LiquidityEvent(
                 block_number=liquidity_block,
                 liquidity=liquidity,
                 tick_lower=tick_lower,
@@ -144,8 +144,8 @@ class UniswapV3LiquiditySnapshot:
                         )
                         continue
 
-                for log in event_logs:
-                    pool_address, liquidity_event = _process_log(log)
+                for event_log in event_logs:
+                    pool_address, liquidity_event = _process_log(event_log)
 
                     if liquidity_event.liquidity == 0:  # pragma: no cover
                         continue

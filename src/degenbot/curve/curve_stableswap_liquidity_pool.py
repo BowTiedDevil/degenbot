@@ -764,15 +764,16 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
                 # Safety checks
                 assert (
-                    ann > N_COINS**N_COINS * A_MULTIPLIER - 1
-                    and ann < 10000 * N_COINS**N_COINS * A_MULTIPLIER + 1
+                    N_COINS**N_COINS * A_MULTIPLIER - 1
+                    < ann
+                    < 10000 * N_COINS**N_COINS * A_MULTIPLIER + 1
                 ), "unsafe value for A"
-                assert gamma > 10**10 - 1 and gamma < 10**16 + 1, "unsafe values for gamma"
-                assert D > 10**17 - 1 and D < 10**15 * 10**18 + 1, "unsafe values for D"
+                assert 10**10 - 1 < gamma < 10**16 + 1, "unsafe values for gamma"
+                assert 10**17 - 1 < D < 10**15 * 10**18 + 1, "unsafe values for D"
 
-                for k in range(3):
-                    if k != token_index:
-                        frac = xp[k] * 10**18 // D
+                for index in range(3):
+                    if index != token_index:
+                        frac = xp[index] * 10**18 // D
                         assert (frac > 10**16 - 1) and (
                             frac < 10**20 + 1
                         ), f"{frac=} out of range"  # dev: unsafe values x[i]
@@ -785,14 +786,14 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 x_sorted[token_index] = 0
                 x_sorted = sorted(x_sorted, reverse=True)  # From high to low
 
-                convergence_limit = max(max(x_sorted[0] // 10**14, D // 10**14), 100)
-                for j in range(2, N_COINS + 1):
-                    _x = x_sorted[N_COINS - j]
+                convergence_limit = max(x_sorted[0] // 10**14, D // 10**14, 100)
+                for _j in range(2, N_COINS + 1):
+                    _x = x_sorted[N_COINS - _j]
                     y = y * D // (_x * N_COINS)  # Small _x first
                     S_i += _x
 
-                for j in range(N_COINS - 1):
-                    K0_i = K0_i * x_sorted[j] * N_COINS // D  # Large _x first
+                for _k in range(N_COINS - 1):
+                    K0_i = K0_i * x_sorted[_k] * N_COINS // D  # Large _x first
 
                 for _ in range(255):
                     y_prev = y
@@ -1180,39 +1181,36 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     * self._get_scaled_redemption_price(block_number=block_number)
                     // self.PRECISION
                 )
-            else:
-                if base_j < 0:
-                    # i is from BasePool
-                    # At first, get the amount of pool tokens
-                    base_inputs = [0] * BASE_N_COINS
-                    base_inputs[base_i] = dx
-                    # Token amount transformed to underlying "dollars"
-                    x = (
-                        self.base_pool._calc_token_amount(
-                            amounts=base_inputs,
-                            deposit=True,
-                            block_identifier=block_number,
-                            override_state=(
-                                override_state.base if override_state is not None else None
-                            ),
-                        )
-                        * vp_rate
-                        // self.PRECISION
-                    )
-                    # Accounting for deposit/withdraw fees approximately
-                    x -= x * self.base_pool.fee // (2 * self.FEE_DENOMINATOR)
-                    # Adding number of pool tokens
-                    x += xp[MAX_COIN]
-                else:
-                    # If both are from the base pool
-                    return self.base_pool._get_dy(
-                        i=base_i,
-                        j=base_j,
-                        dx=dx,
+            elif base_j < 0:
+                # i is from BasePool
+                # At first, get the amount of pool tokens
+                base_inputs = [0] * BASE_N_COINS
+                base_inputs[base_i] = dx
+                # Token amount transformed to underlying "dollars"
+                x = (
+                    self.base_pool._calc_token_amount(
+                        amounts=base_inputs,
+                        deposit=True,
+                        block_identifier=block_number,
                         override_state=(
                             override_state.base if override_state is not None else None
                         ),
                     )
+                    * vp_rate
+                    // self.PRECISION
+                )
+                # Accounting for deposit/withdraw fees approximately
+                x -= x * self.base_pool.fee // (2 * self.FEE_DENOMINATOR)
+                # Adding number of pool tokens
+                x += xp[MAX_COIN]
+            else:
+                # If both are from the base pool
+                return self.base_pool._get_dy(
+                    i=base_i,
+                    j=base_j,
+                    dx=dx,
+                    override_state=(override_state.base if override_state is not None else None),
+                )
 
             # This pool is involved only when in-pool assets are used
             y = self._get_y(meta_i, meta_j, x, xp)
@@ -1235,9 +1233,9 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
             return dy
 
-        elif (
-            self.address == "0xC61557C5d177bd7DC889A3b621eEC333e168f68A"
-            or self.address == "0x4606326b4Db89373F5377C316d3b0F6e55Bc6A20"
+        elif self.address in (
+            "0xC61557C5d177bd7DC889A3b621eEC333e168f68A",
+            "0x4606326b4Db89373F5377C316d3b0F6e55Bc6A20",
         ):
             BASE_N_COINS = len(self.base_pool.tokens)
             MAX_COIN = len(self.tokens) - 1
@@ -1259,40 +1257,37 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
             if i == 0:
                 x = xp[i] + dx * (rates[0] // 10**18)
-            else:
-                if j == 0:
-                    # i is from BasePool
-                    # At first, get the amount of pool tokens
-                    base_inputs = [0] * BASE_N_COINS
-                    base_inputs[base_i] = dx
-                    # Token amount transformed to underlying "dollars"
-                    x = (
-                        self.base_pool._calc_token_amount(
-                            amounts=base_inputs,
-                            deposit=True,
-                            block_identifier=block_number,
-                            override_state=(
-                                override_state.base if override_state is not None else None
-                            ),
-                        )
-                        * rates[1]
-                        // self.PRECISION
-                    )
-                    # Accounting for deposit/withdraw fees approximately
-                    x -= x * self.base_pool.fee // (2 * self.FEE_DENOMINATOR)
-                    # Adding number of pool tokens
-                    x += xp[MAX_COIN]
-                else:
-                    # If both are from the base pool
-                    return self.base_pool._get_dy(
-                        i=base_i,
-                        j=base_j,
-                        dx=dx,
+            elif j == 0:
+                # i is from BasePool
+                # At first, get the amount of pool tokens
+                base_inputs = [0] * BASE_N_COINS
+                base_inputs[base_i] = dx
+                # Token amount transformed to underlying "dollars"
+                x = (
+                    self.base_pool._calc_token_amount(
+                        amounts=base_inputs,
+                        deposit=True,
                         block_identifier=block_number,
                         override_state=(
                             override_state.base if override_state is not None else None
                         ),
                     )
+                    * rates[1]
+                    // self.PRECISION
+                )
+                # Accounting for deposit/withdraw fees approximately
+                x -= x * self.base_pool.fee // (2 * self.FEE_DENOMINATOR)
+                # Adding number of pool tokens
+                x += xp[MAX_COIN]
+            else:
+                # If both are from the base pool
+                return self.base_pool._get_dy(
+                    i=base_i,
+                    j=base_j,
+                    dx=dx,
+                    block_identifier=block_number,
+                    override_state=(override_state.base if override_state is not None else None),
+                )
 
             # This pool is involved only when in-pool assets are used
             y = self._get_y(meta_i, meta_j, x, xp)
@@ -1337,40 +1332,37 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
             if base_i < 0:
                 x = xp[i] + dx * precisions[i]
-            else:
-                if base_j < 0:
-                    # i is from BasePool
-                    # At first, get the amount of pool tokens
-                    base_inputs = [0] * BASE_N_COINS
-                    base_inputs[base_i] = dx
-                    # Token amount transformed to underlying "dollars"
-                    x = (
-                        self.base_pool._calc_token_amount(
-                            amounts=base_inputs,
-                            deposit=True,
-                            block_identifier=block_number,
-                            override_state=(
-                                override_state.base if override_state is not None else None
-                            ),
-                        )
-                        * vp_rate
-                        // self.PRECISION
-                    )
-                    # Accounting for deposit/withdraw fees approximately
-                    x -= x * self.base_pool.fee // (2 * self.FEE_DENOMINATOR)
-                    # Adding number of pool tokens
-                    x += xp[MAX_COIN]
-                else:
-                    # If both are from the base pool
-                    return self.base_pool._get_dy(
-                        i=base_i,
-                        j=base_j,
-                        dx=dx,
+            elif base_j < 0:
+                # i is from BasePool
+                # At first, get the amount of pool tokens
+                base_inputs = [0] * BASE_N_COINS
+                base_inputs[base_i] = dx
+                # Token amount transformed to underlying "dollars"
+                x = (
+                    self.base_pool._calc_token_amount(
+                        amounts=base_inputs,
+                        deposit=True,
                         block_identifier=block_number,
                         override_state=(
                             override_state.base if override_state is not None else None
                         ),
                     )
+                    * vp_rate
+                    // self.PRECISION
+                )
+                # Accounting for deposit/withdraw fees approximately
+                x -= x * self.base_pool.fee // (2 * self.FEE_DENOMINATOR)
+                # Adding number of pool tokens
+                x += xp[MAX_COIN]
+            else:
+                # If both are from the base pool
+                return self.base_pool._get_dy(
+                    i=base_i,
+                    j=base_j,
+                    dx=dx,
+                    block_identifier=block_number,
+                    override_state=(override_state.base if override_state is not None else None),
+                )
 
             # This pool is involved only when in-pool assets are used
             y = self._get_y(meta_i, meta_j, x, xp)
@@ -1583,9 +1575,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 if Dprev < D:
                     if D - Dprev <= 1:
                         return D
-                else:
-                    if Dprev - D <= 1:
-                        return D
+                elif Dprev - D <= 1:
+                    return D
 
         elif self.address in (
             "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
@@ -1602,9 +1593,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 if Dprev < D:
                     if D - Dprev <= 1:
                         return D
-                else:
-                    if Dprev - D <= 1:
-                        return D
+                elif Dprev - D <= 1:
+                    return D
 
         elif self.address in (
             "0x0AD66FeC8dB84F8A3365ADA04aB23ce607ac6E24",
@@ -1633,9 +1623,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 if Dprev < D:
                     if D - Dprev <= 1:
                         return D
-                else:
-                    if Dprev - D <= 1:
-                        return D
+                elif Dprev - D <= 1:
+                    return D
 
         elif self.address in (
             "0xDC24316b9AE028F1497c275EB9192a3Ea0f67022",
@@ -1655,9 +1644,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 if Dprev < D:
                     if D - Dprev <= 1:
                         return D
-                else:
-                    if Dprev - D <= 1:
-                        return D
+                elif Dprev - D <= 1:
+                    return D
 
         else:
             for _ in range(255):
@@ -1673,9 +1661,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 if Dprev < D:
                     if D - Dprev <= 1:
                         return D
-                else:
-                    if Dprev - D <= 1:
-                        return D
+                elif Dprev - D <= 1:
+                    return D
 
         raise EVMRevertError(
             f"_get_D() did not converge for pool {self.address}"
@@ -1753,9 +1740,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 if y > y_prev:
                     if y - y_prev <= 1:
                         return y
-                else:
-                    if y_prev - y <= 1:
-                        return y
+                elif y_prev - y <= 1:
+                    return y
 
         else:
             amp = self._A()
@@ -1784,9 +1770,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 if y > y_prev:
                     if y - y_prev <= 1:
                         return y
-                else:
-                    if y_prev - y <= 1:
-                        return y
+                elif y_prev - y <= 1:
+                    return y
 
         raise EVMRevertError(
             f"_get_y() did not converge for pool {self.address}"
@@ -1850,9 +1835,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 if y > y_prev:
                     if y - y_prev <= 1:
                         return y
-                else:
-                    if y_prev - y <= 1:
-                        return y
+                elif y_prev - y <= 1:
+                    return y
             raise EVMRevertError(f"_get_y_D() failed to converge for pool {self.address}")
 
         else:
@@ -1884,9 +1868,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 if y > y_prev:
                     if y - y_prev <= 1:
                         break
-                else:
-                    if y_prev - y <= 1:
-                        break
+                elif y_prev - y <= 1:
+                    break
             return y
 
     def _stored_rates_from_ctokens(self, block_number: int) -> list[int]:

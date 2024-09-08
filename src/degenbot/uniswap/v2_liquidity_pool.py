@@ -183,8 +183,7 @@ class LiquidityPool(AbstractLiquidityPool):
             verified_address = self._verified_address()
             if verified_address != self.address:
                 raise ValueError(
-                    f"Pool address verification failed. Provided: {self.address}, "
-                    f"expected: {verified_address}"
+                    f"Pool address verification failed. Provided: {self.address}, expected: {verified_address}"  # noqa:E501
                 )
 
         if name is not None:
@@ -194,9 +193,7 @@ class LiquidityPool(AbstractLiquidityPool):
                 f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
                 if self.fee_token0 == self.fee_token1
                 else (
-                    f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
-                    "/"
-                    f"{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
+                    f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"  # noqa:E501
                 )
             )
             self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
@@ -232,10 +229,7 @@ class LiquidityPool(AbstractLiquidityPool):
             }
 
     def __repr__(self) -> str:  # pragma: no cover
-        return (
-            f"{self.__class__.__name__}(address={self.address}, "
-            f"token0={self.token0}, token1={self.token1})"
-        )
+        return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1})"  # noqa:E501
 
     def _verified_address(self) -> ChecksumAddress:
         return generate_v2_pool_address(
@@ -377,8 +371,7 @@ class LiquidityPool(AbstractLiquidityPool):
             fee = self.fee_token1
         else:  # pragma: no cover
             raise ValueError(
-                f"Could not identify token_out: {token_out}! This pool holds: "
-                f"{self.token0} {self.token1}"
+                f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"  # noqa:E501
             )
 
         # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
@@ -542,8 +535,8 @@ class LiquidityPool(AbstractLiquidityPool):
             if block_index == len(known_blocks):
                 raise NoPoolStateAvailable(f"No pool state known prior to block {block}")
 
-            for block in known_blocks[:block_index]:
-                del self._pool_state_archive[block]
+            for known_block in known_blocks[:block_index]:
+                del self._pool_state_archive[known_block]
 
     def restore_state_before_block(
         self,
@@ -572,8 +565,8 @@ class LiquidityPool(AbstractLiquidityPool):
                 return
 
             # Remove states at and after the specified block
-            for block in known_blocks[block_index:]:
-                del self._pool_state_archive[block]
+            for known_block in known_blocks[block_index:]:
+                del self._pool_state_archive[known_block]
 
             # Restore previous state and block
             self._update_block, self.state = list(self._pool_state_archive.items())[-1]
@@ -734,8 +727,7 @@ class LiquidityPool(AbstractLiquidityPool):
         # (necessary if sending sync events individually)
         if update_block < self._update_block:
             raise ExternalUpdateError(
-                f"Current state recorded at block {self._update_block}, received update for stale "
-                f"block {update_block}"
+                f"Current state recorded at block {self._update_block}, received update for stale block {update_block}"  # noqa:E501
             )
         else:
             self._update_block = update_block
@@ -888,9 +880,8 @@ class CamelotLiquidityPool(LiquidityPool):
                 if y > y_prev:
                     if y - y_prev <= 1:
                         return y
-                else:
-                    if y_prev - y <= 1:
-                        return y
+                elif y_prev - y <= 1:
+                    return y
 
             return y
 

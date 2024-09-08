@@ -1,3 +1,5 @@
+from typing import cast
+
 import eth_account.messages
 import web3
 from eth_account.datastructures import SignedMessage
@@ -80,18 +82,16 @@ def eip_191_hash(message: str, private_key: str) -> str:
 def get_number_for_block_identifier(identifier: BlockIdentifier | None) -> int:
     match identifier:
         case None:
-            return config.get_web3().eth.get_block_number()
-        case int():
-            return identifier
-        case bytes():
-            return int.from_bytes(identifier, byteorder="big")
-        case str() if isinstance(identifier, str) and identifier[:2] == "0x" and len(
-            identifier
-        ) == 66:
-            return int(identifier, 16)
-        case "latest" | "earliest" | "pending" | "safe" | "finalized":
-            # These tags vary with each new block, so translate to a fixed block number
-            return config.get_web3().eth.get_block(identifier)["number"]
+            return cast(int, config.get_web3().eth.get_block_number())
+        case int() as block_number_as_int:
+            return block_number_as_int
+        case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
+            block_number = config.get_web3().eth.get_block(block_tag)["number"]
+            return cast(int, block_number)
+        case str() as block_number_as_str:
+            return int(block_number_as_str, 16)
+        case bytes() as block_number_as_bytes:
+            return int.from_bytes(block_number_as_bytes, byteorder="big")
         case _:
             raise ValueError(f"Invalid block identifier {identifier!r}")
 
@@ -118,19 +118,19 @@ def next_base_fee(
     last_gas_target = parent_gas_limit // elasticity_multiplier
 
     if parent_gas_used == last_gas_target:
-        next_base_fee = parent_base_fee
+        _next_base_fee = parent_base_fee
     elif parent_gas_used > last_gas_target:
         gas_used_delta = parent_gas_used - last_gas_target
         base_fee_delta = max(
             parent_base_fee * gas_used_delta // last_gas_target // base_fee_max_change_denominator,
             1,
         )
-        next_base_fee = parent_base_fee + base_fee_delta
+        _next_base_fee = parent_base_fee + base_fee_delta
     else:
         gas_used_delta = last_gas_target - parent_gas_used
         base_fee_delta = (
             parent_base_fee * gas_used_delta // last_gas_target // base_fee_max_change_denominator
         )
-        next_base_fee = parent_base_fee - base_fee_delta
+        _next_base_fee = parent_base_fee - base_fee_delta
 
-    return max(min_base_fee, next_base_fee) if min_base_fee else next_base_fee
+    return max(min_base_fee, _next_base_fee) if min_base_fee else _next_base_fee

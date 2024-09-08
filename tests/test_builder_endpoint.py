@@ -12,7 +12,6 @@ FLASHBOTS_URL = "https://relay.flashbots.net"
 RSYNCBUILDER_URL = "https://rsync-builder.xyz"
 TITANBUILDER_URL = "https://rpc.titanbuilder.xyz"
 
-
 BUILDER_FIXTURES = [
     "beaverbuild",
     "builder0x69",
@@ -21,8 +20,6 @@ BUILDER_FIXTURES = [
     "titanbuilder",
 ]
 
-TEST_BUNDLE_HASH: str
-TEST_BUNDLE_BLOCK: int
 
 # Taken from https://privatekeys.pw/keys/ethereum/random
 SIGNER_KEY = "52661f05c0512d64e2dc681900f45996e9946856ec352b7a2950203b150dbd28"
@@ -237,10 +234,11 @@ async def test_eth_send_bundle(
     )
     assert isinstance(response, dict)
 
-    global TEST_BUNDLE_HASH
-    global TEST_BUNDLE_BLOCK
-    TEST_BUNDLE_HASH = response["bundleHash"]
-    TEST_BUNDLE_BLOCK = current_block + 1
+    await flashbots.get_bundle_stats(
+        bundle_hash=response["bundleHash"],
+        block_number=current_block + 1,
+        signer_key=SIGNER_KEY,
+    )
 
 
 async def test_get_user_stats(
@@ -251,12 +249,4 @@ async def test_get_user_stats(
     await flashbots.get_user_stats(
         signer_key=SIGNER_KEY,
         block_number=current_block,
-    )
-
-
-async def test_get_bundle_stats(flashbots: BuilderEndpoint):
-    await flashbots.get_bundle_stats(
-        bundle_hash=TEST_BUNDLE_HASH,
-        block_number=TEST_BUNDLE_BLOCK,
-        signer_key=SIGNER_KEY,
     )

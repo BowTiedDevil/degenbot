@@ -52,8 +52,8 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
     decoded_path: list[ChecksumAddress | int] = []
     while path_offset != len(path):
         byte_length, extraction_func = next(chunk_length_and_decoder_function)
-        chunk = HexBytes(path[path_offset : path_offset + byte_length])
-        decoded_path.append(extraction_func(chunk))
+        path_chunk = HexBytes(path[path_offset : path_offset + byte_length])
+        decoded_path.append(extraction_func(path_chunk))
         path_offset += byte_length
 
     return decoded_path

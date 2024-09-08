@@ -86,8 +86,8 @@ class AnvilFork:
         def get_free_port_number() -> int:
             with socket.socket() as sock:
                 sock.bind(("", 0))
-                _, port = sock.getsockname()
-                return cast(int, port)
+                _, _port = sock.getsockname()
+                return cast(int, _port)
 
         if shutil.which("anvil") is None:  # pragma: no cover
             raise Exception("Anvil is not installed or not accessible in the current path.")
