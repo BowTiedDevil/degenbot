@@ -24,14 +24,14 @@ from web3.types import BlockIdentifier
 from .. import config
 from ..baseclasses import AbstractLiquidityPool
 from ..constants import ZERO_ADDRESS
-from ..dex.curve import (
-    BROKEN_CURVE_V1_POOLS,
-    CURVE_V1_FACTORY_ADDRESS,
-    CURVE_V1_POOL_ATTRIBUTES,
-    CURVE_V1_REGISTRY_ADDRESS,
-)
 from ..erc20_token import Erc20Token
 from ..exceptions import BrokenPool, EVMRevertError, ZeroLiquidityError, ZeroSwapError
+from ..exchanges.curve.deployments import (
+    BROKEN_CURVE_V1_POOLS,
+    CACHED_CURVE_V1_POOL_ATTRIBUTES,
+    CURVE_V1_FACTORY_ADDRESS,
+    CURVE_V1_REGISTRY_ADDRESS,
+)
 from ..functions import get_number_for_block_identifier
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
@@ -276,7 +276,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         cached_pool_attributes: CurveStableSwapPoolAttributes | None = None
         with contextlib.suppress(KeyError):
             cached_pool_attributes = CurveStableSwapPoolAttributes(
-                **CURVE_V1_POOL_ATTRIBUTES[chain_id][self.address]
+                **CACHED_CURVE_V1_POOL_ATTRIBUTES[chain_id][self.address]
             )
 
         w3_contract = self.w3_contract
