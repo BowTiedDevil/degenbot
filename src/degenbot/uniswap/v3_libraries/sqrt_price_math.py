@@ -26,7 +26,7 @@ def getAmount0Delta(
             raise EVMRevertError("require sqrtRatioAX96 > 0")
 
         return (
-            UnsafeMath.divRoundingUp(
+            UnsafeMath.div_rounding_up(
                 FullMath.mulDivRoundingUp(numerator1, numerator2, sqrtRatioBX96), sqrtRatioAX96
             )
             if roundUp
@@ -84,7 +84,7 @@ def getNextSqrtPriceFromAmount0RoundingUp(
                 (product := amount * sqrtPX96) // amount == sqrtPX96
                 and (denominator := numerator1 + product) >= numerator1
             )
-            else UnsafeMath.divRoundingUp(numerator1, numerator1 // sqrtPX96 + amount)
+            else UnsafeMath.div_rounding_up(numerator1, numerator1 // sqrtPX96 + amount)
         )
     else:
         product = amount * sqrtPX96
@@ -110,7 +110,7 @@ def getNextSqrtPriceFromAmount1RoundingDown(
         return to_uint160(sqrtPX96 + quotient)
     else:
         quotient = (
-            UnsafeMath.divRoundingUp(amount << Q96_RESOLUTION, liquidity)
+            UnsafeMath.div_rounding_up(amount << Q96_RESOLUTION, liquidity)
             if amount <= (2**160) - 1
             else FullMath.mulDivRoundingUp(amount, Q96, liquidity)
         )

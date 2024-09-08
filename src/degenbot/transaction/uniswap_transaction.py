@@ -2224,8 +2224,8 @@ class UniswapTransaction(AbstractTransaction):
                             silent=self.silent,
                         )
 
-                        sqrtRatioAX96 = TickMath.getSqrtRatioAtTick(_tick_lower)
-                        sqrtRatioBX96 = TickMath.getSqrtRatioAtTick(_tick_upper)
+                        sqrtRatioAX96 = TickMath.get_sqrt_ratio_at_tick(_tick_lower)
+                        sqrtRatioBX96 = TickMath.get_sqrt_ratio_at_tick(_tick_upper)
 
                         current_sqrt_price_x96 = (
                             # TODO: review this, check for earlier pool states that may differ

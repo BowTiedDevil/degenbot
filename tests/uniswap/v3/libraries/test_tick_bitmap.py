@@ -99,187 +99,154 @@ def test_incorrect_tick_spacing_flip() -> None:
 
 
 def test_nextInitializedTickWithinOneWord() -> None:
-    tick_bitmap: dict[int, UniswapV3BitmapAtWord] = {}
+    TICK_SPACING = 1
+    INITIALIZED_TICKS = [-200, -55, -4, 70, 78, 84, 139, 240, 535]
 
-    # set up a full-sized empty tick bitmap
-    for tick in range(TickMath.MIN_TICK, TickMath.MAX_TICK):
+    # set up a full-sized empty tick bitmap, then initialize the ticks required for the tests
+    tick_bitmap: dict[int, UniswapV3BitmapAtWord] = {}
+    for tick in range(TickMath.MIN_TICK, TickMath.MAX_TICK, TICK_SPACING):
         wordPos, _ = TickBitmap.position(tick=tick)
         if not tick_bitmap.get(wordPos):
             tick_bitmap[wordPos] = UniswapV3BitmapAtWord()
-
-    # set the specified ticks to initialized
-    for tick in [-200, -55, -4, 70, 78, 84, 139, 240, 535]:
+    for tick in INITIALIZED_TICKS:
         TickBitmap.flipTick(tick_bitmap=tick_bitmap, tick=tick, tick_spacing=1)
 
     # lte = false tests
 
     # returns tick to right if at initialized tick
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=78,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=False,
-    )
-    assert next == 84
-    assert initialized is True
+    ) == (84, True)
 
     # returns tick to right if at initialized tick
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=-55,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=False,
-    )
-    assert next == -4
-    assert initialized is True
+    ) == (-4, True)
 
     # returns the tick directly to the right
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=77,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=False,
-    )
-    assert next == 78
-    assert initialized is True
+    ) == (78, True)
 
     # returns the tick directly to the right
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=-56,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=False,
-    )
-    assert next == -55
-    assert initialized is True
+    ) == (-55, True)
 
     # returns the next words initialized tick if on the right boundary
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=255,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=False,
-    )
-    assert next == 511
-    assert initialized is False
+    ) == (511, False)
 
     # returns the next words initialized tick if on the right boundary
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=-257,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=False,
-    )
-    assert next == -200
-    assert initialized is True
+    ) == (-200, True)
 
     # does not exceed boundary
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=508,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=False,
-    )
-    assert next == 511
-    assert initialized is False
+    ) == (511, False)
 
     # skips entire word
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=255,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=False,
-    )
-    assert next == 511
-    assert initialized is False
+    ) == (511, False)
 
     # skips half word
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=383,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=False,
-    )
-    assert next == 511
-    assert initialized is False
+    ) == (511, False)
 
     # lte = true tests
 
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=78,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=True,
-    )
-    assert next == 78
-    assert initialized is True
+    ) == (78, True)
 
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=79,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=True,
-    )
-    assert next == 78
-    assert initialized is True
+    ) == (78, True)
 
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=258,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=True,
-    )
-    assert next == 256
-    assert initialized is False
+    ) == (256, False)
 
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=256,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=True,
-    )
-    assert next == 256
-    assert initialized is False
+    ) == (256, False)
 
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=72,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=True,
-    )
-    assert next == 70
-    assert initialized is True
+    ) == (70, True)
 
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=-257,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=True,
-    )
-    assert next == -512
-    assert initialized is False
+    ) == (-512, False)
 
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=1023,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=True,
-    )
-    assert next == 768
-    assert initialized is False
+    ) == (768, False)
 
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
         tick=900,
-        tick_spacing=1,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=True,
-    )
-    assert next == 768
-    assert initialized is False
+    ) == (768, False)
 
-    next, initialized = TickBitmap.nextInitializedTickWithinOneWord(
+    TickBitmap.flipTick(tick_bitmap=tick_bitmap, tick=329, tick_spacing=1)
+    assert TickBitmap.nextInitializedTickWithinOneWord(
         tick_bitmap=tick_bitmap,
-        tick=900,
-        tick_spacing=1,
+        tick=456,
+        tick_spacing=TICK_SPACING,
         less_than_or_equal=True,
-    )
+    ) == (329, True)

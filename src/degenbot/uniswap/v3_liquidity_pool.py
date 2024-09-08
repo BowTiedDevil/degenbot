@@ -416,7 +416,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             elif step.tick_next > TickMath.MAX_TICK:
                 step.tick_next = TickMath.MAX_TICK
 
-            step.sqrt_price_next_x96 = TickMath.getSqrtRatioAtTick(step.tick_next)
+            step.sqrt_price_next_x96 = TickMath.get_sqrt_ratio_at_tick(step.tick_next)
 
             # compute values to swap to the target tick, price limit, or point where input/output
             # amount is exhausted
@@ -462,7 +462,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             elif state.sqrt_price_x96 != step.sqrt_price_start_x96:  # pragma: no branch
                 # Recompute unless we're on a lower tick boundary (i.e. already transitioned ticks),
                 # and haven't moved
-                state.tick = TickMath.getTickAtSqrtRatio(state.sqrt_price_x96)
+                state.tick = TickMath.get_tick_at_sqrt_ratio(state.sqrt_price_x96)
 
         amount0, amount1 = (
             (

@@ -1,5 +1,6 @@
 import pytest
 
+from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3_libraries import bit_math as BitMath
 
@@ -7,32 +8,28 @@ from degenbot.uniswap.v3_libraries import bit_math as BitMath
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/BitMath.spec.ts
 
 
-def test_mostSignificantBit():
+def test_most_significant_bit():
     with pytest.raises(EVMRevertError):
-        # this test should fail
-        BitMath.mostSignificantBit(0)
+        BitMath.most_significant_bit(MIN_UINT256)
 
-    assert BitMath.mostSignificantBit(1) == 0
+    assert BitMath.most_significant_bit(1) == 0
+    assert BitMath.most_significant_bit(2) == 1
 
-    assert BitMath.mostSignificantBit(2) == 1
-
+    # Test all powers of 2
     for i in range(256):
-        # test all powers of 2
-        assert BitMath.mostSignificantBit(2**i) == i
-    assert BitMath.mostSignificantBit(2**256 - 1) == 255
+        assert BitMath.most_significant_bit(2**i) == i
+    assert BitMath.most_significant_bit(MAX_UINT256) == 255
 
 
-def test_leastSignificantBit():
+def test_least_significant_bit():
     with pytest.raises(EVMRevertError):
-        # this test should fail
-        BitMath.leastSignificantBit(0)
+        BitMath.least_significant_bit(MIN_UINT256)
 
-    assert BitMath.leastSignificantBit(1) == 0
+    assert BitMath.least_significant_bit(1) == 0
+    assert BitMath.least_significant_bit(2) == 1
 
-    assert BitMath.leastSignificantBit(2) == 1
-
+    # Test all powers of 2
     for i in range(256):
-        # test all powers of 2
-        assert BitMath.leastSignificantBit(2**i) == i
+        assert BitMath.least_significant_bit(2**i) == i
 
-    assert BitMath.leastSignificantBit(2**256 - 1) == 0
+    assert BitMath.least_significant_bit(MAX_UINT256) == 0

@@ -25,60 +25,60 @@ def encodePriceSqrt(reserve1: int, reserve0: int) -> int:
 
 def test_getSqrtRatioAtTick() -> None:
     with pytest.raises(EVMRevertError, match="T"):
-        TickMath.getSqrtRatioAtTick(TickMath.MIN_TICK - 1)
+        TickMath.get_sqrt_ratio_at_tick(TickMath.MIN_TICK - 1)
 
     with pytest.raises(EVMRevertError, match="T"):
-        TickMath.getSqrtRatioAtTick(TickMath.MAX_TICK + 1)
+        TickMath.get_sqrt_ratio_at_tick(TickMath.MAX_TICK + 1)
 
-    assert TickMath.getSqrtRatioAtTick(TickMath.MIN_TICK) == 4295128739
+    assert TickMath.get_sqrt_ratio_at_tick(TickMath.MIN_TICK) == 4295128739
 
-    assert TickMath.getSqrtRatioAtTick(TickMath.MIN_TICK + 1) == 4295343490
+    assert TickMath.get_sqrt_ratio_at_tick(TickMath.MIN_TICK + 1) == 4295343490
 
     assert (
-        TickMath.getSqrtRatioAtTick(TickMath.MAX_TICK - 1)
+        TickMath.get_sqrt_ratio_at_tick(TickMath.MAX_TICK - 1)
         == 1461373636630004318706518188784493106690254656249
     )
 
-    assert TickMath.getSqrtRatioAtTick(TickMath.MIN_TICK) < (encodePriceSqrt(1, 2**127))
+    assert TickMath.get_sqrt_ratio_at_tick(TickMath.MIN_TICK) < (encodePriceSqrt(1, 2**127))
 
-    assert TickMath.getSqrtRatioAtTick(TickMath.MAX_TICK) > encodePriceSqrt(2**127, 1)
+    assert TickMath.get_sqrt_ratio_at_tick(TickMath.MAX_TICK) > encodePriceSqrt(2**127, 1)
 
     assert (
-        TickMath.getSqrtRatioAtTick(TickMath.MAX_TICK)
+        TickMath.get_sqrt_ratio_at_tick(TickMath.MAX_TICK)
         == 1461446703485210103287273052203988822378723970342
     )
 
 
 def test_minSqrtRatio() -> None:
-    min = TickMath.getSqrtRatioAtTick(TickMath.MIN_TICK)
+    min = TickMath.get_sqrt_ratio_at_tick(TickMath.MIN_TICK)
     assert min == TickMath.MIN_SQRT_RATIO
 
 
 def test_maxSqrtRatio() -> None:
-    max = TickMath.getSqrtRatioAtTick(TickMath.MAX_TICK)
+    max = TickMath.get_sqrt_ratio_at_tick(TickMath.MAX_TICK)
     assert max == TickMath.MAX_SQRT_RATIO
 
 
 def test_getTickAtSqrtRatio() -> None:
     with pytest.raises(EVMRevertError, match="Not a valid uint160"):
-        TickMath.getTickAtSqrtRatio(MIN_UINT160 - 1)
+        TickMath.get_tick_at_sqrt_ratio(MIN_UINT160 - 1)
 
     with pytest.raises(EVMRevertError, match="Not a valid uint160"):
-        TickMath.getTickAtSqrtRatio(MAX_UINT160 + 1)
+        TickMath.get_tick_at_sqrt_ratio(MAX_UINT160 + 1)
 
     with pytest.raises(EVMRevertError, match="R"):
-        TickMath.getTickAtSqrtRatio(TickMath.MIN_SQRT_RATIO - 1)
+        TickMath.get_tick_at_sqrt_ratio(TickMath.MIN_SQRT_RATIO - 1)
 
     with pytest.raises(EVMRevertError, match="R"):
-        TickMath.getTickAtSqrtRatio(TickMath.MAX_SQRT_RATIO)
+        TickMath.get_tick_at_sqrt_ratio(TickMath.MAX_SQRT_RATIO)
 
-    assert (TickMath.getTickAtSqrtRatio(TickMath.MIN_SQRT_RATIO)) == (TickMath.MIN_TICK)
-    assert (TickMath.getTickAtSqrtRatio(4295343490)) == (TickMath.MIN_TICK + 1)
+    assert (TickMath.get_tick_at_sqrt_ratio(TickMath.MIN_SQRT_RATIO)) == (TickMath.MIN_TICK)
+    assert (TickMath.get_tick_at_sqrt_ratio(4295343490)) == (TickMath.MIN_TICK + 1)
 
-    assert (TickMath.getTickAtSqrtRatio(1461373636630004318706518188784493106690254656249)) == (
+    assert (TickMath.get_tick_at_sqrt_ratio(1461373636630004318706518188784493106690254656249)) == (
         TickMath.MAX_TICK - 1
     )
-    assert (TickMath.getTickAtSqrtRatio(TickMath.MAX_SQRT_RATIO - 1)) == TickMath.MAX_TICK - 1
+    assert (TickMath.get_tick_at_sqrt_ratio(TickMath.MAX_SQRT_RATIO - 1)) == TickMath.MAX_TICK - 1
 
     for ratio in [
         TickMath.MIN_SQRT_RATIO,
@@ -96,12 +96,12 @@ def test_getTickAtSqrtRatio() -> None:
         TickMath.MAX_SQRT_RATIO - 1,
     ]:
         math_result = floor(log(((ratio / 2**96) ** 2), 1.0001))
-        result = TickMath.getTickAtSqrtRatio(ratio)
+        result = TickMath.get_tick_at_sqrt_ratio(ratio)
         abs_diff = abs(result - math_result)
         assert abs_diff <= 1
 
-        tick = TickMath.getTickAtSqrtRatio(ratio)
-        ratio_of_tick = TickMath.getSqrtRatioAtTick(tick)
-        ratio_of_tick_plus_one = TickMath.getSqrtRatioAtTick(tick + 1)
+        tick = TickMath.get_tick_at_sqrt_ratio(ratio)
+        ratio_of_tick = TickMath.get_sqrt_ratio_at_tick(tick)
+        ratio_of_tick_plus_one = TickMath.get_sqrt_ratio_at_tick(tick + 1)
         assert ratio >= ratio_of_tick
         assert ratio < ratio_of_tick_plus_one

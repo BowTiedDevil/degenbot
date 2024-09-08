@@ -1,8 +1,7 @@
 from functools import cache
 
-from ...constants import MAX_UINT160, MAX_UINT256, MIN_UINT160
+from ...constants import MAX_UINT128, MAX_UINT160, MAX_UINT256, MIN_UINT160
 from ...exceptions import EVMRevertError
-from . import yul_operations as yul
 
 MIN_TICK = -887272
 MAX_TICK = -MIN_TICK
@@ -11,55 +10,39 @@ MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342
 
 
 @cache
-def getSqrtRatioAtTick(tick: int) -> int:
+def get_sqrt_ratio_at_tick(tick: int) -> int:
+    """
+    Find the square root ratio in Q128.96 form for the given tick.
+    """
     abs_tick = abs(tick)
     if not (0 <= abs_tick <= MAX_TICK):
         raise EVMRevertError("T")
 
-    ratio = (
-        0xFFFCB933BD6FAD37AA2D162D1A594001
-        if (abs_tick & 0x1 != 0)
-        else 0x100000000000000000000000000000000
-    )
+    ratio = 340265354078544963557816517032075149313 if abs_tick & 1 != 0 else MAX_UINT128
 
-    if abs_tick & 0x2 != 0:
-        ratio = (ratio * 0xFFF97272373D413259A46990580E213A) >> 128
-    if abs_tick & 0x4 != 0:
-        ratio = (ratio * 0xFFF2E50F5F656932EF12357CF3C7FDCC) >> 128
-    if abs_tick & 0x8 != 0:
-        ratio = (ratio * 0xFFE5CACA7E10E4E61C3624EAA0941CD0) >> 128
-    if abs_tick & 0x10 != 0:
-        ratio = (ratio * 0xFFCB9843D60F6159C9DB58835C926644) >> 128
-    if abs_tick & 0x20 != 0:
-        ratio = (ratio * 0xFF973B41FA98C081472E6896DFB254C0) >> 128
-    if abs_tick & 0x40 != 0:
-        ratio = (ratio * 0xFF2EA16466C96A3843EC78B326B52861) >> 128
-    if abs_tick & 0x80 != 0:
-        ratio = (ratio * 0xFE5DEE046A99A2A811C461F1969C3053) >> 128
-    if abs_tick & 0x100 != 0:
-        ratio = (ratio * 0xFCBE86C7900A88AEDCFFC83B479AA3A4) >> 128
-    if abs_tick & 0x200 != 0:
-        ratio = (ratio * 0xF987A7253AC413176F2B074CF7815E54) >> 128
-    if abs_tick & 0x400 != 0:
-        ratio = (ratio * 0xF3392B0822B70005940C7A398E4B70F3) >> 128
-    if abs_tick & 0x800 != 0:
-        ratio = (ratio * 0xE7159475A2C29B7443B29C7FA6E889D9) >> 128
-    if abs_tick & 0x1000 != 0:
-        ratio = (ratio * 0xD097F3BDFD2022B8845AD8F792AA5825) >> 128
-    if abs_tick & 0x2000 != 0:
-        ratio = (ratio * 0xA9F746462D870FDF8A65DC1F90E061E5) >> 128
-    if abs_tick & 0x4000 != 0:
-        ratio = (ratio * 0x70D869A156D2A1B890BB3DF62BAF32F7) >> 128
-    if abs_tick & 0x8000 != 0:
-        ratio = (ratio * 0x31BE135F97D08FD981231505542FCFA6) >> 128
-    if abs_tick & 0x10000 != 0:
-        ratio = (ratio * 0x9AA508B5B7A84E1C677DE54F3E99BC9) >> 128
-    if abs_tick & 0x20000 != 0:
-        ratio = (ratio * 0x5D6AF8DEDB81196699C329225EE604) >> 128
-    if abs_tick & 0x40000 != 0:
-        ratio = (ratio * 0x2216E584F5FA1EA926041BEDFE98) >> 128
-    if abs_tick & 0x80000 != 0:
-        ratio = (ratio * 0x48A170391F7DC42444E8FA2) >> 128
+    for tick_mask, ratio_multiplier in (
+        (2, 340248342086729790484326174814286782778),
+        (4, 340214320654664324051920982716015181260),
+        (8, 340146287995602323631171512101879684304),
+        (16, 340010263488231146823593991679159461444),
+        (32, 339738377640345403697157401104375502016),
+        (64, 339195258003219555707034227454543997025),
+        (128, 338111622100601834656805679988414885971),
+        (256, 335954724994790223023589805789778977700),
+        (512, 331682121138379247127172139078559817300),
+        (1024, 323299236684853023288211250268160618739),
+        (2048, 307163716377032989948697243942600083929),
+        (4096, 277268403626896220162999269216087595045),
+        (8192, 225923453940442621947126027127485391333),
+        (16384, 149997214084966997727330242082538205943),
+        (32768, 66119101136024775622716233608466517926),
+        (65536, 12847376061809297530290974190478138313),
+        (131072, 485053260817066172746253684029974020),
+        (262144, 691415978906521570653435304214168),
+        (524288, 1404880482679654955896180642),
+    ):
+        if abs_tick & tick_mask != 0:
+            ratio = (ratio * ratio_multiplier) >> 128
 
     if tick > 0:
         ratio = MAX_UINT256 // ratio
@@ -71,136 +54,63 @@ def getSqrtRatioAtTick(tick: int) -> int:
 
 
 @cache
-def getTickAtSqrtRatio(sqrt_price_x96: int) -> int:
+def get_tick_at_sqrt_ratio(sqrt_price_x96: int) -> int:
+    """
+    Calculates the greatest tick value such that get_tick_at_sqrt_ratio(tick) <= ratio
+    """
+
     if not (MIN_UINT160 <= sqrt_price_x96 <= MAX_UINT160):
         raise EVMRevertError("Not a valid uint160")
 
-    # second inequality must be < because the price can never reach the price at the max tick
-    if not (sqrt_price_x96 >= MIN_SQRT_RATIO and sqrt_price_x96 < MAX_SQRT_RATIO):
+    # Second inequality must be < because the price can never reach the price at the max tick
+    if not (MIN_SQRT_RATIO <= sqrt_price_x96 < MAX_SQRT_RATIO):
         raise EVMRevertError("R")
 
     ratio = sqrt_price_x96 << 32
 
-    r: int = ratio
-    msb: int = 0
+    f: int
+    r = ratio
+    msb = 0
+    for shift, factor in (
+        (7, 2**128 - 1),
+        (6, 2**64 - 1),
+        (5, 2**32 - 1),
+        (4, 2**16 - 1),
+        (3, 2**8 - 1),
+        (2, 2**4 - 1),
+        (1, 2**2 - 1),
+    ):
+        f = (
+            r > factor  # Python casts the bool to int when applying the shift operator
+        ) << shift
+        msb = msb | f
+        r >>= f
 
-    f = yul.shl(7, yul.gt(r, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF))
-    msb = yul.or_(msb, f)
-    r = yul.shr(f, r)
+    f = r > 1
+    msb = msb | f
 
-    f = yul.shl(7, yul.gt(r, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF))
-    msb = yul.or_(msb, f)
-    r = yul.shr(f, r)
+    MOST_SIGNIFICANT_BIT_FOR_MAX_INT128 = 128
+    r = ratio >> msb - 127 if msb >= MOST_SIGNIFICANT_BIT_FOR_MAX_INT128 else ratio << 127 - msb
 
-    f = yul.shl(6, yul.gt(r, 0xFFFFFFFFFFFFFFFF))
-    msb = yul.or_(msb, f)
-    r = yul.shr(f, r)
+    log_2 = (msb - MOST_SIGNIFICANT_BIT_FOR_MAX_INT128) << 64
 
-    f = yul.shl(5, yul.gt(r, 0xFFFFFFFF))
-    msb = yul.or_(msb, f)
-    r = yul.shr(f, r)
+    for factor in (63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51):
+        r = (r * r) >> 127
+        f = r >> MOST_SIGNIFICANT_BIT_FOR_MAX_INT128
+        log_2 = log_2 | (f << factor)
+        r = r >> f
 
-    f = yul.shl(4, yul.gt(r, 0xFFFF))
-    msb = yul.or_(msb, f)
-    r = yul.shr(f, r)
-
-    f = yul.shl(3, yul.gt(r, 0xFF))
-    msb = yul.or_(msb, f)
-    r = yul.shr(f, r)
-
-    f = yul.shl(2, yul.gt(r, 0xF))
-    msb = yul.or_(msb, f)
-    r = yul.shr(f, r)
-
-    f = yul.shl(1, yul.gt(r, 0x3))
-    msb = yul.or_(msb, f)
-    r = yul.shr(f, r)
-
-    f = yul.gt(r, 0x1)
-    msb = yul.or_(msb, f)
-
-    r = ratio >> msb - 127 if msb >= 128 else ratio << 127 - msb
-
-    log_2 = (int(msb) - 128) << 64
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(63, f))
-    r = yul.shr(f, r)
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(62, f))
-    r = yul.shr(f, r)
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(61, f))
-    r = yul.shr(f, r)
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(60, f))
-    r = yul.shr(f, r)
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(59, f))
-    r = yul.shr(f, r)
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(58, f))
-    r = yul.shr(f, r)
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(57, f))
-    r = yul.shr(f, r)
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(56, f))
-    r = yul.shr(f, r)
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(55, f))
-    r = yul.shr(f, r)
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(54, f))
-    r = yul.shr(f, r)
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(53, f))
-    r = yul.shr(f, r)
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(52, f))
-    r = yul.shr(f, r)
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(51, f))
-    r = yul.shr(f, r)
-
-    r = yul.shr(127, yul.mul(r, r))
-    f = yul.shr(128, r)
-    log_2 = yul.or_(log_2, yul.shl(50, f))
+    r = (r * r) >> 127
+    f = r >> MOST_SIGNIFICANT_BIT_FOR_MAX_INT128
+    log_2 = log_2 | (f << 50)
 
     log_sqrt10001 = log_2 * 255738958999603826347141  # 128.128 number
 
     tick_low = (log_sqrt10001 - 3402992956809132418596140100660247210) >> 128
     tick_high = (log_sqrt10001 + 291339464771989622907027621153398088495) >> 128
 
-    tick = (
+    return (
         tick_low
-        if (tick_low == tick_high)
-        else (tick_high if getSqrtRatioAtTick(tick_high) <= sqrt_price_x96 else tick_low)
+        if tick_low == tick_high
+        else (tick_high if get_sqrt_ratio_at_tick(tick_high) <= sqrt_price_x96 else tick_low)
     )
-
-    return tick

@@ -64,7 +64,7 @@ def nextInitializedTickWithinOneWord(
         # in the word
         initialized_status = masked != 0
         next_tick = (
-            (compressed - (bit_pos - BitMath.mostSignificantBit(masked))) * tick_spacing
+            (compressed - (bit_pos - BitMath.most_significant_bit(masked))) * tick_spacing
             if initialized_status
             else (compressed - bit_pos) * tick_spacing
         )
@@ -85,7 +85,7 @@ def nextInitializedTickWithinOneWord(
         # word
         initialized_status = masked != 0
         next_tick = (
-            (compressed + 1 + (BitMath.leastSignificantBit(masked) - bit_pos)) * tick_spacing
+            (compressed + 1 + (BitMath.least_significant_bit(masked) - bit_pos)) * tick_spacing
             if initialized_status
             else (compressed + 1 + (MAX_UINT8 - bit_pos)) * tick_spacing
         )
