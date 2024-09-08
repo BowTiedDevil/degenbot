@@ -157,8 +157,8 @@ def test_base_pancakeswap_v3(base_full_node_web3: Web3):
     )
 
 
-def test_create_mainnet_managers(ethereum_full_node_web3: Web3):
-    set_web3(ethereum_full_node_web3)
+def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
+    set_web3(ethereum_archive_node_web3)
 
     uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
@@ -273,8 +273,8 @@ def test_create_mainnet_managers(ethereum_full_node_web3: Web3):
     assert uniswap_v2_lp.address not in uniswap_v2_pool_manager._untracked_pools
 
 
-def test_pool_remove_and_recreate(ethereum_full_node_web3: Web3):
-    set_web3(ethereum_full_node_web3)
+def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
+    set_web3(ethereum_archive_node_web3)
 
     uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
@@ -323,8 +323,8 @@ def test_pool_remove_and_recreate(ethereum_full_node_web3: Web3):
     del AllPools(chain_id=1)[super_new_v2_weth_wbtc_lp.address]
 
 
-def test_pools_from_token_path(ethereum_full_node_web3: Web3) -> None:
-    set_web3(ethereum_full_node_web3)
+def test_pools_from_token_path(ethereum_archive_node_web3: Web3) -> None:
+    set_web3(ethereum_archive_node_web3)
 
     uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
@@ -340,10 +340,10 @@ def test_pools_from_token_path(ethereum_full_node_web3: Web3) -> None:
     ]
 
 
-def test_same_block(fork_mainnet_archive: AnvilFork):
+def test_same_block(fork_mainnet: AnvilFork):
     _BLOCK = 18493777
-    fork_mainnet_archive.reset(block_number=_BLOCK)
-    set_web3(fork_mainnet_archive.w3)
+    fork_mainnet.reset(block_number=_BLOCK)
+    set_web3(fork_mainnet.w3)
 
     uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS

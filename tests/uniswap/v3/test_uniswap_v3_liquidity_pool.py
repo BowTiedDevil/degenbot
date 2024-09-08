@@ -38,9 +38,9 @@ def dai() -> Erc20Token:
 
 
 @pytest.fixture(scope="function")
-def wbtc_weth_v3_lp_at_block_17_600_000(fork_mainnet_archive: AnvilFork) -> V3LiquidityPool:
-    fork_mainnet_archive.reset(block_number=17_600_000)
-    set_web3(fork_mainnet_archive.w3)
+def wbtc_weth_v3_lp_at_block_17_600_000(fork_mainnet: AnvilFork) -> V3LiquidityPool:
+    fork_mainnet.reset(block_number=17_600_000)
+    set_web3(fork_mainnet.w3)
     return V3LiquidityPool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
@@ -65,8 +65,8 @@ def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool
     wbtc_weth_v3_lp_at_block_17_600_000._fetch_tick_data_at_word(word_position + 5)
 
 
-def test_creation(ethereum_full_node_web3: Web3) -> None:
-    set_web3(ethereum_full_node_web3)
+def test_creation(ethereum_archive_node_web3: Web3) -> None:
+    set_web3(ethereum_archive_node_web3)
     V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS)
     V3LiquidityPool(
         address=WBTC_WETH_V3_POOL_ADDRESS,
@@ -92,8 +92,8 @@ def test_creation(ethereum_full_node_web3: Web3) -> None:
     )
 
 
-def test_creation_with_bad_tokens(ethereum_full_node_web3: Web3) -> None:
-    set_web3(ethereum_full_node_web3)
+def test_creation_with_bad_tokens(ethereum_archive_node_web3: Web3) -> None:
+    set_web3(ethereum_archive_node_web3)
     with pytest.raises(ValueError, match="too many values to unpack"):
         V3LiquidityPool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
@@ -116,8 +116,8 @@ def test_creation_with_bad_tokens(ethereum_full_node_web3: Web3) -> None:
         )
 
 
-def test_creation_with_bad_liquidity_overrides(ethereum_full_node_web3: Web3) -> None:
-    set_web3(ethereum_full_node_web3)
+def test_creation_with_bad_liquidity_overrides(ethereum_archive_node_web3: Web3) -> None:
+    set_web3(ethereum_archive_node_web3)
     with pytest.raises(ValueError, match="Must provide both tick_bitmap and tick_data"):
         V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={0: {}})
 
@@ -125,19 +125,19 @@ def test_creation_with_bad_liquidity_overrides(ethereum_full_node_web3: Web3) ->
         V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_data={0: {}})
 
 
-def test_creation_with_invalid_hash(ethereum_full_node_web3: Web3) -> None:
-    set_web3(ethereum_full_node_web3)
+def test_creation_with_invalid_hash(ethereum_archive_node_web3: Web3) -> None:
+    set_web3(ethereum_archive_node_web3)
 
     # Delete the preset deployment for this factory so the test uses the provided override instead
     # of preferring the known valid deployment data
-    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][
+    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][
         UNISWAP_V3_FACTORY_ADDRESS
     ]
-    ticklens_deployment = TICKLENS_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][
+    ticklens_deployment = TICKLENS_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][
         UNISWAP_V3_FACTORY_ADDRESS
     ]
-    del FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
-    del TICKLENS_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
+    del FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
+    del TICKLENS_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
 
     # Change last byte of true init hash
     BAD_INIT_HASH = UNISWAP_V3_MAINNET_POOL_INIT_HASH[:-1] + "f"
@@ -154,10 +154,10 @@ def test_creation_with_invalid_hash(ethereum_full_node_web3: Web3) -> None:
         )
 
     # Restore the preset deployments
-    FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
+    FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
         factory_deployment
     )
-    TICKLENS_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
+    TICKLENS_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
         ticklens_deployment
     )
 
@@ -341,6 +341,7 @@ def test_calculate_tokens_out_from_tokens_in(
     wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool,
 ) -> None:
     lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+
     assert (
         lp.calculate_tokens_out_from_tokens_in(
             token_in=lp.token0,
@@ -694,17 +695,17 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -
     )
 
 
-def test_auto_update(fork_mainnet_archive: AnvilFork) -> None:
-    current_block = fork_mainnet_archive.w3.eth.block_number
-    fork_mainnet_archive.reset(block_number=current_block - 500_000)
-    set_web3(fork_mainnet_archive.w3)
+def test_auto_update(fork_mainnet: AnvilFork) -> None:
+    current_block = fork_mainnet.w3.eth.block_number
+    fork_mainnet.reset(block_number=current_block - 500_000)
+    set_web3(fork_mainnet.w3)
     lp = V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS)
-    fork_mainnet_archive.reset(block_number=current_block)
+    fork_mainnet.reset(block_number=current_block)
     lp.auto_update()
     lp.auto_update()  # update twice to cover the "no update" cases
 
 
-def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
+def test_complex_liquidity_transaction_1(fork_mainnet: AnvilFork):
     """
     Tests transaction 0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d, which
     executes a complex Burn/Swap/Mint
@@ -715,8 +716,8 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
     STATE_BLOCK = 19619258
     LP_ADDRESS = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
 
-    fork_mainnet_archive.reset(block_number=STATE_BLOCK)
-    set_web3(fork_mainnet_archive.w3)
+    fork_mainnet.reset(block_number=STATE_BLOCK)
+    set_web3(fork_mainnet.w3)
     lp = V3LiquidityPool(LP_ADDRESS)
 
     # Verify initial state
@@ -770,7 +771,7 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
     )
 
 
-def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
+def test_complex_liquidity_transaction_2(fork_mainnet: AnvilFork):
     """
     Tests transaction 0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b, which
     executes a complex Burn/Swap/Mint
@@ -781,8 +782,8 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
     STATE_BLOCK = 19624318
     LP_ADDRESS = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
 
-    fork_mainnet_archive.reset(block_number=STATE_BLOCK)
-    set_web3(fork_mainnet_archive.w3)
+    fork_mainnet.reset(block_number=STATE_BLOCK)
+    set_web3(fork_mainnet.w3)
     lp = V3LiquidityPool(LP_ADDRESS)
 
     # Verify initial state

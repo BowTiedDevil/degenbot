@@ -12,7 +12,7 @@ from degenbot.config import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.fork.anvil_fork import AnvilFork
 
-from ..conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_FULL_NODE_HTTP_URI
+from ..conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
@@ -20,36 +20,36 @@ WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 def test_anvil_forks():
     # Basic constructor
-    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
+    AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI)
 
     # Test optional arguments
     AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI, fork_block=18_000_000)
-    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, chain_id=1)
-    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, base_fee=10 * 10**9)
+    AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI, chain_id=1)
+    AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI, base_fee=10 * 10**9)
 
 
-def test_rpc_methods(fork_mainnet_archive: AnvilFork):
+def test_rpc_methods(fork_mainnet: AnvilFork):
     with pytest.raises(ValueError, match="Fee outside valid range"):
-        fork_mainnet_archive.set_next_base_fee(-1)
+        fork_mainnet.set_next_base_fee(-1)
     with pytest.raises(ValueError, match="Fee outside valid range"):
-        fork_mainnet_archive.set_next_base_fee(MAX_UINT256 + 1)
-    fork_mainnet_archive.set_next_base_fee(11 * 10**9)
+        fork_mainnet.set_next_base_fee(MAX_UINT256 + 1)
+    fork_mainnet.set_next_base_fee(11 * 10**9)
 
     # Set several snapshot IDs and return to them
     snapshot_ids = []
     for _ in range(10):
-        snapshot_ids.append(fork_mainnet_archive.set_snapshot())
+        snapshot_ids.append(fork_mainnet.set_snapshot())
     for id in snapshot_ids:
-        assert fork_mainnet_archive.return_to_snapshot(id) is True
+        assert fork_mainnet.return_to_snapshot(id) is True
     # No snapshot ID with this value
-    assert fork_mainnet_archive.return_to_snapshot(100) is False
+    assert fork_mainnet.return_to_snapshot(100) is False
 
     # Negative IDs are not allowed
     with pytest.raises(ValueError, match="ID cannot be negative"):
-        fork_mainnet_archive.return_to_snapshot(-1)
+        fork_mainnet.return_to_snapshot(-1)
 
     # Generate a 1 wei WETH deposit transaction from Vitalik.eth
-    weth_contract = fork_mainnet_archive.w3.eth.contract(
+    weth_contract = fork_mainnet.w3.eth.contract(
         address=WETH_ADDRESS,
         abi=ujson.loads(
             """
@@ -63,69 +63,62 @@ def test_rpc_methods(fork_mainnet_archive: AnvilFork):
             "value": Wei(1),
         },
     )
-    access_list = fork_mainnet_archive.create_access_list(
+    access_list = fork_mainnet.create_access_list(
         transaction=deposit_transaction,  # type: ignore[arg-type]
     )
     assert isinstance(access_list, list)
 
-    # switch between two different endpoints
-    for endpoint in (ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_FULL_NODE_HTTP_URI):
-        fork_mainnet_archive.reset(fork_url=endpoint)
-
     for balance in [MIN_UINT256, MAX_UINT256]:
-        fork_mainnet_archive.set_balance(VITALIK_ADDRESS, balance)
-        assert fork_mainnet_archive.w3.eth.get_balance(VITALIK_ADDRESS) == balance
+        fork_mainnet.set_balance(VITALIK_ADDRESS, balance)
+        assert fork_mainnet.w3.eth.get_balance(VITALIK_ADDRESS) == balance
 
     # Balances outside of uint256 should be rejected
     with pytest.raises(ValueError):
-        fork_mainnet_archive.set_balance(VITALIK_ADDRESS, MIN_UINT256 - 1)
+        fork_mainnet.set_balance(VITALIK_ADDRESS, MIN_UINT256 - 1)
     with pytest.raises(ValueError):
-        fork_mainnet_archive.set_balance(VITALIK_ADDRESS, MAX_UINT256 + 1)
+        fork_mainnet.set_balance(VITALIK_ADDRESS, MAX_UINT256 + 1)
 
     FAKE_COINBASE = to_checksum_address("0x0420042004200420042004200420042004200420")
-    fork_mainnet_archive.set_coinbase(FAKE_COINBASE)
+    fork_mainnet.set_coinbase(FAKE_COINBASE)
     # @dev the eth_coinbase method fails when called on Anvil,
     # so check by mining a block and comparing the miner address
 
-    fork_mainnet_archive.mine()
-    block = fork_mainnet_archive.w3.eth.get_block("latest")
+    fork_mainnet.mine()
+    block = fork_mainnet.w3.eth.get_block("latest")
     assert block["miner"] == FAKE_COINBASE
 
 
-def test_mine_and_reset(fork_mainnet_archive: AnvilFork):
-    starting_block = fork_mainnet_archive.w3.eth.get_block_number()
-    fork_mainnet_archive.mine()
-    fork_mainnet_archive.mine()
-    fork_mainnet_archive.mine()
-    assert fork_mainnet_archive.w3.eth.get_block_number() == starting_block + 3
-    fork_mainnet_archive.reset(block_number=starting_block)
-    assert fork_mainnet_archive.w3.eth.get_block_number() == starting_block
+def test_mine_and_reset(fork_mainnet: AnvilFork):
+    starting_block = fork_mainnet.w3.eth.get_block_number()
+    fork_mainnet.mine()
+    fork_mainnet.mine()
+    fork_mainnet.mine()
+    assert fork_mainnet.w3.eth.get_block_number() == starting_block + 3
+    fork_mainnet.reset(block_number=starting_block)
+    assert fork_mainnet.w3.eth.get_block_number() == starting_block
 
 
-def test_set_next_block_base_fee(fork_mainnet_archive: AnvilFork):
+def test_set_next_block_base_fee(fork_mainnet: AnvilFork):
     BASE_FEE_OVERRIDE = 69 * 10**9
 
-    fork_mainnet_archive.set_next_base_fee(BASE_FEE_OVERRIDE)
-    fork_mainnet_archive.mine()
-    assert fork_mainnet_archive.w3.eth.get_block("latest")["baseFeePerGas"] == BASE_FEE_OVERRIDE
+    fork_mainnet.set_next_base_fee(BASE_FEE_OVERRIDE)
+    fork_mainnet.mine()
+    assert fork_mainnet.w3.eth.get_block("latest")["baseFeePerGas"] == BASE_FEE_OVERRIDE
 
 
-def test_reset_and_set_next_block_base_fee(fork_mainnet_archive: AnvilFork):
+def test_reset_and_set_next_block_base_fee(fork_mainnet: AnvilFork):
     BASE_FEE_OVERRIDE = 69 * 10**9
 
-    starting_block = fork_mainnet_archive.w3.eth.get_block_number()
-    fork_mainnet_archive.reset(block_number=starting_block - 10, base_fee=BASE_FEE_OVERRIDE)
-    fork_mainnet_archive.mine()
-    assert fork_mainnet_archive.w3.eth.get_block_number() == starting_block - 9
-    assert (
-        fork_mainnet_archive.w3.eth.get_block(starting_block - 9)["baseFeePerGas"]
-        == BASE_FEE_OVERRIDE
-    )
+    starting_block = fork_mainnet.w3.eth.get_block_number()
+    fork_mainnet.reset(block_number=starting_block - 10, base_fee=BASE_FEE_OVERRIDE)
+    fork_mainnet.mine()
+    assert fork_mainnet.w3.eth.get_block_number() == starting_block - 9
+    assert fork_mainnet.w3.eth.get_block(starting_block - 9)["baseFeePerGas"] == BASE_FEE_OVERRIDE
 
 
 def test_ipc_kwargs():
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         ipc_provider_kwargs=dict(timeout=None),
     )
     if TYPE_CHECKING:
@@ -136,7 +129,7 @@ def test_ipc_kwargs():
 def test_balance_overrides_in_constructor():
     FAKE_BALANCE = 100 * 10**18
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         balance_overrides=[
             (VITALIK_ADDRESS, FAKE_BALANCE),
         ],
@@ -147,7 +140,7 @@ def test_balance_overrides_in_constructor():
 def test_nonce_overrides_in_constructor():
     FAKE_NONCE = 69
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         nonce_overrides=[
             (VITALIK_ADDRESS, FAKE_NONCE),
         ],
@@ -160,7 +153,7 @@ def test_bytecode_overrides_in_constructor():
     FAKE_BYTECODE = HexBytes("0x0420")
 
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI, bytecode_overrides=[(FAKE_ADDRESS, FAKE_BYTECODE)]
+        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI, bytecode_overrides=[(FAKE_ADDRESS, FAKE_BYTECODE)]
     )
     assert fork.w3.eth.get_code(FAKE_ADDRESS) == FAKE_BYTECODE
 
@@ -169,7 +162,7 @@ def test_coinbase_override_in_constructor():
     FAKE_COINBASE = to_checksum_address("0x6969696969696969696969696969696969696969")
 
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         coinbase=FAKE_COINBASE,
     )
     fork.mine()
