@@ -1,12 +1,10 @@
 import pytest
-from eth_typing import (
-    BlockNumber,
-    Hash32,
-    HexStr,
-)
+from eth_typing import BlockNumber, Hash32, HexStr
+from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
 import degenbot.config
+from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.functions import create2_address, get_number_for_block_identifier, next_base_fee
 
 
@@ -19,7 +17,7 @@ def test_create2():
         create2_address(
             deployer="0x0000000000000000000000000000000000000000",
             salt="0x0000000000000000000000000000000000000000000000000000000000000000",
-            init_code="0x00",
+            init_code_hash=keccak(hexstr="0x00"),
         )
         == "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38"
     )
@@ -27,7 +25,7 @@ def test_create2():
         create2_address(
             deployer="0xdeadbeef00000000000000000000000000000000",
             salt="0x0000000000000000000000000000000000000000000000000000000000000000",
-            init_code="0x00",
+            init_code_hash=keccak(hexstr="0x00"),
         )
         == "0xB928f69Bb1D91Cd65274e3c79d8986362984fDA3"
     )
@@ -35,7 +33,7 @@ def test_create2():
         create2_address(
             deployer="0xdeadbeef00000000000000000000000000000000",
             salt="0x000000000000000000000000feed000000000000000000000000000000000000",
-            init_code="0x00",
+            init_code_hash=keccak(hexstr="0x00"),
         )
         == "0xD04116cDd17beBE565EB2422F2497E06cC1C9833"
     )
@@ -43,7 +41,7 @@ def test_create2():
         create2_address(
             deployer="0x0000000000000000000000000000000000000000",
             salt="0x0000000000000000000000000000000000000000000000000000000000000000",
-            init_code="0xdeadbeef",
+            init_code_hash=keccak(hexstr="0xdeadbeef"),
         )
         == "0x70f2b2914A2a4b783FaEFb75f459A580616Fcb5e"
     )
@@ -51,7 +49,7 @@ def test_create2():
         create2_address(
             deployer="0x00000000000000000000000000000000deadbeef",
             salt="0x00000000000000000000000000000000000000000000000000000000cafebabe",
-            init_code="0xdeadbeef",
+            init_code_hash=keccak(hexstr="0xdeadbeef"),
         )
         == "0x60f3f640a8508fC6a86d45DF051962668E1e8AC7"
     )
@@ -59,18 +57,20 @@ def test_create2():
         create2_address(
             deployer="0x00000000000000000000000000000000deadbeef",
             salt="0x00000000000000000000000000000000000000000000000000000000cafebabe",
-            init_code="0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            init_code_hash=keccak(
+                hexstr="0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            ),
         )
         == "0x1d8bfDC5D46DC4f61D6b6115972536eBE6A8854C"
     )
 
 
-def test_converting_block_identifier_to_int(fork_mainnet_archive):
+def test_converting_block_identifier_to_int(fork_mainnet: AnvilFork):
     """
     Check that all inputs for web3 type `BlockIdentifier` can be converted to an integer
     """
 
-    degenbot.config.set_web3(fork_mainnet_archive.w3)
+    degenbot.config.set_web3(fork_mainnet.w3)
 
     # Known string literals
     latest_block = get_number_for_block_identifier("latest")
