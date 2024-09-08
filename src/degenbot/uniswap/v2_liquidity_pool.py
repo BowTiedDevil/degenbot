@@ -979,3 +979,5 @@ class UnregisteredLiquidityPool(LiquidityPool):
             self.fee_token0, self.fee_token1 = fee
         else:
             self.fee_token0 = self.fee_token1 = fee
+
+        self._subscribers = set()
