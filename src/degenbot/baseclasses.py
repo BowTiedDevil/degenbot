@@ -130,12 +130,12 @@ class AbstractLiquidityPool(abc.ABC, Publisher):
         for subscriber in self._subscribers:
             subscriber.notify(self, message)
 
-    def get_arbitrage_helpers(self: Publisher) -> Iterator[AbstractArbitrage]:
-        return (
+    def get_arbitrage_helpers(self: Publisher) -> list[AbstractArbitrage]:
+        return [
             subscriber
             for subscriber in self._subscribers
             if isinstance(subscriber, AbstractArbitrage)
-        )
+        ]
 
     def subscribe(self: Publisher, subscriber: Subscriber) -> None:
         self._subscribers.add(subscriber)
