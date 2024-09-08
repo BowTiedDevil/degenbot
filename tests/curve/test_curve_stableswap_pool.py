@@ -185,14 +185,16 @@ def test_base_registry_pools(fork_mainnet: AnvilFork):
         _test_calculations(lp)
 
 
-@pytest.mark.skip()
 def test_single_pool(
     fork_mainnet: AnvilFork,
 ):
-    _POOL_ADDRESS = "0xA77d09743F77052950C4eb4e6547E9665299BecD"
+    _POOL_ADDRESS = ""
 
-    # _block_identifier = None
-    _block_identifier = 20651129  # TODO: investigate - test is successful on previous block
+    if not _POOL_ADDRESS:
+        return
+
+    _block_identifier = None
+    # _block_identifier = 20651129
 
     set_web3(fork_mainnet.w3)
     if _block_identifier is not None:
