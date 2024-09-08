@@ -51,13 +51,10 @@ class Erc20TokenHelperManager(AbstractManager):
         if token_helper := self._erc20tokens.get(address):
             return token_helper
 
-        try:
-            if address == EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE.address:
-                token_helper = EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE()
-            else:
-                token_helper = Erc20Token(address=address, **kwargs)
-        except Erc20TokenError:
-            raise ManagerError(f"Could not create Erc20Token helper: {address=}") from None
+        if address == EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE.address:
+            token_helper = EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE()
+        else:
+            token_helper = Erc20Token(address=address, **kwargs)
 
         with self._lock:
             self._erc20tokens[address] = token_helper
