@@ -17,9 +17,6 @@ env_values = dotenv.dotenv_values(env_file)
 
 ARBITRUM_ARCHIVE_NODE_HTTP_URI = f"https://rpc.ankr.com/arbitrum/{env_values['ANKR_API_KEY']}"
 ETHEREUM_ARCHIVE_NODE_HTTP_URI = "http://localhost:8544"
-
-
-
 BASE_FULL_NODE_HTTP_URI = "http://localhost:8543"
 
 
