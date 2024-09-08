@@ -12,6 +12,9 @@ def test_most_significant_bit():
     with pytest.raises(EVMRevertError):
         BitMath.most_significant_bit(MIN_UINT256)
 
+    with pytest.raises(EVMRevertError):
+        BitMath.most_significant_bit(MAX_UINT256 + 1)
+
     assert BitMath.most_significant_bit(1) == 0
     assert BitMath.most_significant_bit(2) == 1
 
@@ -24,6 +27,9 @@ def test_most_significant_bit():
 def test_least_significant_bit():
     with pytest.raises(EVMRevertError):
         BitMath.least_significant_bit(MIN_UINT256)
+
+    with pytest.raises(EVMRevertError):
+        BitMath.least_significant_bit(MAX_UINT256 + 1)
 
     assert BitMath.least_significant_bit(1) == 0
     assert BitMath.least_significant_bit(2) == 1
