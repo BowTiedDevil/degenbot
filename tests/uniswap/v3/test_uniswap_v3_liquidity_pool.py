@@ -233,6 +233,23 @@ def test_discard_before_finalized(wbtc_weth_v3_lp_at_block_17_600_000: V3Liquidi
     assert wbtc_weth_v3_lp_at_block_17_600_000._pool_state_archive.keys() == set([_END_BLOCK])
 
 
+def test_discard_earlier_than_created(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
+    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+
+    state_before_discard = lp._pool_state_archive.copy()
+    wbtc_weth_v3_lp_at_block_17_600_000.discard_states_before_block(lp.update_block - 1)
+    assert lp._pool_state_archive == state_before_discard
+
+
+def test_discard_after_last_update(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
+    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+
+    with pytest.raises(
+        NoPoolStateAvailable, match=f"No pool state known prior to block {lp.update_block + 1}"
+    ):
+        wbtc_weth_v3_lp_at_block_17_600_000.discard_states_before_block(lp.update_block + 1)
+
+
 def test_tick_bitmap_equality() -> None:
     with pytest.raises(AssertionError):
         assert UniswapV3BitmapAtWord(bitmap=1) == UniswapV3BitmapAtWord(bitmap=2)
