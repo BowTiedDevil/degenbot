@@ -236,6 +236,7 @@ def test_discard_before_finalized(wbtc_weth_v3_lp_at_block_17_600_000: V3Liquidi
 def test_discard_earlier_than_created(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
     lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
 
+    assert lp._pool_state_archive is not None
     state_before_discard = lp._pool_state_archive.copy()
     wbtc_weth_v3_lp_at_block_17_600_000.discard_states_before_block(lp.update_block - 1)
     assert lp._pool_state_archive == state_before_discard
