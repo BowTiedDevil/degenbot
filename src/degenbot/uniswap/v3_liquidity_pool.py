@@ -505,24 +505,25 @@ class V3LiquidityPool(AbstractLiquidityPool):
             _tick_bitmap = w3_contract.functions.tickBitmap(word_position).call(
                 block_identifier=block_number,
             )
-            _tick_data = self.ticklens_contract.functions.getPopulatedTicksInWord(
-                self.address, word_position
-            ).call(block_identifier=block_number)
+            if _tick_bitmap != 0:
+                _tick_data = self.ticklens_contract.functions.getPopulatedTicksInWord(
+                    self.address, word_position
+                ).call(block_identifier=block_number)
         except Exception as e:
-            print(f"(V3LiquidityPool) (_update_tick_data_at_word) (single tick): {e}")
-            print(type(e))
+            print(f"{type(e)}: (V3LiquidityPool) (_update_tick_data_at_word) (single tick): {e}")
             raise
         else:
             self.tick_bitmap[word_position] = UniswapV3BitmapAtWord(
                 bitmap=_tick_bitmap,
                 block=block_number,
             )
-            for tick, liquidity_net, liquidity_gross in _tick_data:
-                self.tick_data[tick] = UniswapV3LiquidityAtTick(
-                    liquidityNet=liquidity_net,
-                    liquidityGross=liquidity_gross,
-                    block=block_number,
-                )
+            if _tick_bitmap != 0:
+                for tick, liquidity_net, liquidity_gross in _tick_data:
+                    self.tick_data[tick] = UniswapV3LiquidityAtTick(
+                        liquidityNet=liquidity_net,
+                        liquidityGross=liquidity_gross,
+                        block=block_number,
+                    )
 
     def _verified_address(self) -> ChecksumAddress:
         return generate_v3_pool_address(
