@@ -52,12 +52,11 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         self.id = id
         self.input_token = input_token
 
-        if max_input <= 0:
-            raise ValueError("Maximum input must be positive.")
-
         if max_input is None:
             logger.warning("No maximum input provided, setting to 100 WETH")
             max_input = 100 * 10**18
+        elif max_input <= 0:
+            raise ValueError("Maximum input must be positive.")
         self.max_input = max_input
 
         _swap_vectors: list[UniswapPoolSwapVector] = []
