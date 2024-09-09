@@ -248,6 +248,16 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                     # Swap is 1 -> 0  and cannot swap any more token1 for token0
                     raise ZeroLiquidityError("Pool has no liquidity for a 1 -> 0 swap")
 
+        if any(
+            [
+                not isinstance(state, UniswapV2PoolState | UniswapV3PoolState)
+                for state in override_state
+            ]
+        ):
+            raise ValueError(
+                "Unsupported item found in override states. Provide UniswapV2PoolState or UniswapV3PoolState only."  # noqa: E501
+            )
+
         state_overrides = self._sort_overrides(override_state)
 
         if min_rate_of_exchange is None:
