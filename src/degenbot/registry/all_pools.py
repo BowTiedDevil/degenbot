@@ -1,9 +1,8 @@
-
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
-from ..baseclasses import AbstractLiquidityPool
 from ..logging import logger
+from ..types import AbstractLiquidityPool
 
 # Internal state dictionary that maintains a keyed dictionary of all pool objects. The top level
 # dict is keyed by chain ID, and sub-dicts are keyed by the checksummed pool address.

@@ -22,7 +22,6 @@ from web3.contract.contract import Contract
 from web3.types import BlockIdentifier
 
 from .. import config
-from ..baseclasses import AbstractLiquidityPool
 from ..constants import ZERO_ADDRESS
 from ..erc20_token import Erc20Token
 from ..exceptions import BrokenPool, EVMRevertError, ZeroLiquidityError, ZeroSwapError
@@ -36,6 +35,7 @@ from ..functions import get_number_for_block_identifier
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
+from ..types import AbstractLiquidityPool
 from .abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from .types import (
     CurveStableSwapPoolAttributes,

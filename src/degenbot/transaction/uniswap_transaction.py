@@ -20,7 +20,6 @@ from degenbot.exchanges.uniswap.types import (
 )
 
 from .. import config
-from ..baseclasses import AbstractSimulationResult, AbstractTransaction
 from ..constants import WRAPPED_NATIVE_TOKENS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
@@ -32,6 +31,7 @@ from ..exceptions import (
     TransactionError,
 )
 from ..logging import logger
+from ..types import AbstractSimulationResult, AbstractTransaction
 from ..uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from ..uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
 from ..uniswap.v2_functions import generate_v2_pool_address, get_v2_pools_from_token_path

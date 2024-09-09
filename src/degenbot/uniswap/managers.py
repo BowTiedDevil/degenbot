@@ -7,7 +7,6 @@ from eth_utils.address import to_checksum_address
 from web3.contract.contract import Contract
 
 from .. import config
-from ..baseclasses import AbstractManager
 from ..constants import ZERO_ADDRESS
 from ..exceptions import Erc20TokenError, ManagerError, PoolNotAssociated
 from ..exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
@@ -15,6 +14,7 @@ from ..exchanges.uniswap.types import UniswapV2ExchangeDeployment, UniswapV3Exch
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
+from ..types import AbstractManager
 from .abi import UNISWAP_V2_FACTORY_ABI
 from .v2_liquidity_pool import LiquidityPool
 from .v3_functions import generate_v3_pool_address

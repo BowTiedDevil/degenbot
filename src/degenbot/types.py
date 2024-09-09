@@ -1,6 +1,6 @@
 import abc
 import dataclasses
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 from eth_typing import ChecksumAddress

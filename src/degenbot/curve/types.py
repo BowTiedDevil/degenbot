@@ -2,7 +2,7 @@ import dataclasses
 
 from eth_typing import ChecksumAddress, HexAddress
 
-from ..baseclasses import AbstractPoolState, Message
+from ..types import AbstractPoolState, Message
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

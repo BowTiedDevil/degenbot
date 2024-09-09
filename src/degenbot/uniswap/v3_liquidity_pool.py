@@ -14,7 +14,6 @@ from eth_utils.crypto import keccak
 from web3.contract.contract import Contract
 
 from .. import config
-from ..baseclasses import AbstractLiquidityPool
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     BitmapWordUnavailableError,
@@ -29,6 +28,7 @@ from ..exchanges.uniswap.types import UniswapV3ExchangeDeployment
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
+from ..types import AbstractLiquidityPool
 from .abi import UNISWAP_V3_POOL_ABI, UNISWAP_V3_TICKLENS_ABI
 from .v3_functions import (
     exchange_rate_from_sqrt_price_x96,

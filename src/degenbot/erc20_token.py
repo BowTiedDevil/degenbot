@@ -10,12 +10,12 @@ from web3.exceptions import BadFunctionCallOutput, ContractLogicError
 from web3.types import BlockIdentifier
 
 from . import config
-from .baseclasses import AbstractErc20Token
 from .chainlink import ChainlinkPriceContract
 from .exceptions import NoPriceOracle
 from .functions import get_number_for_block_identifier
 from .logging import logger
 from .registry.all_tokens import AllTokens
+from .types import AbstractErc20Token
 
 # Taken from OpenZeppelin's ERC-20 implementation
 # ref: https://www.npmjs.com/package/@openzeppelin/contracts?activeTab=code

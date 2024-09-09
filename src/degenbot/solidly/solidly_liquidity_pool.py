@@ -12,7 +12,6 @@ from degenbot.exchanges.solidly.deployments import FACTORY_DEPLOYMENTS
 from degenbot.exchanges.solidly.types import SolidlyExchangeDeployment
 
 from .. import config
-from ..baseclasses import AbstractLiquidityPool
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     ExternalUpdateError,
@@ -23,6 +22,7 @@ from ..exceptions import (
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
+from ..types import AbstractLiquidityPool
 from ..uniswap.v2_functions import (
     constant_product_calc_exact_in,
     constant_product_calc_exact_out,

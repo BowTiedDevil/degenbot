@@ -13,7 +13,6 @@ from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.exchanges.uniswap.types import UniswapV2ExchangeDeployment
 
 from .. import config
-from ..baseclasses import AbstractLiquidityPool
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     ExternalUpdateError,
@@ -24,6 +23,7 @@ from ..exceptions import (
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
+from ..types import AbstractLiquidityPool
 from .abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
 from .v2_functions import (
     constant_product_calc_exact_in,

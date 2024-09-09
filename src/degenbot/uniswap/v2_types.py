@@ -2,7 +2,7 @@ import dataclasses
 
 from eth_typing import ChecksumAddress
 
-from ..baseclasses import AbstractPoolState, Message, UniswapSimulationResult
+from ..types import AbstractPoolState, Message, UniswapSimulationResult
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

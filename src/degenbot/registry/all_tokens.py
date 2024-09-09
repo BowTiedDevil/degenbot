@@ -1,9 +1,8 @@
-
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
-from ..baseclasses import AbstractErc20Token
 from ..logging import logger
+from ..types import AbstractErc20Token
 
 # Internal state dictionary that maintains a keyed dictionary of all token objects. The top level
 # dict is keyed by chain ID, and sub-dicts are keyed by the checksummed token address.

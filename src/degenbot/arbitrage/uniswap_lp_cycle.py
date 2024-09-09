@@ -10,10 +10,10 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
-from ..baseclasses import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
 from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
+from ..types import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
 from ..uniswap.v2_liquidity_pool import LiquidityPool
 from ..uniswap.v2_types import UniswapV2PoolState, UniswapV2PoolStateUpdated
 from ..uniswap.v3_libraries import TickMath

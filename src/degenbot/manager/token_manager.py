@@ -5,9 +5,8 @@ from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
 from .. import config
-from ..baseclasses import AbstractManager
 from ..erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE, Erc20Token
-from ..exceptions import Erc20TokenError, ManagerError
+from ..types import AbstractManager
 
 
 class Erc20TokenHelperManager(AbstractManager):

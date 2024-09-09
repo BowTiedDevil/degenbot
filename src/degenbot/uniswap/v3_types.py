@@ -3,7 +3,7 @@ from typing import Any
 
 from eth_typing import ChecksumAddress
 
-from ..baseclasses import AbstractPoolState, Message, UniswapSimulationResult
+from ..types import AbstractPoolState, Message, UniswapSimulationResult
 
 
 @dataclasses.dataclass(slots=True)

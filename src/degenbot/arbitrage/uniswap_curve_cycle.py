@@ -10,12 +10,6 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import minimize_scalar
 from web3 import Web3
 
-from ..baseclasses import (
-    AbstractArbitrage,
-    Publisher,
-    Subscriber,
-    UniswapSimulationResult,
-)
 from ..config import get_web3
 from ..constants import MAX_UINT256
 from ..curve.curve_stableswap_liquidity_pool import CurveStableswapPool
@@ -23,6 +17,12 @@ from ..curve.types import CurveStableswapPoolState
 from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
+from ..types import (
+    AbstractArbitrage,
+    Publisher,
+    Subscriber,
+    UniswapSimulationResult,
+)
 from ..uniswap.v2_liquidity_pool import LiquidityPool
 from ..uniswap.v2_types import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from ..uniswap.v3_libraries import TickMath
