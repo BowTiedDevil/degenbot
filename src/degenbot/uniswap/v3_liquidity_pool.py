@@ -808,9 +808,6 @@ class V3LiquidityPool(AbstractLiquidityPool):
         conditions when used with threads.
         """
 
-        if TYPE_CHECKING:
-            assert isinstance(update, UniswapV3PoolExternalUpdate)
-
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
                 f"Rejected update for block {update.block_number} in the past, "
