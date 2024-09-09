@@ -343,11 +343,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
         zero_for_one: bool,
         amount_specified: int,
         sqrt_price_limit_x96: int,
-        override_start_liquidity: int | None = None,
-        override_start_sqrt_price_x96: int | None = None,
-        override_start_tick: int | None = None,
-        override_tick_data: dict[int, Any] | None = None,
-        override_tick_bitmap: dict[int, Any] | None = None,
+        override_state: UniswapV3PoolState | None = None,
     ) -> tuple[int, int, int, int, int]:
         """
         This function is ported and adapted from the UniswapV3Pool.sol contract at
@@ -363,19 +359,21 @@ class V3LiquidityPool(AbstractLiquidityPool):
         if amount_specified == 0:  # pragma: no cover
             raise EVMRevertError("AS")
 
-        _liquidity = (
-            override_start_liquidity if override_start_liquidity is not None else self.liquidity
-        )
+        _liquidity = override_state.liquidity if override_state is not None else self.liquidity
         _sqrt_price_x96 = (
-            override_start_sqrt_price_x96
-            if override_start_sqrt_price_x96 is not None
-            else self.sqrt_price_x96
+            override_state.sqrt_price_x96 if override_state is not None else self.sqrt_price_x96
         )
-        _tick = override_start_tick if override_start_tick is not None else self.tick
+        _tick = override_state.tick if override_state is not None else self.tick
         _tick_bitmap = (
-            override_tick_bitmap if override_tick_bitmap is not None else self.tick_bitmap
+            override_state.tick_bitmap
+            if override_state is not None and override_state.tick_bitmap is not None
+            else self.tick_bitmap
         )
-        _tick_data = override_tick_data if override_tick_data is not None else self.tick_data
+        _tick_data = (
+            override_state.tick_data
+            if override_state is not None and override_state.tick_data is not None
+            else self.tick_data
+        )
 
         if zero_for_one is True and not (
             TickMath.MIN_SQRT_RATIO < sqrt_price_limit_x96 < _sqrt_price_x96
@@ -732,19 +730,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 sqrt_price_limit_x96=(
                     TickMath.MIN_SQRT_RATIO + 1 if _is_zero_for_one else TickMath.MAX_SQRT_RATIO - 1
                 ),
-                override_start_liquidity=(
-                    override_state.liquidity if override_state is not None else None
-                ),
-                override_start_sqrt_price_x96=(
-                    override_state.sqrt_price_x96 if override_state is not None else None
-                ),
-                override_start_tick=(override_state.tick if override_state is not None else None),
-                override_tick_bitmap=(
-                    override_state.tick_bitmap if override_state is not None else None
-                ),
-                override_tick_data=(
-                    override_state.tick_data if override_state is not None else None
-                ),
+                override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
@@ -790,19 +776,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 sqrt_price_limit_x96=(
                     TickMath.MIN_SQRT_RATIO + 1 if _is_zero_for_one else TickMath.MAX_SQRT_RATIO - 1
                 ),
-                override_start_liquidity=(
-                    override_state.liquidity if override_state is not None else None
-                ),
-                override_start_sqrt_price_x96=(
-                    override_state.sqrt_price_x96 if override_state is not None else None
-                ),
-                override_start_tick=(override_state.tick if override_state is not None else None),
-                override_tick_bitmap=(
-                    override_state.tick_bitmap if override_state is not None else None
-                ),
-                override_tick_data=(
-                    override_state.tick_data if override_state is not None else None
-                ),
+                override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
@@ -1141,13 +1115,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                         TickMath.MIN_SQRT_RATIO + 1 if zero_for_one else TickMath.MAX_SQRT_RATIO - 1
                     )
                 ),
-                override_start_liquidity=override_state.liquidity if override_state else None,
-                override_start_sqrt_price_x96=override_state.sqrt_price_x96
-                if override_state
-                else None,
-                override_start_tick=override_state.tick if override_state else None,
-                override_tick_bitmap=override_state.tick_bitmap if override_state else None,
-                override_tick_data=override_state.tick_data if override_state else None,
+                override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
@@ -1200,13 +1168,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                         TickMath.MIN_SQRT_RATIO + 1 if zero_for_one else TickMath.MAX_SQRT_RATIO - 1
                     )
                 ),
-                override_start_liquidity=override_state.liquidity if override_state else None,
-                override_start_sqrt_price_x96=override_state.sqrt_price_x96
-                if override_state
-                else None,
-                override_start_tick=override_state.tick if override_state else None,
-                override_tick_bitmap=override_state.tick_bitmap if override_state else None,
-                override_tick_data=override_state.tick_data if override_state else None,
+                override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
