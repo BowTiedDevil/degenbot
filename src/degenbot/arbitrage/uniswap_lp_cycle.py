@@ -282,6 +282,8 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                     fee = Fraction(
                         pool.fee, 1000000
                     )  # V3 fees are in hundredths of a bip (0.0001), e.g. 3000 == 0.3%
+                case _:
+                    raise ValueError(f"Could not identify pool {pool} and state {pool_state}.")
 
             net_rate_of_exchange *= (
                 exchange_rate if vector.zero_for_one is True else 1 / exchange_rate
