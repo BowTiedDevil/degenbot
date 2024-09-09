@@ -1,3 +1,4 @@
+from .arbitrage.types import ArbitrageCalculationResult
 from .arbitrage.uniswap_curve_cycle import UniswapCurveCycle
 from .arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from .builder_endpoint import BuilderEndpoint
@@ -42,6 +43,7 @@ __all__ = (
     "AllPools",
     "AllTokens",
     "AnvilFork",
+    "ArbitrageCalculationResult",
     "BuilderEndpoint",
     "CamelotLiquidityPool",
     "ChainlinkPriceContract",
