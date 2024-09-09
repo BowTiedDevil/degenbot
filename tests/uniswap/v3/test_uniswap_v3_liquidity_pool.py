@@ -120,10 +120,10 @@ def test_creation_with_bad_tokens(ethereum_archive_node_web3: Web3) -> None:
 
 def test_creation_with_bad_liquidity_overrides(ethereum_archive_node_web3: Web3) -> None:
     set_web3(ethereum_archive_node_web3)
-    with pytest.raises(ValueError, match="Must provide both tick_bitmap and tick_data"):
+    with pytest.raises(ValueError, match="Provide both tick_bitmap and tick_data."):
         V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={0: {}})
 
-    with pytest.raises(ValueError, match="Must provide both tick_bitmap and tick_data"):
+    with pytest.raises(ValueError, match="Provide both tick_bitmap and tick_data."):
         V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_data={0: {}})
 
 

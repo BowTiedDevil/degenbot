@@ -198,17 +198,14 @@ class V3LiquidityPool(AbstractLiquidityPool):
             verified_address = self._verified_address()
             if verified_address != self.address:
                 raise ValueError(
-                    f"Pool address verification failed. Provided: {self.address}, "
-                    f"expected: {verified_address}"
+                    f"Pool address verification failed. Provided: {self.address}, expected: {verified_address}"  # noqa: E501
                 )
 
         self.name = f"{self.token0}-{self.token1} (V3, {self.fee / 10000:.2f}%)"
         self._extra_words = extra_words
 
         if (tick_bitmap is not None) != (tick_data is not None):
-            raise ValueError(
-                f"Must provide both tick_bitmap and tick_data! Got {tick_bitmap=}, {tick_data=}"
-            )
+            raise ValueError("Provide both tick_bitmap and tick_data.")
 
         # If liquidity info was not provided, treat the mapping as sparse
         self.sparse_liquidity_map = tick_bitmap is None or tick_data is None
