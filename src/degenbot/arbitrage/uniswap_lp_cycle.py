@@ -79,7 +79,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                                 zero_for_one=False,
                             )
                         )
-                    case _:
+                    case _:  # pragma: no cover
                         raise ValueError("Input token could not be identified!")
             else:
                 match _swap_vectors[-1].token_out:
@@ -97,7 +97,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                             token_out=pool.token0,
                             zero_for_one=False,
                         )
-                    case _:
+                    case _:  # pragma: no cover
                         raise ValueError("Input token could not be identified!")
         self._swap_vectors = tuple(_swap_vectors)
 
@@ -197,6 +197,8 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
+                    case _:  # pragma: no cover
+                        raise ValueError("Could not identify pool and override type.")
             except LiquidityPoolError as e:  # pragma: no cover
                 raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}") from None
             else:
@@ -688,6 +690,8 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                                 msg_value,
                             )
                         )
+                    case _:  # pragma: no cover
+                        raise ValueError("Could not identify pool and swap amounts.")
         except Exception as e:
             logger.exception("generate_payloads catch-all")
             raise ArbitrageError(f"generate_payloads (catch-all)): {e}") from e
