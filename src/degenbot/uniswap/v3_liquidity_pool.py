@@ -1133,7 +1133,6 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
         if token_out not in self.tokens:  # pragma: no cover
             raise ValueError("token_out is unknown!")
-
         if token_out_quantity == 0:  # pragma: no cover
             raise ValueError("Zero output swap requested.")
 
