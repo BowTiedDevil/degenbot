@@ -216,11 +216,17 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         ) -> None:
             if pool_state.reserves_token0 > 1 and pool_state.reserves_token1 > 1:
                 return  # No liquidity issues
-            elif pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:
+            elif (
+                pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0
+            ):  # pragma: no cover
                 raise ZeroLiquidityError("Pool has no liquidity")
-            elif pool_state.reserves_token1 == 1 and vector.zero_for_one is True:
+            elif (
+                pool_state.reserves_token1 == 1 and vector.zero_for_one is True
+            ):  # pragma: no cover
                 raise ZeroLiquidityError("Pool has no liquidity for a 0 -> 1 swap")
-            elif pool_state.reserves_token0 == 1 and vector.zero_for_one is False:
+            elif (
+                pool_state.reserves_token0 == 1 and vector.zero_for_one is False
+            ):  # pragma: no cover
                 raise ZeroLiquidityError("Pool has no liquidity for a 1 -> 0 swap")
 
         def _check_v3_pool_liquidity(
@@ -231,20 +237,20 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                 pool_state.sqrt_price_x96 == 0
                 or pool_state.tick_bitmap == {}
                 or pool_state.tick_data == {}
-            ):
+            ):  # pragma: no cover
                 raise ZeroLiquidityError("Pool is not uninitialized.")
 
             if pool_state.liquidity == 0:
                 if (
                     pool_state.sqrt_price_x96 == TickMath.MIN_SQRT_RATIO + 1
                     and vector.zero_for_one is True
-                ):
+                ):  # pragma: no cover
                     # Swap is 0 -> 1 and cannot swap any more token0 for token1
                     raise ZeroLiquidityError("Pool has no liquidity for a 0 -> 1 swap")
                 elif (
                     pool_state.sqrt_price_x96 == TickMath.MAX_SQRT_RATIO - 1
                     and vector.zero_for_one is False
-                ):
+                ):  # pragma: no cover
                     # Swap is 1 -> 0  and cannot swap any more token1 for token0
                     raise ZeroLiquidityError("Pool has no liquidity for a 1 -> 0 swap")
 
@@ -260,7 +266,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
 
         state_overrides = self._sort_overrides(override_state)
 
-        if min_rate_of_exchange is None:
+        if min_rate_of_exchange is None:  # pragma: no branch
             min_rate_of_exchange = Fraction(1, 1)
 
         # A scalar value representing the net amount of 1 input token across the complete path

@@ -192,7 +192,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             tick_spacing if tick_spacing is not None else TICK_SPACING_BY_FEE[self.fee]
         )
 
-        if verify_address:
+        if verify_address:  # pragma: no branch
             verified_address = self._verified_address()
             if verified_address != self.address:
                 raise ValueError(
@@ -269,7 +269,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
         self._subscribers = set()
 
-        if not silent:  # pragma: no cover
+        if not silent:  # pragma: no branch
             logger.info(self.name)
             logger.info(f"• Token 0: {self.token0}")
             logger.info(f"• Token 1: {self.token1}")
@@ -347,7 +347,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
         indicates the token quantity deposited.
         """
 
-        if amount_specified == 0:  # pragma: no cover
+        if amount_specified == 0:  # pragma: no branch
             raise EVMRevertError("AS")
 
         _liquidity = override_state.liquidity if override_state is not None else self.liquidity
@@ -368,12 +368,12 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
         if zero_for_one is True and not (
             TickMath.MIN_SQRT_RATIO < sqrt_price_limit_x96 < _sqrt_price_x96
-        ):  # pragma: no cover
+        ):  # pragma: no branch
             raise EVMRevertError("SPL")
 
         if zero_for_one is False and not (
             _sqrt_price_x96 < sqrt_price_limit_x96 < TickMath.MAX_SQRT_RATIO
-        ):  # pragma: no cover
+        ):  # pragma: no branch
             raise EVMRevertError("SPL")
 
         exact_input = amount_specified > 0
@@ -927,7 +927,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 logger.debug(f"update block: {update.block_number} (last={self.update_block})")
 
             if updated_state:
-                if self._pool_state_archive is not None:  # pragma: no cover
+                if self._pool_state_archive is not None:  # pragma: no branch
                     self._pool_state_archive[update.block_number] = self.state
                 self._notify_subscribers(
                     message=UniswapV3PoolStateUpdated(self.state),
@@ -1006,7 +1006,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
         Discard states recorded prior to a target block.
         """
 
-        if self._pool_state_archive is None:  # pragma: no cover
+        if self._pool_state_archive is None:  # pragma: no branch
             raise NoPoolStateAvailable("No archived states are available")
 
         with self._state_lock:
