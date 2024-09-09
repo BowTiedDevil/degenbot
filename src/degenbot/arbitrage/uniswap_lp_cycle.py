@@ -14,7 +14,7 @@ from ..baseclasses import AbstractArbitrage, PlaintextMessage, Publisher, Subscr
 from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
-from ..uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
+from ..uniswap.v2_liquidity_pool import LiquidityPool
 from ..uniswap.v2_types import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
@@ -104,16 +104,6 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                     case _:
                         raise ValueError("Input token could not be identified!")
         self._swap_vectors = tuple(_swap_vectors)
-
-        self.best: dict[str, Any] = {
-            "input_token": self.input_token,
-            "last_swap_amount": 0,
-            "profit_amount": 0,
-            "profit_token": self.input_token,
-            "strategy": "cycle",
-            "swap_amount": 0,
-            "swap_pool_amounts": [],
-        }
 
         self._subscribers: set[Subscriber] = set()
 
@@ -456,7 +446,8 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         min_rate_of_exchange: Fraction | None = None,
     ) -> ArbitrageCalculationResult:
         """
-        Stateless calculation that does not use `self.best`
+        Calculate the results of the arbitrage at the current pool states, or at one or more
+        overridden pool states if provided.
         """
 
         self._pre_calculation_check(
@@ -523,25 +514,6 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             override_state,
         )
 
-    def calculate_arbitrage_return_best(
-        self,
-        override_state: Sequence[
-            tuple[LiquidityPool, UniswapV2PoolState]
-            | tuple[LiquidityPool, UniswapV2PoolSimulationResult]
-            | tuple[V3LiquidityPool, UniswapV3PoolState]
-            | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
-        ]
-        | None = None,
-    ) -> tuple[str, dict[str, Any]]:
-        """
-        A wrapper over `calculate_arbitrage`, useful for sending the
-        calculation into a process pool and retrieving the results after
-        pickling/unpickling the object and losing connection to the original.
-        """
-
-        self.calculate_arbitrage(override_state)
-        return self.id, self.best
-
     def calculate_arbitrage(
         self,
         override_state: Sequence[
@@ -552,7 +524,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         ]
         | None = None,
         min_rate_of_exchange: Fraction | None = None,
-    ) -> tuple[bool, tuple[int, int]]:
+    ) -> ArbitrageCalculationResult:
         """
         TBD
         """
@@ -562,88 +534,13 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             min_rate_of_exchange=min_rate_of_exchange,
         )
 
-        result = self._calculate(override_state=override_state)
-
-        if override_state is None:
-            self.best.update(
-                {
-                    "last_swap_amount": result.input_amount,
-                    "profit_amount": result.profit_amount,
-                    "swap_amount": result.input_amount,
-                    "swap_pool_amounts": result.swap_amounts,
-                }
-            )
-
-        profitable = result.profit_amount > 0
-        return profitable, (result.input_amount, result.profit_amount)
-
-    def clear_best(self) -> None:
-        self.best.update(
-            {
-                "profit_amount": 0,
-                "swap_amount": 0,
-                "swap_pool_amounts": [],
-            }
-        )
-
-    @classmethod
-    def from_addresses(
-        cls,
-        input_token_address: str,
-        swap_pool_addresses: Iterable[tuple[str, str]],
-        id: str,
-        max_input: int | None = None,
-    ) -> "UniswapLpCycle":
-        """
-        Create a new `UniswapLpCycle` object from token and pool addresses.
-
-        Arguments
-        ---------
-        input_token_address : str
-            A address for the input_token
-        swap_pool_addresses : Iterable[str,str]
-            An iterable of tuples representing the address for each pool in the
-            swap path, and a string specifying the Uniswap version for that
-            pool (either "V2" or "V3")
-
-            e.g. swap_pool_addresses = [
-                ("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD","V3"),
-                ("0xbb2b8038a1640196fbe3e38816f3e67cba72d940","V2")
-            ]
-        max_input: int, optional
-            The maximum input amount for the input token (limited by the
-            balance of the deployed contract or operating EOA)
-        id: str, optional
-            A unique identifier for bookkeeping purposes, not validated
-        """
-
-        token = Erc20Token(input_token_address)
-
-        pool_objects: list[LiquidityPool | V3LiquidityPool | CamelotLiquidityPool] = []
-        for pool_address, pool_type in swap_pool_addresses:
-            match pool_type:
-                case "V2":
-                    pool_objects.append(LiquidityPool(address=pool_address))
-                case "V3":
-                    pool_objects.append(V3LiquidityPool(address=pool_address))
-                case "CamelotV2":
-                    pool_objects.append(CamelotLiquidityPool(address=pool_address))
-                case _:  # pragma: no cover
-                    raise ArbitrageError(f"Pool type {pool_type} unknown!")
-
-        return cls(
-            input_token=token,
-            swap_pools=pool_objects,
-            max_input=max_input,
-            id=id,
-        )
+        return self._calculate(override_state=override_state)
 
     def generate_payloads(
         self,
         from_address: ChecksumAddress | str,
-        swap_amount: int | None = None,
-        pool_swap_amounts: Sequence[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts]
-        | None = None,
+        swap_amount: int,
+        pool_swap_amounts: Sequence[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts],
     ) -> list[tuple[ChecksumAddress, bytes, int]]:
         """
         Generate a list of ABI-encoded calldata for each step in the swap path.
@@ -657,15 +554,12 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             The address that will execute the calldata. Must be a smart
             contract implementing the required callbacks specific to the pool.
 
-        swap_amount: int, optional
+        swap_amount: int
             The initial amount of `token_in` to swap through the first pool.
-            If this argument is `None`, amount will be retrieved from
-            `self.best`.
 
         pool_swap_amounts: Iterable[UniswapV2PoolSwapAmounts |
-        UniswapV3PoolSwapAmounts], optional
-            An iterable of swap amounts to be encoded. If this argument is
-            `None`, amounts will be retrieved from `self.best`.
+        UniswapV3PoolSwapAmounts]
+            An iterable of swap amounts to be encoded.
 
         Returns
         -------
@@ -681,20 +575,6 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         """
 
         from_address = to_checksum_address(from_address)
-
-        if swap_amount is None:
-            swap_amount = self.best["swap_amount"]
-
-        if pool_swap_amounts is None:
-            pool_swap_amounts = self.best["swap_pool_amounts"]
-
-        # Abandon empty inputs.
-        # @dev this looks like a useful place for a ValueError, but threaded
-        # clients may execute a pool update for a swap pool before the call to
-        # generate payloads is processed. Abandon the call in this case and
-        # raise a generic non-fatal exception.
-        if not pool_swap_amounts:
-            raise ArbitrageError("Pool amounts empty, abandoning payload generation.")
 
         payloads = []
         msg_value: int = 0  # This arbitrage does not require a `msg.value` payment

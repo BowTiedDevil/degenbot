@@ -2120,19 +2120,6 @@ def test_create_with_either_token_input(
     )
 
 
-def test_create_from_token_addresses(fork_mainnet: AnvilFork):
-    set_web3(fork_mainnet.w3)
-    UniswapLpCycle.from_addresses(
-        input_token_address=WETH_ADDRESS,
-        swap_pool_addresses=[
-            (WBTC_WETH_V2_POOL_ADDRESS, "V2"),
-            (WBTC_WETH_V3_POOL_ADDRESS, "V3"),
-        ],
-        id="test",
-        max_input=1,
-    )
-
-
 def test_arbitrage_with_overrides(
     wbtc_weth_arb: UniswapLpCycle,
     wbtc_weth_v2_lp: LiquidityPool,
@@ -2178,11 +2165,9 @@ def test_arbitrage_with_overrides(
     overrides = [
         (wbtc_weth_v3_lp, v3_pool_state_override),
     ]
-
-    assert wbtc_weth_arb.calculate_arbitrage(override_state=overrides) == (
-        True,
-        (20454968409226055680, 163028226755627520),
-    )
+    result = wbtc_weth_arb.calculate_arbitrage(override_state=overrides)
+    assert result.profit_amount == 163028226755627520
+    assert result.input_amount == 20454968409226055680
 
     # Irrelevant V2 and V3 mocked pools, only the address is changed.
     irrelevant_v2_pool = MockLiquidityPool()
@@ -2226,10 +2211,9 @@ def test_arbitrage_with_overrides(
     ]
 
     # This should equal the result from the test with the V3 override only
-    assert wbtc_weth_arb.calculate_arbitrage(override_state=overrides) == (
-        True,
-        (20454968409226055680, 163028226755627520),
-    )
+    result = wbtc_weth_arb.calculate_arbitrage(override_state=overrides)
+    assert result.profit_amount == 163028226755627520
+    assert result.input_amount == 20454968409226055680
 
 
 @pytest.mark.skip(reason="Unreliable RPC")
@@ -2268,7 +2252,7 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum: AnvilFor
             _tasks.append(
                 loop.run_in_executor(
                     executor,
-                    arb.calculate_arbitrage_return_best,
+                    arb.calculate_arbitrage,
                 )
             )
 
@@ -2277,7 +2261,7 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum: AnvilFor
                 await task
 
     with contextlib.suppress(ArbitrageError):
-        arb.calculate_arbitrage_return_best()
+        arb.calculate_arbitrage()
 
 
 async def test_process_pool_calculation(
@@ -2347,38 +2331,6 @@ async def test_process_pool_calculation(
         print(f"Completed {_NUM_FUTURES} calculations in {time.perf_counter() - start:.1f}s")
 
 
-async def test_process_pool_calculation_with_return_best(
-    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v3_lp: V3LiquidityPool
-):
-    v3_pool_state_override = UniswapV3PoolState(
-        pool=wbtc_weth_v3_lp.address,
-        liquidity=1533143241938066251,
-        sqrt_price_x96=31881290961944305252140777263703426,
-        tick=258116,
-    )
-
-    overrides = [
-        (wbtc_weth_v3_lp, v3_pool_state_override),
-    ]
-
-    with concurrent.futures.ProcessPoolExecutor(
-        mp_context=multiprocessing.get_context("spawn"),
-    ) as executor:
-        wbtc_weth_arb.calculate_arbitrage_return_best(override_state=overrides)
-
-        loop = asyncio.get_running_loop()
-
-        _tasks = []
-        for _ in range(8):
-            _tasks.append(
-                loop.run_in_executor(
-                    executor,
-                    wbtc_weth_arb.calculate_arbitrage_return_best,
-                    overrides,
-                )
-            )
-
-
 def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
     lp_1 = MockLiquidityPool()
     lp_1.name = "WBTC-WETH (V2, 0.30%)"
@@ -2421,8 +2373,12 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
         swap_pools=[lp_1, lp_2],
         max_input=100 * 10**18,
     )
-    arb.calculate_arbitrage()
-    arb.generate_payloads(from_address=ZERO_ADDRESS)
+    result = arb.calculate_arbitrage()
+    arb.generate_payloads(
+        from_address=ZERO_ADDRESS,
+        pool_swap_amounts=result.swap_amounts,
+        swap_amount=result.input_amount,
+    )
 
     # This arb path should result in an unprofitable calculation, since token1
     # price is lower in the second pool.
