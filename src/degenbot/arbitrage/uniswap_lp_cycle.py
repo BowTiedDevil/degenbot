@@ -140,7 +140,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         _token_out_quantity: int = 0
 
         for i, (pool, swap_vector) in enumerate(
-            zip(self.swap_pools, self._swap_vectors, strict=False)
+            zip(self.swap_pools, self._swap_vectors, strict=True)
         ):
             token_in = swap_vector.token_in
             zero_for_one = swap_vector.zero_for_one
@@ -268,7 +268,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         net_rate_of_exchange = Fraction(1, 1)
 
         # Check the pool state liquidity in the direction of the trade
-        for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=False):
+        for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=True):
             pool_state = state_overrides.get(pool.address) or pool.state
 
             match pool, pool_state:
@@ -320,7 +320,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             token_out_quantity: int = 0
 
             for i, (pool, swap_vector) in enumerate(
-                zip(self.swap_pools, self._swap_vectors, strict=False)
+                zip(self.swap_pools, self._swap_vectors, strict=True)
             ):
                 pool_override = state_overrides.get(pool.address)
 
@@ -564,7 +564,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                 )
 
             for i, (swap_pool, _swap_amounts) in enumerate(
-                zip(self.swap_pools, pool_swap_amounts, strict=False)
+                zip(self.swap_pools, pool_swap_amounts, strict=True)
             ):
                 next_pool = None if swap_pool is last_pool else self.swap_pools[i + 1]
                 if next_pool is not None:
