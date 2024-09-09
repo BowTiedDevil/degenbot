@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -174,24 +174,14 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             _token_in_quantity = token_in_quantity if i == 0 else _token_out_quantity
 
             try:
-                match pool:
-                    case LiquidityPool():
-                        if TYPE_CHECKING:
-                            assert pool_state_override is None or isinstance(
-                                pool_state_override,
-                                UniswapV2PoolState,
-                            )
+                match pool, pool_state_override:
+                    case LiquidityPool(), UniswapV2PoolState() | None:
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=token_in,
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
-                    case V3LiquidityPool():
-                        if TYPE_CHECKING:
-                            assert pool_state_override is None or isinstance(
-                                pool_state_override,
-                                UniswapV3PoolState,
-                            )
+                    case V3LiquidityPool(), UniswapV3PoolState() | None:
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=token_in,
                             token_in_quantity=_token_in_quantity,
@@ -252,9 +242,6 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             pool_state: UniswapV2PoolState,
             vector: UniswapPoolSwapVector,
         ) -> None:
-            if TYPE_CHECKING:
-                assert isinstance(pool_state, UniswapV2PoolState)
-
             if pool_state.reserves_token0 > 1 and pool_state.reserves_token1 > 1:
                 return  # No liquidity issues
             if pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:
@@ -268,9 +255,6 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             pool_state: UniswapV3PoolState,
             vector: UniswapPoolSwapVector,
         ) -> None:
-            if TYPE_CHECKING:
-                assert isinstance(pool_state, UniswapV3PoolState)
-
             if (
                 pool_state.sqrt_price_x96 == 0
                 or pool_state.tick_bitmap == {}
@@ -624,11 +608,8 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                     # sending address
                     swap_destination_address = from_address
 
-                match swap_pool:
-                    case LiquidityPool():
-                        if TYPE_CHECKING:
-                            assert isinstance(_swap_amounts, UniswapV2PoolSwapAmounts)
-
+                match swap_pool, _swap_amounts:
+                    case LiquidityPool(), UniswapV2PoolSwapAmounts():
                         logger.debug(f"PAYLOAD: building V2 swap at pool {i}")
                         logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
                         logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
@@ -656,10 +637,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                                 msg_value,
                             )
                         )
-                    case V3LiquidityPool():
-                        if TYPE_CHECKING:
-                            assert isinstance(_swap_amounts, UniswapV3PoolSwapAmounts)
-
+                    case V3LiquidityPool(), UniswapV3PoolSwapAmounts():
                         logger.debug(f"PAYLOAD: building V3 swap at pool {i}")
                         logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
                         logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
