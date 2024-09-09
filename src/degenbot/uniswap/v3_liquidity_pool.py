@@ -678,7 +678,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 self._notify_subscribers(
                     message=UniswapV3PoolStateUpdated(self.state),
                 )
-                if self._pool_state_archive is not None:
+                if self._pool_state_archive is not None:  # pragma: no cover
                     self._pool_state_archive[block_number] = self.state
 
             if not silent:  # pragma: no cover
@@ -936,7 +936,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 logger.debug(f"update block: {update.block_number} (last={self.update_block})")
 
             if updated_state:
-                if self._pool_state_archive is not None:
+                if self._pool_state_archive is not None:  # pragma: no cover
                     self._pool_state_archive[update.block_number] = self.state
                 self._notify_subscribers(
                     message=UniswapV3PoolStateUpdated(self.state),
@@ -1053,7 +1053,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
         # index=3 is for block 103.
         # block_index = self._pool_state_archive.bisect_left(block)
 
-        if self._pool_state_archive is None:
+        if self._pool_state_archive is None:  # pragma: no cover
             raise NoPoolStateAvailable("No archived states are available")
 
         with self._state_lock:
