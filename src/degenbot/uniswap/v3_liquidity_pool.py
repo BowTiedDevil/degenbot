@@ -289,6 +289,18 @@ class V3LiquidityPool(AbstractLiquidityPool):
         Create a new `V3LiquidityPool` with exchange information taken from the provided deployment.
         """
 
+        for key in [
+            "factory_address",
+            "deployer_address",
+            "abi",
+            "init_hash",
+        ]:
+            if key in kwargs:
+                logger.warning(
+                    f"Ignoring keyword argument {key}={kwargs[key]} in favor of value in exchange deployment."  # noqa: E501
+                )
+                kwargs.pop(key)
+
         return cls(
             address=address,
             factory_address=exchange.factory.address,
