@@ -268,11 +268,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             block_identifier=self.update_block
         )
 
-        self._pool_state_archive: dict[int, UniswapV3PoolState] | None
-        if archive_states:
-            self._pool_state_archive = {self.update_block: self.state}
-        else:
-            self._pool_state_archive = None
+        self._pool_state_archive = {self.update_block: self.state} if archive_states else None
 
         AllPools(w3.eth.chain_id)[self.address] = self
 
