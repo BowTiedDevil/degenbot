@@ -229,6 +229,7 @@ def test_discard_before_finalized(wbtc_weth_v3_lp_at_block_17_600_000: V3Liquidi
         block_states[block_number] = lp.state
 
     wbtc_weth_v3_lp_at_block_17_600_000.discard_states_before_block(_END_BLOCK)
+    assert wbtc_weth_v3_lp_at_block_17_600_000._pool_state_archive is not None
     assert wbtc_weth_v3_lp_at_block_17_600_000._pool_state_archive.keys() == set([_END_BLOCK])
 
 

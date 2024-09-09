@@ -268,9 +268,11 @@ class V3LiquidityPool(AbstractLiquidityPool):
             block_identifier=self.update_block
         )
 
-        self._pool_state_archive: dict[int, UniswapV3PoolState] = {}
+        self._pool_state_archive: dict[int, UniswapV3PoolState] | None
         if archive_states:
-            self._pool_state_archive[self.update_block] = self.state
+            self._pool_state_archive = {self.update_block: self.state}
+        else:
+            self._pool_state_archive = None
 
         AllPools(w3.eth.chain_id)[self.address] = self
 
@@ -678,7 +680,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 self._notify_subscribers(
                     message=UniswapV3PoolStateUpdated(self.state),
                 )
-                if self._pool_state_archive:
+                if self._pool_state_archive is not None:
                     self._pool_state_archive[block_number] = self.state
 
             if not silent:  # pragma: no cover
@@ -960,7 +962,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 logger.debug(f"update block: {update.block_number} (last={self.update_block})")
 
             if updated_state:
-                if self._pool_state_archive:
+                if self._pool_state_archive is not None:
                     self._pool_state_archive[update.block_number] = self.state
                 self._notify_subscribers(
                     message=UniswapV3PoolStateUpdated(self.state),
@@ -1039,7 +1041,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
         Discard states recorded prior to a target block.
         """
 
-        if not self._pool_state_archive:
+        if self._pool_state_archive is None:  # pragma: no cover
             raise NoPoolStateAvailable("No archived states are available")
 
         with self._state_lock:
@@ -1077,7 +1079,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
         # index=3 is for block 103.
         # block_index = self._pool_state_archive.bisect_left(block)
 
-        if not self._pool_state_archive:
+        if self._pool_state_archive is None:
             raise NoPoolStateAvailable("No archived states are available")
 
         with self._state_lock:
