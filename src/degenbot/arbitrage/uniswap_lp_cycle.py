@@ -43,19 +43,16 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         id: str,
         max_input: int | None = None,
     ):
-        if any([not isinstance(pool, LiquidityPool | V3LiquidityPool) for pool in swap_pools]):
-            raise ValueError("Must provide only Uniswap liquidity pools.")
+        for pool in swap_pools:
+            if not isinstance(pool, LiquidityPool | V3LiquidityPool):
+                raise ValueError("Incompatible pool provided.")
 
         self.swap_pools: tuple[LiquidityPool | V3LiquidityPool, ...] = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
-
-        for pool in swap_pools:
-            pool.subscribe(self)
-
         self.id = id
         self.input_token = input_token
 
-        if max_input == 0:
+        if max_input <= 0:
             raise ValueError("Maximum input must be positive.")
 
         if max_input is None:
@@ -106,6 +103,8 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         self._swap_vectors = tuple(_swap_vectors)
 
         self._subscribers: set[Subscriber] = set()
+        for pool in swap_pools:
+            pool.subscribe(self)
 
     def __getstate__(self) -> dict[str, Any]:
         dropped_attributes = ("_subscribers",)
@@ -131,8 +130,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         | None,
     ) -> dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState]:
         """
-        Validate the overrides, extract and insert the resulting pool states
-        into a dictionary.
+        Validate the overrides and sort into a dictionary keyed by pool address.
         """
 
         if overrides is None:

@@ -2397,7 +2397,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
 def test_bad_pool_in_constructor(
     wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
 ):
-    with pytest.raises(ValueError, match="Must provide only Uniswap liquidity pools."):
+    with pytest.raises(ValueError, match="Incompatible pool provided."):
         UniswapLpCycle(
             id="test_arb",
             input_token=weth_token,
