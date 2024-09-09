@@ -15,6 +15,7 @@ from degenbot.exceptions import (
 )
 from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
 from degenbot.fork.anvil_fork import AnvilFork
+from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_liquidity_pool import UNISWAP_V3_MAINNET_POOL_INIT_HASH, V3LiquidityPool
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
@@ -59,8 +60,9 @@ def convert_unsigned_integer_to_signed(num: int):
 
 
 def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool):
-    word_position, _ = wbtc_weth_v3_lp_at_block_17_600_000._get_tick_bitmap_word_and_bit_position(
-        wbtc_weth_v3_lp_at_block_17_600_000.tick
+    word_position, _ = get_tick_word_and_bit_position(
+        tick=wbtc_weth_v3_lp_at_block_17_600_000.tick,
+        tick_spacing=wbtc_weth_v3_lp_at_block_17_600_000.tick_spacing,
     )
     wbtc_weth_v3_lp_at_block_17_600_000._fetch_tick_data_at_word(word_position + 5)
 
@@ -611,12 +613,9 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -
     assert wbtc_weth_v3_lp_at_block_17_600_000._update_block == _START_BLOCK
 
     # Ensure liquidity data is available for the manipulated tick range
-    word_pos_1, _ = wbtc_weth_v3_lp_at_block_17_600_000._get_tick_bitmap_word_and_bit_position(
-        -887160
-    )
-    word_pos_2, _ = wbtc_weth_v3_lp_at_block_17_600_000._get_tick_bitmap_word_and_bit_position(
-        -887220
-    )
+    tick_spacing = wbtc_weth_v3_lp_at_block_17_600_000.tick_spacing
+    word_pos_1, _ = get_tick_word_and_bit_position(tick=-887160, tick_spacing=tick_spacing)
+    word_pos_2, _ = get_tick_word_and_bit_position(tick=-887220, tick_spacing=tick_spacing)
     wbtc_weth_v3_lp_at_block_17_600_000._fetch_tick_data_at_word(word_pos_1)
     wbtc_weth_v3_lp_at_block_17_600_000._fetch_tick_data_at_word(word_pos_2)
 

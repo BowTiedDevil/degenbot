@@ -3,7 +3,6 @@
 
 import dataclasses
 from bisect import bisect_left
-from decimal import Decimal
 from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Literal
@@ -31,7 +30,11 @@ from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
 from .abi import UNISWAP_V3_POOL_ABI, UNISWAP_V3_TICKLENS_ABI
-from .v3_functions import exchange_rate_from_sqrt_price_x96, generate_v3_pool_address
+from .v3_functions import (
+    exchange_rate_from_sqrt_price_x96,
+    generate_v3_pool_address,
+    get_tick_word_and_bit_position,
+)
 from .v3_libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
 from .v3_libraries.functions import to_int256
 from .v3_types import (
@@ -225,8 +228,12 @@ class V3LiquidityPool(AbstractLiquidityPool):
             }
 
             # Add empty regions to mapping
-            min_word_position, _ = self._get_tick_bitmap_word_and_bit_position(TickMath.MIN_TICK)
-            max_word_position, _ = self._get_tick_bitmap_word_and_bit_position(TickMath.MAX_TICK)
+            min_word_position, _ = get_tick_word_and_bit_position(
+                TickMath.MIN_TICK, self.tick_spacing
+            )
+            max_word_position, _ = get_tick_word_and_bit_position(
+                TickMath.MAX_TICK, self.tick_spacing
+            )
             known_empty_words = (
                 set(range(min_word_position, max_word_position + 1)) - self.tick_bitmap.keys()
             )
@@ -248,7 +255,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
         if tick_bitmap is None and tick_data is None:
             logger.debug(f"{self} @ {self.address} updating -> {tick_bitmap=}, {tick_data=}")
-            word_position, _ = self._get_tick_bitmap_word_and_bit_position(self.tick)
+            word_position, _ = get_tick_word_and_bit_position(self.tick, self.tick_spacing)
 
             self._fetch_tick_data_at_word(
                 word_position,
@@ -516,13 +523,6 @@ class V3LiquidityPool(AbstractLiquidityPool):
                     liquidityGross=liquidity_gross,
                     block=block_number,
                 )
-
-    def _get_tick_bitmap_word_and_bit_position(self, tick: int) -> tuple[int, int]:
-        """
-        Retrieves the word and bit position (both zero indexed) for the tick. Accounts for the tick
-        spacing.
-        """
-        return TickBitmap.position(int(Decimal(tick) // self.tick_spacing))
 
     def _verified_address(self) -> ChecksumAddress:
         return generate_v3_pool_address(
@@ -880,7 +880,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                     )
 
                 for tick in (lower_tick, upper_tick):
-                    tick_word, _ = self._get_tick_bitmap_word_and_bit_position(tick)
+                    tick_word, _ = get_tick_word_and_bit_position(tick, self.tick_spacing)
 
                     if tick_word not in self.tick_bitmap:
                         # The tick bitmap must be known for the word prior to changing the

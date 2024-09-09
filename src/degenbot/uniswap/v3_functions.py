@@ -1,4 +1,5 @@
 from collections.abc import Callable, Iterable, Iterator
+from decimal import Decimal
 from fractions import Fraction
 from itertools import cycle
 
@@ -9,6 +10,7 @@ from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
 from ..functions import create2_address
+from .v3_libraries import tick_bitmap as TickBitmap
 
 
 def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
@@ -91,3 +93,13 @@ def generate_v3_pool_address(
         salt=salt,
         init_code_hash=init_hash,
     )
+
+
+def get_tick_word_and_bit_position(
+    tick: int,
+    tick_spacing: int,
+) -> tuple[int, int]:
+    """
+    Retrieves the word and bit position for the tick, accounting for tick spacing.
+    """
+    return TickBitmap.position(int(Decimal(tick) // tick_spacing))
