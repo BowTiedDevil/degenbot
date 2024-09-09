@@ -2201,7 +2201,7 @@ def test_arbitrage_with_overrides(
     irrelevant_v3_pool.token1 = weth_token
     irrelevant_v3_pool.liquidity = 1612978974357835825
     irrelevant_v3_pool.sqrt_price_x96 = 31549217861118002279483878013792428
-    irrelevant_v3_pool.sparse_bitmap = False
+    irrelevant_v3_pool.sparse_liquidity_map = False
     irrelevant_v3_pool.tick = 257907
     irrelevant_v3_pool.tick_spacing = 60
 

@@ -453,7 +453,11 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         """
 
         if any(
-            [pool.sparse_bitmap for pool in self.swap_pools if isinstance(pool, V3LiquidityPool)]
+            [
+                pool.sparse_liquidity_map
+                for pool in self.swap_pools
+                if isinstance(pool, V3LiquidityPool)
+            ]
         ):
             raise ValueError(
                 f"Cannot calculate {self} with executor. One or more V3 pools has a sparse bitmap."

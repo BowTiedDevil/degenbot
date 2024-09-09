@@ -210,8 +210,8 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 f"Must provide both tick_bitmap and tick_data! Got {tick_bitmap=}, {tick_data=}"
             )
 
-        # If tick info was not provided, treat the bitmap as sparse
-        self.sparse_bitmap = tick_bitmap is None or tick_data is None
+        # If liquidity info was not provided, treat the mapping as sparse
+        self.sparse_liquidity_map = tick_bitmap is None or tick_data is None
 
         if tick_bitmap is not None:
             # transform dict to UniswapV3BitmapAtWord
@@ -406,7 +406,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 )
             except BitmapWordUnavailableError as exc:
                 missing_word = exc.args[1]
-                if self.sparse_bitmap:
+                if self.sparse_liquidity_map:
                     self._fetch_tick_data_at_word(
                         word_position=missing_word,
                         block_number=self.update_block,
@@ -859,7 +859,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                         # The tick bitmap must be known for the word prior to changing the
                         # initialized status of any tick
 
-                        if self.sparse_bitmap:
+                        if self.sparse_liquidity_map:
                             logger.debug(
                                 f"(external_update) {tick_word=} not found in tick_bitmap."
                             )
