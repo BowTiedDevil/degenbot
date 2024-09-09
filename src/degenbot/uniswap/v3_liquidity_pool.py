@@ -154,9 +154,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 ticklens_abi if ticklens_abi is not None else UNISWAP_V3_TICKLENS_ABI
             )
 
-        if state_block is None:
-            state_block = w3.eth.block_number
-        self._update_block = state_block
+        self._update_block = state_block if state_block is not None else w3.eth.block_number
 
         self.state: UniswapV3PoolState = UniswapV3PoolState(
             pool=self.address,
