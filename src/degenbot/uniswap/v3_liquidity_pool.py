@@ -1,4 +1,5 @@
 # TODO: add event prototype exporter method and handler for callbacks
+# TODO: add housekeeping to remove any words where a bitmap == 0
 
 import dataclasses
 from bisect import bisect_left

@@ -244,11 +244,11 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         ) -> None:
             if pool_state.reserves_token0 > 1 and pool_state.reserves_token1 > 1:
                 return  # No liquidity issues
-            if pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:
+            elif pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:
                 raise ZeroLiquidityError("Pool has no liquidity")
-            if pool_state.reserves_token1 == 1 and vector.zero_for_one is True:
+            elif pool_state.reserves_token1 == 1 and vector.zero_for_one is True:
                 raise ZeroLiquidityError("Pool has no liquidity for a 0 -> 1 swap")
-            if pool_state.reserves_token0 == 1 and vector.zero_for_one is False:
+            elif pool_state.reserves_token0 == 1 and vector.zero_for_one is False:
                 raise ZeroLiquidityError("Pool has no liquidity for a 1 -> 0 swap")
 
         def _check_v3_pool_liquidity(
@@ -260,7 +260,6 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                 or pool_state.tick_bitmap == {}
                 or pool_state.tick_data == {}
             ):
-                # TODO: add housekeeping to `V3LiquidityPool` to remove tick_bitmaps set to 0
                 raise ZeroLiquidityError("Pool is not uninitialized.")
 
             if pool_state.liquidity == 0:
@@ -295,7 +294,6 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                     _check_v2_pool_liquidity(pool_state, vector)
                     exchange_rate = Fraction(pool_state.reserves_token1, pool_state.reserves_token0)
                     fee = pool.fee_token0 if vector.zero_for_one else pool.fee_token1
-
                 case V3LiquidityPool(), UniswapV3PoolState():
                     _check_v3_pool_liquidity(pool_state, vector)
                     exchange_rate = Fraction(pool_state.sqrt_price_x96**2, 2**192)
