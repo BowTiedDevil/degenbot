@@ -217,8 +217,8 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         block_number: int | None = None,
     ) -> list[SwapAmounts]:
         """
-        Generate human-readable inputs for a complete swap along the arbitrage
-        path, starting with `token_in_quantity` amount of `token_in`.
+        Generate human-readable inputs for a complete swap along the arbitrage path, starting with
+        `token_in_quantity` amount of `token_in`.
         """
 
         if pool_state_overrides is None:  # pragma: no branch
@@ -254,14 +254,12 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
-
                     case V3LiquidityPool(), UniswapV3PoolState() | None:
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=token_in,
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
-
                     case CurveStableswapPool(), CurveStableswapPoolState() | None:
                         _token_out_quantity = int(
                             self.curve_discount_factor
@@ -362,12 +360,11 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                 case LiquidityPool(), UniswapV2PoolState(), UniswapPoolSwapVector():
                     if pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:
                         raise ZeroLiquidityError(f"V2 pool {pool.address} has no liquidity")
-
                     if pool_state.reserves_token1 == 1 and vector.zero_for_one:
                         raise ZeroLiquidityError(
                             f"V2 pool {pool.address} has no liquidity for a 0 -> 1 swap"
                         )
-                    elif pool_state.reserves_token0 == 1 and not vector.zero_for_one:
+                    if pool_state.reserves_token0 == 1 and not vector.zero_for_one:
                         raise ZeroLiquidityError(
                             f"V2 pool {pool.address} has no liquidity for a 1 -> 0 swap"
                         )
@@ -382,15 +379,13 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                         raise ZeroLiquidityError(
                             f"V3 pool {pool.address} has no liquidity (not initialized)"
                         )
-
                     if pool_state.tick_bitmap == {}:
                         raise ZeroLiquidityError(
                             f"V3 pool {pool.address} has no liquidity (empty bitmap)"
                         )
-
                     if pool_state.liquidity == 0:
-                        # Check if the swap is 0 -> 1 and cannot swap any more
-                        # token0 for token1
+                        # Check if the swap is 0 -> 1 and has reached the lower limit of the price
+                        # range
                         if (
                             pool_state.sqrt_price_x96 == TickMath.MIN_SQRT_RATIO + 1
                             and vector.zero_for_one
@@ -398,9 +393,9 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                             raise ZeroLiquidityError(
                                 f"V3 pool {pool.address} has no liquidity for a 0 -> 1 swap"
                             )
-                        # Check if the swap is 1 -> 0 (zeroForOne=False) and
-                        # cannot swap any more token1 for token0
-                        elif (
+                        # Check if the swap is 1 -> 0 and has reached the upper limit of the price
+                        # range
+                        if (
                             pool_state.sqrt_price_x96 == TickMath.MAX_SQRT_RATIO - 1
                             and not vector.zero_for_one
                         ):
@@ -615,7 +610,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
             ]
         ):  # pragma: no cover
             raise ValueError(
-                f"Cannot calculate {self} with executor. One or more V3 pools has a sparse bitmap."
+                f"Cannot calculate {self} with executor. One or more V3 pools has a sparse liquidity map."  # noqa: E501
             )
 
         curve_pool = self.swap_pools[1]
