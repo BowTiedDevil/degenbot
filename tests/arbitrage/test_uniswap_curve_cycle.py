@@ -6,13 +6,15 @@ import time
 
 import pytest
 
+from degenbot import LiquidityPool, V3LiquidityPool
 from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
 from degenbot.config import set_web3
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20_token import Erc20Token
-from degenbot.exceptions import ArbitrageError
-from degenbot.uniswap.v2_liquidity_pool import LiquidityPool
+from degenbot.exceptions import ArbitrageError, ZeroLiquidityError
 from degenbot.uniswap.v2_types import UniswapV2PoolState
+from degenbot.uniswap.v3_libraries import TickMath
+from degenbot.uniswap.v3_types import UniswapV3PoolState
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
@@ -22,6 +24,9 @@ CURVE_TRIPOOL_ADDRESS = "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"
 UNISWAP_V2_WETH_DAI_ADDRESS = "0xA478c2975Ab1Ea89e8196811F51A7B7Ade33eB11"
 UNISWAP_V2_WETH_USDC_ADDRESS = "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"
 UNISWAP_V2_WETH_USDT_ADDRESS = "0x0d4a11d5EEaaC28EC3F61d100daF4d40471f1852"
+UNISWAP_V3_WETH_DAI_ADDRESS = "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8"
+UNISWAP_V3_WETH_USDC_ADDRESS = "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8"
+UNISWAP_V3_WETH_USDT_ADDRESS = "0x4e68Ccd3E89f51C3074ca5072bbAC773960dFa36"
 FAKE_ADDRESS = "0x6942000000000000000000000000000000000000"
 
 
@@ -91,6 +96,9 @@ def test_arb_calculation(ethereum_archive_node_web3):
     uniswap_v2_weth_dai_lp = LiquidityPool(UNISWAP_V2_WETH_DAI_ADDRESS)
     uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
     uniswap_v2_weth_usdt_lp = LiquidityPool(UNISWAP_V2_WETH_USDT_ADDRESS)
+    uniswap_v3_weth_dai_lp = V3LiquidityPool(UNISWAP_V3_WETH_DAI_ADDRESS)
+    uniswap_v3_weth_usdc_lp = V3LiquidityPool(UNISWAP_V3_WETH_USDC_ADDRESS)
+    uniswap_v3_weth_usdt_lp = V3LiquidityPool(UNISWAP_V3_WETH_USDT_ADDRESS)
 
     weth = Erc20Token(WETH_ADDRESS)
 
@@ -101,6 +109,12 @@ def test_arb_calculation(ethereum_archive_node_web3):
         (uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
         (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_dai_lp),
         (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
+        (uniswap_v3_weth_dai_lp, curve_tripool, uniswap_v3_weth_usdc_lp),
+        (uniswap_v3_weth_dai_lp, curve_tripool, uniswap_v3_weth_usdt_lp),
+        (uniswap_v3_weth_usdc_lp, curve_tripool, uniswap_v3_weth_dai_lp),
+        (uniswap_v3_weth_usdc_lp, curve_tripool, uniswap_v3_weth_usdt_lp),
+        (uniswap_v3_weth_usdt_lp, curve_tripool, uniswap_v3_weth_dai_lp),
+        (uniswap_v3_weth_usdt_lp, curve_tripool, uniswap_v3_weth_usdc_lp),
     ]:
         try:
             arb = UniswapCurveCycle(
@@ -112,6 +126,198 @@ def test_arb_calculation(ethereum_archive_node_web3):
             arb.calculate()
         except ArbitrageError:
             pass
+
+
+def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3):
+    set_web3(ethereum_archive_node_web3)
+    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_usdt_lp = LiquidityPool(UNISWAP_V2_WETH_USDT_ADDRESS)
+
+    weth = Erc20Token(WETH_ADDRESS)
+    arb = UniswapCurveCycle(
+        input_token=weth,
+        swap_pools=(uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
+        id="test",
+        max_input=10 * 10**18,
+    )
+
+    # Test with zero reserves for each token
+    with pytest.raises(
+        ZeroLiquidityError, match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity"
+    ):
+        arb.calculate(
+            override_state=[
+                (
+                    uniswap_v2_weth_usdc_lp,
+                    UniswapV2PoolState(
+                        pool=uniswap_v2_weth_usdc_lp.address,
+                        reserves_token0=0,
+                        reserves_token1=1,
+                    ),
+                )
+            ]
+        )
+    with pytest.raises(
+        ZeroLiquidityError, match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity"
+    ):
+        arb.calculate(
+            override_state=[
+                (
+                    uniswap_v2_weth_usdc_lp,
+                    UniswapV2PoolState(
+                        pool=uniswap_v2_weth_usdc_lp.address,
+                        reserves_token0=1,
+                        reserves_token1=0,
+                    ),
+                )
+            ]
+        )
+
+    # Test with no liquidity in the 0 -> 1 direction
+    with pytest.raises(
+        ZeroLiquidityError,
+        match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity for a 0 -> 1 swap",
+    ):
+        arb.calculate(
+            override_state=[
+                (
+                    uniswap_v2_weth_usdc_lp,
+                    UniswapV2PoolState(
+                        pool=uniswap_v2_weth_usdc_lp.address,
+                        reserves_token0=1_000_000,
+                        reserves_token1=1,
+                    ),
+                )
+            ]
+        )
+
+    # Build the arb in the other direction to check for 1 -> 0 swaps
+    arb = UniswapCurveCycle(
+        input_token=weth,
+        swap_pools=(uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
+        id="test",
+        max_input=10 * 10**18,
+    )
+
+    # Test with no liquidity in the 1 -> 0 direction
+    with pytest.raises(
+        ZeroLiquidityError,
+        match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity for a 1 -> 0 swap",
+    ):
+        arb.calculate(
+            override_state=[
+                (
+                    uniswap_v2_weth_usdc_lp,
+                    UniswapV2PoolState(
+                        pool=uniswap_v2_weth_usdc_lp.address,
+                        reserves_token0=1,
+                        reserves_token1=1_000_000,
+                    ),
+                )
+            ]
+        )
+
+
+def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3):
+    set_web3(ethereum_archive_node_web3)
+    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
+    uniswap_v3_weth_usdc_lp = V3LiquidityPool(UNISWAP_V3_WETH_USDC_ADDRESS)
+    uniswap_v3_weth_usdt_lp = V3LiquidityPool(UNISWAP_V3_WETH_USDT_ADDRESS)
+
+    weth = Erc20Token(WETH_ADDRESS)
+    arb = UniswapCurveCycle(
+        input_token=weth,
+        swap_pools=(uniswap_v3_weth_usdt_lp, curve_tripool, uniswap_v3_weth_usdc_lp),
+        id="test",
+        max_input=10 * 10**18,
+    )
+
+    # Test with uninitialized pool (price=0)
+    with pytest.raises(
+        ZeroLiquidityError,
+        match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity \(not initialized\)",
+    ):
+        arb.calculate(
+            override_state=[
+                (
+                    uniswap_v3_weth_usdc_lp,
+                    UniswapV3PoolState(
+                        pool=uniswap_v3_weth_usdc_lp.address,
+                        liquidity=69_420,
+                        sqrt_price_x96=0,  # <--- value triggering the exception
+                        tick=1,
+                    ),
+                )
+            ]
+        )
+    # Test with uninitialized pool (empty tick_bitmap)
+    with pytest.raises(
+        ZeroLiquidityError,
+        match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity \(empty bitmap\)",
+    ):
+        arb.calculate(
+            override_state=[
+                (
+                    uniswap_v3_weth_usdc_lp,
+                    UniswapV3PoolState(
+                        pool=uniswap_v3_weth_usdc_lp.address,
+                        liquidity=69_420,
+                        sqrt_price_x96=1,
+                        tick=1,
+                        tick_bitmap={},  # <--- value triggering the exception
+                    ),
+                )
+            ]
+        )
+
+    # Test with min. price pool
+    with pytest.raises(
+        ZeroLiquidityError,
+        match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity for a 0 -> 1 swap",
+    ):
+        arb.calculate(
+            override_state=[
+                (
+                    uniswap_v3_weth_usdc_lp,
+                    UniswapV3PoolState(
+                        pool=uniswap_v3_weth_usdc_lp.address,
+                        liquidity=0,  # <--- value triggering the exception
+                        sqrt_price_x96=(
+                            TickMath.MIN_SQRT_RATIO + 1  # <--- value triggering the exception
+                        ),
+                        tick=1,
+                    ),
+                )
+            ]
+        )
+
+    # Rebuild arb in reverse to test 1 -> 0 swap checks
+    arb = UniswapCurveCycle(
+        input_token=weth,
+        swap_pools=(uniswap_v3_weth_usdc_lp, curve_tripool, uniswap_v3_weth_usdt_lp),
+        id="test",
+        max_input=10 * 10**18,
+    )
+    with pytest.raises(
+        ZeroLiquidityError,
+        match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity for a 1 -> 0 swap",
+    ):
+        arb.calculate(
+            override_state=[
+                (
+                    uniswap_v3_weth_usdc_lp,
+                    UniswapV3PoolState(
+                        pool=uniswap_v3_weth_usdc_lp.address,
+                        liquidity=0,  # <--- value triggering the exception
+                        sqrt_price_x96=(
+                            TickMath.MAX_SQRT_RATIO - 1  # <--- value triggering the exception
+                        ),
+                        tick=1,
+                    ),
+                )
+            ]
+        )
 
 
 def test_arb_payload_encoding(ethereum_archive_node_web3):
