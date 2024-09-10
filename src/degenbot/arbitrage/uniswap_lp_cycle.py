@@ -84,10 +84,12 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                             )
                         )
                     case pool.token1:
-                        UniswapPoolSwapVector(
-                            token_in=pool.token1,
-                            token_out=pool.token0,
-                            zero_for_one=False,
+                        _swap_vectors.append(
+                            UniswapPoolSwapVector(
+                                token_in=pool.token1,
+                                token_out=pool.token0,
+                                zero_for_one=False,
+                            )
                         )
                     case _:  # pragma: no cover
                         raise ValueError("Input token could not be identified!")
