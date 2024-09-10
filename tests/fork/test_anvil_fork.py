@@ -12,7 +12,7 @@ from degenbot.config import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.fork.anvil_fork import AnvilFork
 
-from ..conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from ..conftest import BASE_FULL_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
@@ -114,6 +114,11 @@ def test_reset_and_set_next_block_base_fee(fork_mainnet: AnvilFork):
     fork_mainnet.mine()
     assert fork_mainnet.w3.eth.get_block_number() == starting_block - 9
     assert fork_mainnet.w3.eth.get_block(starting_block - 9)["baseFeePerGas"] == BASE_FEE_OVERRIDE
+
+
+def test_reset_to_new_endpoint(fork_mainnet: AnvilFork):
+    fork_mainnet.reset(fork_url=BASE_FULL_NODE_HTTP_URI)
+    assert fork_mainnet.fork_url == BASE_FULL_NODE_HTTP_URI
 
 
 def test_ipc_kwargs():
