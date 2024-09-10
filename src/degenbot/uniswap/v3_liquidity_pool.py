@@ -1017,7 +1017,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
         Discard states recorded prior to a target block.
         """
 
-        if self._pool_state_archive is None:  # pragma: no branch
+        if self._pool_state_archive is None:  # pragma: no cover
             raise NoPoolStateAvailable("No archived states are available")
 
         with self._state_lock:

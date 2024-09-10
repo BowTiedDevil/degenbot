@@ -85,7 +85,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             pool_init_hash = factory_deployment.pool_init_hash
             pool_abi = factory_deployment.pool_abi
         except KeyError:
-            if pool_abi is None or pool_init_hash is None:
+            if pool_abi is None or pool_init_hash is None:  # pragma: no branch
                 raise ManagerError(
                     "Cannot create pool manager without factory address, pool ABI, and pool init hash."  # noqa:E501
                 ) from None

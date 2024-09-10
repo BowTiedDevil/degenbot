@@ -263,8 +263,8 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                         pass
                     case V3LiquidityPool(), UniswapV3PoolState():
                         pass
-                    case _:
-                        raise ValueError(f"Unsupported items ({pool},{state}) found in overrides.")
+                    case _:  # pragma: no cover
+                        raise ValueError(f"Unsupported items ({pool}, {state}) found in overrides.")
 
         state_overrides = self._sort_overrides(override_state)
 
@@ -290,7 +290,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                     fee = Fraction(
                         pool.fee, 1000000
                     )  # V3 fees are in hundredths of a bip (0.0001), e.g. 3000 == 0.3%
-                case _:
+                case _:  # pragma: no cover
                     raise ValueError(f"Could not identify pool {pool} and state {pool_state}.")
 
             net_rate_of_exchange *= (
