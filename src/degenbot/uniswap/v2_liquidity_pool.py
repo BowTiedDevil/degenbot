@@ -198,9 +198,15 @@ class LiquidityPool(AbstractLiquidityPool):
             )
             self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
 
-        self._pool_state_archive: dict[int, UniswapV2PoolState] = {}
-        if archive_states:
-            self._pool_state_archive[self._update_block] = self.state
+        reserves0, reserves1, *_ = self.w3_contract.functions.getReserves().call(
+            block_identifier=self._update_block
+        )
+        self._state = UniswapV2PoolState(
+            pool=self.address,
+            reserves_token0=reserves0,
+            reserves_token1=reserves1,
+        )
+        self._pool_state_archive = {self.update_block: self.state} if archive_states else None
 
         AllPools(chain_id)[self.address] = self
 
@@ -269,7 +275,8 @@ class LiquidityPool(AbstractLiquidityPool):
                 reserves_token0=reserves0,
                 reserves_token1=reserves1,
             )
-            self._pool_state_archive[current_block] = self._state
+            if self._pool_state_archive is not None:  # pragma: no cover
+                self._pool_state_archive[current_block] = self._state
         return self._state
 
     @state.setter
@@ -519,7 +526,7 @@ class LiquidityPool(AbstractLiquidityPool):
         Discard states recorded prior to a target block.
         """
 
-        if not self._pool_state_archive:
+        if self._pool_state_archive is None:  # pragma: no cover
             raise NoPoolStateAvailable("No archived states are available")
 
         with self._state_lock:
@@ -548,7 +555,7 @@ class LiquidityPool(AbstractLiquidityPool):
         Use this method to maintain consistent state data following a chain re-organization.
         """
 
-        if not self._pool_state_archive:
+        if self._pool_state_archive is None:  # pragma: no cover
             raise NoPoolStateAvailable("No archived states are available")
 
         with self._state_lock:
@@ -744,8 +751,9 @@ class LiquidityPool(AbstractLiquidityPool):
                         reserves_token0=reserves0,
                         reserves_token1=reserves1,
                     )
-                    # self.reserves_token0, self.reserves_token1 = reserves0, reserves1
-                    self._pool_state_archive[update_block] = self.state
+
+                    if self._pool_state_archive is not None:  # pragma: no cover
+                        self._pool_state_archive[update_block] = self.state
 
                     self._notify_subscribers(
                         message=UniswapV2PoolStateUpdated(self.state),
@@ -777,10 +785,10 @@ class LiquidityPool(AbstractLiquidityPool):
                     reserves_token0=external_token0_reserves,
                     reserves_token1=external_token1_reserves,
                 )
-                # self.reserves_token0 = external_token0_reserves
-                # self.reserves_token1 = external_token1_reserves
 
-                self._pool_state_archive[update_block] = self.state
+                if self._pool_state_archive is not None:  # pragma: no cover
+                    self._pool_state_archive[update_block] = self.state
+
                 self._notify_subscribers(
                     message=UniswapV2PoolStateUpdated(self.state),
                 )
