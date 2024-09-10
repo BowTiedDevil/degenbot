@@ -126,76 +126,70 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             return dict()
         return {pool.address: override for pool, override in overrides}
 
-    def _build_amounts_out(
+    def _build_swap_amounts(
         self,
-        token_in: Erc20Token,
         token_in_quantity: int,
         pool_state_overrides: dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState],
     ) -> list[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts]:
         """
-        Generate human-readable inputs for a swap along the arbitrage path, starting with the
-        specified amount of the given input token.
+        Generate inputs for all swaps along the arbitrage path, starting with the specified amount
+        of the input token defined in the constructor.
         """
+        _token_out_quantity = 0
         pools_amounts_out: list[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts] = []
-
-        _token_in_quantity: int = 0
-        _token_out_quantity: int = 0
-
         for i, (pool, swap_vector) in enumerate(
             zip(self.swap_pools, self._swap_vectors, strict=True)
         ):
-            token_in = swap_vector.token_in
-            zero_for_one = swap_vector.zero_for_one
             pool_state_override = pool_state_overrides.get(pool.address)
-
             _token_in_quantity = token_in_quantity if i == 0 else _token_out_quantity
 
             try:
                 match pool, pool_state_override:
                     case LiquidityPool(), UniswapV2PoolState() | None:
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
-                            token_in=token_in,
+                            token_in=swap_vector.token_in,
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
+                        if _token_out_quantity == 0:
+                            raise ArbitrageError(
+                                f"Zero-output swap through pool {pool} @ {pool.address}"
+                            )
+                        pools_amounts_out.append(
+                            UniswapV2PoolSwapAmounts(
+                                pool=pool.address,
+                                amounts_in=(_token_in_quantity, 0)
+                                if swap_vector.zero_for_one
+                                else (0, _token_in_quantity),
+                                amounts_out=(0, _token_out_quantity)
+                                if swap_vector.zero_for_one
+                                else (_token_out_quantity, 0),
+                            )
+                        )
                     case V3LiquidityPool(), UniswapV3PoolState() | None:
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
-                            token_in=token_in,
+                            token_in=swap_vector.token_in,
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
+                        )
+                        if _token_out_quantity == 0:
+                            raise ArbitrageError(
+                                f"Zero-output swap through pool {pool} @ {pool.address}"
+                            )
+                        pools_amounts_out.append(
+                            UniswapV3PoolSwapAmounts(
+                                pool=pool.address,
+                                amount_specified=_token_in_quantity,
+                                zero_for_one=swap_vector.zero_for_one,
+                                sqrt_price_limit_x96=TickMath.MIN_SQRT_RATIO + 1
+                                if swap_vector.zero_for_one
+                                else TickMath.MAX_SQRT_RATIO - 1,
+                            )
                         )
                     case _:  # pragma: no cover
                         raise ValueError("Could not identify pool and override type.")
             except LiquidityPoolError as e:  # pragma: no cover
                 raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}") from None
-            else:
-                if _token_out_quantity == 0:  # pragma: no cover
-                    raise ArbitrageError(f"Zero-output swap through pool {pool} @ {pool.address}")
-
-            match pool:
-                case LiquidityPool():
-                    pools_amounts_out.append(
-                        UniswapV2PoolSwapAmounts(
-                            pool=pool.address,
-                            amounts_in=(_token_in_quantity, 0)
-                            if zero_for_one
-                            else (0, _token_in_quantity),
-                            amounts_out=(0, _token_out_quantity)
-                            if zero_for_one
-                            else (_token_out_quantity, 0),
-                        )
-                    )
-                case V3LiquidityPool():
-                    pools_amounts_out.append(
-                        UniswapV3PoolSwapAmounts(
-                            pool=pool.address,
-                            amount_specified=_token_in_quantity,
-                            zero_for_one=zero_for_one,
-                            sqrt_price_limit_x96=TickMath.MIN_SQRT_RATIO + 1
-                            if zero_for_one
-                            else TickMath.MAX_SQRT_RATIO - 1,
-                        )
-                    )
 
         return pools_amounts_out
 
@@ -379,21 +373,10 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         best_profit = -int(opt.fun)
         swap_amount = int(opt.x)
 
-        try:
-            best_amounts = self._build_amounts_out(
-                token_in=self.input_token,
-                token_in_quantity=swap_amount,
-                pool_state_overrides=state_overrides,
-            )
-        # except (EVMRevertError, LiquidityPoolError) as e:
-        except ArbitrageError as e:
-            # Simulated EVM reverts inside the ported `swap` function were
-            # ignored to execute the optimizer to completion. Now the optimal
-            # value should be tested and raise an exception if it would
-            # generate a bad payload that will revert
-            raise ArbitrageError(f"No possible arbitrage: {e}") from None
-        except Exception as e:
-            raise ArbitrageError(f"No possible arbitrage: {e}") from e
+        best_amounts = self._build_swap_amounts(
+            token_in_quantity=swap_amount,
+            pool_state_overrides=state_overrides,
+        )
 
         return ArbitrageCalculationResult(
             id=self.id,
@@ -418,7 +401,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         """
 
         self._pre_calculation_check(
-            override_state,
+            override_state=override_state,
             min_rate_of_exchange=min_rate_of_exchange,
         )
 
@@ -522,120 +505,109 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
 
         from_address = to_checksum_address(from_address)
 
+        MSG_VALUE = 0  # This arbitrage does not require a `msg.value` payment
         payloads = []
-        msg_value: int = 0  # This arbitrage does not require a `msg.value` payment
-
-        first_pool = self.swap_pools[0]
-        last_pool = self.swap_pools[-1]
-
-        try:
-            if isinstance(first_pool, LiquidityPool):
-                # Special case: If first pool is type V2, input token must be
-                # transferred prior to the swap
-                payloads.append(
-                    (
-                        # address
-                        self.input_token.address,
-                        # bytes calldata
-                        Web3.keccak(text="transfer(address,uint256)")[:4]
-                        + eth_abi.abi.encode(
-                            types=(
-                                "address",
-                                "uint256",
-                            ),
-                            args=(
-                                first_pool.address,
-                                swap_amount,
-                            ),
-                        ),
-                        msg_value,
-                    )
-                )
-
-            for i, (swap_pool, _swap_amounts) in enumerate(
-                zip(self.swap_pools, pool_swap_amounts, strict=True)
-            ):
-                next_pool = None if swap_pool is last_pool else self.swap_pools[i + 1]
-                if next_pool is not None:
-                    # V2 pools require a pre-swap transfer, so the contract
-                    # does not have to perform intermediate custody and the
-                    # swap can send the tokens directly to the next pool
-                    if isinstance(next_pool, LiquidityPool):
-                        swap_destination_address = next_pool.address
-                    # V3 pools cannot accept a pre-swap transfer, so the contract
-                    # must maintain custody prior to a swap
-                    elif isinstance(next_pool, V3LiquidityPool):
-                        swap_destination_address = from_address
-                else:
-                    # Set the destination address for the last swap to the
-                    # sending address
+        for i, (swap_pool, _swap_amounts) in enumerate(
+            zip(self.swap_pools, pool_swap_amounts, strict=True)
+        ):
+            try:
+                next_pool = self.swap_pools[i + 1]
+                # V2 pools require a pre-swap transfer, so the contract does not have to perform
+                # intermediate custody and the swap can send the tokens directly to the next pool
+                if isinstance(next_pool, LiquidityPool):
+                    swap_destination_address = next_pool.address
+                # V3 pools cannot accept a pre-swap transfer, so the contract must maintain custody
+                # prior to a swap
+                elif isinstance(next_pool, V3LiquidityPool):
                     swap_destination_address = from_address
+            except IndexError:
+                # Set the destination address for the last swap to the sending address
+                swap_destination_address = from_address
 
-                match swap_pool, _swap_amounts:
-                    case LiquidityPool(), UniswapV2PoolSwapAmounts():
-                        logger.debug(f"PAYLOAD: building V2 swap at pool {i}")
-                        logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
-                        logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
-                        logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
-
-                        payloads.append(
-                            (
-                                # address
-                                swap_pool.address,
-                                # bytes calldata
-                                Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
-                                + eth_abi.abi.encode(
-                                    types=(
-                                        "uint256",
-                                        "uint256",
-                                        "address",
-                                        "bytes",
-                                    ),
-                                    args=(
-                                        *_swap_amounts.amounts_out,
-                                        swap_destination_address,
-                                        b"",
-                                    ),
+            match i, swap_pool, _swap_amounts:
+                case 0, LiquidityPool() as first_pool, _:
+                    # Special case: If first pool is type V2, input token must be transferred prior
+                    # to the swap
+                    payloads.append(
+                        (
+                            # address
+                            self.input_token.address,
+                            # bytes calldata
+                            Web3.keccak(text="transfer(address,uint256)")[:4]
+                            + eth_abi.abi.encode(
+                                types=(
+                                    "address",
+                                    "uint256",
                                 ),
-                                msg_value,
-                            )
-                        )
-                    case V3LiquidityPool(), UniswapV3PoolSwapAmounts():
-                        logger.debug(f"PAYLOAD: building V3 swap at pool {i}")
-                        logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
-                        logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
-                        logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
-
-                        payloads.append(
-                            (
-                                # address
-                                swap_pool.address,
-                                # bytes calldata
-                                Web3.keccak(text="swap(address,bool,int256,uint160,bytes)")[:4]
-                                + eth_abi.abi.encode(
-                                    types=(
-                                        "address",
-                                        "bool",
-                                        "int256",
-                                        "uint160",
-                                        "bytes",
-                                    ),
-                                    args=(
-                                        swap_destination_address,
-                                        _swap_amounts.zero_for_one,
-                                        _swap_amounts.amount_specified,
-                                        _swap_amounts.sqrt_price_limit_x96,
-                                        b"",
-                                    ),
+                                args=(
+                                    first_pool.address,
+                                    swap_amount,
                                 ),
-                                msg_value,
-                            )
+                            ),
+                            MSG_VALUE,
                         )
-                    case _:  # pragma: no cover
-                        raise ValueError("Could not identify pool and swap amounts.")
-        except Exception as e:
-            logger.exception("generate_payloads catch-all")
-            raise ArbitrageError(f"generate_payloads (catch-all)): {e}") from e
+                    )
+                case _, LiquidityPool(), UniswapV2PoolSwapAmounts():
+                    logger.debug(f"PAYLOAD: building V2 swap at pool {i}")
+                    logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
+                    logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
+                    logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
+
+                    payloads.append(
+                        (
+                            # address
+                            swap_pool.address,
+                            # bytes calldata
+                            Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
+                            + eth_abi.abi.encode(
+                                types=(
+                                    "uint256",
+                                    "uint256",
+                                    "address",
+                                    "bytes",
+                                ),
+                                args=(
+                                    *_swap_amounts.amounts_out,
+                                    swap_destination_address,
+                                    b"",
+                                ),
+                            ),
+                            MSG_VALUE,
+                        )
+                    )
+                case _, V3LiquidityPool(), UniswapV3PoolSwapAmounts():
+                    logger.debug(f"PAYLOAD: building V3 swap at pool {i}")
+                    logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
+                    logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
+                    logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
+
+                    payloads.append(
+                        (
+                            # address
+                            swap_pool.address,
+                            # bytes calldata
+                            Web3.keccak(text="swap(address,bool,int256,uint160,bytes)")[:4]
+                            + eth_abi.abi.encode(
+                                types=(
+                                    "address",
+                                    "bool",
+                                    "int256",
+                                    "uint160",
+                                    "bytes",
+                                ),
+                                args=(
+                                    swap_destination_address,
+                                    _swap_amounts.zero_for_one,
+                                    _swap_amounts.amount_specified,
+                                    _swap_amounts.sqrt_price_limit_x96,
+                                    b"",
+                                ),
+                            ),
+                            MSG_VALUE,
+                        )
+                    )
+                case _:  # pragma: no cover
+                    raise ValueError("Could not identify pool and swap amounts.")
 
         return payloads
 
