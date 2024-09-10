@@ -63,8 +63,6 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         self.swap_pools: tuple[PoolTypes, ...] = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
 
-        self.pool_states: dict[ChecksumAddress, PoolStates] = {}
-        self._update_pool_states(self.swap_pools)
         self.curve_discount_factor = CURVE_V1_DEFAULT_DISCOUNT_FACTOR
 
         for pool in swap_pools:
@@ -322,12 +320,6 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                     )
 
         return pools_amounts_out
-
-    def _update_pool_states(self, pools: Iterable[PoolTypes]) -> None:
-        """
-        Update `self.pool_states` with state values from the `pools` iterable
-        """
-        self.pool_states.update({pool.address: pool.state for pool in pools})
 
     def _pre_calculation_check(
         self,
@@ -912,10 +904,18 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         return payloads
 
     def notify(self, publisher: Publisher, message: Any) -> None:
-        match publisher:
-            case LiquidityPool() | V3LiquidityPool() | CurveStableswapPool():
-                self._update_pool_states((publisher,))
+        match publisher, message:
+            case (
+                LiquidityPool()
+                | V3LiquidityPool()
+                | CurveStableswapPool(),
+                UniswapV2PoolStateUpdated()
+                | UniswapV3PoolStateUpdated()
+                | CurveStableSwapPoolStateUpdated(),
+            ):
+                if message.state.pool in self.swap_pools:
+                    self._notify_subscribers(
+                        PlaintextMessage(f"Received update from pool {message.state.pool}")
+                    )
             case _:  # pragma: no cover
-                logger.info(
-                    f"{self} received message {message} from unsupported subscriber {publisher}"
-                )
+                logger.info(f"Unhandled message {message} from publisher {publisher}")
