@@ -2151,7 +2151,7 @@ def test_arbitrage_with_overrides(
     ]
 
     with pytest.raises(ArbitrageError):
-        wbtc_weth_arb.calculate_arbitrage(override_state=overrides)
+        wbtc_weth_arb.calculate(override_state=overrides)
 
     # Override V2 pool only
     overrides = [
@@ -2159,13 +2159,13 @@ def test_arbitrage_with_overrides(
     ]
 
     with pytest.raises(ArbitrageError):
-        wbtc_weth_arb.calculate_arbitrage(override_state=overrides)
+        wbtc_weth_arb.calculate(override_state=overrides)
 
     # Override V3 pool only
     overrides = [
         (wbtc_weth_v3_lp, v3_pool_state_override),
     ]
-    result = wbtc_weth_arb.calculate_arbitrage(override_state=overrides)
+    result = wbtc_weth_arb.calculate(override_state=overrides)
     assert result.profit_amount == 163028226755627520
     assert result.input_amount == 20454968409226055680
 
@@ -2211,7 +2211,7 @@ def test_arbitrage_with_overrides(
     ]
 
     # This should equal the result from the test with the V3 override only
-    result = wbtc_weth_arb.calculate_arbitrage(override_state=overrides)
+    result = wbtc_weth_arb.calculate(override_state=overrides)
     assert result.profit_amount == 163028226755627520
     assert result.input_amount == 20454968409226055680
 
@@ -2252,7 +2252,7 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum: AnvilFor
             _tasks.append(
                 loop.run_in_executor(
                     executor,
-                    arb.calculate_arbitrage,
+                    arb.calculate,
                 )
             )
 
@@ -2261,7 +2261,7 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum: AnvilFor
                 await task
 
     with contextlib.suppress(ArbitrageError):
-        arb.calculate_arbitrage()
+        arb.calculate()
 
 
 async def test_process_pool_calculation(
@@ -2373,7 +2373,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
         swap_pools=[lp_1, lp_2],
         max_input=100 * 10**18,
     )
-    result = arb.calculate_arbitrage()
+    result = arb.calculate()
     arb.generate_payloads(
         from_address=ZERO_ADDRESS,
         pool_swap_amounts=result.swap_amounts,
@@ -2391,7 +2391,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
             swap_pools=[lp_2, lp_1],
             max_input=100 * 10**18,
         )
-        arb.calculate_arbitrage()
+        arb.calculate()
 
 
 def test_bad_pool_in_constructor(

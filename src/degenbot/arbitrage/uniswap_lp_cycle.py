@@ -482,25 +482,6 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             override_state,
         )
 
-    def calculate_arbitrage(
-        self,
-        override_state: Sequence[
-            tuple[LiquidityPool, UniswapV2PoolState] | tuple[V3LiquidityPool, UniswapV3PoolState]
-        ]
-        | None = None,
-        min_rate_of_exchange: Fraction | None = None,
-    ) -> ArbitrageCalculationResult:
-        """
-        TBD
-        """
-
-        self._pre_calculation_check(
-            override_state=override_state,
-            min_rate_of_exchange=min_rate_of_exchange,
-        )
-
-        return self._calculate(override_state=override_state)
-
     def generate_payloads(
         self,
         from_address: ChecksumAddress | str,
