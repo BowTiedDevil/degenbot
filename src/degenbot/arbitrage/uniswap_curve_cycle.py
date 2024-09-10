@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Awaitable, Iterable, Sequence
+from collections.abc import Awaitable, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -13,21 +13,30 @@ from web3 import Web3
 from ..config import get_web3
 from ..constants import MAX_UINT256
 from ..curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from ..curve.types import CurveStableswapPoolState
+from ..curve.types import CurveStableswapPoolState, CurveStableSwapPoolStateUpdated
 from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
 from ..types import (
     AbstractArbitrage,
+    PlaintextMessage,
     Publisher,
     Subscriber,
     UniswapSimulationResult,
 )
 from ..uniswap.v2_liquidity_pool import LiquidityPool
-from ..uniswap.v2_types import UniswapV2PoolSimulationResult, UniswapV2PoolState
+from ..uniswap.v2_types import (
+    UniswapV2PoolSimulationResult,
+    UniswapV2PoolState,
+    UniswapV2PoolStateUpdated,
+)
 from ..uniswap.v3_libraries import TickMath
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
-from ..uniswap.v3_types import UniswapV3PoolSimulationResult, UniswapV3PoolState
+from ..uniswap.v3_types import (
+    UniswapV3PoolSimulationResult,
+    UniswapV3PoolState,
+    UniswapV3PoolStateUpdated,
+)
 from .types import (
     ArbitrageCalculationResult,
     CurveStableSwapPoolSwapAmounts,
