@@ -652,14 +652,6 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
 
         from_address = to_checksum_address(from_address)
 
-        # Abandon empty inputs.
-        # @dev this looks like a useful place for a ValueError, but threaded
-        # clients may execute a pool update for a swap pool before the call to
-        # generate payloads is processed. Abandon the call in this case and
-        # raise a generic non-fatal exception.
-        if not pool_swap_amounts:
-            raise ArbitrageError("Pool amounts empty, abandoning payload generation.")
-
         payloads = []
         msg_value: int = 0  # This arbitrage does not require a `msg.value` payment
 
