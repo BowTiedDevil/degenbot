@@ -584,6 +584,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
     @property
     def tick_bitmap(self) -> dict[int, UniswapV3BitmapAtWord]:
         if TYPE_CHECKING:
+            # TODO: remove this check once tick_bitmap and tick_data are not optional
             assert self.state.tick_bitmap is not None
         return self.state.tick_bitmap
 
@@ -601,6 +602,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
     @property
     def tick_data(self) -> dict[int, UniswapV3LiquidityAtTick]:
         if TYPE_CHECKING:
+            # TODO: remove this check once tick_bitmap and tick_data are not optional
             assert self.state.tick_data is not None
         return self.state.tick_data
 
