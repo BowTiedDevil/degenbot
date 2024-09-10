@@ -602,7 +602,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
 
         self._pre_calculation_check(override_state)
 
-        if any(
+        if isinstance(executor, ProcessPoolExecutor) and any(
             [
                 pool.sparse_liquidity_map
                 for pool in self.swap_pools
