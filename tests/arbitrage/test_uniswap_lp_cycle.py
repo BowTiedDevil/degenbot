@@ -2140,32 +2140,31 @@ def test_arbitrage_with_overrides(
         tick=258116,
     )
 
-    overrides: Sequence[
-        tuple[LiquidityPool, UniswapV2PoolState] | tuple[V3LiquidityPool, UniswapV3PoolState]
-    ]
+    overrides: Mapping[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState]
 
     # Override both pools
-    overrides = [
-        (wbtc_weth_v2_lp, v2_pool_state_override),
-        (wbtc_weth_v3_lp, v3_pool_state_override),
-    ]
+    overrides = {
+        wbtc_weth_v2_lp.address: v2_pool_state_override,
+        wbtc_weth_v3_lp.address: v3_pool_state_override,
+    }
 
     with pytest.raises(ArbitrageError):
-        wbtc_weth_arb.calculate(override_state=overrides)
+        wbtc_weth_arb.calculate(state_overrides=overrides)
 
     # Override V2 pool only
-    overrides = [
-        (wbtc_weth_v2_lp, v2_pool_state_override),
-    ]
+    overrides = {
+        wbtc_weth_v2_lp.address: v2_pool_state_override,
+    }
 
     with pytest.raises(ArbitrageError):
-        wbtc_weth_arb.calculate(override_state=overrides)
+        wbtc_weth_arb.calculate(state_overrides=overrides)
 
     # Override V3 pool only
-    overrides = [
-        (wbtc_weth_v3_lp, v3_pool_state_override),
-    ]
-    result = wbtc_weth_arb.calculate(override_state=overrides)
+    overrides = {
+        wbtc_weth_v3_lp.address: v3_pool_state_override,
+    }
+
+    result = wbtc_weth_arb.calculate(state_overrides=overrides)
     assert result.profit_amount == 163028226755627520
     assert result.input_amount == 20454968409226055680
 
@@ -2205,13 +2204,13 @@ def test_arbitrage_with_overrides(
     irrelevant_v3_pool.tick = 257907
     irrelevant_v3_pool.tick_spacing = 60
 
-    overrides = [
-        (irrelevant_v2_pool, v2_pool_state_override),  # Should be ignored
-        (wbtc_weth_v3_lp, v3_pool_state_override),
-    ]
+    overrides = {
+        irrelevant_v2_pool.address: v2_pool_state_override,  # <--- entry should be ignored
+        wbtc_weth_v3_lp.address: v3_pool_state_override,
+    }
 
     # This should equal the result from the test with the V3 override only
-    result = wbtc_weth_arb.calculate(override_state=overrides)
+    result = wbtc_weth_arb.calculate(state_overrides=overrides)
     assert result.profit_amount == 163028226755627520
     assert result.input_amount == 20454968409226055680
 
@@ -2276,9 +2275,9 @@ async def test_process_pool_calculation(
         tick=258116,
     )
 
-    overrides = [
-        (wbtc_weth_v3_lp, v3_pool_state_override),
-    ]
+    overrides: Mapping[ChecksumAddress, UniswapV3PoolState] = {
+        wbtc_weth_v3_lp.address: v3_pool_state_override,
+    }
 
     with concurrent.futures.ProcessPoolExecutor(
         mp_context=multiprocessing.get_context("spawn"),
@@ -2288,7 +2287,7 @@ async def test_process_pool_calculation(
 
         future = await wbtc_weth_arb.calculate_with_pool(
             executor=executor,
-            override_state=overrides,
+            state_overrides=overrides,
         )
         result = await future
         assert result == ArbitrageCalculationResult(
@@ -2320,7 +2319,7 @@ async def test_process_pool_calculation(
             calculation_futures.append(
                 await wbtc_weth_arb.calculate_with_pool(
                     executor=executor,
-                    override_state=overrides,
+                    state_overrides=overrides,
                 )
             )
 

@@ -147,31 +147,25 @@ def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3):
         ZeroLiquidityError, match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity"
     ):
         arb.calculate(
-            override_state=[
-                (
-                    uniswap_v2_weth_usdc_lp,
-                    UniswapV2PoolState(
-                        pool=uniswap_v2_weth_usdc_lp.address,
-                        reserves_token0=0,
-                        reserves_token1=1,
-                    ),
+            state_overrides={
+                uniswap_v2_weth_usdc_lp.address: UniswapV2PoolState(
+                    pool=uniswap_v2_weth_usdc_lp.address,
+                    reserves_token0=0,
+                    reserves_token1=1,
                 )
-            ]
+            }
         )
     with pytest.raises(
         ZeroLiquidityError, match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity"
     ):
         arb.calculate(
-            override_state=[
-                (
-                    uniswap_v2_weth_usdc_lp,
-                    UniswapV2PoolState(
-                        pool=uniswap_v2_weth_usdc_lp.address,
-                        reserves_token0=1,
-                        reserves_token1=0,
-                    ),
+            state_overrides={
+                uniswap_v2_weth_usdc_lp.address: UniswapV2PoolState(
+                    pool=uniswap_v2_weth_usdc_lp.address,
+                    reserves_token0=1,
+                    reserves_token1=0,
                 )
-            ]
+            }
         )
 
     # Test with no liquidity in the 0 -> 1 direction
@@ -180,16 +174,13 @@ def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3):
         match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity for a 0 -> 1 swap",
     ):
         arb.calculate(
-            override_state=[
-                (
-                    uniswap_v2_weth_usdc_lp,
-                    UniswapV2PoolState(
-                        pool=uniswap_v2_weth_usdc_lp.address,
-                        reserves_token0=1_000_000,
-                        reserves_token1=1,
-                    ),
-                )
-            ]
+            state_overrides={
+                uniswap_v2_weth_usdc_lp.address: UniswapV2PoolState(
+                    pool=uniswap_v2_weth_usdc_lp.address,
+                    reserves_token0=1_000_000,
+                    reserves_token1=1,
+                ),
+            }
         )
 
     # Build the arb in the other direction to check for 1 -> 0 swaps
@@ -206,16 +197,13 @@ def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3):
         match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity for a 1 -> 0 swap",
     ):
         arb.calculate(
-            override_state=[
-                (
-                    uniswap_v2_weth_usdc_lp,
-                    UniswapV2PoolState(
-                        pool=uniswap_v2_weth_usdc_lp.address,
-                        reserves_token0=1,
-                        reserves_token1=1_000_000,
-                    ),
-                )
-            ]
+            state_overrides={
+                uniswap_v2_weth_usdc_lp.address: UniswapV2PoolState(
+                    pool=uniswap_v2_weth_usdc_lp.address,
+                    reserves_token0=1,
+                    reserves_token1=1_000_000,
+                ),
+            }
         )
 
 
@@ -239,17 +227,14 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3):
         match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity \\(not initialized\\)",
     ):
         arb.calculate(
-            override_state=[
-                (
-                    uniswap_v3_weth_usdc_lp,
-                    UniswapV3PoolState(
-                        pool=uniswap_v3_weth_usdc_lp.address,
-                        liquidity=69_420,
-                        sqrt_price_x96=0,  # <--- value triggering the exception
-                        tick=1,
-                    ),
-                )
-            ]
+            state_overrides={
+                uniswap_v3_weth_usdc_lp.address: UniswapV3PoolState(
+                    pool=uniswap_v3_weth_usdc_lp.address,
+                    liquidity=69_420,
+                    sqrt_price_x96=0,  # <--- value triggering the exception
+                    tick=1,
+                ),
+            }
         )
     # Test with uninitialized pool (empty tick_bitmap)
     with pytest.raises(
@@ -257,18 +242,15 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3):
         match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity \\(empty bitmap\\)",
     ):
         arb.calculate(
-            override_state=[
-                (
-                    uniswap_v3_weth_usdc_lp,
-                    UniswapV3PoolState(
-                        pool=uniswap_v3_weth_usdc_lp.address,
-                        liquidity=69_420,
-                        sqrt_price_x96=1,
-                        tick=1,
-                        tick_bitmap={},  # <--- value triggering the exception
-                    ),
-                )
-            ]
+            state_overrides={
+                uniswap_v3_weth_usdc_lp.address: UniswapV3PoolState(
+                    pool=uniswap_v3_weth_usdc_lp.address,
+                    liquidity=69_420,
+                    sqrt_price_x96=1,
+                    tick=1,
+                    tick_bitmap={},  # <--- value triggering the exception
+                ),
+            }
         )
 
     # Test with min. price pool
@@ -277,19 +259,16 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3):
         match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity for a 0 -> 1 swap",
     ):
         arb.calculate(
-            override_state=[
-                (
-                    uniswap_v3_weth_usdc_lp,
-                    UniswapV3PoolState(
-                        pool=uniswap_v3_weth_usdc_lp.address,
-                        liquidity=0,  # <--- value triggering the exception
-                        sqrt_price_x96=(
-                            TickMath.MIN_SQRT_RATIO + 1  # <--- value triggering the exception
-                        ),
-                        tick=1,
+            state_overrides={
+                uniswap_v3_weth_usdc_lp.address: UniswapV3PoolState(
+                    pool=uniswap_v3_weth_usdc_lp.address,
+                    liquidity=0,  # <--- value triggering the exception
+                    sqrt_price_x96=(
+                        TickMath.MIN_SQRT_RATIO + 1  # <--- value triggering the exception
                     ),
-                )
-            ]
+                    tick=1,
+                ),
+            }
         )
 
     # Rebuild arb in reverse to test 1 -> 0 swap checks
@@ -304,19 +283,16 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3):
         match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity for a 1 -> 0 swap",
     ):
         arb.calculate(
-            override_state=[
-                (
-                    uniswap_v3_weth_usdc_lp,
-                    UniswapV3PoolState(
-                        pool=uniswap_v3_weth_usdc_lp.address,
-                        liquidity=0,  # <--- value triggering the exception
-                        sqrt_price_x96=(
-                            TickMath.MAX_SQRT_RATIO - 1  # <--- value triggering the exception
-                        ),
-                        tick=1,
+            state_overrides={
+                uniswap_v3_weth_usdc_lp.address: UniswapV3PoolState(
+                    pool=uniswap_v3_weth_usdc_lp.address,
+                    liquidity=0,  # <--- value triggering the exception
+                    sqrt_price_x96=(
+                        TickMath.MAX_SQRT_RATIO - 1  # <--- value triggering the exception
                     ),
-                )
-            ]
+                    tick=1,
+                ),
+            }
         )
 
 
@@ -346,11 +322,11 @@ def test_arb_payload_encoding(ethereum_archive_node_web3):
         reserves_token1=82374477120833,  # USDT
     )
 
-    overrides = [
-        (uniswap_v2_weth_dai_lp, v2_weth_dai_state_override),
-        (uniswap_v2_weth_usdc_lp, v2_weth_usdc_lp_state_override),
-        (uniswap_v2_weth_usdt_lp, v2_weth_usdt_lp_state_override),
-    ]
+    overrides = {
+        uniswap_v2_weth_dai_lp.address: v2_weth_dai_state_override,
+        uniswap_v2_weth_usdc_lp.address: v2_weth_usdc_lp_state_override,
+        uniswap_v2_weth_usdt_lp.address: v2_weth_usdt_lp_state_override,
+    }
 
     for swap_pools in [
         (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
@@ -368,7 +344,7 @@ def test_arb_payload_encoding(ethereum_archive_node_web3):
         )
 
         try:
-            calc_result = arb.calculate(override_state=overrides)
+            calc_result = arb.calculate(state_overrides=overrides)
         except ArbitrageError:
             raise
         else:
@@ -423,11 +399,11 @@ async def test_process_pool_calculation(ethereum_archive_node_web3) -> None:
         reserves_token1=82374477120833,  # USDT
     )
 
-    overrides = [
-        (uniswap_v2_weth_dai_lp, v2_weth_dai_state_override),
-        (uniswap_v2_weth_usdc_lp, v2_weth_usdc_lp_state_override),
-        (uniswap_v2_weth_usdt_lp, v2_weth_usdt_lp_state_override),
-    ]
+    overrides = {
+        uniswap_v2_weth_dai_lp.address: v2_weth_dai_state_override,
+        uniswap_v2_weth_usdc_lp.address: v2_weth_usdc_lp_state_override,
+        uniswap_v2_weth_usdt_lp.address: v2_weth_usdt_lp_state_override,
+    }
 
     with concurrent.futures.ProcessPoolExecutor(
         mp_context=multiprocessing.get_context("spawn"),
@@ -447,7 +423,7 @@ async def test_process_pool_calculation(ethereum_archive_node_web3) -> None:
                 max_input=10 * 10**18,
             )
 
-            future = await arb.calculate_with_pool(executor=executor, override_state=overrides)
+            future = await arb.calculate_with_pool(executor=executor, state_overrides=overrides)
             result = await future
             assert result
 
@@ -459,7 +435,7 @@ async def test_process_pool_calculation(ethereum_archive_node_web3) -> None:
             calculation_futures.append(
                 await arb.calculate_with_pool(
                     executor=executor,
-                    override_state=overrides,
+                    state_overrides=overrides,
                 )
             )
 

@@ -1,8 +1,8 @@
 import asyncio
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import Any
+from typing import Any, TypeAlias
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -26,20 +26,24 @@ from .types import (
     UniswapV3PoolSwapAmounts,
 )
 
+UniswapPoolState: TypeAlias = UniswapV2PoolState | UniswapV3PoolState
+UniswapPool: TypeAlias = LiquidityPool | V3LiquidityPool
+UniswapSwapAmount: TypeAlias = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
+
 
 class UniswapLpCycle(Subscriber, AbstractArbitrage):
     def __init__(
         self,
         input_token: Erc20Token,
-        swap_pools: Iterable[LiquidityPool | V3LiquidityPool],
+        swap_pools: Iterable[UniswapPool],
         id: str,
         max_input: int | None = None,
     ):
         for pool in swap_pools:
-            if not isinstance(pool, LiquidityPool | V3LiquidityPool):
+            if not isinstance(pool, UniswapPool):
                 raise ValueError("Incompatible pool provided.")
 
-        self.swap_pools: tuple[LiquidityPool | V3LiquidityPool, ...] = tuple(swap_pools)
+        self.swap_pools: tuple[UniswapPool, ...] = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
         self.id = id
         self.input_token = input_token
@@ -112,31 +116,18 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
     def __str__(self) -> str:
         return self.name
 
-    @staticmethod
-    def _sort_overrides(
-        overrides: Sequence[
-            tuple[LiquidityPool, UniswapV2PoolState] | tuple[V3LiquidityPool, UniswapV3PoolState]
-        ]
-        | None,
-    ) -> dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState]:
-        """
-        Validate the overrides and sort into a dictionary keyed by pool address.
-        """
-        if overrides is None:
-            return dict()
-        return {pool.address: override for pool, override in overrides}
-
     def _build_swap_amounts(
         self,
         token_in_quantity: int,
-        pool_state_overrides: dict[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState],
-    ) -> list[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts]:
+        pool_state_overrides: Mapping[ChecksumAddress, UniswapPoolState],
+    ) -> list[UniswapSwapAmount]:
         """
         Generate inputs for all swaps along the arbitrage path, starting with the specified amount
         of the input token defined in the constructor.
         """
+
         _token_out_quantity = 0
-        pools_amounts_out: list[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts] = []
+        swap_amounts: list[UniswapSwapAmount] = []
         for i, (pool, swap_vector) in enumerate(
             zip(self.swap_pools, self._swap_vectors, strict=True)
         ):
@@ -155,7 +146,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                             raise ArbitrageError(
                                 f"Zero-output swap through pool {pool} @ {pool.address}"
                             )
-                        pools_amounts_out.append(
+                        swap_amounts.append(
                             UniswapV2PoolSwapAmounts(
                                 pool=pool.address,
                                 amounts_in=(_token_in_quantity, 0)
@@ -176,7 +167,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                             raise ArbitrageError(
                                 f"Zero-output swap through pool {pool} @ {pool.address}"
                             )
-                        pools_amounts_out.append(
+                        swap_amounts.append(
                             UniswapV3PoolSwapAmounts(
                                 pool=pool.address,
                                 amount_specified=_token_in_quantity,
@@ -191,14 +182,11 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             except LiquidityPoolError as e:  # pragma: no cover
                 raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}") from None
 
-        return pools_amounts_out
+        return swap_amounts
 
     def _pre_calculation_check(
         self,
-        override_state: Sequence[
-            tuple[LiquidityPool, UniswapV2PoolState] | tuple[V3LiquidityPool, UniswapV3PoolState]
-        ]
-        | None = None,
+        state_overrides: Mapping[ChecksumAddress, UniswapPoolState],
         min_rate_of_exchange: Fraction | None = None,
     ) -> None:
         """
@@ -250,18 +238,6 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                     # Swap is 1 -> 0  and cannot swap any more token1 for token0
                     raise ZeroLiquidityError("Pool has no liquidity for a 1 -> 0 swap")
 
-        if override_state is not None:
-            for pool, state in override_state:
-                match pool, state:
-                    case LiquidityPool(), UniswapV2PoolState():
-                        pass
-                    case V3LiquidityPool(), UniswapV3PoolState():
-                        pass
-                    case _:  # pragma: no cover
-                        raise ValueError(f"Unsupported items ({pool}, {state}) found in overrides.")
-
-        state_overrides = self._sort_overrides(override_state)
-
         if min_rate_of_exchange is None:  # pragma: no branch
             min_rate_of_exchange = Fraction(1, 1)
 
@@ -298,16 +274,11 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
 
     def _calculate(
         self,
-        override_state: Sequence[
-            tuple[LiquidityPool, UniswapV2PoolState] | tuple[V3LiquidityPool, UniswapV3PoolState]
-        ]
-        | None = None,
+        state_overrides: Mapping[ChecksumAddress, UniswapPoolState],
     ) -> ArbitrageCalculationResult:
         """
         Calculate the optimal arbitrage profit using the maximum input as an upper bound.
         """
-
-        state_overrides = self._sort_overrides(override_state)
 
         # The bounded Brent optimizer requires bounds for the input amount, and a bracketed guess
         # to initiate the search
@@ -389,10 +360,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
 
     def calculate(
         self,
-        override_state: Sequence[
-            tuple[LiquidityPool, UniswapV2PoolState] | tuple[V3LiquidityPool, UniswapV3PoolState]
-        ]
-        | None = None,
+        state_overrides: Mapping[ChecksumAddress, UniswapPoolState] | None = None,
         min_rate_of_exchange: Fraction | None = None,
     ) -> ArbitrageCalculationResult:
         """
@@ -400,35 +368,34 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         overridden pool states if provided.
         """
 
+        if state_overrides is None:
+            state_overrides = {}
+
         self._pre_calculation_check(
-            override_state=override_state,
+            state_overrides=state_overrides,
             min_rate_of_exchange=min_rate_of_exchange,
         )
 
-        return self._calculate(override_state=override_state)
+        return self._calculate(state_overrides=state_overrides)
 
     async def calculate_with_pool(
         self,
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
-        override_state: Sequence[
-            tuple[LiquidityPool, UniswapV2PoolState] | tuple[V3LiquidityPool, UniswapV3PoolState]
-        ]
-        | None = None,
+        state_overrides: Mapping[ChecksumAddress, UniswapPoolState] | None = None,
         min_rate_of_exchange: Fraction | None = None,
     ) -> asyncio.Future[ArbitrageCalculationResult]:
         """
-        Wrap the arbitrage calculation into an asyncio future using the
-        specified executor.
+        Wrap the arbitrage calculation into an asyncio future using the specified executor.
 
         Arguments
         ---------
         executor : Executor
-            An executor (from `concurrent.futures`) to process the calculation
-            work. Both `ThreadPoolExecutor` and `ProcessPoolExecutor` are
-            supported, but `ProcessPoolExecutor` is recommended.
-        override_state : StateOverrideTypes, optional
-            An sequence of tuples, representing an ordered pair of helper
-            objects for Uniswap V2 / V3 pools and their overridden states.
+            An executor (from `concurrent.futures`) to process the calculation work. Both
+            `ThreadPoolExecutor` and `ProcessPoolExecutor` are supported, but `ProcessPoolExecutor`
+            is recommended for CPU-bound work like this.
+        state_overrides : Mapping[ChecksumAddress, UniswapPoolStateOverride], optional
+            A dict (or equivalent mapping) of pool states, keyed by the checksummed address of that
+            pool.
         min_rate_of_exchange : Fraction, optional
             The minimum net rate of exchange for the arbitrage path. Rates
             below this minimum will trigger an exception.
@@ -454,22 +421,25 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                 f"Cannot calculate {self} with executor. One or more V3 pools has a sparse bitmap."
             )
 
+        if state_overrides is None:
+            state_overrides = {}
+
         self._pre_calculation_check(
-            override_state=override_state,
+            state_overrides=state_overrides,
             min_rate_of_exchange=min_rate_of_exchange,
         )
 
         return asyncio.get_running_loop().run_in_executor(
             executor,
             self._calculate,
-            override_state,
+            state_overrides,
         )
 
     def generate_payloads(
         self,
         from_address: ChecksumAddress | str,
         swap_amount: int,
-        pool_swap_amounts: Sequence[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts],
+        pool_swap_amounts: Sequence[UniswapSwapAmount],
     ) -> list[tuple[ChecksumAddress, bytes, int]]:
         """
         Generate a list of ABI-encoded calldata for each step in the swap path.
@@ -495,12 +465,6 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         ``list[(str, bytes, int)]``
             A list of payload tuples. Each payload tuple has form (
             address: ChecksumAddress, calldata: bytes, value: int).
-
-        Raises
-        ------
-        ArbitrageError
-            if the generated payloads would revert on-chain, or if the inputs
-            were invalid
         """
 
         from_address = to_checksum_address(from_address)
