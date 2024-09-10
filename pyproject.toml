@@ -81,6 +81,12 @@ select = [
     "I",    # isort
     "PL",   # pylint
 ]
+ignore = [
+    "PLR0911", # too-many-return-statements
+    "PLR0912", # too-many-branches
+    "PLR0913", # too-many-arguments
+    "PLR0915", # too-many-statements 
+]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["PLR2004"]   # many swap amount tests compare "magic" values
