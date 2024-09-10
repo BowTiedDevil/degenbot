@@ -236,7 +236,7 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3):
     # Test with uninitialized pool (price=0)
     with pytest.raises(
         ZeroLiquidityError,
-        match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity \(not initialized\)",
+        match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity \\(not initialized\\)",
     ):
         arb.calculate(
             override_state=[
@@ -254,7 +254,7 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3):
     # Test with uninitialized pool (empty tick_bitmap)
     with pytest.raises(
         ZeroLiquidityError,
-        match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity \(empty bitmap\)",
+        match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity \\(empty bitmap\\)",
     ):
         arb.calculate(
             override_state=[
