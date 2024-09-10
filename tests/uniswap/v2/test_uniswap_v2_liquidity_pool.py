@@ -615,6 +615,10 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: 
             update_block=block_number,
         )
         assert (
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive
+            is not None
+        )
+        assert (
             block_number
             in ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive
         )
@@ -658,6 +662,11 @@ def test_discard_before_finalized(
 ):
     starting_state = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state
     starting_block = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block
+
+    assert (
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive
+        is not None
+    )
 
     _FIRST_UPDATE_BLOCK = (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block + 1

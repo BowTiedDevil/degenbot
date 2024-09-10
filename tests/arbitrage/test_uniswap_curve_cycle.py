@@ -119,7 +119,7 @@ def test_arb_calculation(ethereum_archive_node_web3):
         try:
             arb = UniswapCurveCycle(
                 input_token=weth,
-                swap_pools=swap_pools,
+                swap_pools=swap_pools,  # type: ignore[arg-type]
                 id="test",
                 max_input=10 * 10**18,
             )
