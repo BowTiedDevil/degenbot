@@ -4,12 +4,13 @@ import contextlib
 import multiprocessing
 import pickle
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping
 from fractions import Fraction
 from threading import Lock
 from typing import Any
 
 import pytest
+from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
 from degenbot.arbitrage.types import (
@@ -23,10 +24,7 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError
 from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.uniswap.v2_liquidity_pool import (
-    CamelotLiquidityPool,
-    LiquidityPool,
-)
+from degenbot.uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
 from degenbot.uniswap.v2_types import UniswapV2PoolState, UniswapV2PoolStateUpdated
 from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
 from degenbot.uniswap.v3_types import (

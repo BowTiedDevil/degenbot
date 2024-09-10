@@ -356,7 +356,7 @@ def test_dunder_methods(
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool > HexBytes(ZERO_ADDRESS)
 
     assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool > ethereum_uniswap_v2_wbtc_weth_liquiditypool
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool > ethereum_uniswap_v2_wbtc_weth_liquiditypool  # noqa: PLR0124
     ) is False
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool
@@ -368,7 +368,7 @@ def test_dunder_methods(
     ) is False
 
     assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool < ethereum_uniswap_v2_wbtc_weth_liquiditypool
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool < ethereum_uniswap_v2_wbtc_weth_liquiditypool  # noqa: PLR0124
     ) is False
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool
