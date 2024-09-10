@@ -105,7 +105,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                                         zero_for_one=False,
                                     )
                                 )
-                            case _:
+                            case _:  # pragma: no cover
                                 raise ValueError("Input token could not be identified!")
                     else:
                         match _swap_vectors[-1].token_out:
@@ -125,7 +125,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                                         zero_for_one=False,
                                     )
                                 )
-                            case _:
+                            case _:  # pragma: no cover
                                 raise ValueError("Input token could not be identified!")
                 case CurveStableswapPool():
                     # A Curve pool may have 3 or more tokens, so instead of a binary
@@ -212,7 +212,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         path, starting with `token_in_quantity` amount of `token_in`.
         """
 
-        if pool_state_overrides is None:
+        if pool_state_overrides is None:  # pragma: no branch
             pool_state_overrides = {}
 
         pools_amounts_out: list[SwapAmounts] = []
@@ -604,7 +604,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                 for pool in self.swap_pools
                 if isinstance(pool, V3LiquidityPool)
             ]
-        ):
+        ):  # pragma: no cover
             raise ValueError(
                 f"Cannot calculate {self} with executor. One or more V3 pools has a sparse bitmap."
             )
@@ -892,7 +892,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                                     msg_value,
                                 )
                             )
-                    case _:
+                    case _:  # pragma: no cover
                         raise ValueError(
                             f"Could not identify pool {swap_pool} and amounts {_swap_amounts}"
                         )
