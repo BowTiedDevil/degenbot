@@ -160,6 +160,10 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                     raise ValueError("Pool type could not be identified")
         self._swap_vectors = tuple(_swap_vectors)
 
+        self._subscribers = set()
+        for pool in swap_pools:
+            pool.subscribe(self)
+
     def __getstate__(self) -> dict[str, Any]:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
