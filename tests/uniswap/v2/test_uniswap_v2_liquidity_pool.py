@@ -699,6 +699,32 @@ def test_discard_before_finalized(
     )
 
 
+def test_discard_earlier_than_created(
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+) -> None:
+    lp = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000
+
+    assert lp._pool_state_archive is not None
+    state_before_discard = lp._pool_state_archive.copy()
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.discard_states_before_block(
+        lp.update_block - 1
+    )
+    assert lp._pool_state_archive == state_before_discard
+
+
+def test_discard_after_last_update(
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+) -> None:
+    lp = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000
+
+    with pytest.raises(
+        NoPoolStateAvailable, match=f"No pool state known prior to block {lp.update_block + 1}"
+    ):
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.discard_states_before_block(
+            lp.update_block + 1
+        )
+
+
 def test_simulations(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
 ):
