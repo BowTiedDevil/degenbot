@@ -12,6 +12,7 @@ from .logging import logger
 from .manager.token_manager import Erc20TokenHelperManager
 from .registry.all_pools import AllPools
 from .registry.all_tokens import AllTokens
+from .solidly.solidly_liquidity_pool import AerodromeV2LiquidityPool
 from .transaction.uniswap_transaction import UniswapTransaction
 from .uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
 from .uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
@@ -40,6 +41,7 @@ __all__ = (
     "set_web3",
     "solidly",
     "uniswap",
+    "AerodromeV2LiquidityPool",
     "AllPools",
     "AllTokens",
     "AnvilFork",
