@@ -60,6 +60,12 @@ def set_degenbot_logging():
 
 
 @pytest.fixture()
+def fork_base() -> AnvilFork:
+    fork = AnvilFork(fork_url=BASE_FULL_NODE_HTTP_URI)
+    return fork
+
+
+@pytest.fixture()
 def fork_mainnet() -> AnvilFork:
     fork = AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI)
     return fork
