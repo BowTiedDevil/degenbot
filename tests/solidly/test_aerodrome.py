@@ -2,8 +2,9 @@ import web3
 from eth_utils.address import to_checksum_address
 
 from degenbot import set_web3
+from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.solidly.solidly_functions import generate_aerodrome_v2_pool_address
-from degenbot.solidly.solidly_liquidity_pool import SolidlyV2LiquidityPool
+from degenbot.solidly.solidly_liquidity_pool import AerodromeV2LiquidityPool
 
 TBTC_USDBC_POOL_ADDRESS = to_checksum_address("0x723AEf6543aecE026a15662Be4D3fb3424D502A9")
 AERODROME_V2_FACTORY_ADDRESS = to_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da")
@@ -33,9 +34,31 @@ def test_create_pool(
 ):
     set_web3(base_full_node_web3)
 
-    lp = SolidlyV2LiquidityPool(
+    lp = AerodromeV2LiquidityPool(
         address=TBTC_USDBC_POOL_ADDRESS,
     )
     assert lp.address == TBTC_USDBC_POOL_ADDRESS
     assert lp.factory == AERODROME_V2_FACTORY_ADDRESS
     assert lp.deployer_address == AERODROME_V2_FACTORY_ADDRESS
+
+
+def test_calculation_volatile(
+    fork_base: AnvilFork,
+):
+    set_web3(fork_base.w3)
+
+    TOKEN0_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"  # USDC
+    TOKEN1_ADDRESS = "0x940181a94A35A4569E4529A3CDfB74e38FD98631"  # AERO
+
+    lp = AerodromeV2LiquidityPool(
+        address="0x6cdcb1c4a4d1c3c6d054b27ac5b77e89eafb971d",
+    )
+    for token_in_amount in [1 * 10**18, 5 * 10**18, 25 * 10**18]:
+        contract_amount_out = lp.w3_contract.functions.getAmountOut(
+            token_in_amount, TOKEN0_ADDRESS
+        ).call()
+        helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
+            token_in=lp.token0, token_in_quantity=token_in_amount
+        )
+        print(f"{contract_amount_out} == {helper_amount_out}?")
+        assert contract_amount_out == helper_amount_out
