@@ -190,7 +190,6 @@ def test_nominal_price_scaled_by_decimals(wbtc_weth_v2_lp: LiquidityPool):
         )
 
 
-@pytest.mark.skip(reason="Unreliable RPC")
 def test_create_camelot_v2_stable_pool(fork_arbitrum: AnvilFork):
     CAMELOT_MIM_USDC_LP_ADDRESS = "0x68A0859de50B4Dfc6EFEbE981cA906D38Cdb0D1F"
     FORK_BLOCK = 153_759_000
