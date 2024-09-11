@@ -23,6 +23,7 @@ from ..exceptions import (
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
+from ..solidly.solidly_functions import _get_y_camelot, _k
 from ..types import AbstractLiquidityPool
 from .abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
 from .v2_functions import (
@@ -867,41 +868,6 @@ class CamelotLiquidityPool(LiquidityPool):
         precision_multiplier_token0: int = 10**self.token0.decimals
         precision_multiplier_token1: int = 10**self.token1.decimals
 
-        def _k(balance_0: int, balance_1: int) -> int:
-            _x: int = balance_0 * 10**18 // precision_multiplier_token0
-            _y: int = balance_1 * 10**18 // precision_multiplier_token1
-            _a: int = _x * _y // 10**18
-            _b: int = (_x * _x // 10**18) + (_y * _y // 10**18)
-            return _a * _b // 10**18  # x^3*y+y^3*x >= k
-
-        def _get_y(x_0: int, xy: int, y: int) -> int:
-            for _ in range(255):
-                y_prev = y
-                k = _f(x_0, y)
-                if k < xy:
-                    dy = (xy - k) * 10**18 // _d(x_0, y)
-                    y = y + dy
-                else:
-                    dy = (k - xy) * 10**18 // _d(x_0, y)
-                    y = y - dy
-
-                if y > y_prev:
-                    if y - y_prev <= 1:
-                        return y
-                elif y_prev - y <= 1:
-                    return y
-
-            return y
-
-        def _f(x_0: int, y: int) -> int:
-            return (
-                x_0 * (y * y // 10**18 * y // 10**18) // 10**18
-                + (x_0 * x_0 // 10**18 * x_0 // 10**18) * y // 10**18
-            )
-
-        def _d(x_0: int, y: int) -> int:
-            return 3 * x_0 * (y * y // 10**18) // 10**18 + (x_0 * x_0 // 10**18 * x_0 // 10**18)
-
         fee_percent = self.fee_denominator * (
             self.fee_token0 if token_in == self.token0 else self.fee_token1
         )
@@ -915,7 +881,12 @@ class CamelotLiquidityPool(LiquidityPool):
 
         # Remove fee from amount received
         token_in_quantity -= token_in_quantity * fee_percent // self.fee_denominator
-        xy = _k(reserves_token0, reserves_token1)
+        xy = _k(
+            balance_0=reserves_token0,
+            balance_1=reserves_token1,
+            decimals_0=precision_multiplier_token0,
+            decimals_1=precision_multiplier_token1,
+        )
         reserves_token0 = reserves_token0 * 10**18 // precision_multiplier_token0
         reserves_token1 = reserves_token1 * 10**18 // precision_multiplier_token1
         reserve_a, reserve_b = (
@@ -928,7 +899,7 @@ class CamelotLiquidityPool(LiquidityPool):
             if token_in == self.token0
             else token_in_quantity * 10**18 // precision_multiplier_token1
         )
-        y = reserve_b - _get_y(token_in_quantity + reserve_a, xy, reserve_b)
+        y = reserve_b - _get_y_camelot(token_in_quantity + reserve_a, xy, reserve_b)
 
         return (
             y
