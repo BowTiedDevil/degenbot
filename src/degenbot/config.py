@@ -5,7 +5,6 @@ __all__ = (
 )
 
 import web3
-from eth_typing import ChainId
 
 from .exceptions import DegenbotError
 
@@ -13,29 +12,34 @@ from .exceptions import DegenbotError
 class Web3ConnectionManager:
     def __init__(self) -> None:
         self.connections: dict[int, web3.Web3] = dict()
-        self._default_chain_id: int = ChainId.ETH
+        self.default_chain_id: int | None = None
 
-    def register(self, w3: web3.Web3) -> None:
-        if not self.connections:
-            self._default_chain_id = w3.eth.chain_id
+    def get_web3(self, chain_id: int) -> web3.Web3 | None:
+        if chain_id not in self.connections:
+            raise DegenbotError("Chain ID does not have a registered Web3 instance.")
+        return self.connections[chain_id]
+
+    def register_web3(self, w3: web3.Web3) -> None:
+        if w3.is_connected() is False:
+            raise DegenbotError("Web3 instance is not connected.")
         self.connections[w3.eth.chain_id] = w3
 
-    def get(self, chain_id: int) -> web3.Web3 | None:
-        return self.connections.get(chain_id)
+    def set_default_chain(self, chain_id: int):
+        self.default_chain_id = chain_id
 
 
-def get_web3(chain_id: int | None = None) -> web3.Web3:
-    if chain_id is None:
-        chain_id = web3_connection_manager._default_chain_id
-    if (w3 := web3_connection_manager.get(chain_id)) is not None:
-        return w3
-    raise DegenbotError(f"A Web3 instance has not been registered for chain ID {chain_id}.")
+def get_web3() -> web3.Web3:
+    try:
+        return web3_connection_manager.get_web3(chain_id=web3_connection_manager.default_chain_id)
+    except DegenbotError:
+        raise DegenbotError("A default Web3 instance has not been registered.") from None
 
 
 def set_web3(w3: web3.Web3) -> None:
     if w3.is_connected() is False:
-        raise DegenbotError("Web3 object is not connected.")
-    web3_connection_manager.register(w3)
+        raise DegenbotError("Web3 instance is not connected.")
+    web3_connection_manager.register_web3(w3)
+    web3_connection_manager.set_default_chain(w3.eth.chain_id)
 
 
 web3_connection_manager = Web3ConnectionManager()
