@@ -170,6 +170,9 @@ def solidly_calc_exact_in_stable(
     y*x^3 + x*y^3 >= k).
     """
 
+    if token_in not in (0, 1):  # pragma: no cover
+        raise ValueError("Invalid token_in identifier")
+
     try:
         amount_in_after_fee = amount_in - amount_in * fee.numerator // fee.denominator
 
@@ -183,11 +186,9 @@ def solidly_calc_exact_in_stable(
         if token_in == 0:
             reserves_a, reserves_b = scaled_reserves_0, scaled_reserves_1
             amount_in_after_fee = (amount_in_after_fee * 10**18) // decimals0
-        elif token_in == 1:
+        else:
             reserves_a, reserves_b = scaled_reserves_1, scaled_reserves_0
             amount_in_after_fee = (amount_in_after_fee * 10**18) // decimals1
-        else:
-            raise ValueError("Invalid token_in identifier")
 
         y = reserves_b - _get_y_aerodrome(
             amount_in_after_fee + reserves_a, xy, reserves_b, decimals0, decimals1
@@ -209,13 +210,9 @@ def solidly_calc_exact_in_volatile(
     Calculate the amount out for an exact input to a Solidly volatile pool (invariant x*y>=k).
     """
 
-    amount_in_after_fee = amount_in - amount_in * fee.numerator // fee.denominator
-
-    if token_in == 0:
-        reserves_a, reserves_b = reserves0, reserves1
-    elif token_in == 1:
-        reserves_a, reserves_b = reserves1, reserves0
-    else:
+    if token_in not in (0, 1):  # pragma: no cover
         raise ValueError("Invalid token_in identifier")
 
+    amount_in_after_fee = amount_in - amount_in * fee.numerator // fee.denominator
+    reserves_a, reserves_b = (reserves0, reserves1) if token_in == 0 else (reserves1, reserves0)
     return (amount_in_after_fee * reserves_b) // (reserves_a + amount_in_after_fee)
