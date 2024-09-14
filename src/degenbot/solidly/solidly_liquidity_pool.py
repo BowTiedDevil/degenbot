@@ -187,9 +187,11 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
         if self.stable:
             return solidly_calc_exact_in_stable(
                 amount_in=token_in_quantity,
-                token_in=...,
+                token_in=int(token_in == self.token1),
                 reserves0=self.reserves_token0,
                 reserves1=self.reserves_token1,
+                decimals0=10**self.token0.decimals,
+                decimals1=10**self.token1.decimals,
                 fee=self.fee,
             )
         else:
