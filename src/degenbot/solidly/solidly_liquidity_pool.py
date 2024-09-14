@@ -76,9 +76,7 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
         if fee is None:
             factory_contract = w3.eth.contract(address=self.factory, abi=AERODROME_V2_FACTORY_ABI)
             pool_fee = factory_contract.functions.getFee(self.address, self.stable).call()
-            print(f"{fee=}")
             fee = Fraction(pool_fee, 10_000)
-
         self.fee = fee
 
         if tokens is not None:
