@@ -23,7 +23,7 @@ from ..exceptions import (
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
-from ..solidly.solidly_functions import _get_y_camelot, _k
+from ..solidly.solidly_functions import _get_y_camelot, _k_camelot
 from ..types import AbstractLiquidityPool
 from .abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
 from .v2_functions import (
@@ -881,7 +881,7 @@ class CamelotLiquidityPool(LiquidityPool):
 
         # Remove fee from amount received
         token_in_quantity -= token_in_quantity * fee_percent // self.fee_denominator
-        xy = _k(
+        xy = _k_camelot(
             balance_0=reserves_token0,
             balance_1=reserves_token1,
             decimals_0=precision_multiplier_token0,

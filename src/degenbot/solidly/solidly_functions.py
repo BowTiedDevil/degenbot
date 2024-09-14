@@ -112,11 +112,17 @@ def _k_aerodrome(
 ) -> int:
     _x = balance_0 * 10**18 // decimals_0
     _y = balance_1 * 10**18 // decimals_1
-    _a = _x * _y // 10**18
-    _b = (_x * _x // 10**18) + (_y * _y // 10**18)
-
+    _a = (_x * _y) // 10**18
+    _b = (_x * _x) // 10**18 + (_y * _y) // 10**18
     raise_if_invalid_uint256(_a * _b)
     return _a * _b // 10**18  # x^3*y + y^3*x >= k
+
+
+def _k_camelot(balance_0: int, balance_1: int, decimals_0: int, decimals_1: int) -> int:
+    # the contract implements the function in the same way
+    return _k_aerodrome(
+        balance_0=balance_0, balance_1=balance_1, decimals_0=decimals_0, decimals_1=decimals_1
+    )
 
 
 def generate_aerodrome_v2_pool_address(
