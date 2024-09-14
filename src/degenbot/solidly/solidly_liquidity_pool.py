@@ -94,7 +94,7 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
                     f"Pool address verification failed. Provided: {self.address}, expected: {verified_address}"  # noqa:E501
                 )
 
-        self.name = f"{self.token0}-{self.token1} (AerodromeV2, {{100*self.fee.numerator/self.fee.denominator:.2f}}%)"  # noqa:E501
+        self.name = f"{self.token0}-{self.token1} (AerodromeV2, {100*self.fee.numerator/self.fee.denominator:.2f}%)"  # noqa:E501
 
         self.reserves_token0, self.reserves_token1, *_ = (
             self.w3_contract.functions.getReserves().call(block_identifier=self.update_block)
