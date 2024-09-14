@@ -143,45 +143,30 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
         """
 
+        if token_in not in self.tokens:
+            raise ValueError("token_in not recognized.")
+
+        TOKEN_IN: Literal[0, 1] = 0 if token_in == self.token0 else 1
+
         if token_in_quantity <= 0:  # pragma: no cover
             raise ZeroSwapError("token_in_quantity must be positive")
 
         if override_state:  # pragma: no cover
             logger.debug(f"State overrides applied: {override_state}")
 
-        if token_in == self.token0:
-            reserves_in = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            reserves_out = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-        elif token_in == self.token1:
-            reserves_in = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            reserves_out = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-        else:  # pragma: no cover
-            raise ValueError(
-                f"Could not identify token_in: {token_in}! Pool holds: {self.token0} {self.token1}"
-            )
+        reserves_0 = (
+            override_state.reserves_token0 if override_state is not None else self.reserves_token0
+        )
+        reserves_1 = (
+            override_state.reserves_token1 if override_state is not None else self.reserves_token1
+        )
 
         if self.stable:
             return solidly_calc_exact_in_stable(
                 amount_in=token_in_quantity,
-                token_in=int(token_in == self.token1),
-                reserves0=self.reserves_token0,
-                reserves1=self.reserves_token1,
+                token_in=TOKEN_IN,
+                reserves0=reserves_0,
+                reserves1=reserves_1,
                 decimals0=10**self.token0.decimals,
                 decimals1=10**self.token1.decimals,
                 fee=self.fee,
@@ -189,8 +174,8 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
         else:
             return solidly_calc_exact_in_volatile(
                 amount_in=token_in_quantity,
-                token_in=int(token_in == self.token1),
-                reserves0=self.reserves_token0,
-                reserves1=self.reserves_token1,
+                token_in=TOKEN_IN,
+                reserves0=reserves_0,
+                reserves1=reserves_1,
                 fee=self.fee,
             )
