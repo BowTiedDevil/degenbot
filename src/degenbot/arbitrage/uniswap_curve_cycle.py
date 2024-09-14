@@ -514,9 +514,8 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
             An executor (from `concurrent.futures`) to process the calculation
             work. Both `ThreadPoolExecutor` and `ProcessPoolExecutor` are
             supported, but `ProcessPoolExecutor` is recommended.
-        override_state : StateOverrideTypes, optional
-            An sequence of tuples, representing an ordered pair of helper
-            objects for Uniswap V2 / V3 pools and their overridden states.
+        state_overrides : Mapping[ChecksumAddress, StateOverrideTypes], optional
+            A mapping (dict or dict-like) of pool states, keyed by the pool address.
 
         Returns
         -------
