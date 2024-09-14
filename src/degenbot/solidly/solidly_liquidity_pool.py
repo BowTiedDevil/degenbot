@@ -44,7 +44,6 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
         abi: list[Any] | None = None,
         factory_address: str | None = None,
         deployer_address: str | None = None,
-        init_hash: str | None = None,
         fee: Fraction | None = None,
         silent: bool = False,
         archive_states: bool = True,
@@ -67,11 +66,6 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
             to_checksum_address(deployer_address) if deployer_address is not None else self.factory
         )
         self.stable = w3_contract.functions.stable().call()
-
-        try:
-            self.init_hash = FACTORY_DEPLOYMENTS[chain_id][self.factory].pool_init_hash
-        except KeyError:
-            self.init_hash = init_hash
 
         if fee is None:
             factory_contract = w3.eth.contract(address=self.factory, abi=AERODROME_V2_FACTORY_ABI)
