@@ -16,7 +16,7 @@ AERODROME_IMPLEMENTATION_ADDRESS = to_checksum_address("0xA4e46b4f701c62e14DF11B
 
 
 @pytest.fixture
-def test_pools() -> list:
+def test_pools() -> Any:
     with open("tests/solidly/first_200_aerodrome_v2_pools.json") as file:
         return json.load(file)
 
