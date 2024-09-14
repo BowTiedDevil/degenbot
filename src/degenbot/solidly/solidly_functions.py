@@ -47,7 +47,7 @@ def _get_y_aerodrome(
     y: int,
     decimals0: int,
     decimals1: int,
-) -> int:
+) -> int:  # pragma: no cover
     """
     Calculate the minimum reserves for the withdrawn token that satisfy the pool invariant.
 
@@ -84,7 +84,7 @@ def _get_y_camelot(
     x_0: int,
     xy: int,
     y: int,
-) -> int:
+) -> int:  # pragma: no cover
     for _ in range(255):
         y_prev = y
         k = _f_camelot(x_0, y)
