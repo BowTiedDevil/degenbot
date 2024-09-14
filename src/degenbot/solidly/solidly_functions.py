@@ -119,7 +119,8 @@ def _k_aerodrome(
 
 
 def _k_camelot(balance_0: int, balance_1: int, decimals_0: int, decimals_1: int) -> int:
-    # the contract implements the function in the same way
+    # The Camelot contract implements the function in the same way
+    # Reference: https://github.com/CamelotLabs/core/blob/main/contracts/CamelotPair.sol
     return _k_aerodrome(
         balance_0=balance_0, balance_1=balance_1, decimals_0=decimals_0, decimals_1=decimals_1
     )
