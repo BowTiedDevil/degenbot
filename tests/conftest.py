@@ -48,6 +48,7 @@ def initialize_and_reset_after_each_test():
     """
     yield  # the fixture will pause here until the test completes
     degenbot.config.web3_connection_manager.connections.clear()
+    degenbot.config.web3_connection_manager.default_chain_id = None
     degenbot.registry.all_pools._all_pools.clear()
     degenbot.registry.all_tokens._all_tokens.clear()
     degenbot.manager.token_manager.Erc20TokenHelperManager._state.clear()
