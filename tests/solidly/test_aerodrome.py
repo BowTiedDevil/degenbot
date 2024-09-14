@@ -6,7 +6,6 @@ import web3
 from eth_utils.address import to_checksum_address
 
 from degenbot import set_web3
-from degenbot.exceptions import EVMRevertError
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.solidly.solidly_functions import generate_aerodrome_v2_pool_address
 from degenbot.solidly.solidly_liquidity_pool import AerodromeV2LiquidityPool
