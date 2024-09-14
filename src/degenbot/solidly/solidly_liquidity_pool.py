@@ -139,7 +139,7 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
         """
 
-        if token_in not in self.tokens:
+        if token_in not in self.tokens:  # pragma: no cover
             raise ValueError("token_in not recognized.")
 
         TOKEN_IN: Literal[0, 1] = 0 if token_in == self.token0 else 1
