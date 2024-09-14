@@ -7,23 +7,77 @@ from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
+from degenbot.constants import MAX_UINT256, MIN_UINT256
+
+from ..exceptions import EVMRevertError
 from ..functions import eip_1167_clone_address
+
+
+def raise_if_invalid_uint256(number: int) -> None:
+    if (MIN_UINT256 <= number <= MAX_UINT256) is False:
+        raise EVMRevertError(f"underflow/overflow for {number}")
 
 
 def _d(
     x0: int,
     y: int,
 ) -> int:
-    return (3 * x0 * y * y // 10**36) + (x0 * x0 * x0 // 10**36)
+    return (3 * x0 * ((y * y) // 10**18)) // 10**18 + ((((x0 * x0) // 10**18) * x0) // 10**18)
 
 
-def _f(
+def _f_aerodrome(
     x0: int,
     y: int,
 ) -> int:
-    _a = x0 * y // 10**18
-    _b = x0 * x0 // 10**18 + y * y // 10**18
+    _a = (x0 * y) // 10**18
+    _b = (x0 * x0) // 10**18 + (y * y) // 10**18
     return (_a * _b) // 10**18
+
+
+def _f_camelot(x0: int, y: int) -> int:
+    return (
+        x0 * (y * y // 10**18 * y // 10**18) // 10**18
+        + (x0 * x0 // 10**18 * x0 // 10**18) * y // 10**18
+    )
+
+
+def _get_y_aerodrome(
+    x0: int,
+    xy: int,
+    y: int,
+    decimals0: int,
+    decimals1: int,
+) -> int:
+    """
+    Calculate the minimum reserves for the withdrawn token that satisfy the pool invariant.
+
+    Reference: https://github.com/aerodrome-finance/contracts/blob/main/contracts/Pool.sol
+    """
+
+    for _ in range(255):
+        k = _f_aerodrome(x0, y)
+        if k < xy:
+            dy = ((xy - k) * 10**18) // _d(x0, y)
+            if dy == 0:
+                if k == xy:
+                    return y
+                if (
+                    _k_aerodrome(
+                        balance_0=x0, balance_1=y + 1, decimals_0=decimals0, decimals_1=decimals1
+                    )
+                    > xy
+                ):
+                    return y + 1
+                dy = 1
+            y = y + dy
+        else:
+            dy = ((k - xy) * 10**18) // _d(x0, y)
+            if dy == 0:
+                if k == xy or _f_aerodrome(x0, y - 1) < xy:
+                    return y
+                dy = 1
+            y = y - dy
+    raise EVMRevertError("Failed to converge on a value for y")
 
 
 def _get_y_camelot(
@@ -33,9 +87,10 @@ def _get_y_camelot(
 ) -> int:
     for _ in range(255):
         y_prev = y
-        k = _f(x_0, y)
+        k = _f_camelot(x_0, y)
         if k < xy:
             dy = (xy - k) * 10**18 // _d(x_0, y)
+
             y = y + dy
         else:
             dy = (k - xy) * 10**18 // _d(x_0, y)
@@ -46,49 +101,10 @@ def _get_y_camelot(
                 return y
         elif y_prev - y <= 1:
             return y
-
     return y
 
 
-def _get_y_aerodrome(
-    x0: int,
-    xy: int,
-    y: int,
-):
-    for _ in range(255):
-        k = _f(x0, y)
-        if k < xy:
-            # there are two cases where dy == 0
-            # case 1: The y is converged and we find the correct answer
-            # case 2: _d(x0, y) is too large compare to (xy - k) and the rounding error
-            #         screwed us.
-            #         In this case, we need to increase y by 1
-            dy = ((xy - k) * 1e18) // _d(x0, y)
-            if dy == 0:
-                if k == xy:
-                    # We found the correct answer. Return y
-                    return y
-                if _k(x0, y + 1) > xy:
-                    # If _k(x0, y + 1) > xy, then we are close to the correct answer.
-                    # There's no closer answer than y + 1
-                    return y + 1
-                dy = 1
-            y = y + dy
-        else:
-            dy = ((k - xy) * 1e18) // _d(x0, y)
-            if dy == 0:
-                if k == xy or _f(x0, y - 1) < xy:
-                    # Likewise, if k == xy, we found the correct answer.
-                    # If _f(x0, y - 1) < xy, then we are close to the correct answer.
-                    # There's no closer answer than "y"
-                    # It's worth mentioning that we need to find y where f(x0, y) >= xy
-                    # As a result, we can't return y - 1 even it's closer to the correct answer
-                    return y
-                dy = 1
-            y = y - dy
-
-
-def _k(
+def _k_aerodrome(
     balance_0: int,
     balance_1: int,
     decimals_0: int,
@@ -98,6 +114,8 @@ def _k(
     _y = balance_1 * 10**18 // decimals_1
     _a = _x * _y // 10**18
     _b = (_x * _x // 10**18) + (_y * _y // 10**18)
+
+    raise_if_invalid_uint256(_a * _b)
     return _a * _b // 10**18  # x^3*y + y^3*x >= k
 
 
@@ -141,25 +159,36 @@ def solidly_calc_exact_in_stable(
     fee: Fraction,
 ) -> int:
     """
-    Calculate the amount out for an exact input from a Solidly stable pool with invariant
-    y*x^3*y + x*y^3 = k.
+    Calculate the amount out for an exact input to a Solidly stable pool (invariant
+    y*x^3 + x*y^3 >= k).
     """
 
-    _amount_in = amount_in * (fee.denominator - fee.numerator) // fee.denominator
+    try:
+        amount_in_after_fee = amount_in - amount_in * fee.numerator // fee.denominator
 
-    xy = _k(reserves0, reserves1)
-    _reserve0 = (reserves0 * 10**18) // decimals0
-    _reserve1 = (reserves1 * 10**18) // decimals1
+        xy = _k_aerodrome(
+            balance_0=reserves0, balance_1=reserves1, decimals_0=decimals0, decimals_1=decimals1
+        )
 
-    if token_in == 0:
-        reserveA, reserveB = _reserve0, _reserve1
-        amountIn = _amount_in * 10**18 // decimals0
-    else:
-        reserveA, reserveB = _reserve1, _reserve0
-        amountIn = _amount_in * 10**18 // decimals1
+        scaled_reserves_0 = (reserves0 * 10**18) // decimals0
+        scaled_reserves_1 = (reserves1 * 10**18) // decimals1
 
-    y = reserveB - _get_y_aerodrome(amountIn + reserveA, xy, reserveB)
-    return y * (decimals1 if token_in == 0 else decimals0) // 10**18
+        if token_in == 0:
+            reserves_a, reserves_b = scaled_reserves_0, scaled_reserves_1
+            amount_in_after_fee = (amount_in_after_fee * 10**18) // decimals0
+        elif token_in == 1:
+            reserves_a, reserves_b = scaled_reserves_1, scaled_reserves_0
+            amount_in_after_fee = (amount_in_after_fee * 10**18) // decimals1
+        else:
+            raise ValueError("Invalid token_in identifier")
+
+        y = reserves_b - _get_y_aerodrome(
+            amount_in_after_fee + reserves_a, xy, reserves_b, decimals0, decimals1
+        )
+        return (y * (decimals1 if token_in == 0 else decimals0)) // 10**18
+    except ZeroDivisionError:
+        # Pools with very low reserves can throw division by zero errors because _d() returns 0
+        raise EVMRevertError("Division by zero") from None
 
 
 def solidly_calc_exact_in_volatile(
@@ -170,15 +199,16 @@ def solidly_calc_exact_in_volatile(
     fee: Fraction,
 ) -> int:
     """
-    Calculate the amount out for an exact input from a Solidly volatile pool with invariant
-    (x*y=k).
+    Calculate the amount out for an exact input to a Solidly volatile pool (invariant x*y>=k).
     """
 
-    amount_in_after_fee = amount_in - amount_in * fee
+    amount_in_after_fee = amount_in - amount_in * fee.numerator // fee.denominator
 
     if token_in == 0:
-        reserveA, reserveB = reserves0, reserves1
+        reserves_a, reserves_b = reserves0, reserves1
     elif token_in == 1:
-        reserveA, reserveB = reserves1, reserves0
+        reserves_a, reserves_b = reserves1, reserves0
+    else:
+        raise ValueError("Invalid token_in identifier")
 
-    return (amount_in_after_fee * reserveB) // (reserveA + amount_in_after_fee)
+    return (amount_in_after_fee * reserves_b) // (reserves_a + amount_in_after_fee)
