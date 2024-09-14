@@ -16,6 +16,7 @@ from degenbot.exceptions import (
 from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
+from degenbot.uniswap.v3_libraries import TickMath
 from degenbot.uniswap.v3_liquidity_pool import UNISWAP_V3_MAINNET_POOL_INIT_HASH, V3LiquidityPool
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
@@ -161,6 +162,25 @@ def test_creation_with_invalid_hash(ethereum_archive_node_web3: Web3) -> None:
     )
     TICKLENS_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
         ticklens_deployment
+    )
+
+
+def test_sparse_liquidity_map(ethereum_archive_node_web3: Web3) -> None:
+    set_web3(ethereum_archive_node_web3)
+
+    lp = V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS)
+    current_word, _ = get_tick_word_and_bit_position(TickMath.MIN_TICK, lp.tick_spacing)
+    known_words = set(lp.tick_bitmap.keys())
+    assert lp.sparse_liquidity_map is True
+    assert current_word + 1 not in lp.tick_bitmap
+
+    lp._fetch_tick_data_at_word(current_word + 1)
+    assert lp.sparse_liquidity_map is True
+    assert current_word + 1 in lp.tick_bitmap
+    assert set(lp.tick_bitmap.keys()) == known_words.union([current_word + 1])
+
+    lp.calculate_tokens_out_from_tokens_in(
+        token_in=lp.token0, token_in_quantity=100000 * 10**lp.token0.decimals
     )
 
 
@@ -711,6 +731,51 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -
             tick=69,
         )
     )
+
+
+def test_mint_and_burn_in_empty_word(fork_mainnet: AnvilFork) -> None:
+    """
+    Test that minting and burning an equal position inside an empty word results in no net
+    liquidity in the mapping, and the removal of the position.
+    """
+    TEST_BLOCK_NUMBER = 20751740
+    fork_mainnet.reset(block_number=TEST_BLOCK_NUMBER)
+    set_web3(fork_mainnet.w3)
+
+    lp = V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS)
+    assert lp.sparse_liquidity_map is True
+
+    EMPTY_WORD = -57
+    LOWER_TICK = -871860
+    UPPER_TICK = LOWER_TICK + lp.tick_spacing
+
+    assert LOWER_TICK not in lp.tick_data
+    assert UPPER_TICK not in lp.tick_data
+
+    lp._fetch_tick_data_at_word(-57)
+    assert lp.tick_bitmap[EMPTY_WORD] == UniswapV3BitmapAtWord()
+
+    assert LOWER_TICK not in lp.tick_data
+    assert UPPER_TICK not in lp.tick_data
+
+    lp.external_update(
+        # Mint
+        update=UniswapV3PoolExternalUpdate(
+            block_number=TEST_BLOCK_NUMBER,
+            liquidity_change=(69_420, LOWER_TICK, UPPER_TICK),
+        )
+    )
+    assert LOWER_TICK in lp.tick_data
+    assert UPPER_TICK in lp.tick_data
+    lp.external_update(
+        # Burn
+        update=UniswapV3PoolExternalUpdate(
+            block_number=TEST_BLOCK_NUMBER,
+            liquidity_change=(-69_420, LOWER_TICK, UPPER_TICK),
+        )
+    )
+    assert LOWER_TICK not in lp.tick_data
+    assert UPPER_TICK not in lp.tick_data
 
 
 def test_auto_update(fork_mainnet: AnvilFork) -> None:
