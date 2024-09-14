@@ -147,7 +147,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             self.init_hash = (
                 init_hash if init_hash is not None else UNISWAP_V3_MAINNET_POOL_INIT_HASH
             )
-            if ticklens_address is None:
+            if ticklens_address is None:  # pragma: no cover
                 raise ValueError("TickLens address for pool is unknown.") from None
             self.ticklens_address = to_checksum_address(ticklens_address)
             self.ticklens_abi = (
@@ -294,7 +294,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             "deployer_address",
             "abi",
             "init_hash",
-        ]:
+        ]:  # pragma: no cover
             if key in kwargs:
                 logger.warning(
                     f"Ignoring keyword argument {key}={kwargs[key]} in favor of value in exchange deployment."  # noqa: E501
@@ -380,12 +380,12 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
         if zero_for_one is True and not (
             TickMath.MIN_SQRT_RATIO < sqrt_price_limit_x96 < _sqrt_price_x96
-        ):  # pragma: no branch
+        ):  # pragma: no cover
             raise EVMRevertError("SPL")
 
         if zero_for_one is False and not (
             _sqrt_price_x96 < sqrt_price_limit_x96 < TickMath.MAX_SQRT_RATIO
-        ):  # pragma: no branch
+        ):  # pragma: no cover
             raise EVMRevertError("SPL")
 
         exact_input = amount_specified > 0
