@@ -1,0 +1,1602 @@
+[
+  {
+    "token0": "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x723AEf6543aecE026a15662Be4D3fb3424D502A9",
+    "pool_number": 1,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x2722C8f9B5E2aC72D1f225f8e8c990E449ba0078",
+    "pool_number": 2,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x26f3901aC8a79c50fb0d8289C74f0d09AdC42E29",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0xAf58FDeE432a104a932a899968d60F92838886cd",
+    "pool_number": 3,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2dAD3a13ef0C6366220f989157009e501e7938F8",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x2B7704f1cb9324cD8586B33C6c540CbD64E58237",
+    "pool_number": 4,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4621b7A9c75199271F773Ebd9A499dbd165c3191",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528",
+    "pool_number": 5,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x6B4712AE9797C199edd44F897cA09BC57628a1CF",
+    "stable": false,
+    "pool_address": "0xA819Af1CC8AbE618eA8abaDeb464960F7451CEAB",
+    "pool_number": 6,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x00e1724885473B63bCE08a9f0a52F35b0979e35A",
+    "token1": "0xf7A0dd3317535eC4f4d29ADF9d620B3d8D5D5069",
+    "stable": false,
+    "pool_address": "0x6e23f90E25f432c9dF9eF9276472DDa3951e4465",
+    "pool_number": 7,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xa334884bF6b0A066d553D19e507315E839409e62",
+    "token1": "0xf7A0dd3317535eC4f4d29ADF9d620B3d8D5D5069",
+    "stable": false,
+    "pool_address": "0x218F511431194B2C756D67a137DE536beA74E498",
+    "pool_number": 8,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xbf1aeA8670D2528E08334083616dD9C5F3B087aE",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0xf6Aec4F97623E691a9426a69BaF5501509fCa05D",
+    "pool_number": 9,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4621b7A9c75199271F773Ebd9A499dbd165c3191",
+    "token1": "0xbf1aeA8670D2528E08334083616dD9C5F3B087aE",
+    "stable": true,
+    "pool_address": "0x8b432C54d6e8E1B8D1802753514AB53044Af1861",
+    "pool_number": 10,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "token1": "0xE3B53AF74a4BF62Ae5511055290838050bf764Df",
+    "stable": false,
+    "pool_address": "0xb680190fB16f417647e69D6A84719aE9c7E5E20a",
+    "pool_number": 11,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xF544251D25f3d243A36B07e7E7962a678f952691",
+    "stable": false,
+    "pool_address": "0x2d25E0514f23c6367687dE89Bd5167dc754D4934",
+    "pool_number": 12,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4A3A6Dd60A34bB2Aba60D73B4C88315E9CeB6A3D",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0x982A169edFC1cf8Fd38dBeE76735547b23875BD1",
+    "pool_number": 13,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x4A3A6Dd60A34bB2Aba60D73B4C88315E9CeB6A3D",
+    "stable": false,
+    "pool_address": "0x535d457FFC1c4459300Bb1dd775f37808F808282",
+    "pool_number": 14,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xc5102fE9359FD9a28f877a67E36B0F050d81a3CC",
+    "stable": false,
+    "pool_address": "0x75D18ee68bB93BE5cB2dcCFa0d8151E25CBC8Eb8",
+    "pool_number": 15,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x65a2508C429a6078a7BC2f7dF81aB575BD9D9275",
+    "token1": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "stable": true,
+    "pool_address": "0x1b05e4e814b3431a48b8164c41eaC834d9cE2Da6",
+    "pool_number": 16,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0x4a3636608d7Bc5776CB19Eb72cAa36EbB9Ea683B",
+    "pool_number": 17,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xDE5ed76E7c05eC5e4572CfC88d1ACEA165109E44",
+    "stable": false,
+    "pool_address": "0x9e4CB8b916289864321661CE02cf66aa5BA63C94",
+    "pool_number": 18,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0x6EAB8c1B93f5799daDf2C687a30230a540DbD636",
+    "pool_number": 19,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x2223F9FE624F69Da4D8256A7bCc9104FBA7F8f75",
+    "pool_number": 20,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "stable": false,
+    "pool_address": "0x7f670f78B17dEC44d5Ef68a48740b6f8849cc2e6",
+    "pool_number": 21,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x9E53e88dCff56d3062510A745952DEC4cEFDff9E",
+    "stable": false,
+    "pool_address": "0xF89042057D079debe2a65A1a899E48E0E825105F",
+    "pool_number": 22,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xAB8a1c03b8E4e1D21c8Ddd6eDf9e07f26E843492",
+    "stable": false,
+    "pool_address": "0xe5fEaC3f554398795298cF90E3801edC522ED974",
+    "pool_number": 23,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xa8B58B9311988a0a6bA99C323e05C30FcDCA17e3",
+    "stable": false,
+    "pool_address": "0x0F3742018aCE31F38ba25235E7aFC96dAf82A4De",
+    "pool_number": 24,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0xB4885Bc63399BF5518b994c1d0C153334Ee579D0",
+    "pool_number": 25,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x45622e5bCe7524D911210A25F4F83b6C8766b735",
+    "stable": false,
+    "pool_address": "0x032c7BFa435Bc98f0e9490d7928799e5913143AF",
+    "pool_number": 26,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xBa5E6fa2f33f3955f0cef50c63dCC84861eAb663",
+    "stable": false,
+    "pool_address": "0x89dE19c640B03649206e9998481Ee9E8E23EBCAf",
+    "pool_number": 27,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+    "stable": false,
+    "pool_address": "0x9287C921f5d920cEeE0d07d7c58d476E46aCC640",
+    "pool_number": 28,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x8901cB2e82CC95c01e42206F8d1F417FE53e7Af0",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x6dbbD2c5EC6A59F54FB0e5f750A245137Ff0492c",
+    "pool_number": 29,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xA6C6502C020D58651a8a1DC044ba7514AC41bCCe",
+    "stable": false,
+    "pool_address": "0xF4cA6481d13859293b78431fe80b47D0977962a8",
+    "pool_number": 30,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x9bb168e7fF1C0f2FBdD844B4348c755DC7500fE1",
+    "stable": false,
+    "pool_address": "0xe3968f5a5107338d89a53E352e13bf5424e33f84",
+    "pool_number": 31,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x44Ecc644449fC3a9858d2007CaA8CFAa4C561f91",
+    "pool_number": 32,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x9065C9F6337fb742709A85402BAD53C78236db36",
+    "stable": false,
+    "pool_address": "0xE58a1997398d6269c1EDe02e49fDC4E39A4d3A6e",
+    "pool_number": 33,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x5c185329BC7720AebD804357043121D26036D1B3",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0x4C29E4dD4A966B27EfC846109B1393677B7E215c",
+    "pool_number": 34,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x917baB0544BEB0e681D02CC159f50446A7A38633",
+    "pool_number": 35,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xcAD58C7ff0410df842835Eb55ba21649bd267D9c",
+    "token1": "0xe3Eb37cE83fac09570482A9A86A193b94849e558",
+    "stable": false,
+    "pool_address": "0x3fF36517cac7333360E1692A0B2F003e4A42Dd59",
+    "pool_number": 36,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xe3Eb37cE83fac09570482A9A86A193b94849e558",
+    "stable": false,
+    "pool_address": "0xc40C51247C7D42F7Ddd73D1a04a290d061232acC",
+    "pool_number": 37,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x5D1A42E32d84560fF46f4F06302fE4C69d28135d",
+    "stable": false,
+    "pool_address": "0x103601D82EF65667A1CeFDEA072F599E00A53457",
+    "pool_number": 38,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x8544FE9D190fD7EC52860abBf45088E81Ee24a8c",
+    "stable": false,
+    "pool_address": "0x80218EeA7490d4a7C48b7A98A2D6373246eB25b1",
+    "pool_number": 39,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x9483ab65847A447e36d21af1CaB8C87e9712ff93",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x3Fc28BFac25fC8e93B5b2fc15EfBBD5a8aA44eFe",
+    "pool_number": 40,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x5D1A42E32d84560fF46f4F06302fE4C69d28135d",
+    "token1": "0xcE71509EA8f3488404770C2a27F69013a00D28bD",
+    "stable": true,
+    "pool_address": "0x69CD4DdB6a63917f30EA22D96E02E4Ed68c331F0",
+    "pool_number": 41,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x74ccbe53F77b08632ce0CB91D3A545bF6B8E0979",
+    "stable": false,
+    "pool_address": "0x4F9Dc2229f2357B27C22db56cB39582c854Ad6d5",
+    "pool_number": 42,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xFF8adeC2221f9f4D8dfbAFa6B9a297d17603493D",
+    "stable": false,
+    "pool_address": "0xffA3F8737C39e36dec4300B162c2153c67c8352f",
+    "pool_number": 43,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x74ccbe53F77b08632ce0CB91D3A545bF6B8E0979",
+    "token1": "0x8901cB2e82CC95c01e42206F8d1F417FE53e7Af0",
+    "stable": false,
+    "pool_address": "0x60D473C6A68FbF54C9085CEee081aba959035579",
+    "pool_number": 44,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xd7c9621e3A5051f5e5A5982c8c430Fd4B55Eda22",
+    "stable": false,
+    "pool_address": "0x3BA3886536b5B3d4FE63029a7674CB712a9F088f",
+    "pool_number": 45,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x5D1A42E32d84560fF46f4F06302fE4C69d28135d",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0xa5e81eCC610Bf665021C6CF9465d2F4BE662B161",
+    "pool_number": 46,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x5D1A42E32d84560fF46f4F06302fE4C69d28135d",
+    "token1": "0xd359D5440C5b68D43076b6475A5f18a3fef8fbd3",
+    "stable": true,
+    "pool_address": "0xAd5c9d704F580fFA219d628b3adAcbfB1c5eDB79",
+    "pool_number": 47,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "token1": "0xf7A0dd3317535eC4f4d29ADF9d620B3d8D5D5069",
+    "stable": false,
+    "pool_address": "0x607363389331f4B2D1b955d009506A67c565D75E",
+    "pool_number": 48,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0xdC0F1F6eCd03ec1C9FFC2A17BaBAbd313477b20E",
+    "pool_number": 49,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x6C781131D8D4494fe32d8Bc9394D0Fef6B1A5b8C",
+    "stable": false,
+    "pool_address": "0x0056D584A4dd680c455Afb01dC00771E3Aa0Dc9d",
+    "pool_number": 50,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "token1": "0xF544251D25f3d243A36B07e7E7962a678f952691",
+    "stable": false,
+    "pool_address": "0x605D7C5CB7c2C5dEE7711CEE06317708F41cefD1",
+    "pool_number": 51,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "token1": "0xf34e0cff046e154CAfCae502C7541b9E5FD8C249",
+    "stable": false,
+    "pool_address": "0x5F43555b02507133eCd5b78218283ed849b07Eac",
+    "pool_number": 52,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xf34e0cff046e154CAfCae502C7541b9E5FD8C249",
+    "stable": false,
+    "pool_address": "0x3f386Acc3A8E9194cF6279C219DF8DD3C5B71974",
+    "pool_number": 53,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2dAD3a13ef0C6366220f989157009e501e7938F8",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x84Ff3B6e2046579Fb2f2b891CE18eE10b5fbDbF2",
+    "pool_number": 54,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x27DCB425C7005DD7558F9583797edA39A8D70ABd",
+    "token1": "0xfb3E929baB9796D2bee7Cd15Ab7954533D899DaD",
+    "stable": true,
+    "pool_address": "0xF4ecEbFe039e4bce40226663F54F8d1Edce80B2b",
+    "pool_number": 55,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xac8DA2e2a1A114AAfe50c774c588DCD93a028fc8",
+    "token1": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "stable": false,
+    "pool_address": "0x888092c9D44cD647a073f8f1eD11305A31e4fa66",
+    "pool_number": 56,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x595675dcbe5D2aD1f4d7b910c50567c0f9230633",
+    "stable": false,
+    "pool_address": "0x74f56160dE6AFA5307A5ED4a6911c22eb78D1eCB",
+    "pool_number": 57,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x213a8Dc524e37bE4C908702340C6eaaD3670023d",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x23E3E430f4c991a338f3eB041e95340584bCE3B3",
+    "pool_number": 58,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xfd949897b850258b41Af56872AB310D6c7811F27",
+    "stable": false,
+    "pool_address": "0x9d202aBA253145d981F4d97105A62fc7B0F82581",
+    "pool_number": 59,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x74ccbe53F77b08632ce0CB91D3A545bF6B8E0979",
+    "token1": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "stable": false,
+    "pool_address": "0xbBf71AAD6E1F8D180D3B1D898528654c1d18b2fF",
+    "pool_number": 60,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x27D2DECb4bFC9C76F0309b8E88dec3a601Fe25a8",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x669A0dFa8aB0bc8E1199D08258769Cc39C0Bc3C5",
+    "pool_number": 61,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xA61BeB4A3d02decb01039e378237032B351125B4",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0xA56bE957d432a5d0eDc040B27078d9726f54E7f6",
+    "pool_number": 62,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x22a2488fE295047Ba13BD8cCCdBC8361DBD8cf7c",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x554EcA2a48136724294CE47fb7bfE9AADfceE3c6",
+    "pool_number": 63,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xc142171B138DB17a1B7Cb999C44526094a4dae05",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0x6313D896423efbD3d62Cc22a3778A62265fe1e1d",
+    "pool_number": 64,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+    "token1": "0xD830162411497FaFF8734CE4200C547faf2FEAE2",
+    "stable": false,
+    "pool_address": "0xBb7E170Df05231f2CEAb51c80f35fe68E47d3af4",
+    "pool_number": 65,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x63A522f6E7D5B96F7aeBB74d2648545E9e14078D",
+    "token1": "0x74ccbe53F77b08632ce0CB91D3A545bF6B8E0979",
+    "stable": false,
+    "pool_address": "0xEDe039272Fce25F0Af30C1Fab8A974f148a8D52A",
+    "pool_number": 66,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xb53Be0BE88bA245B5086E558D00Ad56ee7344556",
+    "stable": false,
+    "pool_address": "0x183D4A5d04baa3646817a0B22e587041a53eb50e",
+    "pool_number": 67,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4621b7A9c75199271F773Ebd9A499dbd165c3191",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x7df970e41b92b33f3BE04815e006db8Dab11796D",
+    "pool_number": 68,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xbbd6CD3A31Cbc5CbD6f89D476D15D5bD2F260AcB",
+    "stable": false,
+    "pool_address": "0x171588019BA2305c84121141710861608ed1F7ff",
+    "pool_number": 69,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xB75445A717D5A8c268f37045162837CFe72Ac337",
+    "stable": false,
+    "pool_address": "0x1CE21E315fA3E6DCf586B99C828dE1f8C1BB217f",
+    "pool_number": 70,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0xB304b47e039E20AFAd75FA2ada6CD8D95a9eea41",
+    "pool_number": 71,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2dAD3a13ef0C6366220f989157009e501e7938F8",
+    "token1": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "stable": false,
+    "pool_address": "0x688F778C51dB4D990bF1abaF8d33fD95e48C6641",
+    "pool_number": 72,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x65a2508C429a6078a7BC2f7dF81aB575BD9D9275",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0x4f7f293e7B7b6D1cAA1ca48784C5986f3dE5E19c",
+    "pool_number": 73,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xbf1aeA8670D2528E08334083616dD9C5F3B087aE",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x7B48C97D097217F960C332F2790b344c4494Dc1D",
+    "pool_number": 74,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x213a8Dc524e37bE4C908702340C6eaaD3670023d",
+    "token1": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "stable": true,
+    "pool_address": "0x568Bc06fC5645bD61b2D8A1a516E32F8FaF4b1B6",
+    "pool_number": 75,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x60b72C00681A43e423F097ab61CC526a1045B048",
+    "stable": false,
+    "pool_address": "0xB8F01693DDE723cB9124f5d1160Fb0721068eA7f",
+    "pool_number": 76,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+    "token1": "0xbf1aeA8670D2528E08334083616dD9C5F3B087aE",
+    "stable": true,
+    "pool_address": "0x30A30f266e1173a75985997B2523EcbC19c60fF3",
+    "pool_number": 77,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x5Aacb870842382315B875f72Ef66d4fa8D940C50",
+    "stable": false,
+    "pool_address": "0x6AB07ae2D18375615411cdc9803379F55F7b4Dbb",
+    "pool_number": 78,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x37DEfBC399e5737D53Dfb5533d9954572F5B19bf",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x45eA259712987b43FF37216AdF748F74FC6F8E62",
+    "pool_number": 79,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x26f3901aC8a79c50fb0d8289C74f0d09AdC42E29",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x5Aa9e1cDF38dbf3F57BC5CeB827dd44b4CF58c6f",
+    "pool_number": 80,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0x44d7Dd237001AeF7fC7D8CB13ab4452f65CE5E40",
+    "pool_number": 81,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x65a2508C429a6078a7BC2f7dF81aB575BD9D9275",
+    "stable": false,
+    "pool_address": "0xfc518E70BbE90A49aF3E0512Cd6Ea57c365b9cA4",
+    "pool_number": 82,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x9483ab65847A447e36d21af1CaB8C87e9712ff93",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0x16119F4820f78189370a9Df276F725DCfa1fD007",
+    "pool_number": 83,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x03617dC1ab7f959cc3593bB43ca43e192e6662da",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x2F31A93050Ff9F9C70090f8789fD6D8f047c1041",
+    "pool_number": 84,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xc0a1CECA76A4e3181998EE7cD785a5D761A9d686",
+    "stable": false,
+    "pool_address": "0xc43D0bDAB15611969d8A38ac4dae44106221F028",
+    "pool_number": 85,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xDBE1489B63f65a11745FFADE9233319df1B70dC9",
+    "stable": false,
+    "pool_address": "0x54f46b520cd17beA1E7e84dB064F6F74A440524c",
+    "pool_number": 86,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4783689F2907ab06226880939B2dD1BE85D44c41",
+    "token1": "0xd359D5440C5b68D43076b6475A5f18a3fef8fbd3",
+    "stable": false,
+    "pool_address": "0xC2F2aFBF9286616CaEB4DB1486c265cF22ddCFDa",
+    "pool_number": 87,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x12063CC18A7096D170e5Fc410d8623Ad97ee24B3",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x679d601AAA86cd555E8bfD48ddC8b4aaDe2A0F27",
+    "pool_number": 88,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2168eb98C6D416Afb85E7beef5abDc4FB4177dfE",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x4394B1443d819d47E39141EBC4561B60F0C10322",
+    "pool_number": 89,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x1F924Db207529d3035116Eb8F67a1B62A6Af8769",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0xcCEe0A53c21538008ba5F04952F1850e8692FfEa",
+    "pool_number": 90,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xF37923311D71c986D701cddb3394777322294E3a",
+    "stable": false,
+    "pool_address": "0xdc04a6978cbe9045371df5102b64035836Cc3092",
+    "pool_number": 91,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xbeFD5C25A59ef2C1316c5A4944931171F30Cd3E4",
+    "stable": false,
+    "pool_address": "0x1Be197A85666Cd1e14c270780D9c6b04ff835122",
+    "pool_number": 92,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xC19669A405067927865B40Ea045a2baabbbe57f5",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0x7a823ff83d2A87AE7570a9934B0dC8B87Be9C14A",
+    "pool_number": 93,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "token1": "0xf7A0dd3317535eC4f4d29ADF9d620B3d8D5D5069",
+    "stable": true,
+    "pool_address": "0x1be76d01d0b29f5E0B6B2fd6006131996e674afd",
+    "pool_number": 94,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x9CBD543f1B1166b2Df36b68Eb6bB1DcE24E6aBDf",
+    "stable": true,
+    "pool_address": "0x5F45e48F9C053286cE9Ca08Db897f8b7eb3f7992",
+    "pool_number": 95,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2B6A85CD35D15691357eea61d88cB3f401A92FC3",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x0912d404B3ca2070b9C74003a828A9b76bd5c1b3",
+    "pool_number": 96,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xFA7D088f6B1bbf7b1C8c3aC265Bb797264FD360B",
+    "stable": false,
+    "pool_address": "0xDd4dB4770918847057EA73805A428CB2E9d2c9Af",
+    "pool_number": 97,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x9CBD543f1B1166b2Df36b68Eb6bB1DcE24E6aBDf",
+    "stable": false,
+    "pool_address": "0x5Dca56718A186AbE7eA7f219aD96325CB0C1247f",
+    "pool_number": 98,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xBa5E6fa2f33f3955f0cef50c63dCC84861eAb663",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0xb905d9195019778CFbaa4e9eD90dF3FC5871CD9A",
+    "pool_number": 99,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+    "token1": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "stable": false,
+    "pool_address": "0x72618657E7947BE9a3A6dA48B11f5C0B8E80DbE5",
+    "pool_number": 100,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+    "token1": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "stable": true,
+    "pool_address": "0xE2D3b2f9d4bAAb9A0de671E95FeBAc27E37050f2",
+    "pool_number": 101,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x5D67a4AFb9fBFc3640e163e93766Cf1eAF2F7045",
+    "stable": false,
+    "pool_address": "0x3ee35c06d93aBcD69FE6871eEB3492Cfd579F51b",
+    "pool_number": 102,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x26f3901aC8a79c50fb0d8289C74f0d09AdC42E29",
+    "token1": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "stable": false,
+    "pool_address": "0xe58D0E233121e3c4B5A03C2D713f97Cab01B6d27",
+    "pool_number": 103,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x9Cc2fC2f75768b0307925C7935396Ec9D94bbA44",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0xb126abF20c6B64FA3C422798E253C22c49DeC59F",
+    "pool_number": 104,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x8aE125E8653821E851F12A49F7765db9a9ce7384",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0xA39bdcf6ea8398D383544C266aDeE9CF34742d3C",
+    "pool_number": 105,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x60be663a88401c917372b945b7D04cd75e5ABd12",
+    "stable": false,
+    "pool_address": "0xe90896CfE8F8856AB00035c577b08b3d95A2FC99",
+    "pool_number": 106,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xE19FD3a859BE6759138fe4A904CDEA363FF51c76",
+    "stable": false,
+    "pool_address": "0xE0901d896540cD400A9Bf727b7C58A56C3215BAc",
+    "pool_number": 107,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x8901cB2e82CC95c01e42206F8d1F417FE53e7Af0",
+    "token1": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "stable": false,
+    "pool_address": "0xc3B5ac236fb5AbE245310FeCa2526F89667D4CAe",
+    "pool_number": 108,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x1dd2d631c92b1aCdFCDd51A0F7145A50130050C4",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x03d42B234255a6D67743BFaD2b386F5745f8d785",
+    "pool_number": 109,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x08cDD613fe9d0470c8fA6400d4DF3d1bA0940844",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x446305B42258CaB3dC102660b52ecec56b0c6a1F",
+    "pool_number": 110,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4621b7A9c75199271F773Ebd9A499dbd165c3191",
+    "token1": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "stable": true,
+    "pool_address": "0x8E9154AC849e839d60299E85156bcb589De2693A",
+    "pool_number": 111,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xBa5E6fa2f33f3955f0cef50c63dCC84861eAb663",
+    "stable": true,
+    "pool_address": "0x7398AC997F73302107ADA9c66EB08B58F5664408",
+    "pool_number": 112,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xd0780896fb46583a71c5CE1ae0FF507E383d8085",
+    "stable": false,
+    "pool_address": "0xbe26c53dA99bDb8274E9b28755440e58dDE0FeDa",
+    "pool_number": 113,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "token1": "0x9483ab65847A447e36d21af1CaB8C87e9712ff93",
+    "stable": false,
+    "pool_address": "0x03e2730cB3FC37315D4DD68d1DcB47358826D291",
+    "pool_number": 114,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x65a2508C429a6078a7BC2f7dF81aB575BD9D9275",
+    "token1": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "stable": false,
+    "pool_address": "0x3CF04A380e54FA4eD31eA48acb9132EA35e2E8D9",
+    "pool_number": 115,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2228363213E6E16e8ccC556Aa270a05f1F1A4E02",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x1d461B9134eF8b1Bcf9f3Cc1d03be3F3342cdbD3",
+    "pool_number": 116,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x703F1803D2c6028B64d6C4969ff096E72D015E06",
+    "stable": false,
+    "pool_address": "0xE12bFbD1f394a00eCC7F722A67a02F30aD8424CE",
+    "pool_number": 117,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x44d05c7Bf593b4cC4322088fFCa35613079E8D37",
+    "stable": false,
+    "pool_address": "0x6326CE1C3301A59fa72ab3b055547eF12AdF73bc",
+    "pool_number": 118,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0x27a8Afa3Bd49406e48a074350fB7b2020c43B2bD",
+    "pool_number": 119,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xc5102fE9359FD9a28f877a67E36B0F050d81a3CC",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x96AF34c61531883aCfe0f5286a8C87B0806EDC05",
+    "pool_number": 120,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "stable": false,
+    "pool_address": "0xcDAC0d6c6C59727a65F871236188350531885C43",
+    "pool_number": 121,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "token1": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "stable": false,
+    "pool_address": "0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d",
+    "pool_number": 122,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "token1": "0xE3B53AF74a4BF62Ae5511055290838050bf764Df",
+    "stable": false,
+    "pool_address": "0xBE22423dD7413CF6410AD488e5F907308e98381E",
+    "pool_number": 123,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+    "token1": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "stable": true,
+    "pool_address": "0x67b00B46FA4f4F24c03855c5C8013C0B938B3eEc",
+    "pool_number": 124,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "stable": false,
+    "pool_address": "0x08B935148AB10d3699Cb8d944519e8213abE6f1D",
+    "pool_number": 125,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+    "token1": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "stable": false,
+    "pool_address": "0x2d6d32d343423Dc3057Aa8571a072a40FfBE126d",
+    "pool_number": 126,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x18c1075b8F0cDF93e01214e461e3f661C9B88631",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x1c534f562933c16330114ad28b5D5ce9c6d47B34",
+    "pool_number": 127,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xBCBAe0DD948b404e2157Ff395caCB10ABFc2b52A",
+    "stable": false,
+    "pool_address": "0xB2D45b8c6D99D939c7BF81174Bfdae6fF3f18a74",
+    "pool_number": 128,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x96e890c6b2501a69cAD5Dba402BFB871a2A2874C",
+    "stable": false,
+    "pool_address": "0x6689a0582BAfcC286A81dc38D76e0470AcD17275",
+    "pool_number": 129,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "token1": "0xbf1aeA8670D2528E08334083616dD9C5F3B087aE",
+    "stable": true,
+    "pool_address": "0x3FF5bfE3ff5e1877664Fe25862871554e632b9C9",
+    "pool_number": 130,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xd5DA32Ad4C7510457C0e46Fa4332F75f6C4C4dC0",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x88652ec79476F8E4832BE4432c850Cba31F8fE3A",
+    "pool_number": 131,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x27DCB425C7005DD7558F9583797edA39A8D70ABd",
+    "token1": "0x8BE49607832a299FA33eE837038418ad0223333e",
+    "stable": false,
+    "pool_address": "0xDe3820c24aF47B420E6699a2e22D9a1512182a70",
+    "pool_number": 132,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xEf6b19D71B342EAE33773346b05EAD8F0966BD42",
+    "stable": false,
+    "pool_address": "0x4559002C75FED909A83232d068828bf020bF9a05",
+    "pool_number": 133,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x9Fabf6Fca68Bd4E0d910b6464721832A098D8a5D",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x52DE6AD4672e02254323a0aD79d5E02159f4a8c1",
+    "pool_number": 134,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x27DCB425C7005DD7558F9583797edA39A8D70ABd",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0xF5A5A87911a8260898916f61A965caEa507cCf24",
+    "pool_number": 135,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x7Ee9cf972BC8441ebc112c5F01a96Ce85b0a44Bd",
+    "token1": "0xfF07fc776206BDdd9d285A5E571dcDF98131120B",
+    "stable": true,
+    "pool_address": "0x532aDFFFE815064daFcDd0ECe2022E47524f3000",
+    "pool_number": 136,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x8BE49607832a299FA33eE837038418ad0223333e",
+    "stable": false,
+    "pool_address": "0xF4784435AAD798C86c5074E8481cbf5B99d9A089",
+    "pool_number": 137,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xD0A96c9b21565a7B73d006C02E56E09438b51C1B",
+    "stable": false,
+    "pool_address": "0xbE23ce31C665225E27521D3d7DB9Bb7E5A76aeb8",
+    "pool_number": 138,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x025f99977db78317a4EbA606998258B502Bb256F",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0xd0ad69bE7C2dD8125023e5271b63735D6b7A6B06",
+    "pool_number": 139,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xD0A96c9b21565a7B73d006C02E56E09438b51C1B",
+    "stable": true,
+    "pool_address": "0xF804A225371b7B8ebf1BcF054f8132C954dCc5e7",
+    "pool_number": 140,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x728cDA34D732a87fD6429129e23D4742d9Ff0064",
+    "stable": false,
+    "pool_address": "0x1D8F0ca616f363E1EE36782564Ddc6EdE81d4Cc6",
+    "pool_number": 141,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "token1": "0xEB466342C4d449BC9f53A865D5Cb90586f405215",
+    "stable": false,
+    "pool_address": "0x23084f461e37d6009FaEfa5778ecb253bB72169d",
+    "pool_number": 142,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x33994a876c342Aa8bd25F70961810a7E103218B0",
+    "token1": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+    "stable": false,
+    "pool_address": "0x7255182773BaE6000a1a81B401Ba387d8B026B66",
+    "pool_number": 143,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b",
+    "token1": "0xEB466342C4d449BC9f53A865D5Cb90586f405215",
+    "stable": false,
+    "pool_address": "0xB081B6E5EAd659aC26F5Ae04346fC506E03444bf",
+    "pool_number": 144,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xEB466342C4d449BC9f53A865D5Cb90586f405215",
+    "stable": false,
+    "pool_address": "0xD266fB3E928b2A5f631B072a79Fd5b82704Ba983",
+    "pool_number": 145,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2259ba575F7C66cF10d59a1Fe2F7BA77C5685770",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0xF05c6b0D7Fe18879523a4DfdF2bdce376B8117F8",
+    "pool_number": 146,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b",
+    "token1": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "stable": false,
+    "pool_address": "0x1736e4ca7f9d43744C928a65d5dd096EE1D22e15",
+    "pool_number": 147,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+    "token1": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "stable": false,
+    "pool_address": "0xa0A60D4A974A487e36855fE9A9448e7e76c0FCB7",
+    "pool_number": 148,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b",
+    "token1": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+    "stable": false,
+    "pool_address": "0x184B770a6c06ff9A0C576Ef62E5479cF80Cd28d3",
+    "pool_number": 149,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0xb3dfC382FF41A76A0DB72E1D87c2A831cAeacE5E",
+    "pool_number": 150,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x3fF4720522228cB57daA59280Ad5d0a31B289ec4",
+    "token1": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "stable": true,
+    "pool_address": "0x15756316Fb30F67a337cdD529C32096De1EBe71f",
+    "pool_number": 151,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x10A93eAB1B0Ea596522BC408a22584f9eA60dfCd",
+    "token1": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "stable": true,
+    "pool_address": "0x3bE1D477B5a3F5B41D1Dd2181202FeCfB5EB619b",
+    "pool_number": 152,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "token1": "0xEB466342C4d449BC9f53A865D5Cb90586f405215",
+    "stable": false,
+    "pool_address": "0xd5524fcEeAA1b73EDa464Cd300eE6C322B5090B9",
+    "pool_number": 153,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "token1": "0xAc5Da09e0a15b1335edd7d1AEeEA2578FDeF7b66",
+    "stable": true,
+    "pool_address": "0x5a467c3e0e2F1e0A5A3dD4F707cBf41d487a355C",
+    "pool_number": 154,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "token1": "0xEB466342C4d449BC9f53A865D5Cb90586f405215",
+    "stable": false,
+    "pool_address": "0x420Efbd4C3fa8f093Ad3e29b86B1bD432ab59535",
+    "pool_number": 155,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b",
+    "token1": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+    "stable": false,
+    "pool_address": "0xd232c595922BE34C10218DA2D863509e43D047CB",
+    "pool_number": 156,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xA3d1a8DEB97B111454B294E2324EfAD13a9d8396",
+    "token1": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "stable": false,
+    "pool_address": "0x61366A4e6b1DB1b85DD701f2f4BFa275EF271197",
+    "pool_number": 157,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": true,
+    "pool_address": "0x9E8bfEB5c73F3f897BebdB49CC4161FecE0B0c55",
+    "pool_number": 158,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xBe449c2aB88B5D9BF33eDe32270957d240155597",
+    "stable": false,
+    "pool_address": "0xfA04eBE01c7Bfc6db84cCc3D172eF3EFf248AD06",
+    "pool_number": 159,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": false,
+    "pool_address": "0x67C247EA8ac79cBa228d0fD9Ec3C884C9DC58271",
+    "pool_number": 160,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+    "token1": "0xEB466342C4d449BC9f53A865D5Cb90586f405215",
+    "stable": false,
+    "pool_address": "0x24e3c1C874F6dfFbd318709e22b97be153D0C698",
+    "pool_number": 161,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "token1": "0x9E53e88dCff56d3062510A745952DEC4cEFDff9E",
+    "stable": false,
+    "pool_address": "0x656D48D3F337c6b3cD2ED8471B135fF54b1F96Ad",
+    "pool_number": 162,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "token1": "0xeF0b2Ccb53A683fA48799245f376D6a60929f003",
+    "stable": false,
+    "pool_address": "0x5F41911Bc9ab580FDb07aB4F192BcEc10C77bfd4",
+    "pool_number": 163,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x5e06eA564efcB3158a85dBF0B9E017cb003ff56f",
+    "token1": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "stable": true,
+    "pool_address": "0x60B4af50569105021a52C454B9AA4E44A5677890",
+    "pool_number": 164,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xB79DD08EA68A908A97220C76d19A6aA9cBDE4376",
+    "token1": "0xBa5E6fa2f33f3955f0cef50c63dCC84861eAb663",
+    "stable": false,
+    "pool_address": "0xbA5C5cB0C2F16E580856B6E6a416debd926a88E1",
+    "pool_number": 165,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x1d75AA781665A189b240ca3D6D3CbB540EC7f02A",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x050e91B3ABe34281285084cBB63f3A42d0dE2c21",
+    "pool_number": 166,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x85e510539bC94144Fd4B9E00335DC9F27E6d0F64",
+    "stable": false,
+    "pool_address": "0x70C1381F9249fDeFc2282CFbE05cAEE703010A80",
+    "pool_number": 167,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x3d5C55467326ca3FDb304D8706E02E957dbB0dc6",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x6b7d437a94779f2F926091750d6dEa0c944C2d30",
+    "pool_number": 168,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x587971e263F098418aBeEF0e46C6499D4dA63822",
+    "stable": false,
+    "pool_address": "0x615FC6896BE693bB4f9A30ff8F7830a1eF66cB4B",
+    "pool_number": 169,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b",
+    "token1": "0x26f3901aC8a79c50fb0d8289C74f0d09AdC42E29",
+    "stable": false,
+    "pool_address": "0xfd8aA87c97D32345BFe4F753ACf25729008331C9",
+    "pool_number": 170,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x1F23B787053802108fED5B67CF703f0778AEBaD8",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x6BA0379F302BC0F5214dA18Fa846F914C12b0000",
+    "pool_number": 171,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xDB2949F540eDbCd7FdEc8Fe64cA935CBD4A0c9AA",
+    "stable": false,
+    "pool_address": "0x681F97606EEcdAfbc888b7014c3F48918A7E15Af",
+    "pool_number": 172,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "token1": "0xDB2949F540eDbCd7FdEc8Fe64cA935CBD4A0c9AA",
+    "stable": false,
+    "pool_address": "0xE5A1c275400608d1E08f674f236e3f2a9F748CEE",
+    "pool_number": 173,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xCa080DD32EEaa87711Db63543C9712b08795926a",
+    "stable": false,
+    "pool_address": "0x280284Bb2D029eFEF10ae3093C291037a4E59425",
+    "pool_number": 174,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "token1": "0xaFB2820316e7Bc5Ef78d295AB9b8Bb2257534576",
+    "stable": true,
+    "pool_address": "0x31285ccF9Be7F548433f73e0B13411e6eE181F58",
+    "pool_number": 175,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xd260115030b9fB6849da169a01ed80b6496d1e99",
+    "stable": true,
+    "pool_address": "0x8071175D8fe0055048B0654B10c88CAD5D2D1F19",
+    "pool_number": 176,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x608d5401d377228E465Ba6113517dCf9bD1f95CA",
+    "stable": false,
+    "pool_address": "0xF909B746Ce48dede23c09B05B3fA27754E768Bd2",
+    "pool_number": 177,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xd260115030b9fB6849da169a01ed80b6496d1e99",
+    "stable": false,
+    "pool_address": "0x9d998e865b5CFB0332799D27F3852dee0A0d92a5",
+    "pool_number": 178,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4621b7A9c75199271F773Ebd9A499dbd165c3191",
+    "token1": "0xbf1aeA8670D2528E08334083616dD9C5F3B087aE",
+    "stable": false,
+    "pool_address": "0x32B0973E4a97846a7c865Bdc7590F80A9a12AD56",
+    "pool_number": 179,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x608d5401d377228E465Ba6113517dCf9bD1f95CA",
+    "stable": true,
+    "pool_address": "0xFfb2920ba4c08DF2931de06e82312eFCafa21D5E",
+    "pool_number": 180,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xC528EB57779E66bABEF0c7b3fdb17C73afDB1505",
+    "stable": false,
+    "pool_address": "0xe70600bC2BFe823a22514741993834B5E28DD220",
+    "pool_number": 181,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x373056181B981ddF44b8E561770cE5269D648DD4",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0xAC0780E717517C878D58Bee7B608f1d61C77B943",
+    "pool_number": 182,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x236f9ebE3A40F3b24CEa63a880704c712d5EC760",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0xfC337be5321ce6Cb3585287e3d99859C86157401",
+    "pool_number": 183,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xbE3111856e4acA828593274eA6872f27968C8DD6",
+    "stable": false,
+    "pool_address": "0x7F5735a897F8b7f8Bb7f08749931EadacBB6d4A6",
+    "pool_number": 184,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x608d5401d377228E465Ba6113517dCf9bD1f95CA",
+    "token1": "0xd260115030b9fB6849da169a01ed80b6496d1e99",
+    "stable": false,
+    "pool_address": "0xFca502Cde28699C38ff0540a2206Fed5023e8B6A",
+    "pool_number": 185,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+    "token1": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+    "stable": false,
+    "pool_address": "0xb13a01382ff777b8BcF051a512A72f3316a31010",
+    "pool_number": 186,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xF909B746Ce48dede23c09B05B3fA27754E768Bd2",
+    "stable": false,
+    "pool_address": "0xD54b0CD17b8976078DD37eC495a936435135066c",
+    "pool_number": 187,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+    "token1": "0xEB466342C4d449BC9f53A865D5Cb90586f405215",
+    "stable": false,
+    "pool_address": "0xBba8e747129b1B75FA2A8881F6D5618E6E50c442",
+    "pool_number": 188,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "token1": "0xE2B21D4684b2bA62F3BE1FE286eacb90D26E394d",
+    "stable": false,
+    "pool_address": "0xEF7DcD8027d0C4A33C7FaD497131aAf624e2aba1",
+    "pool_number": 189,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x22a2488fE295047Ba13BD8cCCdBC8361DBD8cf7c",
+    "token1": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "stable": false,
+    "pool_address": "0x4cC2FeFB2635C86b1bae1b58E0f60Fb43E95e264",
+    "pool_number": 190,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "token1": "0xE2B21D4684b2bA62F3BE1FE286eacb90D26E394d",
+    "stable": false,
+    "pool_address": "0xB83Baa216816a5641733f534c8b6918927673295",
+    "pool_number": 191,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+    "token1": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "stable": false,
+    "pool_address": "0x325a5FC7a92d3166ffabe7233c992143CF5EDd2c",
+    "pool_number": 192,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x990E3950a1F218Ad02807D7B39F36665e96ABcDF",
+    "stable": true,
+    "pool_address": "0xf62A89D3D75e8a3662cDdde25564C1DA3DCFDd64",
+    "pool_number": 193,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xF2f934FC4DEb2348908c465Fe085e96F2b87776C",
+    "stable": false,
+    "pool_address": "0xF029b25af0B36c2845004cA734E8d69C4B7a7C9a",
+    "pool_number": 194,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0xfFC565d504569afde0ba1AE6AA37E7e3c28DEd47",
+    "stable": false,
+    "pool_address": "0x1fb70639aC7302a7529CD2CE9Be951793138545F",
+    "pool_number": 195,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+    "token1": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "stable": false,
+    "pool_address": "0x4f5f4B7381b2445937dab831Fc1952eCBB834e53",
+    "pool_number": 196,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x00e1724885473B63bCE08a9f0a52F35b0979e35A",
+    "token1": "0x2dAD3a13ef0C6366220f989157009e501e7938F8",
+    "stable": false,
+    "pool_address": "0xF5C5a84e92A0b088570e1e744B4c6d8e3075Ad57",
+    "pool_number": 197,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x990E3950a1F218Ad02807D7B39F36665e96ABcDF",
+    "stable": false,
+    "pool_address": "0xb952DB258B8aE1667727Ec6F379F19517078D5bb",
+    "pool_number": 198,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x065EC3C3152a17D9A30Cdc640013676Cb49C7E0d",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": true,
+    "pool_address": "0x13eef064800133F116a048ca218d2A8c050E46cb",
+    "pool_number": 199,
+    "type": "AerodromeV2"
+  },
+  {
+    "token0": "0x1EEC4c6b8c633659a38315C87ECBA8515db8662e",
+    "token1": "0x4200000000000000000000000000000000000006",
+    "stable": false,
+    "pool_address": "0x14110C8C747711Ec1b38B906209D299f541E0647",
+    "pool_number": 200,
+    "type": "AerodromeV2"
+  }
+]
