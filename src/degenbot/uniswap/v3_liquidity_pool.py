@@ -412,12 +412,14 @@ class V3LiquidityPool(AbstractLiquidityPool):
                     zero_for_one,
                 )
             except BitmapWordUnavailableError as exc:
-                missing_word = exc.args[1]
-                if self.sparse_liquidity_map:
-                    self._fetch_tick_data_at_word(
-                        word_position=missing_word,
-                        block_number=self.update_block,
-                    )
+                _, missing_word = exc.args
+                assert (
+                    self.sparse_liquidity_map is True
+                )  # non-sparse liquidity mappings should populate all bitmaps in the constructor
+                self._fetch_tick_data_at_word(
+                    word_position=missing_word,
+                    block_number=self.update_block,
+                )
                 continue
 
             # Ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of
