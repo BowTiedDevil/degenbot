@@ -15,9 +15,10 @@ class Web3ConnectionManager:
         self.default_chain_id: int | None = None
 
     def get_web3(self, chain_id: int) -> web3.Web3:
-        if chain_id not in self.connections:
-            raise DegenbotError("Chain ID does not have a registered Web3 instance.")
-        return self.connections[chain_id]
+        try:
+            return self.connections[chain_id]
+        except KeyError:
+            raise DegenbotError("Chain ID does not have a registered Web3 instance.") from None
 
     def register_web3(self, w3: web3.Web3) -> None:
         if w3.is_connected() is False:
@@ -29,10 +30,10 @@ class Web3ConnectionManager:
 
 
 def get_web3() -> web3.Web3:
-    if web3_connection_manager.default_chain_id is None:
+    try:
+        return web3_connection_manager.get_web3(chain_id=web3_connection_manager.default_chain_id)
+    except DegenbotError:
         raise DegenbotError("A default Web3 instance has not been registered.") from None
-
-    return web3_connection_manager.get_web3(chain_id=web3_connection_manager.default_chain_id)
 
 
 def set_web3(w3: web3.Web3) -> None:
