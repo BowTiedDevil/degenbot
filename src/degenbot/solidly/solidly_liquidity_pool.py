@@ -49,6 +49,23 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
         archive_states: bool = True,
         verify_address: bool = True,
     ) -> None:
+        def _get_fee() -> Fraction:
+            factory_contract = w3.eth.contract(address=self.factory, abi=AERODROME_V2_FACTORY_ABI)
+            pool_fee = factory_contract.functions.getFee(self.address, self.stable).call()
+            return Fraction(pool_fee, 10_000)
+
+        def _get_tokens() -> tuple[Erc20Token, Erc20Token]:
+            _token_manager = Erc20TokenHelperManager(chain_id)
+            token0 = _token_manager.get_erc20token(
+                address=w3_contract.functions.token0().call(),
+                silent=silent,
+            )
+            token1 = _token_manager.get_erc20token(
+                address=w3_contract.functions.token1().call(),
+                silent=silent,
+            )
+            return token0, token1
+
         self.address = to_checksum_address(address)
         self.abi = abi if abi is not None else AERODROME_V2_POOL_ABI
 
@@ -67,32 +84,12 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
         )
         self.stable = w3_contract.functions.stable().call()
 
-        if fee is None:
-            factory_contract = w3.eth.contract(address=self.factory, abi=AERODROME_V2_FACTORY_ABI)
-            pool_fee = factory_contract.functions.getFee(self.address, self.stable).call()
-            fee = Fraction(pool_fee, 10_000)
-        self.fee = fee
-
-        if tokens is not None:
-            self.token0, self.token1 = sorted(tokens)
-        else:
-            _token_manager = Erc20TokenHelperManager(chain_id)
-            self.token0 = _token_manager.get_erc20token(
-                address=w3_contract.functions.token0().call(),
-                silent=silent,
-            )
-            self.token1 = _token_manager.get_erc20token(
-                address=w3_contract.functions.token1().call(),
-                silent=silent,
-            )
+        self.fee = fee if fee is not None else _get_fee()
+        self.token0, self.token1 = sorted(tokens) if tokens is not None else _get_tokens()
         self.tokens = (self.token0, self.token1)
 
-        if verify_address:
-            verified_address = self._verified_address()
-            if verified_address != self.address:
-                raise ValueError(
-                    f"Pool address verification failed. Provided: {self.address}, expected: {verified_address}"  # noqa:E501
-                )
+        if verify_address and self.address != self._verified_address():  # pragma: no branch
+            raise ValueError("Pool address verification failed.")
 
         self.name = f"{self.token0}-{self.token1} (AerodromeV2, {100*self.fee.numerator/self.fee.denominator:.2f}%)"  # noqa:E501
 
