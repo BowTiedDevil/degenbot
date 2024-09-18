@@ -46,14 +46,6 @@ from .v3_types import (
     UniswapV3PoolStateUpdated,
 )
 
-TICK_SPACING_BY_FEE = {
-    100: 1,
-    500: 10,
-    2500: 50,  # Used by PancakeSwap
-    3000: 60,
-    10000: 200,
-}
-
 UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
     "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
 )
@@ -189,7 +181,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
         self.tokens = (self.token0, self.token1)
         self.fee: int = fee if fee is not None else w3_contract.functions.fee().call()
         self.tick_spacing = (
-            tick_spacing if tick_spacing is not None else TICK_SPACING_BY_FEE[self.fee]
+            tick_spacing if tick_spacing is not None else w3_contract.functions.tickSpacing().call()
         )
 
         if verify_address:  # pragma: no branch
