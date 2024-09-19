@@ -14,7 +14,7 @@ from .exceptions import ExternalServiceError
 from .functions import eip_191_hash
 
 
-class BuilderEndpoint:
+class BuilderEndpoint:  # pragma: no cover
     """
     An external HTTP endpoint with one or more bundle-related methods defined by the Flashbots RPC
     specification at https://docs.flashbots.net/flashbots-auction/advanced/rpc-endpoint
@@ -85,7 +85,7 @@ class BuilderEndpoint:
                     # check in the `json` method
                     content_type=None,
                 )
-        except aiohttp.ClientError as exc:  # pragma: no cover
+        except aiohttp.ClientError as exc:
             raise ExternalServiceError(f"HTTP Error: {exc}") from None
         else:
             return (
@@ -111,7 +111,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "eth_callBundle"
 
-        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
+        if ENDPOINT_METHOD not in self.endpoints:
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
@@ -128,7 +128,7 @@ class BuilderEndpoint:
         }
 
         if isinstance(state_block, str):
-            if state_block != "latest":  # pragma: no cover
+            if state_block != "latest":
                 raise ValueError("state_block tag may only be an integer, or the string 'latest'")
             bundle_params["stateBlockNumber"] = state_block
         elif isinstance(state_block, int):
@@ -176,7 +176,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "eth_cancelBundle"
 
-        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
+        if ENDPOINT_METHOD not in self.endpoints:
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
@@ -227,7 +227,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "eth_cancelPrivateTransaction"
 
-        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
+        if ENDPOINT_METHOD not in self.endpoints:
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
@@ -279,7 +279,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "flashbots_getUserStatsV2"
 
-        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
+        if ENDPOINT_METHOD not in self.endpoints:
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
@@ -332,7 +332,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "flashbots_getBundleStatsV2"
 
-        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
+        if ENDPOINT_METHOD not in self.endpoints:
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
@@ -382,7 +382,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "eth_sendBundle"
 
-        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
+        if ENDPOINT_METHOD not in self.endpoints:
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
@@ -466,7 +466,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "eth_sendPrivateTransaction"
 
-        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
+        if ENDPOINT_METHOD not in self.endpoints:
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
@@ -527,7 +527,7 @@ class BuilderEndpoint:
 
         ENDPOINT_METHOD = "eth_sendPrivateRawTransaction"
 
-        if ENDPOINT_METHOD not in self.endpoints:  # pragma: no cover
+        if ENDPOINT_METHOD not in self.endpoints:
             raise ValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
