@@ -30,10 +30,10 @@ class Web3ConnectionManager:
 
 
 def get_web3() -> web3.Web3:
-    try:
-        return web3_connection_manager.get_web3(chain_id=web3_connection_manager.default_chain_id)
-    except DegenbotError:
+    if web3_connection_manager.default_chain_id is None:
         raise DegenbotError("A default Web3 instance has not been registered.") from None
+    else:
+        return web3_connection_manager.get_web3(chain_id=web3_connection_manager.default_chain_id)
 
 
 def set_web3(w3: web3.Web3) -> None:
