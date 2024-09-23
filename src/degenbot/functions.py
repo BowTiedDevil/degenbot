@@ -1,12 +1,13 @@
-from typing import cast
+from typing import Any, cast
 
+import eth_abi.abi
 import eth_account.messages
-import web3
 from eth_account.datastructures import SignedMessage
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
+from web3 import Web3
 from web3.types import BlockIdentifier
 
 from . import config
@@ -30,6 +31,39 @@ def create2_address(
             -20:
         ],  # Contract address is the least significant 20 bytes from the 32 byte hash
     )
+
+
+def encode_function_calldata(
+    function_prototype: str, function_arguments: list[Any] | None
+) -> bytes:
+    """
+    Encode the calldata to execute a call to the given function prototype, with ordered arguments.
+    The resulting bytes array will include the 4-byte function selector, followed by the
+    ABI-encoded arguments.
+    """
+
+    if function_arguments is None:
+        function_arguments = []
+
+    return keccak(text=function_prototype)[:4] + eth_abi.abi.encode(
+        types=extract_argument_types_from_function_prototype(function_prototype),
+        args=function_arguments,
+    )
+
+
+def extract_argument_types_from_function_prototype(function_prototype: str) -> list[str]:
+    """
+    Extract the argument types from the function prototype.
+
+    e.g. the argument types for the prototype 'function(address,uint256)' are ['address','uint256']
+    """
+
+    if function_args := function_prototype[
+        function_prototype.find("(") + 1 : function_prototype.find(")") :
+    ]:
+        return function_args.split(",")
+    else:
+        return []
 
 
 def eip_1167_clone_address(
@@ -66,22 +100,26 @@ def eip_191_hash(message: str, private_key: str) -> str:
     Get the signature hash (a hex-formatted string) for a given message and signing key.
     """
     result: SignedMessage = eth_account.Account.sign_message(
-        signable_message=eth_account.messages.encode_defunct(
-            text=web3.Web3.keccak(text=message).hex()
-        ),
+        signable_message=eth_account.messages.encode_defunct(text=keccak(text=message).hex()),
         private_key=private_key,
     )
     return result.signature.hex()
 
 
-def get_number_for_block_identifier(identifier: BlockIdentifier | None) -> int:
+def get_number_for_block_identifier(
+    identifier: BlockIdentifier | None, w3: Web3 | None = None
+) -> int:
     match identifier:
         case None:
-            return cast(int, config.get_web3().eth.get_block_number())
+            if w3 is None:
+                w3 = config.get_web3()
+            return cast(int, w3.eth.get_block_number())
         case int() as block_number_as_int:
             return block_number_as_int
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
-            block_number = config.get_web3().eth.get_block(block_tag)["number"]
+            if w3 is None:
+                w3 = config.get_web3()
+            block_number = w3.eth.get_block(block_tag)["number"]
             return cast(int, block_number)
         case str() as block_number_as_str:
             return int(block_number_as_str, 16)
@@ -129,3 +167,26 @@ def next_base_fee(
         _next_base_fee = parent_base_fee - base_fee_delta
 
     return max(min_base_fee, _next_base_fee) if min_base_fee else _next_base_fee
+
+
+def raw_call(
+    w3: Web3,
+    address: ChecksumAddress,
+    calldata: bytes,
+    return_types: list[str],
+    block_identifier: BlockIdentifier | None = None,
+) -> tuple[Any, ...]:
+    """
+    Perform an eth_call at the given address and returns the decoded response.
+    """
+
+    return eth_abi.abi.decode(
+        types=return_types,
+        data=w3.eth.call(
+            transaction={
+                "to": address,
+                "data": calldata,
+            },
+            block_identifier=get_number_for_block_identifier(block_identifier, w3),
+        ),
+    )

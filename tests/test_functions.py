@@ -1,11 +1,79 @@
 import pytest
+import web3
 from eth_typing import BlockNumber, Hash32, HexStr
+from eth_utils.address import to_checksum_address
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
 import degenbot.config
 from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.functions import create2_address, get_number_for_block_identifier, next_base_fee
+from degenbot.functions import (
+    create2_address,
+    encode_function_calldata,
+    extract_argument_types_from_function_prototype,
+    get_number_for_block_identifier,
+    next_base_fee,
+    raw_call,
+)
+
+
+def test_extract_argument_types_from_function_prototype():
+    assert extract_argument_types_from_function_prototype("func()") == []
+    assert extract_argument_types_from_function_prototype("func(uint256)") == [
+        "uint256",
+    ]
+    assert extract_argument_types_from_function_prototype("func(uint256,address)") == [
+        "uint256",
+        "address",
+    ]
+    assert extract_argument_types_from_function_prototype("func(uint256,address,bytes)") == [
+        "uint256",
+        "address",
+        "bytes",
+    ]
+    assert extract_argument_types_from_function_prototype("func(uint256,address,bytes[])") == [
+        "uint256",
+        "address",
+        "bytes[]",
+    ]
+
+
+def test_encode_function_calldata():
+    assert (
+        encode_function_calldata(function_prototype="factory()", function_arguments=[])
+        == HexBytes("0xc45a01550ceb4bc5c6b2e6f722b5033a03078f9bd6673457375ba94c26ac1cf0")[:4]
+    )
+    assert encode_function_calldata(
+        function_prototype="transfer(address,uint256)",
+        function_arguments=[
+            "0xA69babEF1cA67A37Ffaf7a485DfFF3382056e78C",
+            26535330612692929974,
+        ],
+    ) == HexBytes(
+        "0xa9059cbb000000000000000000000000a69babef1ca67a37ffaf7a485dfff3382056e78c00000000000000000000000000000000000000000000000170406e9a1f1c4db6"
+    )
+
+
+def test_low_level_call_for_factory_address(ethereum_archive_node_web3: web3.Web3):
+    degenbot.config.set_web3(ethereum_archive_node_web3)
+
+    POOL_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
+
+    function_prototype = "factory()"
+
+    result, *_ = raw_call(
+        w3=ethereum_archive_node_web3,
+        block_identifier=ethereum_archive_node_web3.eth.block_number,
+        address=POOL_ADDRESS,
+        calldata=encode_function_calldata(
+            function_prototype=function_prototype,
+            function_arguments=extract_argument_types_from_function_prototype(function_prototype),
+        ),
+        return_types=["address"],
+    )
+    assert to_checksum_address(result) == to_checksum_address(
+        "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+    )
 
 
 def test_create2():
