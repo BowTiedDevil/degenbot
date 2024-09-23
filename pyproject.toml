@@ -22,16 +22,6 @@ classifiers = [
     "Operating System :: POSIX",
 ]
 
-[project.optional-dependencies]
-tests = [
-    'pytest',
-    'pytest-asyncio',
-    'pytest-cov',
-    'pytest-doc',
-    'pytest-xdist',
-    'python-dotenv',
-]
-
 [project.urls]
 Homepage = "https://www.degencode.com"
 Repository = "https://github.com/BowTiedDevil/degenbot"
@@ -42,12 +32,27 @@ Twitter = "https://twitter.com/BowTiedDevil"
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:", # exclude type checking imports and checks
+    "except Exception", # exclude catch-alls
+    "return NotImplemented", # required for __eq__, __lt__, __gt__
+    "def __hash__",
+    "def __repr__",
+    "def __str__",
+    "logger.debug",
+]
+
+[tool.coverage.run]
+source = ["src/degenbot"]
+
 [tool.mypy]
 files=[
     "src/degenbot", 
     "tests/",
 ]
 python_version = "3.10"
+python_executable = ".venv/bin/python"
 
 [[tool.mypy.overrides]]
 module="degenbot.*"
@@ -70,6 +75,7 @@ ignore_missing_imports = true
 [tool.ruff]
 line-length = 100
 indent-width = 4
+target-version = "py310"
 
 [tool.ruff.lint]
 select = [    
@@ -91,22 +97,19 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["PLR2004"]   # many swap amount tests compare "magic" values
 
-[tool.coverage.run]
-source = ["src/degenbot"]
-
-[tool.coverage.report]
-exclude_also = [
-    "if TYPE_CHECKING:", # exclude type checking imports and checks
-    "except Exception", # exclude catch-alls
-    "return NotImplemented", # required for __eq__, __lt__, __gt__
-    "def __hash__",
-    "def __repr__",
-    "def __str__",
-    "logger.debug",
-]
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 addopts = "--cov --cov-branch --cov-report=html --cov-append"
 python_files = "test_*.py"
 testpaths = "tests"
+
+[tool.uv]
+dev-dependencies = [
+    'pytest',
+    'pytest-asyncio',
+    'pytest-cov',
+    'pytest-doc',
+    'python-dotenv',
+    'pytest-xdist',
+]
