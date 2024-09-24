@@ -848,7 +848,6 @@ class V3LiquidityPool(AbstractLiquidityPool):
     def external_update(
         self,
         update: UniswapV3PoolExternalUpdate,
-        silent: bool = True,
     ) -> bool:
         """
         Process a `UniswapV3PoolExternalUpdate` with one or more of the following update types:
@@ -882,14 +881,17 @@ class V3LiquidityPool(AbstractLiquidityPool):
             if update.tick is not None and update.tick != self.tick:
                 updated_state = True
                 self.tick = update.tick
+                logger.debug(f"Tick: {self.tick}")
 
             if update.liquidity is not None and update.liquidity != self.liquidity:
                 updated_state = True
                 self.liquidity = update.liquidity
+                logger.debug(f"Liquidity: {self.liquidity}")
 
             if update.sqrt_price_x96 is not None and update.sqrt_price_x96 != self.sqrt_price_x96:
                 updated_state = True
                 self.sqrt_price_x96 = update.sqrt_price_x96
+                logger.debug(f"SqrtPriceX96: {self.sqrt_price_x96}")
 
             if update.liquidity_change is not None and update.liquidity_change[0] != 0:
                 updated_state = True
@@ -971,10 +973,6 @@ class V3LiquidityPool(AbstractLiquidityPool):
                             block=update.block_number,
                         )
 
-            if not silent:
-                logger.debug(f"Liquidity: {self.liquidity}")
-                logger.debug(f"SqrtPriceX96: {self.sqrt_price_x96}")
-                logger.debug(f"Tick: {self.tick}")
                 logger.debug(
                     f"liquidity event: {liquidity_delta} in tick range "
                     f"[{lower_tick},{upper_tick}], pool: {self.name}"
@@ -983,7 +981,6 @@ class V3LiquidityPool(AbstractLiquidityPool):
                     "\n"
                     f"new liquidity: {new_liquidity_net} net, {new_liquidity_gross} gross"
                 )
-                logger.debug(f"update block: {update.block_number} (last={self.update_block})")
 
             if updated_state:
                 if self._pool_state_archive is not None:  # pragma: no branch
