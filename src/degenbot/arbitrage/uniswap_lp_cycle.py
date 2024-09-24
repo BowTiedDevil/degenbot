@@ -142,7 +142,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
-                        if _token_out_quantity == 0:
+                        if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
                                 f"Zero-output swap through pool {pool} @ {pool.address}"
                             )
@@ -163,7 +163,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
-                        if _token_out_quantity == 0:
+                        if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
                                 f"Zero-output swap through pool {pool} @ {pool.address}"
                             )

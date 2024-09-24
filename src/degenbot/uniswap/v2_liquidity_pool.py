@@ -152,10 +152,9 @@ class LiquidityPool(AbstractLiquidityPool):
             )
             self.factory = to_checksum_address(factory_address)
 
-        if deployer_address is not None:
-            self.deployer_address = to_checksum_address(deployer_address)
-        else:
-            self.deployer_address = self.factory
+        self.deployer_address = (
+            to_checksum_address(deployer_address) if deployer_address is not None else self.factory
+        )
 
         chain_id = w3.eth.chain_id
         try:
