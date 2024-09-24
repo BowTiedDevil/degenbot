@@ -57,7 +57,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         if any([not isinstance(pool, CurveOrUniswapPool) for pool in swap_pools]):
             raise ValueError("Must provide only Curve StableSwap or Uniswap liquidity pools.")
 
-        self.swap_pools: tuple[CurveOrUniswapPool, ...] = tuple(swap_pools)
+        self.swap_pools = swap_pools
         self.name = " → ".join([pool.name for pool in self.swap_pools])
 
         self.curve_discount_factor = CURVE_V1_DEFAULT_DISCOUNT_FACTOR
@@ -192,7 +192,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
-                        if _token_out_quantity == 0:
+                        if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
                                 f"Zero-output swap through pool {pool} @ {pool.address}"
                             )
@@ -213,7 +213,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                             token_in_quantity=_token_in_quantity,
                             override_state=pool_state_override,
                         )
-                        if _token_out_quantity == 0:
+                        if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
                                 f"Zero-output swap through pool {pool} @ {pool.address}"
                             )
@@ -243,7 +243,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                                 block_identifier=block_number,
                             )
                         )
-                        if _token_out_quantity == 0:
+                        if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
                                 f"Zero-output swap through pool {pool} @ {pool.address}"
                             )
@@ -268,7 +268,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                         raise ValueError(
                             f"Could not process pool {pool} and override {pool_state_override}"
                         )
-            except LiquidityPoolError as e:
+            except LiquidityPoolError as e:  # pragma: no cover
                 raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}") from None
 
         return swap_amounts
@@ -325,7 +325,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                         raise ZeroLiquidityError(
                             f"V3 pool {pool.address} has no liquidity (empty bitmap)"
                         )
-                    if pool_state.liquidity == 0:
+                    if pool_state.liquidity == 0:  # pragma: no cover
                         # Check if the swap is 0 -> 1 and has reached the lower limit of the price
                         # range
                         if (
@@ -591,7 +591,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         swap_amount: int
             The initial amount of `token_in` to swap through the first pool.
 
-        pool_swap_amounts: Iterable[CurveOrUniswapSwapAmount]
+        pool_swap_amounts: Sequence[CurveOrUniswapSwapAmount]
             An ordered sequence of swap amounts.
 
         infinite_approval: bool
