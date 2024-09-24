@@ -6,6 +6,7 @@ from eth_account.datastructures import SignedMessage
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from eth_utils.crypto import keccak
+from eth_utils.curried import to_hex
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.types import BlockIdentifier
@@ -100,7 +101,9 @@ def eip_191_hash(message: str, private_key: str) -> str:
     Get the signature hash (a hex-formatted string) for a given message and signing key.
     """
     result: SignedMessage = eth_account.Account.sign_message(
-        signable_message=eth_account.messages.encode_defunct(text=keccak(text=message).hex()),
+        signable_message=eth_account.messages.encode_defunct(
+            text=to_hex(keccak(text=message)),
+        ),
         private_key=private_key,
     )
     return result.signature.hex()
