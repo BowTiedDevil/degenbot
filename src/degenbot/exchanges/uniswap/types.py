@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Any
 
 from eth_typing import ChecksumAddress
 
@@ -11,7 +10,6 @@ class UniswapFactoryDeployment:
     address: ChecksumAddress
     deployer: ChecksumAddress | None
     pool_init_hash: str
-    pool_abi: list[Any]
 
 
 @dataclass(slots=True, frozen=True)

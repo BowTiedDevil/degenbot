@@ -8,7 +8,6 @@ from degenbot.exceptions import ManagerError, PoolNotAssociated
 from degenbot.exchanges.uniswap.types import UniswapFactoryDeployment, UniswapV3ExchangeDeployment
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.registry.all_pools import AllPools
-from degenbot.uniswap.abi import PANCAKESWAP_V3_POOL_ABI
 from degenbot.uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
 from degenbot.uniswap.v3_liquidity_pool import PancakeV3Pool
@@ -60,7 +59,6 @@ BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
         address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
         deployer=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
         pool_init_hash="0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2",
-        pool_abi=PANCAKESWAP_V3_POOL_ABI,
     ),
 )
 
@@ -76,7 +74,7 @@ def test_create_base_chain_managers(base_full_node_web3: Web3):
     # Create a pool manager with an invalid address
     with pytest.raises(
         ManagerError,
-        match="Cannot create UniswapV2 pool manager without factory address, pool ABI, and pool init hash.",  # noqa:E501
+        match="Cannot create UniswapV2 pool manager without factory address and pool init hash.",  # noqa:E501
     ):
         UniswapV2LiquidityPoolManager(factory_address=BASE_WETH_ADDRESS)
 
@@ -137,7 +135,6 @@ def test_base_pancakeswap_v3(base_full_node_web3: Web3):
         factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
         pool_class=PancakeV3Pool,
         deployer_address=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
-        pool_abi=PANCAKESWAP_V3_POOL_ABI,
     )
 
     assert (
@@ -165,7 +162,7 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
     # Create a pool manager with an invalid address
     with pytest.raises(
         ManagerError,
-        match="Cannot create UniswapV2 pool manager without factory address, pool ABI, and pool init hash.",  # noqa:E501
+        match="Cannot create UniswapV2 pool manager without factory address and pool init hash.",  # noqa:E501
     ):
         UniswapV2LiquidityPoolManager(factory_address=MAINNET_WETH_ADDRESS)
 

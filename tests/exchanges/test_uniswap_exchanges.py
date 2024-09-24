@@ -12,7 +12,6 @@ from degenbot.exchanges.uniswap.types import (
     UniswapV2ExchangeDeployment,
     UniswapV3ExchangeDeployment,
 )
-from degenbot.uniswap.abi import UNISWAP_V2_POOL_ABI, UNISWAP_V3_POOL_ABI
 
 
 def _generate_random_address() -> ChecksumAddress:
@@ -30,7 +29,6 @@ def test_register_v2_exchange() -> None:
             address=FACTORY_DEPLOYMENT_ADDRESS,
             deployer=None,
             pool_init_hash="0x0420",
-            pool_abi=UNISWAP_V2_POOL_ABI,
         ),
     )
 
@@ -53,7 +51,6 @@ def test_register_v3_exchange() -> None:
             address=FACTORY_DEPLOYMENT_ADDRESS,
             deployer=None,
             pool_init_hash="0x0420",
-            pool_abi=UNISWAP_V3_POOL_ABI,
         ),
     )
 
@@ -74,7 +71,6 @@ def test_register_router() -> None:
             address=FACTORY_DEPLOYMENT_ADDRESS,
             deployer=None,
             pool_init_hash="0x0420",
-            pool_abi=UNISWAP_V3_POOL_ABI,
         ),
     )
 

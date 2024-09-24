@@ -1,12 +1,6 @@
 from eth_typing import ChainId, ChecksumAddress
 from eth_utils.address import to_checksum_address
 
-from ...uniswap.abi import (
-    AERODROME_V3_POOL_ABI,
-    PANCAKESWAP_V3_POOL_ABI,
-    UNISWAP_V2_POOL_ABI,
-    UNISWAP_V3_POOL_ABI,
-)
 from .types import (
     UniswapFactoryDeployment,
     UniswapRouterDeployment,
@@ -22,7 +16,6 @@ EthereumMainnetUniswapV2 = UniswapV2ExchangeDeployment(
         address=to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
         deployer=None,
         pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
-        pool_abi=UNISWAP_V2_POOL_ABI,
     ),
 )
 EthereumMainnetSushiswapV2 = UniswapV2ExchangeDeployment(
@@ -32,7 +25,6 @@ EthereumMainnetSushiswapV2 = UniswapV2ExchangeDeployment(
         address=to_checksum_address("0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"),
         deployer=None,
         pool_init_hash="0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303",
-        pool_abi=UNISWAP_V2_POOL_ABI,
     ),
 )
 EthereumMainnetUniswapV3 = UniswapV3ExchangeDeployment(
@@ -42,7 +34,6 @@ EthereumMainnetUniswapV3 = UniswapV3ExchangeDeployment(
         address=to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
         deployer=None,
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
-        pool_abi=UNISWAP_V3_POOL_ABI,
     ),
 )
 EthereumMainnetSushiswapV3 = UniswapV3ExchangeDeployment(
@@ -52,13 +43,13 @@ EthereumMainnetSushiswapV3 = UniswapV3ExchangeDeployment(
         address=to_checksum_address("0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F"),
         deployer=None,
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
-        pool_abi=UNISWAP_V3_POOL_ABI,
     ),
 )
 # Mainnet DEX --------------- END
 
 
 # Base DEX ---------------- START
+# TODO: add Aerodrome V2
 BaseAerodromeV3 = UniswapV3ExchangeDeployment(
     name="Base Aerodrome V3",
     chain_id=ChainId.BASE,
@@ -66,7 +57,6 @@ BaseAerodromeV3 = UniswapV3ExchangeDeployment(
         address=to_checksum_address("0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A"),
         deployer=None,
         pool_init_hash="",
-        pool_abi=AERODROME_V3_POOL_ABI,
     ),
 )
 BasePancakeswapV2 = UniswapV2ExchangeDeployment(
@@ -76,7 +66,6 @@ BasePancakeswapV2 = UniswapV2ExchangeDeployment(
         address=to_checksum_address("0x02a84c1b3BBD7401a5f7fa98a384EBC70bB5749E"),
         deployer=None,
         pool_init_hash="0x57224589c67f3f30a6b0d7a1b54cf3153ab84563bc609ef41dfb34f8b2974d2d",
-        pool_abi=UNISWAP_V2_POOL_ABI,
     ),
 )
 BasePancakeswapV3 = UniswapV3ExchangeDeployment(
@@ -86,7 +75,6 @@ BasePancakeswapV3 = UniswapV3ExchangeDeployment(
         address=to_checksum_address("0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"),
         deployer=to_checksum_address("0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9"),
         pool_init_hash="0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2",
-        pool_abi=PANCAKESWAP_V3_POOL_ABI,
     ),
 )
 BaseSushiswapV2 = UniswapV2ExchangeDeployment(
@@ -96,7 +84,6 @@ BaseSushiswapV2 = UniswapV2ExchangeDeployment(
         address=to_checksum_address("0x71524B4f93c58fcbF659783284E38825f0622859"),
         deployer=None,
         pool_init_hash="0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303",
-        pool_abi=UNISWAP_V2_POOL_ABI,
     ),
 )
 BaseSushiswapV3 = UniswapV3ExchangeDeployment(
@@ -106,7 +93,6 @@ BaseSushiswapV3 = UniswapV3ExchangeDeployment(
         address=to_checksum_address("0xc35DADB65012eC5796536bD9864eD8773aBc74C4"),
         deployer=None,
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
-        pool_abi=UNISWAP_V3_POOL_ABI,
     ),
 )
 BaseSwapbasedV2 = UniswapV2ExchangeDeployment(
@@ -116,7 +102,6 @@ BaseSwapbasedV2 = UniswapV2ExchangeDeployment(
         address=to_checksum_address("0x04C9f118d21e8B767D2e50C946f0cC9F6C367300"),
         deployer=None,
         pool_init_hash="0xb64118b4e99d4a4163453838112a1695032df46c09f7f09064d4777d2767f8ea",
-        pool_abi=UNISWAP_V2_POOL_ABI,
     ),
 )
 BaseUniswapV2 = UniswapV2ExchangeDeployment(
@@ -126,7 +111,6 @@ BaseUniswapV2 = UniswapV2ExchangeDeployment(
         address=to_checksum_address("0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6"),
         deployer=None,
         pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
-        pool_abi=UNISWAP_V2_POOL_ABI,
     ),
 )
 BaseUniswapV3 = UniswapV3ExchangeDeployment(
@@ -136,7 +120,6 @@ BaseUniswapV3 = UniswapV3ExchangeDeployment(
         address=to_checksum_address("0x33128a8fC17869897dcE68Ed026d694621f6FDfD"),
         deployer=None,
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
-        pool_abi=UNISWAP_V3_POOL_ABI,
     ),
 )
 # Base DEX -------------------- END
@@ -150,7 +133,6 @@ ArbitrumSushiswapV2 = UniswapV2ExchangeDeployment(
         address=to_checksum_address("0xc35DADB65012eC5796536bD9864eD8773aBc74C4"),
         deployer=None,
         pool_init_hash="0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303",
-        pool_abi=UNISWAP_V2_POOL_ABI,
     ),
 )
 ArbitrumUniswapV3 = UniswapV3ExchangeDeployment(
@@ -160,7 +142,6 @@ ArbitrumUniswapV3 = UniswapV3ExchangeDeployment(
         address=to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
         deployer=None,
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
-        pool_abi=UNISWAP_V3_POOL_ABI,
     ),
 )
 ArbitrumSushiswapV3 = UniswapV3ExchangeDeployment(
@@ -170,7 +151,6 @@ ArbitrumSushiswapV3 = UniswapV3ExchangeDeployment(
         address=to_checksum_address("0x1af415a1EbA07a4986a52B6f2e7dE7003D82231e"),
         deployer=None,
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
-        pool_abi=UNISWAP_V3_POOL_ABI,
     ),
 )
 # ----------------------------- END
