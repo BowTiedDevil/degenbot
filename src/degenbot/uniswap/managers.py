@@ -1,6 +1,6 @@
 import contextlib
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from eth_typing import BlockIdentifier, ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -164,7 +164,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             return_types=["address"],
             block_identifier=get_number_for_block_identifier(block_identifier),
         )
-        return pool_address
+        return cast(str, pool_address)
 
     def get_pool(
         self,
