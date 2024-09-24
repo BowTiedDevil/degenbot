@@ -81,6 +81,8 @@ def test_calculation_volatile(fork_base: AnvilFork, test_pools: list[Any]):
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
 
+        w3_contract = fork_base.w3.eth.contract(address=pool_address, abi=AERODROME_V2_POOL_ABI)
+
         if max_reserves_token1 >= 2:
             for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
                 token_in_amount = int(token_mult * max_reserves_token0)
@@ -88,9 +90,6 @@ def test_calculation_volatile(fork_base: AnvilFork, test_pools: list[Any]):
                     continue
                 print(f"{token_in_amount=} with {token_mult=}")
 
-                w3_contract = fork_base.w3.eth.contract(
-                    address=pool_address, abi=AERODROME_V2_POOL_ABI
-                )
                 try:
                     helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
                         token_in=lp.token0,
@@ -156,6 +155,8 @@ def test_calculation_stable(fork_base: AnvilFork, test_pools: list[Any]):
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
 
+        w3_contract = fork_base.w3.eth.contract(address=pool_address, abi=AERODROME_V2_POOL_ABI)
+
         if max_reserves_token1 >= 2:
             for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
                 token_in_amount = int(token_mult * max_reserves_token0)
@@ -167,7 +168,7 @@ def test_calculation_stable(fork_base: AnvilFork, test_pools: list[Any]):
                         token_in=lp.token0,
                         token_in_quantity=token_in_amount,
                     )
-                    contract_amount_out = lp.w3_contract.functions.getAmountOut(
+                    contract_amount_out = w3_contract.functions.getAmountOut(
                         token_in_amount,
                         lp.token0.address,
                     ).call()
@@ -187,7 +188,7 @@ def test_calculation_stable(fork_base: AnvilFork, test_pools: list[Any]):
                         token_in=lp.token1,
                         token_in_quantity=token_in_amount,
                     )
-                    contract_amount_out = lp.w3_contract.functions.getAmountOut(
+                    contract_amount_out = w3_contract.functions.getAmountOut(
                         token_in_amount,
                         lp.token1.address,
                     ).call()
