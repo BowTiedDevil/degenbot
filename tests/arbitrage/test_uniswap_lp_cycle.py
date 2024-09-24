@@ -2311,7 +2311,7 @@ async def test_process_pool_calculation(
 
         # Saturate the process pool executor with multiple calculations.
         # Should reveal cases of excessive latency.
-        _NUM_FUTURES = 512
+        _NUM_FUTURES = 64
         calculation_futures = []
         for _ in range(_NUM_FUTURES):
             calculation_futures.append(

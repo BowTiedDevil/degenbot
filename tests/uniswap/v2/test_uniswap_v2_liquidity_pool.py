@@ -8,6 +8,10 @@ from hexbytes import HexBytes
 from web3.contract.contract import Contract
 
 import degenbot
+import degenbot.exceptions
+import degenbot.exchanges
+import degenbot.exchanges.uniswap
+import degenbot.exchanges.uniswap.deployments
 from degenbot.config import set_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
@@ -17,6 +21,7 @@ from degenbot.exceptions import (
     NoPoolStateAvailable,
     ZeroSwapError,
 )
+from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.registry.all_pools import AllPools
 from degenbot.uniswap.abi import CAMELOT_POOL_ABI
@@ -37,6 +42,8 @@ UNISWAPV2_FACTORY_POOL_INIT_HASH = (
 DAI_CONTRACT_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
 WBTC_CONTRACT_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_CONTRACT_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+
+CAMELOT_WETH_USDC_LP_ADDRESS = to_checksum_address("0x84652bb2539513BAf36e225c930Fdd8eaa63CE27")
 
 
 @pytest.fixture(scope="function")
@@ -147,6 +154,29 @@ def test_create_pool(
     )
 
 
+def test_from_exchange_deployment(ethereum_archive_node_web3: web3.Web3):
+    set_web3(ethereum_archive_node_web3)
+
+    UNISWAP_V2_FACTORY_ADDRESS = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+
+    # Delete the preset deployment for this factory so the test uses the provided override instead
+    # of preferring the known valid deployment data
+    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][
+        UNISWAP_V2_FACTORY_ADDRESS
+    ]
+    del FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
+
+    LiquidityPool.from_exchange(
+        address=UNISWAP_V2_WBTC_WETH_POOL,
+        exchange=degenbot.exchanges.uniswap.deployments.EthereumMainnetUniswapV2,
+    )
+
+    # Restore the preset deployment
+    FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS] = (
+        factory_deployment
+    )
+
+
 def test_create_with_invalid_tokens(
     ethereum_archive_node_web3: web3.Web3,
     wbtc: Erc20Token,
@@ -193,7 +223,7 @@ def test_nominal_price_scaled_by_decimals(wbtc_weth_v2_lp: LiquidityPool):
 
 
 def test_create_camelot_v2_stable_pool(fork_arbitrum: AnvilFork):
-    CAMELOT_MIM_USDC_LP_ADDRESS = "0x68A0859de50B4Dfc6EFEbE981cA906D38Cdb0D1F"
+    CAMELOT_MIM_USDC_LP_ADDRESS = to_checksum_address("0x68A0859de50B4Dfc6EFEbE981cA906D38Cdb0D1F")
     FORK_BLOCK = 153_759_000
     fork_arbitrum.reset(block_number=FORK_BLOCK)
 
@@ -254,8 +284,8 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum: AnvilFork):
 
 
 def test_create_camelot_v2_pool(fork_arbitrum: AnvilFork):
-    CAMELOT_WETH_USDC_LP_ADDRESS = "0x84652bb2539513BAf36e225c930Fdd8eaa63CE27"
     set_web3(fork_arbitrum.w3)
+
     lp = CamelotLiquidityPool(address=CAMELOT_WETH_USDC_LP_ADDRESS)
     assert lp.stable_swap is False
 
@@ -274,7 +304,6 @@ def test_create_camelot_v2_pool(fork_arbitrum: AnvilFork):
 
 
 def test_pickle_camelot_v2_pool(fork_arbitrum: AnvilFork):
-    CAMELOT_WETH_USDC_LP_ADDRESS = "0x84652bb2539513BAf36e225c930Fdd8eaa63CE27"
     set_web3(fork_arbitrum.w3)
     lp = CamelotLiquidityPool(address=CAMELOT_WETH_USDC_LP_ADDRESS)
     pickle.dumps(lp)
@@ -294,6 +323,14 @@ def test_create_nonstandard_pools(
         ],
     )
 
+    UNISWAP_V2_FACTORY_ADDRESS = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    # Delete the preset deployment for this factory so the test uses the provided override instead
+    # of preferring the known valid deployment data
+    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][
+        UNISWAP_V2_FACTORY_ADDRESS
+    ]
+    del FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
+
     # Create pool with a malformed init hash
     bad_init_hash = UNISWAPV2_FACTORY_POOL_INIT_HASH.replace("a", "b")
     with pytest.raises(
@@ -310,6 +347,11 @@ def test_create_nonstandard_pools(
             factory_address=UNISWAPV2_FACTORY,
             init_hash=bad_init_hash,
         )
+
+    # Restore the preset deployment
+    FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS] = (
+        factory_deployment
+    )
 
     # Create with non-standard fee
     lp = LiquidityPool(

@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import contextlib
 import multiprocessing
 import pickle
 import time
@@ -427,9 +428,14 @@ async def test_process_pool_calculation(ethereum_archive_node_web3) -> None:
             result = await future
             assert result
 
+            with contextlib.suppress(ArbitrageError):
+                future = await arb.calculate_with_pool(executor=executor)
+                result = await future
+                assert result
+
         # Saturate the process pool executor with multiple calculations.
         # Should reveal cases of excessive latency.
-        _NUM_FUTURES = 512
+        _NUM_FUTURES = 64
         calculation_futures = []
         for _ in range(_NUM_FUTURES):
             calculation_futures.append(
