@@ -71,7 +71,6 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             factory_address=exchange.factory.address,
             deployer_address=exchange.factory.deployer,
             pool_init_hash=exchange.factory.pool_init_hash,
-            pool_abi=exchange.factory.pool_abi,
         )
 
     def __init__(
@@ -80,7 +79,6 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         deployer_address: ChecksumAddress | str | None = None,
         chain_id: int | None = None,
         pool_init_hash: str | None = None,
-        pool_abi: list[Any] | None = None,
     ):
         chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
         factory_address = to_checksum_address(factory_address)
@@ -93,11 +91,10 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 else factory_address
             )
             pool_init_hash = factory_deployment.pool_init_hash
-            pool_abi = factory_deployment.pool_abi
         except KeyError:
-            if pool_abi is None or pool_init_hash is None:  # pragma: no branch
+            if pool_init_hash is None:  # pragma: no branch
                 raise ManagerError(
-                    "Cannot create UniswapV2 pool manager without factory address, pool ABI, and pool init hash."  # noqa:E501
+                    "Cannot create UniswapV2 pool manager without factory address and pool init hash."  # noqa:E501
                 ) from None
             deployer_address = (
                 to_checksum_address(deployer_address)
@@ -121,7 +118,6 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._token_manager: Erc20TokenHelperManager = self._state[chain_id][
                     "erc20token_manager"
                 ]
-                self._pool_abi = pool_abi
                 self._pool_init_hash = pool_init_hash
                 self._tracked_pools: dict[ChecksumAddress, LiquidityPool] = dict()
                 self._untracked_pools: set[ChecksumAddress] = set()
@@ -274,7 +270,6 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             factory_address=exchange.factory.address,
             deployer_address=exchange.factory.deployer,
             chain_id=exchange.chain_id,
-            pool_abi=exchange.factory.pool_abi,
             snapshot=snapshot,
         )
 
@@ -284,7 +279,6 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         deployer_address: ChecksumAddress | str | None = None,
         chain_id: int | None = None,
         pool_init_hash: str | None = None,
-        pool_abi: list[Any] | None = None,
         pool_class: type = V3LiquidityPool,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
     ):
@@ -301,11 +295,10 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 else factory_address
             )
             pool_init_hash = factory_deployment.pool_init_hash
-            pool_abi = factory_deployment.pool_abi
         except KeyError:
-            if pool_abi is None or pool_init_hash is None:
+            if pool_init_hash is None:
                 raise ManagerError(
-                    "Cannot create UniswapV3 pool manager without factory address, pool ABI, and pool init hash."  # noqa:E501
+                    "Cannot create UniswapV3 pool manager without factory address and pool init hash."  # noqa:E501
                 ) from None
             deployer_address = (
                 to_checksum_address(deployer_address)
@@ -329,7 +322,6 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._token_manager: Erc20TokenHelperManager = self._state[chain_id][
                     "erc20token_manager"
                 ]
-                self._pool_abi = pool_abi
                 self._pool_class = pool_class
                 self._pool_init_hash = pool_init_hash
                 self._snapshot = snapshot
@@ -434,7 +426,6 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             try:
                 pool_helper = self._pool_class(
                     address=pool_address,
-                    abi=self._pool_abi,
                     silent=silent,
                     state_block=state_block,
                     **v3liquiditypool_kwargs,
