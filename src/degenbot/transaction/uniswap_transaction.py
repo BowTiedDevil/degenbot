@@ -4,6 +4,7 @@
 # TODO: instead of appending pool states to list, replace with dict and only return final state
 
 import contextlib
+import json
 from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
@@ -18,6 +19,7 @@ from degenbot.exchanges.uniswap.types import (
     UniswapV2ExchangeDeployment,
     UniswapV3ExchangeDeployment,
 )
+from degenbot.uniswap.v3_libraries import FullMath, TickMath, constants
 
 from .. import config
 from ..constants import WRAPPED_NATIVE_TOKENS
@@ -2082,9 +2084,6 @@ class UniswapTransaction(AbstractTransaction):
                         )
 
                     case "increaseLiquidity":
-                        import json
-
-                        from degenbot.uniswap.v3_libraries import FullMath, TickMath, constants
 
                         def getLiquidityForAmount0(
                             sqrtRatioAX96: int, sqrtRatioBX96: int, amount0: int
