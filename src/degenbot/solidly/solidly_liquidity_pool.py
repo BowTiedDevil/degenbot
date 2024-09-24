@@ -12,13 +12,8 @@ from degenbot.functions import encode_function_calldata, get_number_for_block_id
 from .. import config
 from ..erc20_token import Erc20Token
 from ..exceptions import (
-    ExternalUpdateError,
-    LiquidityPoolError,
-    NoPoolStateAvailable,
     ZeroSwapError,
 )
-from ..exchanges.solidly.deployments import FACTORY_DEPLOYMENTS
-from ..exchanges.solidly.types import SolidlyExchangeDeployment
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
@@ -28,11 +23,7 @@ from .solidly_functions import (
     solidly_calc_exact_in_stable,
     solidly_calc_exact_in_volatile,
 )
-from .types import (
-    AerodromeV2PoolSimulationResult,
-    AerodromeV2PoolState,
-    AerodromeV2PoolStateUpdated,
-)
+from .types import AerodromeV2PoolState
 
 FEE_DENOMINATOR = 10_000
 
