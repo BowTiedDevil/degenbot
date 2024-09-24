@@ -5,6 +5,7 @@ import pytest
 import web3
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
+from web3.contract.contract import Contract
 
 import degenbot
 from degenbot.config import set_web3
@@ -18,6 +19,7 @@ from degenbot.exceptions import (
 )
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.registry.all_pools import AllPools
+from degenbot.uniswap.abi import CAMELOT_POOL_ABI
 from degenbot.uniswap.v2_liquidity_pool import (
     CamelotLiquidityPool,
     LiquidityPool,
@@ -205,7 +207,11 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum: AnvilFork):
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
 
     # Test that the swap output from the pool contract matches the off-chain calculation
-    contract_amount = lp.w3_contract.functions.getAmountOut(
+    w3_contract = fork_arbitrum.w3.eth.contract(
+        address=CAMELOT_MIM_USDC_LP_ADDRESS, abi=CAMELOT_POOL_ABI
+    )
+
+    contract_amount = w3_contract.functions.getAmountOut(
         amountIn=amount_in, tokenIn=token_in.address
     ).call()
     assert contract_amount == lp.calculate_tokens_out_from_tokens_in(
@@ -215,13 +221,13 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum: AnvilFork):
     current_reserves = lp.reserves_token0, lp.reserves_token1
 
     rewind_block_length = 500_000
-    contract_amount_old = lp.w3_contract.functions.getAmountOut(
+    contract_amount_old = w3_contract.functions.getAmountOut(
         amountIn=amount_in, tokenIn=token_in.address
     ).call(block_identifier=FORK_BLOCK - rewind_block_length)
 
     assert contract_amount != contract_amount_old
 
-    old_reserves = lp.w3_contract.functions.getReserves().call(
+    old_reserves = w3_contract.functions.getReserves().call(
         block_identifier=FORK_BLOCK - rewind_block_length
     )
     lp.state = UniswapV2PoolState(
@@ -256,7 +262,10 @@ def test_create_camelot_v2_pool(fork_arbitrum: AnvilFork):
     token_in = lp.token1
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
 
-    assert lp.w3_contract.functions.getAmountOut(
+    w3_contract: Contract = fork_arbitrum.w3.eth.contract(
+        address=CAMELOT_WETH_USDC_LP_ADDRESS, abi=CAMELOT_POOL_ABI
+    )
+    assert w3_contract.functions.getAmountOut(
         amountIn=amount_in, tokenIn=token_in.address
     ).call() == lp.calculate_tokens_out_from_tokens_in(
         token_in=token_in,

@@ -7,6 +7,7 @@ from eth_utils.address import to_checksum_address
 
 from degenbot import set_web3
 from degenbot.fork.anvil_fork import AnvilFork
+from degenbot.solidly.abi import AERODROME_V2_POOL_ABI
 from degenbot.solidly.solidly_functions import generate_aerodrome_v2_pool_address
 from degenbot.solidly.solidly_liquidity_pool import AerodromeV2LiquidityPool
 
@@ -86,12 +87,16 @@ def test_calculation_volatile(fork_base: AnvilFork, test_pools: list[Any]):
                 if token_in_amount == 0:
                     continue
                 print(f"{token_in_amount=} with {token_mult=}")
+
+                w3_contract = fork_base.w3.eth.contract(
+                    address=pool_address, abi=AERODROME_V2_POOL_ABI
+                )
                 try:
                     helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
                         token_in=lp.token0,
                         token_in_quantity=token_in_amount,
                     )
-                    contract_amount_out = lp.w3_contract.functions.getAmountOut(
+                    contract_amount_out = w3_contract.functions.getAmountOut(
                         token_in_amount,
                         lp.token0.address,
                     ).call()
@@ -112,7 +117,7 @@ def test_calculation_volatile(fork_base: AnvilFork, test_pools: list[Any]):
                         token_in=lp.token1,
                         token_in_quantity=token_in_amount,
                     )
-                    contract_amount_out = lp.w3_contract.functions.getAmountOut(
+                    contract_amount_out = w3_contract.functions.getAmountOut(
                         token_in_amount,
                         lp.token1.address,
                     ).call()

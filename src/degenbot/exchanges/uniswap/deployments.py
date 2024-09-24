@@ -2,15 +2,14 @@ from eth_typing import ChainId, ChecksumAddress
 from eth_utils.address import to_checksum_address
 
 from ...uniswap.abi import (
+    AERODROME_V3_POOL_ABI,
     PANCAKESWAP_V3_POOL_ABI,
     UNISWAP_V2_POOL_ABI,
     UNISWAP_V3_POOL_ABI,
-    UNISWAP_V3_TICKLENS_ABI,
 )
 from .types import (
     UniswapFactoryDeployment,
     UniswapRouterDeployment,
-    UniswapTickLensDeployment,
     UniswapV2ExchangeDeployment,
     UniswapV3ExchangeDeployment,
 )
@@ -45,10 +44,6 @@ EthereumMainnetUniswapV3 = UniswapV3ExchangeDeployment(
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
         pool_abi=UNISWAP_V3_POOL_ABI,
     ),
-    tick_lens=UniswapTickLensDeployment(
-        address=to_checksum_address("0xbfd8137f7d1516D3ea5cA83523914859ec47F573"),
-        abi=UNISWAP_V3_TICKLENS_ABI,
-    ),
 )
 EthereumMainnetSushiswapV3 = UniswapV3ExchangeDeployment(
     name="Ethereum Mainnet Sushiswap V3",
@@ -59,15 +54,21 @@ EthereumMainnetSushiswapV3 = UniswapV3ExchangeDeployment(
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
         pool_abi=UNISWAP_V3_POOL_ABI,
     ),
-    tick_lens=UniswapTickLensDeployment(
-        address=to_checksum_address("0xFB70AD5a200d784E7901230E6875d91d5Fa6B68c"),
-        abi=UNISWAP_V3_TICKLENS_ABI,
-    ),
 )
 # Mainnet DEX --------------- END
 
 
 # Base DEX ---------------- START
+BaseAerodromeV3 = UniswapV3ExchangeDeployment(
+    name="Base Aerodrome V3",
+    chain_id=ChainId.BASE,
+    factory=UniswapFactoryDeployment(
+        address=to_checksum_address("0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A"),
+        deployer=None,
+        pool_init_hash="",
+        pool_abi=AERODROME_V3_POOL_ABI,
+    ),
+)
 BasePancakeswapV2 = UniswapV2ExchangeDeployment(
     name="Pancakeswap V2",
     chain_id=ChainId.BASE,
@@ -87,10 +88,6 @@ BasePancakeswapV3 = UniswapV3ExchangeDeployment(
         pool_init_hash="0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2",
         pool_abi=PANCAKESWAP_V3_POOL_ABI,
     ),
-    tick_lens=UniswapTickLensDeployment(
-        address=to_checksum_address("0x9a489505a00cE272eAa5e07Dba6491314CaE3796"),
-        abi=UNISWAP_V3_TICKLENS_ABI,
-    ),
 )
 BaseSushiswapV2 = UniswapV2ExchangeDeployment(
     name="Sushiswap V2",
@@ -103,17 +100,13 @@ BaseSushiswapV2 = UniswapV2ExchangeDeployment(
     ),
 )
 BaseSushiswapV3 = UniswapV3ExchangeDeployment(
-    name="Base Sushiswap V3",
+    name="Sushiswap V3",
     chain_id=ChainId.BASE,
     factory=UniswapFactoryDeployment(
         address=to_checksum_address("0xc35DADB65012eC5796536bD9864eD8773aBc74C4"),
         deployer=None,
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
         pool_abi=UNISWAP_V3_POOL_ABI,
-    ),
-    tick_lens=UniswapTickLensDeployment(
-        address=to_checksum_address("0xF4d73326C13a4Fc5FD7A064217e12780e9Bd62c3"),
-        abi=UNISWAP_V3_TICKLENS_ABI,
     ),
 )
 BaseSwapbasedV2 = UniswapV2ExchangeDeployment(
@@ -137,7 +130,7 @@ BaseUniswapV2 = UniswapV2ExchangeDeployment(
     ),
 )
 BaseUniswapV3 = UniswapV3ExchangeDeployment(
-    name="Base Uniswap V3",
+    name="Uniswap V3",
     chain_id=ChainId.BASE,
     factory=UniswapFactoryDeployment(
         address=to_checksum_address("0x33128a8fC17869897dcE68Ed026d694621f6FDfD"),
@@ -145,13 +138,7 @@ BaseUniswapV3 = UniswapV3ExchangeDeployment(
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
         pool_abi=UNISWAP_V3_POOL_ABI,
     ),
-    tick_lens=UniswapTickLensDeployment(
-        address=to_checksum_address("0x0CdeE061c75D43c82520eD998C23ac2991c9ac6d"),
-        abi=UNISWAP_V3_TICKLENS_ABI,
-    ),
 )
-
-
 # Base DEX -------------------- END
 
 
@@ -175,10 +162,6 @@ ArbitrumUniswapV3 = UniswapV3ExchangeDeployment(
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
         pool_abi=UNISWAP_V3_POOL_ABI,
     ),
-    tick_lens=UniswapTickLensDeployment(
-        address=to_checksum_address("0xbfd8137f7d1516D3ea5cA83523914859ec47F573"),
-        abi=UNISWAP_V3_TICKLENS_ABI,
-    ),
 )
 ArbitrumSushiswapV3 = UniswapV3ExchangeDeployment(
     name="Arbitrum Sushiswap V3",
@@ -188,10 +171,6 @@ ArbitrumSushiswapV3 = UniswapV3ExchangeDeployment(
         deployer=None,
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
         pool_abi=UNISWAP_V3_POOL_ABI,
-    ),
-    tick_lens=UniswapTickLensDeployment(
-        address=to_checksum_address("0x8516944E89f296eb6473d79aED1Ba12088016c9e"),
-        abi=UNISWAP_V3_TICKLENS_ABI,
     ),
 )
 # ----------------------------- END
@@ -316,6 +295,7 @@ FACTORY_DEPLOYMENTS: dict[
         EthereumMainnetUniswapV3.factory.address: EthereumMainnetUniswapV3.factory,
     },
     ChainId.BASE: {
+        BaseAerodromeV3.factory.address: BaseAerodromeV3.factory,
         BasePancakeswapV2.factory.address: BasePancakeswapV2.factory,
         BasePancakeswapV3.factory.address: BasePancakeswapV3.factory,
         BaseSushiswapV2.factory.address: BaseSushiswapV2.factory,
@@ -356,28 +336,5 @@ ROUTER_DEPLOYMENTS: dict[
         ArbitrumUniswapUniversalRouter.address: ArbitrumUniswapUniversalRouter,
         ArbitrumUniswapUniversalRouter2.address: ArbitrumUniswapUniversalRouter2,
         ArbitrumUniswapUniversalRouter3.address: ArbitrumUniswapUniversalRouter3,
-    },
-}
-
-
-TICKLENS_DEPLOYMENTS: dict[
-    int,  # Chain ID
-    dict[
-        ChecksumAddress,  # Factory address
-        UniswapTickLensDeployment,
-    ],
-] = {
-    ChainId.ETH: {
-        EthereumMainnetSushiswapV3.factory.address: EthereumMainnetSushiswapV3.tick_lens,
-        EthereumMainnetUniswapV3.factory.address: EthereumMainnetUniswapV3.tick_lens,
-    },
-    ChainId.BASE: {
-        BasePancakeswapV3.factory.address: BasePancakeswapV3.tick_lens,
-        BaseSushiswapV3.factory.address: BaseSushiswapV3.tick_lens,
-        BaseUniswapV3.factory.address: BaseUniswapV3.tick_lens,
-    },
-    ChainId.ARB1: {
-        ArbitrumSushiswapV3.factory.address: ArbitrumSushiswapV3.tick_lens,
-        ArbitrumUniswapV3.factory.address: ArbitrumUniswapV3.tick_lens,
     },
 }

@@ -13,7 +13,7 @@ from degenbot.exceptions import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
+from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries import TickMath
@@ -136,11 +136,7 @@ def test_creation_with_invalid_hash(ethereum_archive_node_web3: Web3) -> None:
     factory_deployment = FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][
         UNISWAP_V3_FACTORY_ADDRESS
     ]
-    ticklens_deployment = TICKLENS_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][
-        UNISWAP_V3_FACTORY_ADDRESS
-    ]
     del FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
-    del TICKLENS_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
 
     # Change last byte of true init hash
     BAD_INIT_HASH = UNISWAP_V3_MAINNET_POOL_INIT_HASH[:-1] + "f"
@@ -152,16 +148,12 @@ def test_creation_with_invalid_hash(ethereum_archive_node_web3: Web3) -> None:
         V3LiquidityPool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
             factory_address=UNISWAP_V3_FACTORY_ADDRESS,
-            ticklens_address=UNISWAP_V3_TICKLENS_ADDRESS,
             init_hash=BAD_INIT_HASH,
         )
 
     # Restore the preset deployments
     FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
         factory_deployment
-    )
-    TICKLENS_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
-        ticklens_deployment
     )
 
 

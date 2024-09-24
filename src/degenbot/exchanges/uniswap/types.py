@@ -15,12 +15,6 @@ class UniswapFactoryDeployment:
 
 
 @dataclass(slots=True, frozen=True)
-class UniswapTickLensDeployment:
-    address: ChecksumAddress
-    abi: list[Any]
-
-
-@dataclass(slots=True, frozen=True)
 class UniswapV2ExchangeDeployment(AbstractExchangeDeployment):
     factory: UniswapFactoryDeployment
 
@@ -28,7 +22,6 @@ class UniswapV2ExchangeDeployment(AbstractExchangeDeployment):
 @dataclass(slots=True, frozen=True)
 class UniswapV3ExchangeDeployment(AbstractExchangeDeployment):
     factory: UniswapFactoryDeployment
-    tick_lens: UniswapTickLensDeployment
 
 
 @dataclass(slots=True, frozen=True)

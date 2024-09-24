@@ -5,13 +5,14 @@ import dataclasses
 from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, cast
 
-import eth_abi.abi
-from eth_typing import ChecksumAddress, HexStr
+from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from eth_utils.crypto import keccak
-from web3.contract.contract import Contract
+from typing_extensions import override
+from web3 import Web3
+from web3.types import BlockIdentifier
 
 from .. import config
 from ..erc20_token import Erc20Token
@@ -23,15 +24,17 @@ from ..exceptions import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from ..exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS, TICKLENS_DEPLOYMENTS
+from ..exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS
 from ..exchanges.uniswap.types import UniswapV3ExchangeDeployment
+from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
 from ..types import AbstractLiquidityPool
-from .abi import UNISWAP_V3_POOL_ABI, UNISWAP_V3_TICKLENS_ABI
+from .abi import UNISWAP_V3_POOL_ABI
 from .v3_functions import (
     exchange_rate_from_sqrt_price_x96,
+    generate_aerodrome_v3_pool_address,
     generate_v3_pool_address,
     get_tick_word_and_bit_position,
 )
@@ -78,14 +81,12 @@ class V3LiquidityPool(AbstractLiquidityPool):
     def __init__(
         self,
         address: str,
-        fee: Literal[100, 500, 2500, 3000, 10000] | None = None,
+        fee: int | None = None,
         tick_spacing: int | None = None,
         tokens: list[Erc20Token] | None = None,
         abi: list[Any] | None = None,
         factory_address: str | None = None,
         deployer_address: str | None = None,
-        ticklens_address: str | None = None,
-        ticklens_abi: list[Any] | None = None,
         init_hash: str | None = None,
         extra_words: int = 10,
         silent: bool = False,
@@ -95,41 +96,44 @@ class V3LiquidityPool(AbstractLiquidityPool):
         archive_states: bool = True,
         verify_address: bool = True,
     ):
-        w3 = config.get_web3()
         self.address = to_checksum_address(address)
 
-        self.abi = abi if abi is not None else UNISWAP_V3_POOL_ABI
+        self._state_lock = Lock()
+        self._state = UniswapV3PoolState(
+            pool=self.address,
+            liquidity=0,
+            sqrt_price_x96=0,
+            tick=0,
+            tick_bitmap={},
+            tick_data={},
+        )
+
+        w3 = config.get_web3()
+        self._update_block = state_block if state_block is not None else w3.eth.block_number
 
         if factory_address is not None:
             self.factory = to_checksum_address(factory_address)
         else:
-            # Get the factory address via eth_call because the ABI has not been determined yet
-            contract_call_result: str
-            contract_call_result, *_ = eth_abi.abi.decode(
-                types=["address"],
-                data=w3.eth.call(
-                    transaction={
-                        "to": self.address,
-                        "data": keccak(text="factory()")[:4],
-                    },
-                    block_identifier=state_block,
-                ),
+            factory_address, *_ = raw_call(
+                w3=w3,
+                block_identifier=self._update_block,
+                address=self.address,
+                calldata=keccak(text="factory()")[:4],
+                return_types=["address"],
             )
-            self.factory = to_checksum_address(contract_call_result)
+            self.factory = to_checksum_address(factory_address)
 
         if deployer_address is not None:
             self.deployer_address = to_checksum_address(deployer_address)
         else:
             self.deployer_address = self.factory
 
+        chain_id = w3.eth.chain_id
         try:
             # Use degenbot deployment values if available
-            factory_deployment = FACTORY_DEPLOYMENTS[w3.eth.chain_id][self.factory]
-            ticklens_deployment = TICKLENS_DEPLOYMENTS[w3.eth.chain_id][self.factory]
+            factory_deployment = FACTORY_DEPLOYMENTS[chain_id][self.factory]
             self.init_hash = factory_deployment.pool_init_hash
             self.abi = factory_deployment.pool_abi
-            self.ticklens_address = ticklens_deployment.address
-            self.ticklens_abi = ticklens_deployment.abi
             if factory_deployment.deployer is not None:
                 self.deployer_address = factory_deployment.deployer
         except KeyError:
@@ -139,36 +143,32 @@ class V3LiquidityPool(AbstractLiquidityPool):
             self.init_hash = (
                 init_hash if init_hash is not None else UNISWAP_V3_MAINNET_POOL_INIT_HASH
             )
-            if ticklens_address is None:  # pragma: no cover
-                raise ValueError("TickLens address for pool is unknown.") from None
-            self.ticklens_address = to_checksum_address(ticklens_address)
-            self.ticklens_abi = (
-                ticklens_abi if ticklens_abi is not None else UNISWAP_V3_TICKLENS_ABI
-            )
-
-        self._update_block = state_block if state_block is not None else w3.eth.block_number
-
-        self.state: UniswapV3PoolState = UniswapV3PoolState(
-            pool=self.address,
-            liquidity=0,
-            sqrt_price_x96=0,
-            tick=0,
-            tick_bitmap={},
-            tick_data={},
-        )
-
-        # held for operations that manipulate state data
-        self._state_lock = Lock()
-
-        w3_contract = self.w3_contract
 
         if tokens is not None:
             self.token0, self.token1 = sorted(tokens)
         else:
-            token0_address: HexStr = w3_contract.functions.token0().call()
-            token1_address: HexStr = w3_contract.functions.token1().call()
+            token0_address, *_ = raw_call(
+                w3=w3,
+                address=self.address,
+                calldata=encode_function_calldata(
+                    function_prototype="token0()",
+                    function_arguments=None,
+                ),
+                return_types=["address"],
+                block_identifier=self._update_block,
+            )
+            token1_address, *_ = raw_call(
+                w3=w3,
+                address=self.address,
+                calldata=encode_function_calldata(
+                    function_prototype="token1()",
+                    function_arguments=None,
+                ),
+                return_types=["address"],
+                block_identifier=self._update_block,
+            )
 
-            token_manager = Erc20TokenHelperManager(w3.eth.chain_id)
+            token_manager = Erc20TokenHelperManager(chain_id)
             self.token0 = token_manager.get_erc20token(
                 address=token0_address,
                 silent=silent,
@@ -179,17 +179,14 @@ class V3LiquidityPool(AbstractLiquidityPool):
             )
 
         self.tokens = (self.token0, self.token1)
-        self.fee: int = fee if fee is not None else w3_contract.functions.fee().call()
+
+        self.fee = fee if fee is not None else self.get_fee(w3=w3)
         self.tick_spacing = (
-            tick_spacing if tick_spacing is not None else w3_contract.functions.tickSpacing().call()
+            tick_spacing if tick_spacing is not None else self.get_tick_spacing(w3=w3)
         )
 
-        if verify_address:  # pragma: no branch
-            verified_address = self._verified_address()
-            if verified_address != self.address:
-                raise ValueError(
-                    f"Pool address verification failed. Provided: {self.address}, expected: {verified_address}"  # noqa: E501
-                )
+        if verify_address and self.address != self._verified_address():  # pragma: no branch
+            raise ValueError("Pool address verification failed.")
 
         self.name = f"{self.token0}-{self.token1} (V3, {self.fee / 10000:.2f}%)"
         self._extra_words = extra_words
@@ -249,15 +246,14 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 block_number=self.update_block,
             )
 
-        self.liquidity = w3_contract.functions.liquidity().call(block_identifier=self.update_block)
-
-        self.sqrt_price_x96, self.tick, *_ = w3_contract.functions.slot0().call(
-            block_identifier=self.update_block
+        self.liquidity = self.get_liquidity(w3=w3, block_identifier=self.update_block)
+        self.sqrt_price_x96, self.tick, *_ = self.get_price_and_tick(
+            w3=w3, block_identifier=self.update_block
         )
 
         self._pool_state_archive = {self.update_block: self.state} if archive_states else None
 
-        AllPools(w3.eth.chain_id)[self.address] = self
+        AllPools(chain_id)[self.address] = self
 
         self._subscribers = set()
 
@@ -483,6 +479,66 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
         return amount0, amount1, state.sqrt_price_x96, state.liquidity, state.tick
 
+    def get_tick_bitmap_at_word(
+        self, w3: Web3, word_position: int, block_identifier: BlockIdentifier
+    ) -> int:
+        bitmap_at_word, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            calldata=encode_function_calldata(
+                function_prototype="tickBitmap(int16)",
+                function_arguments=[word_position],
+            ),
+            return_types=["uint256"],
+            block_identifier=block_identifier,
+        )
+        return cast(int, bitmap_at_word)
+
+    def get_populated_ticks_in_word(
+        self,
+        w3: Web3,
+        word_position: int,
+        block_identifier: BlockIdentifier,
+    ) -> list[tuple[int, int, int]]:
+        bitmap_at_word = self.get_tick_bitmap_at_word(
+            w3=w3,
+            word_position=word_position,
+            block_identifier=block_identifier,
+        )
+
+        populated_ticks = []
+        for i in range(256):
+            if bitmap_at_word & (1 << i) > 0:
+                populatedTick = (((word_position) << 8) + (i)) * self.tick_spacing
+                liquidityGross, liquidityNet, *_ = raw_call(
+                    w3=w3,
+                    address=self.address,
+                    calldata=encode_function_calldata(
+                        function_prototype="ticks(int24)",
+                        function_arguments=[populatedTick],
+                    ),
+                    # UNISWAP V3
+                    return_types=[
+                        "uint128",
+                        "int128",
+                        "uint256",
+                        "uint256",
+                        "int56",
+                        "uint160",
+                        "uint32",
+                        "bool",
+                    ],
+                )
+                populated_ticks.append(
+                    (
+                        populatedTick,
+                        liquidityNet,
+                        liquidityGross,
+                    )
+                )
+
+        return populated_ticks
+
     def _fetch_tick_data_at_word(
         self,
         word_position: int,
@@ -493,34 +549,33 @@ class V3LiquidityPool(AbstractLiquidityPool):
         256 ticks, spaced per the tickSpacing interval.
         """
 
-        w3_contract = self.w3_contract
+        w3 = config.get_web3()
 
         if block_number is None:
-            block_number = config.get_web3().eth.get_block_number()
+            block_number = w3.eth.get_block_number()
 
-        try:
-            _tick_bitmap = w3_contract.functions.tickBitmap(word_position).call(
+        _tick_bitmap: int = 0
+        _tick_data: list[tuple[int, int, int]] = []
+        _tick_bitmap = self.get_tick_bitmap_at_word(
+            w3=w3, word_position=word_position, block_identifier=block_number
+        )
+        if _tick_bitmap != 0:
+            _tick_data = self.get_populated_ticks_in_word(
+                w3=w3,
+                word_position=word_position,
                 block_identifier=block_number,
             )
-            if _tick_bitmap != 0:
-                _tick_data = self.ticklens_contract.functions.getPopulatedTicksInWord(
-                    self.address, word_position
-                ).call(block_identifier=block_number)
-        except Exception as e:
-            print(f"{type(e)}: (V3LiquidityPool) (_update_tick_data_at_word) (single tick): {e}")
-            raise
-        else:
-            self.tick_bitmap[word_position] = UniswapV3BitmapAtWord(
-                bitmap=_tick_bitmap,
+
+        self.tick_bitmap[word_position] = UniswapV3BitmapAtWord(
+            bitmap=_tick_bitmap,
+            block=block_number,
+        )
+        for tick, liquidity_net, liquidity_gross in _tick_data:
+            self.tick_data[tick] = UniswapV3LiquidityAtTick(
+                liquidityNet=liquidity_net,
+                liquidityGross=liquidity_gross,
                 block=block_number,
             )
-            if _tick_bitmap != 0:
-                for tick, liquidity_net, liquidity_gross in _tick_data:
-                    self.tick_data[tick] = UniswapV3LiquidityAtTick(
-                        liquidityNet=liquidity_net,
-                        liquidityGross=liquidity_gross,
-                        block=block_number,
-                    )
 
     def _verified_address(self) -> ChecksumAddress:
         return generate_v3_pool_address(
@@ -536,13 +591,14 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
     @liquidity.setter
     def liquidity(self, new_liquidity: int) -> None:
+        current_state = self.state
         self.state = UniswapV3PoolState(
-            pool=self.address,
+            pool=current_state.pool,
             liquidity=new_liquidity,
-            sqrt_price_x96=self.sqrt_price_x96,
-            tick=self.tick,
-            tick_bitmap=self.tick_bitmap,
-            tick_data=self.tick_data,
+            sqrt_price_x96=current_state.sqrt_price_x96,
+            tick=current_state.tick,
+            tick_bitmap=current_state.tick_bitmap,
+            tick_data=current_state.tick_data,
         )
 
     @property
@@ -551,14 +607,25 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
     @sqrt_price_x96.setter
     def sqrt_price_x96(self, new_sqrt_price_x96: int) -> None:
+        current_state = self.state
         self.state = UniswapV3PoolState(
-            pool=self.address,
-            liquidity=self.liquidity,
+            pool=current_state.pool,
+            liquidity=current_state.liquidity,
             sqrt_price_x96=new_sqrt_price_x96,
-            tick=self.tick,
-            tick_bitmap=self.tick_bitmap,
-            tick_data=self.tick_data,
+            tick=current_state.tick,
+            tick_bitmap=current_state.tick_bitmap,
+            tick_data=current_state.tick_data,
         )
+
+    @property
+    @override
+    def state(self) -> UniswapV3PoolState:
+        return self._state
+
+    @state.setter
+    @override
+    def state(self, new_state: UniswapV3PoolState) -> None:
+        self._state = new_state
 
     @property
     def tick(self) -> int:
@@ -566,13 +633,14 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
     @tick.setter
     def tick(self, new_tick: int) -> None:
+        current_state = self.state
         self.state = UniswapV3PoolState(
-            pool=self.address,
-            liquidity=self.liquidity,
-            sqrt_price_x96=self.sqrt_price_x96,
+            pool=current_state.pool,
+            liquidity=current_state.liquidity,
+            sqrt_price_x96=current_state.sqrt_price_x96,
             tick=new_tick,
-            tick_bitmap=self.tick_bitmap,
-            tick_data=self.tick_data,
+            tick_bitmap=current_state.tick_bitmap,
+            tick_data=current_state.tick_data,
         )
 
     @property
@@ -584,13 +652,14 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
     @tick_bitmap.setter
     def tick_bitmap(self, new_tick_bitmap: dict[int, UniswapV3BitmapAtWord]) -> None:
+        current_state = self.state
         self.state = UniswapV3PoolState(
-            pool=self.address,
-            liquidity=self.liquidity,
-            sqrt_price_x96=self.sqrt_price_x96,
-            tick=self.tick,
+            pool=current_state.pool,
+            liquidity=current_state.liquidity,
+            sqrt_price_x96=current_state.sqrt_price_x96,
+            tick=current_state.tick,
             tick_bitmap=new_tick_bitmap,
-            tick_data=self.tick_data,
+            tick_data=current_state.tick_data,
         )
 
     @property
@@ -602,32 +671,19 @@ class V3LiquidityPool(AbstractLiquidityPool):
 
     @tick_data.setter
     def tick_data(self, new_tick_data: dict[int, UniswapV3LiquidityAtTick]) -> None:
+        current_state = self.state
         self.state = UniswapV3PoolState(
-            pool=self.address,
-            liquidity=self.liquidity,
-            sqrt_price_x96=self.sqrt_price_x96,
-            tick=self.tick,
-            tick_bitmap=self.tick_bitmap,
+            pool=current_state.pool,
+            liquidity=current_state.liquidity,
+            sqrt_price_x96=current_state.sqrt_price_x96,
+            tick=current_state.tick,
+            tick_bitmap=current_state.tick_bitmap,
             tick_data=new_tick_data,
         )
 
     @property
     def update_block(self) -> int:
         return self._update_block
-
-    @property
-    def w3_contract(self) -> Contract:
-        return config.get_web3().eth.contract(
-            address=self.address,
-            abi=self.abi,
-        )
-
-    @property
-    def ticklens_contract(self) -> Contract:
-        return config.get_web3().eth.contract(
-            address=self.ticklens_address,
-            abi=self.ticklens_abi,
-        )
 
     def auto_update(
         self,
@@ -647,17 +703,15 @@ class V3LiquidityPool(AbstractLiquidityPool):
         """
 
         with self._state_lock:
-            w3_contract = self.w3_contract
             updated = False
 
-            block_number = (
-                config.get_web3().eth.get_block_number() if block_number is None else block_number
-            )
+            w3 = config.get_web3()
+            block_number = w3.eth.get_block_number() if block_number is None else block_number
 
-            _sqrt_price_x96, _tick, *_ = w3_contract.functions.slot0().call(
-                block_identifier=block_number
+            _sqrt_price_x96, _tick, *_ = self.get_price_and_tick(
+                w3=w3, block_identifier=block_number
             )
-            _liquidity = w3_contract.functions.liquidity().call(block_identifier=block_number)
+            _liquidity = self.get_liquidity(w3=w3, block_identifier=block_number)
 
             if self.sqrt_price_x96 != _sqrt_price_x96:
                 updated = True
@@ -970,6 +1024,68 @@ class V3LiquidityPool(AbstractLiquidityPool):
         else:  # pragma: no cover
             raise ValueError(f"Unknown token {token}")
 
+    def get_fee(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> int:
+        result, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            calldata=encode_function_calldata(
+                function_prototype="fee()",
+                function_arguments=None,
+            ),
+            return_types=["uint256"],
+            block_identifier=get_number_for_block_identifier(block_identifier),
+        )
+        return cast(int, result)
+
+    def get_price_and_tick(
+        self, w3: Web3, block_identifier: BlockIdentifier | None = None
+    ) -> tuple[int, int]:
+        price, tick, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            calldata=encode_function_calldata(
+                function_prototype="slot0()",
+                function_arguments=None,
+            ),
+            return_types=[
+                "uint160",
+                "int24",
+                "uint16",
+                "uint16",
+                "uint16",
+                "uint8",
+                "bool",
+            ],
+            block_identifier=get_number_for_block_identifier(block_identifier),
+        )
+        return price, tick
+
+    def get_tick_spacing(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> int:
+        result, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            calldata=encode_function_calldata(
+                function_prototype="tickSpacing()",
+                function_arguments=None,
+            ),
+            return_types=["uint256"],
+            block_identifier=get_number_for_block_identifier(block_identifier),
+        )
+        return cast(int, result)
+
+    def get_liquidity(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> int:
+        result, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            calldata=encode_function_calldata(
+                function_prototype="liquidity()",
+                function_arguments=None,
+            ),
+            return_types=["uint256"],
+            block_identifier=get_number_for_block_identifier(block_identifier),
+        )
+        return cast(int, result)
+
     def get_nominal_price(
         self,
         token: Erc20Token,
@@ -1067,10 +1183,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             for known_block in known_blocks[block_index:]:
                 del self._pool_state_archive[known_block]
 
-            restored_block, restored_state = list(self._pool_state_archive.items())[-1]
-
-            self.state = restored_state
-            self._update_block = restored_block
+            self._update_block, self.state = list(self._pool_state_archive.items())[-1]
 
         self._notify_subscribers(
             message=UniswapV3PoolStateUpdated(self.state),
@@ -1179,3 +1292,117 @@ class V3LiquidityPool(AbstractLiquidityPool):
                     tick=end_tick,
                 ),
             )
+
+
+class PancakeV3Pool(V3LiquidityPool):
+    def get_price_and_tick(
+        self, w3: Web3, block_identifier: BlockIdentifier | None = None
+    ) -> tuple[int, int]:
+        price, tick, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            calldata=encode_function_calldata(
+                function_prototype="slot0()",
+                function_arguments=None,
+            ),
+            return_types=[
+                "uint160",
+                "int24",
+                "uint16",
+                "uint16",
+                "uint16",
+                "uint32",
+                "bool",
+            ],
+            block_identifier=get_number_for_block_identifier(block_identifier),
+        )
+        return price, tick
+
+
+class AerodromeV3Pool(V3LiquidityPool):
+    def get_price_and_tick(
+        self, w3: Web3, block_identifier: BlockIdentifier | None = None
+    ) -> tuple[int, int]:
+        price, tick, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            calldata=encode_function_calldata(
+                function_prototype="slot0()",
+                function_arguments=None,
+            ),
+            return_types=[
+                "uint160",
+                "int24",
+                "uint16",
+                "uint16",
+                "uint16",
+                "bool",
+            ],
+            block_identifier=get_number_for_block_identifier(block_identifier),
+        )
+        return price, tick
+
+    def _verified_address(self) -> ChecksumAddress:
+        # The implementation address is hard-coded into the contract
+        implementation_address = to_checksum_address(
+            config.get_web3().eth.get_code(self.address)[10:30]
+        )
+
+        return generate_aerodrome_v3_pool_address(
+            deployer_address=self.deployer_address,
+            token_addresses=(self.token0.address, self.token1.address),
+            implementation_address=to_checksum_address(implementation_address),
+            tick_spacing=self.tick_spacing,
+        )
+
+    def get_populated_ticks_in_word(
+        self,
+        w3: Web3,
+        word_position: int,
+        block_identifier: BlockIdentifier,
+    ) -> list[tuple[int, int, int]]:
+        bitmap, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            calldata=encode_function_calldata(
+                function_prototype="tickBitmap(int16)",
+                function_arguments=[word_position],
+            ),
+            return_types=["uint256"],
+            block_identifier=block_identifier,
+        )
+
+        populated_ticks = []
+        for i in range(256):
+            if bitmap & (1 << i) > 0:
+                populatedTick = (((word_position) << 8) + (i)) * self.tick_spacing
+                liquidityGross, liquidityNet, *_ = raw_call(
+                    w3=w3,
+                    address=self.address,
+                    calldata=encode_function_calldata(
+                        function_prototype="ticks(int24)",
+                        function_arguments=[populatedTick],
+                    ),
+                    # AERODROME V3
+                    return_types=[
+                        "uint128",
+                        "int128",
+                        "int128",
+                        "uint256",
+                        "uint256",
+                        "uint256",
+                        "int56",
+                        "uint160",
+                        "uint32",
+                        "bool",
+                    ],
+                )
+                populated_ticks.append(
+                    (
+                        populatedTick,
+                        liquidityNet,
+                        liquidityGross,
+                    )
+                )
+
+        return populated_ticks
