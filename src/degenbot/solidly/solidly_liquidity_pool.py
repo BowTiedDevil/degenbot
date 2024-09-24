@@ -213,7 +213,7 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
             ),
             return_types=["address"],
         )
-        return factory_address
+        return cast(str, factory_address)
 
     def get_fee(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> int:
         result, *_ = raw_call(
@@ -241,9 +241,10 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
             ),
             return_types=["uint256", "uint256"],
         )
-        return reserves_token0, reserves_token1
 
-    def get_stable(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> str:
+        return cast(int, reserves_token0), cast(int, reserves_token1)
+
+    def get_stable(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> bool:
         stable, *_ = raw_call(
             w3=w3,
             address=self.address,
@@ -254,9 +255,9 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
             ),
             return_types=["bool"],
         )
-        return stable
+        return cast(bool, stable)
 
-    def get_token0(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> int:
+    def get_token0(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> str:
         result, *_ = raw_call(
             w3=w3,
             address=self.address,
@@ -267,9 +268,9 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
             return_types=["address"],
             block_identifier=get_number_for_block_identifier(block_identifier),
         )
-        return result
+        return cast(str, result)
 
-    def get_token1(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> int:
+    def get_token1(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> str:
         result, *_ = raw_call(
             w3=w3,
             address=self.address,
@@ -280,4 +281,4 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
             return_types=["address"],
             block_identifier=get_number_for_block_identifier(block_identifier),
         )
-        return result
+        return cast(str, result)
