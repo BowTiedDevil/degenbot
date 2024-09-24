@@ -458,21 +458,11 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         best_profit = -int(opt.fun)
         swap_amount = int(opt.x)
 
-        try:
-            best_amounts = self._build_swap_amounts(
-                token_in_quantity=swap_amount,
-                state_overrides=state_overrides,
-                block_number=block_number,
-            )
-        # except (EVMRevertError, LiquidityPoolError) as e:
-        except ArbitrageError as e:
-            # Simulated EVM reverts inside the ported `swap` function were
-            # ignored to execute the optimizer to completion. Now the optimal
-            # value should be tested and raise an exception if it would
-            # generate a bad payload that will revert
-            raise ArbitrageError(f"No possible arbitrage: {e}") from None
-        except Exception as e:
-            raise ArbitrageError(f"No possible arbitrage: {e}") from e
+        best_amounts = self._build_swap_amounts(
+            token_in_quantity=swap_amount,
+            state_overrides=state_overrides,
+            block_number=block_number,
+        )
 
         return ArbitrageCalculationResult(
             id=self.id,
@@ -619,18 +609,24 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         ):
             try:
                 next_pool = self.swap_pools[i + 1]
-                # V2 pools require a pre-swap transfer, so the contract does not have to perform
-                # intermediate custody and the swap can send the tokens directly to the next pool
-                if isinstance(next_pool, LiquidityPool):
-                    swap_destination_address = next_pool.address
-                # V3 pools cannot accept a pre-swap transfer, so the contract must maintain custody
-                # prior to a swap
-                elif isinstance(next_pool, V3LiquidityPool | CurveStableswapPool):
-                    swap_destination_address = from_address
             except IndexError:
-                # Set the destination address for the last swap to the sending address
                 next_pool = None
-                swap_destination_address = from_address
+
+            match next_pool:
+                case LiquidityPool():
+                    # V2 pools require a pre-swap transfer, so the contract does not have to
+                    # perform intermediate custody and the swap can send the tokens directly to the
+                    # next pool
+                    swap_destination_address = next_pool.address
+                case V3LiquidityPool() | CurveStableswapPool():
+                    # V3 and Curve pools do not accept a pre-swap transfer, so the contract must
+                    # maintain custody prior to a swap
+                    swap_destination_address = from_address
+                case None:
+                    # Set the destination address for the last swap to the sending address
+                    swap_destination_address = from_address
+                case _:
+                    raise ValueError(f"Unknown pool type {next_pool}")
 
             match i, swap_pool, _swap_amounts:
                 case 0, LiquidityPool() as first_pool, _:
