@@ -87,6 +87,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self.precision_multipliers: list[int]
         self.rate_multipliers: list[int]
         self.use_lending: list[bool]
+        self.oracle_method: int | None
 
         def _get_coin_index_type() -> str:
             # Identify the coins input format (int128 or uint256)
@@ -2082,6 +2083,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         rates = self.rate_multipliers
         oracle = self.oracle_method
+        if TYPE_CHECKING:
+            assert oracle is not None
 
         if oracle != 0:
             oracle_rate, *_ = eth_abi.abi.decode(
