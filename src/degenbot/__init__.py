@@ -21,7 +21,7 @@ from .uniswap.v2_types import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
-from .uniswap.v3_liquidity_pool import V3LiquidityPool
+from .uniswap.v3_liquidity_pool import AerodromeV3Pool, PancakeV3Pool, V3LiquidityPool
 from .uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from .uniswap.v3_types import (
     UniswapV3PoolExternalUpdate,
@@ -42,6 +42,7 @@ __all__ = (
     "solidly",
     "uniswap",
     "AerodromeV2LiquidityPool",
+    "AerodromeV3Pool",
     "AllPools",
     "AllTokens",
     "AnvilFork",
@@ -53,6 +54,7 @@ __all__ = (
     "Erc20Token",
     "Erc20TokenHelperManager",
     "LiquidityPool",
+    "PancakeV3Pool",
     "UniswapCurveCycle",
     "UniswapLpCycle",
     "UniswapTransaction",
