@@ -2,9 +2,11 @@ import contextlib
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Literal
 
-from eth_typing import ChecksumAddress
+from eth_typing import BlockIdentifier, ChecksumAddress
 from eth_utils.address import to_checksum_address
-from web3.contract.contract import Contract
+from web3 import Web3
+
+from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 
 from .. import config
 from ..constants import ZERO_ADDRESS
@@ -15,7 +17,6 @@ from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
 from ..types import AbstractManager
-from .abi import UNISWAP_V2_FACTORY_ABI
 from .v2_liquidity_pool import LiquidityPool
 from .v3_functions import generate_v3_pool_address
 from .v3_liquidity_pool import V3LiquidityPool
@@ -145,17 +146,29 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
     def __repr__(self) -> str:  # pragma: no cover
         return f"UniswapV2LiquidityPoolManager(factory={self._factory_address})"
 
-    @property
-    def w3_contract(self) -> Contract:
-        return config.get_web3().eth.contract(
-            address=self._factory_address,
-            abi=UNISWAP_V2_FACTORY_ABI,
-        )
-
     def _add_pool(self, pool_helper: LiquidityPool) -> None:
         with self._lock:
             self._tracked_pools[pool_helper.address] = pool_helper
         assert pool_helper.address in self._tracked_pools
+
+    def get_pair_from_factory(
+        self,
+        w3: Web3,
+        token0: ChecksumAddress,
+        token1: ChecksumAddress,
+        block_identifier: BlockIdentifier | None = None,
+    ) -> str:
+        pool_address, *_ = raw_call(
+            w3=w3,
+            address=self._factory_address,
+            calldata=encode_function_calldata(
+                function_prototype="getPair(address,address)",
+                function_arguments=[token0, token1],
+            ),
+            return_types=["address"],
+            block_identifier=get_number_for_block_identifier(block_identifier),
+        )
+        return pool_address
 
     def get_pool(
         self,
@@ -188,7 +201,12 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 raise ManagerError("Could not get both Erc20Token helpers") from None
 
             pool_address = to_checksum_address(
-                self.w3_contract.functions.getPair(*checksummed_token_addresses).call()
+                self.get_pair_from_factory(
+                    w3=config.get_web3(),
+                    token0=checksummed_token_addresses[0],
+                    token1=checksummed_token_addresses[1],
+                    block_identifier=None,
+                )
             )
             if pool_address == ZERO_ADDRESS:
                 raise ManagerError("No V2 LP available")

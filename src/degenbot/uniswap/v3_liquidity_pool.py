@@ -1,5 +1,4 @@
 # TODO: add event prototype exporter method and handler for callbacks
-# TODO: add housekeeping to remove any words where a bitmap == 0
 
 import dataclasses
 from bisect import bisect_left
@@ -9,7 +8,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from eth_utils.crypto import keccak
 from typing_extensions import override
 from web3 import Web3
 from web3.types import BlockIdentifier
@@ -31,7 +29,6 @@ from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
 from ..types import AbstractLiquidityPool
-from .abi import UNISWAP_V3_POOL_ABI
 from .v3_functions import (
     exchange_rate_from_sqrt_price_x96,
     generate_aerodrome_v3_pool_address,
@@ -84,11 +81,9 @@ class V3LiquidityPool(AbstractLiquidityPool):
         fee: int | None = None,
         tick_spacing: int | None = None,
         tokens: list[Erc20Token] | None = None,
-        abi: list[Any] | None = None,
         factory_address: str | None = None,
         deployer_address: str | None = None,
         init_hash: str | None = None,
-        extra_words: int = 10,
         silent: bool = False,
         tick_data: dict[int, dict[str, Any] | UniswapV3LiquidityAtTick] | None = None,
         tick_bitmap: dict[int, dict[str, Any] | UniswapV3BitmapAtWord] | None = None,
@@ -118,7 +113,10 @@ class V3LiquidityPool(AbstractLiquidityPool):
                 w3=w3,
                 block_identifier=self._update_block,
                 address=self.address,
-                calldata=keccak(text="factory()")[:4],
+                calldata=encode_function_calldata(
+                    function_prototype="factory()",
+                    function_arguments=None,
+                ),
                 return_types=["address"],
             )
             self.factory = to_checksum_address(factory_address)
@@ -133,13 +131,11 @@ class V3LiquidityPool(AbstractLiquidityPool):
             # Use degenbot deployment values if available
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][self.factory]
             self.init_hash = factory_deployment.pool_init_hash
-            self.abi = factory_deployment.pool_abi
             if factory_deployment.deployer is not None:
                 self.deployer_address = factory_deployment.deployer
         except KeyError:
             # Deployment is unknown. Uses any inputs provided, otherwise use default values from
             # original Uniswap contracts
-            self.abi = abi if abi is not None else UNISWAP_V3_POOL_ABI
             self.init_hash = (
                 init_hash if init_hash is not None else UNISWAP_V3_MAINNET_POOL_INIT_HASH
             )
@@ -189,7 +185,6 @@ class V3LiquidityPool(AbstractLiquidityPool):
             raise ValueError("Pool address verification failed.")
 
         self.name = f"{self.token0}-{self.token1} (V3, {self.fee / 10000:.2f}%)"
-        self._extra_words = extra_words
 
         if (tick_bitmap is not None) != (tick_data is not None):
             raise ValueError("Provide both tick_bitmap and tick_data.")
@@ -280,7 +275,6 @@ class V3LiquidityPool(AbstractLiquidityPool):
         for key in [
             "factory_address",
             "deployer_address",
-            "abi",
             "init_hash",
         ]:  # pragma: no cover
             if key in kwargs:
@@ -293,7 +287,6 @@ class V3LiquidityPool(AbstractLiquidityPool):
             address=address,
             factory_address=exchange.factory.address,
             deployer_address=exchange.factory.deployer,
-            abi=exchange.factory.pool_abi,
             init_hash=exchange.factory.pool_init_hash,
             **kwargs,
         )

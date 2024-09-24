@@ -6,12 +6,12 @@ from typing import Any, Literal
 
 from eth_typing import BlockIdentifier, ChecksumAddress
 from eth_utils.address import to_checksum_address
-from eth_utils.crypto import keccak
 from typing_extensions import override
+from web3 import Web3
 
 from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.exchanges.uniswap.types import UniswapV2ExchangeDeployment
-from degenbot.functions import get_number_for_block_identifier, raw_call
+from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 
 from .. import config
 from ..erc20_token import Erc20Token
@@ -26,7 +26,6 @@ from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
 from ..solidly.solidly_functions import _get_y_camelot, _k_camelot
 from ..types import AbstractLiquidityPool
-from .abi import CAMELOT_POOL_ABI, UNISWAP_V2_POOL_ABI
 from .v2_functions import (
     constant_product_calc_exact_in,
     constant_product_calc_exact_out,
@@ -67,7 +66,6 @@ class LiquidityPool(AbstractLiquidityPool):
             address=address,
             factory_address=exchange.factory.address,
             deployer_address=exchange.factory.deployer,
-            abi=exchange.factory.pool_abi,
             init_hash=exchange.factory.pool_init_hash,
             **kwargs,
         )
@@ -78,7 +76,6 @@ class LiquidityPool(AbstractLiquidityPool):
         tokens: list[Erc20Token] | None = None,
         name: str | None = None,
         update_method: Literal["polling", "external"] = "polling",
-        abi: list[Any] | None = None,
         factory_address: str | None = None,
         deployer_address: str | None = None,
         init_hash: str | None = None,
@@ -103,8 +100,6 @@ class LiquidityPool(AbstractLiquidityPool):
             A string that sets the method used to fetch updates to the pool. Can be "polling",
             which fetches updates from the chain object using the contract object, or "external"
             which relies on updates being provided from outside the object.
-        abi : list, optional
-            Contract ABI.
         factory_address : str, optional
             The address for the factory contract.
         deployer_address : str, optional
@@ -149,7 +144,10 @@ class LiquidityPool(AbstractLiquidityPool):
                 w3=w3,
                 block_identifier=self._update_block,
                 address=self.address,
-                calldata=keccak(text="factory()")[:4],
+                calldata=encode_function_calldata(
+                    function_prototype="factory()",
+                    function_arguments=None,
+                ),
                 return_types=["address"],
             )
             self.factory = to_checksum_address(factory_address)
@@ -164,13 +162,11 @@ class LiquidityPool(AbstractLiquidityPool):
             # Use degenbot deployment values if available
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][self.factory]
             self.init_hash = factory_deployment.pool_init_hash
-            self.abi = factory_deployment.pool_abi
             if factory_deployment.deployer is not None:
                 self.deployer_address = factory_deployment.deployer
         except KeyError:
             # Deployment is unknown. Uses any inputs provided, otherwise use default values from
             # original Uniswap contracts
-            self.abi = abi if abi is not None else UNISWAP_V2_POOL_ABI
             self.init_hash = (
                 init_hash if init_hash is not None else UNISWAP_V2_MAINNET_POOL_INIT_HASH
             )
@@ -189,14 +185,20 @@ class LiquidityPool(AbstractLiquidityPool):
                 w3=w3,
                 block_identifier=self._update_block,
                 address=self.address,
-                calldata=keccak(text="token0()")[:4],
+                calldata=encode_function_calldata(
+                    function_prototype="token0()",
+                    function_arguments=None,
+                ),
                 return_types=["address"],
             )
             token1_address, *_ = raw_call(
                 w3=w3,
                 block_identifier=self._update_block,
                 address=self.address,
-                calldata=keccak(text="token1()")[:4],
+                calldata=encode_function_calldata(
+                    function_prototype="token1()",
+                    function_arguments=None,
+                ),
                 return_types=["address"],
             )
 
@@ -227,7 +229,9 @@ class LiquidityPool(AbstractLiquidityPool):
             )
             self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
 
-        self.reserves_token0, self.reserves_token1 = self.get_reserves()
+        self.reserves_token0, self.reserves_token1 = self.get_reserves(
+            w3=w3, block_identifier=self._update_block
+        )
 
         self._pool_state_archive = {self.update_block: self.state} if archive_states else None
 
@@ -544,13 +548,18 @@ class LiquidityPool(AbstractLiquidityPool):
         else:  # pragma: no cover
             raise ValueError(f"Unknown token {token}")
 
-    def get_reserves(self, block_identifier: BlockIdentifier | None = None) -> tuple[int, int]:
+    def get_reserves(
+        self, w3: Web3, block_identifier: BlockIdentifier | None = None
+    ) -> tuple[int, int]:
         reserves_token0, reserves_token1, *_ = raw_call(
-            w3=config.get_web3(),
-            block_identifier=get_number_for_block_identifier(block_identifier),
+            w3=w3,
             address=self.address,
-            calldata=keccak(text="getReserves()")[:4],
+            calldata=encode_function_calldata(
+                function_prototype="getReserves()",
+                function_arguments=None,
+            ),
             return_types=["uint256", "uint256"],
+            block_identifier=get_number_for_block_identifier(block_identifier),
         )
         return reserves_token0, reserves_token1
 
@@ -758,8 +767,9 @@ class LiquidityPool(AbstractLiquidityPool):
 
         update_method = override_update_method or self._update_method
 
+        w3 = config.get_web3()
         if update_block is None:
-            update_block = config.get_web3().eth.get_block_number()
+            update_block = w3.eth.get_block_number()
 
         # Discard stale updates, but allow updating the same pool multiple times per block
         # (necessary if sending sync events individually)
@@ -773,7 +783,7 @@ class LiquidityPool(AbstractLiquidityPool):
         state_updated = False
         if update_method == "polling":
             try:
-                reserves0, reserves1 = self.get_reserves(block_identifier=self._update_block)
+                reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=self._update_block)
                 if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
                     self.reserves_token0 = reserves0
                     self.reserves_token1 = reserves1
@@ -834,7 +844,6 @@ class CamelotLiquidityPool(LiquidityPool):
         tokens: list[Erc20Token] | None = None,
         name: str | None = None,
         update_method: Literal["polling", "external"] = "polling",
-        abi: list[Any] | None = None,
         silent: bool = False,
     ) -> None:
         address = to_checksum_address(address)
@@ -848,7 +857,10 @@ class CamelotLiquidityPool(LiquidityPool):
             w3=w3,
             block_identifier=get_number_for_block_identifier(state_block),
             address=address,
-            calldata=keccak(text="getReserves()")[:4],
+            calldata=encode_function_calldata(
+                function_prototype="getReserves()",
+                function_arguments=None,
+            ),
             return_types=["uint256", "uint256", "uint256", "uint256"],
         )
 
@@ -857,7 +869,10 @@ class CamelotLiquidityPool(LiquidityPool):
             w3=w3,
             block_identifier=get_number_for_block_identifier(state_block),
             address=address,
-            calldata=keccak(text="FEE_DENOMINATOR()")[:4],
+            calldata=encode_function_calldata(
+                function_prototype="FEE_DENOMINATOR()",
+                function_arguments=None,
+            ),
             return_types=["uint256"],
         )
 
@@ -866,7 +881,6 @@ class CamelotLiquidityPool(LiquidityPool):
             tokens=tokens,
             name=name,
             update_method=update_method,
-            abi=abi or CAMELOT_POOL_ABI,
             init_hash=CAMELOT_ARBITRUM_POOL_INIT_HASH,
             fee=(
                 Fraction(fee_token0, self.fee_denominator),
@@ -881,7 +895,10 @@ class CamelotLiquidityPool(LiquidityPool):
             w3=w3,
             block_identifier=get_number_for_block_identifier(state_block),
             address=address,
-            calldata=keccak(text="stableSwap()")[:4],
+            calldata=encode_function_calldata(
+                function_prototype="stableSwap()",
+                function_arguments=None,
+            ),
             return_types=["bool"],
         )
 
@@ -981,12 +998,11 @@ class UnregisteredLiquidityPool(LiquidityPool):
         self,
         address: ChecksumAddress | str,
         tokens: list[Erc20Token],
-        abi: list[Any] | None = None,
         fee: Fraction | Iterable[Fraction] = Fraction(3, 1000),
     ) -> None:
-        self._state_lock = Lock()
-        self.abi = abi if abi is not None else UNISWAP_V2_POOL_ABI
         self.address = to_checksum_address(address)
+        self._state_lock = Lock()
+        self.state = UniswapV2PoolState(pool=self.address, reserves_token0=0, reserves_token1=0)
         self.token0 = min(tokens)
         self.token1 = max(tokens)
         self.tokens = (self.token0, self.token1)

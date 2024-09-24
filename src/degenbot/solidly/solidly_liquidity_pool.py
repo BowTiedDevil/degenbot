@@ -1,13 +1,13 @@
-from collections.abc import Iterable
 from fractions import Fraction
 from threading import Lock
-from typing import Any, Literal
+from typing import Literal, cast
 
-from eth_typing import ChecksumAddress
+from eth_typing import BlockIdentifier, ChecksumAddress
 from eth_utils.address import to_checksum_address
-from eth_utils.crypto import keccak
 from typing_extensions import override
-from web3.contract.contract import Contract
+from web3 import Web3
+
+from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 
 from .. import config
 from ..erc20_token import Erc20Token
@@ -23,7 +23,6 @@ from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
 from ..types import AbstractLiquidityPool
-from .abi import AERODROME_V2_FACTORY_ABI, AERODROME_V2_POOL_ABI
 from .solidly_functions import (
     generate_aerodrome_v2_pool_address,
     solidly_calc_exact_in_stable,
@@ -35,13 +34,14 @@ from .types import (
     AerodromeV2PoolStateUpdated,
 )
 
+FEE_DENOMINATOR = 10_000
+
 
 class AerodromeV2LiquidityPool(AbstractLiquidityPool):
     def __init__(
         self,
         address: ChecksumAddress | str,
         tokens: list[Erc20Token] | None = None,
-        abi: list[Any] | None = None,
         factory_address: str | None = None,
         deployer_address: str | None = None,
         fee: Fraction | None = None,
@@ -49,59 +49,62 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
         archive_states: bool = True,
         verify_address: bool = True,
     ) -> None:
-        def _get_fee() -> Fraction:
-            factory_contract = w3.eth.contract(address=self.factory, abi=AERODROME_V2_FACTORY_ABI)
-            pool_fee = factory_contract.functions.getFee(self.address, self.stable).call()
-            return Fraction(pool_fee, 10_000)
-
-        def _get_tokens() -> tuple[Erc20Token, Erc20Token]:
-            _token_manager = Erc20TokenHelperManager(chain_id)
-            token0 = _token_manager.get_erc20token(
-                address=w3_contract.functions.token0().call(),
-                silent=silent,
-            )
-            token1 = _token_manager.get_erc20token(
-                address=w3_contract.functions.token1().call(),
-                silent=silent,
-            )
-            return token0, token1
-
         self.address = to_checksum_address(address)
-        self.abi = abi if abi is not None else AERODROME_V2_POOL_ABI
 
         w3 = config.get_web3()
         self.update_block = w3.eth.block_number
         chain_id = w3.eth.chain_id
-        w3_contract = self.w3_contract
+
+        self._state_lock = Lock()
+        self.state = AerodromeV2PoolState(
+            pool=self.address,
+            reserves_token0=0,
+            reserves_token1=0,
+        )
 
         self.factory = (
             to_checksum_address(factory_address)
             if factory_address is not None
-            else w3_contract.functions.factory().call()
+            else to_checksum_address(self.get_factory(w3=w3, block_identifier=self.update_block))
         )
         self.deployer_address = (
             to_checksum_address(deployer_address) if deployer_address is not None else self.factory
         )
-        self.stable = w3_contract.functions.stable().call()
+        self.stable: bool = self.get_stable(w3=w3, block_identifier=self.update_block)
+        self.fee = (
+            fee
+            if fee is not None
+            else Fraction(
+                self.get_fee(w3=w3, block_identifier=self.update_block),
+                FEE_DENOMINATOR,
+            )
+        )
 
-        self.fee = fee if fee is not None else _get_fee()
-        self.token0, self.token1 = sorted(tokens) if tokens is not None else _get_tokens()
+        self.token0, self.token1 = (
+            sorted(tokens)
+            if tokens is not None
+            else (
+                (token_manager := Erc20TokenHelperManager(chain_id)).get_erc20token(
+                    address=self.get_token0(w3=w3, block_identifier=self.update_block),
+                    silent=silent,
+                ),
+                token_manager.get_erc20token(
+                    address=self.get_token1(w3=w3, block_identifier=self.update_block),
+                    silent=silent,
+                ),
+            )
+        )
         self.tokens = (self.token0, self.token1)
 
         if verify_address and self.address != self._verified_address():  # pragma: no branch
             raise ValueError("Pool address verification failed.")
 
         self.name = f"{self.token0}-{self.token1} (AerodromeV2, {100*self.fee.numerator/self.fee.denominator:.2f}%)"  # noqa:E501
+        self.reserves_token0, self.reserves_token1 = self.get_reserves(
+            w3=w3, block_identifier=self.update_block
+        )
 
-        self.reserves_token0, self.reserves_token1, *_ = (
-            self.w3_contract.functions.getReserves().call(block_identifier=self.update_block)
-        )
-        self._state = AerodromeV2PoolState(
-            pool=self.address,
-            reserves_token0=self.reserves_token0,
-            reserves_token1=self.reserves_token1,
-        )
-        self._pool_state_archive = {self.update_block: self._state} if archive_states else None
+        self._pool_state_archive = {self.update_block: self.state} if archive_states else None
 
         AllPools(chain_id)[self.address] = self
 
@@ -126,8 +129,40 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
         )
 
     @property
-    def w3_contract(self) -> Contract:
-        return config.get_web3().eth.contract(address=self.address, abi=self.abi)
+    def reserves_token0(self) -> int:
+        return self.state.reserves_token0
+
+    @reserves_token0.setter
+    def reserves_token0(self, new_reserves: int) -> None:
+        current_state = self.state
+        self.state = AerodromeV2PoolState(
+            pool=current_state.pool,
+            reserves_token0=new_reserves,
+            reserves_token1=current_state.reserves_token1,
+        )
+
+    @property
+    def reserves_token1(self) -> int:
+        return self.state.reserves_token1
+
+    @reserves_token1.setter
+    def reserves_token1(self, new_reserves: int) -> None:
+        current_state = self.state
+        self.state = AerodromeV2PoolState(
+            pool=current_state.pool,
+            reserves_token0=current_state.reserves_token0,
+            reserves_token1=new_reserves,
+        )
+
+    @property
+    @override
+    def state(self) -> AerodromeV2PoolState:
+        return self._state
+
+    @state.setter
+    @override
+    def state(self, new_state: AerodromeV2PoolState) -> None:
+        self._state = new_state
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -175,3 +210,83 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
                 reserves1=reserves_1,
                 fee=self.fee,
             )
+
+    def get_factory(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> str:
+        factory_address, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            block_identifier=get_number_for_block_identifier(block_identifier),
+            calldata=encode_function_calldata(
+                function_prototype="factory()",
+                function_arguments=None,
+            ),
+            return_types=["address"],
+        )
+        return factory_address
+
+    def get_fee(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> int:
+        result, *_ = raw_call(
+            w3=w3,
+            address=self.factory,
+            calldata=encode_function_calldata(
+                function_prototype="getFee(address,bool)",
+                function_arguments=[self.address, self.stable],
+            ),
+            return_types=["uint256"],
+            block_identifier=get_number_for_block_identifier(block_identifier),
+        )
+        return cast(int, result)
+
+    def get_reserves(
+        self, w3: Web3, block_identifier: BlockIdentifier | None = None
+    ) -> tuple[int, int]:
+        reserves_token0, reserves_token1, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            block_identifier=get_number_for_block_identifier(block_identifier),
+            calldata=encode_function_calldata(
+                function_prototype="getReserves()",
+                function_arguments=None,
+            ),
+            return_types=["uint256", "uint256"],
+        )
+        return reserves_token0, reserves_token1
+
+    def get_stable(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> str:
+        stable, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            block_identifier=get_number_for_block_identifier(block_identifier),
+            calldata=encode_function_calldata(
+                function_prototype="stable()",
+                function_arguments=None,
+            ),
+            return_types=["bool"],
+        )
+        return stable
+
+    def get_token0(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> int:
+        result, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            calldata=encode_function_calldata(
+                function_prototype="token0()",
+                function_arguments=None,
+            ),
+            return_types=["address"],
+            block_identifier=get_number_for_block_identifier(block_identifier),
+        )
+        return result
+
+    def get_token1(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> int:
+        result, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            calldata=encode_function_calldata(
+                function_prototype="token1()",
+                function_arguments=None,
+            ),
+            return_types=["address"],
+            block_identifier=get_number_for_block_identifier(block_identifier),
+        )
+        return result
