@@ -5,8 +5,8 @@ import eth_account.messages
 from eth_account.datastructures import SignedMessage
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
+from eth_utils.conversions import to_hex
 from eth_utils.crypto import keccak
-from eth_utils.curried import to_hex
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.types import BlockIdentifier
