@@ -155,10 +155,10 @@ async def test_eth_call_bundle(
     }
     signed_tx_1 = fork_mainnet.w3.eth.account.sign_transaction(
         transaction_1, SIGNER_KEY
-    ).rawTransaction
+    ).raw_transaction
     signed_tx_2 = fork_mainnet.w3.eth.account.sign_transaction(
         transaction_2, SIGNER_KEY
-    ).rawTransaction
+    ).raw_transaction
 
     response = await flashbots.call_eth_bundle(
         bundle=[signed_tx_1, signed_tx_2],
@@ -222,10 +222,10 @@ async def test_eth_send_bundle(
     }
     signed_tx_1 = fork_mainnet.w3.eth.account.sign_transaction(
         transaction_1, SIGNER_KEY
-    ).rawTransaction
+    ).raw_transaction
     signed_tx_2 = fork_mainnet.w3.eth.account.sign_transaction(
         transaction_2, SIGNER_KEY
-    ).rawTransaction
+    ).raw_transaction
 
     response = await flashbots.send_eth_bundle(
         bundle=[signed_tx_1, signed_tx_2],
