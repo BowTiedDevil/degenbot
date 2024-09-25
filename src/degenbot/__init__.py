@@ -12,6 +12,7 @@ from .logging import logger
 from .manager.token_manager import Erc20TokenHelperManager
 from .registry.all_pools import AllPools
 from .registry.all_tokens import AllTokens
+from .solidly.managers import SolidlyV2LiquidityPoolManager
 from .solidly.solidly_liquidity_pool import AerodromeV2LiquidityPool
 from .transaction.uniswap_transaction import UniswapTransaction
 from .uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
@@ -55,13 +56,14 @@ __all__ = (
     "Erc20TokenHelperManager",
     "LiquidityPool",
     "PancakeV3Pool",
+    "SolidlyV2LiquidityPoolManager",
     "UniswapCurveCycle",
     "UniswapLpCycle",
     "UniswapTransaction",
     "UniswapV2LiquidityPoolManager",
-    "UniswapV2PoolState",
     "UniswapV2PoolExternalUpdate",
     "UniswapV2PoolSimulationResult",
+    "UniswapV2PoolState",
     "UniswapV3LiquidityPoolManager",
     "UniswapV3LiquiditySnapshot",
     "UniswapV3PoolExternalUpdate",
