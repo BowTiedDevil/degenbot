@@ -123,8 +123,8 @@ class UniswapV3LiquiditySnapshot:
                 _, event_filter_params = construct_event_filter_params(
                     event_abi=event_abi,
                     abi_codec=w3.codec,
-                    fromBlock=start_block,
-                    toBlock=end_block,
+                    from_block=start_block,
+                    to_block=end_block,
                 )
 
                 event_logs = w3.eth.get_logs(event_filter_params)
