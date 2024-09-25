@@ -781,27 +781,24 @@ class UniswapV2Pool(AbstractLiquidityPool):
 
         state_updated = False
         if update_method == "polling":
-            try:
-                reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=self._update_block)
-                if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
-                    self.reserves_token0 = reserves0
-                    self.reserves_token1 = reserves1
+            reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=self._update_block)
+            if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
+                self.reserves_token0 = reserves0
+                self.reserves_token1 = reserves1
 
-                    if self._pool_state_archive is not None:  # pragma: no cover
-                        self._pool_state_archive[update_block] = self.state
+                if self._pool_state_archive is not None:  # pragma: no cover
+                    self._pool_state_archive[update_block] = self.state
 
-                    self._notify_subscribers(
-                        message=UniswapV2PoolStateUpdated(self.state),
-                    )
-                    state_updated = True
+                self._notify_subscribers(
+                    message=UniswapV2PoolStateUpdated(self.state),
+                )
+                state_updated = True
 
-                    if not silent:  # pragma: no cover
-                        logger.info(f"[{self.name}]")
-                        if print_reserves:
-                            logger.info(f"{self.token0}: {self.reserves_token0}")
-                            logger.info(f"{self.token1}: {self.reserves_token1}")
-            except Exception as e:
-                print(f"LiquidityPool: Exception in update_reserves (polling): {e}")
+                if not silent:  # pragma: no cover
+                    logger.info(f"[{self.name}]")
+                    if print_reserves:
+                        logger.info(f"{self.token0}: {self.reserves_token0}")
+                        logger.info(f"{self.token1}: {self.reserves_token1}")
         elif update_method == "external":
             if not (external_token0_reserves is not None and external_token1_reserves is not None):
                 raise ValueError(
