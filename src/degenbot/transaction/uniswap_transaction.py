@@ -1359,7 +1359,7 @@ class UniswapTransaction(AbstractTransaction):
                         | "swapExactTokensForTokens"
                         | "swapExactTokensForTokensSupportingFeeOnTransferTokens"
                     ):
-                        logger.debug(f"{func_name}: {self.hash.hex()=}")
+                        logger.debug(f"{func_name}: {self.hash.to_0x_hex()=}")
 
                         try:
                             tx_amount_in = func_params["amountIn"]
@@ -1420,7 +1420,7 @@ class UniswapTransaction(AbstractTransaction):
                         | "swapTokensForExactTokens"
                         | "swapETHForExactTokens"
                     ):
-                        logger.debug(f"{func_name}: {self.hash.hex()=}")
+                        logger.debug(f"{func_name}: {self.hash.to_0x_hex()=}")
 
                         tx_amount_out = func_params["amountOut"]
                         try:
@@ -1502,7 +1502,7 @@ class UniswapTransaction(AbstractTransaction):
                             self.simulated_pool_states.append((pool, _sim_result))
 
                     case "addLiquidity" | "addLiquidityETH":
-                        logger.debug(f"{func_name}: {self.hash.hex()=}")
+                        logger.debug(f"{func_name}: {self.hash.to_0x_hex()=}")
 
                         if func_name == "addLiquidity":
                             tx_token_a = to_checksum_address(func_params["tokenA"])
@@ -1592,7 +1592,7 @@ class UniswapTransaction(AbstractTransaction):
                 raise TransactionError(f"Simulation failed: {e}") from e
 
         def _process_uniswap_v3_transaction() -> None:
-            logger.debug(f"{func_name}: {self.hash.hex()=}")
+            logger.debug(f"{func_name}: {self.hash.to_0x_hex()=}")
 
             if TYPE_CHECKING:
                 v3_sim_result: UniswapV3PoolSimulationResult
@@ -2238,7 +2238,7 @@ class UniswapTransaction(AbstractTransaction):
                 raise TransactionError(f"Simulation failed: {e}") from e
 
         def _process_uniswap_universal_router_transaction() -> None:
-            logger.debug(f"{func_name}: {self.hash.hex()=}")
+            logger.debug(f"{func_name}: {self.hash.to_0x_hex()=}")
 
             if func_name != "execute":
                 raise ValueError(f"UNHANDLED UNIVERSAL ROUTER FUNCTION: {func_name}")

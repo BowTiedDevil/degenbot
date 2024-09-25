@@ -106,7 +106,7 @@ def eip_191_hash(message: str, private_key: str) -> str:
         ),
         private_key=private_key,
     )
-    return result.signature.hex()
+    return result.signature.to_0x_hex()
 
 
 def get_number_for_block_identifier(
