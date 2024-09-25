@@ -10,7 +10,8 @@ from eth_typing import HexAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import IPCProvider, Web3
-from web3.types import Middleware, RPCEndpoint
+from web3.middleware import Middleware
+from web3.types import RPCEndpoint
 
 from ..constants import MAX_UINT256
 from ..logging import logger
