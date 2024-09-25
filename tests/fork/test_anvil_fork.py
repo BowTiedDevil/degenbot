@@ -28,6 +28,17 @@ def test_anvil_forks():
     AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI, base_fee=10 * 10**9)
 
 
+def test_set_bytecode():
+    FAKE_BYTECODE = HexBytes("0x42069")
+    fork = AnvilFork(
+        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        bytecode_overrides=[
+            (VITALIK_ADDRESS, FAKE_BYTECODE),
+        ],
+    )
+    assert fork.w3.eth.get_code(VITALIK_ADDRESS) == FAKE_BYTECODE
+
+
 def test_rpc_methods(fork_mainnet: AnvilFork):
     with pytest.raises(ValueError, match="Fee outside valid range"):
         fork_mainnet.set_next_base_fee(-1)
