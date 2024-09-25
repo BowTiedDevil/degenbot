@@ -59,7 +59,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         **kwargs: Any,
     ) -> "UniswapV2Pool":
         """
-        Create a new `LiquidityPool` with exchange information taken from the provided deployment.
+        Create a new `UniswapV2Pool` with exchange information taken from the provided deployment.
         """
 
         return cls(

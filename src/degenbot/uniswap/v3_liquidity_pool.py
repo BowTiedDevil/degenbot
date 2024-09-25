@@ -269,7 +269,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         **kwargs: Any,
     ) -> "UniswapV3Pool":
         """
-        Create a new `V3LiquidityPool` with exchange information taken from the provided deployment.
+        Create a new `UniswapV3Pool` with exchange information taken from the provided deployment.
         """
 
         for key in [
@@ -315,7 +315,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
 
     def __repr__(self) -> str:  # pragma: no cover
         return (
-            f"V3LiquidityPool(address={self.address}, token0={self.token0}, token1={self.token1}, "
+            f"UniswapV3Pool(address={self.address}, token0={self.token0}, token1={self.token1}, "
             f"fee={self.fee})"
         )
 

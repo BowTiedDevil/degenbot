@@ -23,8 +23,8 @@ The following snippets assume a connected `Web3` instance with a working provide
 ### Uniswap V2 Liquidity Pools
 
 ```
-# Create `LiquidityPool` object from on-chain data at the given address and current chain height
->>> lp = degenbot.LiquidityPool('0xBb2b8038a1640196FbE3e38816F3e67Cba72D940')
+# Create `UniswapV2Pool` object from on-chain data at the given address and current chain height
+>>> lp = degenbot.UniswapV2Pool('0xBb2b8038a1640196FbE3e38816F3e67Cba72D940')
 • WBTC (Wrapped BTC)
 • WETH (Wrapped Ether)
 WBTC-WETH (V2, 0.30%)

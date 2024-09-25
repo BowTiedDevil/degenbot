@@ -383,13 +383,12 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         | None = None,
         pool_fee: int | None = None,
         silent: bool = False,
-        # keyword arguments passed to the `V3LiquidityPool` constructor
+        # keyword arguments passed to the `UniswapV3Pool` constructor
         v3liquiditypool_kwargs: dict[str, Any] | None = None,
         state_block: int | None = None,
     ) -> UniswapV3Pool:
         """
-        Get a `V3LiquidityPool` from its address, or a tuple of token addresses and fee in bips
-        (e.g. 100, 500, 3000, 10000)
+        Get a `UniswapV3Pool` from its address or token addresses and fee.
         """
 
         def find_or_build(

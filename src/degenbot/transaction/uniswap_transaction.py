@@ -931,7 +931,7 @@ class UniswapTransaction(AbstractTransaction):
                         pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
                     except (LiquidityPoolError, ManagerError):
                         raise TransactionError(
-                            f"LiquidityPool could not be built for all steps in path {tx_path}"
+                            f"Pools could not be built for all steps in path {tx_path}"
                         ) from None
 
                     last_pool_pos = len(tx_path) - 2
@@ -1005,7 +1005,7 @@ class UniswapTransaction(AbstractTransaction):
                         pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
                     except (LiquidityPoolError, ManagerError):
                         raise TransactionError(
-                            f"LiquidityPool could not be built for all steps in path {tx_path}"
+                            f"Pools could not be built for all steps in path {tx_path}"
                         ) from None
 
                     last_pool_pos = len(pools) - 1
@@ -1380,7 +1380,7 @@ class UniswapTransaction(AbstractTransaction):
                             pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
                         except (LiquidityPoolError, ManagerError):
                             raise TransactionError(
-                                f"LiquidityPool could not be built for all steps in path {tx_path}"
+                                f"Pools could not be built for all steps in path {tx_path}"
                             ) from None
 
                         last_pool_pos = len(tx_path) - 2
@@ -1442,7 +1442,7 @@ class UniswapTransaction(AbstractTransaction):
                             pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
                         except (LiquidityPoolError, ManagerError):
                             raise TransactionError(
-                                f"LiquidityPool could not be built for all steps in path {tx_path}"
+                                f"Pools could not be built for all steps in path {tx_path}"
                             ) from None
 
                         last_pool_pos = len(pools) - 1

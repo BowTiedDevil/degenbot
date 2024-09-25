@@ -150,8 +150,8 @@ class UniswapV3LiquiditySnapshot:
         pool_updates = self._liquidity_events.get(pool_address, list())
         self._liquidity_events[pool_address] = list()
 
-        # The V3LiquidityPool helper will reject liquidity events associated with a past block, so
-        # they must be applied in chronological order
+        # Liquidity events from a block prior to the current update block will be rejected, so they
+        # must be applied in chronological order
         sorted_events = sorted(
             pool_updates,
             key=lambda event: (event.block_number, event.tx_index),
