@@ -2327,6 +2327,7 @@ async def test_process_pool_calculation(
             print(f"Completed process_pool calc #{i}, {time.perf_counter()-start:.2f}s since start")
         print(f"Completed {_NUM_FUTURES} calculations in {time.perf_counter() - start:.1f}s")
 
+        assert isinstance(wbtc_weth_arb.swap_pools[1], V3LiquidityPool)
         wbtc_weth_arb.swap_pools[1].sparse_liquidity_map = True
         with pytest.raises(ValueError, match="One or more V3 pools has a sparse bitmap."):
             await wbtc_weth_arb.calculate_with_pool(
