@@ -37,14 +37,15 @@ class AerodromeV2LiquidityPool(AbstractLiquidityPool):
         deployer_address: str | None = None,
         fee: Fraction | None = None,
         silent: bool = False,
+        state_block: int | None = None,
         archive_states: bool = True,
         verify_address: bool = True,
     ) -> None:
         self.address = to_checksum_address(address)
 
         w3 = config.get_web3()
-        self.update_block = w3.eth.block_number
         chain_id = w3.eth.chain_id
+        self.update_block = state_block if state_block is not None else w3.eth.block_number
 
         self._state_lock = Lock()
         self.state = AerodromeV2PoolState(
