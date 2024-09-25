@@ -27,7 +27,7 @@ from degenbot.registry.all_pools import AllPools
 from degenbot.uniswap.abi import CAMELOT_POOL_ABI
 from degenbot.uniswap.v2_liquidity_pool import (
     CamelotLiquidityPool,
-    LiquidityPool,
+    UniswapV2Pool,
     UnregisteredLiquidityPool,
 )
 from degenbot.uniswap.v2_types import UniswapV2PoolSimulationResult, UniswapV2PoolState
@@ -49,10 +49,10 @@ CAMELOT_WETH_USDC_LP_ADDRESS = to_checksum_address("0x84652bb2539513BAf36e225c93
 @pytest.fixture(scope="function")
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000(
     fork_mainnet: AnvilFork,
-) -> LiquidityPool:
+) -> UniswapV2Pool:
     fork_mainnet.reset(block_number=17_600_000)
     set_web3(fork_mainnet.w3)
-    return LiquidityPool(
+    return UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         update_method="external",
         factory_address=UNISWAPV2_FACTORY,
@@ -63,10 +63,10 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000(
 @pytest.fixture(scope="function")
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_650_000(
     fork_mainnet: AnvilFork,
-) -> LiquidityPool:
+) -> UniswapV2Pool:
     fork_mainnet.reset(block_number=17_650_000)
     set_web3(fork_mainnet.w3)
-    return LiquidityPool(
+    return UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         update_method="external",
         factory_address=UNISWAPV2_FACTORY,
@@ -77,9 +77,9 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_650_000(
 @pytest.fixture(scope="function")
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool(
     fork_mainnet: AnvilFork,
-) -> LiquidityPool:
+) -> UniswapV2Pool:
     set_web3(fork_mainnet.w3)
-    return LiquidityPool(
+    return UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         update_method="external",
         factory_address=UNISWAPV2_FACTORY,
@@ -106,9 +106,9 @@ def weth(ethereum_archive_node_web3) -> Erc20Token:
 
 
 @pytest.fixture
-def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> LiquidityPool:
+def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> UniswapV2Pool:
     set_web3(fork_mainnet.w3)
-    return LiquidityPool(UNISWAP_V2_WBTC_WETH_POOL)
+    return UniswapV2Pool(UNISWAP_V2_WBTC_WETH_POOL)
 
 
 def test_create_pool(
@@ -118,7 +118,7 @@ def test_create_pool(
 ):
     set_web3(ethereum_archive_node_web3)
 
-    LiquidityPool(
+    UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         tokens=[wbtc, weth],
         name="WBTC-WETH (V2, 0.30%)",
@@ -127,7 +127,7 @@ def test_create_pool(
     )
 
     # Omitting tokens
-    LiquidityPool(
+    UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         # tokens=[wbtc, weth],
         name="WBTC-WETH (V2, 0.30%)",
@@ -136,7 +136,7 @@ def test_create_pool(
     )
 
     # Omitting factory address
-    LiquidityPool(
+    UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         tokens=[wbtc, weth],
         name="WBTC-WETH (V2, 0.30%)",
@@ -145,7 +145,7 @@ def test_create_pool(
     )
 
     # Omitting init hash
-    LiquidityPool(
+    UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         tokens=[wbtc, weth],
         name="WBTC-WETH (V2, 0.30%)",
@@ -166,7 +166,7 @@ def test_from_exchange_deployment(ethereum_archive_node_web3: web3.Web3):
     ]
     del FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
 
-    LiquidityPool.from_exchange(
+    UniswapV2Pool.from_exchange(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         exchange=degenbot.exchanges.uniswap.deployments.EthereumMainnetUniswapV2,
     )
@@ -185,26 +185,26 @@ def test_create_with_invalid_tokens(
     set_web3(ethereum_archive_node_web3)
 
     with pytest.raises(ValueError, match="too many values to unpack"):
-        LiquidityPool(
+        UniswapV2Pool(
             address=UNISWAP_V2_WBTC_WETH_POOL,
             tokens=[wbtc, weth, wbtc],
         )
 
     with pytest.raises(ValueError, match="not enough values to unpack"):
-        LiquidityPool(
+        UniswapV2Pool(
             address=UNISWAP_V2_WBTC_WETH_POOL,
             tokens=[wbtc],
         )
 
 
-def test_price_is_inverse_of_exchange_rate(wbtc_weth_v2_lp: LiquidityPool):
+def test_price_is_inverse_of_exchange_rate(wbtc_weth_v2_lp: UniswapV2Pool):
     for token in [wbtc_weth_v2_lp.token0, wbtc_weth_v2_lp.token1]:
         assert wbtc_weth_v2_lp.get_absolute_price(token) == 1 / wbtc_weth_v2_lp.get_absolute_rate(
             token
         )
 
 
-def test_nominal_rate_scaled_by_decimals(wbtc_weth_v2_lp: LiquidityPool):
+def test_nominal_rate_scaled_by_decimals(wbtc_weth_v2_lp: UniswapV2Pool):
     for token in [wbtc_weth_v2_lp.token0, wbtc_weth_v2_lp.token1]:
         nom_rate = int(wbtc_weth_v2_lp.get_nominal_rate(token))
         abs_rate = int(wbtc_weth_v2_lp.get_absolute_rate(token))
@@ -213,7 +213,7 @@ def test_nominal_rate_scaled_by_decimals(wbtc_weth_v2_lp: LiquidityPool):
         )
 
 
-def test_nominal_price_scaled_by_decimals(wbtc_weth_v2_lp: LiquidityPool):
+def test_nominal_price_scaled_by_decimals(wbtc_weth_v2_lp: UniswapV2Pool):
     for token in [wbtc_weth_v2_lp.token0, wbtc_weth_v2_lp.token1]:
         nom_price = int(wbtc_weth_v2_lp.get_nominal_price(token))
         abs_price = int(wbtc_weth_v2_lp.get_absolute_price(token))
@@ -310,7 +310,7 @@ def test_pickle_camelot_v2_pool(fork_arbitrum: AnvilFork):
 
 
 def test_create_nonstandard_pools(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool: UniswapV2Pool,
     ethereum_archive_node_web3: web3.Web3,
 ):
     set_web3(ethereum_archive_node_web3)
@@ -337,7 +337,7 @@ def test_create_nonstandard_pools(
         ValueError,
         match="Pool address verification failed",
     ):
-        LiquidityPool(
+        UniswapV2Pool(
             address=UNISWAP_V2_WBTC_WETH_POOL,
             tokens=[
                 ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
@@ -354,7 +354,7 @@ def test_create_nonstandard_pools(
     )
 
     # Create with non-standard fee
-    lp = LiquidityPool(
+    lp = UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         tokens=[
             ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
@@ -369,7 +369,7 @@ def test_create_nonstandard_pools(
     assert lp.fee_token1 == Fraction(2, 1000)
 
     # Create split-fee pool of differing values
-    lp = LiquidityPool(
+    lp = UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         tokens=[
             ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
@@ -381,7 +381,7 @@ def test_create_nonstandard_pools(
     assert lp.fee_token1 == Fraction(5, 1000)
 
     # Create split-fee pool of equal values
-    lp = LiquidityPool(
+    lp = UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         tokens=[
             ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
@@ -394,7 +394,7 @@ def test_create_nonstandard_pools(
 
 
 def test_dunder_methods(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool: UniswapV2Pool,
 ):
     ethereum_uniswap_v2_wbtc_weth_liquiditypool.__str__()
     ethereum_uniswap_v2_wbtc_weth_liquiditypool.__hash__()
@@ -430,7 +430,7 @@ def test_dunder_methods(
     ) is False
 
 
-def test_pickle_pool(ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool):
+def test_pickle_pool(ethereum_uniswap_v2_wbtc_weth_liquiditypool: UniswapV2Pool):
     pickle.dumps(ethereum_uniswap_v2_wbtc_weth_liquiditypool)
 
 
@@ -444,7 +444,7 @@ def test_calculate_tokens_out_from_ratio_out(fork_mainnet: AnvilFork):
         abi=degenbot.uniswap.abi.UNISWAP_V2_ROUTER_ABI,
     )
 
-    lp = LiquidityPool(UNISWAP_V2_WBTC_WETH_POOL)
+    lp = UniswapV2Pool(UNISWAP_V2_WBTC_WETH_POOL)
 
     for wbtc_amount_in in [
         int(0.1 * 10**8),
@@ -486,7 +486,7 @@ def test_calculate_tokens_out_from_ratio_out(fork_mainnet: AnvilFork):
 
 
 def test_calculate_tokens_out_from_tokens_in(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
     dai: Erc20Token,
 ):
     assert (
@@ -512,8 +512,8 @@ def test_calculate_tokens_out_from_tokens_in(
 
 
 def test_calculate_tokens_out_from_tokens_in_with_override(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_650_000: LiquidityPool,
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_650_000: UniswapV2Pool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool: UniswapV2Pool,
 ):
     pool_state_override = UniswapV2PoolState(
         pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_650_000.address,
@@ -546,7 +546,7 @@ def test_calculate_tokens_out_from_tokens_in_with_override(
 
 
 def test_calculate_tokens_in_from_tokens_out(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
 ):
     """
     Reserve values for this test are taken at block height 17,600,000
@@ -570,7 +570,7 @@ def test_calculate_tokens_in_from_tokens_out(
 
 
 def test_calculate_tokens_in_from_tokens_out_with_override(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool, dai: Erc20Token
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool, dai: Erc20Token
 ):
     # Overridden reserve values for this test are taken at block height 17,650,000
     # token0 reserves: 16027096956
@@ -600,7 +600,7 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
 
 
 def test_comparisons(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
 ):
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000 == UNISWAP_V2_WBTC_WETH_POOL
@@ -612,7 +612,7 @@ def test_comparisons(
 
     del AllPools(chain_id=1)[ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000]
 
-    other_lp = LiquidityPool(
+    other_lp = UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         update_method="external",
         tokens=[
@@ -632,7 +632,7 @@ def test_comparisons(
     set([ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000, other_lp])
 
 
-def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool):
+def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool):
     from pprint import pprint
 
     starting_state = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state
@@ -708,7 +708,7 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: 
 
 
 def test_discard_before_finalized(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
 ):
     starting_state = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state
     starting_block = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._update_block
@@ -759,7 +759,7 @@ def test_discard_before_finalized(
 
 
 def test_discard_earlier_than_created(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
 ) -> None:
     lp = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000
 
@@ -772,7 +772,7 @@ def test_discard_earlier_than_created(
 
 
 def test_discard_after_last_update(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
 ) -> None:
     lp = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000
 
@@ -785,7 +785,7 @@ def test_discard_after_last_update(
 
 
 def test_simulations(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
 ):
     sim_result = UniswapV2PoolSimulationResult(
         amount0_delta=8000000000,
@@ -866,7 +866,7 @@ def test_simulations(
 
 
 def test_simulations_with_override(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
 ):
     pool_state_override = UniswapV2PoolState(
         pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
@@ -920,7 +920,7 @@ def test_simulations_with_override(
 
 
 def test_swap_for_all(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
 ):
     # The last token in a pool can never be swapped for
     assert (
@@ -951,7 +951,7 @@ def test_swap_for_all(
         )
 
 
-def test_zero_swaps(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool):
+def test_zero_swaps(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool):
     with pytest.raises(ZeroSwapError):
         assert (
             ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.calculate_tokens_out_from_tokens_in(
@@ -972,7 +972,7 @@ def test_zero_swaps(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_
 
 
 def test_polling_update(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
     fork_mainnet: AnvilFork,
 ):
     _BLOCK_NUMBER = 18_000_000
@@ -986,7 +986,7 @@ def test_polling_update(
 
 
 def test_late_update(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: LiquidityPool,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
 ):
     # Provide some semi-random updates
     for block_number in range(

@@ -17,7 +17,7 @@ from ..logging import logger
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
 from ..types import AbstractManager
-from .v2_liquidity_pool import LiquidityPool
+from .v2_liquidity_pool import UniswapV2Pool
 from .v3_functions import generate_v3_pool_address
 from .v3_liquidity_pool import V3LiquidityPool
 from .v3_snapshot import UniswapV3LiquiditySnapshot
@@ -119,16 +119,16 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                     "erc20token_manager"
                 ]
                 self._pool_init_hash = pool_init_hash
-                self._tracked_pools: dict[ChecksumAddress, LiquidityPool] = dict()
+                self._tracked_pools: dict[ChecksumAddress, UniswapV2Pool] = dict()
                 self._untracked_pools: set[ChecksumAddress] = set()
             except Exception as e:
                 self._state[chain_id][factory_address] = {}
                 raise ManagerError(f"Could not initialize state for {factory_address}") from e
 
-    def __delitem__(self, pool: LiquidityPool | ChecksumAddress | str) -> None:
+    def __delitem__(self, pool: UniswapV2Pool | ChecksumAddress | str) -> None:
         pool_address: ChecksumAddress
 
-        if isinstance(pool, LiquidityPool):
+        if isinstance(pool, UniswapV2Pool):
             pool_address = pool.address
         else:
             pool_address = to_checksum_address(pool)
@@ -142,7 +142,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
     def __repr__(self) -> str:  # pragma: no cover
         return f"UniswapV2LiquidityPoolManager(factory={self._factory_address})"
 
-    def _add_pool(self, pool_helper: LiquidityPool) -> None:
+    def _add_pool(self, pool_helper: UniswapV2Pool) -> None:
         with self._lock:
             self._tracked_pools[pool_helper.address] = pool_helper
         assert pool_helper.address in self._tracked_pools
@@ -174,7 +174,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         update_method: Literal["polling", "external"] = "polling",
         state_block: int | None = None,
         liquiditypool_kwargs: dict[str, Any] | None = None,
-    ) -> LiquidityPool:
+    ) -> UniswapV2Pool:
         """
         Get the pool object from its address, or a tuple of token addresses
         """
@@ -226,7 +226,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         pool_helper = AllPools(self._chain_id).get(pool_address)
         if pool_helper:
             if TYPE_CHECKING:
-                assert isinstance(pool_helper, LiquidityPool)
+                assert isinstance(pool_helper, UniswapV2Pool)
             if pool_helper.factory == self._factory_address:
                 self._add_pool(pool_helper)
                 return pool_helper
@@ -235,7 +235,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
                 raise PoolNotAssociated(f"Pool {pool_address} is not associated with this DEX")
 
         try:
-            pool_helper = LiquidityPool(
+            pool_helper = UniswapV2Pool(
                 address=pool_address,
                 silent=silent,
                 state_block=state_block,

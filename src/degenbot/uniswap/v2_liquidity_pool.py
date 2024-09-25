@@ -46,7 +46,7 @@ CAMELOT_ARBITRUM_POOL_INIT_HASH = (
 )
 
 
-class LiquidityPool(AbstractLiquidityPool):
+class UniswapV2Pool(AbstractLiquidityPool):
     """
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
@@ -57,7 +57,7 @@ class LiquidityPool(AbstractLiquidityPool):
         address: str,
         exchange: UniswapV2ExchangeDeployment,
         **kwargs: Any,
-    ) -> "LiquidityPool":
+    ) -> "UniswapV2Pool":
         """
         Create a new `LiquidityPool` with exchange information taken from the provided deployment.
         """
@@ -836,7 +836,7 @@ class LiquidityPool(AbstractLiquidityPool):
         return state_updated
 
 
-class CamelotLiquidityPool(LiquidityPool):
+class CamelotLiquidityPool(UniswapV2Pool):
     def __init__(
         self,
         address: str,
@@ -984,7 +984,7 @@ class CamelotLiquidityPool(LiquidityPool):
             )
 
 
-class UnregisteredLiquidityPool(LiquidityPool):
+class UnregisteredLiquidityPool(UniswapV2Pool):
     """
     A disconnected version of `LiquidityPool` for use where a pool helper is expected, but no
     chain data available to read the necessary values.

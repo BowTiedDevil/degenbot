@@ -5,7 +5,7 @@ from degenbot.erc20_token import Erc20Token
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.registry.all_pools import AllPools
 from degenbot.registry.all_tokens import AllTokens
-from degenbot.uniswap.v2_liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 UNISWAP_V2_WBTC_WETH_POOL = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
 
@@ -13,7 +13,7 @@ UNISWAP_V2_WBTC_WETH_POOL = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e
 def test_adding_pool(fork_mainnet: AnvilFork):
     set_web3(fork_mainnet.w3)
     all_pools = AllPools(fork_mainnet.w3.eth.chain_id)
-    lp = LiquidityPool(UNISWAP_V2_WBTC_WETH_POOL)
+    lp = UniswapV2Pool(UNISWAP_V2_WBTC_WETH_POOL)
     assert lp in all_pools
     assert lp.address in all_pools
     assert all_pools[lp.address] is lp
@@ -22,7 +22,7 @@ def test_adding_pool(fork_mainnet: AnvilFork):
 def test_deleting_pool(fork_mainnet: AnvilFork):
     set_web3(fork_mainnet.w3)
     all_pools = AllPools(fork_mainnet.w3.eth.chain_id)
-    lp = LiquidityPool(UNISWAP_V2_WBTC_WETH_POOL)
+    lp = UniswapV2Pool(UNISWAP_V2_WBTC_WETH_POOL)
     assert lp in all_pools
     del all_pools[lp]
     assert lp not in all_pools
@@ -31,7 +31,7 @@ def test_deleting_pool(fork_mainnet: AnvilFork):
 def test_deleting_pool_by_address(fork_mainnet: AnvilFork):
     set_web3(fork_mainnet.w3)
     all_pools = AllPools(fork_mainnet.w3.eth.chain_id)
-    lp = LiquidityPool(UNISWAP_V2_WBTC_WETH_POOL)
+    lp = UniswapV2Pool(UNISWAP_V2_WBTC_WETH_POOL)
     assert lp in all_pools
     del all_pools[lp.address]
     assert lp not in all_pools

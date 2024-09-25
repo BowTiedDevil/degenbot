@@ -37,7 +37,7 @@ from ..types import AbstractSimulationResult, AbstractTransaction
 from ..uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from ..uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
 from ..uniswap.v2_functions import generate_v2_pool_address, get_v2_pools_from_token_path
-from ..uniswap.v2_liquidity_pool import LiquidityPool, UnregisteredLiquidityPool
+from ..uniswap.v2_liquidity_pool import UniswapV2Pool, UnregisteredLiquidityPool
 from ..uniswap.v2_types import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from ..uniswap.v3_functions import decode_v3_path
 from ..uniswap.v3_liquidity_pool import V3LiquidityPool
@@ -185,7 +185,7 @@ class UniswapTransaction(AbstractTransaction):
 
     @staticmethod
     def _show_pool_states(
-        pool: LiquidityPool | V3LiquidityPool,
+        pool: UniswapV2Pool | V3LiquidityPool,
         sim_result: UniswapV2PoolSimulationResult | UniswapV3PoolSimulationResult,
     ) -> None:
         current_state = sim_result.initial_state
@@ -232,7 +232,7 @@ class UniswapTransaction(AbstractTransaction):
 
     def _simulate_v2_swap_exact_in(
         self,
-        pool: LiquidityPool,
+        pool: UniswapV2Pool,
         recipient: ChecksumAddress | str,
         token_in: Erc20Token,
         amount_in: int,
@@ -240,10 +240,10 @@ class UniswapTransaction(AbstractTransaction):
         first_swap: bool = False,
         last_swap: bool = False,
     ) -> tuple[
-        LiquidityPool,
+        UniswapV2Pool,
         UniswapV2PoolSimulationResult,
     ]:
-        assert isinstance(pool, LiquidityPool), f"Called _simulate_v2_swap_exact_in on pool {pool}"
+        assert isinstance(pool, UniswapV2Pool), f"Called _simulate_v2_swap_exact_in on pool {pool}"
 
         silent = self.silent
 
@@ -314,7 +314,7 @@ class UniswapTransaction(AbstractTransaction):
 
     @staticmethod
     def _simulate_v2_add_liquidity(
-        pool: LiquidityPool,
+        pool: UniswapV2Pool,
         added_reserves_token0: int,
         added_reserves_token1: int,
         override_state: UniswapV2PoolState | None = None,
@@ -327,14 +327,14 @@ class UniswapTransaction(AbstractTransaction):
 
     def _simulate_v2_swap_exact_out(
         self,
-        pool: LiquidityPool,
+        pool: UniswapV2Pool,
         recipient: ChecksumAddress | str,
         token_in: Erc20Token,
         amount_out: int,
         amount_in_max: int | None = None,
         first_swap: bool = False,
-    ) -> tuple[LiquidityPool, UniswapV2PoolSimulationResult]:
-        assert isinstance(pool, LiquidityPool), f"Called _simulate_v2_swap_exact_out on pool {pool}"
+    ) -> tuple[UniswapV2Pool, UniswapV2PoolSimulationResult]:
+        assert isinstance(pool, UniswapV2Pool), f"Called _simulate_v2_swap_exact_out on pool {pool}"
 
         silent = self.silent
 
@@ -2286,7 +2286,7 @@ class UniswapTransaction(AbstractTransaction):
         silent: bool = False,
         state_block: BlockNumber | int | None = None,
     ) -> list[
-        tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+        tuple[UniswapV2Pool, UniswapV2PoolSimulationResult]
         | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
     ]:
         """
@@ -2309,7 +2309,7 @@ class UniswapTransaction(AbstractTransaction):
             self.state_block = cast(BlockNumber, state_block)
 
         self.simulated_pool_states: list[
-            tuple[LiquidityPool, UniswapV2PoolSimulationResult]
+            tuple[UniswapV2Pool, UniswapV2PoolSimulationResult]
             | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
         ] = []
 

@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from degenbot import LiquidityPool, V3LiquidityPool
+from degenbot import UniswapV2Pool, V3LiquidityPool
 from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
 from degenbot.config import set_web3
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
@@ -33,9 +33,9 @@ FAKE_ADDRESS = "0x6942000000000000000000000000000000000000"
 
 def test_create_arb(ethereum_archive_node_web3):
     set_web3(ethereum_archive_node_web3)
-    uniswap_v2_weth_dai_lp = LiquidityPool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
     weth = Erc20Token(WETH_ADDRESS)
     UniswapCurveCycle(
@@ -77,9 +77,9 @@ def test_create_arb(ethereum_archive_node_web3):
 
 def test_pickle_arb(ethereum_archive_node_web3):
     set_web3(ethereum_archive_node_web3)
-    uniswap_v2_weth_dai_lp = LiquidityPool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
     weth = Erc20Token(WETH_ADDRESS)
     arb = UniswapCurveCycle(
@@ -94,9 +94,9 @@ def test_pickle_arb(ethereum_archive_node_web3):
 def test_arb_calculation(ethereum_archive_node_web3):
     set_web3(ethereum_archive_node_web3)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_dai_lp = LiquidityPool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
-    uniswap_v2_weth_usdt_lp = LiquidityPool(UNISWAP_V2_WETH_USDT_ADDRESS)
+    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_usdt_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDT_ADDRESS)
     uniswap_v3_weth_dai_lp = V3LiquidityPool(UNISWAP_V3_WETH_DAI_ADDRESS)
     uniswap_v3_weth_usdc_lp = V3LiquidityPool(UNISWAP_V3_WETH_USDC_ADDRESS)
     uniswap_v3_weth_usdt_lp = V3LiquidityPool(UNISWAP_V3_WETH_USDT_ADDRESS)
@@ -132,8 +132,8 @@ def test_arb_calculation(ethereum_archive_node_web3):
 def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3):
     set_web3(ethereum_archive_node_web3)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
-    uniswap_v2_weth_usdt_lp = LiquidityPool(UNISWAP_V2_WETH_USDT_ADDRESS)
+    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_usdt_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDT_ADDRESS)
 
     weth = Erc20Token(WETH_ADDRESS)
     arb = UniswapCurveCycle(
@@ -300,9 +300,9 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3):
 def test_arb_payload_encoding(ethereum_archive_node_web3):
     set_web3(ethereum_archive_node_web3)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_dai_lp = LiquidityPool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
-    uniswap_v2_weth_usdt_lp = LiquidityPool(UNISWAP_V2_WETH_USDT_ADDRESS)
+    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_usdt_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDT_ADDRESS)
 
     weth = Erc20Token(WETH_ADDRESS)
 
@@ -362,9 +362,9 @@ async def test_process_pool_calculation(ethereum_archive_node_web3) -> None:
 
     weth = Erc20Token(WETH_ADDRESS)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_dai_lp = LiquidityPool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
-    uniswap_v2_weth_usdt_lp = LiquidityPool(UNISWAP_V2_WETH_USDT_ADDRESS)
+    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_usdt_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDT_ADDRESS)
 
     # Reserves taken from block 19050173
     # ---
@@ -455,8 +455,8 @@ async def test_process_pool_calculation(ethereum_archive_node_web3) -> None:
 def test_bad_pool_in_constructor(ethereum_archive_node_web3):
     set_web3(ethereum_archive_node_web3)
     weth = Erc20Token(WETH_ADDRESS)
-    uniswap_v2_weth_dai_lp = LiquidityPool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
     with pytest.raises(
         ValueError, match="Must provide only Curve StableSwap or Uniswap liquidity pools."
@@ -472,9 +472,9 @@ def test_bad_pool_in_constructor(ethereum_archive_node_web3):
 def test_no_max_input(ethereum_archive_node_web3):
     set_web3(ethereum_archive_node_web3)
     weth = Erc20Token(WETH_ADDRESS)
-    uniswap_v2_weth_dai_lp = LiquidityPool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
     UniswapCurveCycle(
         id="test_arb",
@@ -486,9 +486,9 @@ def test_no_max_input(ethereum_archive_node_web3):
 def test_zero_max_input(ethereum_archive_node_web3):
     set_web3(ethereum_archive_node_web3)
     weth = Erc20Token(WETH_ADDRESS)
-    uniswap_v2_weth_dai_lp = LiquidityPool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_usdc_lp = LiquidityPool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
     with pytest.raises(ValueError, match="Maximum input must be positive."):
         UniswapCurveCycle(

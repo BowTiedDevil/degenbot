@@ -16,7 +16,7 @@ from .solidly.managers import SolidlyV2LiquidityPoolManager
 from .solidly.solidly_liquidity_pool import AerodromeV2LiquidityPool
 from .transaction.uniswap_transaction import UniswapTransaction
 from .uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
-from .uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
+from .uniswap.v2_liquidity_pool import CamelotLiquidityPool, UniswapV2Pool
 from .uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
@@ -54,7 +54,7 @@ __all__ = (
     "CurveStableswapPool",
     "Erc20Token",
     "Erc20TokenHelperManager",
-    "LiquidityPool",
+    "UniswapV2Pool",
     "PancakeV3Pool",
     "SolidlyV2LiquidityPoolManager",
     "UniswapCurveCycle",

@@ -24,7 +24,7 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError
 from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.uniswap.v2_liquidity_pool import CamelotLiquidityPool, LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import CamelotLiquidityPool, UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState, UniswapV2PoolStateUpdated
 from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
 from degenbot.uniswap.v3_types import (
@@ -54,9 +54,9 @@ def weth_token(ethereum_archive_node_web3) -> Erc20Token:
 
 
 @pytest.fixture
-def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> LiquidityPool:
+def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> UniswapV2Pool:
     set_web3(fork_mainnet.w3)
-    pool = LiquidityPool(WBTC_WETH_V2_POOL_ADDRESS)
+    pool = UniswapV2Pool(WBTC_WETH_V2_POOL_ADDRESS)
     pool.state = UniswapV2PoolState(
         pool=pool.address,
         reserves_token0=16231137593,
@@ -2073,7 +2073,7 @@ def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> V3LiquidityPool:
 
 @pytest.fixture
 def wbtc_weth_arb(
-    wbtc_weth_v2_lp: LiquidityPool,
+    wbtc_weth_v2_lp: UniswapV2Pool,
     wbtc_weth_v3_lp: V3LiquidityPool,
     weth_token: Erc20Token,
 ):
@@ -2085,7 +2085,7 @@ def wbtc_weth_arb(
     )
 
 
-class MockLiquidityPool(LiquidityPool):
+class MockLiquidityPool(UniswapV2Pool):
     def __init__(self) -> None:
         self.state = UniswapV2PoolState(ZERO_ADDRESS, 0, 0)
         self._state_lock = Lock()
@@ -2099,7 +2099,7 @@ class MockV3LiquidityPool(V3LiquidityPool):
 
 
 def test_create_with_either_token_input(
-    wbtc_weth_v2_lp: LiquidityPool,
+    wbtc_weth_v2_lp: UniswapV2Pool,
     wbtc_weth_v3_lp: V3LiquidityPool,
     weth_token: Erc20Token,
     wbtc_token: Erc20Token,
@@ -2120,7 +2120,7 @@ def test_create_with_either_token_input(
 
 def test_arbitrage_with_overrides(
     wbtc_weth_arb: UniswapLpCycle,
-    wbtc_weth_v2_lp: LiquidityPool,
+    wbtc_weth_v2_lp: UniswapV2Pool,
     wbtc_weth_v3_lp: V3LiquidityPool,
     weth_token: Erc20Token,
     wbtc_token: Erc20Token,
@@ -2227,7 +2227,7 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum: AnvilFor
     _weth = Erc20Token(_WETH_ADDRESS)
 
     camelot_lp = CamelotLiquidityPool(address=_CAMELOT_WETH_WBTC_LP_ADDRESS)
-    sushi_lp = LiquidityPool(address=_SUSHI_V2_WETH_WBTC_LP_ADDRESS)
+    sushi_lp = UniswapV2Pool(address=_SUSHI_V2_WETH_WBTC_LP_ADDRESS)
 
     for arb in [
         UniswapLpCycle(
@@ -2400,7 +2400,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
 
 
 def test_bad_pool_in_constructor(
-    wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
+    wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
 ):
     with pytest.raises(ValueError, match="Incompatible pool provided."):
         UniswapLpCycle(
@@ -2412,7 +2412,7 @@ def test_bad_pool_in_constructor(
 
 
 def test_no_max_input(
-    wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
+    wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
 ):
     arb = UniswapLpCycle(
         id="test_arb",
@@ -2423,7 +2423,7 @@ def test_no_max_input(
 
 
 def test_zero_max_input(
-    wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
+    wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
 ):
     with pytest.raises(ValueError, match="Maximum input must be positive."):
         UniswapLpCycle(
@@ -2435,7 +2435,7 @@ def test_zero_max_input(
 
 
 def test_arbitrage_helper_subscriptions(
-    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool
+    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: V3LiquidityPool
 ):
     assert wbtc_weth_arb in wbtc_weth_v2_lp._subscribers
     assert wbtc_weth_arb in wbtc_weth_v3_lp._subscribers
@@ -2487,7 +2487,7 @@ def test_arbitrage_helper_subscriptions(
 
 
 def test_pool_helper_unsubscriptions(
-    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: V3LiquidityPool
+    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: V3LiquidityPool
 ):
     assert wbtc_weth_arb in wbtc_weth_v2_lp._subscribers
     assert wbtc_weth_arb in wbtc_weth_v3_lp._subscribers

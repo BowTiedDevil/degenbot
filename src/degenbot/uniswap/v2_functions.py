@@ -12,7 +12,7 @@ from ..functions import create2_address
 
 if TYPE_CHECKING:
     from .managers import UniswapV2LiquidityPoolManager
-    from .v2_liquidity_pool import LiquidityPool
+    from .v2_liquidity_pool import UniswapV2Pool
 
 
 def generate_v2_pool_address(
@@ -46,7 +46,7 @@ def generate_v2_pool_address(
 def get_v2_pools_from_token_path(
     tx_path: Iterable[ChecksumAddress | str],
     pool_manager: "UniswapV2LiquidityPoolManager",
-) -> list["LiquidityPool"]:
+) -> list["UniswapV2Pool"]:
     return [
         pool_manager.get_pool(
             token_addresses=token_addresses,
