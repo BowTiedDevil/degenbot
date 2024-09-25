@@ -15,7 +15,7 @@ from ..exchanges.solidly.deployments import FACTORY_DEPLOYMENTS
 from ..exchanges.solidly.types import SolidlyExchangeDeployment
 from ..manager.token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
-from ..solidly.solidly_liquidity_pool import AerodromeV2LiquidityPool
+from ..solidly.solidly_liquidity_pool import AerodromeV2Pool
 
 
 class SolidlyV2LiquidityPoolManager:
@@ -47,7 +47,7 @@ class SolidlyV2LiquidityPoolManager:
         self._factory_address = factory_address
         self._deployer_address = deployer_address
         self._token_manager: Erc20TokenHelperManager = Erc20TokenHelperManager(chain_id=chain_id)
-        self._tracked_pools: dict[ChecksumAddress, AerodromeV2LiquidityPool] = dict()
+        self._tracked_pools: dict[ChecksumAddress, AerodromeV2Pool] = dict()
         self._untracked_pools: set[ChecksumAddress] = set()
 
     @classmethod
@@ -60,10 +60,10 @@ class SolidlyV2LiquidityPoolManager:
             deployer_address=exchange.factory.deployer,
         )
 
-    def __delitem__(self, pool: AerodromeV2LiquidityPool | ChecksumAddress | str) -> None:
+    def __delitem__(self, pool: AerodromeV2Pool | ChecksumAddress | str) -> None:
         pool_address: ChecksumAddress
 
-        if isinstance(pool, AerodromeV2LiquidityPool):
+        if isinstance(pool, AerodromeV2Pool):
             pool_address = pool.address
         else:
             pool_address = to_checksum_address(pool)
@@ -77,7 +77,7 @@ class SolidlyV2LiquidityPoolManager:
     def __repr__(self) -> str:  # pragma: no cover
         return f"UniswapV2LiquidityPoolManager(factory={self._factory_address})"
 
-    def _add_pool(self, pool_helper: AerodromeV2LiquidityPool) -> None:
+    def _add_pool(self, pool_helper: AerodromeV2Pool) -> None:
         with self._lock:
             self._tracked_pools[pool_helper.address] = pool_helper
         assert pool_helper.address in self._tracked_pools
@@ -110,7 +110,7 @@ class SolidlyV2LiquidityPoolManager:
         silent: bool = False,
         state_block: int | None = None,
         liquiditypool_kwargs: dict[str, Any] | None = None,
-    ) -> AerodromeV2LiquidityPool:
+    ) -> AerodromeV2Pool:
         """
         Get the pool object from its address, or a tuple of token addresses
         """
@@ -163,7 +163,7 @@ class SolidlyV2LiquidityPoolManager:
         pool_helper = AllPools(self._chain_id).get(pool_address)
         if pool_helper:
             if TYPE_CHECKING:
-                assert isinstance(pool_helper, AerodromeV2LiquidityPool)
+                assert isinstance(pool_helper, AerodromeV2Pool)
             if pool_helper.factory == self._factory_address:
                 self._add_pool(pool_helper)
                 return pool_helper
@@ -172,7 +172,7 @@ class SolidlyV2LiquidityPoolManager:
                 raise PoolNotAssociated(f"Pool {pool_address} is not associated with this DEX")
 
         try:
-            pool_helper = AerodromeV2LiquidityPool(
+            pool_helper = AerodromeV2Pool(
                 address=pool_address,
                 silent=silent,
                 state_block=state_block,

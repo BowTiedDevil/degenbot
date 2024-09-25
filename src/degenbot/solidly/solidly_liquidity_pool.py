@@ -28,7 +28,7 @@ from .types import AerodromeV2PoolState
 FEE_DENOMINATOR = 10_000
 
 
-class AerodromeV2LiquidityPool(AbstractLiquidityPool):
+class AerodromeV2Pool(AbstractLiquidityPool):
     def __init__(
         self,
         address: ChecksumAddress | str,

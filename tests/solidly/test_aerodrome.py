@@ -9,7 +9,7 @@ from degenbot import set_web3
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.solidly.abi import AERODROME_V2_POOL_ABI
 from degenbot.solidly.solidly_functions import generate_aerodrome_v2_pool_address
-from degenbot.solidly.solidly_liquidity_pool import AerodromeV2LiquidityPool
+from degenbot.solidly.solidly_liquidity_pool import AerodromeV2Pool
 
 TBTC_USDBC_POOL_ADDRESS = to_checksum_address("0x723AEf6543aecE026a15662Be4D3fb3424D502A9")
 AERODROME_V2_FACTORY_ADDRESS = to_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da")
@@ -45,7 +45,7 @@ def test_create_pool(
 ):
     set_web3(base_full_node_web3)
 
-    lp = AerodromeV2LiquidityPool(
+    lp = AerodromeV2Pool(
         address=TBTC_USDBC_POOL_ADDRESS,
     )
     assert lp.address == TBTC_USDBC_POOL_ADDRESS
@@ -76,7 +76,7 @@ def test_calculation_volatile(fork_base: AnvilFork, test_pools: list[Any]):
     ]
 
     for pool_address in [pool["pool_address"] for pool in test_pools if pool["stable"] is False]:
-        lp = AerodromeV2LiquidityPool(address=pool_address)
+        lp = AerodromeV2Pool(address=pool_address)
 
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
@@ -150,7 +150,7 @@ def test_calculation_stable(fork_base: AnvilFork, test_pools: list[Any]):
     ]
 
     for pool_address in [pool["pool_address"] for pool in test_pools if pool["stable"] is True]:
-        lp = AerodromeV2LiquidityPool(address=pool_address)
+        lp = AerodromeV2Pool(address=pool_address)
 
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1

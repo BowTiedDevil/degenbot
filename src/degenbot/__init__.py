@@ -13,7 +13,7 @@ from .manager.token_manager import Erc20TokenHelperManager
 from .registry.all_pools import AllPools
 from .registry.all_tokens import AllTokens
 from .solidly.managers import SolidlyV2LiquidityPoolManager
-from .solidly.solidly_liquidity_pool import AerodromeV2LiquidityPool
+from .solidly.solidly_liquidity_pool import AerodromeV2Pool
 from .transaction.uniswap_transaction import UniswapTransaction
 from .uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
 from .uniswap.v2_liquidity_pool import CamelotLiquidityPool, UniswapV2Pool
@@ -42,7 +42,7 @@ __all__ = (
     "set_web3",
     "solidly",
     "uniswap",
-    "AerodromeV2LiquidityPool",
+    "AerodromeV2Pool",
     "AerodromeV3Pool",
     "AllPools",
     "AllTokens",
