@@ -502,7 +502,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
         populated_ticks = []
         for i in range(256):
             if bitmap_at_word & (1 << i) > 0:
-                populatedTick = (((word_position) << 8) + (i)) * self.tick_spacing
+                populatedTick = ((word_position << 8) + i) * self.tick_spacing
                 liquidityGross, liquidityNet, *_ = raw_call(
                     w3=w3,
                     address=self.address,
@@ -1351,15 +1351,8 @@ class AerodromeV3Pool(V3LiquidityPool):
         word_position: int,
         block_identifier: BlockIdentifier,
     ) -> list[tuple[int, int, int]]:
-        bitmap, *_ = raw_call(
-            w3=w3,
-            address=self.address,
-            calldata=encode_function_calldata(
-                function_prototype="tickBitmap(int16)",
-                function_arguments=[word_position],
-            ),
-            return_types=["uint256"],
-            block_identifier=block_identifier,
+        bitmap = self.get_tick_bitmap_at_word(
+            w3=w3, word_position=word_position, block_identifier=block_identifier
         )
 
         populated_ticks = []
