@@ -12,10 +12,10 @@ from .logging import logger
 from .manager.token_manager import Erc20TokenHelperManager
 from .registry.all_pools import AllPools
 from .registry.all_tokens import AllTokens
-from .solidly.managers import SolidlyV2LiquidityPoolManager
+from .solidly.managers import SolidlyV2PoolManager
 from .solidly.solidly_liquidity_pool import AerodromeV2Pool
 from .transaction.uniswap_transaction import UniswapTransaction
-from .uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
+from .uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from .uniswap.v2_liquidity_pool import CamelotLiquidityPool, UniswapV2Pool
 from .uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
@@ -54,20 +54,20 @@ __all__ = (
     "CurveStableswapPool",
     "Erc20Token",
     "Erc20TokenHelperManager",
-    "UniswapV2Pool",
     "PancakeV3Pool",
-    "SolidlyV2LiquidityPoolManager",
+    "SolidlyV2PoolManager",
     "UniswapCurveCycle",
     "UniswapLpCycle",
     "UniswapTransaction",
-    "UniswapV2LiquidityPoolManager",
+    "UniswapV2Pool",
     "UniswapV2PoolExternalUpdate",
+    "UniswapV2PoolManager",
     "UniswapV2PoolSimulationResult",
     "UniswapV2PoolState",
-    "UniswapV3LiquidityPoolManager",
     "UniswapV3LiquiditySnapshot",
+    "UniswapV3Pool",
     "UniswapV3PoolExternalUpdate",
+    "UniswapV3PoolManager",
     "UniswapV3PoolSimulationResult",
     "UniswapV3PoolState",
-    "UniswapV3Pool",
 )

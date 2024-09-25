@@ -18,7 +18,7 @@ from ..registry.all_pools import AllPools
 from ..solidly.solidly_liquidity_pool import AerodromeV2Pool
 
 
-class SolidlyV2LiquidityPoolManager:
+class SolidlyV2PoolManager:
     def __init__(
         self,
         factory_address: str,
@@ -54,7 +54,7 @@ class SolidlyV2LiquidityPoolManager:
     def from_exchange(
         cls,
         exchange: SolidlyExchangeDeployment,
-    ) -> "SolidlyV2LiquidityPoolManager":
+    ) -> "SolidlyV2PoolManager":
         return cls(
             factory_address=exchange.factory.address,
             deployer_address=exchange.factory.deployer,
@@ -75,7 +75,7 @@ class SolidlyV2LiquidityPoolManager:
         assert pool_address not in self._untracked_pools
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"UniswapV2LiquidityPoolManager(factory={self._factory_address})"
+        return f"UniswapV2PoolManager(factory={self._factory_address})"
 
     def _add_pool(self, pool_helper: AerodromeV2Pool) -> None:
         with self._lock:

@@ -52,7 +52,7 @@ def initialize_and_reset_after_each_test():
     degenbot.registry.all_pools._all_pools.clear()
     degenbot.registry.all_tokens._all_tokens.clear()
     degenbot.manager.token_manager.Erc20TokenHelperManager._state.clear()
-    degenbot.uniswap.managers.UniswapLiquidityPoolManager._state.clear()
+    degenbot.uniswap.managers.UniswapPoolManager._state.clear()
 
 
 @pytest.fixture(autouse=True)

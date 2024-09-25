@@ -4,7 +4,7 @@ from web3 import Web3
 
 from degenbot.config import set_web3
 from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.uniswap.managers import UniswapV3LiquidityPoolManager
+from degenbot.uniswap.managers import UniswapV3PoolManager
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
@@ -196,7 +196,7 @@ def test_apply_update_to_snapshot(
     assert empty_snapshot.get_tick_data(POOL_ADDRESS) is tick_data
     assert empty_snapshot.get_tick_bitmap(POOL_ADDRESS) is tick_bitmap
 
-    pool_manager = UniswapV3LiquidityPoolManager(
+    pool_manager = UniswapV3PoolManager(
         factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
         chain_id=1,
         snapshot=empty_snapshot,
@@ -214,7 +214,7 @@ def test_pool_manager_applies_snapshots(
     set_web3(fork_mainnet.w3)
 
     # Build a pool manager to inject the liquidity events into the new pools as they are created
-    pool_manager = UniswapV3LiquidityPoolManager(
+    pool_manager = UniswapV3PoolManager(
         factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
         chain_id=1,
         snapshot=first_250_blocks_snapshot,

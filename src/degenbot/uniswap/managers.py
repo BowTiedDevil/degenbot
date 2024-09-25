@@ -23,7 +23,7 @@ from .v3_liquidity_pool import UniswapV3Pool
 from .v3_snapshot import UniswapV3LiquiditySnapshot
 
 
-class UniswapLiquidityPoolManager(AbstractManager):
+class UniswapPoolManager(AbstractManager):
     """
     Single-concern base class to allow derived classes to share state
     """
@@ -54,7 +54,7 @@ class UniswapLiquidityPoolManager(AbstractManager):
             self._state[chain_id][factory_address] = {}
 
 
-class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
+class UniswapV2PoolManager(UniswapPoolManager):
     """
     A class that generates and tracks Uniswap V2 liquidity pool helpers
 
@@ -66,7 +66,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
     def from_exchange(
         cls,
         exchange: UniswapV2ExchangeDeployment,
-    ) -> "UniswapV2LiquidityPoolManager":
+    ) -> "UniswapV2PoolManager":
         return cls(
             factory_address=exchange.factory.address,
             deployer_address=exchange.factory.deployer,
@@ -140,7 +140,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
         assert pool_address not in self._untracked_pools
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"UniswapV2LiquidityPoolManager(factory={self._factory_address})"
+        return f"UniswapV2PoolManager(factory={self._factory_address})"
 
     def _add_pool(self, pool_helper: UniswapV2Pool) -> None:
         with self._lock:
@@ -252,7 +252,7 @@ class UniswapV2LiquidityPoolManager(UniswapLiquidityPoolManager):
             return pool_helper
 
 
-class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
+class UniswapV3PoolManager(UniswapPoolManager):
     """
     A class that generates and tracks Uniswap V3 liquidity pool helpers
 
@@ -265,7 +265,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         cls,
         exchange: UniswapV3ExchangeDeployment,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
-    ) -> "UniswapV3LiquidityPoolManager":
+    ) -> "UniswapV3PoolManager":
         return cls(
             factory_address=exchange.factory.address,
             deployer_address=exchange.factory.deployer,
@@ -346,7 +346,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         self._untracked_pools.discard(pool_address)
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"UniswapV3LiquidityPoolManager(factory={self._factory_address})"
+        return f"UniswapV3PoolManager(factory={self._factory_address})"
 
     def _add_tracked_pool(self, pool_helper: UniswapV3Pool) -> None:
         with self._lock:

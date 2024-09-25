@@ -35,7 +35,7 @@ from ..exceptions import (
 from ..logging import logger
 from ..types import AbstractSimulationResult, AbstractTransaction
 from ..uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
-from ..uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
+from ..uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from ..uniswap.v2_functions import generate_v2_pool_address, get_v2_pools_from_token_path
 from ..uniswap.v2_liquidity_pool import UniswapV2Pool, UnregisteredLiquidityPool
 from ..uniswap.v2_types import UniswapV2PoolSimulationResult, UniswapV2PoolState
@@ -117,8 +117,8 @@ class UniswapTransaction(AbstractTransaction):
         self.ledger = SimulationLedger()
         self.chain_id: int
 
-        self.v2_pool_manager: UniswapV2LiquidityPoolManager | None = None
-        self.v3_pool_manager: UniswapV3LiquidityPoolManager | None = None
+        self.v2_pool_manager: UniswapV2PoolManager | None = None
+        self.v3_pool_manager: UniswapV3PoolManager | None = None
 
         if router is not None:
             self.chain_id = router.exchanges[0].chain_id
@@ -127,9 +127,9 @@ class UniswapTransaction(AbstractTransaction):
             for exchange in router.exchanges:
                 match exchange:
                     case UniswapV2ExchangeDeployment():
-                        self.v2_pool_manager = UniswapV2LiquidityPoolManager.from_exchange(exchange)
+                        self.v2_pool_manager = UniswapV2PoolManager.from_exchange(exchange)
                     case UniswapV3ExchangeDeployment():
-                        self.v3_pool_manager = UniswapV3LiquidityPoolManager.from_exchange(exchange)
+                        self.v3_pool_manager = UniswapV3PoolManager.from_exchange(exchange)
                     case _:
                         raise ValueError(f"Could not identify DEX type for {exchange}")
         else:
@@ -147,11 +147,11 @@ class UniswapTransaction(AbstractTransaction):
             for exchange in router_deployment.exchanges:
                 match exchange:
                     case UniswapV2ExchangeDeployment():
-                        self.v2_pool_manager = UniswapV2LiquidityPoolManager(
+                        self.v2_pool_manager = UniswapV2PoolManager(
                             factory_address=exchange.factory.address
                         )
                     case UniswapV3ExchangeDeployment():
-                        self.v3_pool_manager = UniswapV3LiquidityPoolManager(
+                        self.v3_pool_manager = UniswapV3PoolManager(
                             factory_address=exchange.factory.address
                         )
                     case _:
@@ -1647,7 +1647,7 @@ class UniswapTransaction(AbstractTransaction):
                             self._raise_if_past_deadline(tx_deadline)
 
                         if TYPE_CHECKING:
-                            assert isinstance(self.v3_pool_manager, UniswapV3LiquidityPoolManager)
+                            assert isinstance(self.v3_pool_manager, UniswapV3PoolManager)
                         v3_pool = self.v3_pool_manager.get_pool(
                             token_addresses=(
                                 tx_token_in_address,
@@ -1743,9 +1743,7 @@ class UniswapTransaction(AbstractTransaction):
                             last_swap = token_pos == last_token_pos
 
                             if TYPE_CHECKING:
-                                assert isinstance(
-                                    self.v3_pool_manager, UniswapV3LiquidityPoolManager
-                                )
+                                assert isinstance(self.v3_pool_manager, UniswapV3PoolManager)
                             v3_pool = self.v3_pool_manager.get_pool(
                                 token_addresses=(
                                     tx_token_in_address,
@@ -1823,7 +1821,7 @@ class UniswapTransaction(AbstractTransaction):
                             self._raise_if_past_deadline(tx_deadline)
 
                         if TYPE_CHECKING:
-                            assert isinstance(self.v3_pool_manager, UniswapV3LiquidityPoolManager)
+                            assert isinstance(self.v3_pool_manager, UniswapV3PoolManager)
                         v3_pool = self.v3_pool_manager.get_pool(
                             token_addresses=(
                                 tx_token_in_address,
@@ -1923,9 +1921,7 @@ class UniswapTransaction(AbstractTransaction):
                             last_swap = token_pos == 0
 
                             if TYPE_CHECKING:
-                                assert isinstance(
-                                    self.v3_pool_manager, UniswapV3LiquidityPoolManager
-                                )
+                                assert isinstance(self.v3_pool_manager, UniswapV3PoolManager)
                             v3_pool = self.v3_pool_manager.get_pool(
                                 token_addresses=(
                                     tx_token_in_address,

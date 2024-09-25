@@ -8,7 +8,7 @@ from degenbot.exceptions import ManagerError, PoolNotAssociated
 from degenbot.exchanges.uniswap.types import UniswapFactoryDeployment, UniswapV3ExchangeDeployment
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.registry.all_pools import AllPools
-from degenbot.uniswap.managers import UniswapV2LiquidityPoolManager, UniswapV3LiquidityPoolManager
+from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
 from degenbot.uniswap.v3_liquidity_pool import PancakeV3Pool
 
@@ -66,9 +66,7 @@ BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
 def test_create_base_chain_managers(base_full_node_web3: Web3):
     set_web3(base_full_node_web3)
 
-    uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
-        factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS
-    )
+    uniswap_v2_pool_manager = UniswapV2PoolManager(factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS)
     assert uniswap_v2_pool_manager._factory_address == BASE_UNISWAP_V2_FACTORY_ADDRESS
 
     # Create a pool manager with an invalid address
@@ -76,11 +74,9 @@ def test_create_base_chain_managers(base_full_node_web3: Web3):
         ManagerError,
         match="Cannot create UniswapV2 pool manager without factory address and pool init hash.",  # noqa:E501
     ):
-        UniswapV2LiquidityPoolManager(factory_address=BASE_WETH_ADDRESS)
+        UniswapV2PoolManager(factory_address=BASE_WETH_ADDRESS)
 
-    uniswap_v3_pool_manager = UniswapV3LiquidityPoolManager(
-        factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS
-    )
+    uniswap_v3_pool_manager = UniswapV3PoolManager(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS)
     assert uniswap_v3_pool_manager._factory_address == BASE_UNISWAP_V3_FACTORY_ADDRESS
 
     # Get known pairs
@@ -97,7 +93,7 @@ def test_create_base_chain_managers(base_full_node_web3: Web3):
 
     # Create one-off pool managers and verify they return the same object
     assert (
-        UniswapV2LiquidityPoolManager(factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS).get_pool(
+        UniswapV2PoolManager(factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS).get_pool(
             token_addresses=(
                 BASE_WETH_ADDRESS,
                 BASE_DEGEN_ADDRESS,
@@ -106,7 +102,7 @@ def test_create_base_chain_managers(base_full_node_web3: Web3):
         is uniswap_v2_lp
     )
     assert (
-        UniswapV3LiquidityPoolManager(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS).get_pool(
+        UniswapV3PoolManager(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS).get_pool(
             token_addresses=(
                 BASE_WETH_ADDRESS,
                 BASE_DEGEN_ADDRESS,
@@ -131,7 +127,7 @@ def test_base_pancakeswap_v3(base_full_node_web3: Web3):
         address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
     )
 
-    pancakev3_lp_manager = UniswapV3LiquidityPoolManager(
+    pancakev3_lp_manager = UniswapV3PoolManager(
         factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
         pool_class=PancakeV3Pool,
         deployer_address=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
@@ -149,10 +145,10 @@ def test_base_pancakeswap_v3(base_full_node_web3: Web3):
 def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
 
-    uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
+    uniswap_v2_pool_manager = UniswapV2PoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
     )
-    sushiswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
+    sushiswap_v2_pool_manager = UniswapV2PoolManager(
         factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS
     )
 
@@ -164,7 +160,7 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
         ManagerError,
         match="Cannot create UniswapV2 pool manager without factory address and pool init hash.",  # noqa:E501
     ):
-        UniswapV2LiquidityPoolManager(factory_address=MAINNET_WETH_ADDRESS)
+        UniswapV2PoolManager(factory_address=MAINNET_WETH_ADDRESS)
 
     # Ensure each pool manager has a unique state
     assert uniswap_v2_pool_manager.__dict__ is not sushiswap_v2_pool_manager.__dict__
@@ -173,7 +169,7 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
         uniswap_v2_pool_manager._untracked_pools is not sushiswap_v2_pool_manager._untracked_pools
     )
 
-    uniswap_v3_pool_manager = UniswapV3LiquidityPoolManager(
+    uniswap_v3_pool_manager = UniswapV3PoolManager(
         factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS
     )
 
@@ -204,7 +200,7 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
 
     # Create one-off pool managers and verify they return the same object
     assert (
-        UniswapV2LiquidityPoolManager(factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS).get_pool(
+        UniswapV2PoolManager(factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS).get_pool(
             token_addresses=(
                 MAINNET_WETH_ADDRESS,
                 MAINNET_WBTC_ADDRESS,
@@ -213,9 +209,7 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
         is uniswap_v2_lp
     )
     assert (
-        UniswapV2LiquidityPoolManager(
-            factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS
-        ).get_pool(
+        UniswapV2PoolManager(factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS).get_pool(
             token_addresses=(
                 MAINNET_WETH_ADDRESS,
                 MAINNET_WBTC_ADDRESS,
@@ -224,7 +218,7 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
         is sushiswap_v2_lp
     )
     assert (
-        UniswapV3LiquidityPoolManager(factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS).get_pool(
+        UniswapV3PoolManager(factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS).get_pool(
             token_addresses=(
                 MAINNET_WETH_ADDRESS,
                 MAINNET_WBTC_ADDRESS,
@@ -238,24 +232,24 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
     with pytest.raises(
         ManagerError, match=f"Pool {uniswap_v2_lp.address} is not associated with this DEX"
     ):
-        UniswapV2LiquidityPoolManager(
-            factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS
-        ).get_pool(pool_address=uniswap_v2_lp.address)
+        UniswapV2PoolManager(factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS).get_pool(
+            pool_address=uniswap_v2_lp.address
+        )
     assert uniswap_v2_lp.address in sushiswap_v2_pool_manager._untracked_pools
     assert sushiswap_v2_lp.address not in sushiswap_v2_pool_manager._untracked_pools
     with pytest.raises(PoolNotAssociated):
-        UniswapV2LiquidityPoolManager(
-            factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS
-        ).get_pool(pool_address=uniswap_v2_lp.address)
+        UniswapV2PoolManager(factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS).get_pool(
+            pool_address=uniswap_v2_lp.address
+        )
 
     with pytest.raises(
         ManagerError, match=f"Pool {sushiswap_v2_lp.address} is not associated with this DEX"
     ):
-        UniswapV2LiquidityPoolManager(factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS).get_pool(
+        UniswapV2PoolManager(factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS).get_pool(
             pool_address=sushiswap_v2_lp.address
         )
     with pytest.raises(PoolNotAssociated):
-        UniswapV2LiquidityPoolManager(factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS).get_pool(
+        UniswapV2PoolManager(factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS).get_pool(
             pool_address=sushiswap_v2_lp.address
         )
     assert sushiswap_v2_lp.address in uniswap_v2_pool_manager._untracked_pools
@@ -265,7 +259,7 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
 def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
 
-    uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
+    uniswap_v2_pool_manager = UniswapV2PoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
     )
 
@@ -315,7 +309,7 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
 def test_pools_from_token_path(ethereum_archive_node_web3: Web3) -> None:
     set_web3(ethereum_archive_node_web3)
 
-    uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
+    uniswap_v2_pool_manager = UniswapV2PoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
     )
 
@@ -334,7 +328,7 @@ def test_same_block(fork_mainnet: AnvilFork):
     fork_mainnet.reset(block_number=_BLOCK)
     set_web3(fork_mainnet.w3)
 
-    uniswap_v2_pool_manager = UniswapV2LiquidityPoolManager(
+    uniswap_v2_pool_manager = UniswapV2PoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
     )
 

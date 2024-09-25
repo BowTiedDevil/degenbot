@@ -143,6 +143,5 @@ class LedgerError(TransactionError):
 # 2nd level exceptions for Uniswap Manager classes
 class PoolNotAssociated(ManagerError):
     """
-    Raised by a UniswapV2LiquidityPoolManager or UniswapV3LiquidityPoolManager class if a requested
-    pool address is not associated with the DEX.
+    Raised by a Uniswap pool manager if a requested pool address is not associated with the DEX.
     """
