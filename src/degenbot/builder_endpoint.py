@@ -119,7 +119,7 @@ class BuilderEndpoint:  # pragma: no cover
         bundle_params: dict[str, Any] = {
             "txs": (
                 # Array[String], A list of signed transactions to execute in an atomic bundle
-                [tx.hex() for tx in bundle]
+                [tx.to_0x_hex() for tx in bundle]
             ),
             "blockNumber": (
                 # String, a hex encoded block number for which this bundle is valid on
@@ -215,7 +215,7 @@ class BuilderEndpoint:  # pragma: no cover
 
     async def cancel_private_transaction(
         self,
-        tx_hash: bytes | str,
+        tx_hash: HexBytes | str,
         signer_key: str,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
@@ -237,8 +237,8 @@ class BuilderEndpoint:  # pragma: no cover
                 f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
-        if isinstance(tx_hash, bytes):
-            tx_hash = tx_hash.hex()
+        if isinstance(tx_hash, HexBytes):
+            tx_hash = tx_hash.to_0x_hex()
 
         payload = ujson.dumps(
             {
@@ -395,7 +395,7 @@ class BuilderEndpoint:  # pragma: no cover
         bundle_params: dict[str, Any] = {
             "txs": (
                 # Array[String], A list of signed transactions to execute in an atomic bundle
-                [tx.hex() for tx in bundle]
+                [tx.to_0x_hex() for tx in bundle]
             ),
             "blockNumber": (
                 # String, a hex encoded block number for which this bundle is valid on
@@ -454,7 +454,7 @@ class BuilderEndpoint:  # pragma: no cover
 
     async def send_private_transaction(
         self,
-        raw_transaction: bytes | str,
+        raw_transaction: HexBytes | str,
         signer_key: str,
         max_block_number: int | None = None,
         preferences: dict[str, Any] | None = None,
@@ -476,8 +476,8 @@ class BuilderEndpoint:  # pragma: no cover
                 f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
-        if isinstance(raw_transaction, bytes):
-            raw_transaction = raw_transaction.hex()
+        if isinstance(raw_transaction, HexBytes):
+            raw_transaction = raw_transaction.to_0x_hex()
 
         params_dict: dict[str, Any] = {
             "tx": raw_transaction,
@@ -516,7 +516,7 @@ class BuilderEndpoint:  # pragma: no cover
 
     async def send_private_raw_transaction(
         self,
-        raw_transaction: bytes | str,
+        raw_transaction: HexBytes | str,
         signer_key: str,
         preferences: dict[str, Any] | None = None,
         http_session: aiohttp.ClientSession | None = None,
@@ -537,8 +537,8 @@ class BuilderEndpoint:  # pragma: no cover
                 f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
-        if isinstance(raw_transaction, bytes):
-            raw_transaction = raw_transaction.hex()
+        if isinstance(raw_transaction, HexBytes):
+            raw_transaction = raw_transaction.to_0x_hex()
 
         params: list[str | dict[str, Any]] = [
             raw_transaction,
