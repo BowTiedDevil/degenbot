@@ -1,6 +1,6 @@
 import contextlib
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from eth_typing import BlockIdentifier, ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -58,7 +58,6 @@ class SolidlyV2LiquidityPoolManager:
         return cls(
             factory_address=exchange.factory.address,
             deployer_address=exchange.factory.deployer,
-            pool_init_hash=exchange.factory.pool_init_hash,
         )
 
     def __delitem__(self, pool: AerodromeV2LiquidityPool | ChecksumAddress | str) -> None:
