@@ -176,7 +176,7 @@ class AbstractErc20Token:
     def __lt__(self, other: Any) -> bool:
         match other:
             case AbstractErc20Token():
-                return self.address == other.address
+                return self.address < other.address
             case HexBytes():
                 return self.address.lower() < other.to_0x_hex().lower()
             case bytes():
@@ -189,7 +189,7 @@ class AbstractErc20Token:
     def __gt__(self, other: Any) -> bool:
         match other:
             case AbstractErc20Token():
-                return self.address == other.address
+                return self.address > other.address
             case HexBytes():
                 return self.address.lower() > other.to_0x_hex().lower()
             case bytes():
