@@ -7,8 +7,6 @@ from collections.abc import Iterable
 from typing import Any, Literal, cast
 
 from eth_typing import HexAddress
-from eth_utils.address import to_checksum_address
-from hexbytes import HexBytes
 from web3 import IPCProvider, Web3
 from web3.middleware import Middleware
 from web3.types import RPCEndpoint
@@ -199,25 +197,19 @@ class AnvilFork:
 
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setBalance"),
-            params=[
-                to_checksum_address(address),
-                hex(balance),
-            ],
+            params=[address, hex(balance)],
         )
 
     def set_code(self, address: str, bytecode: bytes) -> None:
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setCode"),
-            params=[
-                HexBytes(address).hex(),
-                HexBytes(bytecode).hex(),
-            ],
+            params=[address, bytecode],
         )
 
     def set_coinbase(self, address: str) -> None:
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setCoinbase"),
-            params=[HexBytes(address).hex()],
+            params=[address],
         )
 
     def set_next_base_fee(self, fee: int) -> None:
@@ -225,13 +217,13 @@ class AnvilFork:
             raise ValueError("Fee outside valid range 0 <= fee <= 2**256-1")
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setNextBlockBaseFeePerGas"),
-            params=[hex(fee)],
+            params=[fee],
         )
 
     def set_nonce(self, address: str, nonce: int) -> None:
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setNonce"),
-            params=[to_checksum_address(address), hex(nonce)],
+            params=[address, nonce],
         )
 
     def set_snapshot(self) -> int:
