@@ -19,7 +19,7 @@ from ..registry.all_pools import AllPools
 from ..types import AbstractManager
 from .v2_liquidity_pool import UniswapV2Pool
 from .v3_functions import generate_v3_pool_address
-from .v3_liquidity_pool import V3LiquidityPool
+from .v3_liquidity_pool import UniswapV3Pool
 from .v3_snapshot import UniswapV3LiquiditySnapshot
 
 
@@ -279,13 +279,13 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         deployer_address: ChecksumAddress | str | None = None,
         chain_id: int | None = None,
         pool_init_hash: str | None = None,
-        pool_class: type = V3LiquidityPool,
+        pool_class: type = UniswapV3Pool,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
     ):
         chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
         factory_address = to_checksum_address(factory_address)
 
-        assert issubclass(pool_class, V3LiquidityPool)
+        assert issubclass(pool_class, UniswapV3Pool)
 
         try:
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
@@ -325,17 +325,17 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._pool_class = pool_class
                 self._pool_init_hash = pool_init_hash
                 self._snapshot = snapshot
-                self._tracked_pools: dict[ChecksumAddress, V3LiquidityPool] = {}
+                self._tracked_pools: dict[ChecksumAddress, UniswapV3Pool] = {}
                 self._untracked_pools: set[ChecksumAddress] = set()
             except Exception as e:
                 self._state[chain_id][factory_address] = {}
                 logger.exception("debug")
                 raise ManagerError(f"Could not initialize state for {factory_address}") from e
 
-    def __delitem__(self, pool: V3LiquidityPool | ChecksumAddress | str) -> None:
+    def __delitem__(self, pool: UniswapV3Pool | ChecksumAddress | str) -> None:
         pool_address: ChecksumAddress
 
-        if isinstance(pool, V3LiquidityPool):
+        if isinstance(pool, UniswapV3Pool):
             pool_address = pool.address
         else:
             pool_address = to_checksum_address(pool)
@@ -348,11 +348,11 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
     def __repr__(self) -> str:  # pragma: no cover
         return f"UniswapV3LiquidityPoolManager(factory={self._factory_address})"
 
-    def _add_tracked_pool(self, pool_helper: V3LiquidityPool) -> None:
+    def _add_tracked_pool(self, pool_helper: UniswapV3Pool) -> None:
         with self._lock:
             self._tracked_pools[pool_helper.address] = pool_helper
 
-    def _apply_pending_liquidity_updates(self, pool: V3LiquidityPool) -> None:
+    def _apply_pending_liquidity_updates(self, pool: UniswapV3Pool) -> None:
         """
         Apply all pending updates from the snapshot.
         """
@@ -386,7 +386,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         # keyword arguments passed to the `V3LiquidityPool` constructor
         v3liquiditypool_kwargs: dict[str, Any] | None = None,
         state_block: int | None = None,
-    ) -> V3LiquidityPool:
+    ) -> UniswapV3Pool:
         """
         Get a `V3LiquidityPool` from its address, or a tuple of token addresses and fee in bips
         (e.g. 100, 500, 3000, 10000)
@@ -395,14 +395,14 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
         def find_or_build(
             pool_address: ChecksumAddress,
             state_block: int | None = None,
-        ) -> V3LiquidityPool:
+        ) -> UniswapV3Pool:
             if TYPE_CHECKING:
                 assert isinstance(v3liquiditypool_kwargs, dict)
 
             # Check if the AllPools collection already has this pool
             if pool_helper := AllPools(self._chain_id).get(pool_address):
                 if TYPE_CHECKING:
-                    assert isinstance(pool_helper, V3LiquidityPool)
+                    assert isinstance(pool_helper, UniswapV3Pool)
                 if pool_helper.factory == self._factory_address:
                     self._add_tracked_pool(pool_helper)
                     return pool_helper
@@ -437,7 +437,7 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
                 self._apply_pending_liquidity_updates(pool_helper)
                 self._add_tracked_pool(pool_helper)
                 assert isinstance(
-                    pool_helper, V3LiquidityPool
+                    pool_helper, UniswapV3Pool
                 ), f"{self} Attempted to return non-V3 pool {pool_helper}! {pool_address=}, {token_addresses=}, {pool_fee=}"  # noqa:E501
                 return pool_helper
 
@@ -470,9 +470,9 @@ class UniswapV3LiquidityPoolManager(UniswapLiquidityPoolManager):
             pool_helper = find_or_build(pool_address, state_block)
 
         if TYPE_CHECKING:
-            assert isinstance(pool_helper, V3LiquidityPool)
+            assert isinstance(pool_helper, UniswapV3Pool)
 
         assert isinstance(
-            pool_helper, V3LiquidityPool
+            pool_helper, UniswapV3Pool
         ), f"{self} Attempted to return non-V3 pool {pool_helper}! {pool_address=}, {token_addresses=}, {pool_fee=}"  # noqa:E501
         return pool_helper

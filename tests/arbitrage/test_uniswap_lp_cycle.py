@@ -26,7 +26,7 @@ from degenbot.exceptions import ArbitrageError
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.uniswap.v2_liquidity_pool import CamelotLiquidityPool, UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState, UniswapV2PoolStateUpdated
-from degenbot.uniswap.v3_liquidity_pool import V3LiquidityPool
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
@@ -67,9 +67,9 @@ def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> UniswapV2Pool:
 
 
 @pytest.fixture
-def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> V3LiquidityPool:
+def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> UniswapV3Pool:
     set_web3(fork_mainnet.w3)
-    pool = V3LiquidityPool(
+    pool = UniswapV3Pool(
         WBTC_WETH_V3_POOL_ADDRESS,
         tick_bitmap={
             -1: UniswapV3BitmapAtWord(
@@ -2074,7 +2074,7 @@ def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> V3LiquidityPool:
 @pytest.fixture
 def wbtc_weth_arb(
     wbtc_weth_v2_lp: UniswapV2Pool,
-    wbtc_weth_v3_lp: V3LiquidityPool,
+    wbtc_weth_v3_lp: UniswapV3Pool,
     weth_token: Erc20Token,
 ):
     return UniswapLpCycle(
@@ -2092,7 +2092,7 @@ class MockLiquidityPool(UniswapV2Pool):
         self._subscribers = set()
 
 
-class MockV3LiquidityPool(V3LiquidityPool):
+class MockV3LiquidityPool(UniswapV3Pool):
     def __init__(self) -> None:
         self._state_lock = Lock()
         self._subscribers = set()
@@ -2100,7 +2100,7 @@ class MockV3LiquidityPool(V3LiquidityPool):
 
 def test_create_with_either_token_input(
     wbtc_weth_v2_lp: UniswapV2Pool,
-    wbtc_weth_v3_lp: V3LiquidityPool,
+    wbtc_weth_v3_lp: UniswapV3Pool,
     weth_token: Erc20Token,
     wbtc_token: Erc20Token,
 ):
@@ -2121,7 +2121,7 @@ def test_create_with_either_token_input(
 def test_arbitrage_with_overrides(
     wbtc_weth_arb: UniswapLpCycle,
     wbtc_weth_v2_lp: UniswapV2Pool,
-    wbtc_weth_v3_lp: V3LiquidityPool,
+    wbtc_weth_v3_lp: UniswapV3Pool,
     weth_token: Erc20Token,
     wbtc_token: Erc20Token,
 ):
@@ -2262,7 +2262,7 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum: AnvilFor
 
 
 async def test_process_pool_calculation(
-    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
+    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
 ):
     start = time.perf_counter()
 
@@ -2327,7 +2327,7 @@ async def test_process_pool_calculation(
             print(f"Completed process_pool calc #{i}, {time.perf_counter()-start:.2f}s since start")
         print(f"Completed {_NUM_FUTURES} calculations in {time.perf_counter() - start:.1f}s")
 
-        assert isinstance(wbtc_weth_arb.swap_pools[1], V3LiquidityPool)
+        assert isinstance(wbtc_weth_arb.swap_pools[1], UniswapV3Pool)
         wbtc_weth_arb.swap_pools[1].sparse_liquidity_map = True
         with pytest.raises(ValueError, match="One or more V3 pools has a sparse bitmap."):
             await wbtc_weth_arb.calculate_with_pool(
@@ -2400,7 +2400,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
 
 
 def test_bad_pool_in_constructor(
-    wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
+    wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
 ):
     with pytest.raises(ValueError, match="Incompatible pool provided."):
         UniswapLpCycle(
@@ -2412,7 +2412,7 @@ def test_bad_pool_in_constructor(
 
 
 def test_no_max_input(
-    wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
+    wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
 ):
     arb = UniswapLpCycle(
         id="test_arb",
@@ -2423,7 +2423,7 @@ def test_no_max_input(
 
 
 def test_zero_max_input(
-    wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: V3LiquidityPool, weth_token: Erc20Token
+    wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
 ):
     with pytest.raises(ValueError, match="Maximum input must be positive."):
         UniswapLpCycle(
@@ -2435,7 +2435,7 @@ def test_zero_max_input(
 
 
 def test_arbitrage_helper_subscriptions(
-    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: V3LiquidityPool
+    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool
 ):
     assert wbtc_weth_arb in wbtc_weth_v2_lp._subscribers
     assert wbtc_weth_arb in wbtc_weth_v3_lp._subscribers
@@ -2487,7 +2487,7 @@ def test_arbitrage_helper_subscriptions(
 
 
 def test_pool_helper_unsubscriptions(
-    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: V3LiquidityPool
+    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool
 ):
     assert wbtc_weth_arb in wbtc_weth_v2_lp._subscribers
     assert wbtc_weth_arb in wbtc_weth_v3_lp._subscribers

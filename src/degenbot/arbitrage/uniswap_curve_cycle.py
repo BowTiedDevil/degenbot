@@ -21,7 +21,7 @@ from ..types import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
 from ..uniswap.v2_liquidity_pool import UniswapV2Pool
 from ..uniswap.v2_types import UniswapV2PoolState, UniswapV2PoolStateUpdated
 from ..uniswap.v3_libraries import TickMath
-from ..uniswap.v3_liquidity_pool import V3LiquidityPool
+from ..uniswap.v3_liquidity_pool import UniswapV3Pool
 from ..uniswap.v3_types import UniswapV3PoolState, UniswapV3PoolStateUpdated
 from .types import (
     ArbitrageCalculationResult,
@@ -35,7 +35,7 @@ from .types import (
 CurveOrUniswapPoolState: TypeAlias = (
     UniswapV2PoolState | UniswapV3PoolState | CurveStableswapPoolState
 )
-CurveOrUniswapPool: TypeAlias = UniswapV2Pool | V3LiquidityPool | CurveStableswapPool
+CurveOrUniswapPool: TypeAlias = UniswapV2Pool | UniswapV3Pool | CurveStableswapPool
 CurveOrUniswapSwapAmount: TypeAlias = (
     CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
 )
@@ -83,7 +83,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         _swap_vectors: list[CurveStableSwapPoolVector | UniswapPoolSwapVector] = []
         for i, pool in enumerate(self.swap_pools):
             match pool:
-                case UniswapV2Pool() | V3LiquidityPool():
+                case UniswapV2Pool() | UniswapV3Pool():
                     if i == 0:
                         match self.input_token:
                             case pool.token0:
@@ -207,7 +207,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                                 else (_token_out_quantity, 0),
                             )
                         )
-                    case V3LiquidityPool(), UniswapV3PoolState() | None, UniswapPoolSwapVector():
+                    case UniswapV3Pool(), UniswapV3PoolState() | None, UniswapPoolSwapVector():
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=swap_vector.token_in,
                             token_in_quantity=_token_in_quantity,
@@ -316,7 +316,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                     profit_factor *= (price if vector.zero_for_one else 1 / price) * (
                         (fee.denominator - fee.numerator) / fee.denominator
                     )
-                case V3LiquidityPool(), UniswapV3PoolState(), UniswapPoolSwapVector():
+                case UniswapV3Pool(), UniswapV3PoolState(), UniswapPoolSwapVector():
                     if pool_state.sqrt_price_x96 == 0:
                         raise ZeroLiquidityError(
                             f"V3 pool {pool.address} has no liquidity (not initialized)"
@@ -410,7 +410,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                                 else token_out_quantity,
                                 override_state=pool_override,
                             )
-                        case V3LiquidityPool(), UniswapV3PoolState() | None:
+                        case UniswapV3Pool(), UniswapV3PoolState() | None:
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
@@ -526,7 +526,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
             [
                 pool.sparse_liquidity_map
                 for pool in self.swap_pools
-                if isinstance(pool, V3LiquidityPool)
+                if isinstance(pool, UniswapV3Pool)
             ]
         ):  # pragma: no cover
             raise ValueError(
@@ -618,7 +618,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                     # perform intermediate custody and the swap can send the tokens directly to the
                     # next pool
                     swap_destination_address = next_pool.address
-                case V3LiquidityPool() | CurveStableswapPool():
+                case UniswapV3Pool() | CurveStableswapPool():
                     # V3 and Curve pools do not accept a pre-swap transfer, so the contract must
                     # maintain custody prior to a swap
                     swap_destination_address = from_address
@@ -689,7 +689,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
                             MSG_VALUE,
                         )
                     )
-                case _, V3LiquidityPool(), UniswapV3PoolSwapAmounts():
+                case _, UniswapV3Pool(), UniswapV3PoolSwapAmounts():
                     if _swap_amounts.zero_for_one:
                         _token_in = swap_pool.token0
                         _token_out = swap_pool.token1
@@ -840,7 +840,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
         match publisher, message:
             case (
                 UniswapV2Pool()
-                | V3LiquidityPool()
+                | UniswapV3Pool()
                 | CurveStableswapPool(),
                 UniswapV2PoolStateUpdated()
                 | UniswapV3PoolStateUpdated()

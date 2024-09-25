@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from degenbot import UniswapV2Pool, V3LiquidityPool
+from degenbot import UniswapV2Pool, UniswapV3Pool
 from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
 from degenbot.config import set_web3
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
@@ -97,9 +97,9 @@ def test_arb_calculation(ethereum_archive_node_web3):
     uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
     uniswap_v2_weth_usdt_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDT_ADDRESS)
-    uniswap_v3_weth_dai_lp = V3LiquidityPool(UNISWAP_V3_WETH_DAI_ADDRESS)
-    uniswap_v3_weth_usdc_lp = V3LiquidityPool(UNISWAP_V3_WETH_USDC_ADDRESS)
-    uniswap_v3_weth_usdt_lp = V3LiquidityPool(UNISWAP_V3_WETH_USDT_ADDRESS)
+    uniswap_v3_weth_dai_lp = UniswapV3Pool(UNISWAP_V3_WETH_DAI_ADDRESS)
+    uniswap_v3_weth_usdc_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDC_ADDRESS)
+    uniswap_v3_weth_usdt_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDT_ADDRESS)
 
     weth = Erc20Token(WETH_ADDRESS)
 
@@ -211,8 +211,8 @@ def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3):
 def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3):
     set_web3(ethereum_archive_node_web3)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v3_weth_usdc_lp = V3LiquidityPool(UNISWAP_V3_WETH_USDC_ADDRESS)
-    uniswap_v3_weth_usdt_lp = V3LiquidityPool(UNISWAP_V3_WETH_USDT_ADDRESS)
+    uniswap_v3_weth_usdc_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDC_ADDRESS)
+    uniswap_v3_weth_usdt_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDT_ADDRESS)
 
     weth = Erc20Token(WETH_ADDRESS)
     arb = UniswapCurveCycle(

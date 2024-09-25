@@ -22,7 +22,7 @@ from .uniswap.v2_types import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
-from .uniswap.v3_liquidity_pool import AerodromeV3Pool, PancakeV3Pool, V3LiquidityPool
+from .uniswap.v3_liquidity_pool import AerodromeV3Pool, PancakeV3Pool, UniswapV3Pool
 from .uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from .uniswap.v3_types import (
     UniswapV3PoolExternalUpdate,
@@ -69,5 +69,5 @@ __all__ = (
     "UniswapV3PoolExternalUpdate",
     "UniswapV3PoolSimulationResult",
     "UniswapV3PoolState",
-    "V3LiquidityPool",
+    "UniswapV3Pool",
 )

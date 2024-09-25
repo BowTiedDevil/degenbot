@@ -51,7 +51,7 @@ UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
 )
 
 
-class V3LiquidityPool(AbstractLiquidityPool):
+class UniswapV3Pool(AbstractLiquidityPool):
     @dataclasses.dataclass(slots=True, repr=False, eq=False)
     class SwapCache:
         liquidity_start: int
@@ -267,7 +267,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
         address: str,
         exchange: UniswapV3ExchangeDeployment,
         **kwargs: Any,
-    ) -> "V3LiquidityPool":
+    ) -> "UniswapV3Pool":
         """
         Create a new `V3LiquidityPool` with exchange information taken from the provided deployment.
         """
@@ -1284,7 +1284,7 @@ class V3LiquidityPool(AbstractLiquidityPool):
             )
 
 
-class PancakeV3Pool(V3LiquidityPool):
+class PancakeV3Pool(UniswapV3Pool):
     def get_price_and_tick(
         self, w3: Web3, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, int]:
@@ -1309,7 +1309,7 @@ class PancakeV3Pool(V3LiquidityPool):
         return price, tick
 
 
-class AerodromeV3Pool(V3LiquidityPool):
+class AerodromeV3Pool(UniswapV3Pool):
     def get_price_and_tick(
         self, w3: Web3, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, int]:

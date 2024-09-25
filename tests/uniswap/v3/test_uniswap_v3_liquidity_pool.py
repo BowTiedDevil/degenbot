@@ -17,7 +17,7 @@ from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries import TickMath
-from degenbot.uniswap.v3_liquidity_pool import UNISWAP_V3_MAINNET_POOL_INIT_HASH, V3LiquidityPool
+from degenbot.uniswap.v3_liquidity_pool import UNISWAP_V3_MAINNET_POOL_INIT_HASH, UniswapV3Pool
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
@@ -40,16 +40,16 @@ def dai() -> Erc20Token:
 
 
 @pytest.fixture(scope="function")
-def wbtc_weth_v3_lp_at_block_17_600_000(fork_mainnet: AnvilFork) -> V3LiquidityPool:
+def wbtc_weth_v3_lp_at_block_17_600_000(fork_mainnet: AnvilFork) -> UniswapV3Pool:
     fork_mainnet.reset(block_number=17_600_000)
     set_web3(fork_mainnet.w3)
-    return V3LiquidityPool(WBTC_WETH_V3_POOL_ADDRESS)
+    return UniswapV3Pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
 @pytest.fixture
-def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> V3LiquidityPool:
+def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> UniswapV3Pool:
     set_web3(fork_mainnet.w3)
-    return V3LiquidityPool(WBTC_WETH_V3_POOL_ADDRESS)
+    return UniswapV3Pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
 def convert_unsigned_integer_to_signed(num: int):
@@ -60,7 +60,7 @@ def convert_unsigned_integer_to_signed(num: int):
     return int.from_bytes(HexBytes(num), byteorder="big", signed=True)
 
 
-def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool):
+def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool):
     word_position, _ = get_tick_word_and_bit_position(
         tick=wbtc_weth_v3_lp_at_block_17_600_000.tick,
         tick_spacing=wbtc_weth_v3_lp_at_block_17_600_000.tick_spacing,
@@ -70,25 +70,25 @@ def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool
 
 def test_creation(ethereum_archive_node_web3: Web3) -> None:
     set_web3(ethereum_archive_node_web3)
-    V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS)
-    V3LiquidityPool(
+    UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
+    UniswapV3Pool(
         address=WBTC_WETH_V3_POOL_ADDRESS,
         factory_address=UNISWAP_V3_FACTORY_ADDRESS,
     )
-    V3LiquidityPool(
+    UniswapV3Pool(
         address=WBTC_WETH_V3_POOL_ADDRESS,
         tokens=[
             Erc20Token(WBTC_CONTRACT_ADDRESS),
             Erc20Token(WETH_CONTRACT_ADDRESS),
         ],
     )
-    V3LiquidityPool(
+    UniswapV3Pool(
         address=WBTC_WETH_V3_POOL_ADDRESS,
         deployer_address=UNISWAP_V3_FACTORY_ADDRESS,
         init_hash=UNISWAP_V3_MAINNET_POOL_INIT_HASH,
     )
     assert (
-        V3LiquidityPool(
+        UniswapV3Pool(
             address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={}, tick_data={}
         ).sparse_liquidity_map
         is False
@@ -98,7 +98,7 @@ def test_creation(ethereum_archive_node_web3: Web3) -> None:
 def test_creation_with_bad_tokens(ethereum_archive_node_web3: Web3) -> None:
     set_web3(ethereum_archive_node_web3)
     with pytest.raises(ValueError, match="too many values to unpack"):
-        V3LiquidityPool(
+        UniswapV3Pool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
             tokens=[
                 Erc20Token(WBTC_CONTRACT_ADDRESS),
@@ -110,7 +110,7 @@ def test_creation_with_bad_tokens(ethereum_archive_node_web3: Web3) -> None:
     with pytest.raises(ValueError, match="Pool address verification failed"):
         # The bad token adddress will result in a mismatched CREATE2 address, so pool is implicitly
         # protected against incorrectly-overridden tokens
-        V3LiquidityPool(
+        UniswapV3Pool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
             tokens=[
                 Erc20Token(WBTC_CONTRACT_ADDRESS),
@@ -122,10 +122,10 @@ def test_creation_with_bad_tokens(ethereum_archive_node_web3: Web3) -> None:
 def test_creation_with_bad_liquidity_overrides(ethereum_archive_node_web3: Web3) -> None:
     set_web3(ethereum_archive_node_web3)
     with pytest.raises(ValueError, match="Provide both tick_bitmap and tick_data."):
-        V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={0: {}})
+        UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={0: {}})
 
     with pytest.raises(ValueError, match="Provide both tick_bitmap and tick_data."):
-        V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_data={0: {}})
+        UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_data={0: {}})
 
 
 def test_creation_with_invalid_hash(ethereum_archive_node_web3: Web3) -> None:
@@ -145,7 +145,7 @@ def test_creation_with_invalid_hash(ethereum_archive_node_web3: Web3) -> None:
         ValueError,
         match="Pool address verification failed",
     ):
-        V3LiquidityPool(
+        UniswapV3Pool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
             factory_address=UNISWAP_V3_FACTORY_ADDRESS,
             init_hash=BAD_INIT_HASH,
@@ -160,7 +160,7 @@ def test_creation_with_invalid_hash(ethereum_archive_node_web3: Web3) -> None:
 def test_sparse_liquidity_map(ethereum_archive_node_web3: Web3) -> None:
     set_web3(ethereum_archive_node_web3)
 
-    lp = V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS)
+    lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
     current_word, _ = get_tick_word_and_bit_position(TickMath.MIN_TICK, lp.tick_spacing)
     known_words = set(lp.tick_bitmap.keys())
     assert lp.sparse_liquidity_map is True
@@ -176,8 +176,8 @@ def test_sparse_liquidity_map(ethereum_archive_node_web3: Web3) -> None:
     )
 
 
-def test_reorg(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
-    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+def test_reorg(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
 
     _START_BLOCK = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
     _END_BLOCK = _START_BLOCK + 10
@@ -218,8 +218,8 @@ def test_reorg(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
     assert lp.state == starting_state
 
 
-def test_discard_before_finalized(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
-    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+def test_discard_before_finalized(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
 
     _START_BLOCK = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
     _END_BLOCK = _START_BLOCK + 10
@@ -245,8 +245,8 @@ def test_discard_before_finalized(wbtc_weth_v3_lp_at_block_17_600_000: V3Liquidi
     assert wbtc_weth_v3_lp_at_block_17_600_000._pool_state_archive.keys() == set([_END_BLOCK])
 
 
-def test_discard_earlier_than_created(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
-    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+def test_discard_earlier_than_created(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
 
     assert lp._pool_state_archive is not None
     state_before_discard = lp._pool_state_archive.copy()
@@ -254,8 +254,8 @@ def test_discard_earlier_than_created(wbtc_weth_v3_lp_at_block_17_600_000: V3Liq
     assert lp._pool_state_archive == state_before_discard
 
 
-def test_discard_after_last_update(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
-    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+def test_discard_after_last_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
 
     with pytest.raises(
         NoPoolStateAvailable, match=f"No pool state known prior to block {lp.update_block + 1}"
@@ -272,7 +272,7 @@ def test_tick_bitmap_equality() -> None:
     assert UniswapV3BitmapAtWord(bitmap=1, block=1) == UniswapV3BitmapAtWord(bitmap=1, block=2)
 
 
-def test_pickle_pool(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool):
+def test_pickle_pool(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool):
     pickle.dumps(wbtc_weth_v3_lp_at_block_17_600_000)
 
 
@@ -289,8 +289,8 @@ def test_tick_data_equality() -> None:
     ) == UniswapV3LiquidityAtTick(liquidityNet=1, liquidityGross=2, block=4)
 
 
-def test_pool_state_equality(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
-    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+def test_pool_state_equality(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
     with pytest.raises(AssertionError):
         assert UniswapV3PoolState(
             pool=lp.address,
@@ -345,14 +345,14 @@ def test_pool_state_equality(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPoo
     )
 
 
-def test_price_is_inverse_of_exchange_rate(wbtc_weth_v3_lp: V3LiquidityPool):
+def test_price_is_inverse_of_exchange_rate(wbtc_weth_v3_lp: UniswapV3Pool):
     for token in [wbtc_weth_v3_lp.token0, wbtc_weth_v3_lp.token1]:
         assert wbtc_weth_v3_lp.get_absolute_price(token) == 1 / wbtc_weth_v3_lp.get_absolute_rate(
             token
         )
 
 
-def test_nominal_rate_scaled_by_decimals(wbtc_weth_v3_lp: V3LiquidityPool):
+def test_nominal_rate_scaled_by_decimals(wbtc_weth_v3_lp: UniswapV3Pool):
     for token in [wbtc_weth_v3_lp.token0, wbtc_weth_v3_lp.token1]:
         nom_rate = int(wbtc_weth_v3_lp.get_nominal_rate(token))
         abs_rate = int(wbtc_weth_v3_lp.get_absolute_rate(token))
@@ -361,7 +361,7 @@ def test_nominal_rate_scaled_by_decimals(wbtc_weth_v3_lp: V3LiquidityPool):
         )
 
 
-def test_nominal_price_scaled_by_decimals(wbtc_weth_v3_lp: V3LiquidityPool):
+def test_nominal_price_scaled_by_decimals(wbtc_weth_v3_lp: UniswapV3Pool):
     for token in [wbtc_weth_v3_lp.token0, wbtc_weth_v3_lp.token1]:
         nom_price = int(wbtc_weth_v3_lp.get_nominal_price(token))
         abs_price = int(wbtc_weth_v3_lp.get_absolute_price(token))
@@ -371,9 +371,9 @@ def test_nominal_price_scaled_by_decimals(wbtc_weth_v3_lp: V3LiquidityPool):
 
 
 def test_calculate_tokens_out_from_tokens_in(
-    wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool,
+    wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool,
 ) -> None:
-    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
 
     assert (
         lp.calculate_tokens_out_from_tokens_in(
@@ -392,9 +392,9 @@ def test_calculate_tokens_out_from_tokens_in(
 
 
 def test_calculate_tokens_out_from_tokens_in_with_override(
-    wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool,
+    wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool,
 ) -> None:
-    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
     # Overridden reserve values for this test are taken at block height 17,650,000
     # Liquidity: 1533143241938066251
     # SqrtPrice: 31881290961944305252140777263703426
@@ -418,9 +418,9 @@ def test_calculate_tokens_out_from_tokens_in_with_override(
 
 
 def test_calculate_tokens_in_from_tokens_out(
-    wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool,
+    wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool,
 ) -> None:
-    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
     assert (
         lp.calculate_tokens_in_from_tokens_out(
             token_out=lp.token1,
@@ -439,9 +439,9 @@ def test_calculate_tokens_in_from_tokens_out(
 
 
 def test_calculate_tokens_in_from_tokens_out_with_override(
-    wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool,
+    wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool,
 ) -> None:
-    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
     # Overridden reserve values for this test are taken at block height 17,650,000
     # Liquidity: 1533143241938066251
     # SqrtPrice: 31881290961944305252140777263703426
@@ -464,8 +464,8 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
     )
 
 
-def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool, dai: Erc20Token) -> None:
-    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool, dai: Erc20Token) -> None:
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
     # 1 WETH -> WBTC swap
     weth_amount_in = 1 * 10**18
 
@@ -546,9 +546,9 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool, dai: 
 
 
 def test_simulations_with_override(
-    wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool,
+    wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool,
 ) -> None:
-    lp: V3LiquidityPool = wbtc_weth_v3_lp_at_block_17_600_000
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
     # Overridden reserve values for this test are taken at block height 17,650,000
     # Liquidity: 1533143241938066251
     # SqrtPrice: 31881290961944305252140777263703426
@@ -594,7 +594,7 @@ def test_simulations_with_override(
     )
 
 
-def test_zero_swaps(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
+def test_zero_swaps(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
     with pytest.raises(LiquidityPoolError):
         assert (
             wbtc_weth_v3_lp_at_block_17_600_000.calculate_tokens_out_from_tokens_in(
@@ -614,7 +614,7 @@ def test_zero_swaps(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> Non
         )
 
 
-def test_swap_for_all(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
+def test_swap_for_all(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
     with pytest.raises(InsufficientAmountOutError):
         # pool has ~94,000 WETH, calculation should throw
         wbtc_weth_v3_lp_at_block_17_600_000.calculate_tokens_in_from_tokens_out(
@@ -630,7 +630,7 @@ def test_swap_for_all(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> N
         )
 
 
-def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: V3LiquidityPool) -> None:
+def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
     _START_BLOCK = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
 
     wbtc_weth_v3_lp_at_block_17_600_000.sparse_liquidity_map = False
@@ -734,7 +734,7 @@ def test_mint_and_burn_in_empty_word(fork_mainnet: AnvilFork) -> None:
     fork_mainnet.reset(block_number=TEST_BLOCK_NUMBER)
     set_web3(fork_mainnet.w3)
 
-    lp = V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS)
+    lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
     assert lp.sparse_liquidity_map is True
 
     EMPTY_WORD = -57
@@ -774,7 +774,7 @@ def test_auto_update(fork_mainnet: AnvilFork) -> None:
     current_block = fork_mainnet.w3.eth.block_number
     fork_mainnet.reset(block_number=current_block - 500_000)
     set_web3(fork_mainnet.w3)
-    lp = V3LiquidityPool(address=WBTC_WETH_V3_POOL_ADDRESS)
+    lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
     fork_mainnet.reset(block_number=current_block)
     lp.auto_update()
     lp.auto_update()  # update twice to cover the "no update" cases
@@ -793,7 +793,7 @@ def test_complex_liquidity_transaction_1(fork_mainnet: AnvilFork):
 
     fork_mainnet.reset(block_number=STATE_BLOCK)
     set_web3(fork_mainnet.w3)
-    lp = V3LiquidityPool(LP_ADDRESS)
+    lp = UniswapV3Pool(LP_ADDRESS)
 
     # Verify initial state
     assert lp.liquidity == 14421592867765366
@@ -859,7 +859,7 @@ def test_complex_liquidity_transaction_2(fork_mainnet: AnvilFork):
 
     fork_mainnet.reset(block_number=STATE_BLOCK)
     set_web3(fork_mainnet.w3)
-    lp = V3LiquidityPool(LP_ADDRESS)
+    lp = UniswapV3Pool(LP_ADDRESS)
 
     # Verify initial state
     assert lp.liquidity == 14823044070524674

@@ -40,7 +40,7 @@ from ..uniswap.v2_functions import generate_v2_pool_address, get_v2_pools_from_t
 from ..uniswap.v2_liquidity_pool import UniswapV2Pool, UnregisteredLiquidityPool
 from ..uniswap.v2_types import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from ..uniswap.v3_functions import decode_v3_path
-from ..uniswap.v3_liquidity_pool import V3LiquidityPool
+from ..uniswap.v3_liquidity_pool import UniswapV3Pool
 from ..uniswap.v3_types import UniswapV3PoolSimulationResult, UniswapV3PoolState
 from .simulation_ledger import SimulationLedger
 
@@ -185,7 +185,7 @@ class UniswapTransaction(AbstractTransaction):
 
     @staticmethod
     def _show_pool_states(
-        pool: UniswapV2Pool | V3LiquidityPool,
+        pool: UniswapV2Pool | UniswapV3Pool,
         sim_result: UniswapV2PoolSimulationResult | UniswapV3PoolSimulationResult,
     ) -> None:
         current_state = sim_result.initial_state
@@ -384,17 +384,15 @@ class UniswapTransaction(AbstractTransaction):
 
     def _simulate_v3_swap_exact_in(
         self,
-        pool: V3LiquidityPool,
+        pool: UniswapV3Pool,
         recipient: str,
         token_in: Erc20Token,
         amount_in: int,
         amount_out_min: int | None = None,
         sqrt_price_limit_x96: int | None = None,
         first_swap: bool = False,
-    ) -> tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]:
-        assert isinstance(
-            pool, V3LiquidityPool
-        ), f"Called _simulate_v3_swap_exact_in on pool {pool}"
+    ) -> tuple[UniswapV3Pool, UniswapV3PoolSimulationResult]:
+        assert isinstance(pool, UniswapV3Pool), f"Called _simulate_v3_swap_exact_in on pool {pool}"
 
         silent = self.silent
 
@@ -471,7 +469,7 @@ class UniswapTransaction(AbstractTransaction):
 
     def _simulate_v3_swap_exact_out(
         self,
-        pool: V3LiquidityPool,
+        pool: UniswapV3Pool,
         recipient: str,
         token_in: Erc20Token,
         amount_out: int,
@@ -479,10 +477,8 @@ class UniswapTransaction(AbstractTransaction):
         sqrt_price_limit_x96: int | None = None,
         first_swap: bool = False,
         last_swap: bool = False,
-    ) -> tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]:
-        assert isinstance(
-            pool, V3LiquidityPool
-        ), f"Called _simulate_v3_swap_exact_out on pool {pool}"
+    ) -> tuple[UniswapV3Pool, UniswapV3PoolSimulationResult]:
+        assert isinstance(pool, UniswapV3Pool), f"Called _simulate_v3_swap_exact_out on pool {pool}"
 
         silent = self.silent
 
@@ -2220,7 +2216,7 @@ class UniswapTransaction(AbstractTransaction):
                             if pool == v3_pool:
                                 if TYPE_CHECKING:
                                     assert isinstance(state, UniswapV3PoolState)
-                                    assert isinstance(pool, V3LiquidityPool)
+                                    assert isinstance(pool, UniswapV3Pool)
                                 logger.info("Found V3 Pool!")
                                 pool.simulate_add_liquidity()
 
@@ -2287,7 +2283,7 @@ class UniswapTransaction(AbstractTransaction):
         state_block: BlockNumber | int | None = None,
     ) -> list[
         tuple[UniswapV2Pool, UniswapV2PoolSimulationResult]
-        | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
+        | tuple[UniswapV3Pool, UniswapV3PoolSimulationResult]
     ]:
         """
         Execute a simulation of a transaction, using the attributes
@@ -2310,7 +2306,7 @@ class UniswapTransaction(AbstractTransaction):
 
         self.simulated_pool_states: list[
             tuple[UniswapV2Pool, UniswapV2PoolSimulationResult]
-            | tuple[V3LiquidityPool, UniswapV3PoolSimulationResult]
+            | tuple[UniswapV3Pool, UniswapV3PoolSimulationResult]
         ] = []
 
         self._simulate(

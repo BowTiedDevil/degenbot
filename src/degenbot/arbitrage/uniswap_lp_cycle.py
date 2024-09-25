@@ -17,7 +17,7 @@ from ..types import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
 from ..uniswap.v2_liquidity_pool import UniswapV2Pool
 from ..uniswap.v2_types import UniswapV2PoolState, UniswapV2PoolStateUpdated
 from ..uniswap.v3_libraries import TickMath
-from ..uniswap.v3_liquidity_pool import V3LiquidityPool
+from ..uniswap.v3_liquidity_pool import UniswapV3Pool
 from ..uniswap.v3_types import UniswapV3PoolState, UniswapV3PoolStateUpdated
 from .types import (
     ArbitrageCalculationResult,
@@ -27,7 +27,7 @@ from .types import (
 )
 
 UniswapPoolState: TypeAlias = UniswapV2PoolState | UniswapV3PoolState
-UniswapPool: TypeAlias = UniswapV2Pool | V3LiquidityPool
+UniswapPool: TypeAlias = UniswapV2Pool | UniswapV3Pool
 UniswapSwapAmount: TypeAlias = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
 
 
@@ -157,7 +157,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                                 else (_token_out_quantity, 0),
                             )
                         )
-                    case V3LiquidityPool(), UniswapV3PoolState() | None:
+                    case UniswapV3Pool(), UniswapV3PoolState() | None:
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=swap_vector.token_in,
                             token_in_quantity=_token_in_quantity,
@@ -254,7 +254,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                     _check_v2_pool_liquidity(pool_state, vector)
                     exchange_rate = Fraction(pool_state.reserves_token1, pool_state.reserves_token0)
                     fee = pool.fee_token0 if vector.zero_for_one else pool.fee_token1
-                case V3LiquidityPool(), UniswapV3PoolState():
+                case UniswapV3Pool(), UniswapV3PoolState():
                     _check_v3_pool_liquidity(pool_state, vector)
                     exchange_rate = Fraction(pool_state.sqrt_price_x96**2, 2**192)
                     fee = Fraction(
@@ -307,7 +307,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                                 else token_out_quantity,
                                 override_state=pool_override,
                             )
-                        case V3LiquidityPool(), UniswapV3PoolState() | None:
+                        case UniswapV3Pool(), UniswapV3PoolState() | None:
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
@@ -414,7 +414,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             [
                 pool.sparse_liquidity_map
                 for pool in self.swap_pools
-                if isinstance(pool, V3LiquidityPool)
+                if isinstance(pool, UniswapV3Pool)
             ]
         ):
             raise ValueError(
@@ -482,7 +482,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                     swap_destination_address = next_pool.address
                 # V3 pools cannot accept a pre-swap transfer, so the contract must maintain custody
                 # prior to a swap
-                elif isinstance(next_pool, V3LiquidityPool):
+                elif isinstance(next_pool, UniswapV3Pool):
                     swap_destination_address = from_address
             except IndexError:
                 # Set the destination address for the last swap to the sending address
@@ -539,7 +539,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                             MSG_VALUE,
                         )
                     )
-                case _, V3LiquidityPool(), UniswapV3PoolSwapAmounts():
+                case _, UniswapV3Pool(), UniswapV3PoolSwapAmounts():
                     logger.debug(f"PAYLOAD: building V3 swap at pool {i}")
                     logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
                     logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
@@ -579,7 +579,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         match publisher, message:
             case (
                 UniswapV2Pool()
-                | V3LiquidityPool(),
+                | UniswapV3Pool(),
                 UniswapV2PoolStateUpdated()
                 | UniswapV3PoolStateUpdated(),
             ):
