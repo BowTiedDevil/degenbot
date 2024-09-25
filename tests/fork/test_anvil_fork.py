@@ -191,7 +191,7 @@ def test_injecting_middleware():
         fork_url="https://rpc.ankr.com/polygon",
         fork_block=53178474 - 1,
         middlewares=[
-            (web3.middleware.geth_poa.geth_poa_middleware, 0),
+            (web3.middleware.ExtraDataToPOAMiddleware, 0),
         ],
     )
     set_web3(fork.w3)
