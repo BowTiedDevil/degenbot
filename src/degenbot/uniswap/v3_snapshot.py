@@ -83,7 +83,7 @@ class UniswapV3LiquiditySnapshot:
     def fetch_new_liquidity_events(
         self,
         to_block: int,
-        span: int = 1000,
+        span: int = 100,
     ) -> None:
         def _process_log(log: LogReceipt) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
             decoded_event = get_event_data(
@@ -127,23 +127,7 @@ class UniswapV3LiquiditySnapshot:
                     toBlock=end_block,
                 )
 
-                attempts = 0
-                max_attempts = 3
-                while True:
-                    if attempts == max_attempts:
-                        raise Exception("Timeout")
-                    try:
-                        attempts += 1
-                        logger.info(f"Fetching logs from {start_block} to {end_block}")
-                        event_logs = config.get_web3().eth.get_logs(event_filter_params)
-                        break
-                    except TimeoutError:
-                        end_block = max(start_block + 1, end_block - span // max_attempts)
-                        logger.info(
-                            f"Timeout. Reduced range to {start_block}-{end_block} and retrying..."
-                        )
-                        continue
-
+                event_logs = w3.eth.get_logs(event_filter_params)
                 for event_log in event_logs:
                     pool_address, liquidity_event = _process_log(event_log)
 
