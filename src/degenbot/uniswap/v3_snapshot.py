@@ -87,7 +87,7 @@ class UniswapV3LiquiditySnapshot:
     ) -> None:
         def _process_log(log: LogReceipt) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
             decoded_event = get_event_data(
-                abi_codec=config.get_web3().codec,
+                abi_codec=w3.codec,
                 event_abi=event_abi,
                 log_entry=log,
             )
@@ -109,9 +109,9 @@ class UniswapV3LiquiditySnapshot:
             )
 
         logger.info(f"Updating snapshot from block {self.newest_block} to {to_block}")
+        w3 = config.get_web3()
 
         v3pool = Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI)
-
         for event in [v3pool.events.Mint, v3pool.events.Burn]:
             logger.info(f"Processing {event.event_name} events")
             event_abi = event._get_event_abi()
@@ -122,7 +122,7 @@ class UniswapV3LiquiditySnapshot:
 
                 _, event_filter_params = construct_event_filter_params(
                     event_abi=event_abi,
-                    abi_codec=config.get_web3().codec,
+                    abi_codec=w3.codec,
                     fromBlock=start_block,
                     toBlock=end_block,
                 )
