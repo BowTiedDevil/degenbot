@@ -8,9 +8,9 @@ description = "Python classes to aid rapid development of Uniswap V2 & V3, Curve
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    'scipy >=1.14.1, <1.15',
-    'ujson >= 5.10.0, <6',
-    'web3 >=7.2.0, <8',
+    "scipy >=1.14.1, <1.15",
+    "ujson >= 5.10.0, <6",
+    "web3 >=7.2.0, <8",
 ]
 license = {text = "MIT"}
 classifiers = [
@@ -106,8 +106,8 @@ testpaths = "tests"
 
 [tool.uv]
 dev-dependencies = [
-    'pytest',
-    'pytest-asyncio',
-    'pytest-cov',    
-    'python-dotenv',    
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",    
+    "python-dotenv",    
 ]
