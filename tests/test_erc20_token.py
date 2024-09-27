@@ -23,6 +23,15 @@ def weth(ethereum_archive_node_web3):
 
 
 def test_erc20token_comparisons(wbtc, weth):
+    with pytest.raises(AssertionError):
+        assert weth == 69
+
+    with pytest.raises(TypeError):
+        assert weth < 69
+
+    with pytest.raises(TypeError):
+        assert weth > 69
+
     assert weth != wbtc
 
     assert weth == WETH_ADDRESS
@@ -30,6 +39,7 @@ def test_erc20token_comparisons(wbtc, weth):
     assert weth == WETH_ADDRESS.upper()
     assert weth == to_checksum_address(WETH_ADDRESS)
     assert weth == HexBytes(WETH_ADDRESS)
+    assert weth == bytes.fromhex(WETH_ADDRESS[2:])
 
     assert wbtc == WBTC_ADDRESS
     assert wbtc == WBTC_ADDRESS.lower()
@@ -43,6 +53,7 @@ def test_erc20token_comparisons(wbtc, weth):
     assert weth > WBTC_ADDRESS.upper()
     assert weth > to_checksum_address(WBTC_ADDRESS)
     assert weth > HexBytes(WBTC_ADDRESS)
+    assert weth > bytes.fromhex(WBTC_ADDRESS[2:])
 
     assert wbtc < weth
     assert wbtc < WETH_ADDRESS
@@ -50,6 +61,7 @@ def test_erc20token_comparisons(wbtc, weth):
     assert wbtc < WETH_ADDRESS.upper()
     assert wbtc < to_checksum_address(WETH_ADDRESS)
     assert wbtc < HexBytes(WETH_ADDRESS)
+    assert wbtc < bytes.fromhex(WETH_ADDRESS[2:])
 
 
 def test_non_compliant_tokens(ethereum_archive_node_web3):
