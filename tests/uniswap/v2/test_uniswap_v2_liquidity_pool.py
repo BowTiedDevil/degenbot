@@ -399,11 +399,28 @@ def test_dunder_methods(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool.__str__()
     ethereum_uniswap_v2_wbtc_weth_liquiditypool.__hash__()
 
+    with pytest.raises(AssertionError):
+        assert ethereum_uniswap_v2_wbtc_weth_liquiditypool == 69
+
+    with pytest.raises(TypeError):
+        assert ethereum_uniswap_v2_wbtc_weth_liquiditypool < 69
+
+    with pytest.raises(TypeError):
+        assert ethereum_uniswap_v2_wbtc_weth_liquiditypool > 69
+
+    assert (
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool
+        == ethereum_uniswap_v2_wbtc_weth_liquiditypool.address
+    )
+    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool == bytes.fromhex(
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool.address[2:]
+    )
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool == HexBytes(
         ethereum_uniswap_v2_wbtc_weth_liquiditypool.address
     )
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool > ZERO_ADDRESS
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool > HexBytes(ZERO_ADDRESS)
+    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool > bytes.fromhex(ZERO_ADDRESS[2:])
 
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool > ethereum_uniswap_v2_wbtc_weth_liquiditypool  # noqa: PLR0124
@@ -423,6 +440,10 @@ def test_dunder_methods(
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool
         < HexBytes(ethereum_uniswap_v2_wbtc_weth_liquiditypool.address)
+    ) is False
+    assert (
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool
+        < bytes.fromhex(ethereum_uniswap_v2_wbtc_weth_liquiditypool.address[2:])
     ) is False
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool
