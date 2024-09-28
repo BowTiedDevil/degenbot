@@ -14,6 +14,7 @@ from .registry.all_pools import AllPools
 from .registry.all_tokens import AllTokens
 from .solidly.managers import SolidlyV2PoolManager
 from .solidly.solidly_liquidity_pool import AerodromeV2Pool
+from .solidly.types import AerodromeV2PoolState
 from .transaction.uniswap_transaction import UniswapTransaction
 from .uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from .uniswap.v2_liquidity_pool import CamelotLiquidityPool, UniswapV2Pool
@@ -25,6 +26,7 @@ from .uniswap.v2_types import (
 from .uniswap.v3_liquidity_pool import AerodromeV3Pool, PancakeV3Pool, UniswapV3Pool
 from .uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from .uniswap.v3_types import (
+    AerodromeV3PoolState,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
@@ -43,7 +45,9 @@ __all__ = (
     "solidly",
     "uniswap",
     "AerodromeV2Pool",
+    "AerodromeV2PoolState",
     "AerodromeV3Pool",
+    "AerodromeV3PoolState",
     "AllPools",
     "AllTokens",
     "AnvilFork",
