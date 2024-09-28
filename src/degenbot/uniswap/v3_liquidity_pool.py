@@ -585,7 +585,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @liquidity.setter
     def liquidity(self, new_liquidity: int) -> None:
         current_state = self.state
-        self.state = UniswapV3PoolState(
+        self._state = UniswapV3PoolState(
             pool=current_state.pool,
             liquidity=new_liquidity,
             sqrt_price_x96=current_state.sqrt_price_x96,
@@ -601,7 +601,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @sqrt_price_x96.setter
     def sqrt_price_x96(self, new_sqrt_price_x96: int) -> None:
         current_state = self.state
-        self.state = UniswapV3PoolState(
+        self._state = UniswapV3PoolState(
             pool=current_state.pool,
             liquidity=current_state.liquidity,
             sqrt_price_x96=new_sqrt_price_x96,
@@ -615,11 +615,6 @@ class UniswapV3Pool(AbstractLiquidityPool):
     def state(self) -> UniswapV3PoolState:
         return self._state
 
-    @state.setter
-    @override
-    def state(self, new_state: UniswapV3PoolState) -> None:
-        self._state = new_state
-
     @property
     def tick(self) -> int:
         return self.state.tick
@@ -627,7 +622,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @tick.setter
     def tick(self, new_tick: int) -> None:
         current_state = self.state
-        self.state = UniswapV3PoolState(
+        self._state = UniswapV3PoolState(
             pool=current_state.pool,
             liquidity=current_state.liquidity,
             sqrt_price_x96=current_state.sqrt_price_x96,
@@ -646,7 +641,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @tick_bitmap.setter
     def tick_bitmap(self, new_tick_bitmap: dict[int, UniswapV3BitmapAtWord]) -> None:
         current_state = self.state
-        self.state = UniswapV3PoolState(
+        self._state = UniswapV3PoolState(
             pool=current_state.pool,
             liquidity=current_state.liquidity,
             sqrt_price_x96=current_state.sqrt_price_x96,
@@ -665,7 +660,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @tick_data.setter
     def tick_data(self, new_tick_data: dict[int, UniswapV3LiquidityAtTick]) -> None:
         current_state = self.state
-        self.state = UniswapV3PoolState(
+        self._state = UniswapV3PoolState(
             pool=current_state.pool,
             liquidity=current_state.liquidity,
             sqrt_price_x96=current_state.sqrt_price_x96,
@@ -1173,7 +1168,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
             for known_block in known_blocks[block_index:]:
                 del self._pool_state_archive[known_block]
 
-            self._update_block, self.state = list(self._pool_state_archive.items())[-1]
+            self._update_block, self._state = list(self._pool_state_archive.items())[-1]
 
         self._notify_subscribers(
             message=UniswapV3PoolStateUpdated(self.state),

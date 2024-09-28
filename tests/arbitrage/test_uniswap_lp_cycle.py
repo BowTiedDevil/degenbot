@@ -57,7 +57,7 @@ def weth_token(ethereum_archive_node_web3) -> Erc20Token:
 def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> UniswapV2Pool:
     set_web3(fork_mainnet.w3)
     pool = UniswapV2Pool(WBTC_WETH_V2_POOL_ADDRESS)
-    pool.state = UniswapV2PoolState(
+    pool._state = UniswapV2PoolState(
         pool=pool.address,
         reserves_token0=16231137593,
         reserves_token1=2571336301536722443178,
@@ -2087,7 +2087,7 @@ def wbtc_weth_arb(
 
 class MockLiquidityPool(UniswapV2Pool):
     def __init__(self) -> None:
-        self.state = UniswapV2PoolState(ZERO_ADDRESS, 0, 0)
+        self._state = UniswapV2PoolState(ZERO_ADDRESS, 0, 0)
         self._state_lock = Lock()
         self._subscribers = set()
 
@@ -2173,7 +2173,7 @@ def test_arbitrage_with_overrides(
     irrelevant_v2_pool.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     irrelevant_v2_pool.fee_token0 = Fraction(3, 1000)
     irrelevant_v2_pool.fee_token1 = Fraction(3, 1000)
-    irrelevant_v2_pool.state = UniswapV2PoolState(
+    irrelevant_v2_pool._state = UniswapV2PoolState(
         pool=irrelevant_v2_pool.address,
         reserves_token0=16231137593,
         reserves_token1=2571336301536722443178,
@@ -2183,7 +2183,7 @@ def test_arbitrage_with_overrides(
 
     irrelevant_v3_pool = MockV3LiquidityPool()
     irrelevant_v3_pool.address = to_checksum_address("0x0000000000000000000000000000000000000420")
-    irrelevant_v3_pool.state = UniswapV3PoolState(
+    irrelevant_v3_pool._state = UniswapV3PoolState(
         pool=irrelevant_v3_pool.address,
         liquidity=0,
         sqrt_price_x96=0,
@@ -2343,7 +2343,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
     lp_1.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp_1.fee_token0 = Fraction(3, 1000)
     lp_1.fee_token1 = Fraction(3, 1000)
-    lp_1.state = UniswapV2PoolState(
+    lp_1._state = UniswapV2PoolState(
         pool=lp_1.address,
         reserves_token0=16000000000,
         reserves_token1=2500000000000000000000,
@@ -2357,7 +2357,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
     lp_2.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp_2.fee_token0 = Fraction(3, 1000)
     lp_2.fee_token1 = Fraction(3, 1000)
-    lp_2.state = UniswapV2PoolState(
+    lp_2._state = UniswapV2PoolState(
         pool=lp_2.address,
         reserves_token0=15000000000,
         reserves_token1=2500000000000000000000,

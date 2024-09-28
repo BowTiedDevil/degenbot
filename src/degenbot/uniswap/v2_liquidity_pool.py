@@ -127,7 +127,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         w3 = config.get_web3()
 
         self._state_lock = Lock()
-        self.state = UniswapV2PoolState(
+        self._state = UniswapV2PoolState(
             pool=self.address,
             reserves_token0=0,
             reserves_token1=0,
@@ -281,7 +281,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
     @reserves_token0.setter
     def reserves_token0(self, new_reserves: int) -> None:
         current_state = self.state
-        self.state = UniswapV2PoolState(
+        self._state = UniswapV2PoolState(
             pool=current_state.pool,
             reserves_token0=new_reserves,
             reserves_token1=current_state.reserves_token1,
@@ -294,7 +294,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
     @reserves_token1.setter
     def reserves_token1(self, new_reserves: int) -> None:
         current_state = self.state
-        self.state = UniswapV2PoolState(
+        self._state = UniswapV2PoolState(
             pool=current_state.pool,
             reserves_token0=current_state.reserves_token0,
             reserves_token1=new_reserves,
@@ -304,24 +304,6 @@ class UniswapV2Pool(AbstractLiquidityPool):
     @override
     def state(self) -> UniswapV2PoolState:
         return self._state
-
-    @state.setter
-    @override
-    def state(self, new_state: UniswapV2PoolState) -> None:
-        self._state = new_state
-
-    def auto_update(
-        self,
-        block_number: int | None = None,
-        silent: bool = True,
-    ) -> tuple[bool, UniswapV2PoolState]:
-        found_updates = self.update_reserves(
-            silent=silent,
-            print_reserves=not silent,
-            update_block=block_number,
-            override_update_method="polling",
-        )
-        return found_updates, self.state
 
     def calculate_tokens_in_from_ratio_out(
         self,
@@ -617,7 +599,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
                 del self._pool_state_archive[known_block]
 
             # Restore previous state and block
-            self._update_block, self.state = list(self._pool_state_archive.items())[-1]
+            self._update_block, self._state = list(self._pool_state_archive.items())[-1]
             self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
 
     def simulate_add_liquidity(
@@ -998,7 +980,7 @@ class UnregisteredLiquidityPool(UniswapV2Pool):
     ) -> None:
         self.address = to_checksum_address(address)
         self._state_lock = Lock()
-        self.state = UniswapV2PoolState(pool=self.address, reserves_token0=0, reserves_token1=0)
+        self._state = UniswapV2PoolState(pool=self.address, reserves_token0=0, reserves_token1=0)
         self.token0 = min(tokens)
         self.token1 = max(tokens)
         self.tokens = (self.token0, self.token1)

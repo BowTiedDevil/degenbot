@@ -260,7 +260,7 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum: AnvilFork):
     old_reserves = w3_contract.functions.getReserves().call(
         block_identifier=FORK_BLOCK - rewind_block_length
     )
-    lp.state = UniswapV2PoolState(
+    lp._state = UniswapV2PoolState(
         pool=lp.address,
         reserves_token0=old_reserves[0],
         reserves_token1=old_reserves[1],
