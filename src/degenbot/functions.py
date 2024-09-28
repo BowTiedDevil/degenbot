@@ -1,4 +1,4 @@
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 import eth_account.messages
@@ -120,9 +120,11 @@ def get_number_for_block_identifier(
         case int() as block_number_as_int:
             return block_number_as_int
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
-            if w3 is None:
-                w3 = config.get_web3()
-            block_number = w3.eth.get_block(block_tag)["number"]
+            block_number = (
+                (w3 if w3 is not None else config.get_web3()).eth.get_block(block_tag).get("number")
+            )
+            if TYPE_CHECKING:
+                assert block_number is not None
             return cast(int, block_number)
         case str() as block_number_as_str:
             return int(block_number_as_str, 16)
