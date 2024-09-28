@@ -46,8 +46,7 @@ class Subscriber(Protocol):
 
 class AbstractArbitrage:
     id: str
-    gas_estimate: int
-    swap_pools: Sequence["AbstractLiquidityPool"]
+    swap_pools: Sequence[Any]
 
     def _notify_subscribers(self: Publisher, message: Message) -> None:
         for subscriber in self._subscribers:
@@ -87,7 +86,6 @@ class UniswapSimulationResult(AbstractSimulationResult):
 class AbstractLiquidityPool(abc.ABC, Publisher):
     address: ChecksumAddress
     name: str
-    state: AbstractPoolState
     tokens: Sequence["Erc20Token"]
     _subscribers: set[Subscriber]
 

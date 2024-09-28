@@ -611,7 +611,6 @@ class UniswapV3Pool(AbstractLiquidityPool):
         )
 
     @property
-    @override
     def state(self) -> UniswapV3PoolState:
         return self._state
 

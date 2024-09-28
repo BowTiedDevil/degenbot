@@ -76,8 +76,6 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
             max_input = 100 * 10**18
         self.max_input = max_input
 
-        self.gas_estimate: int
-
         # Set up pre-determined "swap vectors", which allows the helper
         # to identify the tokens and direction of each swap along the path
         _swap_vectors: list[CurveStableSwapPoolVector | UniswapPoolSwapVector] = []
@@ -155,10 +153,7 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
     def __getstate__(self) -> dict[str, Any]:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
-        dropped_attributes = (
-            "_subscribers",
-            "gas_estimate",
-        )
+        dropped_attributes = ("_subscribers",)
 
         return {key: value for key, value in self.__dict__.items() if key not in dropped_attributes}
 

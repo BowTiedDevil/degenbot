@@ -6,7 +6,6 @@ from typing import Any, Literal
 
 from eth_typing import BlockIdentifier, ChecksumAddress
 from eth_utils.address import to_checksum_address
-from typing_extensions import override
 from web3 import Web3
 
 from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS
@@ -301,7 +300,6 @@ class UniswapV2Pool(AbstractLiquidityPool):
         )
 
     @property
-    @override
     def state(self) -> UniswapV2PoolState:
         return self._state
 
