@@ -121,6 +121,3 @@ class UniswapV3PoolSimulationResult(UniswapSimulationResult):
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV3PoolStateUpdated(Message):
     state: UniswapV3PoolState
-
-
-class AerodromeV3PoolState(UniswapV3PoolState): ...

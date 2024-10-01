@@ -3,6 +3,9 @@
 #   - ABIs
 # - create Sushiswap classes (simple renames)
 # - add all module folders to __all__
+# - AllTokens and AllPools improvements
+#   - singleton created at import
+#   - make getter/setter methods with chain ID
 
 from . import (
     aerodrome,
@@ -19,7 +22,7 @@ from . import (
 )
 from .aerodrome.managers import AerodromeV2PoolManager, AerodromeV3PoolManager
 from .aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
-from .aerodrome.types import AerodromeV2PoolState
+from .aerodrome.types import AerodromeV2PoolState, AerodromeV3PoolState
 from .anvil_fork import AnvilFork
 from .arbitrage.types import ArbitrageCalculationResult
 from .arbitrage.uniswap_curve_cycle import UniswapCurveCycle
@@ -38,7 +41,6 @@ from .registry.all_tokens import AllTokens
 from .transaction.uniswap_transaction import UniswapTransaction
 from .uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from .uniswap.types import (
-    AerodromeV3PoolState,
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
