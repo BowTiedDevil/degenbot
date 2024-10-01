@@ -48,7 +48,7 @@ source = ["src/degenbot"]
 
 [tool.mypy]
 files=[
-    "src/degenbot", 
+    "src/degenbot",
     "tests/",
 ]
 python_version = "3.10"
@@ -66,11 +66,15 @@ disable_error_code = [
 
 [[tool.mypy.overrides]]
 module=[
-    "eth_abi.*",    
+    "eth_abi.*",
     "scipy.*",
     "ujson.*",
 ]
 ignore_missing_imports = true
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
 
 [tool.ruff]
 line-length = 100
@@ -78,12 +82,12 @@ indent-width = 4
 target-version = "py310"
 
 [tool.ruff.lint]
-select = [    
-    "E",    # pycodestyle    
-    "F",    # Pyflakes    
-    "UP",   # pyupgrade    
-    "B",    # flake8-bugbear    
-    "SIM",  # flake8-simplify    
+select = [
+    "E",    # pycodestyle
+    "F",    # Pyflakes
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
     "I",    # isort
     "PL",   # pylint
 ]
@@ -91,7 +95,7 @@ ignore = [
     "PLR0911", # too-many-return-statements
     "PLR0912", # too-many-branches
     "PLR0913", # too-many-arguments
-    "PLR0915", # too-many-statements 
+    "PLR0915", # too-many-statements
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -108,6 +112,6 @@ testpaths = "tests"
 dev-dependencies = [
     "pytest",
     "pytest-asyncio",
-    "pytest-cov",    
-    "python-dotenv",    
+    "pytest-cov",
+    "python-dotenv",
 ]
