@@ -3,9 +3,9 @@ from typing import Any
 import pytest
 from hexbytes import HexBytes
 
+from degenbot import AnvilFork
 from degenbot.config import set_web3
 from degenbot.exceptions import TransactionError
-from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.transaction.uniswap_transaction import UniswapTransaction
 
 

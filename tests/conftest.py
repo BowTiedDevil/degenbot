@@ -7,10 +7,10 @@ import web3
 import degenbot
 import degenbot.config
 import degenbot.logging
-import degenbot.manager
+import degenbot.managers
 import degenbot.registry
 import degenbot.uniswap.managers
-from degenbot.fork.anvil_fork import AnvilFork
+from degenbot.anvil_fork import AnvilFork
 
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
@@ -51,8 +51,7 @@ def initialize_and_reset_after_each_test():
     degenbot.config.web3_connection_manager.default_chain_id = None
     degenbot.registry.all_pools._all_pools.clear()
     degenbot.registry.all_tokens._all_tokens.clear()
-    degenbot.manager.token_manager.Erc20TokenHelperManager._state.clear()
-    degenbot.uniswap.managers.UniswapPoolManager._state.clear()
+    degenbot.managers.erc20_token_manager.Erc20TokenHelperManager._state.clear()
 
 
 @pytest.fixture(autouse=True)

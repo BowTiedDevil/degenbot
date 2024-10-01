@@ -2,15 +2,15 @@ import pytest
 from eth_utils.address import to_checksum_address
 from web3 import Web3
 
+from degenbot.anvil_fork import AnvilFork
 from degenbot.config import set_web3
-from degenbot.fork.anvil_fork import AnvilFork
 from degenbot.uniswap.managers import UniswapV3PoolManager
-from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
-from degenbot.uniswap.v3_types import (
+from degenbot.uniswap.types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3LiquidityEvent,
 )
+from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 
 EMPTY_SNAPSHOT_FILENAME = "tests/uniswap/v3/empty_v3_liquidity_snapshot.json"
 EMPTY_SNAPSHOT_BLOCK = (

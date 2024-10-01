@@ -4,13 +4,15 @@ import pytest
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
-from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS, ROUTER_DEPLOYMENTS
-from degenbot.exchanges.uniswap.register import register_exchange, register_router
-from degenbot.exchanges.uniswap.types import (
+from degenbot.uniswap.deployments import (
+    FACTORY_DEPLOYMENTS,
+    ROUTER_DEPLOYMENTS,
     UniswapFactoryDeployment,
     UniswapRouterDeployment,
     UniswapV2ExchangeDeployment,
     UniswapV3ExchangeDeployment,
+    register_exchange,
+    register_router,
 )
 
 

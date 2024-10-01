@@ -5,6 +5,7 @@ from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
 
+from degenbot.anvil_fork import AnvilFork
 from degenbot.config import set_web3
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
@@ -13,18 +14,17 @@ from degenbot.exceptions import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS
-from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
-from degenbot.uniswap.v3_libraries import TickMath
-from degenbot.uniswap.v3_liquidity_pool import UNISWAP_V3_MAINNET_POOL_INIT_HASH, UniswapV3Pool
-from degenbot.uniswap.v3_types import (
+from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
+from degenbot.uniswap.types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
+from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
+from degenbot.uniswap.v3_libraries import TickMath
+from degenbot.uniswap.v3_liquidity_pool import UNISWAP_V3_MAINNET_POOL_INIT_HASH, UniswapV3Pool
 
 WBTC_WETH_V3_POOL_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 WETH_CONTRACT_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")

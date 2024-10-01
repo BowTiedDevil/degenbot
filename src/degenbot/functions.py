@@ -12,6 +12,8 @@ from web3 import Web3
 from web3.types import BlockIdentifier
 
 from . import config
+from .constants import MAX_UINT256, MIN_UINT256
+from .exceptions import EVMRevertError
 
 
 def create2_address(
@@ -172,6 +174,11 @@ def next_base_fee(
         _next_base_fee = parent_base_fee - base_fee_delta
 
     return max(min_base_fee, _next_base_fee) if min_base_fee else _next_base_fee
+
+
+def raise_if_invalid_uint256(number: int) -> None:
+    if (MIN_UINT256 <= number <= MAX_UINT256) is False:
+        raise EVMRevertError(f"underflow/overflow for {number}")
 
 
 def raw_call(

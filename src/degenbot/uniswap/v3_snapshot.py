@@ -15,7 +15,7 @@ from web3.types import LogReceipt
 from .. import config
 from ..logging import logger
 from .abi import UNISWAP_V3_POOL_ABI
-from .v3_types import (
+from .types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3LiquidityEvent,

@@ -1,7 +1,6 @@
 from eth_typing import ChainId, ChecksumAddress
 from eth_utils.address import to_checksum_address
 
-from ...solidly.abi import AERODROME_V2_POOL_ABI
 from .types import SolidlyExchangeDeployment, SolidlyFactoryDeployment
 
 # Base DEX --------------- START
@@ -12,7 +11,6 @@ BaseMainnetAerodromeV2 = SolidlyExchangeDeployment(
         address=to_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da"),
         deployer=None,
         pool_init_hash="0xa29c9b69e1a80d2352a264163a9012501d60dbd7cf552a87e681c62e81af9937",
-        pool_abi=AERODROME_V2_POOL_ABI,
     ),
 )
 

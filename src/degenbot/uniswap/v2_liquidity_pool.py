@@ -2,15 +2,15 @@ from bisect import bisect_left
 from collections.abc import Iterable
 from fractions import Fraction
 from threading import Lock
-from typing import Any, Literal
+from typing import Any
 
 from eth_typing import BlockIdentifier, ChecksumAddress
 from eth_utils.address import to_checksum_address
+from typing_extensions import Self
 from web3 import Web3
 
-from degenbot.exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS
-from degenbot.exchanges.uniswap.types import UniswapV2ExchangeDeployment
 from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
+from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
 
 from .. import config
 from ..erc20_token import Erc20Token
@@ -21,27 +21,19 @@ from ..exceptions import (
     ZeroSwapError,
 )
 from ..logging import logger
-from ..manager.token_manager import Erc20TokenHelperManager
+from ..managers.erc20_token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
-from ..solidly.solidly_functions import _get_y_camelot, _k_camelot
 from ..types import AbstractLiquidityPool
-from .v2_functions import (
-    constant_product_calc_exact_in,
-    constant_product_calc_exact_out,
-    generate_v2_pool_address,
-)
-from .v2_types import (
+from .types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
     UniswapV2PoolStateUpdated,
 )
-
-UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
-    "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
-)
-CAMELOT_ARBITRUM_POOL_INIT_HASH = (
-    "0xa856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"
+from .v2_functions import (
+    constant_product_calc_exact_in,
+    constant_product_calc_exact_out,
+    generate_v2_pool_address,
 )
 
 
@@ -50,13 +42,17 @@ class UniswapV2Pool(AbstractLiquidityPool):
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
 
+    UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
+        "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
+    )
+
     @classmethod
     def from_exchange(
         cls,
         address: str,
         exchange: UniswapV2ExchangeDeployment,
         **kwargs: Any,
-    ) -> "UniswapV2Pool":
+    ) -> Self:
         """
         Create a new `UniswapV2Pool` with exchange information taken from the provided deployment.
         """
@@ -74,7 +70,6 @@ class UniswapV2Pool(AbstractLiquidityPool):
         address: ChecksumAddress | str,
         tokens: list[Erc20Token] | None = None,
         name: str | None = None,
-        update_method: Literal["polling", "external"] = "polling",
         factory_address: str | None = None,
         deployer_address: str | None = None,
         init_hash: str | None = None,
@@ -95,10 +90,6 @@ class UniswapV2Pool(AbstractLiquidityPool):
             "Erc20Token" objects for the tokens held by the deployed pool.
         name : str, optional
             Name of the contract, e.g. "DAI-WETH".
-        update_method : str
-            A string that sets the method used to fetch updates to the pool. Can be "polling",
-            which fetches updates from the chain object using the contract object, or "external"
-            which relies on updates being provided from outside the object.
         factory_address : str, optional
             The address for the factory contract.
         deployer_address : str, optional
@@ -139,9 +130,9 @@ class UniswapV2Pool(AbstractLiquidityPool):
         if factory_address is not None:
             self.factory = to_checksum_address(factory_address)
         else:
-            factory_address, *_ = raw_call(
+            _factory_address, *_ = raw_call(
                 w3=w3,
-                block_identifier=self._update_block,
+                block_identifier=self.update_block,
                 address=self.address,
                 calldata=encode_function_calldata(
                     function_prototype="factory()",
@@ -149,7 +140,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
                 ),
                 return_types=["address"],
             )
-            self.factory = to_checksum_address(factory_address)
+            self.factory = to_checksum_address(_factory_address)
 
         self.deployer_address = (
             to_checksum_address(deployer_address) if deployer_address is not None else self.factory
@@ -166,7 +157,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             # Deployment is unknown. Uses any inputs provided, otherwise use default values from
             # original Uniswap contracts
             self.init_hash = (
-                init_hash if init_hash is not None else UNISWAP_V2_MAINNET_POOL_INIT_HASH
+                init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
             )
 
         if isinstance(fee, Iterable):
@@ -174,14 +165,12 @@ class UniswapV2Pool(AbstractLiquidityPool):
         else:
             self.fee_token0 = self.fee_token1 = fee
 
-        self._update_method = update_method
-
         if tokens is not None:
             self.token0, self.token1 = sorted(tokens)
         else:
             token0_address, *_ = raw_call(
                 w3=w3,
-                block_identifier=self._update_block,
+                block_identifier=self.update_block,
                 address=self.address,
                 calldata=encode_function_calldata(
                     function_prototype="token0()",
@@ -191,7 +180,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             )
             token1_address, *_ = raw_call(
                 w3=w3,
-                block_identifier=self._update_block,
+                block_identifier=self.update_block,
                 address=self.address,
                 calldata=encode_function_calldata(
                     function_prototype="token1()",
@@ -228,7 +217,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
 
         self.reserves_token0, self.reserves_token1 = self.get_reserves(
-            w3=w3, block_identifier=self._update_block
+            w3=w3, block_identifier=self.update_block
         )
 
         self._pool_state_archive = {self.update_block: self.state} if archive_states else None
@@ -455,15 +444,35 @@ class UniswapV2Pool(AbstractLiquidityPool):
     def external_update(
         self,
         update: UniswapV2PoolExternalUpdate,
-        silent: bool = True,
     ) -> bool:
-        return self.update_reserves(
-            silent=silent,
-            external_token0_reserves=update.reserves_token0,
-            external_token1_reserves=update.reserves_token1,
-            print_reserves=not silent,
-            override_update_method="external",
-        )
+        if update.block_number < self.update_block:
+            raise ExternalUpdateError(
+                f"Rejected update for block {update.block_number} in the past, "
+                f"current update block is {self.update_block}"
+            )
+
+        with self._state_lock:
+            updated_state = False
+
+            if update.reserves_token0 != self.reserves_token0:
+                updated_state = True
+                self.reserves_token0 = update.reserves_token0
+                logger.debug(f"Token 0 Reserves: {self.reserves_token0}")
+
+            if update.reserves_token1 != self.reserves_token1:
+                updated_state = True
+                self.reserves_token1 = update.reserves_token1
+                logger.debug(f"Token 1 Reserves: {self.reserves_token1}")
+
+            if updated_state:
+                if self._pool_state_archive is not None:  # pragma: no branch
+                    self._pool_state_archive[update.block_number] = self.state
+                self._notify_subscribers(
+                    message=UniswapV2PoolStateUpdated(self.state),
+                )
+                self._update_block = update.block_number
+
+            return updated_state
 
     def get_absolute_price(
         self, token: Erc20Token, override_state: UniswapV2PoolState | None = None
@@ -730,235 +739,51 @@ class UniswapV2Pool(AbstractLiquidityPool):
             ),
         )
 
-    def update_reserves(
+    def auto_update(
         self,
-        silent: bool = False,
-        print_reserves: bool = True,
-        external_token0_reserves: int | None = None,
-        external_token1_reserves: int | None = None,
-        override_update_method: str | None = None,
-        update_block: int | None = None,
+        block_number: int | None = None,
+        silent: bool = True,
     ) -> bool:
         """
-        Updates token reserves. If update method is set to "polling", uses Web3 to read current
-        contract values. If set to "external", uses the provided reserves without verification.
+        Retrieves the current reserves from the pool, stores any that have changed, and returns a
+        status boolean indicating whether any update was found.
+
+        @dev this method uses a lock to guard state-modifying methods that might cause race
+        conditions when used with threads.
         """
+        with self._state_lock:
+            if block_number is not None and block_number < self.update_block:
+                raise ExternalUpdateError(
+                    f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"  # noqa:E501
+                )
 
-        update_method = override_update_method or self._update_method
+            state_updated = False
+            w3 = config.get_web3()
+            block_number = w3.eth.get_block_number() if block_number is None else block_number
 
-        w3 = config.get_web3()
-        if update_block is None:
-            update_block = w3.eth.get_block_number()
+            reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
 
-        # Discard stale updates, but allow updating the same pool multiple times per block
-        # (necessary if sending sync events individually)
-        if update_block < self._update_block:
-            raise ExternalUpdateError(
-                f"Current state recorded at block {self._update_block}, received update for stale block {update_block}"  # noqa:E501
-            )
-        else:
-            self._update_block = update_block
-
-        state_updated = False
-        if update_method == "polling":
-            reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=self._update_block)
             if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
+                state_updated = True
                 self.reserves_token0 = reserves0
                 self.reserves_token1 = reserves1
 
+            self._update_block = block_number
+
+            if state_updated:
                 if self._pool_state_archive is not None:  # pragma: no cover
-                    self._pool_state_archive[update_block] = self.state
+                    self._pool_state_archive[block_number] = self.state
 
                 self._notify_subscribers(
                     message=UniswapV2PoolStateUpdated(self.state),
                 )
-                state_updated = True
 
                 if not silent:  # pragma: no cover
                     logger.info(f"[{self.name}]")
-                    if print_reserves:
-                        logger.info(f"{self.token0}: {self.reserves_token0}")
-                        logger.info(f"{self.token1}: {self.reserves_token1}")
-        elif update_method == "external":
-            if not (external_token0_reserves is not None and external_token1_reserves is not None):
-                raise ValueError(
-                    "Called update_reserves without providing reserve values for both tokens!"
-                )
-
-            # Skip follow-up processing if no updated values were found
-            if (
-                external_token0_reserves == self.reserves_token0
-                and external_token1_reserves == self.reserves_token1
-            ):
-                state_updated = False
-            else:
-                self.reserves_token0 = external_token0_reserves
-                self.reserves_token1 = external_token1_reserves
-
-                if self._pool_state_archive is not None:  # pragma: no cover
-                    self._pool_state_archive[update_block] = self.state
-
-                self._notify_subscribers(
-                    message=UniswapV2PoolStateUpdated(self.state),
-                )
-
-            if not silent:  # pragma: no cover
-                logger.info(f"[{self.name}]")
-                if print_reserves:
                     logger.info(f"{self.token0}: {self.reserves_token0}")
                     logger.info(f"{self.token1}: {self.reserves_token1}")
-        else:  # pragma: no cover
-            raise ValueError(f"Update method {update_method} is not recognized.")
 
         return state_updated
-
-
-class CamelotLiquidityPool(UniswapV2Pool):
-    def __init__(
-        self,
-        address: str,
-        tokens: list[Erc20Token] | None = None,
-        name: str | None = None,
-        update_method: Literal["polling", "external"] = "polling",
-        silent: bool = False,
-    ) -> None:
-        address = to_checksum_address(address)
-
-        w3 = config.get_web3()
-        state_block = w3.eth.get_block_number()
-
-        fee_token0: int
-        fee_token1: int
-        _, _, fee_token0, fee_token1, *_ = raw_call(
-            w3=w3,
-            block_identifier=get_number_for_block_identifier(state_block),
-            address=address,
-            calldata=encode_function_calldata(
-                function_prototype="getReserves()",
-                function_arguments=None,
-            ),
-            return_types=["uint256", "uint256", "uint256", "uint256"],
-        )
-
-        self.fee_denominator: int
-        self.fee_denominator, *_ = raw_call(
-            w3=w3,
-            block_identifier=get_number_for_block_identifier(state_block),
-            address=address,
-            calldata=encode_function_calldata(
-                function_prototype="FEE_DENOMINATOR()",
-                function_arguments=None,
-            ),
-            return_types=["uint256"],
-        )
-
-        super().__init__(
-            address=address,
-            tokens=tokens,
-            name=name,
-            update_method=update_method,
-            init_hash=CAMELOT_ARBITRUM_POOL_INIT_HASH,
-            fee=(
-                Fraction(fee_token0, self.fee_denominator),
-                Fraction(fee_token1, self.fee_denominator),
-            ),
-            silent=silent,
-            state_block=state_block,
-        )
-
-        self.stable_swap: bool
-        self.stable_swap, *_ = raw_call(
-            w3=w3,
-            block_identifier=get_number_for_block_identifier(state_block),
-            address=address,
-            calldata=encode_function_calldata(
-                function_prototype="stableSwap()",
-                function_arguments=None,
-            ),
-            return_types=["bool"],
-        )
-
-    def _calculate_tokens_out_from_tokens_in_stable_swap(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-        override_state: UniswapV2PoolState | None = None,
-    ) -> int:
-        """
-        Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
-        Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
-        """
-
-        if override_state is not None:  # pragma: no cover
-            logger.debug(f"State overrides applied: {override_state}")
-
-        if token_in_quantity <= 0:  # pragma: no cover
-            raise ZeroSwapError("token_in_quantity must be positive")
-
-        precision_multiplier_token0: int = 10**self.token0.decimals
-        precision_multiplier_token1: int = 10**self.token1.decimals
-
-        fee_percent = self.fee_denominator * (
-            self.fee_token0 if token_in == self.token0 else self.fee_token1
-        )
-
-        reserves_token0 = (
-            override_state.reserves_token0 if override_state is not None else self.reserves_token0
-        )
-        reserves_token1 = (
-            override_state.reserves_token1 if override_state is not None else self.reserves_token1
-        )
-
-        # Remove fee from amount received
-        token_in_quantity -= token_in_quantity * fee_percent // self.fee_denominator
-        xy = _k_camelot(
-            balance_0=reserves_token0,
-            balance_1=reserves_token1,
-            decimals_0=precision_multiplier_token0,
-            decimals_1=precision_multiplier_token1,
-        )
-        reserves_token0 = reserves_token0 * 10**18 // precision_multiplier_token0
-        reserves_token1 = reserves_token1 * 10**18 // precision_multiplier_token1
-        reserve_a, reserve_b = (
-            (reserves_token0, reserves_token1)
-            if token_in == self.token0
-            else (reserves_token1, reserves_token0)
-        )
-        token_in_quantity = (
-            token_in_quantity * 10**18 // precision_multiplier_token0
-            if token_in == self.token0
-            else token_in_quantity * 10**18 // precision_multiplier_token1
-        )
-        y = reserve_b - _get_y_camelot(token_in_quantity + reserve_a, xy, reserve_b)
-
-        return (
-            y
-            * (
-                precision_multiplier_token1
-                if token_in == self.token0
-                else precision_multiplier_token0
-            )
-            // 10**18
-        )
-
-    def calculate_tokens_out_from_tokens_in(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-        override_state: UniswapV2PoolState | None = None,
-    ) -> int:
-        if self.stable_swap:
-            return self._calculate_tokens_out_from_tokens_in_stable_swap(
-                token_in=token_in,
-                token_in_quantity=token_in_quantity,
-                override_state=override_state,
-            )
-        else:
-            return super().calculate_tokens_out_from_tokens_in(
-                token_in=token_in,
-                token_in_quantity=token_in_quantity,
-                override_state=override_state,
-            )
 
 
 class UnregisteredLiquidityPool(UniswapV2Pool):

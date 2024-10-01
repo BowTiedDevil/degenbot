@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from typing_extensions import override
 from web3 import Web3
 from web3.types import BlockIdentifier
 
@@ -22,22 +21,14 @@ from ..exceptions import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from ..exchanges.uniswap.deployments import FACTORY_DEPLOYMENTS
-from ..exchanges.uniswap.types import UniswapV3ExchangeDeployment
 from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..logging import logger
-from ..manager.token_manager import Erc20TokenHelperManager
+from ..managers.erc20_token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
 from ..types import AbstractLiquidityPool
-from .v3_functions import (
-    exchange_rate_from_sqrt_price_x96,
-    generate_aerodrome_v3_pool_address,
-    generate_v3_pool_address,
-    get_tick_word_and_bit_position,
-)
-from .v3_libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
-from .v3_libraries.functions import to_int256
-from .v3_types import (
+from ..uniswap.deployments import UniswapV3ExchangeDeployment
+from .deployments import FACTORY_DEPLOYMENTS
+from .types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
@@ -45,6 +36,13 @@ from .v3_types import (
     UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
+from .v3_functions import (
+    exchange_rate_from_sqrt_price_x96,
+    generate_v3_pool_address,
+    get_tick_word_and_bit_position,
+)
+from .v3_libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
+from .v3_libraries.functions import to_int256
 
 UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
     "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
@@ -109,7 +107,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         if factory_address is not None:
             self.factory = to_checksum_address(factory_address)
         else:
-            factory_address, *_ = raw_call(
+            _factory_address, *_ = raw_call(
                 w3=w3,
                 block_identifier=self._update_block,
                 address=self.address,
@@ -119,7 +117,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 ),
                 return_types=["address"],
             )
-            self.factory = to_checksum_address(factory_address)
+            self.factory = to_checksum_address(_factory_address)
 
         if deployer_address is not None:
             self.deployer_address = to_checksum_address(deployer_address)
@@ -233,7 +231,6 @@ class UniswapV3Pool(AbstractLiquidityPool):
             }
 
         if tick_bitmap is None and tick_data is None:
-            logger.debug(f"{self} @ {self.address} updating -> {tick_bitmap=}, {tick_data=}")
             word_position, _ = get_tick_word_and_bit_position(self.tick, self.tick_spacing)
 
             self._fetch_tick_data_at_word(
@@ -676,21 +673,22 @@ class UniswapV3Pool(AbstractLiquidityPool):
         self,
         block_number: int | None = None,
         silent: bool = True,
-    ) -> tuple[bool, UniswapV3PoolState]:
+    ) -> bool:
         """
         Retrieves the current slot0 and liquidity values from the LP, stores any that have changed,
-        and returns a tuple with a status boolean indicating whether any update was found,
-        and a dictionary holding current state values:
-            - liquidity
-            - sqrt_price_x96
-            - tick
+        and returns a status boolean indicating whether any update was found.
 
-        Uses a lock to guard state-modifying methods that might cause race conditions
-        when used with threads.
+        @ dev this method uses a lock to guard state-modifying methods that might cause race
+        conditions when used with threads.
         """
 
         with self._state_lock:
-            updated = False
+            if block_number is not None and block_number < self.update_block:
+                raise ExternalUpdateError(
+                    f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"  # noqa:E501
+                )
+
+            state_updated = False
 
             w3 = config.get_web3()
             block_number = w3.eth.get_block_number() if block_number is None else block_number
@@ -701,32 +699,33 @@ class UniswapV3Pool(AbstractLiquidityPool):
             _liquidity = self.get_liquidity(w3=w3, block_identifier=block_number)
 
             if self.sqrt_price_x96 != _sqrt_price_x96:
-                updated = True
+                state_updated = True
                 self.sqrt_price_x96 = _sqrt_price_x96
 
             if self.tick != _tick:
-                updated = True
+                state_updated = True
                 self.tick = _tick
 
             if self.liquidity != _liquidity:
-                updated = True
+                state_updated = True
                 self.liquidity = _liquidity
 
             self._update_block = block_number
 
-            if updated:
-                self._notify_subscribers(
-                    message=UniswapV3PoolStateUpdated(self.state),
-                )
+            if state_updated:
                 if self._pool_state_archive is not None:  # pragma: no cover
                     self._pool_state_archive[block_number] = self.state
 
-            if not silent:  # pragma: no cover
-                logger.info(f"Liquidity: {self.liquidity}")
-                logger.info(f"SqrtPriceX96: {self.sqrt_price_x96}")
-                logger.info(f"Tick: {self.tick}")
+                self._notify_subscribers(
+                    message=UniswapV3PoolStateUpdated(self.state),
+                )
 
-        return updated, self.state
+                if not silent:  # pragma: no cover
+                    logger.info(f"Liquidity: {self.liquidity}")
+                    logger.info(f"SqrtPriceX96: {self.sqrt_price_x96}")
+                    logger.info(f"Tick: {self.tick}")
+
+        return state_updated
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -758,24 +757,21 @@ class UniswapV3Pool(AbstractLiquidityPool):
         if token_in not in self.tokens:  # pragma: no cover
             raise ValueError("token_in not found!")
 
-        if override_state:
-            logger.debug(f"V3 calc with overridden state: {override_state}")
-
-        _is_zero_for_one = token_in == self.token0
+        zero_for_one = token_in == self.token0
 
         try:
             amount0_delta, amount1_delta, *_ = self._calculate_swap(
-                zero_for_one=_is_zero_for_one,
+                zero_for_one=zero_for_one,
                 amount_specified=token_in_quantity,
                 sqrt_price_limit_x96=(
-                    TickMath.MIN_SQRT_RATIO + 1 if _is_zero_for_one else TickMath.MAX_SQRT_RATIO - 1
+                    TickMath.MIN_SQRT_RATIO + 1 if zero_for_one else TickMath.MAX_SQRT_RATIO - 1
                 ),
                 override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
         else:
-            return -amount1_delta if _is_zero_for_one else -amount0_delta
+            return -amount1_delta if zero_for_one else -amount0_delta
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -868,17 +864,14 @@ class UniswapV3Pool(AbstractLiquidityPool):
             if update.tick is not None and update.tick != self.tick:
                 updated_state = True
                 self.tick = update.tick
-                logger.debug(f"Tick: {self.tick}")
 
             if update.liquidity is not None and update.liquidity != self.liquidity:
                 updated_state = True
                 self.liquidity = update.liquidity
-                logger.debug(f"Liquidity: {self.liquidity}")
 
             if update.sqrt_price_x96 is not None and update.sqrt_price_x96 != self.sqrt_price_x96:
                 updated_state = True
                 self.sqrt_price_x96 = update.sqrt_price_x96
-                logger.debug(f"SqrtPriceX96: {self.sqrt_price_x96}")
 
             if update.liquidity_change is not None and update.liquidity_change[0] != 0:
                 updated_state = True
@@ -886,14 +879,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
 
                 # Adjust in-range liquidity if current tick is within the modified range
                 if lower_tick <= self.tick < upper_tick:
-                    liquidity_before = self.liquidity
                     self.liquidity += liquidity_delta
-                    logger.debug(
-                        f"Adjusting in-range liquidity, TX {update.tx}, "
-                        f"tick range = [{lower_tick},{upper_tick}], current tick = {self.tick}, "
-                        f"{self.address=}, previous liquidity = {liquidity_before}, "
-                        f"liquidity change = {liquidity_delta}, new liquidity = {self.liquidity}"
-                    )
 
                 for tick in (lower_tick, upper_tick):
                     tick_word, _ = get_tick_word_and_bit_position(tick, self.tick_spacing)
@@ -903,9 +889,6 @@ class UniswapV3Pool(AbstractLiquidityPool):
                         # initialized status of any tick
 
                         if self.sparse_liquidity_map:
-                            logger.debug(
-                                f"(external_update) {tick_word=} not found in tick_bitmap."
-                            )
                             self._fetch_tick_data_at_word(
                                 word_position=tick_word,
                                 # Fetch the word using the previous block as a known "good" state
@@ -960,15 +943,6 @@ class UniswapV3Pool(AbstractLiquidityPool):
                             block=update.block_number,
                         )
 
-                logger.debug(
-                    f"liquidity event: {liquidity_delta} in tick range "
-                    f"[{lower_tick},{upper_tick}], pool: {self.name}"
-                    "\n"
-                    f"old liquidity: {tick_liquidity_net} net, {tick_liquidity_gross} gross"
-                    "\n"
-                    f"new liquidity: {new_liquidity_net} net, {new_liquidity_gross} gross"
-                )
-
             if updated_state:
                 if self._pool_state_archive is not None:  # pragma: no branch
                     self._pool_state_archive[update.block_number] = self.state
@@ -1022,7 +996,9 @@ class UniswapV3Pool(AbstractLiquidityPool):
         return cast(int, result)
 
     def get_price_and_tick(
-        self, w3: Web3, block_identifier: BlockIdentifier | None = None
+        self,
+        w3: Web3,
+        block_identifier: BlockIdentifier | None,
     ) -> tuple[int, int]:
         price, tick, *_ = raw_call(
             w3=w3,
@@ -1276,110 +1252,3 @@ class UniswapV3Pool(AbstractLiquidityPool):
                     tick=end_tick,
                 ),
             )
-
-
-class PancakeV3Pool(UniswapV3Pool):
-    def get_price_and_tick(
-        self, w3: Web3, block_identifier: BlockIdentifier | None = None
-    ) -> tuple[int, int]:
-        price, tick, *_ = raw_call(
-            w3=w3,
-            address=self.address,
-            calldata=encode_function_calldata(
-                function_prototype="slot0()",
-                function_arguments=None,
-            ),
-            return_types=[
-                "uint160",
-                "int24",
-                "uint16",
-                "uint16",
-                "uint16",
-                "uint32",
-                "bool",
-            ],
-            block_identifier=get_number_for_block_identifier(block_identifier),
-        )
-        return price, tick
-
-
-class AerodromeV3Pool(UniswapV3Pool):
-    def get_price_and_tick(
-        self, w3: Web3, block_identifier: BlockIdentifier | None = None
-    ) -> tuple[int, int]:
-        price, tick, *_ = raw_call(
-            w3=w3,
-            address=self.address,
-            calldata=encode_function_calldata(
-                function_prototype="slot0()",
-                function_arguments=None,
-            ),
-            return_types=[
-                "uint160",
-                "int24",
-                "uint16",
-                "uint16",
-                "uint16",
-                "bool",
-            ],
-            block_identifier=get_number_for_block_identifier(block_identifier),
-        )
-        return price, tick
-
-    def _verified_address(self) -> ChecksumAddress:
-        # The implementation address is hard-coded into the contract
-        implementation_address = to_checksum_address(
-            config.get_web3().eth.get_code(self.address)[10:30]
-        )
-
-        return generate_aerodrome_v3_pool_address(
-            deployer_address=self.deployer_address,
-            token_addresses=(self.token0.address, self.token1.address),
-            implementation_address=to_checksum_address(implementation_address),
-            tick_spacing=self.tick_spacing,
-        )
-
-    def get_populated_ticks_in_word(
-        self,
-        w3: Web3,
-        word_position: int,
-        block_identifier: BlockIdentifier,
-    ) -> list[tuple[int, int, int]]:
-        bitmap = self.get_tick_bitmap_at_word(
-            w3=w3, word_position=word_position, block_identifier=block_identifier
-        )
-
-        populated_ticks = []
-        for i in range(256):
-            if bitmap & (1 << i) > 0:
-                populatedTick = (((word_position) << 8) + (i)) * self.tick_spacing
-                liquidityGross, liquidityNet, *_ = raw_call(
-                    w3=w3,
-                    address=self.address,
-                    calldata=encode_function_calldata(
-                        function_prototype="ticks(int24)",
-                        function_arguments=[populatedTick],
-                    ),
-                    # AERODROME V3
-                    return_types=[
-                        "uint128",
-                        "int128",
-                        "int128",
-                        "uint256",
-                        "uint256",
-                        "uint256",
-                        "int56",
-                        "uint160",
-                        "uint32",
-                        "bool",
-                    ],
-                )
-                populated_ticks.append(
-                    (
-                        populatedTick,
-                        liquidityNet,
-                        liquidityGross,
-                    )
-                )
-
-        return populated_ticks

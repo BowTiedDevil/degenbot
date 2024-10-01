@@ -8,9 +8,9 @@ from hexbytes import HexBytes
 from web3.providers.ipc import IPCProvider
 from web3.types import Wei
 
+from degenbot import AnvilFork
 from degenbot.config import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.fork.anvil_fork import AnvilFork
 
 from ..conftest import BASE_FULL_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE_HTTP_URI
 

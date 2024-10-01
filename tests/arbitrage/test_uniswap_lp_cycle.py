@@ -13,21 +13,25 @@ import pytest
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
+from degenbot import (
+    AnvilFork,
+    CamelotLiquidityPool,
+    Erc20Token,
+    UniswapLpCycle,
+    UniswapV2Pool,
+    UniswapV3Pool,
+    set_web3,
+)
 from degenbot.arbitrage.types import (
     ArbitrageCalculationResult,
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
-from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
-from degenbot.config import set_web3
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError
-from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.uniswap.v2_liquidity_pool import CamelotLiquidityPool, UniswapV2Pool
-from degenbot.uniswap.v2_types import UniswapV2PoolState, UniswapV2PoolStateUpdated
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import (
+from degenbot.uniswap.types import (
+    UniswapV2PoolState,
+    UniswapV2PoolStateUpdated,
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,

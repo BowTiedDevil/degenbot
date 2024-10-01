@@ -11,8 +11,8 @@ from web3 import IPCProvider, Web3
 from web3.middleware import Middleware
 from web3.types import RPCEndpoint
 
-from ..constants import MAX_UINT256
-from ..logging import logger
+from .constants import MAX_UINT256
+from .logging import logger
 
 
 class AnvilFork:

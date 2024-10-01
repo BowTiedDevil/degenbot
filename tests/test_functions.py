@@ -6,7 +6,7 @@ from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
 import degenbot.config
-from degenbot.fork.anvil_fork import AnvilFork
+from degenbot import AnvilFork
 from degenbot.functions import (
     create2_address,
     encode_function_calldata,

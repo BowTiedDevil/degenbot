@@ -3,7 +3,7 @@ from decimal import Decimal
 from ...constants import MAX_UINT8
 from ...exceptions import BitmapWordUnavailableError, EVMRevertError, MissingTickWordError
 from ...logging import logger
-from ..v3_types import UniswapV3BitmapAtWord
+from ..types import UniswapV3BitmapAtWord
 from . import bit_math as BitMath
 
 

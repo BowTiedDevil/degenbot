@@ -3,8 +3,8 @@ import eth_account
 import pytest
 from eth_account.signers.local import LocalAccount
 
+from degenbot import AnvilFork
 from degenbot.builder_endpoint import BuilderEndpoint
-from degenbot.fork.anvil_fork import AnvilFork
 
 BEAVERBUILD_URL = "https://rpc.beaverbuild.org"
 BUILDER0X69_URL = "https://builder0x69.io"

@@ -4,7 +4,7 @@ from eth_utils.address import to_checksum_address
 
 from degenbot.config import set_web3
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.manager.token_manager import Erc20TokenHelperManager
+from degenbot.managers.erc20_token_manager import Erc20TokenHelperManager
 from degenbot.registry.all_tokens import AllTokens
 
 WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")

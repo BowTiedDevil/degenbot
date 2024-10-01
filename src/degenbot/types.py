@@ -1,6 +1,6 @@
 import abc
-import dataclasses
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 from eth_typing import ChecksumAddress
@@ -46,7 +46,6 @@ class Subscriber(Protocol):
 
 class AbstractArbitrage:
     id: str
-    swap_pools: Sequence[Any]
 
     def _notify_subscribers(self: Publisher, message: Message) -> None:
         for subscriber in self._subscribers:
@@ -59,15 +58,25 @@ class AbstractArbitrage:
         self._subscribers.discard(subscriber)
 
 
+@dataclass(slots=True, frozen=True)
+class AbstractExchangeDeployment:
+    name: str
+    chain_id: int
+
+
 class AbstractManager:
     """
     Base class for managers that generate, track and distribute various helper classes
     """
 
 
+class AbstractPoolManager: ...
+
+
 class AbstractPoolUpdate: ...
 
 
+@dataclass(slots=True, frozen=True)
 class AbstractPoolState:
     pool: ChecksumAddress
 
@@ -75,15 +84,7 @@ class AbstractPoolState:
 class AbstractSimulationResult: ...
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class UniswapSimulationResult(AbstractSimulationResult):
-    amount0_delta: int
-    amount1_delta: int
-    initial_state: AbstractPoolState
-    final_state: AbstractPoolState
-
-
-class AbstractLiquidityPool(abc.ABC, Publisher):
+class AbstractLiquidityPool(Publisher):
     address: ChecksumAddress
     name: str
     tokens: Sequence["Erc20Token"]

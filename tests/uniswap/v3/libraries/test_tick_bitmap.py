@@ -3,8 +3,8 @@ from typing import Any
 import pytest
 
 from degenbot.exceptions import EVMRevertError, MissingTickWordError
+from degenbot.uniswap.types import UniswapV3BitmapAtWord
 from degenbot.uniswap.v3_libraries import TickBitmap, TickMath
-from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/TickBitmap.spec.ts

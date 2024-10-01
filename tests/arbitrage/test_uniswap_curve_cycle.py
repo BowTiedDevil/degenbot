@@ -13,9 +13,8 @@ from degenbot.config import set_web3
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError, ZeroLiquidityError
-from degenbot.uniswap.v2_types import UniswapV2PoolState
+from degenbot.uniswap.types import UniswapV2PoolState, UniswapV3PoolState
 from degenbot.uniswap.v3_libraries import TickMath
-from degenbot.uniswap.v3_types import UniswapV3PoolState
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
@@ -433,23 +432,25 @@ async def test_process_pool_calculation(ethereum_archive_node_web3) -> None:
                 result = await future
                 assert result
 
-        # Saturate the process pool executor with multiple calculations.
-        # Should reveal cases of excessive latency.
-        _NUM_FUTURES = 64
-        calculation_futures = []
-        for _ in range(_NUM_FUTURES):
-            calculation_futures.append(
-                await arb.calculate_with_pool(
-                    executor=executor,
-                    state_overrides=overrides,
+            # Saturate the process pool executor with multiple calculations.
+            # Should reveal cases of excessive latency.
+            _NUM_FUTURES = 64
+            calculation_futures = []
+            for _ in range(_NUM_FUTURES):
+                calculation_futures.append(
+                    await arb.calculate_with_pool(
+                        executor=executor,
+                        state_overrides=overrides,
+                    )
                 )
-            )
 
-        assert len(calculation_futures) == _NUM_FUTURES
-        for i, task in enumerate(asyncio.as_completed(calculation_futures)):
-            await task
-            print(f"Completed process_pool calc #{i}, {time.perf_counter()-start:.2f}s since start")
-        print(f"Completed {_NUM_FUTURES} calculations in {time.perf_counter() - start:.1f}s")
+            assert len(calculation_futures) == _NUM_FUTURES
+            for i, task in enumerate(asyncio.as_completed(calculation_futures)):
+                await task
+                print(
+                    f"Completed process_pool calc #{i}, {time.perf_counter()-start:.2f}s since start"  # noqa:E501
+                )
+            print(f"Completed {_NUM_FUTURES} calculations in {time.perf_counter() - start:.1f}s")
 
 
 def test_bad_pool_in_constructor(ethereum_archive_node_web3):
@@ -458,9 +459,7 @@ def test_bad_pool_in_constructor(ethereum_archive_node_web3):
     uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
-    with pytest.raises(
-        ValueError, match="Must provide only Curve StableSwap or Uniswap liquidity pools."
-    ):
+    with pytest.raises(ValueError, match="Incompatible pool provided."):
         UniswapCurveCycle(
             input_token=weth,
             swap_pools=[uniswap_v2_weth_dai_lp, None, uniswap_v2_weth_usdc_lp],  # type: ignore[list-item]

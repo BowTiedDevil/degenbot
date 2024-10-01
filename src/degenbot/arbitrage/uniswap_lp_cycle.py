@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -14,11 +14,15 @@ from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
 from ..types import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
+from ..uniswap.types import (
+    UniswapV2PoolState,
+    UniswapV2PoolStateUpdated,
+    UniswapV3PoolState,
+    UniswapV3PoolStateUpdated,
+)
 from ..uniswap.v2_liquidity_pool import UniswapV2Pool
-from ..uniswap.v2_types import UniswapV2PoolState, UniswapV2PoolStateUpdated
 from ..uniswap.v3_libraries import TickMath
 from ..uniswap.v3_liquidity_pool import UniswapV3Pool
-from ..uniswap.v3_types import UniswapV3PoolState, UniswapV3PoolStateUpdated
 from .types import (
     ArbitrageCalculationResult,
     UniswapPoolSwapVector,
@@ -26,24 +30,24 @@ from .types import (
     UniswapV3PoolSwapAmounts,
 )
 
-UniswapPoolState: TypeAlias = UniswapV2PoolState | UniswapV3PoolState
-UniswapPool: TypeAlias = UniswapV2Pool | UniswapV3Pool
-UniswapSwapAmount: TypeAlias = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
+Pool: TypeAlias = UniswapV2Pool | UniswapV3Pool
+PoolState: TypeAlias = UniswapV2PoolState | UniswapV3PoolState
+SwapAmount: TypeAlias = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
 
 
 class UniswapLpCycle(Subscriber, AbstractArbitrage):
     def __init__(
         self,
         input_token: Erc20Token,
-        swap_pools: Iterable[UniswapPool],
+        swap_pools: Iterable[Pool],
         id: str,
         max_input: int | None = None,
     ):
-        for pool in swap_pools:
-            if not isinstance(pool, UniswapPool):
+        for swap_pool in swap_pools:
+            if not isinstance(swap_pool, Pool):
                 raise ValueError("Incompatible pool provided.")
 
-        self.swap_pools: tuple[UniswapPool, ...] = tuple(swap_pools)
+        self.swap_pools = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
         self.id = id
         self.input_token = input_token
@@ -119,15 +123,15 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
     def _build_swap_amounts(
         self,
         token_in_quantity: int,
-        pool_state_overrides: Mapping[ChecksumAddress, UniswapPoolState],
-    ) -> list[UniswapSwapAmount]:
+        pool_state_overrides: Mapping[ChecksumAddress, PoolState],
+    ) -> list[SwapAmount]:
         """
         Generate inputs for all swaps along the arbitrage path, starting with the specified amount
         of the input token defined in the constructor.
         """
 
         _token_out_quantity = 0
-        swap_amounts: list[UniswapSwapAmount] = []
+        swap_amounts: list[SwapAmount] = []
         for i, (pool, swap_vector) in enumerate(
             zip(self.swap_pools, self._swap_vectors, strict=True)
         ):
@@ -184,59 +188,55 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
 
         return swap_amounts
 
+    @staticmethod
+    def _check_v2_pool_liquidity(
+        pool_state: UniswapV2PoolState,
+        vector: UniswapPoolSwapVector,
+    ) -> None:
+        if pool_state.reserves_token0 > 1 and pool_state.reserves_token1 > 1:
+            return  # No liquidity issues
+        elif pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:  # pragma: no cover
+            raise ZeroLiquidityError("Pool has no liquidity")
+        elif pool_state.reserves_token1 == 1 and vector.zero_for_one is True:  # pragma: no cover
+            raise ZeroLiquidityError("Pool has no liquidity for a 0 -> 1 swap")
+        elif pool_state.reserves_token0 == 1 and vector.zero_for_one is False:  # pragma: no cover
+            raise ZeroLiquidityError("Pool has no liquidity for a 1 -> 0 swap")
+
+    @staticmethod
+    def _check_v3_pool_liquidity(
+        pool_state: UniswapV3PoolState,
+        vector: UniswapPoolSwapVector,
+    ) -> None:
+        if (
+            pool_state.sqrt_price_x96 == 0
+            or pool_state.tick_bitmap == {}
+            or pool_state.tick_data == {}
+        ):  # pragma: no cover
+            raise ZeroLiquidityError("Pool is not uninitialized.")
+
+        if pool_state.liquidity == 0:
+            if (
+                pool_state.sqrt_price_x96 == TickMath.MIN_SQRT_RATIO + 1
+                and vector.zero_for_one is True
+            ):  # pragma: no cover
+                # Swap is 0 -> 1 and cannot swap any more token0 for token1
+                raise ZeroLiquidityError("Pool has no liquidity for a 0 -> 1 swap")
+            elif (
+                pool_state.sqrt_price_x96 == TickMath.MAX_SQRT_RATIO - 1
+                and vector.zero_for_one is False
+            ):  # pragma: no cover
+                # Swap is 1 -> 0  and cannot swap any more token1 for token0
+                raise ZeroLiquidityError("Pool has no liquidity for a 1 -> 0 swap")
+
     def _pre_calculation_check(
         self,
-        state_overrides: Mapping[ChecksumAddress, UniswapPoolState],
+        state_overrides: Mapping[ChecksumAddress, PoolState],
         min_rate_of_exchange: Fraction | None = None,
     ) -> None:
         """
         Perform liquidity and minimum rate of exchange checks and raise an exception if further
         optimization should be avoided.
         """
-
-        def _check_v2_pool_liquidity(
-            pool_state: UniswapV2PoolState,
-            vector: UniswapPoolSwapVector,
-        ) -> None:
-            if pool_state.reserves_token0 > 1 and pool_state.reserves_token1 > 1:
-                return  # No liquidity issues
-            elif (
-                pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0
-            ):  # pragma: no cover
-                raise ZeroLiquidityError("Pool has no liquidity")
-            elif (
-                pool_state.reserves_token1 == 1 and vector.zero_for_one is True
-            ):  # pragma: no cover
-                raise ZeroLiquidityError("Pool has no liquidity for a 0 -> 1 swap")
-            elif (
-                pool_state.reserves_token0 == 1 and vector.zero_for_one is False
-            ):  # pragma: no cover
-                raise ZeroLiquidityError("Pool has no liquidity for a 1 -> 0 swap")
-
-        def _check_v3_pool_liquidity(
-            pool_state: UniswapV3PoolState,
-            vector: UniswapPoolSwapVector,
-        ) -> None:
-            if (
-                pool_state.sqrt_price_x96 == 0
-                or pool_state.tick_bitmap == {}
-                or pool_state.tick_data == {}
-            ):  # pragma: no cover
-                raise ZeroLiquidityError("Pool is not uninitialized.")
-
-            if pool_state.liquidity == 0:
-                if (
-                    pool_state.sqrt_price_x96 == TickMath.MIN_SQRT_RATIO + 1
-                    and vector.zero_for_one is True
-                ):  # pragma: no cover
-                    # Swap is 0 -> 1 and cannot swap any more token0 for token1
-                    raise ZeroLiquidityError("Pool has no liquidity for a 0 -> 1 swap")
-                elif (
-                    pool_state.sqrt_price_x96 == TickMath.MAX_SQRT_RATIO - 1
-                    and vector.zero_for_one is False
-                ):  # pragma: no cover
-                    # Swap is 1 -> 0  and cannot swap any more token1 for token0
-                    raise ZeroLiquidityError("Pool has no liquidity for a 1 -> 0 swap")
 
         if min_rate_of_exchange is None:  # pragma: no branch
             min_rate_of_exchange = Fraction(1, 1)
@@ -251,11 +251,11 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
 
             match pool, pool_state:
                 case UniswapV2Pool(), UniswapV2PoolState():
-                    _check_v2_pool_liquidity(pool_state, vector)
+                    self._check_v2_pool_liquidity(pool_state, vector)
                     exchange_rate = Fraction(pool_state.reserves_token1, pool_state.reserves_token0)
                     fee = pool.fee_token0 if vector.zero_for_one else pool.fee_token1
                 case UniswapV3Pool(), UniswapV3PoolState():
-                    _check_v3_pool_liquidity(pool_state, vector)
+                    self._check_v3_pool_liquidity(pool_state, vector)
                     exchange_rate = Fraction(pool_state.sqrt_price_x96**2, 2**192)
                     fee = Fraction(
                         pool.fee, 1000000
@@ -274,7 +274,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
 
     def _calculate(
         self,
-        state_overrides: Mapping[ChecksumAddress, UniswapPoolState],
+        state_overrides: Mapping[ChecksumAddress, PoolState],
     ) -> ArbitrageCalculationResult:
         """
         Calculate the optimal arbitrage profit using the maximum input as an upper bound.
@@ -332,13 +332,15 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             # negated profit
             return -float(token_out_quantity - token_in_quantity)
 
-        opt: OptimizeResult = minimize_scalar(
+        opt = minimize_scalar(
             fun=arb_profit,
             method="bounded",
             bounds=bounds,
             bracket=bracket,
             options={"xatol": 1.0},
         )
+        if TYPE_CHECKING:
+            assert isinstance(opt, OptimizeResult)
 
         # Negate the result to convert to a sensible value (positive profit)
         best_profit = -int(opt.fun)
@@ -360,7 +362,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
 
     def calculate(
         self,
-        state_overrides: Mapping[ChecksumAddress, UniswapPoolState] | None = None,
+        state_overrides: Mapping[ChecksumAddress, PoolState] | None = None,
         min_rate_of_exchange: Fraction | None = None,
     ) -> ArbitrageCalculationResult:
         """
@@ -381,7 +383,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
     async def calculate_with_pool(
         self,
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
-        state_overrides: Mapping[ChecksumAddress, UniswapPoolState] | None = None,
+        state_overrides: Mapping[ChecksumAddress, PoolState] | None = None,
         min_rate_of_exchange: Fraction | None = None,
     ) -> asyncio.Future[ArbitrageCalculationResult]:
         """
@@ -439,7 +441,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         self,
         from_address: ChecksumAddress | str,
         swap_amount: int,
-        pool_swap_amounts: Sequence[UniswapSwapAmount],
+        pool_swap_amounts: Sequence[SwapAmount],
     ) -> list[tuple[ChecksumAddress, bytes, int]]:
         """
         Generate a list of ABI-encoded calldata for each step in the swap path.
@@ -474,18 +476,12 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
         for i, (swap_pool, _swap_amounts) in enumerate(
             zip(self.swap_pools, pool_swap_amounts, strict=True)
         ):
-            try:
-                next_pool = self.swap_pools[i + 1]
-                # V2 pools require a pre-swap transfer, so the contract does not have to perform
-                # intermediate custody and the swap can send the tokens directly to the next pool
-                if isinstance(next_pool, UniswapV2Pool):
-                    swap_destination_address = next_pool.address
-                # V3 pools cannot accept a pre-swap transfer, so the contract must maintain custody
-                # prior to a swap
-                elif isinstance(next_pool, UniswapV3Pool):
-                    swap_destination_address = from_address
-            except IndexError:
-                # Set the destination address for the last swap to the sending address
+            # Special case when a Uniswap V2 pool is the next step in the path
+            if i < len(self.swap_pools) - 1 and isinstance(
+                (next_pool := self.swap_pools[i + 1]), UniswapV2Pool
+            ):
+                swap_destination_address = next_pool.address
+            else:
                 swap_destination_address = from_address
 
             match i, swap_pool, _swap_amounts:

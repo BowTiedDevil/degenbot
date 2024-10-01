@@ -1,0 +1,37 @@
+from dataclasses import dataclass
+
+from eth_typing import ChecksumAddress
+
+from ..types import AbstractExchangeDeployment, AbstractPoolState, Message
+
+
+@dataclass(slots=True, frozen=True)
+class SolidlyFactoryDeployment:
+    address: ChecksumAddress
+    deployer: ChecksumAddress | None
+    pool_init_hash: str
+
+
+@dataclass(slots=True, frozen=True)
+class SolidlyExchangeDeployment(AbstractExchangeDeployment):
+    factory: SolidlyFactoryDeployment
+
+
+@dataclass(slots=True, frozen=True)
+class AerodromeV2PoolState(AbstractPoolState):
+    pool: ChecksumAddress
+    reserves_token0: int
+    reserves_token1: int
+
+
+@dataclass(slots=True, frozen=True)
+class AerodromeV2PoolSimulationResult:
+    amount0_delta: int
+    amount1_delta: int
+    current_state: AerodromeV2PoolState
+    future_state: AerodromeV2PoolState
+
+
+@dataclass(slots=True, frozen=True)
+class AerodromeV2PoolStateUpdated(Message):
+    state: AerodromeV2PoolState

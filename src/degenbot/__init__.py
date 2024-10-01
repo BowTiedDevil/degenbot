@@ -1,52 +1,75 @@
+# TODO:
+# - move all fork-specific classes and data to folder (Camelot, Aerodrome, etc)
+#   - ABIs
+# - create Sushiswap classes (simple renames)
+# - add all module folders to __all__
+
+from . import (
+    aerodrome,
+    arbitrage,
+    camelot,
+    constants,
+    curve,
+    exceptions,
+    functions,
+    pancakeswap,
+    solidly,
+    sushiswap,
+    uniswap,
+)
+from .aerodrome.managers import AerodromeV2PoolManager, AerodromeV3PoolManager
+from .aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
+from .aerodrome.types import AerodromeV2PoolState
+from .anvil_fork import AnvilFork
 from .arbitrage.types import ArbitrageCalculationResult
 from .arbitrage.uniswap_curve_cycle import UniswapCurveCycle
 from .arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from .builder_endpoint import BuilderEndpoint
+from .camelot.pools import CamelotLiquidityPool
 from .chainlink import ChainlinkPriceContract
 from .config import get_web3, set_web3
 from .curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from .erc20_token import Erc20Token
-from .fork.anvil_fork import AnvilFork
-from .functions import next_base_fee
 from .logging import logger
-from .manager.token_manager import Erc20TokenHelperManager
+from .managers.erc20_token_manager import Erc20TokenHelperManager
+from .pancakeswap.pools import PancakeV3Pool
 from .registry.all_pools import AllPools
 from .registry.all_tokens import AllTokens
-from .solidly.managers import SolidlyV2PoolManager
-from .solidly.solidly_liquidity_pool import AerodromeV2Pool
-from .solidly.types import AerodromeV2PoolState
 from .transaction.uniswap_transaction import UniswapTransaction
 from .uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
-from .uniswap.v2_liquidity_pool import CamelotLiquidityPool, UniswapV2Pool
-from .uniswap.v2_types import (
+from .uniswap.types import (
+    AerodromeV3PoolState,
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
-)
-from .uniswap.v3_liquidity_pool import AerodromeV3Pool, PancakeV3Pool, UniswapV3Pool
-from .uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
-from .uniswap.v3_types import (
-    AerodromeV3PoolState,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
+from .uniswap.v2_liquidity_pool import UniswapV2Pool
+from .uniswap.v3_liquidity_pool import UniswapV3Pool
+from .uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 
 __all__ = (
+    "aerodrome",
+    "arbitrage",
+    "camelot",
     "constants",
     "curve",
     "exceptions",
-    "exchanges",
-    "fork",
+    "functions",
     "get_web3",
     "logger",
-    "next_base_fee",
+    "pancakeswap",
     "set_web3",
     "solidly",
+    "sushiswap",
     "uniswap",
     "AerodromeV2Pool",
+    "AerodromeV2PoolManager",
     "AerodromeV2PoolState",
     "AerodromeV3Pool",
+    "AerodromeV3PoolManager",
     "AerodromeV3PoolState",
     "AllPools",
     "AllTokens",
@@ -59,7 +82,6 @@ __all__ = (
     "Erc20Token",
     "Erc20TokenHelperManager",
     "PancakeV3Pool",
-    "SolidlyV2PoolManager",
     "UniswapCurveCycle",
     "UniswapLpCycle",
     "UniswapTransaction",

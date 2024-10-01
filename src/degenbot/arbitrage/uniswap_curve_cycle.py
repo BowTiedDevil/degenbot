@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import Awaitable, Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import eth_abi.abi
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from scipy.optimize import minimize_scalar
+from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
 from ..config import get_web3
@@ -18,11 +18,15 @@ from ..erc20_token import Erc20Token
 from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
 from ..logging import logger
 from ..types import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
+from ..uniswap.types import (
+    UniswapV2PoolState,
+    UniswapV2PoolStateUpdated,
+    UniswapV3PoolState,
+    UniswapV3PoolStateUpdated,
+)
 from ..uniswap.v2_liquidity_pool import UniswapV2Pool
-from ..uniswap.v2_types import UniswapV2PoolState, UniswapV2PoolStateUpdated
 from ..uniswap.v3_libraries import TickMath
 from ..uniswap.v3_liquidity_pool import UniswapV3Pool
-from ..uniswap.v3_types import UniswapV3PoolState, UniswapV3PoolStateUpdated
 from .types import (
     ArbitrageCalculationResult,
     CurveStableSwapPoolSwapAmounts,
@@ -50,23 +54,20 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
     def __init__(
         self,
         input_token: Erc20Token,
-        swap_pools: Sequence[CurveOrUniswapPool],
+        swap_pools: Iterable[CurveOrUniswapPool],
         id: str,
         max_input: int | None = None,
     ):
-        if any([not isinstance(pool, CurveOrUniswapPool) for pool in swap_pools]):
-            raise ValueError("Must provide only Curve StableSwap or Uniswap liquidity pools.")
+        for swap_pool in swap_pools:
+            if not isinstance(swap_pool, CurveOrUniswapPool):
+                raise ValueError("Incompatible pool provided.")
 
-        self.swap_pools = swap_pools
+        self.swap_pools = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
-
-        self.curve_discount_factor = CURVE_V1_DEFAULT_DISCOUNT_FACTOR
-
-        for pool in swap_pools:
-            pool.subscribe(self)
 
         self.id = id
         self.input_token = input_token
+        self.curve_discount_factor = CURVE_V1_DEFAULT_DISCOUNT_FACTOR
 
         if max_input == 0:
             raise ValueError("Maximum input must be positive.")
@@ -448,6 +449,8 @@ class UniswapCurveCycle(Subscriber, AbstractArbitrage):
             bracket=bracket,
             options={"xatol": 1.0},
         )
+        if TYPE_CHECKING:
+            assert isinstance(opt, OptimizeResult)
 
         # Negate the result to convert to a sensible value (positive profit)
         best_profit = -int(opt.fun)

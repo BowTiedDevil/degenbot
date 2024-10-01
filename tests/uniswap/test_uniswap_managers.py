@@ -3,14 +3,14 @@ from eth_typing import ChainId
 from eth_utils.address import to_checksum_address
 from web3 import Web3
 
+from degenbot import AnvilFork, PancakeV3Pool
 from degenbot.config import set_web3
 from degenbot.exceptions import ManagerError, PoolNotAssociated
-from degenbot.exchanges.uniswap.types import UniswapFactoryDeployment, UniswapV3ExchangeDeployment
-from degenbot.fork.anvil_fork import AnvilFork
+from degenbot.pancakeswap.managers import PancakeV3PoolManager
 from degenbot.registry.all_pools import AllPools
+from degenbot.uniswap.deployments import UniswapFactoryDeployment, UniswapV3ExchangeDeployment
 from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
-from degenbot.uniswap.v3_liquidity_pool import PancakeV3Pool
 
 MAINNET_UNISWAP_V2_FACTORY_ADDRESS = to_checksum_address(
     "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
@@ -127,9 +127,8 @@ def test_base_pancakeswap_v3(base_full_node_web3: Web3):
         address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
     )
 
-    pancakev3_lp_manager = UniswapV3PoolManager(
+    pancakev3_lp_manager = PancakeV3PoolManager(
         factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
-        pool_class=PancakeV3Pool,
         deployer_address=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
     )
 
@@ -198,60 +197,23 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
     assert sushiswap_v2_lp.address == MAINNET_SUSHISWAPV2_WETH_WBTC_ADDRESS
     assert uniswap_v3_lp.address == MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS
 
-    # Create one-off pool managers and verify they return the same object
-    assert (
-        UniswapV2PoolManager(factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS).get_pool(
-            token_addresses=(
-                MAINNET_WETH_ADDRESS,
-                MAINNET_WBTC_ADDRESS,
-            )
-        )
-        is uniswap_v2_lp
-    )
-    assert (
-        UniswapV2PoolManager(factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS).get_pool(
-            token_addresses=(
-                MAINNET_WETH_ADDRESS,
-                MAINNET_WBTC_ADDRESS,
-            )
-        )
-        is sushiswap_v2_lp
-    )
-    assert (
-        UniswapV3PoolManager(factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS).get_pool(
-            token_addresses=(
-                MAINNET_WETH_ADDRESS,
-                MAINNET_WBTC_ADDRESS,
-            ),
-            pool_fee=3000,
-        )
-        is uniswap_v3_lp
-    )
-
     # Calling get_pool at the wrong pool manager should raise an exception
     with pytest.raises(
         ManagerError, match=f"Pool {uniswap_v2_lp.address} is not associated with this DEX"
     ):
-        UniswapV2PoolManager(factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS).get_pool(
-            pool_address=uniswap_v2_lp.address
-        )
+        sushiswap_v2_pool_manager.get_pool(pool_address=uniswap_v2_lp.address)
+
     assert uniswap_v2_lp.address in sushiswap_v2_pool_manager._untracked_pools
     assert sushiswap_v2_lp.address not in sushiswap_v2_pool_manager._untracked_pools
     with pytest.raises(PoolNotAssociated):
-        UniswapV2PoolManager(factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS).get_pool(
-            pool_address=uniswap_v2_lp.address
-        )
+        sushiswap_v2_pool_manager.get_pool(pool_address=uniswap_v2_lp.address)
 
     with pytest.raises(
         ManagerError, match=f"Pool {sushiswap_v2_lp.address} is not associated with this DEX"
     ):
-        UniswapV2PoolManager(factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS).get_pool(
-            pool_address=sushiswap_v2_lp.address
-        )
+        uniswap_v2_pool_manager.get_pool(pool_address=sushiswap_v2_lp.address)
     with pytest.raises(PoolNotAssociated):
-        UniswapV2PoolManager(factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS).get_pool(
-            pool_address=sushiswap_v2_lp.address
-        )
+        uniswap_v2_pool_manager.get_pool(pool_address=sushiswap_v2_lp.address)
     assert sushiswap_v2_lp.address in uniswap_v2_pool_manager._untracked_pools
     assert uniswap_v2_lp.address not in uniswap_v2_pool_manager._untracked_pools
 

@@ -25,18 +25,18 @@ from .. import config
 from ..constants import ZERO_ADDRESS
 from ..erc20_token import Erc20Token
 from ..exceptions import BrokenPool, EVMRevertError, ZeroLiquidityError, ZeroSwapError
-from ..exchanges.curve.deployments import (
+from ..functions import get_number_for_block_identifier
+from ..logging import logger
+from ..managers.erc20_token_manager import Erc20TokenHelperManager
+from ..registry.all_pools import AllPools
+from ..types import AbstractLiquidityPool
+from .abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
+from .deployments import (
     BROKEN_CURVE_V1_POOLS,
     CACHED_CURVE_V1_POOL_ATTRIBUTES,
     CURVE_V1_FACTORY_ADDRESS,
     CURVE_V1_REGISTRY_ADDRESS,
 )
-from ..functions import get_number_for_block_identifier
-from ..logging import logger
-from ..manager.token_manager import Erc20TokenHelperManager
-from ..registry.all_pools import AllPools
-from ..types import AbstractLiquidityPool
-from .abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from .types import (
     CurveStableSwapPoolAttributes,
     CurveStableswapPoolState,

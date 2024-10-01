@@ -8,11 +8,11 @@ from web3 import Web3
 from web3.contract.contract import Contract
 from web3.types import Timestamp
 
+from degenbot import AnvilFork
 from degenbot.config import get_web3, set_web3
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions import BrokenPool, ZeroLiquidityError, ZeroSwapError
-from degenbot.fork.anvil_fork import AnvilFork
 
 FRXETH_WETH_CURVE_POOL_ADDRESS = to_checksum_address("0x9c3B46C0Ceb5B9e304FCd6D88Fc50f7DD24B31Bc")
 CURVE_V1_FACTORY_ADDRESS = to_checksum_address("0x127db66E7F0b16470Bec194d0f496F9Fa065d0A9")

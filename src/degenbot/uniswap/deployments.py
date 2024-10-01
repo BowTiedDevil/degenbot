@@ -1,12 +1,55 @@
+from dataclasses import dataclass
+
 from eth_typing import ChainId, ChecksumAddress
 from eth_utils.address import to_checksum_address
 
-from .types import (
-    UniswapFactoryDeployment,
-    UniswapRouterDeployment,
-    UniswapV2ExchangeDeployment,
-    UniswapV3ExchangeDeployment,
-)
+from ..types import AbstractExchangeDeployment
+
+
+@dataclass(slots=True, frozen=True)
+class UniswapFactoryDeployment:
+    address: ChecksumAddress
+    deployer: ChecksumAddress | None
+    pool_init_hash: str
+
+
+@dataclass(slots=True, frozen=True)
+class UniswapV2ExchangeDeployment(AbstractExchangeDeployment):
+    factory: UniswapFactoryDeployment
+
+
+@dataclass(slots=True, frozen=True)
+class UniswapV3ExchangeDeployment(AbstractExchangeDeployment):
+    factory: UniswapFactoryDeployment
+
+
+@dataclass(slots=True, frozen=True)
+class UniswapRouterDeployment:
+    address: ChecksumAddress
+    chain_id: int
+    name: str
+    exchanges: list[UniswapV2ExchangeDeployment | UniswapV3ExchangeDeployment]
+
+
+def register_exchange(exchange: UniswapV2ExchangeDeployment | UniswapV3ExchangeDeployment) -> None:
+    if exchange.chain_id not in FACTORY_DEPLOYMENTS:
+        FACTORY_DEPLOYMENTS[exchange.chain_id] = {}
+
+    if exchange.factory.address in FACTORY_DEPLOYMENTS[exchange.chain_id]:
+        raise ValueError("Exchange is already registered.")
+
+    FACTORY_DEPLOYMENTS[exchange.chain_id][exchange.factory.address] = exchange.factory
+
+
+def register_router(router: UniswapRouterDeployment) -> None:
+    if router.chain_id not in ROUTER_DEPLOYMENTS:
+        ROUTER_DEPLOYMENTS[router.chain_id] = {}
+
+    if router.address in ROUTER_DEPLOYMENTS[router.chain_id]:
+        raise ValueError("Router is already registered.")
+
+    ROUTER_DEPLOYMENTS[router.chain_id][router.address] = router
+
 
 # Mainnet DEX --------------- START
 EthereumMainnetUniswapV2 = UniswapV2ExchangeDeployment(
@@ -49,7 +92,15 @@ EthereumMainnetSushiswapV3 = UniswapV3ExchangeDeployment(
 
 
 # Base DEX ---------------- START
-# TODO: add Aerodrome V2
+BaseAerodromeV2 = UniswapV2ExchangeDeployment(
+    name="Aerodrome V2",
+    chain_id=ChainId.BASE,
+    factory=UniswapFactoryDeployment(
+        address=to_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da"),
+        deployer=None,
+        pool_init_hash="",
+    ),
+)
 BaseAerodromeV3 = UniswapV3ExchangeDeployment(
     name="Base Aerodrome V3",
     chain_id=ChainId.BASE,
@@ -275,6 +326,7 @@ FACTORY_DEPLOYMENTS: dict[
         EthereumMainnetUniswapV3.factory.address: EthereumMainnetUniswapV3.factory,
     },
     ChainId.BASE: {
+        BaseAerodromeV2.factory.address: BaseAerodromeV2.factory,
         BaseAerodromeV3.factory.address: BaseAerodromeV3.factory,
         BasePancakeswapV2.factory.address: BasePancakeswapV2.factory,
         BasePancakeswapV3.factory.address: BasePancakeswapV3.factory,

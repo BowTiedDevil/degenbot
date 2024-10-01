@@ -1,15 +1,13 @@
-import json
 from typing import Any
 
 import pytest
+import ujson
 import web3
 from eth_utils.address import to_checksum_address
 
-from degenbot import set_web3
-from degenbot.fork.anvil_fork import AnvilFork
-from degenbot.solidly.abi import AERODROME_V2_POOL_ABI
-from degenbot.solidly.solidly_functions import generate_aerodrome_v2_pool_address
-from degenbot.solidly.solidly_liquidity_pool import AerodromeV2Pool
+from degenbot import AerodromeV2Pool, AnvilFork, set_web3
+from degenbot.aerodrome.abi import AERODROME_V2_POOL_ABI
+from degenbot.aerodrome.functions import generate_aerodrome_v2_pool_address
 
 TBTC_USDBC_POOL_ADDRESS = to_checksum_address("0x723AEf6543aecE026a15662Be4D3fb3424D502A9")
 AERODROME_V2_FACTORY_ADDRESS = to_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da")
@@ -19,7 +17,7 @@ AERODROME_IMPLEMENTATION_ADDRESS = to_checksum_address("0xA4e46b4f701c62e14DF11B
 @pytest.fixture
 def test_pools() -> Any:
     with open("tests/solidly/first_200_aerodrome_v2_pools.json") as file:
-        return json.load(file)
+        return ujson.load(file)
 
 
 def test_aerodrome_v2_address_generator():
