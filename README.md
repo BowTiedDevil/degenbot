@@ -3,13 +3,13 @@ Degenbot is a set of Python classes that abstract many of the implementation det
 
 These classes serve as a building blocks for the lessons published by [BowTiedDevil](https://twitter.com/BowTiedDevil) on [Degen Code](https://www.degencode.com/).
 
-The classes originally relied on [Brownie](https://github.com/eth-brownie/), but have evolved to use [web3.py](https://github.com/ethereum/web3.py/) more generally following Brownie's transition to "maintenance mode". The degenbot classes still operate when loaded within a Brownie console or when connected to a Python script with a connected `chain` object.
+The classes originally relied on [Brownie](https://github.com/eth-brownie/brownie), but have evolved to use [web3.py](https://github.com/ethereum/web3.py/) more generally following Brownie's transition to "maintenance mode". The degenbot classes still operate when loaded within a Brownie console or when connected to a Python script with a connected `chain` object.
 
 ## Prerequisites
 Python version 3.10 or newer.
 
 ## Installation
-There are two ways to install degenbot, both require `pip`.
+There are two ways to install degenbot, both require `pip` or similar package management tool.
 
 ### From PyPI
 `pip install degenbot` will fetch the latest version from [PyPI](https://pypi.org/project/degenbot/) with dependencies.
@@ -21,7 +21,6 @@ Use `git clone` to create a local copy of this repo, then install with `pip inst
 The following snippets assume a connected `Web3` instance with a working provider on Ethereum mainnet (chain ID #1), and the classes imported under the `degenbot` namespace.
 
 ### Uniswap V2 Liquidity Pools
-
 ```
 # Create `UniswapV2Pool` object from on-chain data at the given address and current chain height
 >>> lp = degenbot.UniswapV2Pool('0xBb2b8038a1640196FbE3e38816F3e67Cba72D940')
