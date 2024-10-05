@@ -34,8 +34,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.coverage.report]
 exclude_also = [
-    "if TYPE_CHECKING:", # exclude type checking imports and checks
-    "except Exception", # exclude catch-alls
+    "if TYPE_CHECKING:", # exclude type checking imports and checks    
     "return NotImplemented", # required for __eq__, __lt__, __gt__
     "def __hash__",
     "def __repr__",
@@ -45,6 +44,9 @@ exclude_also = [
 
 [tool.coverage.run]
 source = ["src/degenbot"]
+omit = [
+    "abi.py",
+]
 
 [tool.mypy]
 files=[
@@ -99,7 +101,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["PLR2004"]   # many swap amount tests compare "magic" values
+"tests/*" = [
+    "PLR2004", # Many swap amount tests compare "magic" values — transforming to named constants is not worthwhile
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
