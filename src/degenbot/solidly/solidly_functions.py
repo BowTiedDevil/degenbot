@@ -2,18 +2,18 @@ from collections.abc import Callable
 from fractions import Fraction
 from typing import Literal
 
-from ..exceptions import EVMRevertError
+from ..exceptions import DegenbotValueError, EVMRevertError
 from ..functions import raise_if_invalid_uint256
 
 
-def _d(
+def general_calc_d(
     x0: int,
     y: int,
 ) -> int:
     return (3 * x0 * ((y * y) // 10**18)) // 10**18 + ((((x0 * x0) // 10**18) * x0) // 10**18)
 
 
-def _k(
+def general_calc_k(
     balance_0: int,
     balance_1: int,
     decimals_0: int,
@@ -27,7 +27,7 @@ def _k(
     return _a * _b // 10**18  # x^3*y + y^3*x >= k
 
 
-def _calc_exact_in_stable(
+def general_calc_exact_in_stable(
     amount_in: int,
     token_in: Literal[0, 1],
     reserves0: int,
@@ -52,7 +52,7 @@ def _calc_exact_in_stable(
     """
 
     if token_in not in (0, 1):  # pragma: no cover
-        raise ValueError("Invalid token_in identifier")
+        raise DegenbotValueError("Invalid token_in identifier")
 
     try:
         amount_in_after_fee = amount_in - amount_in * fee.numerator // fee.denominator
@@ -78,7 +78,7 @@ def _calc_exact_in_stable(
         raise EVMRevertError("Division by zero") from None
 
 
-def calc_exact_in_volatile(
+def general_calc_exact_in_volatile(
     amount_in: int,
     token_in: Literal[0, 1],
     reserves0: int,
@@ -90,7 +90,7 @@ def calc_exact_in_volatile(
     """
 
     if token_in not in (0, 1):  # pragma: no cover
-        raise ValueError("Invalid token_in identifier")
+        raise DegenbotValueError("Invalid token_in identifier")
 
     amount_in_after_fee = amount_in - amount_in * fee.numerator // fee.denominator
     reserves_a, reserves_b = (reserves0, reserves1) if token_in == 0 else (reserves1, reserves0)

@@ -1,13 +1,10 @@
-import abc
-from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from eth_typing import ChecksumAddress
+from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
-
-if TYPE_CHECKING:
-    from .erc20_token import Erc20Token
+from typing_extensions import Self
 
 
 class Message:
@@ -31,20 +28,22 @@ class Publisher(Protocol):
 
     _subscribers: set["Subscriber"]
 
+    def subscribe(self, subscriber: "Subscriber") -> None: ...
+    def unsubscribe(self, subscriber: "Subscriber") -> None: ...
+
 
 class Subscriber(Protocol):
     """
     Can be notified via the `notify()` method
     """
 
-    @abc.abstractmethod
     def notify(self, publisher: "Publisher", message: "Message") -> None:
         """
         Deliver `message` from `publisher`.
         """
 
 
-class AbstractArbitrage:
+class AbstractArbitrage(Publisher, Subscriber):
     id: str
 
     def _notify_subscribers(self: Publisher, message: Message) -> None:
@@ -70,7 +69,21 @@ class AbstractManager:
     """
 
 
-class AbstractPoolManager: ...
+class AbstractPoolManager:
+    """
+    Base class for liquidity pool managers. The class instance dict and get_instance method are
+    mechanisms for implementing a singleton strategy so only one pool manager is created for a given
+    DEX factory.
+    """
+
+    instances: dict[
+        tuple[int, ChecksumAddress],
+        Self,
+    ] = dict()
+
+    @classmethod
+    def get_instance(cls, factory_address: str, chain_id: int) -> Self | None:
+        return cls.instances.get((chain_id, to_checksum_address(factory_address)))
 
 
 class AbstractPoolUpdate: ...
@@ -87,8 +100,6 @@ class AbstractSimulationResult: ...
 class AbstractLiquidityPool(Publisher):
     address: ChecksumAddress
     name: str
-    tokens: Sequence["Erc20Token"]
-    _subscribers: set[Subscriber]
 
     def __eq__(self, other: Any) -> bool:
         match other:

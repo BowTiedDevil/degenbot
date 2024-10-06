@@ -10,7 +10,7 @@ from eth_account.signers.local import LocalAccount
 from hexbytes import HexBytes
 
 from .config import get_web3
-from .exceptions import ExternalServiceError
+from .exceptions import DegenbotValueError, ExternalServiceError
 from .functions import eip_191_hash
 
 
@@ -27,7 +27,7 @@ class BuilderEndpoint:  # pragma: no cover
         authentication_header_label: str | None = None,
     ):
         if not url.startswith(("http://", "https://")):
-            raise ValueError("Invalid URL")
+            raise DegenbotValueError("Invalid URL")
         self.url = url
 
         self.endpoints = tuple(endpoints)
@@ -112,7 +112,7 @@ class BuilderEndpoint:  # pragma: no cover
         ENDPOINT_METHOD = "eth_callBundle"
 
         if ENDPOINT_METHOD not in self.endpoints:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
@@ -129,7 +129,9 @@ class BuilderEndpoint:  # pragma: no cover
 
         if isinstance(state_block, str):
             if state_block != "latest":
-                raise ValueError("state_block tag may only be an integer, or the string 'latest'")
+                raise DegenbotValueError(
+                    "state_block tag may only be an integer, or the string 'latest'"
+                )
             bundle_params["stateBlockNumber"] = state_block
         elif isinstance(state_block, int):
             bundle_params[
@@ -177,12 +179,12 @@ class BuilderEndpoint:  # pragma: no cover
         ENDPOINT_METHOD = "eth_cancelBundle"
 
         if ENDPOINT_METHOD not in self.endpoints:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         if self.authentication_header_label is not None and signer_key is None:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa: E501
             )
 
@@ -228,12 +230,12 @@ class BuilderEndpoint:  # pragma: no cover
         ENDPOINT_METHOD = "eth_cancelPrivateTransaction"
 
         if ENDPOINT_METHOD not in self.endpoints:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         if self.authentication_header_label is not None and signer_key is None:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
@@ -280,12 +282,12 @@ class BuilderEndpoint:  # pragma: no cover
         ENDPOINT_METHOD = "flashbots_getUserStatsV2"
 
         if ENDPOINT_METHOD not in self.endpoints:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         if self.authentication_header_label is not None and signer_key is None:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
@@ -333,7 +335,7 @@ class BuilderEndpoint:  # pragma: no cover
         ENDPOINT_METHOD = "flashbots_getBundleStatsV2"
 
         if ENDPOINT_METHOD not in self.endpoints:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
@@ -383,12 +385,12 @@ class BuilderEndpoint:  # pragma: no cover
         ENDPOINT_METHOD = "eth_sendBundle"
 
         if ENDPOINT_METHOD not in self.endpoints:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         if self.authentication_header_label is not None and signer_key is None:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
@@ -467,12 +469,12 @@ class BuilderEndpoint:  # pragma: no cover
         ENDPOINT_METHOD = "eth_sendPrivateTransaction"
 
         if ENDPOINT_METHOD not in self.endpoints:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         if self.authentication_header_label is not None and signer_key is None:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
@@ -528,12 +530,12 @@ class BuilderEndpoint:  # pragma: no cover
         ENDPOINT_METHOD = "eth_sendPrivateRawTransaction"
 
         if ENDPOINT_METHOD not in self.endpoints:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         if self.authentication_header_label is not None and signer_key is None:
-            raise ValueError(
+            raise DegenbotValueError(
                 f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 

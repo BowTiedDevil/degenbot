@@ -1,7 +1,4 @@
 # TODO:
-# - move all fork-specific classes and data to folder (Camelot, Aerodrome, etc)
-#   - ABIs
-# - create Sushiswap classes (simple renames)
 # - add all module folders to __all__
 # - AllTokens and AllPools improvements
 #   - singleton created at import
@@ -34,10 +31,12 @@ from .config import get_web3, set_web3
 from .curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from .erc20_token import Erc20Token
 from .logging import logger
-from .managers.erc20_token_manager import Erc20TokenHelperManager
+from .managers.erc20_token_manager import Erc20TokenManager
 from .pancakeswap.pools import PancakeV3Pool
 from .registry.all_pools import AllPools
 from .registry.all_tokens import AllTokens
+from .sushiswap.managers import SushiswapV2PoolManager, SushiswapV3PoolManager
+from .sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
 from .transaction.uniswap_transaction import UniswapTransaction
 from .uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from .uniswap.types import (
@@ -82,8 +81,12 @@ __all__ = (
     "ChainlinkPriceContract",
     "CurveStableswapPool",
     "Erc20Token",
-    "Erc20TokenHelperManager",
+    "Erc20TokenManager",
     "PancakeV3Pool",
+    "SushiswapV2Pool",
+    "SushiswapV2PoolManager",
+    "SushiswapV3Pool",
+    "SushiswapV3PoolManager",
     "UniswapCurveCycle",
     "UniswapLpCycle",
     "UniswapTransaction",

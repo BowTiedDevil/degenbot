@@ -2,28 +2,32 @@ from bisect import bisect_left
 from collections.abc import Iterable
 from fractions import Fraction
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 
+import eth_abi.abi
 from eth_typing import BlockIdentifier, ChecksumAddress
 from eth_utils.address import to_checksum_address
+from hexbytes import HexBytes
 from typing_extensions import Self
 from web3 import Web3
 
-from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
-
 from .. import config
+from ..constants import ZERO_ADDRESS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
+    AddressMismatch,
+    DegenbotValueError,
     ExternalUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
     ZeroSwapError,
 )
+from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..logging import logger
-from ..managers.erc20_token_manager import Erc20TokenHelperManager
+from ..managers.erc20_token_manager import Erc20TokenManager
 from ..registry.all_pools import AllPools
 from ..types import AbstractLiquidityPool
+from ..uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
 from .types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
@@ -59,7 +63,6 @@ class UniswapV2Pool(AbstractLiquidityPool):
 
         return cls(
             address=address,
-            factory_address=exchange.factory.address,
             deployer_address=exchange.factory.deployer,
             init_hash=exchange.factory.pool_init_hash,
             **kwargs,
@@ -68,16 +71,14 @@ class UniswapV2Pool(AbstractLiquidityPool):
     def __init__(
         self,
         address: ChecksumAddress | str,
-        tokens: list[Erc20Token] | None = None,
-        name: str | None = None,
-        factory_address: str | None = None,
+        *,
         deployer_address: str | None = None,
         init_hash: str | None = None,
         fee: Fraction | Iterable[Fraction] = Fraction(3, 1000),
-        silent: bool = False,
         state_block: int | None = None,
         archive_states: bool = True,
         verify_address: bool = True,
+        silent: bool = False,
     ) -> None:
         """
         An abstract representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
@@ -86,12 +87,6 @@ class UniswapV2Pool(AbstractLiquidityPool):
         ---------
         address : str
             Address for the deployed pool contract.
-        tokens : List[Erc20Token], optional
-            "Erc20Token" objects for the tokens held by the deployed pool.
-        name : str, optional
-            Name of the contract, e.g. "DAI-WETH".
-        factory_address : str, optional
-            The address for the factory contract.
         deployer_address : str, optional
             The address for the deployment contract.
         init_hash : str, optional
@@ -102,57 +97,58 @@ class UniswapV2Pool(AbstractLiquidityPool):
             The swap fee imposed by the pool. Defaults to `Fraction(3,1000)` which is equivalent
             to 0.3%. For split-fee pools of unequal value, provide an iterable with `Fraction`
             fees ordered by token position.
-        silent : bool
-            Suppress status output.
         state_block : int, optional
             Fetch initial state values from the chain at a particular block height. Defaults to
             the latest block if omitted.
         verify_address: bool
             Control if the pool address is verified against the deterministic CREATE2 address.
             The deployer address, token addresses, and pool init code hash must be known.
+        silent : bool
+            Suppress status output.
         """
+
+        if address == ZERO_ADDRESS:
+            raise LiquidityPoolError("Invalid pool address")
 
         self.address = to_checksum_address(address)
 
         w3 = config.get_web3()
+        chain_id = w3.eth.chain_id
+        self._update_block = state_block if state_block is not None else w3.eth.block_number
+
+        self.factory, (token0, token1), (reserves0, reserves1) = (
+            self.get_factory_tokens_reserves_batched(w3=w3, state_block=self._update_block)
+        )
+
+        token_manager = Erc20TokenManager(chain_id)
+        self.token0, self.token1 = (
+            token_manager.get_erc20token(
+                address=token0,
+                silent=silent,
+            ),
+            token_manager.get_erc20token(
+                address=token1,
+                silent=silent,
+            ),
+        )
 
         self._state_lock = Lock()
         self._state = UniswapV2PoolState(
             pool=self.address,
-            reserves_token0=0,
-            reserves_token1=0,
+            reserves_token0=reserves0,
+            reserves_token1=reserves1,
         )
 
-        if state_block is None:
-            state_block = w3.eth.block_number
-        self._update_block = state_block
-
-        if factory_address is not None:
-            self.factory = to_checksum_address(factory_address)
-        else:
-            _factory_address, *_ = raw_call(
-                w3=w3,
-                block_identifier=self.update_block,
-                address=self.address,
-                calldata=encode_function_calldata(
-                    function_prototype="factory()",
-                    function_arguments=None,
-                ),
-                return_types=["address"],
-            )
-            self.factory = to_checksum_address(_factory_address)
-
-        self.deployer_address = (
+        self.deployer = (
             to_checksum_address(deployer_address) if deployer_address is not None else self.factory
         )
 
-        chain_id = w3.eth.chain_id
         try:
             # Use degenbot deployment values if available
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][self.factory]
             self.init_hash = factory_deployment.pool_init_hash
             if factory_deployment.deployer is not None:
-                self.deployer_address = factory_deployment.deployer
+                self.deployer = factory_deployment.deployer
         except KeyError:
             # Deployment is unknown. Uses any inputs provided, otherwise use default values from
             # original Uniswap contracts
@@ -165,60 +161,17 @@ class UniswapV2Pool(AbstractLiquidityPool):
         else:
             self.fee_token0 = self.fee_token1 = fee
 
-        if tokens is not None:
-            self.token0, self.token1 = sorted(tokens)
-        else:
-            token0_address, *_ = raw_call(
-                w3=w3,
-                block_identifier=self.update_block,
-                address=self.address,
-                calldata=encode_function_calldata(
-                    function_prototype="token0()",
-                    function_arguments=None,
-                ),
-                return_types=["address"],
-            )
-            token1_address, *_ = raw_call(
-                w3=w3,
-                block_identifier=self.update_block,
-                address=self.address,
-                calldata=encode_function_calldata(
-                    function_prototype="token1()",
-                    function_arguments=None,
-                ),
-                return_types=["address"],
-            )
-
-            _token_manager = Erc20TokenHelperManager(chain_id)
-            self.token0 = _token_manager.get_erc20token(
-                address=token0_address,
-                silent=silent,
-            )
-            self.token1 = _token_manager.get_erc20token(
-                address=token1_address,
-                silent=silent,
-            )
-
-        self.tokens = (self.token0, self.token1)
-
         if verify_address and self.address != self._verified_address():  # pragma: no branch
-            raise ValueError("Pool address verification failed.")
+            raise AddressMismatch("Pool address verification failed.")
 
-        if name is not None:
-            self.name = name
-        else:
-            fee_string = (
-                f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
-                if self.fee_token0 == self.fee_token1
-                else (
-                    f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"  # noqa:E501
-                )
+        fee_string = (
+            f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
+            if self.fee_token0 == self.fee_token1
+            else (
+                f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"  # noqa:E501
             )
-            self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
-
-        self.reserves_token0, self.reserves_token1 = self.get_reserves(
-            w3=w3, block_identifier=self.update_block
         )
+        self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
 
         self._pool_state_archive = {self.update_block: self.state} if archive_states else None
 
@@ -253,9 +206,77 @@ class UniswapV2Pool(AbstractLiquidityPool):
 
     def _verified_address(self) -> ChecksumAddress:
         return generate_v2_pool_address(
-            deployer_address=self.deployer_address,
+            deployer_address=self.deployer,
             token_addresses=(self.token0.address, self.token1.address),
             init_hash=self.init_hash,
+        )
+
+    def get_factory_tokens_reserves_batched(
+        self,
+        w3: Web3,
+        state_block: int,
+    ) -> tuple[
+        ChecksumAddress,  # factory
+        tuple[ChecksumAddress, ChecksumAddress],  # tokens
+        tuple[int, int],  # reserves
+    ]:
+        with w3.batch_requests() as batch:
+            batch.add_mapping(
+                {
+                    # These calls default to use 'latest' for block number, which is OK since the
+                    # values are immutable
+                    w3.eth.call: [
+                        {
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="factory()",
+                                function_arguments=None,
+                            ),
+                        },
+                        {
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="token0()",
+                                function_arguments=None,
+                            ),
+                        },
+                        {
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="token1()",
+                                function_arguments=None,
+                            ),
+                        },
+                    ],
+                }
+            )
+            batch.add(
+                # This call uses a specific block so the reserve values are consistent
+                w3.eth.call(
+                    transaction={
+                        "to": self.address,
+                        "data": encode_function_calldata(
+                            function_prototype="getReserves()",
+                            function_arguments=None,
+                        ),
+                    },
+                    block_identifier=state_block,
+                )
+            )
+
+            factory, token0, token1, reserves = batch.execute()
+
+        factory, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, factory))
+        token0, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token0))
+        token1, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token1))
+        reserves0, reserves1, *_ = eth_abi.abi.decode(
+            types=["uint112", "uint112"], data=cast(HexBytes, reserves)
+        )
+
+        return (
+            to_checksum_address(cast(str, factory)),
+            (to_checksum_address(cast(str, token0)), to_checksum_address(cast(str, token1))),
+            (cast(int, reserves0), cast(int, reserves1)),
         )
 
     @property
@@ -292,6 +313,10 @@ class UniswapV2Pool(AbstractLiquidityPool):
     def state(self) -> UniswapV2PoolState:
         return self._state
 
+    @property
+    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
+        return self.token0, self.token1
+
     def calculate_tokens_in_from_ratio_out(
         self,
         token_in: Erc20Token,
@@ -306,7 +331,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         """
 
         if token_in not in self.tokens:  # pragma: no cover
-            raise ValueError(f"Token in {token_in} not held by this pool.")
+            raise DegenbotValueError(f"Token in {token_in} not held by this pool.")
 
         if token_in == self.token0:
             # formula: dx = y0/C - x0/(1-FEE), where C = token1/token0
@@ -372,7 +397,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             )
             fee = self.fee_token1
         else:  # pragma: no cover
-            raise ValueError(
+            raise DegenbotValueError(
                 f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"  # noqa:E501
             )
 
@@ -430,7 +455,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             )
             fee = self.fee_token1
         else:  # pragma: no cover
-            raise ValueError(
+            raise DegenbotValueError(
                 f"Could not identify token_in: {token_in}! Pool holds: {self.token0} {self.token1}"
             )
 
@@ -499,7 +524,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         elif token == self.token1:
             return Fraction(state.reserves_token1) / Fraction(state.reserves_token0)
         else:  # pragma: no cover
-            raise ValueError(f"Unknown token {token}")
+            raise DegenbotValueError(f"Unknown token {token}")
 
     def get_nominal_price(
         self,
@@ -534,11 +559,9 @@ class UniswapV2Pool(AbstractLiquidityPool):
                 10**self.token0.decimals, state.reserves_token0
             )
         else:  # pragma: no cover
-            raise ValueError(f"Unknown token {token}")
+            raise DegenbotValueError(f"Unknown token {token}")
 
-    def get_reserves(
-        self, w3: Web3, block_identifier: BlockIdentifier | None = None
-    ) -> tuple[int, int]:
+    def get_reserves(self, w3: Web3, block_identifier: BlockIdentifier) -> tuple[int, int]:
         reserves_token0, reserves_token1, *_ = raw_call(
             w3=w3,
             address=self.address,
@@ -672,10 +695,10 @@ class UniswapV2Pool(AbstractLiquidityPool):
         override_state: UniswapV2PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
         if token_in not in self.tokens:  # pragma: no cover
-            raise ValueError("token_in is unknown.")
+            raise DegenbotValueError("token_in is unknown.")
 
         if token_in_quantity == 0:  # pragma: no cover
-            raise ValueError("Zero input swap requested.")
+            raise DegenbotValueError("Zero input swap requested.")
 
         if override_state:
             logger.debug(f"State override: {override_state}")
@@ -709,10 +732,10 @@ class UniswapV2Pool(AbstractLiquidityPool):
         override_state: UniswapV2PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
         if token_out not in self.tokens:  # pragma: no cover
-            raise ValueError("token_out is unknown.")
+            raise DegenbotValueError("token_out is unknown.")
 
         if token_out_quantity == 0:  # pragma: no cover
-            raise ValueError("Zero output swap requested.")
+            raise DegenbotValueError("Zero output swap requested.")
 
         if override_state:
             logger.debug(f"State override: {override_state}")
@@ -783,16 +806,15 @@ class UniswapV2Pool(AbstractLiquidityPool):
                     logger.info(f"{self.token0}: {self.reserves_token0}")
                     logger.info(f"{self.token1}: {self.reserves_token1}")
 
-        return state_updated
+            return state_updated
 
 
 class UnregisteredLiquidityPool(UniswapV2Pool):
     """
-    A disconnected version of `LiquidityPool` for use where a pool helper is expected, but no
+    A disconnected version of `UniswapV2Pool` for use where a pool helper is expected, but no
     chain data available to read the necessary values.
 
-    The pool helper is not added to the pool registry, no Contract object is created, and no
-    reserve values are set.
+    The pool helper is not added to the pool registry and no reserve values are set.
     """
 
     def __init__(
@@ -806,7 +828,6 @@ class UnregisteredLiquidityPool(UniswapV2Pool):
         self._state = UniswapV2PoolState(pool=self.address, reserves_token0=0, reserves_token1=0)
         self.token0 = min(tokens)
         self.token1 = max(tokens)
-        self.tokens = (self.token0, self.token1)
 
         if isinstance(fee, Iterable):
             self.fee_token0, self.fee_token1 = fee

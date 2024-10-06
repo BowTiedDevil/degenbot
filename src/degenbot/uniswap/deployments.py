@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from eth_typing import ChainId, ChecksumAddress
 from eth_utils.address import to_checksum_address
 
+from ..exceptions import DegenbotValueError
 from ..types import AbstractExchangeDeployment
 
 
@@ -36,7 +37,7 @@ def register_exchange(exchange: UniswapV2ExchangeDeployment | UniswapV3ExchangeD
         FACTORY_DEPLOYMENTS[exchange.chain_id] = {}
 
     if exchange.factory.address in FACTORY_DEPLOYMENTS[exchange.chain_id]:
-        raise ValueError("Exchange is already registered.")
+        raise DegenbotValueError("Exchange is already registered.")
 
     FACTORY_DEPLOYMENTS[exchange.chain_id][exchange.factory.address] = exchange.factory
 
@@ -46,7 +47,7 @@ def register_router(router: UniswapRouterDeployment) -> None:
         ROUTER_DEPLOYMENTS[router.chain_id] = {}
 
     if router.address in ROUTER_DEPLOYMENTS[router.chain_id]:
-        raise ValueError("Router is already registered.")
+        raise DegenbotValueError("Router is already registered.")
 
     ROUTER_DEPLOYMENTS[router.chain_id][router.address] = router
 

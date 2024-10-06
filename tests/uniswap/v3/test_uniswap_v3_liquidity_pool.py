@@ -1,6 +1,7 @@
 import pickle
 
 import pytest
+from eth_typing import ChainId
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
@@ -9,11 +10,13 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.config import set_web3
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
+    AddressMismatch,
     ExternalUpdateError,
     InsufficientAmountOutError,
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
+from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.types import (
     UniswapV3BitmapAtWord,
@@ -24,19 +27,31 @@ from degenbot.uniswap.types import (
 )
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries import TickMath
-from degenbot.uniswap.v3_liquidity_pool import UNISWAP_V3_MAINNET_POOL_INIT_HASH, UniswapV3Pool
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 WBTC_WETH_V3_POOL_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 WETH_CONTRACT_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 WBTC_CONTRACT_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 DAI_CONTRACT_ADDRESS = to_checksum_address("0x6B175474E89094C44Da98b954EedeAC495271d0F")
 UNISWAP_V3_FACTORY_ADDRESS = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
-UNISWAP_V3_TICKLENS_ADDRESS = to_checksum_address("0xbfd8137f7d1516D3ea5cA83523914859ec47F573")
 
 
-@pytest.fixture
-def dai() -> Erc20Token:
-    return Erc20Token(DAI_CONTRACT_ADDRESS)
+@pytest.fixture(autouse=True)
+def dai(ethereum_archive_node_web3: Web3) -> Erc20Token:
+    set_web3(ethereum_archive_node_web3)
+    return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(DAI_CONTRACT_ADDRESS)
+
+
+@pytest.fixture(autouse=True)
+def wbtc(ethereum_archive_node_web3: Web3) -> Erc20Token:
+    set_web3(ethereum_archive_node_web3)
+    return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WBTC_CONTRACT_ADDRESS)
+
+
+@pytest.fixture(autouse=True)
+def weth(ethereum_archive_node_web3: Web3) -> Erc20Token:
+    set_web3(ethereum_archive_node_web3)
+    return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WETH_CONTRACT_ADDRESS)
 
 
 @pytest.fixture(scope="function")
@@ -71,52 +86,12 @@ def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool):
 def test_creation(ethereum_archive_node_web3: Web3) -> None:
     set_web3(ethereum_archive_node_web3)
     UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
-    UniswapV3Pool(
-        address=WBTC_WETH_V3_POOL_ADDRESS,
-        factory_address=UNISWAP_V3_FACTORY_ADDRESS,
-    )
-    UniswapV3Pool(
-        address=WBTC_WETH_V3_POOL_ADDRESS,
-        tokens=[
-            Erc20Token(WBTC_CONTRACT_ADDRESS),
-            Erc20Token(WETH_CONTRACT_ADDRESS),
-        ],
-    )
-    UniswapV3Pool(
-        address=WBTC_WETH_V3_POOL_ADDRESS,
-        deployer_address=UNISWAP_V3_FACTORY_ADDRESS,
-        init_hash=UNISWAP_V3_MAINNET_POOL_INIT_HASH,
-    )
     assert (
         UniswapV3Pool(
             address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={}, tick_data={}
         ).sparse_liquidity_map
         is False
     )
-
-
-def test_creation_with_bad_tokens(ethereum_archive_node_web3: Web3) -> None:
-    set_web3(ethereum_archive_node_web3)
-    with pytest.raises(ValueError, match="too many values to unpack"):
-        UniswapV3Pool(
-            address=WBTC_WETH_V3_POOL_ADDRESS,
-            tokens=[
-                Erc20Token(WBTC_CONTRACT_ADDRESS),
-                Erc20Token(WETH_CONTRACT_ADDRESS),
-                Erc20Token(DAI_CONTRACT_ADDRESS),  # <---- extra token
-            ],
-        )
-
-    with pytest.raises(ValueError, match="Pool address verification failed"):
-        # The bad token adddress will result in a mismatched CREATE2 address, so pool is implicitly
-        # protected against incorrectly-overridden tokens
-        UniswapV3Pool(
-            address=WBTC_WETH_V3_POOL_ADDRESS,
-            tokens=[
-                Erc20Token(WBTC_CONTRACT_ADDRESS),
-                Erc20Token(DAI_CONTRACT_ADDRESS),  # <---- wrong token
-            ],
-        )
 
 
 def test_creation_with_bad_liquidity_overrides(ethereum_archive_node_web3: Web3) -> None:
@@ -139,15 +114,11 @@ def test_creation_with_invalid_hash(ethereum_archive_node_web3: Web3) -> None:
     del FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
 
     # Change last byte of true init hash
-    BAD_INIT_HASH = UNISWAP_V3_MAINNET_POOL_INIT_HASH[:-1] + "f"
+    BAD_INIT_HASH = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH[:-1] + "f"
 
-    with pytest.raises(
-        ValueError,
-        match="Pool address verification failed",
-    ):
+    with pytest.raises(AddressMismatch, match="Pool address verification failed"):
         UniswapV3Pool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
-            factory_address=UNISWAP_V3_FACTORY_ADDRESS,
             init_hash=BAD_INIT_HASH,
         )
 

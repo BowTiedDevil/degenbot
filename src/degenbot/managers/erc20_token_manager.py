@@ -9,7 +9,7 @@ from ..erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE, Erc20Token
 from ..types import AbstractManager
 
 
-class Erc20TokenHelperManager(AbstractManager):
+class Erc20TokenManager(AbstractManager):
     """
     A class that generates and tracks Erc20Token helpers
 

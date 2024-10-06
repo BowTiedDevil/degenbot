@@ -1,9 +1,11 @@
 import pytest
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
+from web3 import Web3
 
 from degenbot.config import set_web3
 from degenbot.erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE, Erc20Token
+from degenbot.exceptions import DegenbotValueError
 
 VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
@@ -11,18 +13,44 @@ WBTC_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 
 
 @pytest.fixture
-def wbtc(ethereum_archive_node_web3):
+def wbtc(ethereum_archive_node_web3: Web3) -> Erc20Token:
     set_web3(ethereum_archive_node_web3)
     return Erc20Token(WBTC_ADDRESS)
 
 
 @pytest.fixture
-def weth(ethereum_archive_node_web3):
+def weth(ethereum_archive_node_web3: Web3) -> Erc20Token:
     set_web3(ethereum_archive_node_web3)
     return Erc20Token(WETH_ADDRESS)
 
 
-def test_erc20token_comparisons(wbtc, weth):
+def test_bad_address(ethereum_archive_node_web3):
+    set_web3(ethereum_archive_node_web3)
+    with pytest.raises(DegenbotValueError, match="No contract deployed at this address"):
+        Erc20Token(VITALIK_ADDRESS)
+
+
+def test_caches(ethereum_archive_node_web3: Web3, wbtc: Erc20Token):
+    FAKE_BALANCE = 69_420_000
+    current_block = ethereum_archive_node_web3.eth.block_number
+    balance_actual = wbtc.get_balance(VITALIK_ADDRESS)
+    wbtc._cached_balance[(current_block, VITALIK_ADDRESS)] = FAKE_BALANCE
+    assert wbtc.get_balance(VITALIK_ADDRESS) == FAKE_BALANCE
+    wbtc._cached_balance.clear()
+    assert wbtc.get_balance(VITALIK_ADDRESS) == balance_actual
+
+    current_total_supply = wbtc.get_total_supply()
+    FAKE_SUPPLY = 69_420_000_000
+    wbtc._cached_total_supply[current_block] = FAKE_SUPPLY
+    assert wbtc.get_total_supply() == FAKE_SUPPLY
+    wbtc._cached_total_supply.clear()
+    assert wbtc.get_total_supply() == current_total_supply
+
+    wbtc.get_approval(VITALIK_ADDRESS, VITALIK_ADDRESS)
+    wbtc.get_approval(VITALIK_ADDRESS, VITALIK_ADDRESS)
+
+
+def test_erc20token_comparisons(wbtc: Erc20Token, weth: Erc20Token):
     with pytest.raises(AssertionError):
         assert weth == 69
 
@@ -64,9 +92,10 @@ def test_erc20token_comparisons(wbtc, weth):
     assert wbtc < bytes.fromhex(WETH_ADDRESS[2:])
 
 
-def test_non_compliant_tokens(ethereum_archive_node_web3):
+def test_non_compliant_tokens(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
     for token_address in [
+        "0x0d88eD6E74bbFD96B831231638b66C05571e824F",
         "0x043942281890d4876D26BD98E2BB3F662635DFfb",
         "0x1da4858ad385cc377165A298CC2CE3fce0C5fD31",
         "0x9A2548335a639a58F4241b85B5Fc6c57185C428A",
@@ -82,7 +111,7 @@ def test_non_compliant_tokens(ethereum_archive_node_web3):
         Erc20Token(token_address)
 
 
-def test_erc20token_with_price_feed(ethereum_archive_node_web3):
+def test_erc20token_with_price_feed(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
     Erc20Token(
         address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
@@ -90,7 +119,7 @@ def test_erc20token_with_price_feed(ethereum_archive_node_web3):
     )
 
 
-def test_erc20token_functions(ethereum_archive_node_web3):
+def test_erc20token_functions(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
     weth = Erc20Token(
         address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
@@ -102,7 +131,14 @@ def test_erc20token_functions(ethereum_archive_node_web3):
     _ = weth.price
 
 
-def test_ether_placeholder(ethereum_archive_node_web3):
+def test_ether_placeholder(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
     ether = EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE()
-    ether.get_balance(VITALIK_ADDRESS)
+
+    FAKE_BALANCE = 69_420_000
+    current_block = ethereum_archive_node_web3.eth.block_number
+    balance_actual = ether.get_balance(VITALIK_ADDRESS)
+    ether._cached_balance[(current_block, VITALIK_ADDRESS)] = FAKE_BALANCE
+    assert ether.get_balance(VITALIK_ADDRESS) == FAKE_BALANCE
+    ether._cached_balance.clear()
+    assert ether.get_balance(VITALIK_ADDRESS) == balance_actual

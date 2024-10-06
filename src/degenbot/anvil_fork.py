@@ -12,6 +12,7 @@ from web3.middleware import Middleware
 from web3.types import RPCEndpoint
 
 from .constants import MAX_UINT256
+from .exceptions import DegenbotValueError
 from .logging import logger
 
 
@@ -78,7 +79,7 @@ class AnvilFork:
                     command.append("--no-mining")
                     command.append("--order=fifo")
                 case _:
-                    raise ValueError(f"Unknown mining mode '{mining_mode}'.")
+                    raise DegenbotValueError(f"Unknown mining mode '{mining_mode}'.")
 
             return command
 
@@ -183,7 +184,7 @@ class AnvilFork:
 
     def return_to_snapshot(self, id: int) -> bool:
         if id < 0:
-            raise ValueError("ID cannot be negative")
+            raise DegenbotValueError("ID cannot be negative")
         return bool(
             self.w3.provider.make_request(
                 method=RPCEndpoint("evm_revert"),
@@ -193,7 +194,9 @@ class AnvilFork:
 
     def set_balance(self, address: str, balance: int) -> None:
         if not (0 <= balance <= MAX_UINT256):
-            raise ValueError("Invalid balance, must be within range: 0 <= balance <= 2**256 - 1")
+            raise DegenbotValueError(
+                "Invalid balance, must be within range: 0 <= balance <= 2**256 - 1"
+            )
 
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setBalance"),
@@ -214,7 +217,7 @@ class AnvilFork:
 
     def set_next_base_fee(self, fee: int) -> None:
         if not (0 <= fee <= MAX_UINT256):
-            raise ValueError("Fee outside valid range 0 <= fee <= 2**256-1")
+            raise DegenbotValueError("Fee outside valid range 0 <= fee <= 2**256-1")
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setNextBlockBaseFeePerGas"),
             params=[fee],

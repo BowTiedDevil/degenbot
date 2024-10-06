@@ -5,9 +5,10 @@ from web3 import Web3
 
 from degenbot import AnvilFork, PancakeV3Pool
 from degenbot.config import set_web3
-from degenbot.exceptions import ManagerError, PoolNotAssociated
+from degenbot.exceptions import ManagerAlreadyInitialized, ManagerError, PoolNotAssociated
 from degenbot.pancakeswap.managers import PancakeV3PoolManager
 from degenbot.registry.all_pools import AllPools
+from degenbot.sushiswap.managers import SushiswapV2PoolManager
 from degenbot.uniswap.deployments import UniswapFactoryDeployment, UniswapV3ExchangeDeployment
 from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
@@ -80,10 +81,10 @@ def test_create_base_chain_managers(base_full_node_web3: Web3):
     assert uniswap_v3_pool_manager._factory_address == BASE_UNISWAP_V3_FACTORY_ADDRESS
 
     # Get known pairs
-    uniswap_v2_lp = uniswap_v2_pool_manager.get_pool(
+    uniswap_v2_lp = uniswap_v2_pool_manager.get_pool_from_tokens(
         token_addresses=(BASE_WETH_ADDRESS, BASE_DEGEN_ADDRESS)
     )
-    uniswap_v3_lp = uniswap_v3_pool_manager.get_pool(
+    uniswap_v3_lp = uniswap_v3_pool_manager.get_pool_by_tokens_and_fee(
         token_addresses=(BASE_WETH_ADDRESS, BASE_DEGEN_ADDRESS),
         pool_fee=3000,
     )
@@ -91,26 +92,10 @@ def test_create_base_chain_managers(base_full_node_web3: Web3):
     assert uniswap_v2_lp.address == BASE_UNISWAP_V2_WETH_DEGEN_ADDRESS
     assert uniswap_v3_lp.address == BASE_UNISWAP_V3_WETH_DEGEN_ADDRESS
 
-    # Create one-off pool managers and verify they return the same object
-    assert (
-        UniswapV2PoolManager(factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS).get_pool(
-            token_addresses=(
-                BASE_WETH_ADDRESS,
-                BASE_DEGEN_ADDRESS,
-            )
-        )
-        is uniswap_v2_lp
-    )
-    assert (
-        UniswapV3PoolManager(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS).get_pool(
-            token_addresses=(
-                BASE_WETH_ADDRESS,
-                BASE_DEGEN_ADDRESS,
-            ),
-            pool_fee=3000,
-        )
-        is uniswap_v3_lp
-    )
+    with pytest.raises(ManagerAlreadyInitialized):
+        UniswapV2PoolManager(factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS)
+    with pytest.raises(ManagerAlreadyInitialized):
+        UniswapV3PoolManager(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS)
 
 
 def test_base_pancakeswap_v3(base_full_node_web3: Web3):
@@ -133,7 +118,7 @@ def test_base_pancakeswap_v3(base_full_node_web3: Web3):
     )
 
     assert (
-        pancakev3_lp_manager.get_pool(
+        pancakev3_lp_manager.get_pool_by_tokens_and_fee(
             token_addresses=(BASE_WETH_ADDRESS, BASE_CBETH_ADDRESS),
             pool_fee=100,
         )
@@ -147,7 +132,7 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
     uniswap_v2_pool_manager = UniswapV2PoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
     )
-    sushiswap_v2_pool_manager = UniswapV2PoolManager(
+    sushiswap_v2_pool_manager = SushiswapV2PoolManager(
         factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS
     )
 
@@ -173,19 +158,19 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
     )
 
     # Get known pairs
-    uniswap_v2_lp = uniswap_v2_pool_manager.get_pool(
+    uniswap_v2_lp = uniswap_v2_pool_manager.get_pool_from_tokens(
         token_addresses=(
             MAINNET_WETH_ADDRESS,
             MAINNET_WBTC_ADDRESS,
         )
     )
-    sushiswap_v2_lp = sushiswap_v2_pool_manager.get_pool(
+    sushiswap_v2_lp = sushiswap_v2_pool_manager.get_pool_from_tokens(
         token_addresses=(
             MAINNET_WETH_ADDRESS,
             MAINNET_WBTC_ADDRESS,
         )
     )
-    uniswap_v3_lp = uniswap_v3_pool_manager.get_pool(
+    uniswap_v3_lp = uniswap_v3_pool_manager.get_pool_by_tokens_and_fee(
         token_addresses=(
             MAINNET_WETH_ADDRESS,
             MAINNET_WBTC_ADDRESS,
@@ -225,7 +210,7 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
     )
 
-    v2_weth_wbtc_lp = uniswap_v2_pool_manager.get_pool(
+    v2_weth_wbtc_lp = uniswap_v2_pool_manager.get_pool_from_tokens(
         token_addresses=(
             MAINNET_WETH_ADDRESS,
             MAINNET_WBTC_ADDRESS,
@@ -238,7 +223,7 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
     # Remove the pool from the manager
     del uniswap_v2_pool_manager[v2_weth_wbtc_lp]
 
-    new_v2_weth_wbtc_lp = uniswap_v2_pool_manager.get_pool(
+    new_v2_weth_wbtc_lp = uniswap_v2_pool_manager.get_pool_from_tokens(
         token_addresses=(
             MAINNET_WETH_ADDRESS,
             MAINNET_WBTC_ADDRESS,
@@ -253,7 +238,7 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
     del AllPools(chain_id=1)[new_v2_weth_wbtc_lp]
 
     # This should be a completely new pool object
-    super_new_v2_weth_wbtc_lp = uniswap_v2_pool_manager.get_pool(
+    super_new_v2_weth_wbtc_lp = uniswap_v2_pool_manager.get_pool_from_tokens(
         token_addresses=(
             MAINNET_WETH_ADDRESS,
             MAINNET_WBTC_ADDRESS,
@@ -279,7 +264,7 @@ def test_pools_from_token_path(ethereum_archive_node_web3: Web3) -> None:
         tx_path=[MAINNET_WBTC_ADDRESS, MAINNET_WETH_ADDRESS],
         pool_manager=uniswap_v2_pool_manager,
     ) == [
-        uniswap_v2_pool_manager.get_pool(
+        uniswap_v2_pool_manager.get_pool_from_tokens(
             token_addresses=(MAINNET_WBTC_ADDRESS, MAINNET_WETH_ADDRESS)
         ),
     ]

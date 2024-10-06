@@ -9,6 +9,7 @@ from eth_utils.address import to_checksum_address
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
+from ..exceptions import DegenbotValueError
 from ..functions import create2_address
 from .v3_libraries import tick_bitmap as TickBitmap
 
@@ -33,7 +34,7 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
             len(path) % (ADDRESS_BYTES + FEE_BYTES) != ADDRESS_BYTES,
         ]
     ):  # pragma: no cover
-        raise ValueError("Invalid path.")
+        raise DegenbotValueError("Invalid path.")
 
     chunk_length_and_decoder_function: Iterator[
         tuple[

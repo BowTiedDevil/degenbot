@@ -6,13 +6,16 @@ from typing import Any, TextIO
 
 import ujson
 from eth_typing import ChecksumAddress
+from eth_utils.abi import event_abi_to_log_topic
 from eth_utils.address import to_checksum_address
+from hexbytes import HexBytes
 from web3 import Web3
-from web3._utils.events import get_event_data
-from web3._utils.filters import construct_event_filter_params
-from web3.types import LogReceipt
+from web3.contract.base_contract import BaseContractEvent
+from web3.types import EventData, FilterParams, LogReceipt
+from web3.utils import get_event_abi
 
 from .. import config
+from ..exceptions import DegenbotValueError
 from ..logging import logger
 from .abi import UNISWAP_V3_POOL_ABI
 from .types import (
@@ -43,7 +46,7 @@ class UniswapV3LiquiditySnapshot:
                 with open(file) as file_handle:
                     json_liquidity_snapshot = ujson.load(file_handle)
             case _:  # pragma: no cover
-                raise ValueError(f"Unrecognized file type {type(file)}")
+                raise DegenbotValueError(f"Unrecognized file type {type(file)}")
 
         self._chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
 
@@ -85,12 +88,10 @@ class UniswapV3LiquiditySnapshot:
         to_block: int,
         span: int = 100,
     ) -> None:
-        def _process_log(log: LogReceipt) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
-            decoded_event = get_event_data(
-                abi_codec=w3.codec,
-                event_abi=event_abi,
-                log_entry=log,
-            )
+        def process_liquidity_event_log(
+            event: BaseContractEvent, log: LogReceipt
+        ) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
+            decoded_event: EventData = event.process_log(log)
             address = to_checksum_address(decoded_event["address"])
             tx_index = decoded_event["transactionIndex"]
             liquidity_block = decoded_event["blockNumber"]
@@ -113,23 +114,24 @@ class UniswapV3LiquiditySnapshot:
 
         v3pool = Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI)
         for event in [v3pool.events.Mint, v3pool.events.Burn]:
+            event_instance = event()
             logger.info(f"Processing {event.event_name} events")
-            event_abi = event._get_event_abi()
+            event_abi = get_event_abi(abi=v3pool.abi, event_name=event.event_name)
             start_block = self.newest_block + 1
 
             while True:
                 end_block = min(to_block, start_block + span - 1)
 
-                _, event_filter_params = construct_event_filter_params(
-                    event_abi=event_abi,
-                    abi_codec=w3.codec,
-                    from_block=start_block,
-                    to_block=end_block,
+                event_filter_params = FilterParams(
+                    fromBlock=start_block,
+                    toBlock=end_block,
+                    topics=[HexBytes(event_abi_to_log_topic(event_abi))],
                 )
 
-                event_logs = w3.eth.get_logs(event_filter_params)
-                for event_log in event_logs:
-                    pool_address, liquidity_event = _process_log(event_log)
+                for event_log in w3.eth.get_logs(event_filter_params):
+                    pool_address, liquidity_event = process_liquidity_event_log(
+                        event_instance, event_log
+                    )
 
                     if liquidity_event.liquidity == 0:  # pragma: no cover
                         continue

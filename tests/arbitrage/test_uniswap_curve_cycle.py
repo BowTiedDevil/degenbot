@@ -6,6 +6,8 @@ import pickle
 import time
 
 import pytest
+from eth_typing import ChainId
+from web3 import Web3
 
 from degenbot import UniswapV2Pool, UniswapV3Pool
 from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
@@ -13,6 +15,7 @@ from degenbot.config import set_web3
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError, ZeroLiquidityError
+from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.uniswap.types import UniswapV2PoolState, UniswapV3PoolState
 from degenbot.uniswap.v3_libraries import TickMath
 
@@ -30,13 +33,24 @@ UNISWAP_V3_WETH_USDT_ADDRESS = "0x4e68Ccd3E89f51C3074ca5072bbAC773960dFa36"
 FAKE_ADDRESS = "0x6942000000000000000000000000000000000000"
 
 
-def test_create_arb(ethereum_archive_node_web3):
+@pytest.fixture
+def weth(ethereum_archive_node_web3: Web3) -> Erc20Token:
+    set_web3(ethereum_archive_node_web3)
+    return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WETH_ADDRESS)
+
+
+@pytest.fixture
+def dai(ethereum_archive_node_web3: Web3) -> Erc20Token:
+    set_web3(ethereum_archive_node_web3)
+    return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(DAI_ADDRESS)
+
+
+def test_create_arb(ethereum_archive_node_web3: Web3, weth: Erc20Token, dai: Erc20Token):
     set_web3(ethereum_archive_node_web3)
     uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
     uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
-    weth = Erc20Token(WETH_ADDRESS)
     UniswapCurveCycle(
         input_token=weth,
         swap_pools=[
@@ -48,7 +62,6 @@ def test_create_arb(ethereum_archive_node_web3):
         max_input=10 * 10**18,
     )
 
-    dai = Erc20Token(DAI_ADDRESS)
     with pytest.raises(ValueError, match="Not implemented for Curve pools at position != 1"):
         UniswapCurveCycle(
             input_token=dai,
@@ -74,13 +87,12 @@ def test_create_arb(ethereum_archive_node_web3):
         )
 
 
-def test_pickle_arb(ethereum_archive_node_web3):
+def test_pickle_arb(ethereum_archive_node_web3: Web3, weth: Erc20Token):
     set_web3(ethereum_archive_node_web3)
     uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
     uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
-    weth = Erc20Token(WETH_ADDRESS)
     arb = UniswapCurveCycle(
         input_token=weth,
         swap_pools=[uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp],
@@ -90,7 +102,7 @@ def test_pickle_arb(ethereum_archive_node_web3):
     pickle.dumps(arb)
 
 
-def test_arb_calculation(ethereum_archive_node_web3):
+def test_arb_calculation(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
     uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
@@ -128,13 +140,12 @@ def test_arb_calculation(ethereum_archive_node_web3):
             pass
 
 
-def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3):
+def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3: Web3, weth: Erc20Token):
     set_web3(ethereum_archive_node_web3)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
     uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
     uniswap_v2_weth_usdt_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDT_ADDRESS)
 
-    weth = Erc20Token(WETH_ADDRESS)
     arb = UniswapCurveCycle(
         input_token=weth,
         swap_pools=(uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
@@ -207,13 +218,12 @@ def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3):
         )
 
 
-def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3):
+def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: Erc20Token):
     set_web3(ethereum_archive_node_web3)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
     uniswap_v3_weth_usdc_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDC_ADDRESS)
     uniswap_v3_weth_usdt_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDT_ADDRESS)
 
-    weth = Erc20Token(WETH_ADDRESS)
     arb = UniswapCurveCycle(
         input_token=weth,
         swap_pools=(uniswap_v3_weth_usdt_lp, curve_tripool, uniswap_v3_weth_usdc_lp),
@@ -296,14 +306,12 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3):
         )
 
 
-def test_arb_payload_encoding(ethereum_archive_node_web3):
+def test_arb_payload_encoding(ethereum_archive_node_web3: Web3, weth: Erc20Token):
     set_web3(ethereum_archive_node_web3)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
     uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
     uniswap_v2_weth_usdt_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDT_ADDRESS)
-
-    weth = Erc20Token(WETH_ADDRESS)
 
     # set up overrides for a profitable arbitrage condition
     v2_weth_dai_state_override = UniswapV2PoolState(
@@ -355,11 +363,10 @@ def test_arb_payload_encoding(ethereum_archive_node_web3):
             )
 
 
-async def test_process_pool_calculation(ethereum_archive_node_web3) -> None:
+async def test_process_pool_calculation(ethereum_archive_node_web3: Web3, weth: Erc20Token) -> None:
     set_web3(ethereum_archive_node_web3)
     start = time.perf_counter()
 
-    weth = Erc20Token(WETH_ADDRESS)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
     uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
@@ -453,13 +460,13 @@ async def test_process_pool_calculation(ethereum_archive_node_web3) -> None:
             print(f"Completed {_NUM_FUTURES} calculations in {time.perf_counter() - start:.1f}s")
 
 
-def test_bad_pool_in_constructor(ethereum_archive_node_web3):
+def test_bad_pool_in_constructor(ethereum_archive_node_web3: Web3, weth: Erc20Token):
     set_web3(ethereum_archive_node_web3)
-    weth = Erc20Token(WETH_ADDRESS)
+
     uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
-    with pytest.raises(ValueError, match="Incompatible pool provided."):
+    with pytest.raises(ValueError, match=f"Incompatible pool type \\({type(None)}\\) provided."):
         UniswapCurveCycle(
             input_token=weth,
             swap_pools=[uniswap_v2_weth_dai_lp, None, uniswap_v2_weth_usdc_lp],  # type: ignore[list-item]
@@ -468,9 +475,9 @@ def test_bad_pool_in_constructor(ethereum_archive_node_web3):
         )
 
 
-def test_no_max_input(ethereum_archive_node_web3):
+def test_no_max_input(ethereum_archive_node_web3: Web3, weth: Erc20Token):
     set_web3(ethereum_archive_node_web3)
-    weth = Erc20Token(WETH_ADDRESS)
+
     uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
     uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
@@ -482,9 +489,9 @@ def test_no_max_input(ethereum_archive_node_web3):
     )
 
 
-def test_zero_max_input(ethereum_archive_node_web3):
+def test_zero_max_input(ethereum_archive_node_web3: Web3, weth: Erc20Token):
     set_web3(ethereum_archive_node_web3)
-    weth = Erc20Token(WETH_ADDRESS)
+
     uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
     uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)

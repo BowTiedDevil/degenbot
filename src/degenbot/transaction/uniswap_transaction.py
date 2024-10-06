@@ -18,6 +18,7 @@ from ..constants import WRAPPED_NATIVE_TOKENS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     DegenbotError,
+    DegenbotValueError,
     EVMRevertError,
     LedgerError,
     LiquidityPoolError,
@@ -25,7 +26,7 @@ from ..exceptions import (
     TransactionError,
 )
 from ..logging import logger
-from ..managers.erc20_token_manager import Erc20TokenHelperManager
+from ..managers.erc20_token_manager import Erc20TokenManager
 from ..types import AbstractSimulationResult, AbstractTransaction
 from ..uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from ..uniswap.deployments import (
@@ -131,19 +132,23 @@ class UniswapTransaction(AbstractTransaction):
             for exchange in router.exchanges:
                 match exchange:
                     case UniswapV2ExchangeDeployment():
-                        self.v2_pool_manager = UniswapV2PoolManager.from_exchange(exchange)
+                        self.v2_pool_manager = UniswapV2PoolManager.get_instance(
+                            factory_address=exchange.factory.address, chain_id=self.chain_id
+                        ) or UniswapV2PoolManager.from_exchange(exchange)
                     case UniswapV3ExchangeDeployment():
-                        self.v3_pool_manager = UniswapV3PoolManager.from_exchange(exchange)
+                        self.v3_pool_manager = UniswapV3PoolManager.get_instance(
+                            factory_address=exchange.factory.address, chain_id=self.chain_id
+                        ) or UniswapV3PoolManager.from_exchange(exchange)
                     case _:
-                        raise ValueError(f"Could not identify DEX type for {exchange}")
+                        raise DegenbotValueError(f"Could not identify DEX type for {exchange}")
         else:
             if router_address is None:
-                raise ValueError("Router address not provided")
+                raise DegenbotValueError("Router address not provided")
             self.chain_id = int(chain_id, 16) if isinstance(chain_id, str) else chain_id
 
             self.router_address = to_checksum_address(router_address)
             if self.router_address not in ROUTER_DEPLOYMENTS[self.chain_id]:
-                raise ValueError(f"Router address {router_address} unknown!")
+                raise DegenbotValueError(f"Router address {router_address} unknown!")
 
             router_deployment = ROUTER_DEPLOYMENTS[self.chain_id][self.router_address]
 
@@ -151,15 +156,19 @@ class UniswapTransaction(AbstractTransaction):
             for exchange in router_deployment.exchanges:
                 match exchange:
                     case UniswapV2ExchangeDeployment():
-                        self.v2_pool_manager = UniswapV2PoolManager(
-                            factory_address=exchange.factory.address
+                        self.v2_pool_manager = UniswapV2PoolManager.get_instance(
+                            factory_address=exchange.factory.address, chain_id=self.chain_id
+                        ) or UniswapV2PoolManager(
+                            factory_address=exchange.factory.address, chain_id=self.chain_id
                         )
                     case UniswapV3ExchangeDeployment():
-                        self.v3_pool_manager = UniswapV3PoolManager(
-                            factory_address=exchange.factory.address
+                        self.v3_pool_manager = UniswapV3PoolManager.get_instance(
+                            factory_address=exchange.factory.address, chain_id=self.chain_id
+                        ) or UniswapV3PoolManager(
+                            factory_address=exchange.factory.address, chain_id=self.chain_id
                         )
                     case _:
-                        raise ValueError(f"Could not identify DEX type for {exchange}")
+                        raise DegenbotValueError(f"Could not identify DEX type for {exchange}")
 
         self.sender = to_checksum_address(tx_sender)
         self.recipients: set[ChecksumAddress] = set()
@@ -253,7 +262,7 @@ class UniswapTransaction(AbstractTransaction):
         silent = self.silent
 
         if token_in not in pool.tokens:
-            raise ValueError(f"Token {token_in} not found in pool {pool}")
+            raise DegenbotValueError(f"Token {token_in} not found in pool {pool}")
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
@@ -344,7 +353,7 @@ class UniswapTransaction(AbstractTransaction):
         silent = self.silent
 
         if token_in not in pool.tokens:
-            raise ValueError(f"Token {token_in} not found in pool {pool}")
+            raise DegenbotValueError(f"Token {token_in} not found in pool {pool}")
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
@@ -404,7 +413,7 @@ class UniswapTransaction(AbstractTransaction):
         self.recipients.add(to_checksum_address(recipient))
 
         if token_in not in pool.tokens:
-            raise ValueError(f"Token {token_in} not found in pool {pool}")
+            raise DegenbotValueError(f"Token {token_in} not found in pool {pool}")
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
@@ -490,7 +499,7 @@ class UniswapTransaction(AbstractTransaction):
         self.recipients.add(to_checksum_address(recipient))
 
         if token_in not in pool.tokens:
-            raise ValueError(f"Token {token_in} not found in pool {pool}")
+            raise DegenbotValueError(f"Token {token_in} not found in pool {pool}")
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
@@ -1104,7 +1113,7 @@ class UniswapTransaction(AbstractTransaction):
 
                         if TYPE_CHECKING:
                             assert self.v3_pool_manager is not None
-                        v3_pool = self.v3_pool_manager.get_pool(
+                        v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
                             token_addresses=(
                                 tx_token_in_address,
                                 tx_token_out_address,
@@ -1188,7 +1197,7 @@ class UniswapTransaction(AbstractTransaction):
 
                         if TYPE_CHECKING:
                             assert self.v3_pool_manager is not None
-                        v3_pool = self.v3_pool_manager.get_pool(
+                        v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
                             token_addresses=(
                                 tx_token_in_address,
                                 tx_token_out_address,
@@ -1253,7 +1262,7 @@ class UniswapTransaction(AbstractTransaction):
                     if command in UNIMPLEMENTED_UNIVERAL_ROUTER_COMMANDS:
                         logger.debug(f"UNIMPLEMENTED COMMAND: {command}")
                     else:  # pragma: no cover
-                        raise ValueError(f"Invalid command {command}")
+                        raise DegenbotValueError(f"Invalid command {command}")
 
         def _process_v3_multicall(
             params: dict[str, Any],
@@ -1262,6 +1271,7 @@ class UniswapTransaction(AbstractTransaction):
                 self._raise_if_block_hash_mismatch(params["previousBlockhash"])
 
             for payload in params["data"]:
+                payload_func = payload_args = None
                 try:
                     # decode with Router ABI
                     payload_func, payload_args = (
@@ -1294,6 +1304,9 @@ class UniswapTransaction(AbstractTransaction):
 
                     sys.exit(0)
 
+                if payload_func is None or payload_args is None:
+                    raise DegenbotValueError("Failed to decode payload.")
+
                 # special case to handle a multicall encoded within
                 # another multicall
                 if payload_func.fn_name == "multicall":
@@ -1303,6 +1316,7 @@ class UniswapTransaction(AbstractTransaction):
                         self._raise_if_block_hash_mismatch(params["previousBlockhash"])
 
                     for function_input in payload_args["data"]:
+                        _func = _params = None
                         try:
                             _func, _params = (
                                 Web3()
@@ -1332,6 +1346,9 @@ class UniswapTransaction(AbstractTransaction):
                             import sys
 
                             sys.exit(0)
+
+                        if _func is None or _params is None:
+                            raise DegenbotValueError("Failed to decode function parameters.")
 
                         self._simulate(
                             func_name=_func.fn_name,
@@ -1544,12 +1561,12 @@ class UniswapTransaction(AbstractTransaction):
                         self._raise_if_past_deadline(tx_deadline)
 
                         try:
-                            _pool = self.v2_pool_manager.get_pool(
+                            _pool = self.v2_pool_manager.get_pool_from_tokens(
                                 token_addresses=(token0_address, token1_address),
                                 silent=self.silent,
                             )
                         except ManagerError:
-                            token_manager = Erc20TokenHelperManager(chain_id=self.chain_id)
+                            token_manager = Erc20TokenManager(chain_id=self.chain_id)
                             _pool = UnregisteredLiquidityPool(
                                 address=generate_v2_pool_address(
                                     token_addresses=(
@@ -1565,6 +1582,8 @@ class UniswapTransaction(AbstractTransaction):
                                 ],
                             )
 
+                        if TYPE_CHECKING:
+                            assert isinstance(_pool, UniswapV2Pool)
                         _sim_result = self._simulate_v2_add_liquidity(
                             pool=_pool,
                             added_reserves_token0=token0_amount,
@@ -1579,7 +1598,7 @@ class UniswapTransaction(AbstractTransaction):
                         self.simulated_pool_states.append((_pool, _sim_result))
 
                     case _:
-                        raise ValueError(f"Unknown function: {func_name}!")
+                        raise DegenbotValueError(f"Unknown function: {func_name}!")
 
             except TransactionError:
                 # Catch specific subclass exception to prevent nested
@@ -1641,7 +1660,7 @@ class UniswapTransaction(AbstractTransaction):
                                 ) = func_params["params"]
                                 tx_deadline = None
                             case _:
-                                raise ValueError(
+                                raise DegenbotValueError(
                                     f"Could not identify function parameters. Got {(func_params['params'])}"  # noqa:E501
                                 )
 
@@ -1650,7 +1669,7 @@ class UniswapTransaction(AbstractTransaction):
 
                         if TYPE_CHECKING:
                             assert isinstance(self.v3_pool_manager, UniswapV3PoolManager)
-                        v3_pool = self.v3_pool_manager.get_pool(
+                        v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
                             token_addresses=(
                                 tx_token_in_address,
                                 tx_token_out_address,
@@ -1708,7 +1727,7 @@ class UniswapTransaction(AbstractTransaction):
                                 ) = func_params["params"]
                                 tx_deadline = None
                             case _:
-                                raise ValueError(
+                                raise DegenbotValueError(
                                     f"Could not identify function parameters. Got {(func_params['params'])}"  # noqa:E501
                                 )
 
@@ -1726,6 +1745,7 @@ class UniswapTransaction(AbstractTransaction):
                             logger.info(f" • amountOutMinimum = {tx_amount_out_minimum}")
 
                         last_token_pos = len(tx_path_decoded) - 3
+                        token_out_quantity = 0  # this is overridden by the first calc
 
                         for token_pos in range(
                             0,
@@ -1744,9 +1764,7 @@ class UniswapTransaction(AbstractTransaction):
                             first_swap = token_pos == 0
                             last_swap = token_pos == last_token_pos
 
-                            if TYPE_CHECKING:
-                                assert isinstance(self.v3_pool_manager, UniswapV3PoolManager)
-                            v3_pool = self.v3_pool_manager.get_pool(
+                            v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
                                 token_addresses=(
                                     tx_token_in_address,
                                     tx_token_out_address,
@@ -1815,7 +1833,7 @@ class UniswapTransaction(AbstractTransaction):
                                 ) = func_params["params"]
                                 tx_deadline = None
                             case _:
-                                raise ValueError(
+                                raise DegenbotValueError(
                                     f"Could not identify function parameters. Got {(func_params['params'])}"  # noqa:E501
                                 )
 
@@ -1824,7 +1842,7 @@ class UniswapTransaction(AbstractTransaction):
 
                         if TYPE_CHECKING:
                             assert isinstance(self.v3_pool_manager, UniswapV3PoolManager)
-                        v3_pool = self.v3_pool_manager.get_pool(
+                        v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
                             token_addresses=(
                                 tx_token_in_address,
                                 tx_token_out_address,
@@ -1886,7 +1904,7 @@ class UniswapTransaction(AbstractTransaction):
                                 ) = func_params["params"]
                                 tx_deadline = None
                             case _:
-                                raise ValueError(
+                                raise DegenbotValueError(
                                     f"Could not identify function parameters. Got {(func_params['params'])}"  # noqa:E501
                                 )
 
@@ -1909,6 +1927,7 @@ class UniswapTransaction(AbstractTransaction):
                         last_token_pos = len(tx_path_decoded) - 3
 
                         _amount_in = 0
+                        first_swap = False
 
                         for token_pos in range(
                             0,
@@ -1924,7 +1943,11 @@ class UniswapTransaction(AbstractTransaction):
 
                             if TYPE_CHECKING:
                                 assert isinstance(self.v3_pool_manager, UniswapV3PoolManager)
-                            v3_pool = self.v3_pool_manager.get_pool(
+                                assert isinstance(tx_token_out_address, str)
+                                assert isinstance(tx_token_in_address, str)
+                                assert isinstance(tx_fee, int)
+
+                            v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
                                 token_addresses=(
                                     tx_token_in_address,
                                     tx_token_out_address,
@@ -2084,10 +2107,10 @@ class UniswapTransaction(AbstractTransaction):
                         ) -> int:
                             if sqrtRatioAX96 > sqrtRatioBX96:
                                 (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96)
-                            intermediate = FullMath.mulDiv(
+                            intermediate = FullMath.muldiv(
                                 sqrtRatioAX96, sqrtRatioBX96, constants.Q96
                             )
-                            return FullMath.mulDiv(
+                            return FullMath.muldiv(
                                 amount0, intermediate, sqrtRatioBX96 - sqrtRatioAX96
                             )
 
@@ -2096,7 +2119,7 @@ class UniswapTransaction(AbstractTransaction):
                         ) -> int:
                             if sqrtRatioAX96 > sqrtRatioBX96:
                                 (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96)
-                            return FullMath.mulDiv(
+                            return FullMath.muldiv(
                                 amount1, constants.Q96, sqrtRatioBX96 - sqrtRatioAX96
                             )
 
@@ -2185,7 +2208,7 @@ class UniswapTransaction(AbstractTransaction):
                         logger.info(f"{_tick_lower=}")
                         logger.info(f"{_tick_upper=}")
 
-                        v3_pool = self.v3_pool_manager.get_pool(
+                        v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
                             token_addresses=(token0, token1),
                             pool_fee=_fee,
                             silent=self.silent,
@@ -2235,7 +2258,7 @@ class UniswapTransaction(AbstractTransaction):
             logger.debug(f"{func_name}: {self.hash.to_0x_hex()=}")
 
             if func_name != "execute":
-                raise ValueError(f"UNHANDLED UNIVERSAL ROUTER FUNCTION: {func_name}")
+                raise DegenbotValueError(f"UNHANDLED UNIVERSAL ROUTER FUNCTION: {func_name}")
 
             try:
                 try:

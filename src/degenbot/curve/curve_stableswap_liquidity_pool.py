@@ -9,7 +9,7 @@
 
 import contextlib
 from threading import Lock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 import web3.exceptions
@@ -24,10 +24,16 @@ from web3.types import BlockIdentifier
 from .. import config
 from ..constants import ZERO_ADDRESS
 from ..erc20_token import Erc20Token
-from ..exceptions import BrokenPool, EVMRevertError, ZeroLiquidityError, ZeroSwapError
+from ..exceptions import (
+    BrokenPool,
+    DegenbotValueError,
+    EVMRevertError,
+    ZeroLiquidityError,
+    ZeroSwapError,
+)
 from ..functions import get_number_for_block_identifier
 from ..logging import logger
-from ..managers.erc20_token_manager import Erc20TokenHelperManager
+from ..managers.erc20_token_manager import Erc20TokenManager
 from ..registry.all_pools import AllPools
 from ..types import AbstractLiquidityPool
 from .abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
@@ -113,7 +119,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 else:
                     return _type
 
-            raise ValueError("Could not determine input type for pool")  # pragma: no cover
+            raise DegenbotValueError("Could not determine input type for pool")  # pragma: no cover
 
         def _get_token_addresses() -> list[ChecksumAddress]:
             token_addresses = []
@@ -154,7 +160,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 if lp_token_address != ZERO_ADDRESS:
                     return to_checksum_address(lp_token_address)
 
-            raise ValueError(
+            raise DegenbotValueError(
                 f"Could not identify LP token for pool {self.address}"
             )  # pragma: no cover
 
@@ -177,23 +183,18 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         def _is_metapool() -> bool:
             for contract in [w3_factory_contract, w3_registry_contract]:
-                try:
-                    is_meta, *_ = eth_abi.abi.decode(
-                        types=["bool"],
-                        data=_w3.eth.call(
-                            transaction={
-                                "to": contract.address,
-                                "data": Web3.keccak(text="is_meta(address)")[:4]
-                                + eth_abi.abi.encode(types=["address"], args=[self.address]),
-                            },
-                            block_identifier=state_block,
-                        ),
-                    )
-                except Exception:
-                    continue
-                else:
-                    if is_meta:
-                        return True
+                is_meta, *_ = eth_abi.abi.decode(
+                    types=["bool"],
+                    data=_w3.eth.call(
+                        transaction={
+                            "to": contract.address,
+                            "data": Web3.keccak(text="is_meta(address)")[:4]
+                            + eth_abi.abi.encode(types=["address"], args=[self.address]),
+                        },
+                        block_identifier=state_block,
+                    ),
+                )
+                return cast(bool, is_meta)
             return False
 
         def _set_pool_specific_attributes() -> None:
@@ -268,17 +269,16 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self.abi = abi if abi is not None else CURVE_V1_POOL_ABI
 
         _w3 = config.get_web3()
+        chain_id = _w3.eth.chain_id
         if state_block is None:
             state_block = _w3.eth.get_block_number()
         self.update_block = state_block
-        self._create_timestamp = _w3.eth.get_block("latest")["timestamp"]
-        chain_id = _w3.eth.chain_id
 
-        cached_pool_attributes: CurveStableSwapPoolAttributes | None = None
-        with contextlib.suppress(KeyError):
-            cached_pool_attributes = CurveStableSwapPoolAttributes(
-                **CACHED_CURVE_V1_POOL_ATTRIBUTES[chain_id][self.address]
-            )
+        creation_block = _w3.eth.get_block(self.update_block)
+        creation_block_timestamp = creation_block.get("timestamp")
+        if TYPE_CHECKING:
+            assert creation_block_timestamp is not None
+        self._create_timestamp = creation_block_timestamp
 
         w3_contract = self.w3_contract
         w3_registry_contract = _w3.eth.contract(
@@ -297,7 +297,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self._cached_contract_D: dict[int, int] = {}
         self._cached_gamma: dict[int, int] = {}
         self._cached_price_scale: dict[int, list[int]] = {}
-        self._cached_rates_from_aeth: dict[int, list[int]] = {}
+        self._cached_rates_from_aeth: dict[int, int] = {}
         self._cached_rates_from_ctokens: dict[int, list[int]] = {}
         self._cached_rates_from_cytokens: dict[int, list[int]] = {}
         self._cached_rates_from_oracle: dict[int, list[int]] = {}
@@ -332,8 +332,15 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self.fee: int = w3_contract.functions.fee().call(block_identifier=state_block)
         self.admin_fee: int = w3_contract.functions.admin_fee().call(block_identifier=state_block)
 
+        try:
+            cached_pool_attributes = CurveStableSwapPoolAttributes(
+                **CACHED_CURVE_V1_POOL_ATTRIBUTES[chain_id][self.address]
+            )
+        except KeyError:
+            cached_pool_attributes = None
+
         # token setup
-        self._coin_index_type: str = (
+        self._coin_index_type = (
             cached_pool_attributes.coin_index_type
             if cached_pool_attributes is not None
             else _get_coin_index_type()
@@ -349,7 +356,23 @@ class CurveStableswapPool(AbstractLiquidityPool):
             else _get_lp_token_address()
         )
 
+        token_manager = Erc20TokenManager(chain_id)
+        self.lp_token = token_manager.get_erc20token(
+            address=lp_token_address,
+            silent=silent,
+        )
+        self.tokens = tuple(
+            [
+                token_manager.get_erc20token(
+                    address=token_address,
+                    silent=silent,
+                )
+                for token_address in token_addresses
+            ]
+        )
+
         # metapool setup
+        self.base_pool: CurveStableswapPool | None = None
         self.is_metapool = (
             cached_pool_attributes.is_metapool
             if cached_pool_attributes is not None
@@ -365,38 +388,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 else _get_pool_from_lp_token(base_pool_lp_token_address)
             )
 
-        _token_manager = Erc20TokenHelperManager(chain_id)
-        self.tokens = tuple(
-            [
-                _token_manager.get_erc20token(
-                    address=token_address,
-                    silent=silent,
-                )
-                for token_address in token_addresses
-            ]
-        )
-        self.lp_token = _token_manager.get_erc20token(
-            address=lp_token_address,
-            silent=silent,
-        )
-
-        self.balances = []
-        for token_id, _ in enumerate(self.tokens):
-            token_balance, *_ = eth_abi.abi.decode(
-                types=[self._coin_index_type],
-                data=_w3.eth.call(
-                    transaction={
-                        "to": self.address,
-                        "data": Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
-                        + eth_abi.abi.encode(types=[self._coin_index_type], args=[token_id]),
-                    },
-                    block_identifier=state_block,
-                ),
-            )
-            self.balances.append(token_balance)
-
-        if self.is_metapool is True:
-            self.base_pool: CurveStableswapPool
             try:
                 base_pool = AllPools(chain_id)[base_pool_address]
                 if TYPE_CHECKING:
@@ -421,6 +412,21 @@ class CurveStableswapPool(AbstractLiquidityPool):
             self.base_virtual_price: int
             with contextlib.suppress(web3.exceptions.ContractLogicError):
                 self.base_virtual_price = self._get_base_virtual_price(block_number=state_block)
+
+        self.balances = []
+        for token_id, _ in enumerate(self.tokens):
+            token_balance, *_ = eth_abi.abi.decode(
+                types=[self._coin_index_type],
+                data=_w3.eth.call(
+                    transaction={
+                        "to": self.address,
+                        "data": Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
+                        + eth_abi.abi.encode(types=[self._coin_index_type], args=[token_id]),
+                    },
+                    block_identifier=state_block,
+                ),
+            )
+            self.balances.append(token_balance)
 
         # 3pool example
         # rate_multipliers = [
@@ -515,7 +521,10 @@ class CurveStableswapPool(AbstractLiquidityPool):
             return self.future_a_coefficient
 
         if timestamp is None:
-            timestamp = config.get_web3().eth.get_block("latest")["timestamp"]
+            latest_block = config.get_web3().eth.get_block("latest")
+            timestamp = latest_block.get("timestamp")
+            if TYPE_CHECKING:
+                assert timestamp is not None
 
         A1 = self.future_a_coefficient
         t1 = self.future_a_coefficient_time
@@ -1143,6 +1152,9 @@ class CurveStableswapPool(AbstractLiquidityPool):
         block_identifier: BlockIdentifier | None = None,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
+        if TYPE_CHECKING:
+            assert self.base_pool is not None
+
         if override_state is not None:
             pool_balances = override_state.balances.copy()
         else:
@@ -1425,6 +1437,9 @@ class CurveStableswapPool(AbstractLiquidityPool):
         return base_virtual_price
 
     def _get_virtual_price(self, block_number: int) -> int:
+        if TYPE_CHECKING:
+            assert self.base_pool is not None
+
         try:
             return self._cached_virtual_price[block_number]
         except KeyError:
@@ -1433,7 +1448,10 @@ class CurveStableswapPool(AbstractLiquidityPool):
         BASE_CACHE_EXPIRES = 10 * 60  # 10 minutes
 
         _w3 = config.get_web3()
-        timestamp = _w3.eth.get_block(block_identifier=block_number)["timestamp"]
+        block = _w3.eth.get_block(block_identifier=block_number)
+        timestamp = block.get("timestamp")
+        if TYPE_CHECKING:
+            assert timestamp is not None
 
         base_virtual_price: int
         if (
@@ -2042,11 +2060,10 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
     def _stored_rates_from_aeth(self, block_number: int) -> list[int]:
         try:
+            ratio = self._cached_rates_from_aeth[block_number]
             return [
                 self.PRECISION,
-                self.PRECISION
-                * self.LENDING_PRECISION
-                // self._cached_rates_from_aeth[block_number],
+                self.PRECISION * self.LENDING_PRECISION // ratio,
             ]
         except KeyError:
             pass
@@ -2054,7 +2071,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         _w3 = config.get_web3()
 
         # ref: https://etherscan.io/address/0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2#code
-        ratio, *_ = eth_abi.abi.decode(
+        _ratio, *_ = eth_abi.abi.decode(
             types=["uint256"],
             data=_w3.eth.call(
                 transaction={
@@ -2064,10 +2081,12 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 block_identifier=block_number,
             ),
         )
-        self._cached_rates_from_aeth[block_number] = ratio
+        if TYPE_CHECKING:
+            assert isinstance(_ratio, int)
+        self._cached_rates_from_aeth[block_number] = _ratio
         return [
             self.PRECISION,
-            self.PRECISION * self.LENDING_PRECISION // ratio,
+            self.PRECISION * self.LENDING_PRECISION // _ratio,
         ]
 
     def _stored_rates_from_oracle(self, block_number: int) -> list[int]:
@@ -2134,6 +2153,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
             token_balances.append(token_balance)
 
         if self.is_metapool:
+            if TYPE_CHECKING:
+                assert self.base_pool is not None
             self.base_pool.auto_update(block_number=block_number)
             if self.base_cache_updated is not None:
                 self.base_cache_updated = self._get_base_cache_updated(block_number=block_number)
@@ -2145,36 +2166,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self.update_block = block_number
 
         return found_updates, CurveStableswapPoolState(pool=self.address, balances=self.balances)
-
-    # def external_update(self, update: CurveStableswapPoolExternalUpdate) -> bool:
-    #     with self._state_lock:
-    #         i = update.sold_id
-    #         j = update.bought_id
-    #         dx = update.tokens_sold
-    #         dy_out = update.tokens_bought
-
-    #         _xp = self._xp(rates=self.rate_multipliers, balances=self.balances)
-    #         x = _xp[i] + dx * self.rate_multipliers[i] // self.PRECISION
-    #         y = self._get_y(i, j, x, _xp)
-
-    #         dy = _xp[j] - y - 1
-    #         dy_fee = dy * self.fee // self.FEE_DENOMINATOR
-
-    #         dy = (dy - dy_fee) * self.PRECISION // self.rate_multipliers[j]
-
-    #         dy_admin_fee = dy_fee * self.admin_fee // self.FEE_DENOMINATOR
-    #         dy_admin_fee = dy_admin_fee * self.PRECISION // self.rate_multipliers[j]
-
-    #         assert dy == dy_out, f"Predicted output {dy} does not match update {dy_out}"
-
-    #         self.balances[i] += dx
-    #         self.balances[j] -= dy_out + dy_admin_fee
-
-    #         if update.block_number:
-    #             self.update_block = update.block_number
-
-    #         self._update_pool_state()
-    #         return True
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -2205,7 +2196,11 @@ class CurveStableswapPool(AbstractLiquidityPool):
             token_in in self.tokens,
             token_out in self.tokens,
         ]
+        tokens_used_in_base_pool = []
+
         if self.is_metapool:
+            if TYPE_CHECKING:
+                assert self.base_pool is not None
             tokens_used_in_base_pool = [
                 token_in in self.base_pool.tokens,
                 token_out in self.base_pool.tokens,
@@ -2223,6 +2218,9 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 override_state=override_state,
             )
         elif any(tokens_used_this_pool) and self.is_metapool and any(tokens_used_in_base_pool):
+            if TYPE_CHECKING:
+                assert self.base_pool is not None
+
             # TODO: see if any of these checks are unnecessary (partial zero balanece OK?)
             if any([balance == 0 for balance in self.base_pool.balances]):
                 raise ZeroLiquidityError("One or more of the base pool tokens has a zero balance.")
@@ -2281,6 +2279,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 override_state=override_state,
             )
         else:
-            raise ValueError(
+            raise DegenbotValueError(
                 "Tokens not held by pool or in underlying base pool"
             )  # pragma: no cover

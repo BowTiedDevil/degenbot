@@ -8,10 +8,9 @@ from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from degenbot.exceptions import EVMRevertError
-
+from ..exceptions import EVMRevertError
 from ..functions import eip_1167_clone_address, raise_if_invalid_uint256
-from ..solidly.solidly_functions import _calc_exact_in_stable, _d, _k
+from ..solidly.solidly_functions import general_calc_d, general_calc_exact_in_stable, general_calc_k
 
 
 def _f_aerodrome(
@@ -32,7 +31,7 @@ def calc_exact_in_stable(
     decimals1: int,
     fee: Fraction,
 ) -> int:
-    return _calc_exact_in_stable(
+    return general_calc_exact_in_stable(
         amount_in=amount_in,
         token_in=token_in,
         reserves0=reserves0,
@@ -40,7 +39,7 @@ def calc_exact_in_stable(
         decimals0=decimals0,
         decimals1=decimals1,
         fee=fee,
-        k_func=_k,
+        k_func=general_calc_k,
         get_y_func=_get_y_aerodrome,
     )
 
@@ -61,7 +60,7 @@ def _get_y_aerodrome(
     for _ in range(255):
         k = _f_aerodrome(x0, y)
         if k < xy:
-            dy = ((xy - k) * 10**18) // _d(x0, y)
+            dy = ((xy - k) * 10**18) // general_calc_d(x0, y)
             if dy == 0:
                 if k == xy:
                     return y
@@ -75,7 +74,7 @@ def _get_y_aerodrome(
                 dy = 1
             y = y + dy
         else:
-            dy = ((k - xy) * 10**18) // _d(x0, y)
+            dy = ((k - xy) * 10**18) // general_calc_d(x0, y)
             if dy == 0:
                 if k == xy or _f_aerodrome(x0, y - 1) < xy:
                     return y

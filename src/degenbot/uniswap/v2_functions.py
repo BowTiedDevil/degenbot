@@ -1,5 +1,5 @@
 import itertools
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 def generate_v2_pool_address(
     deployer_address: str | bytes,
-    token_addresses: Sequence[str | bytes],
+    token_addresses: Iterable[str | bytes],
     init_hash: str | bytes,
 ) -> ChecksumAddress:
     """
@@ -47,13 +47,16 @@ def get_v2_pools_from_token_path(
     tx_path: Iterable[ChecksumAddress | str],
     pool_manager: "UniswapV2PoolManager",
 ) -> list["UniswapV2Pool"]:
-    return [
-        pool_manager.get_pool(
+    result: list[UniswapV2Pool] = []
+    for token_addresses in itertools.pairwise(tx_path):
+        pool = pool_manager.get_pool_from_tokens(
             token_addresses=token_addresses,
             silent=True,
         )
-        for token_addresses in itertools.pairwise(tx_path)
-    ]
+        if TYPE_CHECKING:
+            assert isinstance(pool, UniswapV2Pool)
+        result.append(pool)
+    return result
 
 
 def constant_product_calc_exact_in(

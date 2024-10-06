@@ -9,7 +9,7 @@ from ..functions import encode_function_calldata, get_number_for_block_identifie
 from ..logging import logger
 from ..uniswap.types import UniswapV2PoolState
 from ..uniswap.v2_liquidity_pool import UniswapV2Pool
-from .functions import _get_y_camelot, _k_camelot
+from .functions import get_y_camelot, k_camelot
 
 
 class CamelotLiquidityPool(UniswapV2Pool):
@@ -20,8 +20,6 @@ class CamelotLiquidityPool(UniswapV2Pool):
     def __init__(
         self,
         address: str,
-        tokens: list[Erc20Token] | None = None,
-        name: str | None = None,
         silent: bool = False,
     ) -> None:
         address = to_checksum_address(address)
@@ -56,8 +54,6 @@ class CamelotLiquidityPool(UniswapV2Pool):
 
         super().__init__(
             address=address,
-            tokens=tokens,
-            name=name,
             init_hash=self.CAMELOT_ARBITRUM_POOL_INIT_HASH,
             fee=(
                 Fraction(fee_token0, self.fee_denominator),
@@ -112,7 +108,7 @@ class CamelotLiquidityPool(UniswapV2Pool):
 
         # Remove fee from amount received
         token_in_quantity -= token_in_quantity * fee_percent // self.fee_denominator
-        xy = _k_camelot(
+        xy = k_camelot(
             balance_0=reserves_token0,
             balance_1=reserves_token1,
             decimals_0=precision_multiplier_token0,
@@ -130,7 +126,7 @@ class CamelotLiquidityPool(UniswapV2Pool):
             if token_in == self.token0
             else token_in_quantity * 10**18 // precision_multiplier_token1
         )
-        y = reserve_b - _get_y_camelot(token_in_quantity + reserve_a, xy, reserve_b)
+        y = reserve_b - get_y_camelot(token_in_quantity + reserve_a, xy, reserve_b)
 
         return (
             y

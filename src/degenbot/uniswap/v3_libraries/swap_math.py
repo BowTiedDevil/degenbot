@@ -1,100 +1,105 @@
-
 from . import full_math as FullMath
 from . import sqrt_price_math as SqrtPriceMath
 
 
 def computeSwapStep(
-    sqrtRatioCurrentX96: int,
-    sqrtRatioTargetX96: int,
+    sqrt_ratio_x96_current: int,
+    sqrt_ratio_x96_target: int,
     liquidity: int,
-    amountRemaining: int,
-    feePips: int,
+    amount_remaining: int,
+    fee_pips: int,
 ) -> tuple[int, int, int, int]:
-    zeroForOne: bool = sqrtRatioCurrentX96 >= sqrtRatioTargetX96
-    exactIn: bool = amountRemaining >= 0
+    zero_for_one: bool = sqrt_ratio_x96_current >= sqrt_ratio_x96_target
+    exact_in: bool = amount_remaining >= 0
+    amount_in = 0
+    amount_out = 0
 
-    if exactIn:
-        amountRemainingLessFee: int = FullMath.mulDiv(amountRemaining, 10**6 - feePips, 10**6)
-        amountIn = (
-            SqrtPriceMath.getAmount0Delta(sqrtRatioTargetX96, sqrtRatioCurrentX96, liquidity, True)
-            if zeroForOne
-            else SqrtPriceMath.getAmount1Delta(
-                sqrtRatioCurrentX96, sqrtRatioTargetX96, liquidity, True
+    if exact_in:
+        amount_remaining_minus_fee: int = FullMath.muldiv(amount_remaining, 10**6 - fee_pips, 10**6)
+        amount_in = (
+            SqrtPriceMath.get_amount0_delta(
+                sqrt_ratio_x96_target, sqrt_ratio_x96_current, liquidity, True
+            )
+            if zero_for_one
+            else SqrtPriceMath.get_amount1_delta(
+                sqrt_ratio_x96_current, sqrt_ratio_x96_target, liquidity, True
             )
         )
-        if amountRemainingLessFee >= amountIn:
-            sqrtRatioNextX96 = sqrtRatioTargetX96
+        if amount_remaining_minus_fee >= amount_in:
+            sqrt_ratio_x96_next = sqrt_ratio_x96_target
         else:
-            sqrtRatioNextX96 = SqrtPriceMath.getNextSqrtPriceFromInput(
-                sqrtRatioCurrentX96,
+            sqrt_ratio_x96_next = SqrtPriceMath.get_next_sqrt_price_from_input(
+                sqrt_ratio_x96_current,
                 liquidity,
-                amountRemainingLessFee,
-                zeroForOne,
+                amount_remaining_minus_fee,
+                zero_for_one,
             )
     else:
-        amountOut = (
-            SqrtPriceMath.getAmount1Delta(sqrtRatioTargetX96, sqrtRatioCurrentX96, liquidity, False)
-            if zeroForOne
-            else SqrtPriceMath.getAmount0Delta(
-                sqrtRatioCurrentX96, sqrtRatioTargetX96, liquidity, False
+        amount_out = (
+            SqrtPriceMath.get_amount1_delta(
+                sqrt_ratio_x96_target, sqrt_ratio_x96_current, liquidity, False
+            )
+            if zero_for_one
+            else SqrtPriceMath.get_amount0_delta(
+                sqrt_ratio_x96_current, sqrt_ratio_x96_target, liquidity, False
             )
         )
-        if -amountRemaining >= amountOut:
-            sqrtRatioNextX96 = sqrtRatioTargetX96
+        if -amount_remaining >= amount_out:
+            sqrt_ratio_x96_next = sqrt_ratio_x96_target
         else:
-            sqrtRatioNextX96 = SqrtPriceMath.getNextSqrtPriceFromOutput(
-                sqrtRatioCurrentX96,
+            sqrt_ratio_x96_next = SqrtPriceMath.get_next_sqrt_price_from_output(
+                sqrt_ratio_x96_current,
                 liquidity,
-                -amountRemaining,
-                zeroForOne,
+                -amount_remaining,
+                zero_for_one,
             )
 
-    max: bool = sqrtRatioTargetX96 == sqrtRatioNextX96
+    reached_target_price = sqrt_ratio_x96_target == sqrt_ratio_x96_next
     # get the input/output amounts
-    if zeroForOne:
-        amountIn = (
-            amountIn
-            if (max and exactIn)
-            else SqrtPriceMath.getAmount0Delta(
-                sqrtRatioNextX96, sqrtRatioCurrentX96, liquidity, True
+    if zero_for_one:
+        amount_in = (
+            amount_in
+            if (reached_target_price and exact_in)
+            else SqrtPriceMath.get_amount0_delta(
+                sqrt_ratio_x96_next, sqrt_ratio_x96_current, liquidity, True
             )
         )
-        amountOut = (
-            amountOut
-            if (max and not exactIn)
-            else SqrtPriceMath.getAmount1Delta(
-                sqrtRatioNextX96, sqrtRatioCurrentX96, liquidity, False
+        amount_out = (
+            amount_out
+            if (reached_target_price and not exact_in)
+            else SqrtPriceMath.get_amount1_delta(
+                sqrt_ratio_x96_next, sqrt_ratio_x96_current, liquidity, False
             )
         )
     else:
-        amountIn = (
-            amountIn
-            if (max and exactIn)
-            else SqrtPriceMath.getAmount1Delta(
-                sqrtRatioCurrentX96, sqrtRatioNextX96, liquidity, True
+        amount_in = (
+            amount_in
+            if (reached_target_price and exact_in)
+            else SqrtPriceMath.get_amount1_delta(
+                sqrt_ratio_x96_current, sqrt_ratio_x96_next, liquidity, True
             )
         )
-        amountOut = (
-            amountOut
-            if (max and not exactIn)
-            else SqrtPriceMath.getAmount0Delta(
-                sqrtRatioCurrentX96, sqrtRatioNextX96, liquidity, False
+        amount_out = (
+            amount_out
+            if (reached_target_price and not exact_in)
+            else SqrtPriceMath.get_amount0_delta(
+                sqrt_ratio_x96_current, sqrt_ratio_x96_next, liquidity, False
             )
         )
 
     # cap the output amount to not exceed the remaining output amount
-    if not exactIn and (amountOut > -amountRemaining):
-        amountOut = -amountRemaining
+    if not exact_in and (amount_out > -amount_remaining):
+        amount_out = -amount_remaining
 
-    if exactIn and (sqrtRatioNextX96 != sqrtRatioTargetX96):
+    if exact_in and (sqrt_ratio_x96_next != sqrt_ratio_x96_target):
         # we didn't reach the target, so take the remainder of the maximum input as fee
-        feeAmount = amountRemaining - amountIn
+        fee_amount = amount_remaining - amount_in
     else:
-        feeAmount = FullMath.mulDivRoundingUp(amountIn, feePips, 10**6 - feePips)
+        fee_amount = FullMath.muldiv_rounding_up(amount_in, fee_pips, 10**6 - fee_pips)
 
     return (
-        sqrtRatioNextX96,
-        amountIn,
-        amountOut,
-        feeAmount,
+        sqrt_ratio_x96_next,
+        amount_in,
+        amount_out,
+        fee_amount,
     )

@@ -41,7 +41,7 @@ def test_computeSwapStep():
     assert amountOut == 9925619580021728
     assert amountIn + feeAmount < amount
 
-    priceAfterWholeInputAmount = SqrtPriceMath.getNextSqrtPriceFromInput(
+    priceAfterWholeInputAmount = SqrtPriceMath.get_next_sqrt_price_from_input(
         price, liquidity, amount, zeroForOne
     )
 
@@ -65,7 +65,7 @@ def test_computeSwapStep():
     assert amountOut == 9925619580021728
     assert amountOut < -amount
 
-    priceAfterWholeOutputAmount = SqrtPriceMath.getNextSqrtPriceFromOutput(
+    priceAfterWholeOutputAmount = SqrtPriceMath.get_next_sqrt_price_from_output(
         price, liquidity, -amount, zeroForOne
     )
 
@@ -89,7 +89,7 @@ def test_computeSwapStep():
     assert amountOut == 666399946655997866
     assert amountIn + feeAmount == amount
 
-    priceAfterWholeInputAmountLessFee = SqrtPriceMath.getNextSqrtPriceFromInput(
+    priceAfterWholeInputAmountLessFee = SqrtPriceMath.get_next_sqrt_price_from_input(
         price, liquidity, amount - feeAmount, zeroForOne
     )
 
@@ -112,7 +112,7 @@ def test_computeSwapStep():
     assert feeAmount == 1200720432259356
     assert amountOut == -amount
 
-    priceAfterWholeOutputAmount = SqrtPriceMath.getNextSqrtPriceFromOutput(
+    priceAfterWholeOutputAmount = SqrtPriceMath.get_next_sqrt_price_from_output(
         price, liquidity, -amount, zeroForOne
     )
 

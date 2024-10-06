@@ -1,7 +1,8 @@
 import ujson
 from eth_utils.address import to_checksum_address
 
-from degenbot import AerodromeV3Pool, Erc20Token
+from degenbot import AerodromeV3Pool
+from degenbot.aerodrome.types import AerodromeV3PoolState
 from degenbot.anvil_fork import AnvilFork
 from degenbot.config import set_web3
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
@@ -22,23 +23,19 @@ def test_aerodrome_v3_pool_creation(fork_base: AnvilFork) -> None:
     set_web3(fork_base.w3)
 
     AerodromeV3Pool(address=CBETH_WETH_POOL_ADDRESS)
-    AerodromeV3Pool(
-        address=CBETH_WETH_POOL_ADDRESS,
-        factory_address=AERODROME_V3_FACTORY_ADDRESS,
-    )
-    AerodromeV3Pool(
-        address=CBETH_WETH_POOL_ADDRESS,
-        tokens=[
-            Erc20Token(WETH_CONTRACT_ADDRESS),
-            Erc20Token(CBETH_CONTRACT_ADDRESS),
-        ],
-    )
     assert (
         AerodromeV3Pool(
             address=CBETH_WETH_POOL_ADDRESS, tick_bitmap={}, tick_data={}
         ).sparse_liquidity_map
         is False
     )
+
+
+def test_aerodrome_v3_state(fork_base: AnvilFork) -> None:
+    set_web3(fork_base.w3)
+
+    lp = AerodromeV3Pool(address=CBETH_WETH_POOL_ADDRESS)
+    assert isinstance(lp.state, AerodromeV3PoolState), f"{type(lp.state)=}"
 
 
 def test_aerodrome_v3_pool_calculation(fork_base: AnvilFork) -> None:

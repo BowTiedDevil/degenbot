@@ -3,7 +3,7 @@ from ...exceptions import EVMRevertError
 from .functions import mulmod
 
 
-def mulDiv(
+def muldiv(
     a: int,
     b: int,
     denominator: int,
@@ -12,8 +12,8 @@ def mulDiv(
     The Solidity implementation is designed to calculate a * b / d without risk of overflowing
     the intermediate result (maximum of 2**256-1).
 
-    Python does not have this bit depth limitations on integers,
-    so simply check for exceptional conditions then return the result
+    Python does not have this bit depth limitations on integers, so simply check for exceptional
+    conditions before returning the result.
     """
 
     if not (MIN_UINT256 <= a <= MAX_UINT256):
@@ -33,8 +33,8 @@ def mulDiv(
     return result
 
 
-def mulDivRoundingUp(a: int, b: int, denominator: int) -> int:
-    result: int = mulDiv(a, b, denominator)
+def muldiv_rounding_up(a: int, b: int, denominator: int) -> int:
+    result: int = muldiv(a, b, denominator)
     if mulmod(a, b, denominator) > 0:
         # must be less than max uint256 since we're rounding up
         if not (MIN_UINT256 <= result < MAX_UINT256):

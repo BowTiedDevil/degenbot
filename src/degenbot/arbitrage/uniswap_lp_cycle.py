@@ -10,8 +10,15 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
+from ..aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from ..erc20_token import Erc20Token
-from ..exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError, ZeroLiquidityError
+from ..exceptions import (
+    ArbitrageError,
+    DegenbotValueError,
+    EVMRevertError,
+    LiquidityPoolError,
+    ZeroLiquidityError,
+)
 from ..logging import logger
 from ..types import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
 from ..uniswap.types import (
@@ -30,12 +37,12 @@ from .types import (
     UniswapV3PoolSwapAmounts,
 )
 
-Pool: TypeAlias = UniswapV2Pool | UniswapV3Pool
+Pool: TypeAlias = UniswapV2Pool | UniswapV3Pool | AerodromeV2Pool | AerodromeV3Pool
 PoolState: TypeAlias = UniswapV2PoolState | UniswapV3PoolState
 SwapAmount: TypeAlias = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
 
 
-class UniswapLpCycle(Subscriber, AbstractArbitrage):
+class UniswapLpCycle(AbstractArbitrage):
     def __init__(
         self,
         input_token: Erc20Token,
@@ -45,7 +52,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
     ):
         for swap_pool in swap_pools:
             if not isinstance(swap_pool, Pool):
-                raise ValueError("Incompatible pool provided.")
+                raise DegenbotValueError(f"Incompatible pool type ({type(swap_pool)}) provided.")
 
         self.swap_pools = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
@@ -56,7 +63,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
             logger.warning("No maximum input provided, setting to 100 WETH")
             max_input = 100 * 10**18
         elif max_input <= 0:
-            raise ValueError("Maximum input must be positive.")
+            raise DegenbotValueError("Maximum input must be positive.")
         self.max_input = max_input
 
         _swap_vectors: list[UniswapPoolSwapVector] = []
@@ -80,7 +87,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                             )
                         )
                     case _:  # pragma: no cover
-                        raise ValueError("Input token could not be identified!")
+                        raise DegenbotValueError("Input token could not be identified!")
             else:
                 match _swap_vectors[-1].token_out:
                     case pool.token0:
@@ -100,7 +107,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                             )
                         )
                     case _:  # pragma: no cover
-                        raise ValueError("Input token could not be identified!")
+                        raise DegenbotValueError("Input token could not be identified!")
         self._swap_vectors = tuple(_swap_vectors)
 
         self._subscribers: set[Subscriber] = set()
@@ -182,7 +189,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                             )
                         )
                     case _:  # pragma: no cover
-                        raise ValueError("Could not identify pool and override type.")
+                        raise DegenbotValueError("Could not identify pool and override type.")
             except LiquidityPoolError as e:  # pragma: no cover
                 raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}") from None
 
@@ -261,7 +268,9 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                         pool.fee, 1000000
                     )  # V3 fees are in hundredths of a bip (0.0001), e.g. 3000 == 0.3%
                 case _:  # pragma: no cover
-                    raise ValueError(f"Could not identify pool {pool} and state {pool_state}.")
+                    raise DegenbotValueError(
+                        f"Could not identify pool {pool} and state {pool_state}."
+                    )
 
             net_rate_of_exchange *= (
                 exchange_rate if vector.zero_for_one is True else 1 / exchange_rate
@@ -316,7 +325,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                                 override_state=pool_override,
                             )
                         case _:  # pragma: no cover
-                            raise ValueError(
+                            raise DegenbotValueError(
                                 f"Override {pool_override} is not valid for pool {pool}."
                             )
                 except (EVMRevertError, LiquidityPoolError):
@@ -419,7 +428,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                 if isinstance(pool, UniswapV3Pool)
             ]
         ):
-            raise ValueError(
+            raise DegenbotValueError(
                 f"Cannot calculate {self} with executor. One or more V3 pools has a sparse bitmap."
             )
 
@@ -567,7 +576,7 @@ class UniswapLpCycle(Subscriber, AbstractArbitrage):
                         )
                     )
                 case _:  # pragma: no cover
-                    raise ValueError("Could not identify pool and swap amounts.")
+                    raise DegenbotValueError("Could not identify pool and swap amounts.")
 
         return payloads
 

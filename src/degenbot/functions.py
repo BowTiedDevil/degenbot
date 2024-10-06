@@ -13,7 +13,7 @@ from web3.types import BlockIdentifier
 
 from . import config
 from .constants import MAX_UINT256, MIN_UINT256
-from .exceptions import EVMRevertError
+from .exceptions import DegenbotValueError, EVMRevertError
 
 
 def create2_address(
@@ -133,7 +133,7 @@ def get_number_for_block_identifier(
         case bytes() as block_number_as_bytes:
             return int.from_bytes(block_number_as_bytes, byteorder="big")
         case _:
-            raise ValueError(f"Invalid block identifier {identifier!r}")
+            raise DegenbotValueError(f"Invalid block identifier {identifier!r}")
 
 
 def next_base_fee(

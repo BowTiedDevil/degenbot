@@ -6,97 +6,98 @@ from .constants import Q96, Q96_RESOLUTION
 from .functions import to_int256, to_uint160
 
 
-def getAmount0Delta(
-    sqrtRatioAX96: int,
-    sqrtRatioBX96: int,
+def get_amount0_delta(
+    sqrt_ratio_a_x96: int,
+    sqrt_ratio_b_x96: int,
     liquidity: int,
-    roundUp: bool | None = None,
+    round_up: bool | None = None,
 ) -> int:
     # The Solidity function is overloaded with respect to `roundUp`.
     # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/SqrtPriceMath.sol
 
-    if roundUp is not None:
-        if sqrtRatioAX96 > sqrtRatioBX96:
-            sqrtRatioAX96, sqrtRatioBX96 = sqrtRatioBX96, sqrtRatioAX96
+    if round_up is not None:
+        if sqrt_ratio_a_x96 > sqrt_ratio_b_x96:
+            sqrt_ratio_a_x96, sqrt_ratio_b_x96 = sqrt_ratio_b_x96, sqrt_ratio_a_x96
 
         numerator1 = liquidity << Q96_RESOLUTION
-        numerator2 = sqrtRatioBX96 - sqrtRatioAX96
+        numerator2 = sqrt_ratio_b_x96 - sqrt_ratio_a_x96
 
-        if not (sqrtRatioAX96 > 0):
+        if not (sqrt_ratio_a_x96 > 0):
             raise EVMRevertError("require sqrtRatioAX96 > 0")
 
         return (
             UnsafeMath.div_rounding_up(
-                FullMath.mulDivRoundingUp(numerator1, numerator2, sqrtRatioBX96), sqrtRatioAX96
+                FullMath.muldiv_rounding_up(numerator1, numerator2, sqrt_ratio_b_x96),
+                sqrt_ratio_a_x96,
             )
-            if roundUp
-            else FullMath.mulDiv(numerator1, numerator2, sqrtRatioBX96) // sqrtRatioAX96
+            if round_up
+            else FullMath.muldiv(numerator1, numerator2, sqrt_ratio_b_x96) // sqrt_ratio_a_x96
         )
     else:
         return to_int256(
-            to_int256(-getAmount0Delta(sqrtRatioAX96, sqrtRatioBX96, -liquidity, False))
+            to_int256(-get_amount0_delta(sqrt_ratio_a_x96, sqrt_ratio_b_x96, -liquidity, False))
             if liquidity < 0
-            else to_int256(getAmount0Delta(sqrtRatioAX96, sqrtRatioBX96, liquidity, True))
+            else to_int256(get_amount0_delta(sqrt_ratio_a_x96, sqrt_ratio_b_x96, liquidity, True))
         )
 
 
-def getAmount1Delta(
-    sqrtRatioAX96: int,
-    sqrtRatioBX96: int,
+def get_amount1_delta(
+    sqrt_ratio_a_x96: int,
+    sqrt_ratio_b_x96: int,
     liquidity: int,
-    roundUp: bool | None = None,
+    round_up: bool | None = None,
 ) -> int:
     # The Solidity function is overloaded with respect to `roundUp`.
     # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/SqrtPriceMath.sol
 
-    if roundUp is not None:
-        if sqrtRatioAX96 > sqrtRatioBX96:
-            sqrtRatioAX96, sqrtRatioBX96 = sqrtRatioBX96, sqrtRatioAX96
+    if round_up is not None:
+        if sqrt_ratio_a_x96 > sqrt_ratio_b_x96:
+            sqrt_ratio_a_x96, sqrt_ratio_b_x96 = sqrt_ratio_b_x96, sqrt_ratio_a_x96
 
         return (
-            FullMath.mulDivRoundingUp(liquidity, sqrtRatioBX96 - sqrtRatioAX96, Q96)
-            if roundUp
-            else FullMath.mulDiv(liquidity, sqrtRatioBX96 - sqrtRatioAX96, Q96)
+            FullMath.muldiv_rounding_up(liquidity, sqrt_ratio_b_x96 - sqrt_ratio_a_x96, Q96)
+            if round_up
+            else FullMath.muldiv(liquidity, sqrt_ratio_b_x96 - sqrt_ratio_a_x96, Q96)
         )
     else:
         return to_int256(
-            to_int256(-getAmount1Delta(sqrtRatioAX96, sqrtRatioBX96, -liquidity, False))
+            to_int256(-get_amount1_delta(sqrt_ratio_a_x96, sqrt_ratio_b_x96, -liquidity, False))
             if liquidity < 0
-            else to_int256(getAmount1Delta(sqrtRatioAX96, sqrtRatioBX96, liquidity, True))
+            else to_int256(get_amount1_delta(sqrt_ratio_a_x96, sqrt_ratio_b_x96, liquidity, True))
         )
 
 
-def getNextSqrtPriceFromAmount0RoundingUp(
-    sqrtPX96: int,
+def get_next_sqrt_price_from_amount0_rounding_up(
+    sqrt_price_x96: int,
     liquidity: int,
     amount: int,
     add: bool,
 ) -> int:
     if amount == 0:
-        return sqrtPX96
+        return sqrt_price_x96
 
     numerator1 = liquidity << Q96_RESOLUTION
 
     if add:
         return (
-            FullMath.mulDivRoundingUp(numerator1, sqrtPX96, denominator)
+            FullMath.muldiv_rounding_up(numerator1, sqrt_price_x96, denominator)
             if (
-                (product := amount * sqrtPX96) // amount == sqrtPX96
+                (product := amount * sqrt_price_x96) // amount == sqrt_price_x96
                 and (denominator := numerator1 + product) >= numerator1
             )
-            else UnsafeMath.div_rounding_up(numerator1, numerator1 // sqrtPX96 + amount)
+            else UnsafeMath.div_rounding_up(numerator1, numerator1 // sqrt_price_x96 + amount)
         )
     else:
-        product = amount * sqrtPX96
-        if not (product // amount == sqrtPX96 and numerator1 > product):
+        product = amount * sqrt_price_x96
+        if not (product // amount == sqrt_price_x96 and numerator1 > product):
             raise EVMRevertError("product / amount == sqrtPX96 && numerator1 > product")
 
         denominator = numerator1 - product
-        return to_uint160(FullMath.mulDivRoundingUp(numerator1, sqrtPX96, denominator))
+        return to_uint160(FullMath.muldiv_rounding_up(numerator1, sqrt_price_x96, denominator))
 
 
-def getNextSqrtPriceFromAmount1RoundingDown(
-    sqrtPX96: int,
+def get_next_sqrt_price_from_amount1_rounding_down(
+    sqrt_price_x96: int,
     liquidity: int,
     amount: int,
     add: bool,
@@ -105,30 +106,30 @@ def getNextSqrtPriceFromAmount1RoundingDown(
         quotient = (
             (amount << Q96_RESOLUTION) // liquidity
             if amount <= 2**160 - 1
-            else FullMath.mulDiv(amount, Q96, liquidity)
+            else FullMath.muldiv(amount, Q96, liquidity)
         )
-        return to_uint160(sqrtPX96 + quotient)
+        return to_uint160(sqrt_price_x96 + quotient)
     else:
         quotient = (
             UnsafeMath.div_rounding_up(amount << Q96_RESOLUTION, liquidity)
             if amount <= (2**160) - 1
-            else FullMath.mulDivRoundingUp(amount, Q96, liquidity)
+            else FullMath.muldiv_rounding_up(amount, Q96, liquidity)
         )
 
-        if not (sqrtPX96 > quotient):
+        if not (sqrt_price_x96 > quotient):
             raise EVMRevertError("require sqrtPX96 > quotient")
 
         # always fits 160 bits
-        return sqrtPX96 - quotient
+        return sqrt_price_x96 - quotient
 
 
-def getNextSqrtPriceFromInput(
-    sqrtPX96: int,
+def get_next_sqrt_price_from_input(
+    sqrt_price_x96: int,
     liquidity: int,
-    amountIn: int,
-    zeroForOne: bool,
+    amount_in: int,
+    zero_for_one: bool,
 ) -> int:
-    if not (sqrtPX96 > MIN_UINT160):
+    if not (sqrt_price_x96 > MIN_UINT160):
         raise EVMRevertError("sqrtPX96 must be greater than 0")
 
     if not (liquidity > MIN_UINT160):
@@ -136,19 +137,21 @@ def getNextSqrtPriceFromInput(
 
     # round to make sure that we don't pass the target price
     return (
-        getNextSqrtPriceFromAmount0RoundingUp(sqrtPX96, liquidity, amountIn, True)
-        if zeroForOne
-        else getNextSqrtPriceFromAmount1RoundingDown(sqrtPX96, liquidity, amountIn, True)
+        get_next_sqrt_price_from_amount0_rounding_up(sqrt_price_x96, liquidity, amount_in, True)
+        if zero_for_one
+        else get_next_sqrt_price_from_amount1_rounding_down(
+            sqrt_price_x96, liquidity, amount_in, True
+        )
     )
 
 
-def getNextSqrtPriceFromOutput(
-    sqrtPX96: int,
+def get_next_sqrt_price_from_output(
+    sqrt_price_x96: int,
     liquidity: int,
-    amountOut: int,
-    zeroForOne: bool,
+    amount_out: int,
+    zero_for_one: bool,
 ) -> int:
-    if not (sqrtPX96 > 0):
+    if not (sqrt_price_x96 > 0):
         raise EVMRevertError
 
     if not (liquidity > 0):
@@ -156,7 +159,9 @@ def getNextSqrtPriceFromOutput(
 
     # round to make sure that we pass the target price
     return (
-        getNextSqrtPriceFromAmount1RoundingDown(sqrtPX96, liquidity, amountOut, False)
-        if zeroForOne
-        else getNextSqrtPriceFromAmount0RoundingUp(sqrtPX96, liquidity, amountOut, False)
+        get_next_sqrt_price_from_amount1_rounding_down(sqrt_price_x96, liquidity, amount_out, False)
+        if zero_for_one
+        else get_next_sqrt_price_from_amount0_rounding_up(
+            sqrt_price_x96, liquidity, amount_out, False
+        )
     )

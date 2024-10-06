@@ -1,4 +1,4 @@
-# Base exception
+# Base exceptions
 class DegenbotError(Exception):
     """
     Base exception, intended as a generic exception and a base class for specific exceptions raised
@@ -6,11 +6,14 @@ class DegenbotError(Exception):
     """
 
 
-class DeprecationError(ValueError):
+class DegenbotValueError(ValueError): ...
+
+
+class DeprecationError(DegenbotValueError):
     """
     Raised when a feature, class, method, etc. is deprecated.
 
-    Subclasses `ValueError` instead of `Exception`, less likely to be ignored.
+    Subclasses `DegenbotValueError` instead of `Exception`, which is less likely to be ignored
     """
 
 
@@ -87,6 +90,12 @@ class NoPriceOracle(Erc20TokenError):
 
 
 # 2nd level exceptions for Liquidity Pool classes
+class AddressMismatch(LiquidityPoolError):
+    """
+    Raised when the expected pool address does not the provided address.
+    """
+
+
 class BitmapWordUnavailableError(LiquidityPoolError):
     """
     Raised by the ported V3 swap function when the bitmap word is not available. This should be
@@ -144,4 +153,10 @@ class LedgerError(TransactionError):
 class PoolNotAssociated(ManagerError):
     """
     Raised by a Uniswap pool manager if a requested pool address is not associated with the DEX.
+    """
+
+
+class ManagerAlreadyInitialized(ManagerError):
+    """
+    Raised by a Uniswap pool manager if a caller attempts to create from a known factory address.
     """

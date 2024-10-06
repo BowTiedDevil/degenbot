@@ -8,7 +8,10 @@ import degenbot
 import degenbot.config
 import degenbot.logging
 import degenbot.managers
+import degenbot.managers.erc20_token_manager
 import degenbot.registry
+import degenbot.registry.all_pools
+import degenbot.registry.all_tokens
 import degenbot.uniswap.managers
 from degenbot.anvil_fork import AnvilFork
 
@@ -51,7 +54,9 @@ def initialize_and_reset_after_each_test():
     degenbot.config.web3_connection_manager.default_chain_id = None
     degenbot.registry.all_pools._all_pools.clear()
     degenbot.registry.all_tokens._all_tokens.clear()
-    degenbot.managers.erc20_token_manager.Erc20TokenHelperManager._state.clear()
+    degenbot.managers.erc20_token_manager.Erc20TokenManager._state.clear()
+    degenbot.uniswap.managers.UniswapV2PoolManager.instances.clear()
+    degenbot.uniswap.managers.UniswapV3PoolManager.instances.clear()
 
 
 @pytest.fixture(autouse=True)

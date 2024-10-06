@@ -1,6 +1,6 @@
 from fractions import Fraction
 from threading import Lock
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeAlias, cast
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -10,12 +10,12 @@ from web3.types import BlockIdentifier
 
 from .. import config
 from ..erc20_token import Erc20Token
-from ..exceptions import ZeroSwapError
+from ..exceptions import AddressMismatch, DegenbotValueError, ZeroSwapError
 from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..logging import logger
-from ..managers.erc20_token_manager import Erc20TokenHelperManager
+from ..managers.erc20_token_manager import Erc20TokenManager
 from ..registry.all_pools import AllPools
-from ..solidly.solidly_functions import calc_exact_in_volatile
+from ..solidly.solidly_functions import general_calc_exact_in_volatile
 from ..types import AbstractLiquidityPool
 from ..uniswap.v3_liquidity_pool import UniswapV3Pool
 from .functions import (
@@ -43,16 +43,16 @@ class AerodromeV2Pool(AbstractLiquidityPool):
     ) -> None:
         self.address = to_checksum_address(address)
 
-        w3 = config.get_web3()
-        chain_id = w3.eth.chain_id
-        self.update_block = state_block if state_block is not None else w3.eth.block_number
-
         self._state_lock = Lock()
         self.state = AerodromeV2PoolState(
             pool=self.address,
             reserves_token0=0,
             reserves_token1=0,
         )
+
+        w3 = config.get_web3()
+        self.update_block = state_block if state_block is not None else w3.eth.block_number
+        chain_id = w3.eth.chain_id
 
         self.factory = (
             to_checksum_address(factory_address)
@@ -62,6 +62,7 @@ class AerodromeV2Pool(AbstractLiquidityPool):
         self.deployer_address = (
             to_checksum_address(deployer_address) if deployer_address is not None else self.factory
         )
+
         self.stable: bool = self.get_stable(w3=w3, block_identifier=self.update_block)
         self.fee = (
             fee
@@ -72,11 +73,13 @@ class AerodromeV2Pool(AbstractLiquidityPool):
             )
         )
 
+        token_manager = Erc20TokenManager(chain_id)
+
         self.token0, self.token1 = (
             sorted(tokens)
             if tokens is not None
             else (
-                (token_manager := Erc20TokenHelperManager(chain_id)).get_erc20token(
+                token_manager.get_erc20token(
                     address=self.get_token0(w3=w3, block_identifier=self.update_block),
                     silent=silent,
                 ),
@@ -86,10 +89,9 @@ class AerodromeV2Pool(AbstractLiquidityPool):
                 ),
             )
         )
-        self.tokens = (self.token0, self.token1)
 
         if verify_address and self.address != self._verified_address():  # pragma: no branch
-            raise ValueError("Pool address verification failed.")
+            raise AddressMismatch("Pool address verification failed.")
 
         self.name = f"{self.token0}-{self.token1} (AerodromeV2, {100*self.fee.numerator/self.fee.denominator:.2f}%)"  # noqa:E501
         self.reserves_token0, self.reserves_token1 = self.get_reserves(
@@ -171,6 +173,10 @@ class AerodromeV2Pool(AbstractLiquidityPool):
     def state(self, new_state: AerodromeV2PoolState) -> None:
         self._state = new_state
 
+    @property
+    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
+        return self.token0, self.token1
+
     def calculate_tokens_out_from_tokens_in(
         self,
         token_in: Erc20Token,
@@ -182,7 +188,7 @@ class AerodromeV2Pool(AbstractLiquidityPool):
         """
 
         if token_in not in self.tokens:  # pragma: no cover
-            raise ValueError("token_in not recognized.")
+            raise DegenbotValueError("token_in not recognized.")
 
         TOKEN_IN: Literal[0, 1] = 0 if token_in == self.token0 else 1
 
@@ -210,7 +216,7 @@ class AerodromeV2Pool(AbstractLiquidityPool):
                 fee=self.fee,
             )
         else:
-            return calc_exact_in_volatile(
+            return general_calc_exact_in_volatile(
                 amount_in=token_in_quantity,
                 token_in=TOKEN_IN,
                 reserves0=reserves_0,
@@ -301,29 +307,30 @@ class AerodromeV2Pool(AbstractLiquidityPool):
 
 
 class AerodromeV3Pool(UniswapV3Pool):
-    def get_price_and_tick(
-        self,
-        w3: Web3,
-        block_identifier: BlockIdentifier | None,
-    ) -> tuple[int, int]:
-        price, tick, *_ = raw_call(
-            w3=w3,
-            address=self.address,
-            calldata=encode_function_calldata(
-                function_prototype="slot0()",
-                function_arguments=None,
-            ),
-            return_types=[
-                "uint160",
-                "int24",
-                "uint16",
-                "uint16",
-                "uint16",
-                "bool",
-            ],
-            block_identifier=get_number_for_block_identifier(block_identifier),
-        )
-        return price, tick
+    from .types import AerodromeV3PoolState as state_constructor
+
+    PoolStateType: TypeAlias = state_constructor
+
+    TICK_STRUCT_TYPES = [
+        "uint128",
+        "int128",
+        "int128",
+        "uint256",
+        "uint256",
+        "uint256",
+        "int56",
+        "uint160",
+        "uint32",
+        "bool",
+    ]
+    SLOT0_STRUCT_TYPES = [
+        "uint160",
+        "int24",
+        "uint16",
+        "uint16",
+        "uint16",
+        "bool",
+    ]
 
     def _verified_address(self) -> ChecksumAddress:
         # The implementation address is hard-coded into the contract
@@ -337,48 +344,3 @@ class AerodromeV3Pool(UniswapV3Pool):
             implementation_address=to_checksum_address(implementation_address),
             tick_spacing=self.tick_spacing,
         )
-
-    def get_populated_ticks_in_word(
-        self,
-        w3: Web3,
-        word_position: int,
-        block_identifier: BlockIdentifier,
-    ) -> list[tuple[int, int, int]]:
-        bitmap = self.get_tick_bitmap_at_word(
-            w3=w3, word_position=word_position, block_identifier=block_identifier
-        )
-
-        populated_ticks = []
-        for i in range(256):
-            if bitmap & (1 << i) > 0:
-                populatedTick = (((word_position) << 8) + (i)) * self.tick_spacing
-                liquidityGross, liquidityNet, *_ = raw_call(
-                    w3=w3,
-                    address=self.address,
-                    calldata=encode_function_calldata(
-                        function_prototype="ticks(int24)",
-                        function_arguments=[populatedTick],
-                    ),
-                    # AERODROME V3
-                    return_types=[
-                        "uint128",
-                        "int128",
-                        "int128",
-                        "uint256",
-                        "uint256",
-                        "uint256",
-                        "int56",
-                        "uint160",
-                        "uint32",
-                        "bool",
-                    ],
-                )
-                populated_ticks.append(
-                    (
-                        populatedTick,
-                        liquidityNet,
-                        liquidityGross,
-                    )
-                )
-
-        return populated_ticks

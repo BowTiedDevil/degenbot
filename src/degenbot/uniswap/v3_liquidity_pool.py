@@ -1,29 +1,33 @@
 # TODO: add event prototype exporter method and handler for callbacks
-
 import dataclasses
 from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+import eth_abi.abi
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
+from hexbytes import HexBytes
 from web3 import Web3
 from web3.types import BlockIdentifier
 
 from .. import config
+from ..constants import ZERO_ADDRESS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
+    AddressMismatch,
     BitmapWordUnavailableError,
+    DegenbotValueError,
     EVMRevertError,
     ExternalUpdateError,
     InsufficientAmountOutError,
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
+from ..functions import encode_function_calldata, raw_call
 from ..logging import logger
-from ..managers.erc20_token_manager import Erc20TokenHelperManager
+from ..managers.erc20_token_manager import Erc20TokenManager
 from ..registry.all_pools import AllPools
 from ..types import AbstractLiquidityPool
 from ..uniswap.deployments import UniswapV3ExchangeDeployment
@@ -33,7 +37,6 @@ from .types import (
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
-    UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
 from .v3_functions import (
@@ -44,12 +47,35 @@ from .v3_functions import (
 from .v3_libraries import LiquidityMath, SwapMath, TickBitmap, TickMath
 from .v3_libraries.functions import to_int256
 
-UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
-    "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
-)
-
 
 class UniswapV3Pool(AbstractLiquidityPool):
+    from .types import UniswapV3PoolState as state_constructor
+
+    PoolStateType: TypeAlias = state_constructor
+
+    UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
+        "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
+    )
+    TICK_STRUCT_TYPES = [
+        "uint128",
+        "int128",
+        "uint256",
+        "uint256",
+        "int56",
+        "uint160",
+        "uint32",
+        "bool",
+    ]
+    SLOT0_STRUCT_TYPES = [
+        "uint160",
+        "int24",
+        "uint16",
+        "uint16",
+        "uint16",
+        "uint8",
+        "bool",
+    ]
+
     @dataclasses.dataclass(slots=True, repr=False, eq=False)
     class SwapCache:
         liquidity_start: int
@@ -73,26 +99,56 @@ class UniswapV3Pool(AbstractLiquidityPool):
         amount_out: int = 0
         fee_amount: int = 0
 
+    @classmethod
+    def from_exchange(
+        cls,
+        address: str,
+        exchange: UniswapV3ExchangeDeployment,
+        **kwargs: Any,
+    ) -> "UniswapV3Pool":
+        """
+        Create a new `UniswapV3Pool` with exchange information taken from the provided deployment.
+        """
+
+        for key in [
+            "factory_address",
+            "deployer_address",
+            "init_hash",
+        ]:  # pragma: no cover
+            if key in kwargs:
+                logger.warning(
+                    f"Ignoring keyword argument {key}={kwargs[key]} in favor of value in exchange deployment."  # noqa: E501
+                )
+                kwargs.pop(key)
+
+        return cls(
+            address=address,
+            # factory_address=exchange.factory.address,
+            deployer_address=exchange.factory.deployer,
+            init_hash=exchange.factory.pool_init_hash,
+            **kwargs,
+        )
+
     def __init__(
         self,
         address: str,
-        fee: int | None = None,
-        tick_spacing: int | None = None,
-        tokens: list[Erc20Token] | None = None,
-        factory_address: str | None = None,
+        *,
         deployer_address: str | None = None,
         init_hash: str | None = None,
-        silent: bool = False,
         tick_data: dict[int, dict[str, Any] | UniswapV3LiquidityAtTick] | None = None,
         tick_bitmap: dict[int, dict[str, Any] | UniswapV3BitmapAtWord] | None = None,
         state_block: int | None = None,
         archive_states: bool = True,
         verify_address: bool = True,
+        silent: bool = False,
     ):
+        if address == ZERO_ADDRESS:
+            raise LiquidityPoolError("Invalid pool address")
+
         self.address = to_checksum_address(address)
 
         self._state_lock = Lock()
-        self._state = UniswapV3PoolState(
+        self._state = self.state_constructor(
             pool=self.address,
             liquidity=0,
             sqrt_price_x96=0,
@@ -102,29 +158,26 @@ class UniswapV3Pool(AbstractLiquidityPool):
         )
 
         w3 = config.get_web3()
+        chain_id = w3.eth.chain_id
         self._update_block = state_block if state_block is not None else w3.eth.block_number
 
-        if factory_address is not None:
-            self.factory = to_checksum_address(factory_address)
-        else:
-            _factory_address, *_ = raw_call(
-                w3=w3,
-                block_identifier=self._update_block,
-                address=self.address,
-                calldata=encode_function_calldata(
-                    function_prototype="factory()",
-                    function_arguments=None,
-                ),
-                return_types=["address"],
-            )
-            self.factory = to_checksum_address(_factory_address)
+        (
+            factory,
+            (token0, token1),
+            self.fee,
+            self.tick_spacing,
+            self.sqrt_price_x96,
+            self.tick,
+            self.liquidity,
+        ) = self.get_factory_tokens_liquidity_price_tick_batched(
+            w3=w3, state_block=self._update_block
+        )
+        self.factory = to_checksum_address(factory)
 
-        if deployer_address is not None:
-            self.deployer_address = to_checksum_address(deployer_address)
-        else:
-            self.deployer_address = self.factory
+        self.deployer_address = (
+            to_checksum_address(deployer_address) if deployer_address is not None else self.factory
+        )
 
-        chain_id = w3.eth.chain_id
         try:
             # Use degenbot deployment values if available
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][self.factory]
@@ -135,57 +188,28 @@ class UniswapV3Pool(AbstractLiquidityPool):
             # Deployment is unknown. Uses any inputs provided, otherwise use default values from
             # original Uniswap contracts
             self.init_hash = (
-                init_hash if init_hash is not None else UNISWAP_V3_MAINNET_POOL_INIT_HASH
+                init_hash if init_hash is not None else self.UNISWAP_V3_MAINNET_POOL_INIT_HASH
             )
 
-        if tokens is not None:
-            self.token0, self.token1 = sorted(tokens)
-        else:
-            token0_address, *_ = raw_call(
-                w3=w3,
-                address=self.address,
-                calldata=encode_function_calldata(
-                    function_prototype="token0()",
-                    function_arguments=None,
-                ),
-                return_types=["address"],
-                block_identifier=self._update_block,
-            )
-            token1_address, *_ = raw_call(
-                w3=w3,
-                address=self.address,
-                calldata=encode_function_calldata(
-                    function_prototype="token1()",
-                    function_arguments=None,
-                ),
-                return_types=["address"],
-                block_identifier=self._update_block,
-            )
-
-            token_manager = Erc20TokenHelperManager(chain_id)
-            self.token0 = token_manager.get_erc20token(
-                address=token0_address,
+        token_manager = Erc20TokenManager(chain_id)
+        self.token0, self.token1 = (
+            token_manager.get_erc20token(
+                address=token0,
                 silent=silent,
-            )
-            self.token1 = token_manager.get_erc20token(
-                address=token1_address,
+            ),
+            token_manager.get_erc20token(
+                address=token1,
                 silent=silent,
-            )
-
-        self.tokens = (self.token0, self.token1)
-
-        self.fee = fee if fee is not None else self.get_fee(w3=w3)
-        self.tick_spacing = (
-            tick_spacing if tick_spacing is not None else self.get_tick_spacing(w3=w3)
+            ),
         )
 
         if verify_address and self.address != self._verified_address():  # pragma: no branch
-            raise ValueError("Pool address verification failed.")
+            raise AddressMismatch("Pool address verification failed.")
 
         self.name = f"{self.token0}-{self.token1} (V3, {self.fee / 10000:.2f}%)"
 
         if (tick_bitmap is not None) != (tick_data is not None):
-            raise ValueError("Provide both tick_bitmap and tick_data.")
+            raise DegenbotValueError("Provide both tick_bitmap and tick_data.")
 
         # If liquidity info was not provided, treat the mapping as sparse
         self.sparse_liquidity_map = tick_bitmap is None or tick_data is None
@@ -238,11 +262,6 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 block_number=self.update_block,
             )
 
-        self.liquidity = self.get_liquidity(w3=w3, block_identifier=self.update_block)
-        self.sqrt_price_x96, self.tick, *_ = self.get_price_and_tick(
-            w3=w3, block_identifier=self.update_block
-        )
-
         self._pool_state_archive = {self.update_block: self.state} if archive_states else None
 
         AllPools(chain_id)[self.address] = self
@@ -257,36 +276,6 @@ class UniswapV3Pool(AbstractLiquidityPool):
             logger.info(f"• Liquidity: {self.liquidity}")
             logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
             logger.info(f"• Tick: {self.tick}")
-
-    @classmethod
-    def from_exchange(
-        cls,
-        address: str,
-        exchange: UniswapV3ExchangeDeployment,
-        **kwargs: Any,
-    ) -> "UniswapV3Pool":
-        """
-        Create a new `UniswapV3Pool` with exchange information taken from the provided deployment.
-        """
-
-        for key in [
-            "factory_address",
-            "deployer_address",
-            "init_hash",
-        ]:  # pragma: no cover
-            if key in kwargs:
-                logger.warning(
-                    f"Ignoring keyword argument {key}={kwargs[key]} in favor of value in exchange deployment."  # noqa: E501
-                )
-                kwargs.pop(key)
-
-        return cls(
-            address=address,
-            factory_address=exchange.factory.address,
-            deployer_address=exchange.factory.deployer,
-            init_hash=exchange.factory.pool_init_hash,
-            **kwargs,
-        )
 
     def __getstate__(self) -> dict[str, Any]:
         # Remove objects that cannot be pickled and are unnecessary to perform
@@ -324,7 +313,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         zero_for_one: bool,
         amount_specified: int,
         sqrt_price_limit_x96: int,
-        override_state: UniswapV3PoolState | None = None,
+        override_state: PoolStateType | None = None,
     ) -> tuple[int, int, int, int, int]:
         """
         This function is ported and adapted from the UniswapV3Pool.sol contract at
@@ -491,41 +480,38 @@ class UniswapV3Pool(AbstractLiquidityPool):
         block_identifier: BlockIdentifier,
     ) -> list[tuple[int, int, int]]:
         bitmap_at_word = self.get_tick_bitmap_at_word(
-            w3=w3,
-            word_position=word_position,
-            block_identifier=block_identifier,
+            w3=w3, word_position=word_position, block_identifier=block_identifier
         )
 
-        populated_ticks = []
-        for i in range(256):
-            if bitmap_at_word & (1 << i) > 0:
-                populatedTick = ((word_position << 8) + i) * self.tick_spacing
-                liquidityGross, liquidityNet, *_ = raw_call(
-                    w3=w3,
-                    address=self.address,
-                    calldata=encode_function_calldata(
-                        function_prototype="ticks(int24)",
-                        function_arguments=[populatedTick],
-                    ),
-                    # UNISWAP V3
-                    return_types=[
-                        "uint128",
-                        "int128",
-                        "uint256",
-                        "uint256",
-                        "int56",
-                        "uint160",
-                        "uint32",
-                        "bool",
-                    ],
-                )
-                populated_ticks.append(
-                    (
-                        populatedTick,
-                        liquidityNet,
-                        liquidityGross,
+        active_ticks = [
+            ((word_position << 8) + i) * self.tick_spacing
+            for i in range(256)
+            if bitmap_at_word & (1 << i) > 0
+        ]
+
+        with w3.batch_requests() as batch:
+            for tick in active_ticks:
+                batch.add(
+                    w3.eth.call(
+                        transaction={
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="ticks(int24)",
+                                function_arguments=[tick],
+                            ),
+                        },
+                        block_identifier=block_identifier,
                     )
                 )
+            results = batch.execute()
+
+        populated_ticks = []
+        for tick, result in zip(active_ticks, results, strict=True):
+            liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
+                types=self.TICK_STRUCT_TYPES,
+                data=cast(HexBytes, result),
+            )
+            populated_ticks.append((tick, liquidity_gross, liquidity_net))
 
         return populated_ticks
 
@@ -560,7 +546,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
             bitmap=_tick_bitmap,
             block=block_number,
         )
-        for tick, liquidity_net, liquidity_gross in _tick_data:
+        for tick, liquidity_gross, liquidity_net in _tick_data:
             self.tick_data[tick] = UniswapV3LiquidityAtTick(
                 liquidityNet=liquidity_net,
                 liquidityGross=liquidity_gross,
@@ -575,6 +561,113 @@ class UniswapV3Pool(AbstractLiquidityPool):
             init_hash=self.init_hash,
         )
 
+    def get_factory_tokens_liquidity_price_tick_batched(
+        self,
+        w3: Web3,
+        state_block: int,
+    ) -> tuple[
+        ChecksumAddress,  # factory
+        tuple[ChecksumAddress, ChecksumAddress],  # tokens
+        int,  # fee
+        int,  # tick spacing
+        int,  # liquidity
+        int,  # price
+        int,  # tick
+    ]:
+        with w3.batch_requests() as batch:
+            batch.add_mapping(
+                {
+                    # These calls default to use 'latest' for block number, which is OK since the
+                    # values are immutable
+                    w3.eth.call: [
+                        {
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="factory()",
+                                function_arguments=None,
+                            ),
+                        },
+                        {
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="token0()",
+                                function_arguments=None,
+                            ),
+                        },
+                        {
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="token1()",
+                                function_arguments=None,
+                            ),
+                        },
+                        {
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="fee()",
+                                function_arguments=None,
+                            ),
+                        },
+                        {
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="tickSpacing()",
+                                function_arguments=None,
+                            ),
+                        },
+                    ],
+                }
+            )
+            batch.add(
+                # This call uses a specific block so the mutable state values are consistent
+                w3.eth.call(
+                    transaction={
+                        "to": self.address,
+                        "data": encode_function_calldata(
+                            function_prototype="slot0()",
+                            function_arguments=None,
+                        ),
+                    },
+                    block_identifier=state_block,
+                )
+            )
+            batch.add(
+                # This call uses a specific block so the mutable state values are consistent
+                w3.eth.call(
+                    transaction={
+                        "to": self.address,
+                        "data": encode_function_calldata(
+                            function_prototype="liquidity()",
+                            function_arguments=None,
+                        ),
+                    },
+                    block_identifier=state_block,
+                )
+            )
+
+            factory, token0, token1, fee, tick_spacing, slot0, liquidity = batch.execute()
+
+        factory, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, factory))
+        token0, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token0))
+        token1, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token1))
+        fee, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, fee))
+        tick_spacing, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, tick_spacing))
+
+        price, tick, *_ = eth_abi.abi.decode(
+            types=self.SLOT0_STRUCT_TYPES, data=cast(HexBytes, slot0)
+        )
+        liquidity, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, liquidity))
+
+        return (
+            to_checksum_address(cast(str, factory)),
+            (to_checksum_address(cast(str, token0)), to_checksum_address(cast(str, token1))),
+            cast(int, fee),
+            cast(int, tick_spacing),
+            cast(int, price),
+            cast(int, tick),
+            cast(int, liquidity),
+        )
+
     @property
     def liquidity(self) -> int:
         return self.state.liquidity
@@ -582,7 +675,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @liquidity.setter
     def liquidity(self, new_liquidity: int) -> None:
         current_state = self.state
-        self._state = UniswapV3PoolState(
+        self._state = self.state_constructor(
             pool=current_state.pool,
             liquidity=new_liquidity,
             sqrt_price_x96=current_state.sqrt_price_x96,
@@ -598,7 +691,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @sqrt_price_x96.setter
     def sqrt_price_x96(self, new_sqrt_price_x96: int) -> None:
         current_state = self.state
-        self._state = UniswapV3PoolState(
+        self._state = self.state_constructor(
             pool=current_state.pool,
             liquidity=current_state.liquidity,
             sqrt_price_x96=new_sqrt_price_x96,
@@ -608,7 +701,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         )
 
     @property
-    def state(self) -> UniswapV3PoolState:
+    def state(self) -> PoolStateType:
         return self._state
 
     @property
@@ -618,7 +711,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @tick.setter
     def tick(self, new_tick: int) -> None:
         current_state = self.state
-        self._state = UniswapV3PoolState(
+        self._state = self.state_constructor(
             pool=current_state.pool,
             liquidity=current_state.liquidity,
             sqrt_price_x96=current_state.sqrt_price_x96,
@@ -637,7 +730,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @tick_bitmap.setter
     def tick_bitmap(self, new_tick_bitmap: dict[int, UniswapV3BitmapAtWord]) -> None:
         current_state = self.state
-        self._state = UniswapV3PoolState(
+        self._state = self.state_constructor(
             pool=current_state.pool,
             liquidity=current_state.liquidity,
             sqrt_price_x96=current_state.sqrt_price_x96,
@@ -656,7 +749,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @tick_data.setter
     def tick_data(self, new_tick_data: dict[int, UniswapV3LiquidityAtTick]) -> None:
         current_state = self.state
-        self._state = UniswapV3PoolState(
+        self._state = self.state_constructor(
             pool=current_state.pool,
             liquidity=current_state.liquidity,
             sqrt_price_x96=current_state.sqrt_price_x96,
@@ -664,6 +757,10 @@ class UniswapV3Pool(AbstractLiquidityPool):
             tick_bitmap=current_state.tick_bitmap,
             tick_data=new_tick_data,
         )
+
+    @property
+    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
+        return self.token0, self.token1
 
     @property
     def update_block(self) -> int:
@@ -693,10 +790,45 @@ class UniswapV3Pool(AbstractLiquidityPool):
             w3 = config.get_web3()
             block_number = w3.eth.get_block_number() if block_number is None else block_number
 
-            _sqrt_price_x96, _tick, *_ = self.get_price_and_tick(
-                w3=w3, block_identifier=block_number
+            with w3.batch_requests() as batch:
+                batch.add(
+                    # This call uses a specific block so the mutable state values are consistent
+                    w3.eth.call(
+                        transaction={
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="slot0()",
+                                function_arguments=None,
+                            ),
+                        },
+                        block_identifier=block_number,
+                    )
+                )
+                batch.add(
+                    # This call uses a specific block so the mutable state values are consistent
+                    w3.eth.call(
+                        transaction={
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="liquidity()",
+                                function_arguments=None,
+                            ),
+                        },
+                        block_identifier=block_number,
+                    )
+                )
+
+                slot0, liquidity = batch.execute()
+
+            _sqrt_price_x96, _tick, *_ = eth_abi.abi.decode(
+                types=self.SLOT0_STRUCT_TYPES, data=cast(HexBytes, slot0)
             )
-            _liquidity = self.get_liquidity(w3=w3, block_identifier=block_number)
+            _liquidity, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, liquidity))
+
+            if TYPE_CHECKING:
+                assert isinstance(_sqrt_price_x96, int)
+                assert isinstance(_tick, int)
+                assert isinstance(_liquidity, int)
 
             if self.sqrt_price_x96 != _sqrt_price_x96:
                 state_updated = True
@@ -725,13 +857,13 @@ class UniswapV3Pool(AbstractLiquidityPool):
                     logger.info(f"SqrtPriceX96: {self.sqrt_price_x96}")
                     logger.info(f"Tick: {self.tick}")
 
-        return state_updated
+            return state_updated
 
     def calculate_tokens_out_from_tokens_in(
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        override_state: UniswapV3PoolState | None = None,
+        override_state: PoolStateType | None = None,
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
@@ -755,7 +887,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         """
 
         if token_in not in self.tokens:  # pragma: no cover
-            raise ValueError("token_in not found!")
+            raise DegenbotValueError("token_in not found!")
 
         zero_for_one = token_in == self.token0
 
@@ -777,7 +909,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         self,
         token_out: Erc20Token,
         token_out_quantity: int,
-        override_state: UniswapV3PoolState | None = None,
+        override_state: PoolStateType | None = None,
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_in_from_tokens_out`
@@ -801,7 +933,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         """
 
         if token_out not in self.tokens:  # pragma: no cover
-            raise ValueError("token_out not found!")
+            raise DegenbotValueError("token_out not found!")
 
         _is_zero_for_one = token_out == self.token1
 
@@ -956,7 +1088,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     def get_absolute_price(
         self,
         token: Erc20Token,
-        override_state: UniswapV3PoolState | None = None,
+        override_state: PoolStateType | None = None,
     ) -> Fraction:
         """
         Get the absolute price for the given token, expressed in units of the other.
@@ -967,7 +1099,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     def get_absolute_rate(
         self,
         token: Erc20Token,
-        override_state: UniswapV3PoolState | None = None,
+        override_state: PoolStateType | None = None,
     ) -> Fraction:
         """
         Get the absolute rate of exchange for the given token, expressed in units of the other.
@@ -980,76 +1112,12 @@ class UniswapV3Pool(AbstractLiquidityPool):
         elif token == self.token1:
             return exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
         else:  # pragma: no cover
-            raise ValueError(f"Unknown token {token}")
-
-    def get_fee(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> int:
-        result, *_ = raw_call(
-            w3=w3,
-            address=self.address,
-            calldata=encode_function_calldata(
-                function_prototype="fee()",
-                function_arguments=None,
-            ),
-            return_types=["uint256"],
-            block_identifier=get_number_for_block_identifier(block_identifier),
-        )
-        return cast(int, result)
-
-    def get_price_and_tick(
-        self,
-        w3: Web3,
-        block_identifier: BlockIdentifier | None,
-    ) -> tuple[int, int]:
-        price, tick, *_ = raw_call(
-            w3=w3,
-            address=self.address,
-            calldata=encode_function_calldata(
-                function_prototype="slot0()",
-                function_arguments=None,
-            ),
-            return_types=[
-                "uint160",
-                "int24",
-                "uint16",
-                "uint16",
-                "uint16",
-                "uint8",
-                "bool",
-            ],
-            block_identifier=get_number_for_block_identifier(block_identifier),
-        )
-        return price, tick
-
-    def get_tick_spacing(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> int:
-        result, *_ = raw_call(
-            w3=w3,
-            address=self.address,
-            calldata=encode_function_calldata(
-                function_prototype="tickSpacing()",
-                function_arguments=None,
-            ),
-            return_types=["uint256"],
-            block_identifier=get_number_for_block_identifier(block_identifier),
-        )
-        return cast(int, result)
-
-    def get_liquidity(self, w3: Web3, block_identifier: BlockIdentifier | None = None) -> int:
-        result, *_ = raw_call(
-            w3=w3,
-            address=self.address,
-            calldata=encode_function_calldata(
-                function_prototype="liquidity()",
-                function_arguments=None,
-            ),
-            return_types=["uint256"],
-            block_identifier=get_number_for_block_identifier(block_identifier),
-        )
-        return cast(int, result)
+            raise DegenbotValueError(f"Unknown token {token}")
 
     def get_nominal_price(
         self,
         token: Erc20Token,
-        override_state: UniswapV3PoolState | None = None,
+        override_state: PoolStateType | None = None,
     ) -> Fraction:
         """
         Get the nominal price for the given token, expressed in units of the other, corrected for
@@ -1060,7 +1128,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     def get_nominal_rate(
         self,
         token: Erc20Token,
-        override_state: UniswapV3PoolState | None = None,
+        override_state: PoolStateType | None = None,
     ) -> Fraction:
         """
         Get the nominal rate for the given token, expressed in units of the other, corrected for
@@ -1080,7 +1148,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 10**self.token0.decimals, 10**self.token1.decimals
             )
         else:  # pragma: no cover
-            raise ValueError(f"Unknown token {token}")
+            raise DegenbotValueError(f"Unknown token {token}")
 
     def discard_states_before_block(self, block: int) -> None:
         """
@@ -1154,16 +1222,16 @@ class UniswapV3Pool(AbstractLiquidityPool):
         token_in: Erc20Token,
         token_in_quantity: int,
         sqrt_price_limit_x96: int | None = None,
-        override_state: UniswapV3PoolState | None = None,
+        override_state: PoolStateType | None = None,
     ) -> UniswapV3PoolSimulationResult:
         """
         Simulate an exact input swap.
         """
 
         if token_in not in self.tokens:  # pragma: no cover
-            raise ValueError("token_in is unknown!")
+            raise DegenbotValueError("token_in is unknown!")
         if token_in_quantity == 0:  # pragma: no cover
-            raise ValueError("Zero input swap requested.")
+            raise DegenbotValueError("Zero input swap requested.")
 
         zero_for_one = token_in == self.token0
 
@@ -1193,7 +1261,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
                 initial_state=self.state.copy(),
-                final_state=UniswapV3PoolState(
+                final_state=self.state_constructor(
                     pool=self.address,
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrt_price_x96,
@@ -1206,16 +1274,16 @@ class UniswapV3Pool(AbstractLiquidityPool):
         token_out: Erc20Token,
         token_out_quantity: int,
         sqrt_price_limit_x96: int | None = None,
-        override_state: UniswapV3PoolState | None = None,
+        override_state: PoolStateType | None = None,
     ) -> UniswapV3PoolSimulationResult:
         """
         Simulate an exact output swap.
         """
 
         if token_out not in self.tokens:  # pragma: no cover
-            raise ValueError("token_out is unknown!")
+            raise DegenbotValueError("token_out is unknown!")
         if token_out_quantity == 0:  # pragma: no cover
-            raise ValueError("Zero output swap requested.")
+            raise DegenbotValueError("Zero output swap requested.")
 
         zero_for_one = token_out == self.token1
 
@@ -1245,7 +1313,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
                 initial_state=self.state.copy(),
-                final_state=UniswapV3PoolState(
+                final_state=self.state_constructor(
                     pool=self.address,
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrtprice,

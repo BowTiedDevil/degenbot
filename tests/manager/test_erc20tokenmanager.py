@@ -4,7 +4,7 @@ from eth_utils.address import to_checksum_address
 
 from degenbot.config import set_web3
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.managers.erc20_token_manager import Erc20TokenHelperManager
+from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.registry.all_tokens import AllTokens
 
 WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
@@ -14,7 +14,7 @@ ETHER_PLACEHOLDER_ADDRESS = to_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
 
 def test_get_erc20tokens(ethereum_archive_node_web3: web3.Web3):
     set_web3(ethereum_archive_node_web3)
-    token_manager = Erc20TokenHelperManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
+    token_manager = Erc20TokenManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
     token_registry = AllTokens(chain_id=ethereum_archive_node_web3.eth.chain_id)
 
     weth = token_manager.get_erc20token(address=WETH_ADDRESS)
@@ -36,14 +36,14 @@ def test_get_erc20tokens(ethereum_archive_node_web3: web3.Web3):
 
 def test_get_bad_token(ethereum_archive_node_web3: web3.Web3):
     set_web3(ethereum_archive_node_web3)
-    token_manager = Erc20TokenHelperManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
+    token_manager = Erc20TokenManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
     with pytest.raises(ValueError):
         token_manager.get_erc20token(address=ZERO_ADDRESS)
 
 
 def test_get_ether_placeholder(ethereum_archive_node_web3: web3.Web3):
     set_web3(ethereum_archive_node_web3)
-    token_manager = Erc20TokenHelperManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
+    token_manager = Erc20TokenManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
     token_registry = AllTokens(chain_id=ethereum_archive_node_web3.eth.chain_id)
 
     ether_placeholder = token_manager.get_erc20token(address=ETHER_PLACEHOLDER_ADDRESS)

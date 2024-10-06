@@ -1,28 +1,28 @@
 from ..functions import raise_if_invalid_uint256
-from ..solidly.solidly_functions import _d
+from ..solidly.solidly_functions import general_calc_d
 
 
-def _f_camelot(x0: int, y: int) -> int:
+def f_camelot(x0: int, y: int) -> int:
     return (
         x0 * (y * y // 10**18 * y // 10**18) // 10**18
         + (x0 * x0 // 10**18 * x0 // 10**18) * y // 10**18
     )
 
 
-def _get_y_camelot(
+def get_y_camelot(
     x_0: int,
     xy: int,
     y: int,
 ) -> int:  # pragma: no cover
     for _ in range(255):
         y_prev = y
-        k = _f_camelot(x_0, y)
+        k = f_camelot(x_0, y)
         if k < xy:
-            dy = (xy - k) * 10**18 // _d(x_0, y)
+            dy = (xy - k) * 10**18 // general_calc_d(x_0, y)
 
             y = y + dy
         else:
-            dy = (k - xy) * 10**18 // _d(x_0, y)
+            dy = (k - xy) * 10**18 // general_calc_d(x_0, y)
             y = y - dy
 
         if y > y_prev:
@@ -33,7 +33,7 @@ def _get_y_camelot(
     return y
 
 
-def _k_camelot(
+def k_camelot(
     balance_0: int,
     balance_1: int,
     decimals_0: int,

@@ -6,15 +6,20 @@ from eth_typing import BlockIdentifier, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from typing_extensions import Self
 from web3 import Web3
+from web3.exceptions import ContractLogicError
 
 from .. import config
-from ..constants import ZERO_ADDRESS
-from ..exceptions import DegenbotError, Erc20TokenError, ManagerError, PoolNotAssociated
+from ..exceptions import (
+    AddressMismatch,
+    DegenbotError,
+    ManagerAlreadyInitialized,
+    ManagerError,
+    PoolNotAssociated,
+)
 from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..logging import logger
-from ..managers.erc20_token_manager import Erc20TokenHelperManager
 from ..registry.all_pools import AllPools
-from ..types import AbstractPoolManager
+from ..types import AbstractLiquidityPool, AbstractPoolManager
 from ..uniswap.deployments import UniswapV2ExchangeDeployment, UniswapV3ExchangeDeployment
 from .deployments import FACTORY_DEPLOYMENTS
 from .v2_liquidity_pool import UniswapV2Pool
@@ -30,8 +35,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
 
     from .v2_liquidity_pool import UniswapV2Pool as pool_creator
 
-    PoolCreatorType: TypeAlias = pool_creator
-    _tracked_pools: dict[ChecksumAddress, pool_creator]
+    # PoolCreatorType: TypeAlias = pool_creator
 
     @classmethod
     def from_exchange(
@@ -53,6 +57,13 @@ class UniswapV2PoolManager(AbstractPoolManager):
     ):
         chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
         factory_address = to_checksum_address(factory_address)
+
+        if (chain_id, factory_address) in self.instances:
+            raise ManagerAlreadyInitialized(
+                "A manager has already been initialized for this address. Access it using the get_instance() class method"  # noqa:E501
+            )
+        else:
+            self.instances[(chain_id, factory_address)] = self  # type:ignore[assignment]
 
         try:
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
@@ -78,13 +89,13 @@ class UniswapV2PoolManager(AbstractPoolManager):
         self._factory_address = factory_address
         self._deployer_address = deployer_address
         self._pool_init_hash = pool_init_hash
-        self._tracked_pools = dict()
+        self._tracked_pools: dict[ChecksumAddress, AbstractLiquidityPool] = dict()
         self._untracked_pools: set[ChecksumAddress] = set()
 
-    def __delitem__(self, pool: PoolCreatorType | ChecksumAddress | str) -> None:
+    def __delitem__(self, pool: AbstractLiquidityPool | ChecksumAddress | str) -> None:
         pool_address: ChecksumAddress
 
-        if isinstance(pool, UniswapV2Pool):
+        if isinstance(pool, AbstractLiquidityPool):
             pool_address = pool.address
         else:
             pool_address = to_checksum_address(pool)
@@ -93,12 +104,11 @@ class UniswapV2PoolManager(AbstractPoolManager):
             del self._tracked_pools[pool_address]
 
         self._untracked_pools.discard(pool_address)
-        assert pool_address not in self._untracked_pools
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"UniswapV2PoolManager(factory={self._factory_address})"
 
-    def _add_pool(self, pool_helper: PoolCreatorType) -> None:
+    def _add_tracked_pool(self, pool_helper: AbstractLiquidityPool) -> None:
         with self._lock:
             self._tracked_pools[pool_helper.address] = pool_helper
 
@@ -123,86 +133,93 @@ class UniswapV2PoolManager(AbstractPoolManager):
 
     def get_pool(
         self,
-        pool_address: str | None = None,
-        token_addresses: tuple[str, str] | None = None,
+        pool_address: ChecksumAddress | str,
         silent: bool = False,
         state_block: int | None = None,
-        liquiditypool_kwargs: dict[str, Any] | None = None,
-    ) -> PoolCreatorType:
+        pool_class_kwargs: dict[str, Any] | None = None,
+    ) -> AbstractLiquidityPool:
         """
-        Get the pool object from its address, or a tuple of token addresses
+        Get a pool from its address
         """
+        return self._build_pool(
+            pool_address=to_checksum_address(pool_address),
+            silent=silent,
+            state_block=state_block,
+            pool_class_kwargs=pool_class_kwargs,
+        )
 
-        if liquiditypool_kwargs is None:
-            liquiditypool_kwargs = dict()
-
-        if token_addresses is not None:
-            checksummed_token_addresses = tuple(
-                [to_checksum_address(token_address) for token_address in token_addresses]
-            )
-            token_manager = Erc20TokenHelperManager(chain_id=self._chain_id)
-
-            try:
-                for token_address in checksummed_token_addresses:
-                    token_manager.get_erc20token(
-                        address=token_address,
-                        silent=silent,
-                    )
-            except Erc20TokenError:
-                raise ManagerError("Could not get both Erc20Token helpers") from None
-
-            pool_address = to_checksum_address(
+    def get_pool_from_tokens(
+        self,
+        token_addresses: tuple[str, str],
+        silent: bool = False,
+        state_block: int | None = None,
+        pool_class_kwargs: dict[str, Any] | None = None,
+    ) -> AbstractLiquidityPool:
+        """
+        Get a pool by its token addresses
+        """
+        pool = self._build_pool(
+            pool_address=to_checksum_address(
                 self.get_pair_from_factory(
                     w3=config.get_web3(),
-                    token0=checksummed_token_addresses[0],
-                    token1=checksummed_token_addresses[1],
+                    token0=to_checksum_address(token_addresses[0]),
+                    token1=to_checksum_address(token_addresses[1]),
                     block_identifier=None,
                 )
-            )
-            if pool_address == ZERO_ADDRESS:
-                raise ManagerError("No V2 LP available")
+            ),
+            silent=silent,
+            state_block=state_block,
+            pool_class_kwargs=pool_class_kwargs,
+        )
+        assert isinstance(pool, UniswapV2Pool)
+        return pool
 
-        if TYPE_CHECKING:
-            assert pool_address is not None
-        # Address is now known, check if the pool is already being tracked
-        pool_address = to_checksum_address(pool_address)
+    def _build_pool(
+        self,
+        pool_address: ChecksumAddress,
+        silent: bool,
+        state_block: int | None,
+        pool_class_kwargs: dict[str, Any] | None,
+    ) -> AbstractLiquidityPool:
+        with contextlib.suppress(KeyError):
+            result = self._tracked_pools[pool_address]
+            if TYPE_CHECKING:
+                assert isinstance(result, UniswapV2Pool)
+            return result
 
         if pool_address in self._untracked_pools:
             raise PoolNotAssociated(
                 f"Pool address {pool_address} not associated with factory {self._factory_address}"
             )
 
-        try:
-            return self._tracked_pools[pool_address]
-        except KeyError:
-            pass
-
         # Check if the AllPools collection already has this pool
-        known_pool_helper = AllPools(self._chain_id).get(pool_address)
-        if known_pool_helper is not None:
+        if (known_pool_helper := AllPools(self._chain_id).get(pool_address)) is not None:
             if TYPE_CHECKING:
                 assert isinstance(known_pool_helper, UniswapV2Pool)
             if known_pool_helper.factory == self._factory_address:
-                self._add_pool(known_pool_helper)
+                self._add_tracked_pool(known_pool_helper)
                 return known_pool_helper
             else:
                 self._untracked_pools.add(pool_address)
                 raise PoolNotAssociated(f"Pool {pool_address} is not associated with this DEX")
+
+        if pool_class_kwargs is None:
+            pool_class_kwargs = dict()
 
         try:
             new_pool_helper = self.pool_creator(
                 address=pool_address,
                 silent=silent,
                 state_block=state_block,
-                # factory_address=self._factory_address,
-                # factory_init_hash=self._pool_init_hash,
-                **liquiditypool_kwargs,
+                **pool_class_kwargs,
             )
-        except DegenbotError as exc:
+        except AddressMismatch:
             self._untracked_pools.add(pool_address)
-            raise ManagerError(f"Could not build V2 pool {pool_address}: {exc}") from None
+            raise PoolNotAssociated from None
+        except (DegenbotError, ContractLogicError) as exc:
+            raise ManagerError(f"Could not build V2 pool {pool_address}: {exc}") from exc
         else:
-            self._add_pool(new_pool_helper)
+            self._add_tracked_pool(new_pool_helper)
             return new_pool_helper
 
 
@@ -214,7 +231,6 @@ class UniswapV3PoolManager(AbstractPoolManager):
     from .v3_liquidity_pool import UniswapV3Pool as pool_creator
 
     PoolCreatorType: TypeAlias = pool_creator
-    _tracked_pools: dict[ChecksumAddress, PoolCreatorType]
 
     @classmethod
     def from_exchange(
@@ -239,6 +255,13 @@ class UniswapV3PoolManager(AbstractPoolManager):
     ):
         chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
         factory_address = to_checksum_address(factory_address)
+
+        if (chain_id, factory_address) in self.instances:
+            raise ManagerAlreadyInitialized(
+                "A manager has already been initialized for this address. Access it using the get_instance() class method"  # noqa:E501
+            )
+        else:
+            self.instances[(chain_id, factory_address)] = self  # type:ignore[assignment]
 
         try:
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
@@ -265,13 +288,13 @@ class UniswapV3PoolManager(AbstractPoolManager):
         self._deployer_address = deployer_address
         self._pool_init_hash = pool_init_hash
         self._snapshot = snapshot
-        self._tracked_pools = dict()
+        self._tracked_pools: dict[ChecksumAddress, AbstractLiquidityPool] = dict()
         self._untracked_pools: set[ChecksumAddress] = set()
 
-    def __delitem__(self, pool: PoolCreatorType | ChecksumAddress | str) -> None:
+    def __delitem__(self, pool: AbstractLiquidityPool | ChecksumAddress | str) -> None:
         pool_address: ChecksumAddress
 
-        if isinstance(pool, UniswapV3Pool):
+        if isinstance(pool, AbstractLiquidityPool):
             pool_address = pool.address
         else:
             pool_address = to_checksum_address(pool)
@@ -311,94 +334,100 @@ class UniswapV3PoolManager(AbstractPoolManager):
 
     def get_pool(
         self,
-        pool_address: ChecksumAddress | str | None = None,
-        token_addresses: tuple[
-            ChecksumAddress | str,
-            ChecksumAddress | str,
-        ]
-        | None = None,
-        pool_fee: int | None = None,
+        pool_address: ChecksumAddress | str,
         silent: bool = False,
         state_block: int | None = None,
         # keyword arguments passed to the pool class constructor
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> UniswapV3Pool:
-        def find_or_build(
-            pool_address: ChecksumAddress,
-            state_block: int | None = None,
-        ) -> UniswapV3Pool:
-            if TYPE_CHECKING:
-                assert isinstance(pool_class_kwargs, dict)
+        return self._build_pool(
+            pool_address=to_checksum_address(pool_address),
+            silent=silent,
+            state_block=state_block,
+            pool_class_kwargs=pool_class_kwargs,
+        )
 
-            # Check if the AllPools collection already has this pool
-            if known_pool_helper := AllPools(self._chain_id).get(pool_address):
-                if TYPE_CHECKING:
-                    assert isinstance(known_pool_helper, UniswapV3Pool)
-                if known_pool_helper.factory == self._factory_address:
-                    self._add_tracked_pool(known_pool_helper)
-                    return known_pool_helper
-                else:
-                    self._untracked_pools.add(pool_address)
-                    raise PoolNotAssociated(f"Pool {pool_address} is not associated with this DEX")
-
-            if self._snapshot:
-                pool_class_kwargs.update(
-                    {
-                        "tick_bitmap": self._snapshot.get_tick_bitmap(pool_address),
-                        "tick_data": self._snapshot.get_tick_data(pool_address),
-                    }
-                )
-            else:
-                logger.info("Initializing pool without liquidity snapshot")
-
-            # The pool is unknown, so build and add it
-            try:
-                new_pool_helper = self.pool_creator(
-                    address=pool_address,
-                    silent=silent,
-                    state_block=state_block,
-                    **pool_class_kwargs,
-                )
-            except Exception as e:
-                self._untracked_pools.add(pool_address)
-                raise ManagerError(f"Could not build V3 pool {pool_address}: {e}") from e
-            else:
-                self._apply_pending_liquidity_updates(new_pool_helper)
-                self._add_tracked_pool(new_pool_helper)
-                return new_pool_helper
-
-        if not (pool_address is None) ^ (token_addresses is None and pool_fee is None):
-            raise ValueError("Insufficient arguments provided. Pass address OR tokens & fee")
-
-        if pool_class_kwargs is None:
-            pool_class_kwargs = dict()
-
-        if pool_address is not None:
-            pool_address = to_checksum_address(pool_address)
-        elif token_addresses is not None and pool_fee is not None:
-            pool_address = generate_v3_pool_address(
+    def get_pool_by_tokens_and_fee(
+        self,
+        token_addresses: tuple[
+            ChecksumAddress | str,
+            ChecksumAddress | str,
+        ],
+        pool_fee: int,
+        silent: bool = False,
+        state_block: int | None = None,
+        # keyword arguments passed to the pool class constructor
+        pool_class_kwargs: dict[str, Any] | None = None,
+    ) -> UniswapV3Pool:
+        return self.get_pool(
+            pool_address=generate_v3_pool_address(
                 token_addresses=sorted(token_addresses),
                 fee=pool_fee,
                 deployer_address=self._deployer_address,
                 init_hash=self._pool_init_hash,
-            )
-        else:
-            raise ValueError("Provide a pool address or a token address pair and fee")
+            ),
+            silent=silent,
+            state_block=state_block,
+            pool_class_kwargs=pool_class_kwargs,
+        )
+
+    def _build_pool(
+        self,
+        pool_address: ChecksumAddress,
+        silent: bool,
+        state_block: int | None,
+        pool_class_kwargs: dict[str, Any] | None,
+    ) -> UniswapV3Pool:
+        with contextlib.suppress(KeyError):
+            result = self._tracked_pools[pool_address]
+            if TYPE_CHECKING:
+                assert isinstance(result, UniswapV3Pool)
+            return result
 
         if pool_address in self._untracked_pools:
             raise PoolNotAssociated(
                 f"Pool address {pool_address} not associated with factory {self._factory_address}"
             )
 
+        # Check if the AllPools collection already has this pool
+        if (known_pool_helper := AllPools(self._chain_id).get(pool_address)) is not None:
+            if TYPE_CHECKING:
+                assert isinstance(known_pool_helper, UniswapV3Pool)
+            if known_pool_helper.factory == self._factory_address:
+                self._add_tracked_pool(known_pool_helper)
+                return known_pool_helper
+            else:
+                self._untracked_pools.add(pool_address)
+                raise PoolNotAssociated(f"Pool {pool_address} is not associated with this DEX")
+
+        if pool_class_kwargs is None:
+            pool_class_kwargs = dict()
+
+        if self._snapshot is not None:
+            pool_class_kwargs.update(
+                {
+                    "tick_bitmap": self._snapshot.get_tick_bitmap(pool_address),
+                    "tick_data": self._snapshot.get_tick_data(pool_address),
+                }
+            )
+        else:
+            logger.info(f"Initializing pool without liquidity snapshot, {self._factory_address=}")
+            logger.info(f"{self._snapshot=}")
+
+        # The pool is unknown, so build and add it
         try:
-            pool_helper = self._tracked_pools[pool_address]
-        except KeyError:
-            pool_helper = find_or_build(pool_address, state_block)
-
-        if TYPE_CHECKING:
-            assert isinstance(pool_helper, UniswapV3Pool)
-
-        assert isinstance(
-            pool_helper, UniswapV3Pool
-        ), f"{self} Attempted to return non-V3 pool {pool_helper}! {pool_address=}, {token_addresses=}, {pool_fee=}"  # noqa:E501
-        return pool_helper
+            new_pool_helper = self.pool_creator(
+                address=pool_address,
+                silent=silent,
+                state_block=state_block,
+                **pool_class_kwargs,
+            )
+        except AddressMismatch:
+            self._untracked_pools.add(pool_address)
+            raise PoolNotAssociated from None
+        except (DegenbotError, ContractLogicError) as exc:
+            raise ManagerError(f"Could not build V3 pool {pool_address}: {exc}") from exc
+        else:
+            self._apply_pending_liquidity_updates(new_pool_helper)
+            self._add_tracked_pool(new_pool_helper)
+            return new_pool_helper

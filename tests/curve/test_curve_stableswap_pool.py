@@ -1,7 +1,7 @@
 import itertools
 from typing import cast
 
-import eth_abi
+import eth_abi.abi
 import pytest
 from eth_utils.address import to_checksum_address
 from web3 import Web3
@@ -77,6 +77,7 @@ def _test_calculations(lp: CurveStableswapPool):
             ), f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}: {amount} {token_in} for {token_out}"  # noqa:E501
 
     if lp.is_metapool:
+        assert lp.base_pool is not None
         for token_in, token_out in itertools.permutations(lp.tokens_underlying, 2):
             token_in_index = lp.tokens_underlying.index(token_in)
             token_out_index = lp.tokens_underlying.index(token_out)

@@ -1,177 +1,163 @@
-from typing import Any
+import contextlib
+from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
-import ujson
+from eth_abi.exceptions import DecodingError
 from eth_typing import AnyAddress, ChecksumAddress
 from eth_utils.address import to_checksum_address
+from hexbytes import HexBytes
 from web3 import Web3
-from web3.contract.contract import Contract
-from web3.exceptions import BadFunctionCallOutput, ContractLogicError
+from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
 from . import config
 from .chainlink import ChainlinkPriceContract
-from .exceptions import NoPriceOracle
-from .functions import get_number_for_block_identifier
+from .exceptions import DegenbotValueError, NoPriceOracle
+from .functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from .logging import logger
 from .registry.all_tokens import AllTokens
 from .types import AbstractErc20Token
-
-# Taken from OpenZeppelin's ERC-20 implementation
-# ref: https://www.npmjs.com/package/@openzeppelin/contracts?activeTab=code
-ERC20_ABI_MINIMAL = ujson.loads(
-    """
-    [{"inputs": [{"internalType": "string", "name": "name_", "type": "string"}, {"internalType": "string", "name": "symbol_", "type": "string"}], "stateMutability": "nonpayable", "type": "constructor"}, {"anonymous": false, "inputs": [{"indexed": true, "internalType": "address", "name": "owner", "type": "address"}, {"indexed": true, "internalType": "address", "name": "spender", "type": "address"}, {"indexed": false, "internalType": "uint256", "name": "value", "type": "uint256"}], "name": "Approval", "type": "event"}, {"anonymous": false, "inputs": [{"indexed": true, "internalType": "address", "name": "from", "type": "address"}, {"indexed": true, "internalType": "address", "name": "to", "type": "address"}, {"indexed": false, "internalType": "uint256", "name": "value", "type": "uint256"}], "name": "Transfer", "type": "event"}, {"inputs": [{"internalType": "address", "name": "owner", "type": "address"}, {"internalType": "address", "name": "spender", "type": "address"}], "name": "allowance", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}, {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "amount", "type": "uint256"}], "name": "approve", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}, {"inputs": [{"internalType": "address", "name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}, {"inputs": [], "name": "decimals", "outputs": [{"internalType": "uint8", "name": "", "type": "uint8"}], "stateMutability": "view", "type": "function"}, {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "subtractedValue", "type": "uint256"}], "name": "decreaseAllowance", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}, {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "addedValue", "type": "uint256"}], "name": "increaseAllowance", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}, {"inputs": [], "name": "name", "outputs": [{"internalType": "string", "name": "", "type": "string"}], "stateMutability": "view", "type": "function"}, {"inputs": [], "name": "symbol", "outputs": [{"internalType": "string", "name": "", "type": "string"}], "stateMutability": "view", "type": "function"}, {"inputs": [], "name": "totalSupply", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}, {"inputs": [{"internalType": "address", "name": "to", "type": "address"}, {"internalType": "uint256", "name": "amount", "type": "uint256"}], "name": "transfer", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}, {"inputs": [{"internalType": "address", "name": "from", "type": "address"}, {"internalType": "address", "name": "to", "type": "address"}, {"internalType": "uint256", "name": "amount", "type": "uint256"}], "name": "transferFrom", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}]
-    """  # noqa:E501
-)
 
 
 class Erc20Token(AbstractErc20Token):
     """
     An ERC-20 token contract.
-
-    If an ABI is specified, it will be used. Otherwise, a minimal ERC-20 ABI
-    will be used that provides access to the interface defined by EIP-20, plus
-    some commonly used extensions:
-
-    - Functions:
-        # EIP-20 BASELINE
-        - totalSupply()
-        - balanceOf(account)
-        - transfer(to, amount)
-        - allowance(owner, spender)
-        - approve(spender, amount)
-        - transferFrom(from, to, amount)
-        # METADATA EXTENSIONS
-        - name()
-        - symbol()
-        - decimals()
-        # ALLOWANCE EXTENSIONS
-        - increaseAllowance(spender, addedValue)
-        - decreaseAllowance(spender, subtractedValue)
-    - Events:
-        - Transfer(from, to, value)
-        - Approval(owner, spender, value)
     """
+
+    UNKNOWN_NAME = "Unknown"
+    UNKNOWN_SYMBOL = "UNKN"
+    UNKNOWN_DECIMALS = 0
+
+    def get_name_symbol_decimals_batched(self, w3: Web3) -> tuple[str, str, int]:
+        with w3.batch_requests() as batch:
+            batch.add_mapping(
+                {
+                    w3.eth.call: [
+                        {
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="name()",
+                                function_arguments=None,
+                            ),
+                        },
+                        {
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="symbol()",
+                                function_arguments=None,
+                            ),
+                        },
+                        {
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="decimals()",
+                                function_arguments=None,
+                            ),
+                        },
+                    ]
+                }
+            )
+
+            name, symbol, decimals = batch.execute()
+
+            name, *_ = eth_abi.abi.decode(types=["string"], data=cast(HexBytes, name))
+            symbol, *_ = eth_abi.abi.decode(types=["string"], data=cast(HexBytes, symbol))
+            decimals, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, decimals))
+
+            return cast(str, name), cast(str, symbol), cast(int, decimals)
+
+    def get_name(self, w3: Web3, func_prototype: str) -> str:
+        result = w3.eth.call(
+            {
+                "to": self.address,
+                "data": encode_function_calldata(
+                    function_prototype=func_prototype,
+                    function_arguments=None,
+                ),
+            }
+        )
+
+        try:
+            name, *_ = eth_abi.abi.decode(types=["string"], data=result)
+            return cast(str, name)
+        except DecodingError:
+            name, *_ = eth_abi.abi.decode(types=["bytes32"], data=result)
+            return cast(HexBytes, name).decode("utf-8", errors="ignore").strip("\x00")
+
+    def get_symbol(self, w3: Web3, func_prototype: str) -> str:
+        result = w3.eth.call(
+            {
+                "to": self.address,
+                "data": encode_function_calldata(
+                    function_prototype=func_prototype,
+                    function_arguments=None,
+                ),
+            }
+        )
+
+        try:
+            symbol, *_ = eth_abi.abi.decode(types=["string"], data=result)
+            return cast(str, symbol)
+        except DecodingError:
+            symbol, *_ = eth_abi.abi.decode(types=["bytes32"], data=result)
+            return cast(HexBytes, symbol).decode("utf-8", errors="ignore").strip("\x00")
+
+    def get_decimals(self, w3: Web3, func_prototype: str) -> int:
+        result, *_ = raw_call(
+            w3=w3,
+            address=self.address,
+            calldata=encode_function_calldata(
+                function_prototype=func_prototype,
+                function_arguments=None,
+            ),
+            return_types=["uint256"],
+        )
+        return cast(int, result)
 
     def __init__(
         self,
         address: str,
-        abi: list[Any] | None = None,
         oracle_address: str | None = None,
         silent: bool = False,
     ) -> None:
         w3 = config.get_web3()
-        self.address: ChecksumAddress = to_checksum_address(address)
+        self.address = to_checksum_address(address)
 
-        if not w3.eth.get_code(self.address):
-            raise ValueError("No contract deployed at this address.")
-
-        self.abi = abi if abi is not None else ERC20_ABI_MINIMAL
-        w3_contract = self.w3_contract
-
+        self.name = self.UNKNOWN_NAME
+        self.symbol = self.UNKNOWN_SYMBOL
+        self.decimals = self.UNKNOWN_DECIMALS
         try:
-            self.name: str
-            self.name = w3_contract.functions.name().call()
-        except (ContractLogicError, OverflowError, BadFunctionCallOutput):
-            # Workaround for non-ERC20 compliant tokens
-            for func in ("name", "NAME"):
+            self.name, self.symbol, self.decimals = self.get_name_symbol_decimals_batched(w3=w3)
+        except (Web3Exception, DecodingError):
+            for func_prototype in ("name()", "NAME()"):
                 try:
-                    self.name = (
-                        w3.eth.call(
-                            {
-                                "to": self.address,
-                                "data": Web3.keccak(text=f"{func}()"),
-                            }
-                        )
-                    ).decode("utf-8", errors="ignore")
-                except Exception:
+                    self.name = self.get_name(w3=w3, func_prototype=func_prototype)
+                except (Web3Exception, DecodingError):
                     continue
-                else:
-                    break
-        except Exception as e:
-            print(f"(token.name @ {self.address}) {type(e)}: {e}")
-            raise
+                break
 
-        try:
-            _ = self.name
-        except AttributeError:
-            if not w3.eth.get_code(self.address):  # pragma: no cover
-                raise ValueError("No contract deployed at this address") from None
-            self.name = "Unknown"
-            self.name = self.name.strip("\x00")
-            logger.warning(
-                f"Token contract at {self.address} does not implement a 'name' function. Setting to '{self.name}'"  # noqa:E501
-            )
-
-        try:
-            self.symbol: str
-            self.symbol = w3_contract.functions.symbol().call()
-        except (ContractLogicError, OverflowError, BadFunctionCallOutput):
-            for func in ("symbol", "SYMBOL"):
-                # Workaround for non-ERC20 compliant tokens
+            for func_prototype in ("symbol()", "SYMBOL()"):
                 try:
-                    self.symbol = (
-                        w3.eth.call(
-                            {
-                                "to": self.address,
-                                "data": Web3.keccak(text=f"{func}()"),
-                            }
-                        )
-                    ).decode("utf-8", errors="ignore")
-                except Exception:
+                    self.symbol = self.get_symbol(w3=w3, func_prototype=func_prototype)
+                except (Web3Exception, DecodingError):
                     continue
-                else:
-                    break
-        except Exception as e:
-            print(f"(token.symbol @ {self.address}) {type(e)}: {e}")
-            raise
+                break
 
-        try:
-            _ = self.symbol
-        except AttributeError:
-            if not w3.eth.get_code(self.address):  # pragma: no cover
-                raise ValueError("No contract deployed at this address") from None
-            self.symbol = "UNKN"
-            logger.warning(
-                f"Token contract at {self.address} does not implement a 'symbol' function. Setting "
-                f"to {self.symbol}"
-            )
-
-        try:
-            self.decimals: int
-            self.decimals = w3_contract.functions.decimals().call()
-        except (ContractLogicError, OverflowError, BadFunctionCallOutput):
-            for func in ("decimals", "DECIMALS"):
+            for func_prototype in ("decimals()", "DECIMALS()"):
                 try:
-                    # Workaround for non-ERC20 compliant tokens
-                    self.decimals = int.from_bytes(
-                        bytes=w3.eth.call(
-                            {
-                                "to": self.address,
-                                "data": Web3.keccak(text=f"{func}()"),
-                            }
-                        ),
-                        byteorder="big",
-                    )
-                except Exception:
+                    self.decimals = self.get_decimals(w3=w3, func_prototype=func_prototype)
+                except (Web3Exception, DecodingError):
                     continue
-                else:
-                    break
-        except Exception as e:
-            print(f"(token.decimals @ {self.address}) {type(e)}: {e}")
-            raise
+                break
 
-        try:
-            _ = self.decimals
-        except Exception:
-            if not w3.eth.get_code(self.address):  # pragma: no cover
-                raise ValueError("No contract deployed at this address") from None
-            self.decimals = 0
-            logger.warning(
-                f"Token contract at {self.address} does not implement a 'decimals' function. "
-                f"Setting to 0."
-            )
+        if all(
+            [
+                self.name == self.UNKNOWN_NAME,
+                self.symbol == self.UNKNOWN_SYMBOL,
+                self.decimals == self.UNKNOWN_DECIMALS,
+            ]
+        ) and not w3.eth.get_code(self.address):
+            raise DegenbotValueError("No contract deployed at this address") from None
 
         self._price_oracle: ChainlinkPriceContract | None
         self._price_oracle = (
@@ -190,25 +176,15 @@ class Erc20Token(AbstractErc20Token):
     def __repr__(self) -> str:  # pragma: no cover
         return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"  # noqa:E501
 
-    @property
-    def w3_contract(self) -> Contract:
-        return config.get_web3().eth.contract(
-            address=self.address,
-            abi=self.abi,
-        )
-
     def _get_approval_cachable(
         self,
         owner: ChecksumAddress,
         spender: ChecksumAddress,
         block_number: int,
     ) -> int:
-        try:
+        with contextlib.suppress(KeyError):
             return self._cached_approval[block_number, owner, spender]
-        except KeyError:
-            pass
 
-        approval: int
         approval, *_ = eth_abi.abi.decode(
             types=["uint256"],
             data=config.get_web3().eth.call(
@@ -220,6 +196,8 @@ class Erc20Token(AbstractErc20Token):
                 block_identifier=block_number,
             ),
         )
+        if TYPE_CHECKING:
+            assert isinstance(approval, int)
         self._cached_approval[block_number, owner, spender] = approval
         return approval
 
@@ -244,12 +222,9 @@ class Erc20Token(AbstractErc20Token):
         address: ChecksumAddress,
         block_number: int,
     ) -> int:
-        try:
+        with contextlib.suppress(KeyError):
             return self._cached_balance[block_number, address]
-        except KeyError:
-            pass
 
-        balance: int
         balance, *_ = eth_abi.abi.decode(
             types=["uint256"],
             data=config.get_web3().eth.call(
@@ -261,6 +236,8 @@ class Erc20Token(AbstractErc20Token):
                 block_identifier=block_number,
             ),
         )
+        if TYPE_CHECKING:
+            assert isinstance(balance, int)
         self._cached_balance[block_number, address] = balance
         return balance
 
@@ -278,12 +255,9 @@ class Erc20Token(AbstractErc20Token):
         )
 
     def _get_total_supply_cachable(self, block_number: int) -> int:
-        try:
+        with contextlib.suppress(KeyError):
             return self._cached_total_supply[block_number]
-        except KeyError:
-            pass
 
-        total_supply: int
         total_supply, *_ = eth_abi.abi.decode(
             types=["uint256"],
             data=config.get_web3().eth.call(
@@ -291,6 +265,8 @@ class Erc20Token(AbstractErc20Token):
                 block_identifier=block_number,
             ),
         )
+        if TYPE_CHECKING:
+            assert isinstance(total_supply, int)
         self._cached_total_supply[block_number] = total_supply
         return total_supply
 
@@ -336,10 +312,8 @@ class EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE(Erc20Token):
         address: ChecksumAddress,
         block_number: int,
     ) -> int:
-        try:
+        with contextlib.suppress(KeyError):
             return self._cached_balance[block_number, address]
-        except KeyError:
-            pass
 
         balance = config.get_web3().eth.get_balance(
             address,

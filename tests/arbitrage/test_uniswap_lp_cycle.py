@@ -2233,15 +2233,13 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum: AnvilFor
     camelot_lp = CamelotLiquidityPool(address=_CAMELOT_WETH_WBTC_LP_ADDRESS)
     sushi_lp = UniswapV2Pool(address=_SUSHI_V2_WETH_WBTC_LP_ADDRESS)
 
-    for arb in [
-        UniswapLpCycle(
-            id="test_arb",
-            input_token=_weth,
-            swap_pools=[camelot_lp, sushi_lp],
-            max_input=100 * 10**18,
-        ),
-    ]:
-        pickle.dumps(arb)
+    arb = UniswapLpCycle(
+        id="test_arb",
+        input_token=_weth,
+        swap_pools=[camelot_lp, sushi_lp],
+        max_input=100 * 10**18,
+    )
+    pickle.dumps(arb)
 
     loop = asyncio.get_running_loop()
 
@@ -2406,7 +2404,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
 def test_bad_pool_in_constructor(
     wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
 ):
-    with pytest.raises(ValueError, match="Incompatible pool provided."):
+    with pytest.raises(ValueError, match=f"Incompatible pool type \\({type(None)}\\) provided."):
         UniswapLpCycle(
             id="test_arb",
             input_token=weth_token,
