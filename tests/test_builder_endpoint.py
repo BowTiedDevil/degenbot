@@ -248,5 +248,5 @@ async def test_get_user_stats(
     current_block = fork_mainnet.w3.eth.block_number
     await flashbots.get_user_stats(
         signer_key=SIGNER_KEY,
-        block_number=current_block,
+        recent_block_number=current_block,
     )

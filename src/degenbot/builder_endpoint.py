@@ -1,5 +1,5 @@
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import aiohttp
 import eth_account.datastructures
@@ -9,7 +9,6 @@ import ujson
 from eth_account.signers.local import LocalAccount
 from hexbytes import HexBytes
 
-from .config import get_web3
 from .exceptions import DegenbotValueError, ExternalServiceError
 from .functions import eip_191_hash
 
@@ -43,18 +42,11 @@ class BuilderEndpoint:  # pragma: no cover
         Build a MIME type header with an optional EIP-191 signature of the provided payload.
         """
 
-        if signer_key:
-            signer_account: LocalAccount = eth_account.Account.from_key(signer_key)
-            signer_address = signer_account.address
-
         bundle_headers = {"Content-Type": "application/json"}
 
-        if all([header_label is not None, signer_key is not None]):
-            if TYPE_CHECKING:
-                assert header_label is not None
-                assert signer_key is not None
-                assert isinstance(signer_address, eth_account.Account)
-
+        if signer_key and header_label:
+            signer_account: LocalAccount = eth_account.Account.from_key(signer_key)
+            signer_address = signer_account.address
             message_signature = eip_191_hash(message=payload, private_key=signer_key)
             bundle_signature = f"{signer_address}:{message_signature}"
             bundle_headers[header_label] = bundle_signature
@@ -234,11 +226,6 @@ class BuilderEndpoint:  # pragma: no cover
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
-        if self.authentication_header_label is not None and signer_key is None:
-            raise DegenbotValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
-            )
-
         if isinstance(tx_hash, HexBytes):
             tx_hash = tx_hash.to_0x_hex()
 
@@ -272,7 +259,7 @@ class BuilderEndpoint:  # pragma: no cover
     async def get_user_stats(
         self,
         signer_key: str,
-        block_number: int,
+        recent_block_number: int,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
         """
@@ -286,14 +273,6 @@ class BuilderEndpoint:  # pragma: no cover
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
-        if self.authentication_header_label is not None and signer_key is None:
-            raise DegenbotValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
-            )
-
-        if block_number is None:
-            block_number = get_web3().eth.block_number
-
         payload = ujson.dumps(
             {
                 "jsonrpc": "2.0",
@@ -301,7 +280,7 @@ class BuilderEndpoint:  # pragma: no cover
                 "method": ENDPOINT_METHOD,
                 "params": [
                     {
-                        "blockNumber": hex(block_number),
+                        "blockNumber": hex(recent_block_number),
                     }
                 ],
             }
@@ -473,11 +452,6 @@ class BuilderEndpoint:  # pragma: no cover
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
-        if self.authentication_header_label is not None and signer_key is None:
-            raise DegenbotValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
-            )
-
         if isinstance(raw_transaction, HexBytes):
             raw_transaction = raw_transaction.to_0x_hex()
 
@@ -532,11 +506,6 @@ class BuilderEndpoint:  # pragma: no cover
         if ENDPOINT_METHOD not in self.endpoints:
             raise DegenbotValueError(
                 f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
-            )
-
-        if self.authentication_header_label is not None and signer_key is None:
-            raise DegenbotValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
         if isinstance(raw_transaction, HexBytes):
