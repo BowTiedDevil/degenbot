@@ -46,6 +46,8 @@ class UniswapV2Pool(AbstractLiquidityPool):
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
 
+    from .types import UniswapV2PoolState as PoolState
+
     UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
         "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
     )
@@ -139,7 +141,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         )
 
         self._state_lock = Lock()
-        self._state = UniswapV2PoolState(
+        self._state = self.PoolState(
             pool=self.address,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
@@ -300,7 +302,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
     @reserves_token0.setter
     def reserves_token0(self, new_reserves: int) -> None:
         current_state = self.state
-        self._state = UniswapV2PoolState(
+        self._state = self.PoolState(
             pool=current_state.pool,
             reserves_token0=new_reserves,
             reserves_token1=current_state.reserves_token1,
@@ -313,14 +315,14 @@ class UniswapV2Pool(AbstractLiquidityPool):
     @reserves_token1.setter
     def reserves_token1(self, new_reserves: int) -> None:
         current_state = self.state
-        self._state = UniswapV2PoolState(
+        self._state = self.PoolState(
             pool=current_state.pool,
             reserves_token0=current_state.reserves_token0,
             reserves_token1=new_reserves,
         )
 
     @property
-    def state(self) -> UniswapV2PoolState:
+    def state(self) -> PoolState:
         return self._state
 
     @property
@@ -370,13 +372,13 @@ class UniswapV2Pool(AbstractLiquidityPool):
         self,
         token_out_quantity: int,
         token_out: Erc20Token,
-        override_state: UniswapV2PoolState | None = None,
+        override_state: PoolState | None = None,
     ) -> int:
         """
         Calculates the required token INPUT of token_in for a target OUTPUT at current pool
         reserves.
 
-        Accepts a `UniswapV2PoolState` state override for calculation against an arbitrary state
+        Accepts a `PoolState` state override for calculation against an arbitrary state
         in lieu of the recorded state.
         """
 
@@ -432,7 +434,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        override_state: UniswapV2PoolState | None = None,
+        override_state: PoolState | None = None,
     ) -> int:
         """
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
@@ -514,7 +516,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             return updated_state
 
     def get_absolute_price(
-        self, token: Erc20Token, override_state: UniswapV2PoolState | None = None
+        self, token: Erc20Token, override_state: PoolState | None = None
     ) -> Fraction:
         """
         Get the absolute price for the given token, expressed in units of the other.
@@ -525,7 +527,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
     def get_absolute_rate(
         self,
         token: Erc20Token,
-        override_state: UniswapV2PoolState | None = None,
+        override_state: PoolState | None = None,
     ) -> Fraction:
         """
         Get the absolute rate for the given token, expressed in units of the other.
@@ -543,7 +545,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
     def get_nominal_price(
         self,
         token: Erc20Token,
-        override_state: UniswapV2PoolState | None = None,
+        override_state: PoolState | None = None,
     ) -> Fraction:
         """
         Get the nominal price for the given token, expressed in units of the other, corrected for
@@ -555,7 +557,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
     def get_nominal_rate(
         self,
         token: Erc20Token,
-        override_state: UniswapV2PoolState | None = None,
+        override_state: PoolState | None = None,
     ) -> Fraction:
         """
         Get the nominal rate for the given token, expressed in units of the other, corrected for
@@ -650,7 +652,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         self,
         added_reserves_token0: int,
         added_reserves_token1: int,
-        override_state: UniswapV2PoolState | None = None,
+        override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
         if override_state:
             logger.debug(f"State override: {override_state}")
@@ -667,7 +669,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
                 amount0_delta=added_reserves_token0,
                 amount1_delta=added_reserves_token1,
                 initial_state=override_state if override_state is not None else self.state.copy(),
-                final_state=UniswapV2PoolState(
+                final_state=self.PoolState(
                     pool=self.address,
                     reserves_token0=reserves_token0 + added_reserves_token0,
                     reserves_token1=reserves_token1 + added_reserves_token1,
@@ -678,7 +680,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         self,
         removed_reserves_token0: int,
         removed_reserves_token1: int,
-        override_state: UniswapV2PoolState | None = None,
+        override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
         if override_state:
             logger.debug(f"State override: {override_state}")
@@ -695,7 +697,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
                 amount0_delta=-removed_reserves_token0,
                 amount1_delta=-removed_reserves_token1,
                 initial_state=self.state.copy(),
-                final_state=UniswapV2PoolState(
+                final_state=self.PoolState(
                     pool=self.address,
                     reserves_token0=reserves_token0 - removed_reserves_token0,
                     reserves_token1=reserves_token1 - removed_reserves_token1,
@@ -706,7 +708,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        override_state: UniswapV2PoolState | None = None,
+        override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError("token_in is unknown.")
@@ -732,7 +734,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             amount0_delta=token0_delta,
             amount1_delta=token1_delta,
             initial_state=current_state,
-            final_state=UniswapV2PoolState(
+            final_state=self.PoolState(
                 pool=self.address,
                 reserves_token0=self.reserves_token0 + token0_delta,
                 reserves_token1=self.reserves_token1 + token1_delta,
@@ -743,7 +745,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         self,
         token_out: Erc20Token,
         token_out_quantity: int,
-        override_state: UniswapV2PoolState | None = None,
+        override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
         if token_out not in self.tokens:  # pragma: no cover
             raise DegenbotValueError("token_out is unknown.")
@@ -769,7 +771,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             amount0_delta=token0_delta,
             amount1_delta=token1_delta,
             initial_state=current_state,
-            final_state=UniswapV2PoolState(
+            final_state=self.PoolState(
                 pool=self.address,
                 reserves_token0=self.reserves_token0 + token0_delta,
                 reserves_token1=self.reserves_token1 + token1_delta,

@@ -49,7 +49,7 @@ from .v3_libraries.functions import to_int256
 
 
 class UniswapV3Pool(AbstractLiquidityPool):
-    from .types import UniswapV3PoolState as PoolStateType
+    from .types import UniswapV3PoolState as PoolState
 
     UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
         "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
@@ -109,7 +109,6 @@ class UniswapV3Pool(AbstractLiquidityPool):
         """
 
         for key in [
-            "factory_address",
             "deployer_address",
             "init_hash",
         ]:  # pragma: no cover
@@ -121,7 +120,6 @@ class UniswapV3Pool(AbstractLiquidityPool):
 
         return cls(
             address=address,
-            # factory_address=exchange.factory.address,
             deployer_address=exchange.factory.deployer,
             init_hash=exchange.factory.pool_init_hash,
             **kwargs,
@@ -141,9 +139,6 @@ class UniswapV3Pool(AbstractLiquidityPool):
         verify_address: bool = True,
         silent: bool = False,
     ):
-        if address == ZERO_ADDRESS:
-            raise LiquidityPoolError("Invalid pool address")
-
         self.address = to_checksum_address(address)
 
         self._chain_id = (
@@ -153,7 +148,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         self._update_block = state_block if state_block is not None else w3.eth.block_number
 
         self._state_lock = Lock()
-        self._state = self.PoolStateType(
+        self._state = self.PoolState(
             pool=self.address,
             liquidity=0,
             sqrt_price_x96=0,
@@ -314,7 +309,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         zero_for_one: bool,
         amount_specified: int,
         sqrt_price_limit_x96: int,
-        override_state: PoolStateType | None = None,
+        override_state: PoolState | None = None,
     ) -> tuple[int, int, int, int, int]:
         """
         This function is ported and adapted from the UniswapV3Pool.sol contract at
@@ -680,7 +675,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @liquidity.setter
     def liquidity(self, new_liquidity: int) -> None:
         current_state = self.state
-        self._state = self.PoolStateType(
+        self._state = self.PoolState(
             pool=current_state.pool,
             liquidity=new_liquidity,
             sqrt_price_x96=current_state.sqrt_price_x96,
@@ -696,7 +691,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @sqrt_price_x96.setter
     def sqrt_price_x96(self, new_sqrt_price_x96: int) -> None:
         current_state = self.state
-        self._state = self.PoolStateType(
+        self._state = self.PoolState(
             pool=current_state.pool,
             liquidity=current_state.liquidity,
             sqrt_price_x96=new_sqrt_price_x96,
@@ -706,7 +701,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         )
 
     @property
-    def state(self) -> PoolStateType:
+    def state(self) -> PoolState:
         return self._state
 
     @property
@@ -716,7 +711,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @tick.setter
     def tick(self, new_tick: int) -> None:
         current_state = self.state
-        self._state = self.PoolStateType(
+        self._state = self.PoolState(
             pool=current_state.pool,
             liquidity=current_state.liquidity,
             sqrt_price_x96=current_state.sqrt_price_x96,
@@ -735,7 +730,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @tick_bitmap.setter
     def tick_bitmap(self, new_tick_bitmap: dict[int, UniswapV3BitmapAtWord]) -> None:
         current_state = self.state
-        self._state = self.PoolStateType(
+        self._state = self.PoolState(
             pool=current_state.pool,
             liquidity=current_state.liquidity,
             sqrt_price_x96=current_state.sqrt_price_x96,
@@ -754,7 +749,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     @tick_data.setter
     def tick_data(self, new_tick_data: dict[int, UniswapV3LiquidityAtTick]) -> None:
         current_state = self.state
-        self._state = self.PoolStateType(
+        self._state = self.PoolState(
             pool=current_state.pool,
             liquidity=current_state.liquidity,
             sqrt_price_x96=current_state.sqrt_price_x96,
@@ -869,7 +864,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
-        override_state: PoolStateType | None = None,
+        override_state: PoolState | None = None,
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
@@ -915,7 +910,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         self,
         token_out: Erc20Token,
         token_out_quantity: int,
-        override_state: PoolStateType | None = None,
+        override_state: PoolState | None = None,
     ) -> int:
         """
         This function implements the common degenbot interface `calculate_tokens_in_from_tokens_out`
@@ -1094,7 +1089,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     def get_absolute_price(
         self,
         token: Erc20Token,
-        override_state: PoolStateType | None = None,
+        override_state: PoolState | None = None,
     ) -> Fraction:
         """
         Get the absolute price for the given token, expressed in units of the other.
@@ -1105,7 +1100,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     def get_absolute_rate(
         self,
         token: Erc20Token,
-        override_state: PoolStateType | None = None,
+        override_state: PoolState | None = None,
     ) -> Fraction:
         """
         Get the absolute rate of exchange for the given token, expressed in units of the other.
@@ -1123,7 +1118,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     def get_nominal_price(
         self,
         token: Erc20Token,
-        override_state: PoolStateType | None = None,
+        override_state: PoolState | None = None,
     ) -> Fraction:
         """
         Get the nominal price for the given token, expressed in units of the other, corrected for
@@ -1134,7 +1129,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     def get_nominal_rate(
         self,
         token: Erc20Token,
-        override_state: PoolStateType | None = None,
+        override_state: PoolState | None = None,
     ) -> Fraction:
         """
         Get the nominal rate for the given token, expressed in units of the other, corrected for
@@ -1228,7 +1223,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         token_in: Erc20Token,
         token_in_quantity: int,
         sqrt_price_limit_x96: int | None = None,
-        override_state: PoolStateType | None = None,
+        override_state: PoolState | None = None,
     ) -> UniswapV3PoolSimulationResult:
         """
         Simulate an exact input swap.
@@ -1267,7 +1262,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
                 initial_state=self.state.copy(),
-                final_state=self.PoolStateType(
+                final_state=self.PoolState(
                     pool=self.address,
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrt_price_x96,
@@ -1280,7 +1275,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         token_out: Erc20Token,
         token_out_quantity: int,
         sqrt_price_limit_x96: int | None = None,
-        override_state: PoolStateType | None = None,
+        override_state: PoolState | None = None,
     ) -> UniswapV3PoolSimulationResult:
         """
         Simulate an exact output swap.
@@ -1319,7 +1314,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
                 initial_state=self.state.copy(),
-                final_state=self.PoolStateType(
+                final_state=self.PoolState(
                     pool=self.address,
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrtprice,

@@ -1,6 +1,6 @@
 import contextlib
 from threading import Lock
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from eth_typing import BlockIdentifier, ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -33,9 +33,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
     A class that generates and tracks Uniswap V2 liquidity pool helpers.
     """
 
-    from .v2_liquidity_pool import UniswapV2Pool as pool_creator
-
-    # PoolCreatorType: TypeAlias = pool_creator
+    from .v2_liquidity_pool import UniswapV2Pool as Pool
 
     @classmethod
     def from_exchange(
@@ -218,7 +216,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
             pool_class_kwargs = dict()
 
         try:
-            new_pool_helper = self.pool_creator(
+            new_pool_helper = self.Pool(
                 address=pool_address,
                 silent=silent,
                 state_block=state_block,
@@ -239,9 +237,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
     A class that generates and tracks Uniswap V3 liquidity pool helpers.
     """
 
-    from .v3_liquidity_pool import UniswapV3Pool as pool_creator
-
-    PoolCreatorType: TypeAlias = pool_creator
+    from .v3_liquidity_pool import UniswapV3Pool as Pool
 
     @classmethod
     def from_exchange(
@@ -320,11 +316,11 @@ class UniswapV3PoolManager(AbstractPoolManager):
     def __repr__(self) -> str:  # pragma: no cover
         return f"UniswapV3PoolManager(factory={self._factory_address})"
 
-    def _add_tracked_pool(self, pool_helper: PoolCreatorType) -> None:
+    def _add_tracked_pool(self, pool_helper: Pool) -> None:
         with self._lock:
             self._tracked_pools[pool_helper.address] = pool_helper
 
-    def _apply_pending_liquidity_updates(self, pool: PoolCreatorType) -> None:
+    def _apply_pending_liquidity_updates(self, pool: Pool) -> None:
         """
         Apply all pending updates from the snapshot.
         """
@@ -433,7 +429,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
 
         # The pool is unknown, so build and add it
         try:
-            new_pool_helper = self.pool_creator(
+            new_pool_helper = self.Pool(
                 address=pool_address,
                 silent=silent,
                 state_block=state_block,

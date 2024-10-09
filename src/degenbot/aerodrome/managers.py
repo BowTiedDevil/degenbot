@@ -18,7 +18,7 @@ from .functions import generate_aerodrome_v3_pool_address
 
 
 class AerodromeV2PoolManager(UniswapV2PoolManager):
-    from .pools import AerodromeV2Pool as pool_creator
+    from .pools import AerodromeV2Pool as Pool
 
     def get_pair_from_factory(  # type: ignore[override]
         self,
@@ -70,7 +70,7 @@ class AerodromeV2PoolManager(UniswapV2PoolManager):
 
 
 class AerodromeV3PoolManager(UniswapV3PoolManager):
-    from .pools import AerodromeV3Pool as pool_creator
+    from .pools import AerodromeV3Pool as Pool
 
     IMPLEMENTATION_ADDRESS = to_checksum_address("0xeC8E5342B19977B4eF8892e02D8DAEcfa1315831")
 
@@ -123,7 +123,7 @@ class AerodromeV3PoolManager(UniswapV3PoolManager):
 
         # The pool is unknown, so build and add it
         try:
-            new_pool_helper = self.pool_creator(
+            new_pool_helper = self.Pool(
                 address=pool_address,
                 silent=silent,
                 state_block=state_block,
