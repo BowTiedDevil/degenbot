@@ -19,10 +19,11 @@ class TokenRegistry:
         return cls.instance
 
     def __init__(self) -> None:
-        if self.instance is not None:
+        if self.__class__.instance is not None:
             raise RegistryAlreadyInitialized(
                 "A registry has already been initialized. Access it using the get_instance() class method"  # noqa:E501
             )
+        self.__class__.instance = self
 
         self._all_tokens: dict[
             tuple[
