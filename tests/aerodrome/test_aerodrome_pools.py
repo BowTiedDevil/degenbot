@@ -1,3 +1,4 @@
+import pickle
 from typing import Any
 
 import pytest
@@ -8,7 +9,11 @@ from eth_utils.address import to_checksum_address
 from degenbot import AerodromeV2Pool, AerodromeV3Pool, AnvilFork, set_web3
 from degenbot.aerodrome.abi import AERODROME_V2_POOL_ABI
 from degenbot.aerodrome.functions import generate_aerodrome_v2_pool_address
-from degenbot.aerodrome.types import AerodromeV3PoolState
+from degenbot.aerodrome.types import (
+    AerodromeV2PoolExternalUpdate,
+    AerodromeV2PoolState,
+    AerodromeV3PoolState,
+)
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 
 WETH_CONTRACT_ADDRESS = to_checksum_address("0x4200000000000000000000000000000000000006")
@@ -55,6 +60,70 @@ def test_aerodrome_v2_address_generator():
             stable=False,
         )
         == AERODROME_V3_TBTC_USDBC_POOL_ADDRESS
+    )
+
+
+def test_pickle_pool(
+    base_full_node_web3: web3.Web3,
+):
+    set_web3(base_full_node_web3)
+
+    lp = AerodromeV2Pool(
+        address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
+    )
+    pickle.dumps(lp)
+
+
+def test_auto_update(
+    base_full_node_web3: web3.Web3,
+):
+    set_web3(base_full_node_web3)
+    lp = AerodromeV2Pool(
+        address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
+    )
+    assert lp.auto_update() is False
+
+    # Hand-modify the state to force a positive update
+    lp._state = AerodromeV2PoolState(
+        pool=lp.address,
+        reserves_token0=lp.state.reserves_token0 - 1,
+        reserves_token1=lp.state.reserves_token1 + 1,
+    )
+    assert lp.auto_update() is True
+
+
+def test_external_update(
+    base_full_node_web3: web3.Web3,
+):
+    set_web3(base_full_node_web3)
+    lp = AerodromeV2Pool(
+        address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
+    )
+
+    current_state = lp.state
+
+    assert (
+        lp.external_update(
+            update=AerodromeV2PoolExternalUpdate(
+                block_number=lp.update_block + 1,
+                reserves_token0=int(1.1 * lp.reserves_token0),
+                reserves_token1=int(0.9 * lp.reserves_token1),
+            )
+        )
+        is True
+    )
+    assert lp.state.reserves_token0 == int(current_state.reserves_token0 * 1.1)
+    assert lp.state.reserves_token1 == int(current_state.reserves_token1 * 0.9)
+
+    assert (
+        lp.external_update(
+            update=AerodromeV2PoolExternalUpdate(
+                block_number=lp.update_block + 1,
+                reserves_token0=lp.reserves_token0,
+                reserves_token1=lp.reserves_token1,
+            )
+        )
+        is False
     )
 
 

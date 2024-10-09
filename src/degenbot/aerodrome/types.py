@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from eth_typing import ChecksumAddress
 
 from ..types import AbstractExchangeDeployment, AbstractPoolState, Message
-from ..uniswap.types import UniswapV3PoolState
+from ..uniswap.types import UniswapV2PoolExternalUpdate, UniswapV3PoolState
 
 
 @dataclass(slots=True, frozen=True)
@@ -16,6 +16,9 @@ class SolidlyFactoryDeployment:
 @dataclass(slots=True, frozen=True)
 class SolidlyExchangeDeployment(AbstractExchangeDeployment):
     factory: SolidlyFactoryDeployment
+
+
+class AerodromeV2PoolExternalUpdate(UniswapV2PoolExternalUpdate): ...
 
 
 @dataclass(slots=True, frozen=True)
