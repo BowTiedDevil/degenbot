@@ -26,7 +26,7 @@ class CamelotLiquidityPool(UniswapV2Pool):
     ) -> None:
         address = to_checksum_address(address)
 
-        if chain_id is None:
+        if chain_id is None:  # pragma: no branch
             chain_id = web3_connection_manager.default_chain_id
 
         w3 = web3_connection_manager.get_web3(chain_id)

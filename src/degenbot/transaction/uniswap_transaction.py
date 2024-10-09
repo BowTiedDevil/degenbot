@@ -82,17 +82,24 @@ class UniswapTransaction(AbstractTransaction):
     class LeftoverRouterBalance(LedgerError):
         pass
 
+    @classmethod
+    def from_router(cls, router: UniswapRouterDeployment, **kwargs):
+        return cls.__init__(
+            chain_id=router.chain_id,
+            router_address=router.address,
+            **kwargs,
+        )
+
     def __init__(
         self,
         chain_id: int | str,
+        router_address: str,
+        func_name: str,
+        func_params: dict[str, Any],
         tx_hash: HexBytes | bytes | str,
         tx_nonce: int | str,
         tx_value: int | str,
         tx_sender: str,
-        func_name: str,
-        func_params: dict[str, Any],
-        router: UniswapRouterDeployment | None = None,
-        router_address: str | None = None,
     ):
         """
         Build a standalone representation of a transaction submitted to a known Uniswap-based
@@ -126,50 +133,29 @@ class UniswapTransaction(AbstractTransaction):
         self.v3_pool_manager: UniswapV3PoolManager | None = None
 
         self.chain_id = int(chain_id, 16) if isinstance(chain_id, str) else chain_id
+        self.router_address = to_checksum_address(router_address)
+        if self.router_address not in ROUTER_DEPLOYMENTS[self.chain_id]:
+            raise DegenbotValueError(f"Router address {router_address} unknown!")
 
-        if router is not None:
-            self.chain_id = router.exchanges[0].chain_id
-            self.router_address = router.address
+        router_deployment = ROUTER_DEPLOYMENTS[self.chain_id][self.router_address]
 
-            for exchange in router.exchanges:
-                match exchange:
-                    case UniswapV2ExchangeDeployment():
-                        self.v2_pool_manager = UniswapV2PoolManager.get_instance(
-                            factory_address=exchange.factory.address, chain_id=self.chain_id
-                        ) or UniswapV2PoolManager.from_exchange(exchange)
-                    case UniswapV3ExchangeDeployment():
-                        self.v3_pool_manager = UniswapV3PoolManager.get_instance(
-                            factory_address=exchange.factory.address, chain_id=self.chain_id
-                        ) or UniswapV3PoolManager.from_exchange(exchange)
-                    case _:
-                        raise DegenbotValueError(f"Could not identify DEX type for {exchange}")
-        else:
-            if router_address is None:
-                raise DegenbotValueError("Router address not provided")
-
-            self.router_address = to_checksum_address(router_address)
-            if self.router_address not in ROUTER_DEPLOYMENTS[self.chain_id]:
-                raise DegenbotValueError(f"Router address {router_address} unknown!")
-
-            router_deployment = ROUTER_DEPLOYMENTS[self.chain_id][self.router_address]
-
-            # Create pool managers for the supported exchanges
-            for exchange in router_deployment.exchanges:
-                match exchange:
-                    case UniswapV2ExchangeDeployment():
-                        self.v2_pool_manager = UniswapV2PoolManager.get_instance(
-                            factory_address=exchange.factory.address, chain_id=self.chain_id
-                        ) or UniswapV2PoolManager(
-                            factory_address=exchange.factory.address, chain_id=self.chain_id
-                        )
-                    case UniswapV3ExchangeDeployment():
-                        self.v3_pool_manager = UniswapV3PoolManager.get_instance(
-                            factory_address=exchange.factory.address, chain_id=self.chain_id
-                        ) or UniswapV3PoolManager(
-                            factory_address=exchange.factory.address, chain_id=self.chain_id
-                        )
-                    case _:
-                        raise DegenbotValueError(f"Could not identify DEX type for {exchange}")
+        # Create pool managers for the supported exchanges
+        for exchange in router_deployment.exchanges:
+            match exchange:
+                case UniswapV2ExchangeDeployment():
+                    self.v2_pool_manager = UniswapV2PoolManager.get_instance(
+                        factory_address=exchange.factory.address, chain_id=self.chain_id
+                    ) or UniswapV2PoolManager(
+                        factory_address=exchange.factory.address, chain_id=self.chain_id
+                    )
+                case UniswapV3ExchangeDeployment():
+                    self.v3_pool_manager = UniswapV3PoolManager.get_instance(
+                        factory_address=exchange.factory.address, chain_id=self.chain_id
+                    ) or UniswapV3PoolManager(
+                        factory_address=exchange.factory.address, chain_id=self.chain_id
+                    )
+                case _:
+                    raise DegenbotValueError(f"Could not identify DEX type for {exchange}")
 
         self.sender = to_checksum_address(tx_sender)
         self.recipients: set[ChecksumAddress] = set()
@@ -184,13 +170,13 @@ class UniswapTransaction(AbstractTransaction):
 
         self.silent = False
 
-    def _raise_if_past_deadline(self, deadline: int) -> None:
+    def _raise_if_past_deadline(self, deadline: int) -> None:  # pragma: no cover
         block = web3_connection_manager.get_web3(self.chain_id).eth.get_block(self.state_block)
         block_timestamp = block.get("timestamp")
         if block_timestamp is not None and block_timestamp > deadline:
             raise TransactionError("Deadline expired")
 
-    def _raise_if_block_hash_mismatch(self, block_hash: HexBytes) -> None:
+    def _raise_if_block_hash_mismatch(self, block_hash: HexBytes) -> None:  # pragma: no cover
         logger.info(f"Checking previousBlockhash: {block_hash!r}")
         block = web3_connection_manager.get_web3(self.chain_id).eth.get_block("latest")
         _block_hash = block.get("hash")
@@ -259,11 +245,6 @@ class UniswapTransaction(AbstractTransaction):
     ]:
         assert isinstance(pool, UniswapV2Pool), f"Called _simulate_v2_swap_exact_in on pool {pool}"
 
-        silent = self.silent
-
-        if token_in not in pool.tokens:
-            raise DegenbotValueError(f"Token {token_in} not found in pool {pool}")
-
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
         if amount_in in (
@@ -321,7 +302,7 @@ class UniswapTransaction(AbstractTransaction):
                 f"Insufficient output for swap! {_amount_out} {token_out} received, {amount_out_min} required"  # noqa:E501
             )
 
-        if not silent:
+        if not self.silent:
             self._show_pool_states(pool, sim_result)
 
         return pool, sim_result
@@ -349,11 +330,6 @@ class UniswapTransaction(AbstractTransaction):
         first_swap: bool = False,
     ) -> tuple[UniswapV2Pool, UniswapV2PoolSimulationResult]:
         assert isinstance(pool, UniswapV2Pool), f"Called _simulate_v2_swap_exact_out on pool {pool}"
-
-        silent = self.silent
-
-        if token_in not in pool.tokens:
-            raise DegenbotValueError(f"Token {token_in} not found in pool {pool}")
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
@@ -391,7 +367,7 @@ class UniswapTransaction(AbstractTransaction):
         if first_swap and amount_in_max is not None and _amount_in > amount_in_max:
             raise TransactionError(f"Required input {_amount_in} exceeds maximum {amount_in_max}")
 
-        if not silent:
+        if not self.silent:
             self._show_pool_states(pool, sim_result)
 
         return pool, sim_result
@@ -408,12 +384,7 @@ class UniswapTransaction(AbstractTransaction):
     ) -> tuple[UniswapV3Pool, UniswapV3PoolSimulationResult]:
         assert isinstance(pool, UniswapV3Pool), f"Called _simulate_v3_swap_exact_in on pool {pool}"
 
-        silent = self.silent
-
         self.recipients.add(to_checksum_address(recipient))
-
-        if token_in not in pool.tokens:
-            raise DegenbotValueError(f"Token {token_in} not found in pool {pool}")
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
@@ -476,7 +447,7 @@ class UniswapTransaction(AbstractTransaction):
                 f"Insufficient output for swap! {_amount_out} {token_out} received, {amount_out_min} required"  # noqa:E501
             )
 
-        if not silent:
+        if not self.silent:
             self._show_pool_states(pool, _sim_result)
 
         return pool, _sim_result
@@ -494,12 +465,7 @@ class UniswapTransaction(AbstractTransaction):
     ) -> tuple[UniswapV3Pool, UniswapV3PoolSimulationResult]:
         assert isinstance(pool, UniswapV3Pool), f"Called _simulate_v3_swap_exact_out on pool {pool}"
 
-        silent = self.silent
-
         self.recipients.add(to_checksum_address(recipient))
-
-        if token_in not in pool.tokens:
-            raise DegenbotValueError(f"Token {token_in} not found in pool {pool}")
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
@@ -577,7 +543,7 @@ class UniswapTransaction(AbstractTransaction):
                 to_addr=_recipient,
             )
 
-        if not silent:
+        if not self.silent:
             self._show_pool_states(pool, _sim_result)
 
         return pool, _sim_result
@@ -803,11 +769,14 @@ class UniswapTransaction(AbstractTransaction):
                         data=inputs,
                     )
 
-                    match sweep_recipient:
+                    sweep_recipient = to_checksum_address(sweep_recipient)
+                    match sweep_recipient:  # pragma: no cover
                         case UniversalRouterSpecialAddress.MSG_SENDER:
                             sweep_recipient = self.sender
                         case UniversalRouterSpecialAddress.ROUTER:
                             sweep_recipient = self.router_address
+                        case _:
+                            pass
 
                     sweep_token_balance = self.ledger.token_balance(
                         self.router_address, sweep_token_address
@@ -870,38 +839,27 @@ class UniswapTransaction(AbstractTransaction):
                         data=inputs,
                     )
 
-                    match _tx_recipient:
-                        case UniversalRouterSpecialAddress.ROUTER:
-                            _recipient = self.router_address
+                    _recipient = to_checksum_address(_tx_recipient)
+                    match _tx_recipient:  # pragma: no cover
                         case UniversalRouterSpecialAddress.MSG_SENDER:
                             _recipient = self.sender
+                        case UniversalRouterSpecialAddress.ROUTER:
+                            _recipient = self.router_address
                         case _:
-                            _recipient = to_checksum_address(_tx_recipient)
-
-                    # if tx_recipient == UniversalRouterSpecialAddress.ROUTER:
-                    #     _recipient = self.router_address
-                    # else:
-                    #     _recipient = tx_recipient
-
-                    _wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
+                            pass
 
                     self.ledger.adjust(
-                        _recipient,
-                        _wrapped_token_address,
-                        _wrap_amount_min,
+                        address=_recipient,
+                        token=WRAPPED_NATIVE_TOKENS[self.chain_id],
+                        amount=_wrap_amount_min,
                     )
 
                 case "UNWRAP_WETH":
                     """
-                    This function unwraps a quantity of WETH to ETH.
-
-                    ETH is currently untracked by the ledger, so `recipient` is
-                    unused.
+                    Unwraps a quantity of WETH held by the router to ETH.
                     """
 
-                    # TODO: process ETH balance in ledger if needed
-
-                    _unwrap_recipient, _unwrap_amount_min = eth_abi.abi.decode(
+                    _, _unwrap_amount_min = eth_abi.abi.decode(
                         types=("address", "uint256"),
                         data=inputs,
                     )
@@ -1272,39 +1230,23 @@ class UniswapTransaction(AbstractTransaction):
 
             for payload in params["data"]:
                 payload_func = payload_args = None
-                try:
+                with contextlib.suppress(ValueError):
                     # decode with Router ABI
                     payload_func, payload_args = (
                         Web3()
                         .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
                         .decode_function_input(payload)
                     )
-                except ValueError:
-                    pass
-                except Exception as exc:
-                    print(f"{payload=}")
-                    print(f"{type(exc)}: {exc}")
-                    import sys
 
-                    sys.exit(0)
-
-                try:
+                with contextlib.suppress(ValueError):
                     # decode with Router2 ABI
                     payload_func, payload_args = (
                         Web3()
                         .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
                         .decode_function_input(payload)
                     )
-                except ValueError:
-                    pass
-                except Exception as exc:
-                    print(f"{payload=}")
-                    print(f"{type(exc)}: {exc}")
-                    import sys
 
-                    sys.exit(0)
-
-                if payload_func is None or payload_args is None:
+                if payload_func is None or payload_args is None:  # pragma: no cover
                     raise DegenbotValueError("Failed to decode payload.")
 
                 # special case to handle a multicall encoded within
@@ -1317,37 +1259,21 @@ class UniswapTransaction(AbstractTransaction):
 
                     for function_input in payload_args["data"]:
                         _func = _params = None
-                        try:
+                        with contextlib.suppress(ValueError):
                             _func, _params = (
                                 Web3()
                                 .eth.contract(abi=UNISWAP_V3_ROUTER_ABI)
                                 .decode_function_input(function_input)
                             )
-                        except ValueError:
-                            pass
-                        except Exception as exc:
-                            print(f"{payload=}")
-                            print(f"{type(exc)}: {exc}")
-                            import sys
 
-                            sys.exit(0)
-
-                        try:
+                        with contextlib.suppress(ValueError):
                             _func, _params = (
                                 Web3()
                                 .eth.contract(abi=UNISWAP_V3_ROUTER2_ABI)
                                 .decode_function_input(function_input)
                             )
-                        except ValueError:
-                            pass
-                        except Exception as exc:
-                            print(f"{payload=}")
-                            print(f"{type(exc)}: {exc}")
-                            import sys
 
-                            sys.exit(0)
-
-                        if _func is None or _params is None:
+                        if _func is None or _params is None:  # pragma: no cover
                             raise DegenbotValueError("Failed to decode function parameters.")
 
                         self._simulate(
@@ -1453,19 +1379,16 @@ class UniswapTransaction(AbstractTransaction):
                         else:
                             self.recipients.add(tx_recipient)
 
-                        try:
+                        with contextlib.suppress(KeyError):
                             tx_deadline = func_params["deadline"]
-                        except KeyError:
-                            pass
-                        else:
                             self._raise_if_past_deadline(tx_deadline)
 
                         try:
                             pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
-                        except (LiquidityPoolError, ManagerError):
+                        except (LiquidityPoolError, ManagerError) as exc:  # pragma: no cover
                             raise TransactionError(
                                 f"Pools could not be built for all steps in path {tx_path}"
-                            ) from None
+                            ) from exc
 
                         last_pool_pos = len(pools) - 1
 
@@ -1527,8 +1450,6 @@ class UniswapTransaction(AbstractTransaction):
                             tx_token_b = to_checksum_address(func_params["tokenB"])
                             tx_token_amount_a = func_params["amountADesired"]
                             tx_token_amount_b = func_params["amountBDesired"]
-                            tx_token_amount_a_min = func_params["amountAMin"]  # noqa: F841
-                            tx_token_amount_b_min = func_params["amountBMin"]  # noqa: F841
                             token0_address, token1_address = (
                                 (tx_token_a, tx_token_b)
                                 if tx_token_a < tx_token_b
@@ -1539,10 +1460,9 @@ class UniswapTransaction(AbstractTransaction):
                                 if tx_token_a < tx_token_b
                                 else (tx_token_amount_b, tx_token_amount_a)
                             )
-                        elif func_name == "addLiquidityETH":
+                        else:
                             tx_token = to_checksum_address(func_params["token"])
                             tx_token_amount = func_params["amountTokenDesired"]
-                            tx_token_amount_min = func_params["amountTokenMin"]  # noqa: F841
                             tx_eth_min = func_params["amountETHMin"]
                             _wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
                             token0_address, token1_address = (
@@ -1556,7 +1476,6 @@ class UniswapTransaction(AbstractTransaction):
                                 else (tx_token_amount, tx_eth_min)
                             )
 
-                        tx_to = func_params["to"]  # noqa: F841
                         tx_deadline = func_params["deadline"]
                         self._raise_if_past_deadline(tx_deadline)
 
@@ -1614,8 +1533,6 @@ class UniswapTransaction(AbstractTransaction):
             if TYPE_CHECKING:
                 v3_sim_result: UniswapV3PoolSimulationResult
                 assert self.v3_pool_manager is not None
-
-            silent = self.silent
 
             try:
                 match func_name:
@@ -1736,7 +1653,7 @@ class UniswapTransaction(AbstractTransaction):
 
                         tx_path_decoded = decode_v3_path(tx_path)
 
-                        if not silent:
+                        if not self.silent:
                             logger.info(f" • path = {tx_path_decoded}")
                             logger.info(f" • recipient = {tx_recipient}")
                             if tx_deadline is not None:
@@ -1913,7 +1830,7 @@ class UniswapTransaction(AbstractTransaction):
 
                         tx_path_decoded = decode_v3_path(tx_path)
 
-                        if not silent:
+                        if not self.silent:
                             logger.info(f" • path = {tx_path_decoded}")
                             logger.info(f" • recipient = {tx_recipient}")
                             if tx_deadline is not None:
@@ -2263,11 +2180,8 @@ class UniswapTransaction(AbstractTransaction):
                 raise DegenbotValueError(f"UNHANDLED UNIVERSAL ROUTER FUNCTION: {func_name}")
 
             try:
-                try:
+                with contextlib.suppress(KeyError):
                     tx_deadline = func_params["deadline"]
-                except KeyError:
-                    pass
-                else:
                     self._raise_if_past_deadline(tx_deadline)
 
                 tx_commands = func_params["commands"]

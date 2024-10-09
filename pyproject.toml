@@ -40,6 +40,7 @@ exclude_also = [
     "def __repr__",
     "def __str__",
     "logger.debug",
+    "case _:", # exclude catch-all 
 ]
 
 [tool.coverage.run]

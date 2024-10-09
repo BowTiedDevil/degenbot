@@ -328,7 +328,7 @@ class UniswapLpCycle(AbstractArbitrage):
                             raise DegenbotValueError(
                                 f"Override {pool_override} is not valid for pool {pool}."
                             )
-                except (EVMRevertError, LiquidityPoolError):
+                except (EVMRevertError, LiquidityPoolError):  # pragma: no cover
                     # The optimizer might send invalid amounts into the swap
                     # calculation during iteration. We don't want it to stop,
                     # so catch the exception and pretend the swap results in
@@ -588,7 +588,7 @@ class UniswapLpCycle(AbstractArbitrage):
                 UniswapV2PoolStateUpdated()
                 | UniswapV3PoolStateUpdated(),
             ):
-                if message.state.pool in self.swap_pools:
+                if message.state.pool in self.swap_pools:  # pragma: no branch
                     self._notify_subscribers(
                         PlaintextMessage(f"Received update from pool {message.state.pool}")
                     )
