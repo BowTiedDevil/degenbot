@@ -117,7 +117,7 @@ def _test_calculations(lp: CurveStableswapPool):
                 )
 
 
-def test_create_pool(ethereum_archive_node_web3):
+def test_create_pool(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
     CurveStableswapPool(address=TRIPOOL_ADDRESS)
 
@@ -169,25 +169,6 @@ def test_A_ramping(fork_mainnet: AnvilFork):
     assert tripool._A(timestamp=INITIAL_A_TIME) == INITIAL_A
     assert tripool._A(timestamp=FINAL_A_TIME) == FINAL_A
     assert tripool._A(timestamp=(INITIAL_A_TIME + FINAL_A_TIME) // 2) == (INITIAL_A + FINAL_A) // 2
-
-
-def test_base_registry_pools(fork_mainnet: AnvilFork):
-    """
-    Test the custom pools deployed by Curve
-    """
-    set_web3(fork_mainnet.w3)
-
-    registry: Contract = fork_mainnet.w3.eth.contract(
-        address=CURVE_V1_REGISTRY_ADDRESS,
-        abi=CURVE_V1_REGISTRY_ABI,
-    )
-    pool_count = registry.functions.pool_count().call()
-
-    for i, pool_id in enumerate(range(pool_count)):
-        pool_address = registry.functions.pool_list(pool_id).call()
-        print(f"Testing registry pool {i}/{pool_count} @ {pool_address}")
-        lp = CurveStableswapPool(address=pool_address, silent=True)
-        _test_calculations(lp)
 
 
 def test_single_pool(
@@ -315,12 +296,19 @@ def test_factory_stableswap_pools(fork_mainnet: AnvilFork):
     )
     pool_count = stableswap_factory.functions.pool_count().call()
 
-    for i, pool_id in enumerate(range(pool_count)):
-        pool_address = stableswap_factory.functions.pool_list(pool_id).call()
+    with fork_mainnet.w3.batch_requests() as batch:
+        batch.add_mapping(
+            {
+                stableswap_factory.functions.pool_list: [pool for pool in range(pool_count)],
+            }
+        )
+        pool_addresses = batch.execute()
+
+    for i, pool_address in enumerate(pool_addresses):
         print(f"Testing factory pool {i}/{pool_count} @ {pool_address}")
 
         try:
-            lp = CurveStableswapPool(address=pool_address, silent=True)
+            lp = CurveStableswapPool(address=cast(str, pool_address), silent=True)
             _test_calculations(lp)
         except (BrokenPool, ZeroLiquidityError):
             continue
@@ -329,6 +317,32 @@ def test_factory_stableswap_pools(fork_mainnet: AnvilFork):
             raise
 
 
-def test_get_D(tripool):
+def test_base_registry_pools(fork_mainnet: AnvilFork):
+    """
+    Test the custom pools deployed by Curve
+    """
+    set_web3(fork_mainnet.w3)
+
+    registry: Contract = fork_mainnet.w3.eth.contract(
+        address=CURVE_V1_REGISTRY_ADDRESS,
+        abi=CURVE_V1_REGISTRY_ABI,
+    )
+    pool_count = registry.functions.pool_count().call()
+
+    with fork_mainnet.w3.batch_requests() as batch:
+        batch.add_mapping(
+            {
+                registry.functions.pool_list: [pool for pool in range(pool_count)],
+            }
+        )
+        pool_addresses = batch.execute()
+
+    for i, pool_address in enumerate(pool_addresses):
+        print(f"Testing registry pool {i}/{pool_count} @ {pool_address}")
+        lp = CurveStableswapPool(address=cast(str, pool_address), silent=True)
+        _test_calculations(lp)
+
+
+def test_get_D(tripool: CurveStableswapPool):
     # Check that D=0 for an empty pool
     assert tripool._get_D(_xp=[0, 0, 0], _amp=1000) == 0
