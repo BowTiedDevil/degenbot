@@ -6,7 +6,7 @@ __all__ = (
 
 import web3
 
-from .exceptions import DegenbotError, DegenbotValueError
+from .exceptions import DegenbotValueError
 
 
 class Web3ConnectionManager:
@@ -18,11 +18,11 @@ class Web3ConnectionManager:
         try:
             return self.connections[chain_id]
         except KeyError:
-            raise DegenbotError("Chain ID does not have a registered Web3 instance.") from None
+            raise DegenbotValueError("Chain ID does not have a registered Web3 instance.") from None
 
     def register_web3(self, w3: web3.Web3) -> None:
         if w3.is_connected() is False:
-            raise DegenbotError("Web3 instance is not connected.")
+            raise DegenbotValueError("Web3 instance is not connected.")
         self.connections[w3.eth.chain_id] = w3
 
     def set_default_chain(self, chain_id: int) -> None:
@@ -37,14 +37,14 @@ class Web3ConnectionManager:
 
 def get_web3() -> web3.Web3:
     if web3_connection_manager._default_chain_id is None:
-        raise DegenbotError("A default Web3 instance has not been registered.") from None
+        raise DegenbotValueError("A default Web3 instance has not been registered.") from None
     else:
         return web3_connection_manager.get_web3(chain_id=web3_connection_manager.default_chain_id)
 
 
 def set_web3(w3: web3.Web3) -> None:
     if w3.is_connected() is False:
-        raise DegenbotError("Web3 instance is not connected.")
+        raise DegenbotValueError("Web3 instance is not connected.")
     web3_connection_manager.register_web3(w3)
     web3_connection_manager.set_default_chain(w3.eth.chain_id)
 
