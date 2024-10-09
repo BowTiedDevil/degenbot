@@ -9,11 +9,11 @@ import eth_abi.abi
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
+from typing_extensions import Self
 from web3 import Web3
 from web3.types import BlockIdentifier
 
 from ..config import web3_connection_manager
-from ..constants import ZERO_ADDRESS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     AddressMismatch,
@@ -103,7 +103,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         address: str,
         exchange: UniswapV3ExchangeDeployment,
         **kwargs: Any,
-    ) -> "UniswapV3Pool":
+    ) -> Self:
         """
         Create a new `UniswapV3Pool` with exchange information taken from the provided deployment.
         """

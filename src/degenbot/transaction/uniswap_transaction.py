@@ -11,6 +11,7 @@ import ujson
 from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
+from typing_extensions import Self
 from web3 import Web3
 
 from ..config import web3_connection_manager
@@ -83,8 +84,8 @@ class UniswapTransaction(AbstractTransaction):
         pass
 
     @classmethod
-    def from_router(cls, router: UniswapRouterDeployment, **kwargs):
-        return cls.__init__(
+    def from_router(cls, router: UniswapRouterDeployment, **kwargs: Any) -> Self:
+        return cls(
             chain_id=router.chain_id,
             router_address=router.address,
             **kwargs,
