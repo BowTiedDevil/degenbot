@@ -8,10 +8,10 @@ from web3.types import BlockIdentifier
 
 from degenbot.exceptions import AddressMismatch, DegenbotError, ManagerError, PoolNotAssociated
 from degenbot.logging import logger
-from degenbot.registry.all_pools import AllPools
+from degenbot.registry.all_pools import pool_registry
 
 from ..aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
-from ..config import get_web3
+from ..config import web3_connection_manager
 from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from .functions import generate_aerodrome_v3_pool_address
@@ -36,7 +36,7 @@ class AerodromeV2PoolManager(UniswapV2PoolManager):
                 function_arguments=[token0, token1, stable],
             ),
             return_types=["address"],
-            block_identifier=get_number_for_block_identifier(block_identifier),
+            block_identifier=get_number_for_block_identifier(block_identifier, w3),
         )
         return cast(str, pool_address)
 
@@ -54,7 +54,7 @@ class AerodromeV2PoolManager(UniswapV2PoolManager):
         pool = self._build_pool(
             pool_address=to_checksum_address(
                 self.get_pair_from_factory(
-                    w3=get_web3(),
+                    w3=web3_connection_manager.get_web3(self.chain_id),
                     token0=to_checksum_address(token_addresses[0]),
                     token1=to_checksum_address(token_addresses[1]),
                     stable=stable,
@@ -92,8 +92,12 @@ class AerodromeV3PoolManager(UniswapV3PoolManager):
                 f"Pool address {pool_address} not associated with factory {self._factory_address}"
             )
 
-        # Check if the AllPools collection already has this pool
-        if (known_pool_helper := AllPools(self._chain_id).get(pool_address)) is not None:
+        # Check if the pool registry already has this pool
+        if (
+            known_pool_helper := pool_registry.get(
+                pool_address=pool_address, chain_id=self._chain_id
+            )
+        ) is not None:
             if TYPE_CHECKING:
                 assert isinstance(known_pool_helper, AerodromeV3Pool)
             if known_pool_helper.factory == self._factory_address:

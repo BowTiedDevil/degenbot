@@ -54,6 +54,12 @@ class ManagerError(DegenbotError):
     """
 
 
+class RegistryError(DegenbotError):
+    """
+    Exception raised inside registries.
+    """
+
+
 class TransactionError(DegenbotError):
     """
     Exception raised inside transaction simulation helpers.
@@ -146,6 +152,13 @@ class ZeroSwapError(LiquidityPoolError):
 class LedgerError(TransactionError):
     """
     Raised when the ledger does not align with the expected state.
+    """
+
+
+# 2nd level exceptions for Registry classes
+class RegistryAlreadyInitialized(RegistryError):
+    """
+    Raised by a singleton registry if a caller attempts to recreate it.
     """
 
 

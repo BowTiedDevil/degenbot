@@ -138,14 +138,15 @@ def test_converting_block_identifier_to_int(fork_mainnet: AnvilFork):
     Check that all inputs for web3 type `BlockIdentifier` can be converted to an integer
     """
 
-    degenbot.config.set_web3(fork_mainnet.w3)
+    w3 = fork_mainnet.w3
+    degenbot.config.set_web3(w3)
 
     # Known string literals
-    latest_block = get_number_for_block_identifier("latest")
-    earliest_block = get_number_for_block_identifier("earliest")
-    pending_block = get_number_for_block_identifier("pending")
-    safe_block = get_number_for_block_identifier("safe")
-    finalized_block = get_number_for_block_identifier("finalized")
+    latest_block = get_number_for_block_identifier("latest", w3)
+    earliest_block = get_number_for_block_identifier("earliest", w3)
+    pending_block = get_number_for_block_identifier("pending", w3)
+    safe_block = get_number_for_block_identifier("safe", w3)
+    finalized_block = get_number_for_block_identifier("finalized", w3)
 
     assert isinstance(latest_block, int)
     assert isinstance(earliest_block, int)
@@ -157,34 +158,36 @@ def test_converting_block_identifier_to_int(fork_mainnet: AnvilFork):
 
     # BlockNumber
     assert isinstance(
-        get_number_for_block_identifier(BlockNumber(1)),
+        get_number_for_block_identifier(BlockNumber(1), w3),
         int,
     )
 
     # Hash32
     assert isinstance(
-        get_number_for_block_identifier(Hash32((1).to_bytes(length=32, byteorder="big"))),
+        get_number_for_block_identifier(Hash32((1).to_bytes(length=32, byteorder="big")), w3),
         int,
     )
 
     # HexStr
     assert isinstance(
-        get_number_for_block_identifier(HexStr("0x" + (128).to_bytes(32, byteorder="big").hex())),
+        get_number_for_block_identifier(
+            HexStr("0x" + (128).to_bytes(32, byteorder="big").hex()), w3
+        ),
         int,
     )
 
     # HexBytes
-    assert isinstance(get_number_for_block_identifier(HexBytes(1)), int)
+    assert isinstance(get_number_for_block_identifier(HexBytes(1), w3), int)
 
     # int
-    assert isinstance(get_number_for_block_identifier(1), int)
+    assert isinstance(get_number_for_block_identifier(1, w3), int)
 
     for invalid_tag in ["Latest", "latest ", "next", "previous"]:
         with pytest.raises(ValueError):
-            get_number_for_block_identifier(invalid_tag)  # type: ignore[arg-type]
+            get_number_for_block_identifier(invalid_tag, w3)  # type: ignore[arg-type]
 
     with pytest.raises(ValueError):
-        get_number_for_block_identifier(1.0)  # type: ignore[arg-type]
+        get_number_for_block_identifier(1.0, w3)  # type: ignore[arg-type]
 
 
 def test_fee_calcs():

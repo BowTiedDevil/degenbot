@@ -6,13 +6,13 @@ __all__ = (
 
 import web3
 
-from .exceptions import DegenbotError
+from .exceptions import DegenbotError, DegenbotValueError
 
 
 class Web3ConnectionManager:
     def __init__(self) -> None:
         self.connections: dict[int, web3.Web3] = dict()
-        self.default_chain_id: int | None = None
+        self._default_chain_id: int | None = None
 
     def get_web3(self, chain_id: int) -> web3.Web3:
         try:
@@ -26,11 +26,17 @@ class Web3ConnectionManager:
         self.connections[w3.eth.chain_id] = w3
 
     def set_default_chain(self, chain_id: int) -> None:
-        self.default_chain_id = chain_id
+        self._default_chain_id = chain_id
+
+    @property
+    def default_chain_id(self) -> int:
+        if self._default_chain_id is None:
+            raise DegenbotValueError("A default chain ID has not been provided.")
+        return self._default_chain_id
 
 
 def get_web3() -> web3.Web3:
-    if web3_connection_manager.default_chain_id is None:
+    if web3_connection_manager._default_chain_id is None:
         raise DegenbotError("A default Web3 instance has not been registered.") from None
     else:
         return web3_connection_manager.get_web3(chain_id=web3_connection_manager.default_chain_id)

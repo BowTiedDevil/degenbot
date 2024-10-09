@@ -216,4 +216,7 @@ class AbstractErc20Token:
         return self.symbol
 
 
+class AbstractRegistry: ...
+
+
 class AbstractTransaction: ...

@@ -18,13 +18,25 @@ class ChainlinkPriceContract:
     price in USD (e.g. 1 DAI = 1.0 USD)
     """
 
-    def __init__(self, address: str):
+    def __init__(
+        self,
+        address: str,
+        *,
+        chain_id: int | None = None,
+    ):
         self.address = to_checksum_address(address)
+        self._chain_id = (
+            chain_id if chain_id is not None else config.web3_connection_manager.default_chain_id
+        )
         self.decimals: int = self.w3_contract.functions.decimals().call()
 
     @property
+    def chain_id(self) -> int:
+        return self._chain_id
+
+    @property
     def w3_contract(self) -> Contract:
-        return config.get_web3().eth.contract(
+        return config.web3_connection_manager.get_web3(self.chain_id).eth.contract(
             address=self.address,
             abi=CHAINLINK_PRICE_FEED_ABI,
         )

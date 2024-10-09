@@ -2,10 +2,10 @@ from fractions import Fraction
 
 from eth_utils.address import to_checksum_address
 
-from .. import config
+from ..config import web3_connection_manager
 from ..erc20_token import Erc20Token
 from ..exceptions import ZeroSwapError
-from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
+from ..functions import encode_function_calldata, raw_call
 from ..logging import logger
 from ..uniswap.types import UniswapV2PoolState
 from ..uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -20,18 +20,22 @@ class CamelotLiquidityPool(UniswapV2Pool):
     def __init__(
         self,
         address: str,
+        *,
+        chain_id: int | None = None,
         silent: bool = False,
     ) -> None:
         address = to_checksum_address(address)
 
-        w3 = config.get_web3()
+        if chain_id is None:
+            chain_id = web3_connection_manager.default_chain_id
+
+        w3 = web3_connection_manager.get_web3(chain_id)
         state_block = w3.eth.get_block_number()
 
         fee_token0: int
         fee_token1: int
         _, _, fee_token0, fee_token1, *_ = raw_call(
             w3=w3,
-            block_identifier=get_number_for_block_identifier(state_block),
             address=address,
             calldata=encode_function_calldata(
                 function_prototype="getReserves()",
@@ -43,7 +47,6 @@ class CamelotLiquidityPool(UniswapV2Pool):
         self.fee_denominator: int
         self.fee_denominator, *_ = raw_call(
             w3=w3,
-            block_identifier=get_number_for_block_identifier(state_block),
             address=address,
             calldata=encode_function_calldata(
                 function_prototype="FEE_DENOMINATOR()",
@@ -54,6 +57,7 @@ class CamelotLiquidityPool(UniswapV2Pool):
 
         super().__init__(
             address=address,
+            chain_id=chain_id,
             init_hash=self.CAMELOT_ARBITRUM_POOL_INIT_HASH,
             fee=(
                 Fraction(fee_token0, self.fee_denominator),
@@ -66,7 +70,6 @@ class CamelotLiquidityPool(UniswapV2Pool):
         self.stable_swap: bool
         self.stable_swap, *_ = raw_call(
             w3=w3,
-            block_identifier=get_number_for_block_identifier(state_block),
             address=address,
             calldata=encode_function_calldata(
                 function_prototype="stableSwap()",

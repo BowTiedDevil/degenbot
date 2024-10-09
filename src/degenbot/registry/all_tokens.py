@@ -1,53 +1,53 @@
+import contextlib
+from typing import TYPE_CHECKING
+
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
+from typing_extensions import Self
 
-from ..logging import logger
-from ..types import AbstractErc20Token
+from degenbot.exceptions import DegenbotValueError, RegistryAlreadyInitialized
 
-# Internal state dictionary that maintains a keyed dictionary of all token objects. The top level
-# dict is keyed by chain ID, and sub-dicts are keyed by the checksummed token address.
-_all_tokens: dict[
-    int,
-    dict[ChecksumAddress, AbstractErc20Token],
-] = {}
+if TYPE_CHECKING:
+    from ..erc20_token import Erc20Token
 
 
-class AllTokens:
-    def __init__(self, chain_id: int) -> None:
-        try:
-            _all_tokens[chain_id]
-        except KeyError:
-            _all_tokens[chain_id] = {}
-        finally:
-            self.tokens = _all_tokens[chain_id]
+class TokenRegistry:
+    instance: Self | None = None
 
-    def __contains__(self, token: AbstractErc20Token | str) -> bool:
-        if isinstance(token, AbstractErc20Token):
-            _token_address = token.address
-        else:
-            _token_address = to_checksum_address(token)
-        return _token_address in self.tokens
+    @classmethod
+    def get_instance(cls) -> Self | None:
+        return cls.instance
 
-    def __delitem__(self, token: AbstractErc20Token | str) -> None:
-        if isinstance(token, AbstractErc20Token):
-            _token_address = token.address
-        else:
-            _token_address = to_checksum_address(token)
-        del self.tokens[_token_address]
-
-    def __getitem__(self, token_address: str) -> AbstractErc20Token:
-        return self.tokens[to_checksum_address(token_address)]
-
-    def __setitem__(self, token_address: str, token_helper: AbstractErc20Token) -> None:
-        _token_address = to_checksum_address(token_address)
-        if _token_address in self.tokens:  # pragma: no cover
-            logger.warning(
-                f"Token with address {_token_address} already known. It has been overwritten."
+    def __init__(self) -> None:
+        if self.instance is not None:
+            raise RegistryAlreadyInitialized(
+                "A registry has already been initialized. Access it using the get_instance() class method"  # noqa:E501
             )
-        self.tokens[to_checksum_address(token_address)] = token_helper
 
-    def __len__(self) -> int:  # pragma: no cover
-        return len(self.tokens)
+        self._all_tokens: dict[
+            tuple[
+                int,  # chain ID
+                ChecksumAddress,  # token address
+            ],
+            Erc20Token,
+        ] = dict()
 
-    def get(self, token_address: str) -> AbstractErc20Token | None:
-        return self.tokens.get(to_checksum_address(token_address))
+    def get(self, token_address: str, chain_id: int) -> "Erc20Token | None":
+        return self._all_tokens.get(
+            (chain_id, to_checksum_address(token_address)),
+        )
+
+    def add(self, token_address: str, chain_id: int, token: "Erc20Token") -> None:
+        token_address = to_checksum_address(token_address)
+        if self.get(token_address=token_address, chain_id=chain_id):
+            raise DegenbotValueError("Token is already registered")
+        self._all_tokens[(chain_id, token_address)] = token
+
+    def remove(self, token_address: str, chain_id: int) -> None:
+        token_address = to_checksum_address(token_address)
+
+        with contextlib.suppress(KeyError):
+            del self._all_tokens[(chain_id, token_address)]
+
+
+token_registry = TokenRegistry()

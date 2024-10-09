@@ -8,7 +8,7 @@ from typing_extensions import Self
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
-from .. import config
+from ..config import web3_connection_manager
 from ..exceptions import (
     AddressMismatch,
     DegenbotError,
@@ -18,7 +18,7 @@ from ..exceptions import (
 )
 from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..logging import logger
-from ..registry.all_pools import AllPools
+from ..registry.all_pools import pool_registry
 from ..types import AbstractLiquidityPool, AbstractPoolManager
 from ..uniswap.deployments import UniswapV2ExchangeDeployment, UniswapV3ExchangeDeployment
 from .deployments import FACTORY_DEPLOYMENTS
@@ -51,12 +51,15 @@ class UniswapV2PoolManager(AbstractPoolManager):
     def __init__(
         self,
         factory_address: str,
-        deployer_address: ChecksumAddress | str | None = None,
+        *,
         chain_id: int | None = None,
+        deployer_address: ChecksumAddress | str | None = None,
         pool_init_hash: str | None = None,
     ):
-        chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
         factory_address = to_checksum_address(factory_address)
+
+        if chain_id is None:
+            chain_id = web3_connection_manager.default_chain_id
 
         if (chain_id, factory_address) in self.instances:
             raise ManagerAlreadyInitialized(
@@ -112,6 +115,10 @@ class UniswapV2PoolManager(AbstractPoolManager):
         with self._lock:
             self._tracked_pools[pool_helper.address] = pool_helper
 
+    @property
+    def chain_id(self) -> int:
+        return self._chain_id
+
     def get_pair_from_factory(
         self,
         w3: Web3,
@@ -127,7 +134,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
                 function_arguments=[token0, token1],
             ),
             return_types=["address"],
-            block_identifier=get_number_for_block_identifier(block_identifier),
+            block_identifier=get_number_for_block_identifier(block_identifier, w3),
         )
         return cast(str, pool_address)
 
@@ -161,7 +168,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         pool = self._build_pool(
             pool_address=to_checksum_address(
                 self.get_pair_from_factory(
-                    w3=config.get_web3(),
+                    w3=web3_connection_manager.get_web3(self.chain_id),
                     token0=to_checksum_address(token_addresses[0]),
                     token1=to_checksum_address(token_addresses[1]),
                     block_identifier=None,
@@ -192,8 +199,12 @@ class UniswapV2PoolManager(AbstractPoolManager):
                 f"Pool address {pool_address} not associated with factory {self._factory_address}"
             )
 
-        # Check if the AllPools collection already has this pool
-        if (known_pool_helper := AllPools(self._chain_id).get(pool_address)) is not None:
+        # Check if the pool registry already has this pool
+        if (
+            known_pool_helper := pool_registry.get(
+                pool_address=pool_address, chain_id=self._chain_id
+            )
+        ) is not None:
             if TYPE_CHECKING:
                 assert isinstance(known_pool_helper, UniswapV2Pool)
             if known_pool_helper.factory == self._factory_address:
@@ -253,7 +264,9 @@ class UniswapV3PoolManager(AbstractPoolManager):
         pool_init_hash: str | None = None,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
     ):
-        chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
+        if chain_id is None:
+            chain_id = web3_connection_manager.default_chain_id
+
         factory_address = to_checksum_address(factory_address)
 
         if (chain_id, factory_address) in self.instances:
@@ -389,8 +402,12 @@ class UniswapV3PoolManager(AbstractPoolManager):
                 f"Pool address {pool_address} not associated with factory {self._factory_address}"
             )
 
-        # Check if the AllPools collection already has this pool
-        if (known_pool_helper := AllPools(self._chain_id).get(pool_address)) is not None:
+        # Check if the pool registry already has this pool
+        if (
+            known_pool_helper := pool_registry.get(
+                pool_address=pool_address, chain_id=self._chain_id
+            )
+        ) is not None:
             if TYPE_CHECKING:
                 assert isinstance(known_pool_helper, UniswapV3Pool)
             if known_pool_helper.factory == self._factory_address:

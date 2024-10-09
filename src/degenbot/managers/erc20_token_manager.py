@@ -4,8 +4,9 @@ from typing import Any
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
-from .. import config
-from ..erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE, Erc20Token
+from ..config import web3_connection_manager
+from ..erc20_token import Erc20Token, EtherPlaceholder
+from ..registry.all_tokens import token_registry
 from ..types import AbstractManager
 
 
@@ -19,8 +20,12 @@ class Erc20TokenManager(AbstractManager):
 
     _state: dict[int, dict[str, Any]] = {}
 
-    def __init__(self, chain_id: int | None = None) -> None:
-        chain_id = chain_id if chain_id is not None else config.get_web3().eth.chain_id
+    def __init__(
+        self,
+        *,
+        chain_id: int | None = None,
+    ) -> None:
+        chain_id = chain_id if chain_id is not None else web3_connection_manager.default_chain_id
 
         # the internal state data for this object is held in the
         # class-level _state dictionary, keyed by the chain ID
@@ -33,6 +38,7 @@ class Erc20TokenManager(AbstractManager):
             # initialize internal attributes
             self._erc20tokens: dict[ChecksumAddress, Erc20Token] = {}
             self._lock = Lock()
+            self._chain_id = chain_id
 
     def get_erc20token(
         self,
@@ -50,8 +56,11 @@ class Erc20TokenManager(AbstractManager):
         if token_helper := self._erc20tokens.get(address):
             return token_helper
 
-        if address == EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE.address:
-            token_helper = EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE()
+        if token_helper := token_registry.get(token_address=address, chain_id=self._chain_id):
+            return token_helper
+
+        if address == EtherPlaceholder.address:
+            token_helper = EtherPlaceholder()
         else:
             token_helper = Erc20Token(address=address, **kwargs)
 

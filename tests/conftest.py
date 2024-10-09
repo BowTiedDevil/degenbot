@@ -12,6 +12,7 @@ import degenbot.managers.erc20_token_manager
 import degenbot.registry
 import degenbot.registry.all_pools
 import degenbot.registry.all_tokens
+import degenbot.types
 import degenbot.uniswap.managers
 from degenbot.anvil_fork import AnvilFork
 
@@ -47,16 +48,15 @@ def ethereum_archive_node_web3() -> web3.Web3:
 @pytest.fixture(autouse=True)
 def initialize_and_reset_after_each_test():
     """
-    After each test, clear shared state dictionaries
+    After each test, clear and reset global values & singletons to a fresh state
     """
     yield  # the fixture will pause here until the test completes
     degenbot.config.web3_connection_manager.connections.clear()
-    degenbot.config.web3_connection_manager.default_chain_id = None
-    degenbot.registry.all_pools._all_pools.clear()
-    degenbot.registry.all_tokens._all_tokens.clear()
+    degenbot.config.web3_connection_manager._default_chain_id = None
+    degenbot.registry.all_pools.pool_registry._all_pools.clear()
+    degenbot.registry.all_tokens.token_registry._all_tokens.clear()
     degenbot.managers.erc20_token_manager.Erc20TokenManager._state.clear()
-    degenbot.uniswap.managers.UniswapV2PoolManager.instances.clear()
-    degenbot.uniswap.managers.UniswapV3PoolManager.instances.clear()
+    degenbot.types.AbstractPoolManager.instances.clear()
 
 
 @pytest.fixture(autouse=True)

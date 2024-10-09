@@ -1,5 +1,4 @@
 # TODO:
-# - add all module folders to __all__
 # - AllTokens and AllPools improvements
 #   - singleton created at import
 #   - make getter/setter methods with chain ID
@@ -33,8 +32,8 @@ from .erc20_token import Erc20Token
 from .logging import logger
 from .managers.erc20_token_manager import Erc20TokenManager
 from .pancakeswap.pools import PancakeV3Pool
-from .registry.all_pools import AllPools
-from .registry.all_tokens import AllTokens
+from .registry.all_pools import pool_registry
+from .registry.all_tokens import token_registry
 from .sushiswap.managers import SushiswapV2PoolManager, SushiswapV3PoolManager
 from .sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
 from .transaction.uniswap_transaction import UniswapTransaction
@@ -62,9 +61,11 @@ __all__ = (
     "get_web3",
     "logger",
     "pancakeswap",
+    "pool_registry",
     "set_web3",
     "solidly",
     "sushiswap",
+    "token_registry",
     "uniswap",
     "AerodromeV2Pool",
     "AerodromeV2PoolManager",
@@ -72,8 +73,6 @@ __all__ = (
     "AerodromeV3Pool",
     "AerodromeV3PoolManager",
     "AerodromeV3PoolState",
-    "AllPools",
-    "AllTokens",
     "AnvilFork",
     "ArbitrageCalculationResult",
     "BuilderEndpoint",

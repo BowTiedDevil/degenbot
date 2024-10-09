@@ -4,7 +4,7 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from degenbot.config import set_web3
-from degenbot.erc20_token import EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE, Erc20Token
+from degenbot.erc20_token import Erc20Token, EtherPlaceholder
 from degenbot.exceptions import DegenbotValueError
 
 VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
@@ -133,7 +133,7 @@ def test_erc20token_functions(ethereum_archive_node_web3: Web3):
 
 def test_ether_placeholder(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
-    ether = EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE()
+    ether = EtherPlaceholder()
 
     FAKE_BALANCE = 69_420_000
     current_block = ethereum_archive_node_web3.eth.block_number

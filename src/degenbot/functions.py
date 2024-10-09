@@ -11,7 +11,6 @@ from hexbytes import HexBytes
 from web3 import Web3
 from web3.types import BlockIdentifier
 
-from . import config
 from .constants import MAX_UINT256, MIN_UINT256
 from .exceptions import DegenbotValueError, EVMRevertError
 
@@ -111,20 +110,15 @@ def eip_191_hash(message: str, private_key: str) -> str:
     return result.signature.to_0x_hex()
 
 
-def get_number_for_block_identifier(
-    identifier: BlockIdentifier | None, w3: Web3 | None = None
-) -> int:
+def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3) -> int:
     match identifier:
         case None:
-            if w3 is None:
-                w3 = config.get_web3()
             return cast(int, w3.eth.get_block_number())
         case int() as block_number_as_int:
             return block_number_as_int
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
-            block_number = (
-                (w3 if w3 is not None else config.get_web3()).eth.get_block(block_tag).get("number")
-            )
+            block = w3.eth.get_block(block_tag)
+            block_number = block.get("number")
             if TYPE_CHECKING:
                 assert block_number is not None
             return cast(int, block_number)

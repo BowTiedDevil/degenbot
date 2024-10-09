@@ -58,7 +58,11 @@ def weth_token(ethereum_archive_node_web3) -> Erc20Token:
 
 
 @pytest.fixture
-def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> UniswapV2Pool:
+def wbtc_weth_v2_lp(
+    fork_mainnet: AnvilFork,
+    wbtc_token,
+    weth_token,
+) -> UniswapV2Pool:
     set_web3(fork_mainnet.w3)
     pool = UniswapV2Pool(WBTC_WETH_V2_POOL_ADDRESS)
     pool._state = UniswapV2PoolState(

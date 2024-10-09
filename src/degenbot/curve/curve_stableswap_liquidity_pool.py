@@ -13,15 +13,15 @@ from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 import web3.exceptions
-from eth_abi.exceptions import InsufficientDataBytes
+from eth_abi.exceptions import DecodingError, InsufficientDataBytes
 from eth_typing import AnyAddress, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
-from web3.contract.contract import Contract
+from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
-from .. import config
+from ..config import web3_connection_manager
 from ..constants import ZERO_ADDRESS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
@@ -31,12 +31,11 @@ from ..exceptions import (
     ZeroLiquidityError,
     ZeroSwapError,
 )
-from ..functions import get_number_for_block_identifier
+from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..logging import logger
 from ..managers.erc20_token_manager import Erc20TokenManager
-from ..registry.all_pools import AllPools
+from ..registry.all_pools import pool_registry
 from ..types import AbstractLiquidityPool
-from .abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from .deployments import (
     BROKEN_CURVE_V1_POOLS,
     CACHED_CURVE_V1_POOL_ATTRIBUTES,
@@ -63,27 +62,25 @@ class CurveStableswapPool(AbstractLiquidityPool):
     def __init__(
         self,
         address: ChecksumAddress | str,
-        abi: list[Any] | None = None,
-        silent: bool = False,
+        *,
+        chain_id: int | None = None,
         state_block: int | None = None,
+        silent: bool = False,
     ) -> None:
         """
-        Create a `CurveStableswapPool` object for interaction with a Curve V1
-        (StableSwap) pool.
+        A Curve V1 (StableSwap) pool.
 
         Arguments
         ---------
-        address : str
+        address:
             Address for the deployed pool contract.
-        tokens : List[Erc20Token], optional
-            "Erc20Token" objects for the tokens held by the deployed pool.
-        abi : list, optional
-            Contract ABI.
-        silent : bool
+        chain_id:
+            The chain ID where the pool contract is deployed.
+        state_block:
+            Fetch initial state values from the chain at a particular block height. Defaults to the
+            latest block if omitted.
+        silent:
             Suppress status output.
-        state_block: int, optional
-            Fetch initial state values from the chain at a particular block
-            height. Defaults to the latest block if omitted.
         """
 
         self.fee_gamma: int
@@ -95,14 +92,148 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self.use_lending: list[bool]
         self.oracle_method: int | None
 
-        def _get_coin_index_type() -> str:
+        self.initial_a_coefficient: int | None = None
+        self.initial_a_coefficient_time: int | None = None
+        self.future_a_coefficient: int | None = None
+        self.future_a_coefficient_time: int | None = None
+
+        def get_a_scaling_values() -> None:
+            with (
+                contextlib.suppress(Web3Exception, DecodingError),
+                w3.batch_requests() as batch,
+            ):
+                batch.add(
+                    w3.eth.call(
+                        transaction={
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="initial_A()",
+                                function_arguments=None,
+                            ),
+                        },
+                        block_identifier=state_block,
+                    )
+                )
+                batch.add(
+                    w3.eth.call(
+                        transaction={
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="initial_A_time()",
+                                function_arguments=None,
+                            ),
+                        },
+                        block_identifier=state_block,
+                    )
+                )
+                batch.add(
+                    w3.eth.call(
+                        transaction={
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="future_A()",
+                                function_arguments=None,
+                            ),
+                        },
+                        block_identifier=state_block,
+                    )
+                )
+                batch.add(
+                    w3.eth.call(
+                        transaction={
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="future_A_time()",
+                                function_arguments=None,
+                            ),
+                        },
+                        block_identifier=state_block,
+                    )
+                )
+
+                initial_a, initial_a_time, future_a, future_a_time = batch.execute()
+
+                initial_a, *_ = eth_abi.abi.decode(
+                    types=["uint256"], data=cast(HexBytes, initial_a)
+                )
+                initial_a_time, *_ = eth_abi.abi.decode(
+                    types=["uint256"], data=cast(HexBytes, initial_a_time)
+                )
+                future_a, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, future_a))
+                future_a_time, *_ = eth_abi.abi.decode(
+                    types=["uint256"], data=cast(HexBytes, future_a_time)
+                )
+
+                self.initial_a_coefficient = cast(int, initial_a)
+                self.initial_a_coefficient_time = cast(int, initial_a_time)
+                self.future_a_coefficient = cast(int, future_a)
+                self.future_a_coefficient_time = cast(int, future_a_time)
+
+        self.a_coefficient: int
+        self.fee: int
+        self.admin_fee: int
+
+        def get_coefficient_and_fees() -> None:
+            with w3.batch_requests() as batch:
+                batch.add(
+                    w3.eth.call(
+                        transaction={
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="A()",
+                                function_arguments=None,
+                            ),
+                        },
+                        block_identifier=state_block,
+                    )
+                )
+                batch.add(
+                    w3.eth.call(
+                        transaction={
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="fee()",
+                                function_arguments=None,
+                            ),
+                        },
+                        block_identifier=state_block,
+                    )
+                )
+                batch.add(
+                    w3.eth.call(
+                        transaction={
+                            "to": self.address,
+                            "data": encode_function_calldata(
+                                function_prototype="admin_fee()",
+                                function_arguments=None,
+                            ),
+                        },
+                        block_identifier=state_block,
+                    )
+                )
+
+                a_coefficient, pool_fee, admin_fee = batch.execute()
+
+                a_coefficient, *_ = eth_abi.abi.decode(
+                    types=["uint256"], data=cast(HexBytes, a_coefficient)
+                )
+                pool_fee, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, pool_fee))
+                admin_fee, *_ = eth_abi.abi.decode(
+                    types=["uint256"], data=cast(HexBytes, admin_fee)
+                )
+
+                self.a_coefficient = cast(int, a_coefficient)
+                self.fee = cast(int, pool_fee)
+                self.admin_fee = cast(int, admin_fee)
+
+        def get_coin_index_type() -> str:
             # Identify the coins input format (int128 or uint256)
             # Some contracts accept token_id as an int128, some accept uint256
             for _type in ["int128", "uint256"]:
                 try:
                     eth_abi.abi.decode(
                         types=["address"],
-                        data=_w3.eth.call(
+                        data=w3.eth.call(
                             transaction={
                                 "to": self.address,
                                 "data": Web3.keccak(text=f"coins({_type})")[:4]
@@ -121,41 +252,38 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
             raise DegenbotValueError("Could not determine input type for pool")  # pragma: no cover
 
-        def _get_token_addresses() -> list[ChecksumAddress]:
+        def get_token_addresses() -> list[ChecksumAddress]:
             token_addresses = []
             for token_id in range(self.MAX_COINS):
                 try:
-                    token_address, *_ = eth_abi.abi.decode(
-                        types=["address"],
-                        data=_w3.eth.call(
-                            transaction={
-                                "to": self.address,
-                                "data": Web3.keccak(text=f"coins({self._coin_index_type})")[:4]
-                                + eth_abi.abi.encode(
-                                    types=[self._coin_index_type], args=[token_id]
-                                ),
-                            },
-                            block_identifier=state_block,
+                    token_address: str
+                    token_address, *_ = raw_call(
+                        w3=w3,
+                        address=self.address,
+                        calldata=encode_function_calldata(
+                            function_prototype=f"coins({self._coin_index_type})",
+                            function_arguments=[token_id],
                         ),
+                        return_types=["address"],
+                        block_identifier=state_block,
                     )
+                    token_addresses.append(to_checksum_address(token_address))
                 except web3.exceptions.ContractLogicError:
                     break
-                else:
-                    token_addresses.append(to_checksum_address(token_address))
+
             return token_addresses
 
-        def _get_lp_token_address() -> ChecksumAddress:
-            for contract in [w3_registry_contract, w3_factory_contract]:
-                lp_token_address, *_ = eth_abi.abi.decode(
-                    types=["address"],
-                    data=_w3.eth.call(
-                        transaction={
-                            "to": contract.address,
-                            "data": Web3.keccak(text="get_lp_token(address)")[:4]
-                            + eth_abi.abi.encode(types=["address"], args=[self.address]),
-                        },
-                        block_identifier=state_block,
+        def get_lp_token_address() -> ChecksumAddress:
+            for contract_address in (CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS):
+                lp_token_address, *_ = raw_call(
+                    w3=web3_connection_manager.get_web3(chain_id=self.chain_id),
+                    address=contract_address,
+                    calldata=encode_function_calldata(
+                        function_prototype="get_lp_token(address)",
+                        function_arguments=[self.address],
                     ),
+                    return_types=["address"],
+                    block_identifier=state_block,
                 )
                 if lp_token_address != ZERO_ADDRESS:
                     return to_checksum_address(lp_token_address)
@@ -164,40 +292,35 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 f"Could not identify LP token for pool {self.address}"
             )  # pragma: no cover
 
-        def _get_pool_from_lp_token(token: AnyAddress) -> ChecksumAddress:
-            pool_address, *_ = eth_abi.abi.decode(
-                types=["address"],
-                data=_w3.eth.call(
-                    transaction={
-                        "to": w3_registry_contract.address,
-                        "data": Web3.keccak(text="get_pool_from_lp_token(address)")[:4]
-                        + eth_abi.abi.encode(
-                            types=["address"],
-                            args=[to_checksum_address(token)],
-                        ),
-                    },
-                    block_identifier=state_block,
+        def get_pool_from_lp_token(token: AnyAddress) -> ChecksumAddress:
+            pool_address, *_ = raw_call(
+                w3=web3_connection_manager.get_web3(chain_id=self.chain_id),
+                address=CURVE_V1_REGISTRY_ADDRESS,
+                calldata=encode_function_calldata(
+                    function_prototype="get_pool_from_lp_token(address)",
+                    function_arguments=[to_checksum_address(token)],
                 ),
+                return_types=["address"],
+                block_identifier=state_block,
             )
             return to_checksum_address(pool_address)
 
-        def _is_metapool() -> bool:
-            for contract in [w3_factory_contract, w3_registry_contract]:
-                is_meta, *_ = eth_abi.abi.decode(
-                    types=["bool"],
-                    data=_w3.eth.call(
-                        transaction={
-                            "to": contract.address,
-                            "data": Web3.keccak(text="is_meta(address)")[:4]
-                            + eth_abi.abi.encode(types=["address"], args=[self.address]),
-                        },
-                        block_identifier=state_block,
+        def is_metapool() -> bool:
+            for contract_address in (CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS):
+                is_meta, *_ = raw_call(
+                    w3=web3_connection_manager.get_web3(chain_id=self.chain_id),
+                    address=contract_address,
+                    calldata=encode_function_calldata(
+                        function_prototype="is_meta(address)",
+                        function_arguments=[self.address],
                     ),
+                    return_types=["bool"],
+                    block_identifier=state_block,
                 )
                 return cast(bool, is_meta)
             return False
 
-        def _set_pool_specific_attributes() -> None:
+        def set_pool_specific_attributes() -> None:
             match self.address:
                 case "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56":
                     self.use_lending = [True, True]
@@ -217,7 +340,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     self.precision_multipliers = [1, 10**12, 10**12]
                     self.offpeg_fee_multiplier, *_ = eth_abi.abi.decode(
                         types=["uint256"],
-                        data=_w3.eth.call(
+                        data=w3.eth.call(
                             transaction={
                                 "to": self.address,
                                 "data": Web3.keccak(text="offpeg_fee_multiplier()")[:4],
@@ -241,7 +364,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 ):
                     self.oracle_method, *_ = eth_abi.abi.decode(
                         types=["uint256"],
-                        data=_w3.eth.call(
+                        data=w3.eth.call(
                             transaction={
                                 "to": self.address,
                                 "data": Web3.keccak(text="oracle_method()")[:4],
@@ -252,7 +375,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 case "0xEB16Ae0052ed37f479f7fe63849198Df1765a733":
                     self.offpeg_fee_multiplier, *_ = eth_abi.abi.decode(
                         types=["uint256"],
-                        data=_w3.eth.call(
+                        data=w3.eth.call(
                             transaction={
                                 "to": self.address,
                                 "data": Web3.keccak(text="offpeg_fee_multiplier()")[:4],
@@ -265,29 +388,22 @@ class CurveStableswapPool(AbstractLiquidityPool):
         if self.address in BROKEN_CURVE_V1_POOLS:
             raise BrokenPool(f"Pool {self.address} is broken")
 
+        self._chain_id = (
+            chain_id if chain_id is not None else web3_connection_manager.default_chain_id
+        )
+        w3 = web3_connection_manager.get_web3(self.chain_id)
+        self._update_block = state_block if state_block is not None else w3.eth.block_number
+
         self._state_lock = Lock()
-        self.abi = abi if abi is not None else CURVE_V1_POOL_ABI
 
-        _w3 = config.get_web3()
-        chain_id = _w3.eth.chain_id
         if state_block is None:
-            state_block = _w3.eth.get_block_number()
-        self.update_block = state_block
+            state_block = w3.eth.get_block_number()
 
-        creation_block = _w3.eth.get_block(self.update_block)
+        creation_block = w3.eth.get_block(self._update_block)
         creation_block_timestamp = creation_block.get("timestamp")
         if TYPE_CHECKING:
             assert creation_block_timestamp is not None
         self._create_timestamp = creation_block_timestamp
-
-        w3_contract = self.w3_contract
-        w3_registry_contract = _w3.eth.contract(
-            address=CURVE_V1_REGISTRY_ADDRESS, abi=CURVE_V1_REGISTRY_ABI
-        )
-        w3_factory_contract = _w3.eth.contract(
-            address=CURVE_V1_FACTORY_ADDRESS,
-            abi=CURVE_V1_FACTORY_ABI,
-        )
 
         # @dev These dicts are simple caches to hold retrieved values from on-chain calls.
         # @dev They have no functionality to evict old values and will grow without bound
@@ -306,62 +422,34 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self._cached_scaled_redemption_price: dict[int, int] = {}
         self._cached_virtual_price: dict[int, int] = {}
 
-        self.a_coefficient: int = w3_contract.functions.A().call(block_identifier=state_block)
-        self.initial_a_coefficient: int | None = None
-        self.initial_a_coefficient_time: int | None = None
-        self.future_a_coefficient: int | None = None
-        self.future_a_coefficient_time: int | None = None
+        get_a_scaling_values()
+        get_coefficient_and_fees()
 
-        try:
-            self.initial_a_coefficient = w3_contract.functions.initial_A().call(
-                block_identifier=state_block
-            )
-            self.initial_a_coefficient_time = w3_contract.functions.initial_A_time().call(
-                block_identifier=state_block
-            )
-            self.future_a_coefficient = w3_contract.functions.future_A().call(
-                block_identifier=state_block
-            )
-            self.future_a_coefficient_time = w3_contract.functions.future_A_time().call(
-                block_identifier=state_block
-            )
-        except Exception:
-            pass
-
-        # fee setup
-        self.fee: int = w3_contract.functions.fee().call(block_identifier=state_block)
-        self.admin_fee: int = w3_contract.functions.admin_fee().call(block_identifier=state_block)
-
-        try:
+        cached_pool_attributes = None
+        with contextlib.suppress(KeyError):
             cached_pool_attributes = CurveStableSwapPoolAttributes(
-                **CACHED_CURVE_V1_POOL_ATTRIBUTES[chain_id][self.address]
+                **CACHED_CURVE_V1_POOL_ATTRIBUTES[self.chain_id][self.address]
             )
-        except KeyError:
-            cached_pool_attributes = None
 
         # token setup
-        self._coin_index_type = (
-            cached_pool_attributes.coin_index_type
-            if cached_pool_attributes is not None
-            else _get_coin_index_type()
-        )
-        token_addresses = (
-            [to_checksum_address(coin) for coin in cached_pool_attributes.coin_addresses]
-            if cached_pool_attributes is not None
-            else _get_token_addresses()
-        )
-        lp_token_address = (
-            to_checksum_address(cached_pool_attributes.lp_token_address)
-            if cached_pool_attributes is not None
-            else _get_lp_token_address()
-        )
+        self._coin_index_type: str
+        if cached_pool_attributes is not None:
+            self._coin_index_type = cached_pool_attributes.coin_index_type
+            token_addresses = [
+                to_checksum_address(coin) for coin in cached_pool_attributes.coin_addresses
+            ]
+            lp_token_address = to_checksum_address(cached_pool_attributes.lp_token_address)
+        else:
+            self._coin_index_type = get_coin_index_type()
+            token_addresses = get_token_addresses()
+            lp_token_address = get_lp_token_address()
 
-        token_manager = Erc20TokenManager(chain_id)
+        token_manager = Erc20TokenManager(chain_id=self.chain_id)
         self.lp_token = token_manager.get_erc20token(
             address=lp_token_address,
             silent=silent,
         )
-        self.tokens = tuple(
+        self.tokens: tuple[Erc20Token, ...] = tuple(
             [
                 token_manager.get_erc20token(
                     address=token_address,
@@ -376,7 +464,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self.is_metapool = (
             cached_pool_attributes.is_metapool
             if cached_pool_attributes is not None
-            else _is_metapool()
+            else is_metapool()
         )
         if self.is_metapool is True:
             # Curve metapools hold the LP token for the base pool at index 1
@@ -385,25 +473,22 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 to_checksum_address(cached_pool_attributes.base_pool_address)
                 if cached_pool_attributes is not None
                 and cached_pool_attributes.base_pool_address is not None
-                else _get_pool_from_lp_token(base_pool_lp_token_address)
+                else get_pool_from_lp_token(base_pool_lp_token_address)
             )
 
-            try:
-                base_pool = AllPools(chain_id)[base_pool_address]
-                if TYPE_CHECKING:
-                    assert isinstance(base_pool, CurveStableswapPool)
-                self.base_pool = base_pool
-            except KeyError:
-                self.base_pool = CurveStableswapPool(
+            if (
+                base_pool := pool_registry.get(
+                    pool_address=base_pool_address, chain_id=self.chain_id
+                )
+            ) is None:
+                base_pool = CurveStableswapPool(
                     base_pool_address, state_block=state_block, silent=silent
                 )
-
-            base_pool_tokens = self.base_pool.tokens
-
             if TYPE_CHECKING:
-                assert base_pool_tokens is not None
+                assert isinstance(base_pool, CurveStableswapPool)
 
-            self.tokens_underlying = tuple([self.tokens[0]] + list(base_pool_tokens))
+            self.base_pool = base_pool
+            self.tokens_underlying = tuple([self.tokens[0]] + list(self.base_pool.tokens))
 
             self.base_cache_updated: int | None = None
             with contextlib.suppress(web3.exceptions.ContractLogicError):
@@ -417,7 +502,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         for token_id, _ in enumerate(self.tokens):
             token_balance, *_ = eth_abi.abi.decode(
                 types=[self._coin_index_type],
-                data=_w3.eth.call(
+                data=w3.eth.call(
                     transaction={
                         "to": self.address,
                         "data": Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
@@ -442,7 +527,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             10 ** (self.PRECISION_DECIMALS - token.decimals) for token in self.tokens
         ]
 
-        _set_pool_specific_attributes()
+        set_pool_specific_attributes()
 
         fee_string = f"{100*self.fee/self.FEE_DENOMINATOR:.2f}"
         token_string = "-".join([token.symbol for token in self.tokens])
@@ -461,7 +546,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             state_block: self.state,
         }
 
-        AllPools(chain_id)[self.address] = self
+        pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
         if not silent:
             logger.info(
@@ -487,17 +572,14 @@ class CurveStableswapPool(AbstractLiquidityPool):
         token_string = "-".join([token.symbol for token in self.tokens])
         return f"CurveStableswapPool(address={self.address}, tokens={token_string}, fee={100*self.fee/self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"  # noqa:E501
 
+    @property
+    def chain_id(self) -> int:
+        return self._chain_id
+
     def _update_pool_state(self) -> None:
         self.state = CurveStableswapPoolState(pool=self.address, balances=self.balances)
         self._notify_subscribers(
             message=CurveStableSwapPoolStateUpdated(self.state),
-        )
-
-    @property
-    def w3_contract(self) -> Contract:
-        return config.get_web3().eth.contract(
-            address=self.address,
-            abi=self.abi,
         )
 
     def _A(self, timestamp: int | None = None) -> int:
@@ -521,7 +603,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
             return self.future_a_coefficient
 
         if timestamp is None:
-            latest_block = config.get_web3().eth.get_block("latest")
+            w3 = web3_connection_manager.get_web3(self.chain_id)
+            latest_block = w3.eth.get_block("latest")
             timestamp = latest_block.get("timestamp")
             if TYPE_CHECKING:
                 assert timestamp is not None
@@ -551,19 +634,17 @@ class CurveStableswapPool(AbstractLiquidityPool):
         return scaled_A
 
     def _get_scaled_redemption_price(self, block_number: int) -> int:
-        try:
+        with contextlib.suppress(KeyError):
             return self._cached_scaled_redemption_price[block_number]
-        except KeyError:
-            pass
 
         REDEMPTION_PRICE_SCALE = 10**9
 
-        _w3 = config.get_web3()
+        w3 = web3_connection_manager.get_web3(self.chain_id)
 
         snap_contract_address: str
         snap_contract_address, *_ = eth_abi.abi.decode(
             types=["address"],
-            data=_w3.eth.call(
+            data=w3.eth.call(
                 transaction={
                     "to": self.address,
                     "data": Web3.keccak(text="redemption_price_snap()")[:4],
@@ -575,7 +656,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         rate: int
         rate, *_ = eth_abi.abi.decode(
             types=["uint256"],
-            data=_w3.eth.call(
+            data=w3.eth.call(
                 transaction={
                     "to": to_checksum_address(snap_contract_address),
                     "data": Web3.keccak(text="snappedRedemptionPrice()")[:4],
@@ -602,21 +683,9 @@ class CurveStableswapPool(AbstractLiquidityPool):
         @param j Index value of the coin to recieve
         @param dx Amount of `i` being exchanged
         @return Amount of `j` predicted
+
+        Reference: https://github.com/curveresearch/notes/blob/main/stableswap.pdf
         """
-        # ref: https://github.com/curveresearch/notes/blob/main/stableswap.pdf
-
-        result: int
-
-        if override_state is not None:
-            pool_balances = override_state.balances.copy()
-        else:
-            pool_balances = self.balances.copy()
-
-        block_number = (
-            config.get_web3().eth.get_block_number()
-            if block_identifier is None
-            else get_number_for_block_identifier(block_identifier)
-        )
 
         def _dynamic_fee(xpi: int, xpj: int, _fee: int, _feemul: int) -> int:
             if _feemul <= self.FEE_DENOMINATOR:
@@ -626,6 +695,22 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 return (_feemul * _fee) // (
                     (_feemul - self.FEE_DENOMINATOR) * 4 * xpi * xpj // xps2 + self.FEE_DENOMINATOR
                 )
+
+        result: int
+
+        if override_state is not None:
+            pool_balances = override_state.balances.copy()
+        else:
+            pool_balances = self.balances.copy()
+
+        block_number = (
+            get_number_for_block_identifier(
+                block_identifier,
+                web3_connection_manager.get_web3(self.chain_id),
+            )
+            if block_identifier is None
+            else cast(int, block_identifier)
+        )
 
         if self.address in (
             "0x4e0915C88bC70750D68C481540F081fEFaF22273",
@@ -692,17 +777,15 @@ class CurveStableswapPool(AbstractLiquidityPool):
             # off-chain
 
             def _D(block_number: int) -> int:
-                try:
+                with contextlib.suppress(KeyError):
                     return self._cached_contract_D[block_number]
-                except KeyError:
-                    pass
 
-                _w3 = config.get_web3()
+                w3 = web3_connection_manager.get_web3(self.chain_id)
 
                 D: int
                 D, *_ = eth_abi.abi.decode(
                     types=["uint256"],
-                    data=_w3.eth.call(
+                    data=w3.eth.call(
                         transaction={
                             "to": self.address,
                             "data": Web3.keccak(text="D()")[:4],
@@ -714,17 +797,15 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 return D
 
             def _gamma(block_number: int) -> int:
-                try:
+                with contextlib.suppress(KeyError):
                     return self._cached_gamma[block_number]
-                except KeyError:
-                    pass
 
-                _w3 = config.get_web3()
+                w3 = web3_connection_manager.get_web3(self.chain_id)
 
                 gamma: int
                 gamma, *_ = eth_abi.abi.decode(
                     types=["uint256"],
-                    data=_w3.eth.call(
+                    data=w3.eth.call(
                         transaction={
                             "to": self.address,
                             "data": Web3.keccak(text="gamma()")[:4],
@@ -736,19 +817,18 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 return gamma
 
             def _price_scale(block_number: int) -> list[int]:
-                try:
+                with contextlib.suppress(KeyError):
                     return self._cached_price_scale[block_number]
-                except KeyError:
-                    pass
 
                 N_COINS = len(self.tokens)
-                _w3 = config.get_web3()
+
+                w3 = web3_connection_manager.get_web3(self.chain_id)
 
                 price_scale = [0] * (N_COINS - 1)
                 for token_index in range(N_COINS - 1):
                     price_scale[token_index], *_ = eth_abi.abi.decode(
                         types=["uint256"],
-                        data=_w3.eth.call(
+                        data=w3.eth.call(
                             transaction={
                                 "to": self.address,
                                 "data": Web3.keccak(text="price_scale(uint256)")[:4]
@@ -1160,11 +1240,9 @@ class CurveStableswapPool(AbstractLiquidityPool):
         else:
             pool_balances = self.balances.copy()
 
-        block_number = (
-            config.get_web3().eth.get_block_number()
-            if block_identifier is None
-            else get_number_for_block_identifier(block_identifier)
-        )
+        w3 = web3_connection_manager.get_web3(self.chain_id)
+
+        block_number = get_number_for_block_identifier(block_identifier, w3)
 
         if self.address == "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d":
             BASE_N_COINS = len(self.base_pool.tokens)
@@ -1397,15 +1475,15 @@ class CurveStableswapPool(AbstractLiquidityPool):
             return dy
 
     def _get_base_cache_updated(self, block_number: int) -> int:
-        try:
+        with contextlib.suppress(KeyError):
             return self._cached_base_cache_updated[block_number]
-        except KeyError:
-            pass
+
+        w3 = web3_connection_manager.get_web3(self.chain_id)
 
         base_cache_updated: int
         base_cache_updated, *_ = eth_abi.abi.decode(
             types=["uint256"],
-            data=config.get_web3().eth.call(
+            data=w3.eth.call(
                 transaction={
                     "to": self.address,
                     "data": Web3.keccak(text="base_cache_updated()")[:4],
@@ -1417,15 +1495,15 @@ class CurveStableswapPool(AbstractLiquidityPool):
         return base_cache_updated
 
     def _get_base_virtual_price(self, block_number: int) -> int:
-        try:
+        with contextlib.suppress(KeyError):
             return self._cached_base_virtual_price[block_number]
-        except KeyError:
-            pass
+
+        w3 = web3_connection_manager.get_web3(self.chain_id)
 
         base_virtual_price: int
         base_virtual_price, *_ = eth_abi.abi.decode(
             types=["uint256"],
-            data=config.get_web3().eth.call(
+            data=w3.eth.call(
                 transaction={
                     "to": self.address,
                     "data": Web3.keccak(text="base_virtual_price()")[:4],
@@ -1440,15 +1518,13 @@ class CurveStableswapPool(AbstractLiquidityPool):
         if TYPE_CHECKING:
             assert self.base_pool is not None
 
-        try:
+        with contextlib.suppress(KeyError):
             return self._cached_virtual_price[block_number]
-        except KeyError:
-            pass
 
         BASE_CACHE_EXPIRES = 10 * 60  # 10 minutes
 
-        _w3 = config.get_web3()
-        block = _w3.eth.get_block(block_identifier=block_number)
+        w3 = web3_connection_manager.get_web3(self.chain_id)
+        block = w3.eth.get_block(block_identifier=block_number)
         timestamp = block.get("timestamp")
         if TYPE_CHECKING:
             assert timestamp is not None
@@ -1460,7 +1536,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         ):
             base_virtual_price, *_ = eth_abi.abi.decode(
                 types=["uint256"],
-                data=_w3.eth.call(
+                data=w3.eth.call(
                     transaction={
                         "to": self.base_pool.address,
                         "data": Web3.keccak(text="get_virtual_price()")[:4],
@@ -1499,11 +1575,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
         else:
             pool_balances = self.balances.copy()
 
-        block_number = (
-            config.get_web3().eth.get_block_number()
-            if block_identifier is None
-            else get_number_for_block_identifier(block_identifier)
-        )
+        w3 = web3_connection_manager.get_web3(self.chain_id)
+        block_number = get_number_for_block_identifier(block_identifier, w3)
 
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
         amp = self._A()
@@ -1526,11 +1599,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
     def _calc_withdraw_one_coin(
         self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, ...]:
-        block_number = (
-            config.get_web3().eth.get_block_number()
-            if block_identifier is None
-            else get_number_for_block_identifier(block_identifier)
-        )
+        w3 = web3_connection_manager.get_web3(self.chain_id)
+        block_number = get_number_for_block_identifier(block_identifier, w3)
 
         N_COINS = len(self.tokens)
 
@@ -1555,15 +1625,21 @@ class CurveStableswapPool(AbstractLiquidityPool):
         return dy, dy_0 - dy, total_supply
 
     def _get_admin_balance(self, token_index: int, block_number: int) -> int:
-        try:
+        with contextlib.suppress(KeyError):
             return self._cached_admin_balance[block_number, token_index]
-        except KeyError:
-            pass
 
         admin_balance: int
-        admin_balance = self.w3_contract.functions.admin_balances(token_index).call(
-            block_identifier=block_number
+        admin_balance, *_ = raw_call(
+            w3=web3_connection_manager.get_web3(chain_id=self.chain_id),
+            address=self.address,
+            calldata=encode_function_calldata(
+                function_prototype="admin_balances(uint256)",
+                function_arguments=[token_index],
+            ),
+            return_types=["uint256"],
+            block_identifier=block_number,
         )
+
         self._cached_admin_balance[block_number, token_index] = admin_balance
         return admin_balance
 
@@ -1894,12 +1970,10 @@ class CurveStableswapPool(AbstractLiquidityPool):
             return y
 
     def _stored_rates_from_ctokens(self, block_number: int) -> list[int]:
-        try:
+        with contextlib.suppress(KeyError):
             return self._cached_rates_from_ctokens[block_number]
-        except KeyError:
-            pass
 
-        _w3 = config.get_web3()
+        w3 = web3_connection_manager.get_web3(self.chain_id)
 
         result = []
         for token, use_lending, multiplier in zip(
@@ -1913,7 +1987,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             else:
                 rate, *_ = eth_abi.abi.decode(
                     types=["uint256"],
-                    data=_w3.eth.call(
+                    data=w3.eth.call(
                         transaction={
                             "to": token.address,
                             "data": Web3.keccak(text="exchangeRateStored()")[:4],
@@ -1923,7 +1997,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 )
                 supply_rate, *_ = eth_abi.abi.decode(
                     types=["uint256"],
-                    data=_w3.eth.call(
+                    data=w3.eth.call(
                         transaction={
                             "to": token.address,
                             "data": Web3.keccak(text="supplyRatePerBlock()")[:4],
@@ -1933,7 +2007,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 )
                 old_block, *_ = eth_abi.abi.decode(
                     types=["uint256"],
-                    data=_w3.eth.call(
+                    data=w3.eth.call(
                         transaction={
                             "to": token.address,
                             "data": Web3.keccak(text="accrualBlockNumber()")[:4],
@@ -1950,12 +2024,10 @@ class CurveStableswapPool(AbstractLiquidityPool):
         return result
 
     def _stored_rates_from_ytokens(self, block_number: int) -> list[int]:
-        try:
+        with contextlib.suppress(KeyError):
             return self._cached_rates_from_ytokens[block_number]
-        except KeyError:
-            pass
 
-        _w3 = config.get_web3()
+        w3 = web3_connection_manager.get_web3(self.chain_id)
 
         # ref: https://etherscan.io/address/0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27#code
 
@@ -1969,7 +2041,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             if use_lending:
                 rate, *_ = eth_abi.abi.decode(
                     types=["uint256"],
-                    data=_w3.eth.call(
+                    data=w3.eth.call(
                         transaction={
                             "to": token.address,
                             "data": Web3.keccak(text="getPricePerFullShare()")[:4],
@@ -1986,12 +2058,10 @@ class CurveStableswapPool(AbstractLiquidityPool):
         return result
 
     def _stored_rates_from_cytokens(self, block_number: int) -> list[int]:
-        try:
+        with contextlib.suppress(KeyError):
             return self._cached_rates_from_cytokens[block_number]
-        except KeyError:
-            pass
 
-        _w3 = config.get_web3()
+        w3 = web3_connection_manager.get_web3(self.chain_id)
 
         result = []
         for token, precision_multiplier in zip(
@@ -2000,7 +2070,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             rate, *_ = eth_abi.abi.decode(
                 types=["uint256"],
                 data=(
-                    _w3.eth.call(
+                    w3.eth.call(
                         transaction={
                             "to": token.address,
                             "data": Web3.keccak(text="exchangeRateStored()")[:4],
@@ -2011,7 +2081,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             )
             supply_rate, *_ = eth_abi.abi.decode(
                 types=["uint256"],
-                data=_w3.eth.call(
+                data=w3.eth.call(
                     transaction={
                         "to": token.address,
                         "data": Web3.keccak(text="supplyRatePerBlock()")[:4],
@@ -2021,7 +2091,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             )
             old_block, *_ = eth_abi.abi.decode(
                 types=["uint256"],
-                data=_w3.eth.call(
+                data=w3.eth.call(
                     transaction={
                         "to": token.address,
                         "data": Web3.keccak(text="accrualBlockNumber()")[:4],
@@ -2037,17 +2107,15 @@ class CurveStableswapPool(AbstractLiquidityPool):
         return result
 
     def _stored_rates_from_reth(self, block_number: int) -> list[int]:
-        try:
+        with contextlib.suppress(KeyError):
             return [self.PRECISION, self._cached_rates_from_reth[block_number]]
-        except KeyError:
-            pass
 
-        _w3 = config.get_web3()
+        w3 = web3_connection_manager.get_web3(self.chain_id)
 
         # ref: https://etherscan.io/address/0xF9440930043eb3997fc70e1339dBb11F341de7A8#code
         ratio, *_ = eth_abi.abi.decode(
             types=["uint256"],
-            data=_w3.eth.call(
+            data=w3.eth.call(
                 transaction={
                     "to": self.tokens[1].address,
                     "data": Web3.keccak(text="getExchangeRate()")[:4],
@@ -2059,21 +2127,20 @@ class CurveStableswapPool(AbstractLiquidityPool):
         return [self.PRECISION, ratio]
 
     def _stored_rates_from_aeth(self, block_number: int) -> list[int]:
-        try:
-            ratio = self._cached_rates_from_aeth[block_number]
+        with contextlib.suppress(KeyError):
             return [
                 self.PRECISION,
-                self.PRECISION * self.LENDING_PRECISION // ratio,
+                self.PRECISION
+                * self.LENDING_PRECISION
+                // self._cached_rates_from_aeth[block_number],
             ]
-        except KeyError:
-            pass
 
-        _w3 = config.get_web3()
+        w3 = web3_connection_manager.get_web3(self.chain_id)
 
         # ref: https://etherscan.io/address/0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2#code
         _ratio, *_ = eth_abi.abi.decode(
             types=["uint256"],
-            data=_w3.eth.call(
+            data=w3.eth.call(
                 transaction={
                     "to": self.tokens[1].address,
                     "data": Web3.keccak(text="ratio()")[:4],
@@ -2090,12 +2157,10 @@ class CurveStableswapPool(AbstractLiquidityPool):
         ]
 
     def _stored_rates_from_oracle(self, block_number: int) -> list[int]:
-        try:
+        with contextlib.suppress(KeyError):
             return self._cached_rates_from_oracle[block_number]
-        except KeyError:
-            pass
 
-        _w3 = config.get_web3()
+        w3 = web3_connection_manager.get_web3(self.chain_id)
 
         # ref: https://etherscan.io/address/0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492#code
         ORACLE_BIT_MASK = (2**32 - 1) * 256**28
@@ -2108,7 +2173,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         if oracle != 0:
             oracle_rate, *_ = eth_abi.abi.decode(
                 types=["uint256"],
-                data=_w3.eth.call(
+                data=w3.eth.call(
                     transaction={
                         "to": to_checksum_address(HexBytes(oracle % 2**160)),
                         "data": HexBytes(oracle & ORACLE_BIT_MASK),
@@ -2131,9 +2196,9 @@ class CurveStableswapPool(AbstractLiquidityPool):
         Retrieve updated balances from the contract
         """
 
-        _w3 = config.get_web3()
+        w3 = web3_connection_manager.get_web3(self.chain_id)
         if block_number is None:
-            block_number = _w3.eth.get_block_number()
+            block_number = w3.eth.get_block_number()
 
         found_updates = False
         token_balances = []
@@ -2141,7 +2206,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         for token_id, _ in enumerate(self.tokens):
             token_balance, *_ = eth_abi.abi.decode(
                 types=[coin_index_type],
-                data=_w3.eth.call(
+                data=w3.eth.call(
                     transaction={
                         "to": self.address,
                         "data": Web3.keccak(text=f"balances({coin_index_type})")[:4]
@@ -2163,7 +2228,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             found_updates = True
             self.balances = token_balances
 
-        self.update_block = block_number
+        self._update_block = block_number
 
         return found_updates, CurveStableswapPoolState(pool=self.address, balances=self.balances)
 
@@ -2180,9 +2245,12 @@ class CurveStableswapPool(AbstractLiquidityPool):
         """
 
         block_number = (
-            config.get_web3().eth.get_block_number()
+            get_number_for_block_identifier(
+                block_identifier,
+                web3_connection_manager.get_web3(self.chain_id),
+            )
             if block_identifier is None
-            else get_number_for_block_identifier(block_identifier)
+            else cast(int, block_identifier)
         )
 
         if token_in_quantity <= 0:

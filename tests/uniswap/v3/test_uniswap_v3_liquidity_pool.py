@@ -83,9 +83,13 @@ def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool):
     wbtc_weth_v3_lp_at_block_17_600_000._fetch_tick_data_at_word(word_position + 5)
 
 
-def test_creation(ethereum_archive_node_web3: Web3) -> None:
+def test_pool_creation(ethereum_archive_node_web3: Web3) -> None:
     set_web3(ethereum_archive_node_web3)
     UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
+
+
+def test_pool_creation_with_liquidity_map(ethereum_archive_node_web3: Web3) -> None:
+    set_web3(ethereum_archive_node_web3)
     assert (
         UniswapV3Pool(
             address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={}, tick_data={}

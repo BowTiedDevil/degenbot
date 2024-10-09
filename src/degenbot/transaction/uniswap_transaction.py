@@ -13,7 +13,7 @@ from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
 
-from .. import config
+from ..config import web3_connection_manager
 from ..constants import WRAPPED_NATIVE_TOKENS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
@@ -125,6 +125,8 @@ class UniswapTransaction(AbstractTransaction):
         self.v2_pool_manager: UniswapV2PoolManager | None = None
         self.v3_pool_manager: UniswapV3PoolManager | None = None
 
+        self.chain_id = int(chain_id, 16) if isinstance(chain_id, str) else chain_id
+
         if router is not None:
             self.chain_id = router.exchanges[0].chain_id
             self.router_address = router.address
@@ -144,7 +146,6 @@ class UniswapTransaction(AbstractTransaction):
         else:
             if router_address is None:
                 raise DegenbotValueError("Router address not provided")
-            self.chain_id = int(chain_id, 16) if isinstance(chain_id, str) else chain_id
 
             self.router_address = to_checksum_address(router_address)
             if self.router_address not in ROUTER_DEPLOYMENTS[self.chain_id]:
@@ -184,15 +185,14 @@ class UniswapTransaction(AbstractTransaction):
         self.silent = False
 
     def _raise_if_past_deadline(self, deadline: int) -> None:
-        block = config.get_web3().eth.get_block(self.state_block)
+        block = web3_connection_manager.get_web3(self.chain_id).eth.get_block(self.state_block)
         block_timestamp = block.get("timestamp")
         if block_timestamp is not None and block_timestamp > deadline:
             raise TransactionError("Deadline expired")
 
-    @staticmethod
-    def _raise_if_block_hash_mismatch(block_hash: HexBytes) -> None:
+    def _raise_if_block_hash_mismatch(self, block_hash: HexBytes) -> None:
         logger.info(f"Checking previousBlockhash: {block_hash!r}")
-        block = config.get_web3().eth.get_block("latest")
+        block = web3_connection_manager.get_web3(self.chain_id).eth.get_block("latest")
         _block_hash = block.get("hash")
         if _block_hash is not None and block_hash != _block_hash:
             raise TransactionError("Previous block hash mismatch")
@@ -2181,7 +2181,9 @@ class UniswapTransaction(AbstractTransaction):
                         logger.info(f"{amount0_desired=}")
                         logger.info(f"{amount1_desired=}")
 
-                        positions_contract = config.get_web3().eth.contract(
+                        positions_contract = web3_connection_manager.get_web3(
+                            self.chain_id
+                        ).eth.contract(
                             address=to_checksum_address(
                                 "0xC36442b4a4522E871399CD717aBDD847Ab11FE88"
                             ),
@@ -2319,11 +2321,11 @@ class UniswapTransaction(AbstractTransaction):
 
         self.silent = silent
 
-        self.state_block: BlockNumber
-        if state_block is None:
-            self.state_block = config.get_web3().eth.get_block_number()
-        else:
-            self.state_block = cast(BlockNumber, state_block)
+        self.state_block = (
+            web3_connection_manager.get_web3(self.chain_id).eth.get_block_number()
+            if state_block is None
+            else cast(BlockNumber, state_block)
+        )
 
         self.simulated_pool_states: list[
             tuple[UniswapV2Pool, UniswapV2PoolSimulationResult]
@@ -2339,8 +2341,5 @@ class UniswapTransaction(AbstractTransaction):
             raise self.LeftoverRouterBalance(
                 "Unaccounted router balance", self.ledger.balances[self.router_address]
             )
-
-        # if not silent:
-        #     logger.info(f"{self.simulated_pool_states=}")
 
         return self.simulated_pool_states

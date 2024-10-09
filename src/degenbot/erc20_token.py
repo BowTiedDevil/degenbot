@@ -10,12 +10,12 @@ from web3 import Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
-from . import config
 from .chainlink import ChainlinkPriceContract
+from .config import web3_connection_manager
 from .exceptions import DegenbotValueError, NoPriceOracle
 from .functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from .logging import logger
-from .registry.all_tokens import AllTokens
+from .registry.all_tokens import token_registry
 from .types import AbstractErc20Token
 
 
@@ -117,11 +117,17 @@ class Erc20Token(AbstractErc20Token):
     def __init__(
         self,
         address: str,
+        *,
+        chain_id: int | None = None,
         oracle_address: str | None = None,
         silent: bool = False,
     ) -> None:
-        w3 = config.get_web3()
         self.address = to_checksum_address(address)
+
+        self._chain_id = (
+            chain_id if chain_id is not None else web3_connection_manager.default_chain_id
+        )
+        w3 = self.w3
 
         self.name = self.UNKNOWN_NAME
         self.symbol = self.UNKNOWN_SYMBOL
@@ -161,10 +167,12 @@ class Erc20Token(AbstractErc20Token):
 
         self._price_oracle: ChainlinkPriceContract | None
         self._price_oracle = (
-            ChainlinkPriceContract(address=oracle_address) if oracle_address else None
+            ChainlinkPriceContract(address=oracle_address, chain_id=self.chain_id)
+            if oracle_address
+            else None
         )
 
-        AllTokens(chain_id=w3.eth.chain_id)[self.address] = self
+        token_registry.add(token_address=self.address, chain_id=self.chain_id, token=self)
 
         self._cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
         self._cached_balance: dict[tuple[int, ChecksumAddress], int] = {}
@@ -187,7 +195,7 @@ class Erc20Token(AbstractErc20Token):
 
         approval, *_ = eth_abi.abi.decode(
             types=["uint256"],
-            data=config.get_web3().eth.call(
+            data=self.w3.eth.call(
                 transaction={
                     "to": self.address,
                     "data": Web3.keccak(text="allowance(address,address)")[:4]
@@ -211,10 +219,16 @@ class Erc20Token(AbstractErc20Token):
         Retrieve the amount that can be spent by `spender` on behalf of `owner`.
         """
 
+        block_number = (
+            get_number_for_block_identifier(block_identifier, self.w3)
+            if block_identifier is None
+            else cast(int, block_identifier)
+        )
+
         return self._get_approval_cachable(
             to_checksum_address(owner),
             to_checksum_address(spender),
-            block_number=get_number_for_block_identifier(block_identifier),
+            block_number=block_number,
         )
 
     def _get_balance_cachable(
@@ -227,7 +241,7 @@ class Erc20Token(AbstractErc20Token):
 
         balance, *_ = eth_abi.abi.decode(
             types=["uint256"],
-            data=config.get_web3().eth.call(
+            data=self.w3.eth.call(
                 transaction={
                     "to": self.address,
                     "data": Web3.keccak(text="balanceOf(address)")[:4]
@@ -249,9 +263,16 @@ class Erc20Token(AbstractErc20Token):
         """
         Retrieve the ERC-20 balance for the given address.
         """
+
+        block_number = (
+            get_number_for_block_identifier(block_identifier, self.w3)
+            if block_identifier is None
+            else cast(int, block_identifier)
+        )
+
         return self._get_balance_cachable(
             address=to_checksum_address(address),
-            block_number=get_number_for_block_identifier(block_identifier),
+            block_number=block_number,
         )
 
     def _get_total_supply_cachable(self, block_number: int) -> int:
@@ -260,8 +281,11 @@ class Erc20Token(AbstractErc20Token):
 
         total_supply, *_ = eth_abi.abi.decode(
             types=["uint256"],
-            data=config.get_web3().eth.call(
-                transaction={"to": self.address, "data": Web3.keccak(text="totalSupply()")[:4]},
+            data=self.w3.eth.call(
+                transaction={
+                    "to": self.address,
+                    "data": Web3.keccak(text="totalSupply()")[:4],
+                },
                 block_identifier=block_number,
             ),
         )
@@ -275,15 +299,20 @@ class Erc20Token(AbstractErc20Token):
         Retrieve the total supply for this token.
         """
 
-        block_identifier = (
-            config.get_web3().eth.get_block_number()
+        block_number = (
+            get_number_for_block_identifier(
+                block_identifier,
+                self.w3,
+            )
             if block_identifier is None
-            else block_identifier
+            else cast(int, block_identifier)
         )
 
-        return self._get_total_supply_cachable(
-            block_number=get_number_for_block_identifier(block_identifier)
-        )
+        return self._get_total_supply_cachable(block_number=block_number)
+
+    @property
+    def chain_id(self) -> int:
+        return self._chain_id
 
     @property
     def price(self) -> float:
@@ -292,8 +321,12 @@ class Erc20Token(AbstractErc20Token):
         else:  # pragma: no cover
             raise NoPriceOracle(f"{self} does not have a price oracle.")
 
+    @property
+    def w3(self) -> Web3:
+        return web3_connection_manager.get_web3(self.chain_id)
 
-class EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE(Erc20Token):
+
+class EtherPlaceholder(Erc20Token):
     """
     An adapter for pools using the 'all Es' placeholder address to represent native Ether.
     """
@@ -303,9 +336,16 @@ class EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE(Erc20Token):
     name = "Ether Placeholder"
     decimals = 18
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        chain_id: int | None = None,
+    ) -> None:
+        self._chain_id = (
+            chain_id if chain_id is not None else web3_connection_manager.default_chain_id
+        )
         self._cached_balance: dict[tuple[int, ChecksumAddress], int] = {}
-        AllTokens(chain_id=config.get_web3().eth.chain_id)[self.address] = self
+        token_registry.add(token_address=self.address, chain_id=self._chain_id, token=self)
 
     def _get_balance_cachable(
         self,
@@ -315,7 +355,7 @@ class EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE(Erc20Token):
         with contextlib.suppress(KeyError):
             return self._cached_balance[block_number, address]
 
-        balance = config.get_web3().eth.get_balance(
+        balance = self.w3.eth.get_balance(
             address,
             block_identifier=block_number,
         )
@@ -327,7 +367,12 @@ class EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE(Erc20Token):
         address: AnyAddress,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
+        block_number = (
+            get_number_for_block_identifier(block_identifier, self.w3)
+            if block_identifier is None
+            else cast(int, block_identifier)
+        )
         return self._get_balance_cachable(
             address=to_checksum_address(address),
-            block_number=get_number_for_block_identifier(block_identifier),
+            block_number=block_number,
         )

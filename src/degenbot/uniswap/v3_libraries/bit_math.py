@@ -5,7 +5,7 @@ from ...exceptions import EVMRevertError
 # Reference: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/BitMath.sol
 
 
-def least_significant_bit(number: int):
+def least_significant_bit(number: int) -> int:
     """
     Find the least significant bit for the given number.
 

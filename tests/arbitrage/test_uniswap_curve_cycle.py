@@ -102,7 +102,7 @@ def test_pickle_arb(ethereum_archive_node_web3: Web3, weth: Erc20Token):
     pickle.dumps(arb)
 
 
-def test_arb_calculation(ethereum_archive_node_web3: Web3):
+def test_arb_calculation(ethereum_archive_node_web3: Web3, weth: Erc20Token):
     set_web3(ethereum_archive_node_web3)
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
     uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
@@ -111,8 +111,6 @@ def test_arb_calculation(ethereum_archive_node_web3: Web3):
     uniswap_v3_weth_dai_lp = UniswapV3Pool(UNISWAP_V3_WETH_DAI_ADDRESS)
     uniswap_v3_weth_usdc_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDC_ADDRESS)
     uniswap_v3_weth_usdt_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDT_ADDRESS)
-
-    weth = Erc20Token(WETH_ADDRESS)
 
     for swap_pools in [
         (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp),

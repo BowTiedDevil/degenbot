@@ -7,7 +7,7 @@ from degenbot import AnvilFork, PancakeV3Pool
 from degenbot.config import set_web3
 from degenbot.exceptions import ManagerAlreadyInitialized, ManagerError, PoolNotAssociated
 from degenbot.pancakeswap.managers import PancakeV3PoolManager
-from degenbot.registry.all_pools import AllPools
+from degenbot.registry.all_pools import pool_registry
 from degenbot.sushiswap.managers import SushiswapV2PoolManager
 from degenbot.uniswap.deployments import UniswapFactoryDeployment, UniswapV3ExchangeDeployment
 from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
@@ -102,20 +102,29 @@ def test_base_pancakeswap_v3(base_full_node_web3: Web3):
     set_web3(base_full_node_web3)
 
     # Exchange provided explicitly
-    v3_pool = PancakeV3Pool.from_exchange(
+    PancakeV3Pool.from_exchange(
         address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
         exchange=BASE_PANCAKESWAP_V3_EXCHANGE,
     )
 
+
+def test_base_pancakeswap_v3_with_builtin_exchange(base_full_node_web3: Web3):
+    set_web3(base_full_node_web3)
+
     # Exchange looked up implicitly from degenbot deployment module
-    v3_pool = PancakeV3Pool(
+    PancakeV3Pool(
         address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
     )
 
+
+def test_base_pancake_v3_pool_manager(base_full_node_web3: Web3):
+    set_web3(base_full_node_web3)
     pancakev3_lp_manager = PancakeV3PoolManager(
         factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
         deployer_address=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
     )
+
+    v3_pool = pancakev3_lp_manager.get_pool(BASE_CBETH_WETH_V3_POOL_ADDRESS)
 
     assert (
         pancakev3_lp_manager.get_pool_by_tokens_and_fee(
@@ -217,9 +226,6 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
         )
     )
 
-    # Redundant but provides test coverage of the __setitem__ method warning if a pool is recreated
-    AllPools(chain_id=1)[v2_weth_wbtc_lp.address] = v2_weth_wbtc_lp
-
     # Remove the pool from the manager
     del uniswap_v2_pool_manager[v2_weth_wbtc_lp]
 
@@ -235,7 +241,10 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
 
     # Remove from the manager and the AllPools tracker
     del uniswap_v2_pool_manager[new_v2_weth_wbtc_lp]
-    del AllPools(chain_id=1)[new_v2_weth_wbtc_lp]
+    pool_registry.remove(
+        pool_address=new_v2_weth_wbtc_lp.address,
+        chain_id=1,
+    )
 
     # This should be a completely new pool object
     super_new_v2_weth_wbtc_lp = uniswap_v2_pool_manager.get_pool_from_tokens(
@@ -247,10 +256,26 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
     assert super_new_v2_weth_wbtc_lp is not new_v2_weth_wbtc_lp
     assert super_new_v2_weth_wbtc_lp is not v2_weth_wbtc_lp
 
-    assert AllPools(chain_id=1).get(v2_weth_wbtc_lp.address) is super_new_v2_weth_wbtc_lp
-    len(AllPools(chain_id=1))
-    AllPools(chain_id=1)[super_new_v2_weth_wbtc_lp.address]
-    del AllPools(chain_id=1)[super_new_v2_weth_wbtc_lp.address]
+    assert (
+        pool_registry.get(
+            pool_address=v2_weth_wbtc_lp.address,
+            chain_id=1,
+        )
+        is super_new_v2_weth_wbtc_lp
+    )
+
+    pool_registry.remove(
+        pool_address=v2_weth_wbtc_lp.address,
+        chain_id=1,
+    )
+
+    assert (
+        pool_registry.get(
+            pool_address=v2_weth_wbtc_lp.address,
+            chain_id=1,
+        )
+        is not super_new_v2_weth_wbtc_lp
+    )
 
 
 def test_pools_from_token_path(ethereum_archive_node_web3: Web3) -> None:
@@ -285,7 +310,10 @@ def test_same_block(fork_mainnet: AnvilFork):
     )
 
     del uniswap_v2_pool_manager[v2_heyjoe_weth_lp]
-    del AllPools(chain_id=1)[v2_heyjoe_weth_lp]
+    pool_registry.remove(
+        pool_address=v2_heyjoe_weth_lp.address,
+        chain_id=1,
+    )
 
     new_v2_heyjoe_weth_lp = uniswap_v2_pool_manager.get_pool(
         pool_address="0xC928CF054fE73CaB56d753BA4b508da0F82FABFD",
