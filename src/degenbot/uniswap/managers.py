@@ -89,19 +89,6 @@ class UniswapV2PoolManager(AbstractPoolManager):
         self._tracked_pools: dict[ChecksumAddress, AbstractLiquidityPool] = dict()
         self._untracked_pools: set[ChecksumAddress] = set()
 
-    def __delitem__(self, pool: AbstractLiquidityPool | ChecksumAddress | str) -> None:
-        pool_address: ChecksumAddress
-
-        if isinstance(pool, AbstractLiquidityPool):
-            pool_address = pool.address
-        else:
-            pool_address = to_checksum_address(pool)
-
-        with contextlib.suppress(KeyError):
-            del self._tracked_pools[pool_address]
-
-        self._untracked_pools.discard(pool_address)
-
     def __repr__(self) -> str:  # pragma: no cover
         return f"UniswapV2PoolManager(factory={self._factory_address})"
 
@@ -279,14 +266,6 @@ class UniswapV3PoolManager(AbstractPoolManager):
         self._snapshot = snapshot
         self._tracked_pools: dict[ChecksumAddress, AbstractLiquidityPool] = dict()
         self._untracked_pools: set[ChecksumAddress] = set()
-
-    def __delitem__(self, pool: Pool | ChecksumAddress | str) -> None:
-        pool_address = pool.address if isinstance(pool, self.Pool) else to_checksum_address(pool)
-
-        with contextlib.suppress(KeyError):
-            del self._tracked_pools[pool_address]
-
-        self._untracked_pools.discard(pool_address)
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"UniswapV3PoolManager(factory={self._factory_address})"
