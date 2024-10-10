@@ -1,4 +1,3 @@
-
 from eth_utils.address import to_checksum_address
 from web3 import Web3
 
@@ -32,7 +31,7 @@ def test_create_base_chain_aerodrome_managers(base_full_node_web3: Web3):
 
     aerodrome_v3_lp = aerodrome_v3_pool_manager.get_pool(BASE_AERO_WETH_V3_POOL)
     aerodrome_v3_lp_from_tokens_and_tick_spacing = (
-        aerodrome_v3_pool_manager.get_pool_by_tokens_and_tick_spacing(
+        aerodrome_v3_pool_manager.get_pool_from_tokens_and_tick_spacing(
             token_addresses=(BASE_WETH_TOKEN, BASE_AERO_TOKEN),
             tick_spacing=BASE_AERO_WETH_V3_POOL_TICK_SPACING,
         )
