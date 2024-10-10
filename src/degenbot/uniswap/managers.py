@@ -1,11 +1,10 @@
 import contextlib
 from threading import Lock
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
-from eth_typing import BlockIdentifier, ChecksumAddress
+from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from typing_extensions import Self
-from web3 import Web3
 
 from ..config import web3_connection_manager
 from ..exceptions import (
@@ -15,11 +14,11 @@ from ..exceptions import (
     ManagerError,
     PoolNotAssociated,
 )
-from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..logging import logger
 from ..registry.all_pools import pool_registry
 from ..types import AbstractLiquidityPool, AbstractPoolManager
 from ..uniswap.deployments import UniswapV2ExchangeDeployment, UniswapV3ExchangeDeployment
+from ..uniswap.v2_functions import generate_v2_pool_address
 from .deployments import FACTORY_DEPLOYMENTS
 from .v3_functions import generate_v3_pool_address
 from .v3_snapshot import UniswapV3LiquiditySnapshot
@@ -106,32 +105,13 @@ class UniswapV2PoolManager(AbstractPoolManager):
     def __repr__(self) -> str:  # pragma: no cover
         return f"UniswapV2PoolManager(factory={self._factory_address})"
 
-    def _add_tracked_pool(self, pool_helper: AbstractLiquidityPool) -> None:
+    def _add_tracked_pool(self, pool_helper: Pool) -> None:
         with self._lock:
             self._tracked_pools[pool_helper.address] = pool_helper
 
     @property
     def chain_id(self) -> int:
         return self._chain_id
-
-    def get_pair_from_factory(
-        self,
-        w3: Web3,
-        token0: ChecksumAddress,
-        token1: ChecksumAddress,
-        block_identifier: BlockIdentifier | None = None,
-    ) -> str:
-        pool_address, *_ = raw_call(
-            w3=w3,
-            address=self._factory_address,
-            calldata=encode_function_calldata(
-                function_prototype="getPair(address,address)",
-                function_arguments=[token0, token1],
-            ),
-            return_types=["address"],
-            block_identifier=get_number_for_block_identifier(block_identifier, w3),
-        )
-        return cast(str, pool_address)
 
     def _build_pool(
         self,
@@ -157,7 +137,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         silent: bool = False,
         state_block: int | None = None,
         pool_class_kwargs: dict[str, Any] | None = None,
-    ) -> AbstractLiquidityPool:
+    ) -> Pool:
         """
         Get a pool from its address
         """
@@ -166,8 +146,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
 
         with contextlib.suppress(KeyError):
             result = self._tracked_pools[pool_address]
-            if TYPE_CHECKING:
-                assert isinstance(result, self.Pool)
+            assert isinstance(result, self.Pool)
             return result
 
         if pool_address in self._untracked_pools:
@@ -182,8 +161,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
                 chain_id=self._chain_id,
             )
         ) is not None:
-            if TYPE_CHECKING:
-                assert isinstance(pool_from_registry, self.Pool)
+            assert isinstance(pool_from_registry, self.Pool)
             if pool_from_registry.factory == self._factory_address:
                 self._add_tracked_pool(pool_from_registry)
                 return pool_from_registry
@@ -211,21 +189,19 @@ class UniswapV2PoolManager(AbstractPoolManager):
     def get_pool_from_tokens(
         self,
         token_addresses: tuple[str, str],
+        *,
         silent: bool = False,
         state_block: int | None = None,
         pool_class_kwargs: dict[str, Any] | None = None,
-    ) -> AbstractLiquidityPool:
+    ) -> Pool:
         """
         Get a pool by its token addresses
         """
 
-        pool_address = to_checksum_address(
-            self.get_pair_from_factory(
-                w3=web3_connection_manager.get_web3(self.chain_id),
-                token0=to_checksum_address(token_addresses[0]),
-                token1=to_checksum_address(token_addresses[1]),
-                block_identifier=None,
-            )
+        pool_address = generate_v2_pool_address(
+            deployer_address=self._deployer_address,
+            token_addresses=token_addresses,
+            init_hash=self._pool_init_hash,
         )
 
         return self.get_pool(
@@ -304,13 +280,8 @@ class UniswapV3PoolManager(AbstractPoolManager):
         self._tracked_pools: dict[ChecksumAddress, AbstractLiquidityPool] = dict()
         self._untracked_pools: set[ChecksumAddress] = set()
 
-    def __delitem__(self, pool: AbstractLiquidityPool | ChecksumAddress | str) -> None:
-        pool_address: ChecksumAddress
-
-        if isinstance(pool, AbstractLiquidityPool):
-            pool_address = pool.address
-        else:
-            pool_address = to_checksum_address(pool)
+    def __delitem__(self, pool: Pool | ChecksumAddress | str) -> None:
+        pool_address = pool.address if isinstance(pool, self.Pool) else to_checksum_address(pool)
 
         with contextlib.suppress(KeyError):
             del self._tracked_pools[pool_address]
@@ -376,6 +347,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
     def get_pool(
         self,
         pool_address: ChecksumAddress | str,
+        *,
         silent: bool = False,
         state_block: int | None = None,
         # keyword arguments passed to the pool class constructor
@@ -389,8 +361,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
 
         with contextlib.suppress(KeyError):
             result = self._tracked_pools[pool_address]
-            if TYPE_CHECKING:
-                assert isinstance(result, self.Pool)
+            assert isinstance(result, self.Pool)
             return result
 
         if pool_address in self._untracked_pools:
@@ -405,8 +376,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
                 chain_id=self._chain_id,
             )
         ) is not None:
-            if TYPE_CHECKING:
-                assert isinstance(pool_from_registry, self.Pool)
+            assert isinstance(pool_from_registry, self.Pool)
             if pool_from_registry.factory == self._factory_address:
                 self._add_tracked_pool(pool_from_registry)
                 return pool_from_registry
@@ -439,6 +409,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
             ChecksumAddress | str,
         ],
         pool_fee: int,
+        *,
         silent: bool = False,
         state_block: int | None = None,
         # keyword arguments passed to the pool class constructor
