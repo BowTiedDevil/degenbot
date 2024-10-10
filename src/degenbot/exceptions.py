@@ -98,7 +98,7 @@ class NoPriceOracle(Erc20TokenError):
 # 2nd level exceptions for Liquidity Pool classes
 class AddressMismatch(LiquidityPoolError):
     """
-    Raised when the expected pool address does not the provided address.
+    Raised when the expected pool address does not match the provided address.
     """
 
 
