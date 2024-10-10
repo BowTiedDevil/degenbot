@@ -84,7 +84,7 @@ def test_create_base_chain_managers(base_full_node_web3: Web3):
     uniswap_v2_lp = uniswap_v2_pool_manager.get_pool_from_tokens(
         token_addresses=(BASE_WETH_ADDRESS, BASE_DEGEN_ADDRESS)
     )
-    uniswap_v3_lp = uniswap_v3_pool_manager.get_pool_by_tokens_and_fee(
+    uniswap_v3_lp = uniswap_v3_pool_manager.get_pool_from_tokens_and_fee(
         token_addresses=(BASE_WETH_ADDRESS, BASE_DEGEN_ADDRESS),
         pool_fee=3000,
     )
@@ -127,7 +127,7 @@ def test_base_pancake_v3_pool_manager(base_full_node_web3: Web3):
     v3_pool = pancakev3_lp_manager.get_pool(BASE_CBETH_WETH_V3_POOL_ADDRESS)
 
     assert (
-        pancakev3_lp_manager.get_pool_by_tokens_and_fee(
+        pancakev3_lp_manager.get_pool_from_tokens_and_fee(
             token_addresses=(BASE_WETH_ADDRESS, BASE_CBETH_ADDRESS),
             pool_fee=100,
         )
@@ -179,7 +179,7 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
             MAINNET_WBTC_ADDRESS,
         )
     )
-    uniswap_v3_lp = uniswap_v3_pool_manager.get_pool_by_tokens_and_fee(
+    uniswap_v3_lp = uniswap_v3_pool_manager.get_pool_from_tokens_and_fee(
         token_addresses=(
             MAINNET_WETH_ADDRESS,
             MAINNET_WBTC_ADDRESS,

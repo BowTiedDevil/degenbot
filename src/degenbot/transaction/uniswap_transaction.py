@@ -1072,7 +1072,7 @@ class UniswapTransaction(AbstractTransaction):
 
                         if TYPE_CHECKING:
                             assert self.v3_pool_manager is not None
-                        v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
+                        v3_pool = self.v3_pool_manager.get_pool_from_tokens_and_fee(
                             token_addresses=(
                                 tx_token_in_address,
                                 tx_token_out_address,
@@ -1156,7 +1156,7 @@ class UniswapTransaction(AbstractTransaction):
 
                         if TYPE_CHECKING:
                             assert self.v3_pool_manager is not None
-                        v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
+                        v3_pool = self.v3_pool_manager.get_pool_from_tokens_and_fee(
                             token_addresses=(
                                 tx_token_in_address,
                                 tx_token_out_address,
@@ -1587,7 +1587,7 @@ class UniswapTransaction(AbstractTransaction):
 
                         if TYPE_CHECKING:
                             assert isinstance(self.v3_pool_manager, UniswapV3PoolManager)
-                        v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
+                        v3_pool = self.v3_pool_manager.get_pool_from_tokens_and_fee(
                             token_addresses=(
                                 tx_token_in_address,
                                 tx_token_out_address,
@@ -1682,7 +1682,7 @@ class UniswapTransaction(AbstractTransaction):
                             first_swap = token_pos == 0
                             last_swap = token_pos == last_token_pos
 
-                            v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
+                            v3_pool = self.v3_pool_manager.get_pool_from_tokens_and_fee(
                                 token_addresses=(
                                     tx_token_in_address,
                                     tx_token_out_address,
@@ -1760,7 +1760,7 @@ class UniswapTransaction(AbstractTransaction):
 
                         if TYPE_CHECKING:
                             assert isinstance(self.v3_pool_manager, UniswapV3PoolManager)
-                        v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
+                        v3_pool = self.v3_pool_manager.get_pool_from_tokens_and_fee(
                             token_addresses=(
                                 tx_token_in_address,
                                 tx_token_out_address,
@@ -1865,7 +1865,7 @@ class UniswapTransaction(AbstractTransaction):
                                 assert isinstance(tx_token_in_address, str)
                                 assert isinstance(tx_fee, int)
 
-                            v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
+                            v3_pool = self.v3_pool_manager.get_pool_from_tokens_and_fee(
                                 token_addresses=(
                                     tx_token_in_address,
                                     tx_token_out_address,
@@ -2128,7 +2128,7 @@ class UniswapTransaction(AbstractTransaction):
                         logger.info(f"{_tick_lower=}")
                         logger.info(f"{_tick_upper=}")
 
-                        v3_pool = self.v3_pool_manager.get_pool_by_tokens_and_fee(
+                        v3_pool = self.v3_pool_manager.get_pool_from_tokens_and_fee(
                             token_addresses=(token0, token1),
                             pool_fee=_fee,
                             silent=self.silent,
