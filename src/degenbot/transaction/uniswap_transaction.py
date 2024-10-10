@@ -1497,8 +1497,12 @@ class UniswapTransaction(AbstractTransaction):
                                     init_hash=self.v2_pool_manager._pool_init_hash,
                                 ),
                                 tokens=[
-                                    token_manager.get_erc20token(token0_address),
-                                    token_manager.get_erc20token(token1_address),
+                                    token_manager.get_erc20token(
+                                        token0_address, silent=self.silent
+                                    ),
+                                    token_manager.get_erc20token(
+                                        token1_address, silent=self.silent
+                                    ),
                                 ],
                             )
 

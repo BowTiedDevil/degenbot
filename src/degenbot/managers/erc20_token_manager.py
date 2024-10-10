@@ -43,6 +43,8 @@ class Erc20TokenManager(AbstractManager):
     def get_erc20token(
         self,
         address: str,
+        *,
+        silent: bool = False,
         # accept any number of keyword arguments, which are
         # passed directly to Erc20Token without validation
         **kwargs: Any,
@@ -62,7 +64,7 @@ class Erc20TokenManager(AbstractManager):
         if address == EtherPlaceholder.address:
             token_helper = EtherPlaceholder()
         else:
-            token_helper = Erc20Token(address=address, **kwargs)
+            token_helper = Erc20Token(address=address, silent=silent, **kwargs)
 
         with self._lock:
             self._erc20tokens[address] = token_helper
