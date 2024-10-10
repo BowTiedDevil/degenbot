@@ -5,7 +5,7 @@ from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from typing_extensions import Self
 
-from degenbot.exceptions import DegenbotValueError, RegistryAlreadyInitialized
+from ..exceptions import DegenbotValueError, RegistryAlreadyInitialized
 
 if TYPE_CHECKING:
     from ..erc20_token import Erc20Token
