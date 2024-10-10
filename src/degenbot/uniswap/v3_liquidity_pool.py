@@ -6,11 +6,13 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
+from eth_abi.exceptions import DecodingError
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from typing_extensions import Self
 from web3 import Web3
+from web3.exceptions import ContractLogicError
 from web3.types import BlockIdentifier
 
 from ..config import web3_connection_manager
@@ -140,6 +142,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         silent: bool = False,
     ):
         self.address = to_checksum_address(address)
+        self.factory: ChecksumAddress
 
         self._chain_id = (
             chain_id if chain_id is not None else web3_connection_manager.default_chain_id
@@ -157,19 +160,24 @@ class UniswapV3Pool(AbstractLiquidityPool):
             tick_data={},
         )
 
-        (
-            factory,
-            (token0, token1),
-            self.fee,
-            self.tick_spacing,
-            self.sqrt_price_x96,
-            self.tick,
-            self.liquidity,
-        ) = self.get_factory_tokens_liquidity_price_tick_batched(
-            w3=w3, state_block=self._update_block
-        )
-        self.factory = to_checksum_address(factory)
+        try:
+            (
+                factory,
+                (token0, token1),
+                self.fee,
+                self.tick_spacing,
+                self.sqrt_price_x96,
+                self.tick,
+                self.liquidity,
+            ) = self.get_factory_tokens_liquidity_price_tick_batched(
+                w3=w3, state_block=self._update_block
+            )
+        except (ContractLogicError, DecodingError) as exc:
+            # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
+            # here and raise as a pool-specific exception
+            raise LiquidityPoolError("Could not decode contract data") from exc
 
+        self.factory = to_checksum_address(factory)
         self.deployer_address = (
             to_checksum_address(deployer_address) if deployer_address is not None else self.factory
         )
