@@ -18,6 +18,8 @@ from ..registry.all_pools import pool_registry
 from ..types import AbstractLiquidityPool, AbstractPoolManager
 from ..uniswap.deployments import UniswapV2ExchangeDeployment, UniswapV3ExchangeDeployment
 from ..uniswap.v2_functions import generate_v2_pool_address
+from ..uniswap.v2_liquidity_pool import UniswapV2Pool
+from ..uniswap.v3_liquidity_pool import UniswapV3Pool
 from .deployments import FACTORY_DEPLOYMENTS
 from .v3_functions import generate_v3_pool_address
 from .v3_snapshot import UniswapV3LiquiditySnapshot
@@ -247,10 +249,9 @@ class UniswapV3PoolManager(AbstractPoolManager):
             )
             pool_init_hash = factory_deployment.pool_init_hash
         except KeyError:
-            if pool_init_hash is None:
-                raise ManagerError(
-                    "Cannot create UniswapV3 pool manager without factory address and pool init hash."  # noqa:E501
-                ) from None
+            if pool_init_hash is None:  # pragma: no branch
+                logger.info("Pool init hash is unknown. Using Uniswap V3 mainnet default.")
+                pool_init_hash = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH
             deployer_address = (
                 to_checksum_address(deployer_address)
                 if deployer_address is not None
