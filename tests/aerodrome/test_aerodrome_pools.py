@@ -14,6 +14,7 @@ from degenbot.aerodrome.types import (
     AerodromeV2PoolState,
     AerodromeV3PoolState,
 )
+from degenbot.exceptions import LateUpdateError
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 
 WETH_CONTRACT_ADDRESS = to_checksum_address("0x4200000000000000000000000000000000000006")
@@ -90,6 +91,9 @@ def test_auto_update(
         reserves_token1=lp.state.reserves_token1 + 1,
     )
     assert lp.auto_update() is True
+
+    with pytest.raises(LateUpdateError):
+        lp.auto_update(lp.update_block - 10)
 
 
 def test_external_update(

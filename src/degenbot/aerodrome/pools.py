@@ -11,7 +11,13 @@ from web3.types import BlockIdentifier
 
 from ..config import web3_connection_manager
 from ..erc20_token import Erc20Token
-from ..exceptions import AddressMismatch, DegenbotValueError, ExternalUpdateError, ZeroSwapError
+from ..exceptions import (
+    AddressMismatch,
+    DegenbotValueError,
+    ExternalUpdateError,
+    LateUpdateError,
+    ZeroSwapError,
+)
 from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..logging import logger
 from ..managers.erc20_token_manager import Erc20TokenManager
@@ -138,8 +144,8 @@ class AerodromeV2Pool(AbstractLiquidityPool):
         """
         with self._state_lock:
             if block_number is not None and block_number < self.update_block:
-                raise ExternalUpdateError(
-                    f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"  # noqa:E501
+                raise LateUpdateError(
+                    f"Current state recorded at block {self.update_block}, update requested for stale block {block_number}"  # noqa:E501
                 )
 
             state_updated = False

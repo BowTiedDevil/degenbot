@@ -15,6 +15,7 @@ from degenbot.exceptions import (
     AddressMismatch,
     DegenbotValueError,
     ExternalUpdateError,
+    LateUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
     ZeroSwapError,
@@ -977,7 +978,7 @@ def test_auto_update(
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update() is False
 
     # Attempt an update in the past
-    with pytest.raises(ExternalUpdateError):
+    with pytest.raises(LateUpdateError):
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update(
             block_number=_BLOCK_NUMBER - 10
         )

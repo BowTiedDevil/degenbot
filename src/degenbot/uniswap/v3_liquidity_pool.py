@@ -24,6 +24,7 @@ from ..exceptions import (
     EVMRevertError,
     ExternalUpdateError,
     InsufficientAmountOutError,
+    LateUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
@@ -794,8 +795,8 @@ class UniswapV3Pool(AbstractLiquidityPool):
 
         with self._state_lock:
             if block_number is not None and block_number < self.update_block:
-                raise ExternalUpdateError(
-                    f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"  # noqa:E501
+                raise LateUpdateError(
+                    f"Current state recorded at block {self.update_block}, update requested for stale block {block_number}"  # noqa:E501
                 )
 
             state_updated = False

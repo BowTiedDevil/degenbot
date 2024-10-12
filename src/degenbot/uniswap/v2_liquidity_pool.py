@@ -19,6 +19,7 @@ from ..exceptions import (
     AddressMismatch,
     DegenbotValueError,
     ExternalUpdateError,
+    LateUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
     ZeroSwapError,
@@ -781,10 +782,11 @@ class UniswapV2Pool(AbstractLiquidityPool):
         @dev this method uses a lock to guard state-modifying methods that might cause race
         conditions when used with threads.
         """
+
         with self._state_lock:
             if block_number is not None and block_number < self.update_block:
-                raise ExternalUpdateError(
-                    f"Current state recorded at block {self.update_block}, received update for stale block {block_number}"  # noqa:E501
+                raise LateUpdateError(
+                    f"Current state recorded at block {self.update_block}, update requested for stale block {block_number}"  # noqa:E501
                 )
 
             state_updated = False

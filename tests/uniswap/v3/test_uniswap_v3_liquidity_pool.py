@@ -14,6 +14,7 @@ from degenbot.exceptions import (
     DegenbotValueError,
     ExternalUpdateError,
     InsufficientAmountOutError,
+    LateUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
@@ -793,7 +794,7 @@ def test_auto_update(fork_mainnet: AnvilFork) -> None:
     lp.auto_update()  # update twice to cover the "no update" cases
 
     # Attempt an update in the past
-    with pytest.raises(ExternalUpdateError):
+    with pytest.raises(LateUpdateError):
         lp.auto_update(block_number=current_block - 10)
 
 

@@ -128,6 +128,12 @@ class InsufficientAmountOutError(LiquidityPoolError):
     """
 
 
+class LateUpdateError(LiquidityPoolError):
+    """
+    Raised when an automatic update is attempted at a block prior to the last recorded update.
+    """
+
+
 class MissingTickWordError(LiquidityPoolError):
     """
     Raised by the TickBitmap library when calling for an operation on a word that.
