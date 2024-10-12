@@ -657,9 +657,9 @@ class UniswapV2Pool(AbstractLiquidityPool):
         added_reserves_token1: int,
         override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
-        if override_state:
-            logger.debug(f"State override: {override_state}")
-
+        """
+        Simulate adding liquidity.
+        """
         with self._state_lock:
             reserves_token0 = (
                 override_state.reserves_token0 if override_state else self.reserves_token0
@@ -685,9 +685,9 @@ class UniswapV2Pool(AbstractLiquidityPool):
         removed_reserves_token1: int,
         override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
-        if override_state:
-            logger.debug(f"State override: {override_state}")
-
+        """
+        Simulate removing liquidity.
+        """
         with self._state_lock:
             reserves_token0 = (
                 override_state.reserves_token0 if override_state else self.reserves_token0
