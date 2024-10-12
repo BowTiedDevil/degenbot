@@ -28,7 +28,7 @@ from ..uniswap.types import (
     UniswapV3PoolStateUpdated,
 )
 from ..uniswap.v2_liquidity_pool import UniswapV2Pool
-from ..uniswap.v3_libraries import TickMath
+from ..uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from ..uniswap.v3_liquidity_pool import UniswapV3Pool
 from .types import (
     ArbitrageCalculationResult,
@@ -183,9 +183,9 @@ class UniswapLpCycle(AbstractArbitrage):
                                 pool=pool.address,
                                 amount_specified=_token_in_quantity,
                                 zero_for_one=swap_vector.zero_for_one,
-                                sqrt_price_limit_x96=TickMath.MIN_SQRT_RATIO + 1
+                                sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
                                 if swap_vector.zero_for_one
-                                else TickMath.MAX_SQRT_RATIO - 1,
+                                else MAX_SQRT_RATIO - 1,
                             )
                         )
                     case _:  # pragma: no cover
@@ -223,14 +223,12 @@ class UniswapLpCycle(AbstractArbitrage):
 
         if pool_state.liquidity == 0:
             if (
-                pool_state.sqrt_price_x96 == TickMath.MIN_SQRT_RATIO + 1
-                and vector.zero_for_one is True
+                pool_state.sqrt_price_x96 == MIN_SQRT_RATIO + 1 and vector.zero_for_one is True
             ):  # pragma: no cover
                 # Swap is 0 -> 1 and cannot swap any more token0 for token1
                 raise ZeroLiquidityError("Pool has no liquidity for a 0 -> 1 swap")
             elif (
-                pool_state.sqrt_price_x96 == TickMath.MAX_SQRT_RATIO - 1
-                and vector.zero_for_one is False
+                pool_state.sqrt_price_x96 == MAX_SQRT_RATIO - 1 and vector.zero_for_one is False
             ):  # pragma: no cover
                 # Swap is 1 -> 0  and cannot swap any more token1 for token0
                 raise ZeroLiquidityError("Pool has no liquidity for a 1 -> 0 swap")

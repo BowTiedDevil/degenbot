@@ -1,8 +1,7 @@
-from . import full_math as FullMath
-from . import sqrt_price_math as SqrtPriceMath
+from . import full_math, sqrt_price_math
 
 
-def computeSwapStep(
+def compute_swap_step(
     sqrt_ratio_x96_current: int,
     sqrt_ratio_x96_target: int,
     liquidity: int,
@@ -15,20 +14,22 @@ def computeSwapStep(
     amount_out = 0
 
     if exact_in:
-        amount_remaining_minus_fee: int = FullMath.muldiv(amount_remaining, 10**6 - fee_pips, 10**6)
+        amount_remaining_minus_fee: int = full_math.muldiv(
+            amount_remaining, 10**6 - fee_pips, 10**6
+        )
         amount_in = (
-            SqrtPriceMath.get_amount0_delta(
+            sqrt_price_math.get_amount0_delta(
                 sqrt_ratio_x96_target, sqrt_ratio_x96_current, liquidity, True
             )
             if zero_for_one
-            else SqrtPriceMath.get_amount1_delta(
+            else sqrt_price_math.get_amount1_delta(
                 sqrt_ratio_x96_current, sqrt_ratio_x96_target, liquidity, True
             )
         )
         if amount_remaining_minus_fee >= amount_in:
             sqrt_ratio_x96_next = sqrt_ratio_x96_target
         else:
-            sqrt_ratio_x96_next = SqrtPriceMath.get_next_sqrt_price_from_input(
+            sqrt_ratio_x96_next = sqrt_price_math.get_next_sqrt_price_from_input(
                 sqrt_ratio_x96_current,
                 liquidity,
                 amount_remaining_minus_fee,
@@ -36,18 +37,18 @@ def computeSwapStep(
             )
     else:
         amount_out = (
-            SqrtPriceMath.get_amount1_delta(
+            sqrt_price_math.get_amount1_delta(
                 sqrt_ratio_x96_target, sqrt_ratio_x96_current, liquidity, False
             )
             if zero_for_one
-            else SqrtPriceMath.get_amount0_delta(
+            else sqrt_price_math.get_amount0_delta(
                 sqrt_ratio_x96_current, sqrt_ratio_x96_target, liquidity, False
             )
         )
         if -amount_remaining >= amount_out:
             sqrt_ratio_x96_next = sqrt_ratio_x96_target
         else:
-            sqrt_ratio_x96_next = SqrtPriceMath.get_next_sqrt_price_from_output(
+            sqrt_ratio_x96_next = sqrt_price_math.get_next_sqrt_price_from_output(
                 sqrt_ratio_x96_current,
                 liquidity,
                 -amount_remaining,
@@ -60,14 +61,14 @@ def computeSwapStep(
         amount_in = (
             amount_in
             if (reached_target_price and exact_in)
-            else SqrtPriceMath.get_amount0_delta(
+            else sqrt_price_math.get_amount0_delta(
                 sqrt_ratio_x96_next, sqrt_ratio_x96_current, liquidity, True
             )
         )
         amount_out = (
             amount_out
             if (reached_target_price and not exact_in)
-            else SqrtPriceMath.get_amount1_delta(
+            else sqrt_price_math.get_amount1_delta(
                 sqrt_ratio_x96_next, sqrt_ratio_x96_current, liquidity, False
             )
         )
@@ -75,14 +76,14 @@ def computeSwapStep(
         amount_in = (
             amount_in
             if (reached_target_price and exact_in)
-            else SqrtPriceMath.get_amount1_delta(
+            else sqrt_price_math.get_amount1_delta(
                 sqrt_ratio_x96_current, sqrt_ratio_x96_next, liquidity, True
             )
         )
         amount_out = (
             amount_out
             if (reached_target_price and not exact_in)
-            else SqrtPriceMath.get_amount0_delta(
+            else sqrt_price_math.get_amount0_delta(
                 sqrt_ratio_x96_current, sqrt_ratio_x96_next, liquidity, False
             )
         )
@@ -95,7 +96,7 @@ def computeSwapStep(
         # we didn't reach the target, so take the remainder of the maximum input as fee
         fee_amount = amount_remaining - amount_in
     else:
-        fee_amount = FullMath.muldiv_rounding_up(amount_in, fee_pips, 10**6 - fee_pips)
+        fee_amount = full_math.muldiv_rounding_up(amount_in, fee_pips, 10**6 - fee_pips)
 
     return (
         sqrt_ratio_x96_next,

@@ -4,11 +4,11 @@ from ...constants import MAX_UINT8
 from ...exceptions import BitmapWordUnavailableError, EVMRevertError, MissingTickWordError
 from ...logging import logger
 from ..types import UniswapV3BitmapAtWord
-from . import bit_math as BitMath
+from .bit_math import least_significant_bit, most_significant_bit
 
 
-def flipTick(
-    tick_bitmap: dict[int, "UniswapV3BitmapAtWord"],
+def flip_tick(
+    tick_bitmap: dict[int, UniswapV3BitmapAtWord],
     tick: int,
     tick_spacing: int,
     update_block: int | None = None,
@@ -37,8 +37,8 @@ def position(tick: int) -> tuple[int, int]:
     return word_pos, bit_pos
 
 
-def nextInitializedTickWithinOneWord(
-    tick_bitmap: dict[int, "UniswapV3BitmapAtWord"],
+def next_initialized_tick_within_one_word(
+    tick_bitmap: dict[int, UniswapV3BitmapAtWord],
     tick: int,
     tick_spacing: int,
     less_than_or_equal: bool,
@@ -66,7 +66,7 @@ def nextInitializedTickWithinOneWord(
         # in the word
         initialized_status = masked != 0
         next_tick = (
-            (compressed - (bit_pos - BitMath.most_significant_bit(masked))) * tick_spacing
+            (compressed - (bit_pos - most_significant_bit(masked))) * tick_spacing
             if initialized_status
             else (compressed - bit_pos) * tick_spacing
         )
@@ -87,7 +87,7 @@ def nextInitializedTickWithinOneWord(
         # word
         initialized_status = masked != 0
         next_tick = (
-            (compressed + 1 + (BitMath.least_significant_bit(masked) - bit_pos)) * tick_spacing
+            (compressed + 1 + (least_significant_bit(masked) - bit_pos)) * tick_spacing
             if initialized_status
             else (compressed + 1 + (MAX_UINT8 - bit_pos)) * tick_spacing
         )

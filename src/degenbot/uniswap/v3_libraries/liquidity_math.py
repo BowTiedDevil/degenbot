@@ -2,7 +2,7 @@ from ...constants import MAX_INT128, MAX_UINT128, MIN_INT128, MIN_UINT128
 from ...exceptions import EVMRevertError
 
 
-def addDelta(x: int, y: int) -> int:
+def add_delta(x: int, y: int) -> int:
     """
     This function has been heavily modified to directly check that the result
     fits in a uint128, instead of checking via < or >= tricks via Solidity's

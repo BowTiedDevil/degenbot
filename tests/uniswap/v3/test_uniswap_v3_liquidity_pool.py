@@ -11,6 +11,7 @@ from degenbot.config import set_web3
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
     AddressMismatch,
+    DegenbotValueError,
     ExternalUpdateError,
     InsufficientAmountOutError,
     LiquidityPoolError,
@@ -26,7 +27,7 @@ from degenbot.uniswap.types import (
     UniswapV3PoolState,
 )
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
-from degenbot.uniswap.v3_libraries import TickMath
+from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 WBTC_WETH_V3_POOL_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
@@ -132,11 +133,21 @@ def test_creation_with_invalid_hash(ethereum_archive_node_web3: Web3) -> None:
     )
 
 
+def test_creation_with_wrong_pool_type(base_full_node_web3: Web3) -> None:
+    set_web3(base_full_node_web3)
+
+    # Attempting to build a Pancake V3 pool with a Uniswap V3 (vanilla) helper should fail during
+    # the contract value lookup
+    PANCAKE_POOL_ADDRESS = "0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E"
+    with pytest.raises(LiquidityPoolError, match="Could not decode contract data"):
+        UniswapV3Pool(PANCAKE_POOL_ADDRESS)
+
+
 def test_sparse_liquidity_map(ethereum_archive_node_web3: Web3) -> None:
     set_web3(ethereum_archive_node_web3)
 
     lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
-    current_word, _ = get_tick_word_and_bit_position(TickMath.MIN_TICK, lp.tick_spacing)
+    current_word, _ = get_tick_word_and_bit_position(MIN_TICK, lp.tick_spacing)
     known_words = set(lp.tick_bitmap.keys())
     assert lp.sparse_liquidity_map is True
     assert current_word + 1 not in lp.tick_bitmap
@@ -148,6 +159,26 @@ def test_sparse_liquidity_map(ethereum_archive_node_web3: Web3) -> None:
 
     lp.calculate_tokens_out_from_tokens_in(
         token_in=lp.token0, token_in_quantity=100000 * 10**lp.token0.decimals
+    )
+
+
+def test_external_update_with_sparse_liquidity_map(ethereum_archive_node_web3: Web3) -> None:
+    set_web3(ethereum_archive_node_web3)
+
+    lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
+    current_word, _ = get_tick_word_and_bit_position(MIN_TICK, lp.tick_spacing)
+    assert lp.sparse_liquidity_map is True
+    assert current_word + 1 not in lp.tick_bitmap
+
+    lp.external_update(
+        update=UniswapV3PoolExternalUpdate(
+            block_number=lp.update_block + 1,
+            liquidity_change=(
+                1,
+                lp.tick_spacing * (MIN_TICK // lp.tick_spacing),
+                lp.tick_spacing * (MAX_TICK // lp.tick_spacing),
+            ),
+        )
     )
 
 
@@ -503,21 +534,22 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool, dai: Er
     )
     assert wbtc_amount_in == simulated_state.amount0_delta
 
-    # Test the input validation
-    with pytest.raises(ValueError, match="token_in is unknown!"):
+
+def test_simulation_input_validation(
+    wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool,
+    dai: Erc20Token,
+) -> None:
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
+    with pytest.raises(DegenbotValueError, match="token_in is unknown."):
         lp.simulate_exact_input_swap(
             token_in=dai,
             token_in_quantity=1,
         )
-    with pytest.raises(ValueError, match="token_out is unknown!"):
+    with pytest.raises(DegenbotValueError, match="token_out is unknown."):
         lp.simulate_exact_output_swap(
             token_out=dai,
             token_out_quantity=69,
         )
-    with pytest.raises(ValueError, match="Zero input swap requested."):
-        lp.simulate_exact_input_swap(token_in=lp.token0, token_in_quantity=0)
-    with pytest.raises(ValueError, match="Zero output swap requested."):
-        lp.simulate_exact_output_swap(token_out=lp.token1, token_out_quantity=0)
 
 
 def test_simulations_with_override(
@@ -753,6 +785,10 @@ def test_auto_update(fork_mainnet: AnvilFork) -> None:
     fork_mainnet.reset(block_number=current_block)
     lp.auto_update()
     lp.auto_update()  # update twice to cover the "no update" cases
+
+    # Attempt an update in the past
+    with pytest.raises(ExternalUpdateError):
+        lp.auto_update(block_number=current_block - 10)
 
 
 def test_complex_liquidity_transaction_1(fork_mainnet: AnvilFork):

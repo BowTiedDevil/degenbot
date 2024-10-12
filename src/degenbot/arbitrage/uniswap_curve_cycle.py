@@ -31,7 +31,7 @@ from ..uniswap.types import (
     UniswapV3PoolStateUpdated,
 )
 from ..uniswap.v2_liquidity_pool import UniswapV2Pool
-from ..uniswap.v3_libraries import TickMath
+from ..uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from ..uniswap.v3_liquidity_pool import UniswapV3Pool
 from .types import (
     ArbitrageCalculationResult,
@@ -226,9 +226,9 @@ class UniswapCurveCycle(AbstractArbitrage):
                                 pool=pool.address,
                                 amount_specified=_token_in_quantity,
                                 zero_for_one=swap_vector.zero_for_one,
-                                sqrt_price_limit_x96=TickMath.MIN_SQRT_RATIO + 1
+                                sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
                                 if swap_vector.zero_for_one
-                                else TickMath.MAX_SQRT_RATIO - 1,
+                                else MAX_SQRT_RATIO - 1,
                             )
                         )
                     case (
@@ -332,17 +332,14 @@ class UniswapCurveCycle(AbstractArbitrage):
                     if pool_state.liquidity == 0:  # pragma: no cover
                         # Check if the swap is 0 -> 1 and has reached the lower limit of the price
                         # range
-                        if (
-                            pool_state.sqrt_price_x96 == TickMath.MIN_SQRT_RATIO + 1
-                            and vector.zero_for_one
-                        ):
+                        if pool_state.sqrt_price_x96 == MIN_SQRT_RATIO + 1 and vector.zero_for_one:
                             raise ZeroLiquidityError(
                                 f"V3 pool {pool.address} has no liquidity for a 0 -> 1 swap"
                             )
                         # Check if the swap is 1 -> 0 and has reached the upper limit of the price
                         # range
                         if (
-                            pool_state.sqrt_price_x96 == TickMath.MAX_SQRT_RATIO - 1
+                            pool_state.sqrt_price_x96 == MAX_SQRT_RATIO - 1
                             and not vector.zero_for_one
                         ):
                             raise ZeroLiquidityError(

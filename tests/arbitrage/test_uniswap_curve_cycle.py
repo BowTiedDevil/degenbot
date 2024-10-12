@@ -17,7 +17,7 @@ from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError, ZeroLiquidityError
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.uniswap.types import UniswapV2PoolState, UniswapV3PoolState
-from degenbot.uniswap.v3_libraries import TickMath
+from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
@@ -272,7 +272,7 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
                     pool=uniswap_v3_weth_usdc_lp.address,
                     liquidity=0,  # <--- value triggering the exception
                     sqrt_price_x96=(
-                        TickMath.MIN_SQRT_RATIO + 1  # <--- value triggering the exception
+                        MIN_SQRT_RATIO + 1  # <--- value triggering the exception
                     ),
                     tick=1,
                 ),
@@ -296,7 +296,7 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
                     pool=uniswap_v3_weth_usdc_lp.address,
                     liquidity=0,  # <--- value triggering the exception
                     sqrt_price_x96=(
-                        TickMath.MAX_SQRT_RATIO - 1  # <--- value triggering the exception
+                        MAX_SQRT_RATIO - 1  # <--- value triggering the exception
                     ),
                     tick=1,
                 ),

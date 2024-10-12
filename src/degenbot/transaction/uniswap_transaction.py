@@ -46,7 +46,9 @@ from ..uniswap.types import (
 from ..uniswap.v2_functions import generate_v2_pool_address, get_v2_pools_from_token_path
 from ..uniswap.v2_liquidity_pool import UniswapV2Pool, UnregisteredLiquidityPool
 from ..uniswap.v3_functions import decode_v3_path
-from ..uniswap.v3_libraries import FullMath, TickMath, constants
+from ..uniswap.v3_libraries.constants import Q96
+from ..uniswap.v3_libraries.full_math import muldiv
+from ..uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from ..uniswap.v3_liquidity_pool import UniswapV3Pool
 from .simulation_ledger import SimulationLedger
 
@@ -2029,21 +2031,15 @@ class UniswapTransaction(AbstractTransaction):
                         ) -> int:
                             if sqrtRatioAX96 > sqrtRatioBX96:
                                 (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96)
-                            intermediate = FullMath.muldiv(
-                                sqrtRatioAX96, sqrtRatioBX96, constants.Q96
-                            )
-                            return FullMath.muldiv(
-                                amount0, intermediate, sqrtRatioBX96 - sqrtRatioAX96
-                            )
+                            intermediate = muldiv(sqrtRatioAX96, sqrtRatioBX96, Q96)
+                            return muldiv(amount0, intermediate, sqrtRatioBX96 - sqrtRatioAX96)
 
                         def getLiquidityForAmount1(
                             sqrtRatioAX96: int, sqrtRatioBX96: int, amount1: int
                         ) -> int:
                             if sqrtRatioAX96 > sqrtRatioBX96:
                                 (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96)
-                            return FullMath.muldiv(
-                                amount1, constants.Q96, sqrtRatioBX96 - sqrtRatioAX96
-                            )
+                            return muldiv(amount1, Q96, sqrtRatioBX96 - sqrtRatioAX96)
 
                         def getLiquidityForAmounts(
                             sqrtRatioX96: int,
@@ -2138,8 +2134,8 @@ class UniswapTransaction(AbstractTransaction):
                             silent=self.silent,
                         )
 
-                        sqrtRatioAX96 = TickMath.get_sqrt_ratio_at_tick(_tick_lower)
-                        sqrtRatioBX96 = TickMath.get_sqrt_ratio_at_tick(_tick_upper)
+                        sqrtRatioAX96 = get_sqrt_ratio_at_tick(_tick_lower)
+                        sqrtRatioBX96 = get_sqrt_ratio_at_tick(_tick_upper)
 
                         current_sqrt_price_x96 = (
                             # TODO: review this, check for earlier pool states that may differ

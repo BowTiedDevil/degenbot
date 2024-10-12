@@ -1,9 +1,9 @@
 from ...constants import MIN_UINT160
 from ...exceptions import EVMRevertError
-from . import full_math as FullMath
-from . import unsafe_math as UnsafeMath
 from .constants import Q96, Q96_RESOLUTION
+from .full_math import muldiv, muldiv_rounding_up
 from .functions import to_int256, to_uint160
+from .unsafe_math import div_rounding_up
 
 
 def get_amount0_delta(
@@ -13,7 +13,7 @@ def get_amount0_delta(
     round_up: bool | None = None,
 ) -> int:
     # The Solidity function is overloaded with respect to `roundUp`.
-    # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/SqrtPriceMath.sol
+    # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/sqrt_price_math.sol
 
     if round_up is not None:
         if sqrt_ratio_a_x96 > sqrt_ratio_b_x96:
@@ -26,12 +26,12 @@ def get_amount0_delta(
             raise EVMRevertError("require sqrtRatioAX96 > 0")
 
         return (
-            UnsafeMath.div_rounding_up(
-                FullMath.muldiv_rounding_up(numerator1, numerator2, sqrt_ratio_b_x96),
+            div_rounding_up(
+                muldiv_rounding_up(numerator1, numerator2, sqrt_ratio_b_x96),
                 sqrt_ratio_a_x96,
             )
             if round_up
-            else FullMath.muldiv(numerator1, numerator2, sqrt_ratio_b_x96) // sqrt_ratio_a_x96
+            else muldiv(numerator1, numerator2, sqrt_ratio_b_x96) // sqrt_ratio_a_x96
         )
     else:
         return to_int256(
@@ -48,16 +48,16 @@ def get_amount1_delta(
     round_up: bool | None = None,
 ) -> int:
     # The Solidity function is overloaded with respect to `roundUp`.
-    # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/SqrtPriceMath.sol
+    # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/sqrt_price_math.sol
 
     if round_up is not None:
         if sqrt_ratio_a_x96 > sqrt_ratio_b_x96:
             sqrt_ratio_a_x96, sqrt_ratio_b_x96 = sqrt_ratio_b_x96, sqrt_ratio_a_x96
 
         return (
-            FullMath.muldiv_rounding_up(liquidity, sqrt_ratio_b_x96 - sqrt_ratio_a_x96, Q96)
+            muldiv_rounding_up(liquidity, sqrt_ratio_b_x96 - sqrt_ratio_a_x96, Q96)
             if round_up
-            else FullMath.muldiv(liquidity, sqrt_ratio_b_x96 - sqrt_ratio_a_x96, Q96)
+            else muldiv(liquidity, sqrt_ratio_b_x96 - sqrt_ratio_a_x96, Q96)
         )
     else:
         return to_int256(
@@ -80,12 +80,12 @@ def get_next_sqrt_price_from_amount0_rounding_up(
 
     if add:
         return (
-            FullMath.muldiv_rounding_up(numerator1, sqrt_price_x96, denominator)
+            muldiv_rounding_up(numerator1, sqrt_price_x96, denominator)
             if (
                 (product := amount * sqrt_price_x96) // amount == sqrt_price_x96
                 and (denominator := numerator1 + product) >= numerator1
             )
-            else UnsafeMath.div_rounding_up(numerator1, numerator1 // sqrt_price_x96 + amount)
+            else div_rounding_up(numerator1, numerator1 // sqrt_price_x96 + amount)
         )
     else:
         product = amount * sqrt_price_x96
@@ -93,7 +93,7 @@ def get_next_sqrt_price_from_amount0_rounding_up(
             raise EVMRevertError("product / amount == sqrtPX96 && numerator1 > product")
 
         denominator = numerator1 - product
-        return to_uint160(FullMath.muldiv_rounding_up(numerator1, sqrt_price_x96, denominator))
+        return to_uint160(muldiv_rounding_up(numerator1, sqrt_price_x96, denominator))
 
 
 def get_next_sqrt_price_from_amount1_rounding_down(
@@ -106,14 +106,14 @@ def get_next_sqrt_price_from_amount1_rounding_down(
         quotient = (
             (amount << Q96_RESOLUTION) // liquidity
             if amount <= 2**160 - 1
-            else FullMath.muldiv(amount, Q96, liquidity)
+            else muldiv(amount, Q96, liquidity)
         )
         return to_uint160(sqrt_price_x96 + quotient)
     else:
         quotient = (
-            UnsafeMath.div_rounding_up(amount << Q96_RESOLUTION, liquidity)
+            div_rounding_up(amount << Q96_RESOLUTION, liquidity)
             if amount <= (2**160) - 1
-            else FullMath.muldiv_rounding_up(amount, Q96, liquidity)
+            else muldiv_rounding_up(amount, Q96, liquidity)
         )
 
         if not (sqrt_price_x96 > quotient):

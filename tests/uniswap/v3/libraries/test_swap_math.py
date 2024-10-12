@@ -1,6 +1,10 @@
 from decimal import Decimal, getcontext
 
-from degenbot.uniswap.v3_libraries import SqrtPriceMath, SwapMath
+from degenbot.uniswap.v3_libraries.sqrt_price_math import (
+    get_next_sqrt_price_from_input,
+    get_next_sqrt_price_from_output,
+)
+from degenbot.uniswap.v3_libraries.swap_math import compute_swap_step
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/SwapMath.spec.ts
@@ -23,7 +27,7 @@ def encodePriceSqrt(reserve1: int, reserve0: int):
     return round((Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96))
 
 
-def test_computeSwapStep():
+def test_compute_swap_step():
     # exact amount in that gets capped at price target in one for zero
     price = encodePriceSqrt(1, 1)
     priceTarget = encodePriceSqrt(101, 100)
@@ -32,7 +36,7 @@ def test_computeSwapStep():
     fee = 600
     zeroForOne = False
 
-    sqrtQ, amountIn, amountOut, feeAmount = SwapMath.computeSwapStep(
+    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
         price, priceTarget, liquidity, amount, fee
     )
 
@@ -41,7 +45,7 @@ def test_computeSwapStep():
     assert amountOut == 9925619580021728
     assert amountIn + feeAmount < amount
 
-    priceAfterWholeInputAmount = SqrtPriceMath.get_next_sqrt_price_from_input(
+    priceAfterWholeInputAmount = get_next_sqrt_price_from_input(
         price, liquidity, amount, zeroForOne
     )
 
@@ -56,7 +60,7 @@ def test_computeSwapStep():
     fee = 600
     zeroForOne = False
 
-    sqrtQ, amountIn, amountOut, feeAmount = SwapMath.computeSwapStep(
+    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
         price, priceTarget, liquidity, amount, fee
     )
 
@@ -65,7 +69,7 @@ def test_computeSwapStep():
     assert amountOut == 9925619580021728
     assert amountOut < -amount
 
-    priceAfterWholeOutputAmount = SqrtPriceMath.get_next_sqrt_price_from_output(
+    priceAfterWholeOutputAmount = get_next_sqrt_price_from_output(
         price, liquidity, -amount, zeroForOne
     )
 
@@ -80,7 +84,7 @@ def test_computeSwapStep():
     fee = 600
     zeroForOne = False
 
-    sqrtQ, amountIn, amountOut, feeAmount = SwapMath.computeSwapStep(
+    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
         price, priceTarget, liquidity, amount, fee
     )
 
@@ -89,7 +93,7 @@ def test_computeSwapStep():
     assert amountOut == 666399946655997866
     assert amountIn + feeAmount == amount
 
-    priceAfterWholeInputAmountLessFee = SqrtPriceMath.get_next_sqrt_price_from_input(
+    priceAfterWholeInputAmountLessFee = get_next_sqrt_price_from_input(
         price, liquidity, amount - feeAmount, zeroForOne
     )
 
@@ -104,7 +108,7 @@ def test_computeSwapStep():
     fee = 600
     zeroForOne = False
 
-    sqrtQ, amountIn, amountOut, feeAmount = SwapMath.computeSwapStep(
+    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
         price, priceTarget, liquidity, amount, fee
     )
 
@@ -112,7 +116,7 @@ def test_computeSwapStep():
     assert feeAmount == 1200720432259356
     assert amountOut == -amount
 
-    priceAfterWholeOutputAmount = SqrtPriceMath.get_next_sqrt_price_from_output(
+    priceAfterWholeOutputAmount = get_next_sqrt_price_from_output(
         price, liquidity, -amount, zeroForOne
     )
 
@@ -120,7 +124,7 @@ def test_computeSwapStep():
     assert sqrtQ == priceAfterWholeOutputAmount
 
     # amount out is capped at the desired amount out
-    sqrtQ, amountIn, amountOut, feeAmount = SwapMath.computeSwapStep(
+    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
         417332158212080721273783715441582,
         1452870262520218020823638996,
         159344665391607089467575320103,
@@ -134,7 +138,7 @@ def test_computeSwapStep():
     assert sqrtQ == 417332158212080721273783715441581
 
     # target price of 1 uses partial input amount
-    sqrtQ, amountIn, amountOut, feeAmount = SwapMath.computeSwapStep(
+    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
         2,
         1,
         1,
@@ -148,7 +152,7 @@ def test_computeSwapStep():
     assert sqrtQ == 1
 
     # entire input amount taken as fee
-    sqrtQ, amountIn, amountOut, feeAmount = SwapMath.computeSwapStep(
+    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
         2413,
         79887613182836312,
         1985041575832132834610021537970,
@@ -168,7 +172,7 @@ def test_computeSwapStep():
     # https://www.wolframalpha.com/input/?i=1024+%2F+%2820282409603651670423947251286016+%2F+2**96%29
     amountRemaining = -4
     feePips = 3000
-    sqrtQ, amountIn, amountOut, feeAmount = SwapMath.computeSwapStep(
+    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
         sqrtP, sqrtPTarget, liquidity, amountRemaining, feePips
     )
     assert amountOut == 0
@@ -184,7 +188,7 @@ def test_computeSwapStep():
     # https://www.wolframalpha.com/input/?i=1024+*+%2820282409603651670423947251286016+%2F+2**96%29
     amountRemaining = -263000
     feePips = 3000
-    sqrtQ, amountIn, amountOut, feeAmount = SwapMath.computeSwapStep(
+    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
         sqrtP, sqrtPTarget, liquidity, amountRemaining, feePips
     )
     assert amountOut == 26214
