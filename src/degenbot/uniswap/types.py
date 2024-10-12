@@ -48,7 +48,7 @@ class UniswapV2PoolStateUpdated(Message):
     state: UniswapV2PoolState
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV3BitmapAtWord:
     bitmap: int = 0
     block: int | None = dataclasses.field(compare=False, default=None)
@@ -57,7 +57,7 @@ class UniswapV3BitmapAtWord:
         return dataclasses.asdict(self)
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV3LiquidityAtTick:
     liquidityNet: int = 0
     liquidityGross: int = 0
