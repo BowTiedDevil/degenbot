@@ -49,6 +49,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
 
     from .types import UniswapV2PoolState as PoolState
 
+    RESERVES_STRUCT_TYPES = ["uint112", "uint112"]
     UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
         "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
     )
@@ -284,7 +285,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         token0, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token0))
         token1, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token1))
         reserves0, reserves1, *_ = eth_abi.abi.decode(
-            types=["uint112", "uint112"], data=cast(HexBytes, reserves)
+            types=self.RESERVES_STRUCT_TYPES, data=cast(HexBytes, reserves)
         )
 
         return (

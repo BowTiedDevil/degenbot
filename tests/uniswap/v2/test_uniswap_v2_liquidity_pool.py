@@ -20,6 +20,7 @@ from degenbot.exceptions import (
     ZeroSwapError,
 )
 from degenbot.functions import encode_function_calldata, raw_call
+from degenbot.pancakeswap.pools import PancakeV2Pool
 from degenbot.registry.all_pools import pool_registry
 from degenbot.uniswap.abi import UNISWAP_V2_ROUTER_ABI
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
@@ -116,6 +117,11 @@ def test_create_pool(ethereum_archive_node_web3: web3.Web3):
         address=UNISWAP_V2_WBTC_WETH_POOL,
         # init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
     )
+
+
+def test_create_pancake_v2_pool(base_full_node_web3: web3.Web3):
+    set_web3(base_full_node_web3)
+    PancakeV2Pool("0x92363F9817f92a7ae0592A4cb29959A88d885cc8")
 
 
 def test_from_exchange_deployment(ethereum_archive_node_web3: web3.Web3):
