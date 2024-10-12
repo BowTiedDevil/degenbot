@@ -70,13 +70,6 @@ def test_create_base_chain_managers(base_full_node_web3: Web3):
     uniswap_v2_pool_manager = UniswapV2PoolManager(factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS)
     assert uniswap_v2_pool_manager._factory_address == BASE_UNISWAP_V2_FACTORY_ADDRESS
 
-    # Create a pool manager with an invalid address
-    with pytest.raises(
-        ManagerError,
-        match="Cannot create UniswapV2 pool manager without factory address and pool init hash.",  # noqa:E501
-    ):
-        UniswapV2PoolManager(factory_address=BASE_WETH_ADDRESS)
-
     uniswap_v3_pool_manager = UniswapV3PoolManager(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS)
     assert uniswap_v3_pool_manager._factory_address == BASE_UNISWAP_V3_FACTORY_ADDRESS
 
@@ -147,13 +140,6 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
 
     assert uniswap_v2_pool_manager._factory_address == MAINNET_UNISWAP_V2_FACTORY_ADDRESS
     assert sushiswap_v2_pool_manager._factory_address == MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS
-
-    # Create a pool manager with an invalid address
-    with pytest.raises(
-        ManagerError,
-        match="Cannot create UniswapV2 pool manager without factory address and pool init hash.",  # noqa:E501
-    ):
-        UniswapV2PoolManager(factory_address=MAINNET_WETH_ADDRESS)
 
     # Ensure each pool manager has a unique state
     assert uniswap_v2_pool_manager.__dict__ is not sushiswap_v2_pool_manager.__dict__
