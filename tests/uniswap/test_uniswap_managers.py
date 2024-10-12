@@ -12,7 +12,7 @@ from degenbot.exceptions import (
 )
 from degenbot.pancakeswap.managers import PancakeV3PoolManager
 from degenbot.registry.all_pools import pool_registry
-from degenbot.sushiswap.managers import SushiswapV2PoolManager
+from degenbot.sushiswap.managers import SushiswapV2PoolManager, SushiswapV3PoolManager
 from degenbot.uniswap.deployments import UniswapFactoryDeployment, UniswapV3ExchangeDeployment
 from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
@@ -26,6 +26,10 @@ MAINNET_UNISWAP_V3_FACTORY_ADDRESS = to_checksum_address(
 MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS = to_checksum_address(
     "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"
 )
+MAINNET_SUSHISWAP_V3_FACTORY_ADDRESS = to_checksum_address(
+    "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F"
+)
+
 MAINNET_WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 MAINNET_WBTC_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 MAINNET_SUSHISWAPV2_WETH_WBTC_ADDRESS = to_checksum_address(
@@ -200,6 +204,29 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
         uniswap_v2_pool_manager.get_pool(pool_address=sushiswap_v2_lp.address)
     assert sushiswap_v2_lp.address in uniswap_v2_pool_manager._untracked_pools
     assert uniswap_v2_lp.address not in uniswap_v2_pool_manager._untracked_pools
+
+
+def test_manager_behavior_for_unassociated_pools(ethereum_archive_node_web3: Web3):
+    set_web3(ethereum_archive_node_web3)
+
+    uniswap_v3_pool_manager = UniswapV3PoolManager(
+        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS
+    )
+    sushiswap_v3_pool_manager = SushiswapV3PoolManager(
+        factory_address=MAINNET_SUSHISWAP_V3_FACTORY_ADDRESS
+    )
+
+    uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
+
+    assert MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS not in sushiswap_v3_pool_manager._untracked_pools
+    # The manager will find the registered pool first, compare the factory address, and then reject
+    # it as unassociated
+    with pytest.raises(ManagerError, match="is not associated with this DEX"):
+        sushiswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
+
+    # The manager will now have this pool in its untracked set, and repeated calls can be rejected
+    # faster with the short-circuit check
+    assert MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS in sushiswap_v3_pool_manager._untracked_pools
 
 
 def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):

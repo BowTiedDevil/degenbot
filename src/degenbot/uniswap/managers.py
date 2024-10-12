@@ -137,9 +137,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
             return result
 
         if pool_address in self._untracked_pools:
-            raise PoolNotAssociated(
-                f"Pool address {pool_address} not associated with factory {self._factory_address}"
-            )
+            raise PoolNotAssociated(f"Pool {pool_address} is not associated with this DEX")
 
         # Check if the pool registry already has this pool
         if (
@@ -347,9 +345,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
             return result
 
         if pool_address in self._untracked_pools:
-            raise PoolNotAssociated(
-                f"Pool address {pool_address} not associated with factory {self._factory_address}"
-            )
+            raise PoolNotAssociated(f"Pool {pool_address} is not associated with this DEX")
 
         # Check if the pool registry already has this pool
         pool_from_registry = pool_registry.get(
