@@ -14,7 +14,6 @@ from web3 import Web3
 from web3.exceptions import ContractLogicError
 
 from ..config import web3_connection_manager
-from ..constants import ZERO_ADDRESS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     AddressMismatch,
@@ -115,9 +114,6 @@ class UniswapV2Pool(AbstractLiquidityPool):
             Suppress status output.
         """
 
-        if address == ZERO_ADDRESS:
-            raise LiquidityPoolError("Invalid pool address")
-
         self.address = to_checksum_address(address)
 
         self._chain_id = (
@@ -154,22 +150,21 @@ class UniswapV2Pool(AbstractLiquidityPool):
             reserves_token1=reserves1,
         )
 
-        self.deployer = (
-            to_checksum_address(deployer_address) if deployer_address is not None else self.factory
-        )
-
+        deployer_address = None
         try:
             # Use degenbot deployment values if available
             factory_deployment = FACTORY_DEPLOYMENTS[self.chain_id][self.factory]
             self.init_hash = factory_deployment.pool_init_hash
-            if factory_deployment.deployer is not None:
-                self.deployer = factory_deployment.deployer
+            if factory_deployment.deployer is not None:  # pragma: no branch
+                deployer_address = factory_deployment.deployer
         except KeyError:
             # Deployment is unknown. Uses any inputs provided, otherwise use default values from
             # original Uniswap contracts
             self.init_hash = (
                 init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
             )
+
+        self.deployer = deployer_address if deployer_address is not None else self.factory
 
         if isinstance(fee, Iterable):
             self.fee_token0, self.fee_token1 = fee
