@@ -717,22 +717,17 @@ class UniswapV2Pool(AbstractLiquidityPool):
         token_in_quantity: int,
         override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
-        if token_in not in self.tokens:  # pragma: no cover
+        """
+        Simulate an exact input swap.
+        """
+        if token_in not in self.tokens:
             raise DegenbotValueError("token_in is unknown.")
 
-        if token_in_quantity == 0:  # pragma: no cover
-            raise DegenbotValueError("Zero input swap requested.")
-
-        if override_state:
-            logger.debug(f"State override: {override_state}")
-
-        current_state = override_state if override_state is not None else self.state.copy()
         zero_for_one = token_in == self.token0
-
         token_out_quantity = self.calculate_tokens_out_from_tokens_in(
             token_in=token_in,
             token_in_quantity=token_in_quantity,
-            override_state=current_state,
+            override_state=override_state,
         )
         token0_delta = -token_out_quantity if zero_for_one is False else token_in_quantity
         token1_delta = -token_out_quantity if zero_for_one is True else token_in_quantity
@@ -740,7 +735,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         return UniswapV2PoolSimulationResult(
             amount0_delta=token0_delta,
             amount1_delta=token1_delta,
-            initial_state=current_state,
+            initial_state=override_state or self.state,
             final_state=self.PoolState(
                 pool=self.address,
                 reserves_token0=self.reserves_token0 + token0_delta,
@@ -754,22 +749,15 @@ class UniswapV2Pool(AbstractLiquidityPool):
         token_out_quantity: int,
         override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
-        if token_out not in self.tokens:  # pragma: no cover
+        if token_out not in self.tokens:
             raise DegenbotValueError("token_out is unknown.")
 
-        if token_out_quantity == 0:  # pragma: no cover
-            raise DegenbotValueError("Zero output swap requested.")
-
-        if override_state:
-            logger.debug(f"State override: {override_state}")
-
-        current_state = override_state if override_state is not None else self.state.copy()
         zero_for_one = token_out == self.token1
 
         token_in_quantity = self.calculate_tokens_in_from_tokens_out(
             token_out=token_out,
             token_out_quantity=token_out_quantity,
-            override_state=current_state,
+            override_state=override_state,
         )
         token0_delta = token_in_quantity if zero_for_one is True else -token_out_quantity
         token1_delta = token_in_quantity if zero_for_one is False else -token_out_quantity
@@ -777,7 +765,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         return UniswapV2PoolSimulationResult(
             amount0_delta=token0_delta,
             amount1_delta=token1_delta,
-            initial_state=current_state,
+            initial_state=override_state or self.state,
             final_state=self.PoolState(
                 pool=self.address,
                 reserves_token0=self.reserves_token0 + token0_delta,

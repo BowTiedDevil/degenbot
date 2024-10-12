@@ -1233,11 +1233,8 @@ class UniswapV3Pool(AbstractLiquidityPool):
         """
         Simulate an exact input swap.
         """
-
         if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError("token_in is unknown!")
-        if token_in_quantity == 0:  # pragma: no cover
-            raise DegenbotValueError("Zero input swap requested.")
+            raise DegenbotValueError("token_in is unknown.")
 
         zero_for_one = token_in == self.token0
 
@@ -1264,7 +1261,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
             return UniswapV3PoolSimulationResult(
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
-                initial_state=self.state.copy(),
+                initial_state=override_state or self.state,
                 final_state=self.PoolState(
                     pool=self.address,
                     liquidity=end_liquidity,
@@ -1283,11 +1280,8 @@ class UniswapV3Pool(AbstractLiquidityPool):
         """
         Simulate an exact output swap.
         """
-
         if token_out not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError("token_out is unknown!")
-        if token_out_quantity == 0:  # pragma: no cover
-            raise DegenbotValueError("Zero output swap requested.")
+            raise DegenbotValueError("token_out is unknown.")
 
         zero_for_one = token_out == self.token1
 
@@ -1314,7 +1308,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
             return UniswapV3PoolSimulationResult(
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
-                initial_state=self.state.copy(),
+                initial_state=override_state or self.state,
                 final_state=self.PoolState(
                     pool=self.address,
                     liquidity=end_liquidity,

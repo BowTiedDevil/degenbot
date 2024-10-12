@@ -13,6 +13,7 @@ from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import (
     AddressMismatch,
+    DegenbotValueError,
     ExternalUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
@@ -840,6 +841,17 @@ def test_simulations(
             ),
         )
     )
+
+
+def test_simulation_input_validation(
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
+    dai,
+):
+    lp = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000
+    with pytest.raises(DegenbotValueError, match="token_in is unknown."):
+        lp.simulate_exact_input_swap(token_in=dai, token_in_quantity=1_000)
+    with pytest.raises(DegenbotValueError, match="token_out is unknown."):
+        lp.simulate_exact_output_swap(token_out=dai, token_out_quantity=1_000)
 
 
 def test_simulations_with_override(
