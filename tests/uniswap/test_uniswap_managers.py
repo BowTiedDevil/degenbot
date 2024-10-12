@@ -212,9 +212,6 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
         )
     )
 
-    # Remove the pool from the manager
-    del uniswap_v2_pool_manager[v2_weth_wbtc_lp]
-
     new_v2_weth_wbtc_lp = uniswap_v2_pool_manager.get_pool_from_tokens(
         token_addresses=(
             MAINNET_WETH_ADDRESS,
@@ -225,8 +222,8 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
     # The pool manager should have found the original pool in AllPools and re-used it
     assert v2_weth_wbtc_lp is new_v2_weth_wbtc_lp
 
-    # Remove from the manager and the AllPools tracker
-    del uniswap_v2_pool_manager[new_v2_weth_wbtc_lp]
+    # Remove from the pool manager and the registry
+    uniswap_v2_pool_manager.remove(pool_address=new_v2_weth_wbtc_lp.address)
     pool_registry.remove(
         pool_address=new_v2_weth_wbtc_lp.address,
         chain_id=1,
@@ -295,7 +292,7 @@ def test_same_block(fork_mainnet: AnvilFork):
         state_block=_BLOCK,
     )
 
-    del uniswap_v2_pool_manager[v2_heyjoe_weth_lp]
+    uniswap_v2_pool_manager.remove(pool_address=v2_heyjoe_weth_lp.address)
     pool_registry.remove(
         pool_address=v2_heyjoe_weth_lp.address,
         chain_id=1,

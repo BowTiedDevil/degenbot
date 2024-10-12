@@ -197,6 +197,11 @@ class UniswapV2PoolManager(AbstractPoolManager):
             pool_class_kwargs=pool_class_kwargs,
         )
 
+    def remove(self, pool_address: ChecksumAddress | str) -> None:
+        pool_address = to_checksum_address(pool_address)
+        self._tracked_pools.pop(pool_address, None)
+        self._untracked_pools.discard(pool_address)
+
 
 class UniswapV3PoolManager(AbstractPoolManager):
     """
@@ -409,3 +414,8 @@ class UniswapV3PoolManager(AbstractPoolManager):
             state_block=state_block,
             pool_class_kwargs=pool_class_kwargs,
         )
+
+    def remove(self, pool_address: ChecksumAddress | str) -> None:
+        pool_address = to_checksum_address(pool_address)
+        self._tracked_pools.pop(pool_address, None)
+        self._untracked_pools.discard(pool_address)
