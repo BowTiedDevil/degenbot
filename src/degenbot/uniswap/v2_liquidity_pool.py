@@ -127,7 +127,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             self.factory, (token0, token1), (reserves0, reserves1) = (
                 self.get_factory_tokens_reserves_batched(w3=w3, state_block=self._update_block)
             )
-        except (ContractLogicError, DecodingError) as exc:
+        except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
             # Contracts differ slightly across Uniswap V2 forks, so decoding may fail. Catch this
             # here and raise as a pool-specific exception
             raise LiquidityPoolError("Could not decode contract data") from exc
