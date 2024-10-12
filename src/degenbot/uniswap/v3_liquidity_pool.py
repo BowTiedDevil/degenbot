@@ -1025,21 +1025,15 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 for tick in (lower_tick, upper_tick):
                     tick_word, _ = get_tick_word_and_bit_position(tick, self.tick_spacing)
 
-                    if tick_word not in self.tick_bitmap:
+                    if self.sparse_liquidity_map and tick_word not in self.tick_bitmap:
                         # The tick bitmap must be known for the word prior to changing the
                         # initialized status of any tick
-
-                        if self.sparse_liquidity_map:
-                            self._fetch_tick_data_at_word(
-                                word_position=tick_word,
-                                # Fetch the word using the previous block as a known "good" state
-                                # snapshot
-                                block_number=update.block_number - 1,
-                            )
-
-                        else:
-                            # The bitmap is complete (sparse=False), so mark this word as empty
-                            self.tick_bitmap[tick_word] = UniswapV3BitmapAtWord()
+                        self._fetch_tick_data_at_word(
+                            word_position=tick_word,
+                            # Fetch the word using the previous block as a known "good" state
+                            # snapshot
+                            block_number=update.block_number - 1,
+                        )
 
                     # Get the liquidity info for this tick
                     try:
