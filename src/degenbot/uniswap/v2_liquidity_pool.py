@@ -699,7 +699,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             return UniswapV2PoolSimulationResult(
                 amount0_delta=-removed_reserves_token0,
                 amount1_delta=-removed_reserves_token1,
-                initial_state=self.state.copy(),
+                initial_state=override_state or self.state,
                 final_state=self.PoolState(
                     pool=self.address,
                     reserves_token0=reserves_token0 - removed_reserves_token0,
