@@ -966,7 +966,7 @@ def test_zero_swaps(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_
         )
 
 
-def test_polling_update(
+def test_auto_update(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
     fork_mainnet: AnvilFork,
 ):
@@ -975,6 +975,12 @@ def test_polling_update(
     set_web3(fork_mainnet.w3)
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update() is True
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update() is False
+
+    # Attempt an update in the past
+    with pytest.raises(ExternalUpdateError):
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update(
+            block_number=_BLOCK_NUMBER - 10
+        )
 
 
 def test_late_update(
