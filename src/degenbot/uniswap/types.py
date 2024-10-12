@@ -21,13 +21,6 @@ class UniswapV2PoolState(AbstractPoolState):
     reserves_token0: int
     reserves_token1: int
 
-    def copy(self) -> "UniswapV2PoolState":
-        return UniswapV2PoolState(
-            pool=self.pool,
-            reserves_token0=self.reserves_token0,
-            reserves_token1=self.reserves_token1,
-        )
-
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV2PoolSimulationResult(UniswapSimulationResult):
@@ -100,16 +93,6 @@ class UniswapV3PoolState(AbstractPoolState):
     tick: int
     tick_bitmap: dict[int, UniswapV3BitmapAtWord] | None = dataclasses.field(default=None)
     tick_data: dict[int, UniswapV3LiquidityAtTick] | None = dataclasses.field(default=None)
-
-    def copy(self) -> "UniswapV3PoolState":
-        return UniswapV3PoolState(
-            pool=self.pool,
-            liquidity=self.liquidity,
-            sqrt_price_x96=self.sqrt_price_x96,
-            tick=self.tick,
-            tick_bitmap=self.tick_bitmap.copy() if self.tick_bitmap is not None else None,
-            tick_data=self.tick_data.copy() if self.tick_data is not None else None,
-        )
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
