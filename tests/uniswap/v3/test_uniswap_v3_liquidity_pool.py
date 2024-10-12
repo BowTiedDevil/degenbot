@@ -18,6 +18,7 @@ from degenbot.exceptions import (
     NoPoolStateAvailable,
 )
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
+from degenbot.pancakeswap.pools import PancakeV3Pool
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.types import (
     UniswapV3BitmapAtWord,
@@ -141,6 +142,11 @@ def test_creation_with_wrong_pool_type(base_full_node_web3: Web3) -> None:
     PANCAKE_POOL_ADDRESS = "0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E"
     with pytest.raises(LiquidityPoolError, match="Could not decode contract data"):
         UniswapV3Pool(PANCAKE_POOL_ADDRESS)
+
+
+def test_pancake_v3_pool_creation(base_full_node_web3: Web3) -> None:
+    set_web3(base_full_node_web3)
+    PancakeV3Pool("0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E")
 
 
 def test_sparse_liquidity_map(ethereum_archive_node_web3: Web3) -> None:
