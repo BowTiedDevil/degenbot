@@ -31,7 +31,8 @@ from .curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from .erc20_token import Erc20Token
 from .logging import logger
 from .managers.erc20_token_manager import Erc20TokenManager
-from .pancakeswap.pools import PancakeV3Pool
+from .pancakeswap.managers import PancakeV2PoolManager, PancakeV3PoolManager
+from .pancakeswap.pools import PancakeV2Pool, PancakeV3Pool
 from .registry.all_pools import pool_registry
 from .registry.all_tokens import token_registry
 from .sushiswap.managers import SushiswapV2PoolManager, SushiswapV3PoolManager
@@ -81,7 +82,10 @@ __all__ = (
     "CurveStableswapPool",
     "Erc20Token",
     "Erc20TokenManager",
+    "PancakeV2Pool",
+    "PancakeV2PoolManager",
     "PancakeV3Pool",
+    "PancakeV3PoolManager",
     "SushiswapV2Pool",
     "SushiswapV2PoolManager",
     "SushiswapV3Pool",

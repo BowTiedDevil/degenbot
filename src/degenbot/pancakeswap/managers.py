@@ -1,4 +1,8 @@
-from ..uniswap.managers import UniswapV3PoolManager
+from ..uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
+
+
+class PancakeV2PoolManager(UniswapV2PoolManager):
+    from .pools import PancakeV2Pool as Pool
 
 
 class PancakeV3PoolManager(UniswapV3PoolManager):
