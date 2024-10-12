@@ -14,7 +14,7 @@ from degenbot.aerodrome.types import (
     AerodromeV2PoolState,
     AerodromeV3PoolState,
 )
-from degenbot.exceptions import LateUpdateError
+from degenbot.exceptions import ExternalUpdateError, LateUpdateError
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 
 WETH_CONTRACT_ADDRESS = to_checksum_address("0x4200000000000000000000000000000000000006")
@@ -129,6 +129,15 @@ def test_external_update(
         )
         is False
     )
+
+    with pytest.raises(ExternalUpdateError):
+        lp.external_update(
+            update=AerodromeV2PoolExternalUpdate(
+                block_number=lp.update_block - 10,
+                reserves_token0=lp.reserves_token0,
+                reserves_token1=lp.reserves_token1,
+            )
+        )
 
 
 def test_create_pool(
