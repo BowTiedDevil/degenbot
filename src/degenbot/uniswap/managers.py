@@ -90,13 +90,13 @@ class UniswapV2PoolManager(AbstractPoolManager):
     def __repr__(self) -> str:  # pragma: no cover
         return f"UniswapV2PoolManager(factory={self._factory_address})"
 
-    def _add_tracked_pool(self, pool_helper: Pool) -> None:
-        with self._lock:
-            self._tracked_pools[pool_helper.address] = pool_helper
-
     @property
     def chain_id(self) -> int:
         return self._chain_id
+
+    def _add_tracked_pool(self, pool_helper: Pool) -> None:
+        with self._lock:
+            self._tracked_pools[pool_helper.address] = pool_helper
 
     def _build_pool(
         self,
@@ -143,7 +143,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         if (
             pool_from_registry := pool_registry.get(
                 pool_address=pool_address,
-                chain_id=self._chain_id,
+                chain_id=self.chain_id,
             )
         ) is not None:
             assert isinstance(pool_from_registry, self.Pool)
@@ -268,6 +268,10 @@ class UniswapV3PoolManager(AbstractPoolManager):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"UniswapV3PoolManager(factory={self._factory_address})"
+
+    @property
+    def chain_id(self) -> int:
+        return self._chain_id
 
     def _add_tracked_pool(self, pool_helper: Pool) -> None:
         with self._lock:
