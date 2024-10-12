@@ -5,7 +5,11 @@ from web3 import Web3
 
 from degenbot import AnvilFork, PancakeV3Pool
 from degenbot.config import set_web3
-from degenbot.exceptions import ManagerAlreadyInitialized, ManagerError, PoolNotAssociated
+from degenbot.exceptions import (
+    ManagerAlreadyInitialized,
+    ManagerError,
+    PoolNotAssociated,
+)
 from degenbot.pancakeswap.managers import PancakeV3PoolManager
 from degenbot.registry.all_pools import pool_registry
 from degenbot.sushiswap.managers import SushiswapV2PoolManager
@@ -259,6 +263,53 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
         )
         is not super_new_v2_weth_wbtc_lp
     )
+
+    uniswap_v3_pool_manager = UniswapV3PoolManager(
+        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS
+    )
+    v3_pool = uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
+    assert uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS) is v3_pool
+
+    pool_registry.remove(pool_address=v3_pool.address, chain_id=uniswap_v3_pool_manager.chain_id)
+    uniswap_v3_pool_manager.remove(v3_pool.address)
+
+    assert uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS) is not v3_pool
+
+
+def test_get_already_registered_pool(ethereum_archive_node_web3: Web3):
+    set_web3(ethereum_archive_node_web3)
+
+    uniswap_v2_pool_manager = UniswapV2PoolManager(
+        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
+    )
+    v2_pool = uniswap_v2_pool_manager.get_pool(MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS)
+    # Remove from the pool manager, but not the registry
+    uniswap_v2_pool_manager.remove(pool_address=MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS)
+    new_v2_pool = uniswap_v2_pool_manager.get_pool(MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS)
+    assert v2_pool is new_v2_pool
+
+    uniswap_v3_pool_manager = UniswapV3PoolManager(
+        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS
+    )
+    v3_pool = uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
+    # Remove from the pool manager, but not the registry
+    uniswap_v3_pool_manager.remove(v3_pool.address)
+    new_v3_pool = uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
+    assert v3_pool is new_v3_pool
+
+
+def test_get_pool_with_kwargs(ethereum_archive_node_web3: Web3):
+    set_web3(ethereum_archive_node_web3)
+
+    uniswap_v2_pool_manager = UniswapV2PoolManager(
+        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
+    )
+    uniswap_v2_pool_manager.get_pool(MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS, pool_class_kwargs={})
+
+    uniswap_v3_pool_manager = UniswapV3PoolManager(
+        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS
+    )
+    uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS, pool_class_kwargs={})
 
 
 def test_pools_from_token_path(ethereum_archive_node_web3: Web3) -> None:
