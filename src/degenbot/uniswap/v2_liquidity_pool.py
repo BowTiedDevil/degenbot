@@ -156,7 +156,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             # Use degenbot deployment values if available
             factory_deployment = FACTORY_DEPLOYMENTS[self.chain_id][self.factory]
             self.init_hash = factory_deployment.pool_init_hash
-            if factory_deployment.deployer is not None:  # pragma: no branch
+            if factory_deployment.deployer is not None:  # pragma: no cover
                 deployer_address = factory_deployment.deployer
         except KeyError:
             # Deployment is unknown. Uses any inputs provided, otherwise use default values from
