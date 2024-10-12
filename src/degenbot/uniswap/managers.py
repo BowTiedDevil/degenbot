@@ -72,9 +72,8 @@ class UniswapV2PoolManager(AbstractPoolManager):
             pool_init_hash = factory_deployment.pool_init_hash
         except KeyError:
             if pool_init_hash is None:  # pragma: no branch
-                raise ManagerError(
-                    "Cannot create UniswapV2 pool manager without factory address and pool init hash."  # noqa:E501
-                ) from None
+                logger.info("Pool init hash is unknown. Using Uniswap V3 mainnet default.")
+                pool_init_hash = UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH
             deployer_address = (
                 to_checksum_address(deployer_address)
                 if deployer_address is not None
@@ -313,8 +312,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
                 }
             )
         else:
-            logger.info(f"Initializing pool without liquidity snapshot, {self._factory_address=}")
-            logger.info(f"{self._snapshot=}")
+            logger.debug("Initializing pool without liquidity snapshot")
 
         return self.Pool(
             address=pool_address,

@@ -9,7 +9,7 @@ from typing_extensions import Self
 
 class Message:
     """
-    A message sent from a `Publisher` to a `Subscriber`
+    A message sent by a `Publisher`
     """
 
 
@@ -23,26 +23,30 @@ class PlaintextMessage(Message):
 
 class Publisher(Protocol):
     """
-    Can publish updates and accept subscriptions.
+    Can send a `Message` to a `Subscriber`
     """
 
     _subscribers: set["Subscriber"]
 
     def subscribe(self, subscriber: "Subscriber") -> None:
-        pass
+        """
+        Subscribe to receive messages from this `Publisher`
+        """
 
     def unsubscribe(self, subscriber: "Subscriber") -> None:
-        pass
+        """
+        Stop receiving messages from this `Publisher`
+        """
 
 
 class Subscriber(Protocol):
     """
-    Can be notified via the `notify()` method
+    Can receive messages from a `Publisher`
     """
 
     def notify(self, publisher: "Publisher", message: "Message") -> None:
         """
-        Deliver `message` from `publisher`.
+        Deliver `message` to `Subscriber`
         """
 
 
