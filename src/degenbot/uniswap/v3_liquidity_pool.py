@@ -242,7 +242,8 @@ class UniswapV3Pool(AbstractLiquidityPool):
             known_empty_words = (
                 set(range(min_word_position, max_word_position + 1)) - self.tick_bitmap.keys()
             )
-            self.tick_bitmap.update({word: UniswapV3BitmapAtWord() for word in known_empty_words})
+            empty_bitmap = UniswapV3BitmapAtWord()
+            self.tick_bitmap.update({word: empty_bitmap for word in known_empty_words})
 
         if tick_data is not None:
             # transform dict to LiquidityAtTick

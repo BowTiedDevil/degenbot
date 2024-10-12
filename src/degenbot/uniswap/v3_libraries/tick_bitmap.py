@@ -21,8 +21,10 @@ def flipTick(
 
     try:
         mask = 1 << bit_pos
-        tick_bitmap[word_pos].bitmap ^= mask
-        tick_bitmap[word_pos].block = update_block
+        tick_bitmap[word_pos] = UniswapV3BitmapAtWord(
+            bitmap=tick_bitmap[word_pos].bitmap ^ mask,
+            block=update_block,
+        )
     except KeyError:
         raise MissingTickWordError(f"Called flipTick on missing word={word_pos}") from None
     else:
