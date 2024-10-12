@@ -8,10 +8,9 @@ from typing_extensions import Self
 
 from ..config import web3_connection_manager
 from ..exceptions import (
-    AddressMismatch,
     LiquidityPoolError,
     ManagerAlreadyInitialized,
-    ManagerError,
+    PoolCreationFailed,
     PoolNotAssociated,
 )
 from ..logging import logger
@@ -162,12 +161,8 @@ class UniswapV2PoolManager(AbstractPoolManager):
                 state_block=state_block,
                 pool_class_kwargs=pool_class_kwargs,
             )
-        except AddressMismatch:
-            self._untracked_pools.add(pool_address)
-            raise PoolNotAssociated from None
         except LiquidityPoolError as exc:
-            self._untracked_pools.add(pool_address)
-            raise ManagerError(f"Could not build V2 pool {pool_address}: {exc}") from exc
+            raise PoolCreationFailed(f"Could not build V2 pool {pool_address}: {exc}") from exc
         else:
             self._add_tracked_pool(new_pool)
             return new_pool
@@ -352,12 +347,11 @@ class UniswapV3PoolManager(AbstractPoolManager):
             )
 
         # Check if the pool registry already has this pool
-        if (
-            pool_from_registry := pool_registry.get(
-                pool_address=pool_address,
-                chain_id=self._chain_id,
-            )
-        ) is not None:
+        pool_from_registry = pool_registry.get(
+            pool_address=pool_address,
+            chain_id=self.chain_id,
+        )
+        if pool_from_registry is not None:
             assert isinstance(pool_from_registry, self.Pool)
             if pool_from_registry.factory == self._factory_address:
                 self._add_tracked_pool(pool_from_registry)
@@ -368,17 +362,13 @@ class UniswapV3PoolManager(AbstractPoolManager):
 
         try:
             new_pool = self._build_pool(
-                pool_address=to_checksum_address(pool_address),
+                pool_address=pool_address,
                 silent=silent,
                 state_block=state_block,
                 pool_class_kwargs=pool_class_kwargs,
             )
-        except AddressMismatch:
-            self._untracked_pools.add(pool_address)
-            raise PoolNotAssociated from None
         except LiquidityPoolError as exc:
-            self._untracked_pools.add(pool_address)
-            raise ManagerError(f"Could not build V3 pool {pool_address}: {exc}") from exc
+            raise PoolCreationFailed(f"Could not build V3 pool {pool_address}: {exc}") from exc
         else:
             self._apply_pending_liquidity_updates(new_pool)
             self._add_tracked_pool(new_pool)

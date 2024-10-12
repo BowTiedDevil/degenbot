@@ -169,6 +169,9 @@ class PoolNotAssociated(ManagerError):
     """
 
 
+class PoolCreationFailed(ManagerError): ...
+
+
 class ManagerAlreadyInitialized(ManagerError):
     """
     Raised by a Uniswap pool manager if a caller attempts to create from a known factory address.
