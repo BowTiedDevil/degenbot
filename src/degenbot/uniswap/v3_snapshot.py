@@ -14,7 +14,7 @@ from web3.contract.base_contract import BaseContractEvent
 from web3.types import EventData, FilterParams, LogReceipt
 from web3.utils import get_event_abi
 
-from ..config import web3_connection_manager
+from ..config import connection_manager
 from ..exceptions import DegenbotValueError
 from ..logging import logger
 from .abi import UNISWAP_V3_POOL_ABI
@@ -48,9 +48,7 @@ class UniswapV3LiquiditySnapshot:
             case _:  # pragma: no cover
                 raise DegenbotValueError(f"Unrecognized file type {type(file)}")
 
-        self._chain_id = (
-            chain_id if chain_id is not None else web3_connection_manager.default_chain_id
-        )
+        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
 
         self.newest_block = json_liquidity_snapshot.pop("snapshot_block")
 
@@ -116,7 +114,7 @@ class UniswapV3LiquiditySnapshot:
             )
 
         logger.info(f"Updating snapshot from block {self.newest_block} to {to_block}")
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
 
         v3pool = Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI)
         for event in [v3pool.events.Mint, v3pool.events.Burn]:

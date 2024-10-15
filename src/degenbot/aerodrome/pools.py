@@ -9,7 +9,7 @@ from hexbytes import HexBytes
 from web3 import Web3
 from web3.types import BlockIdentifier
 
-from ..config import web3_connection_manager
+from ..config import connection_manager
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     AddressMismatch,
@@ -51,10 +51,8 @@ class AerodromeV2Pool(AbstractLiquidityPool):
     ) -> None:
         self.address = to_checksum_address(address)
 
-        self._chain_id = (
-            chain_id if chain_id is not None else web3_connection_manager.default_chain_id
-        )
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+        w3 = connection_manager.get_web3(self.chain_id)
         self._update_block = state_block if state_block is not None else w3.eth.block_number
 
         self.factory, (token0, token1), self.stable, fee, (reserves0, reserves1) = (
@@ -120,7 +118,7 @@ class AerodromeV2Pool(AbstractLiquidityPool):
     def _verified_address(self) -> ChecksumAddress:
         # The implementation address is hard-coded into the contract
         implementation_address = to_checksum_address(
-            web3_connection_manager.get_web3(self.chain_id).eth.get_code(self.address)[10:30]
+            connection_manager.get_web3(self.chain_id).eth.get_code(self.address)[10:30]
         )
 
         return generate_aerodrome_v2_pool_address(
@@ -346,7 +344,7 @@ class AerodromeV2Pool(AbstractLiquidityPool):
 
     @property
     def w3(self) -> Web3:
-        return web3_connection_manager.get_web3(self.chain_id)
+        return connection_manager.get_web3(self.chain_id)
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -439,7 +437,7 @@ class AerodromeV3Pool(UniswapV3Pool):
     def _verified_address(self) -> ChecksumAddress:
         # The implementation address is hard-coded into the contract
         implementation_address = to_checksum_address(
-            web3_connection_manager.get_web3(self.chain_id).eth.get_code(self.address)[10:30]
+            connection_manager.get_web3(self.chain_id).eth.get_code(self.address)[10:30]
         )
 
         return generate_aerodrome_v3_pool_address(

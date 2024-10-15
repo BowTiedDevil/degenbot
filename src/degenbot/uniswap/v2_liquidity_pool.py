@@ -13,7 +13,7 @@ from typing_extensions import Self
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
-from ..config import web3_connection_manager
+from ..config import connection_manager
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     AddressMismatch,
@@ -118,10 +118,8 @@ class UniswapV2Pool(AbstractLiquidityPool):
 
         self.address = to_checksum_address(address)
 
-        self._chain_id = (
-            chain_id if chain_id is not None else web3_connection_manager.default_chain_id
-        )
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+        w3 = connection_manager.get_web3(self.chain_id)
         self._update_block = state_block if state_block is not None else w3.eth.block_number
 
         try:
@@ -335,7 +333,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
 
     @property
     def w3(self) -> Web3:
-        return web3_connection_manager.get_web3(self.chain_id)
+        return connection_manager.get_web3(self.chain_id)
 
     def calculate_tokens_in_from_ratio_out(
         self,

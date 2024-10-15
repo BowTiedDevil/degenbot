@@ -15,7 +15,7 @@ from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import BlockIdentifier
 
-from ..config import web3_connection_manager
+from ..config import connection_manager
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     AddressMismatch,
@@ -155,10 +155,8 @@ class UniswapV3Pool(AbstractLiquidityPool):
         self.address = to_checksum_address(address)
         self.factory: ChecksumAddress
 
-        self._chain_id = (
-            chain_id if chain_id is not None else web3_connection_manager.default_chain_id
-        )
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+        w3 = connection_manager.get_web3(self.chain_id)
         self._update_block = state_block if state_block is not None else w3.eth.block_number
 
         self._state_lock = Lock()
@@ -535,7 +533,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         256 ticks, spaced per the tickSpacing interval.
         """
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
 
         if block_number is None:
             block_number = w3.eth.get_block_number()
@@ -801,7 +799,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
 
             state_updated = False
 
-            w3 = web3_connection_manager.get_web3(self.chain_id)
+            w3 = connection_manager.get_web3(self.chain_id)
             if block_number is None:
                 block_number = w3.eth.get_block_number()
 

@@ -2,7 +2,7 @@ from fractions import Fraction
 
 from eth_utils.address import to_checksum_address
 
-from ..config import web3_connection_manager
+from ..config import connection_manager
 from ..erc20_token import Erc20Token
 from ..exceptions import ZeroSwapError
 from ..functions import encode_function_calldata, raw_call
@@ -27,9 +27,9 @@ class CamelotLiquidityPool(UniswapV2Pool):
         address = to_checksum_address(address)
 
         if chain_id is None:  # pragma: no branch
-            chain_id = web3_connection_manager.default_chain_id
+            chain_id = connection_manager.default_chain_id
 
-        w3 = web3_connection_manager.get_web3(chain_id)
+        w3 = connection_manager.get_web3(chain_id)
         state_block = w3.eth.get_block_number()
 
         fee_token0: int

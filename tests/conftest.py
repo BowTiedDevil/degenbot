@@ -51,8 +51,8 @@ def initialize_and_reset_after_each_test():
     After each test, clear and reset global values & singletons to a fresh state
     """
     yield  # the fixture will pause here until the test completes
-    degenbot.config.web3_connection_manager.connections.clear()
-    degenbot.config.web3_connection_manager._default_chain_id = None
+    degenbot.config.connection_manager.connections.clear()
+    degenbot.config.connection_manager._default_chain_id = None
     degenbot.registry.all_pools.pool_registry._all_pools.clear()
     degenbot.registry.all_tokens.token_registry._all_tokens.clear()
     degenbot.managers.erc20_token_manager.Erc20TokenManager._state.clear()

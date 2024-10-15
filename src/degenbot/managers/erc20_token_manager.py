@@ -4,7 +4,7 @@ from typing import Any
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
-from ..config import web3_connection_manager
+from ..config import connection_manager
 from ..erc20_token import Erc20Token, EtherPlaceholder
 from ..registry.all_tokens import token_registry
 from ..types import AbstractManager
@@ -25,7 +25,7 @@ class Erc20TokenManager(AbstractManager):
         *,
         chain_id: int | None = None,
     ) -> None:
-        chain_id = chain_id if chain_id is not None else web3_connection_manager.default_chain_id
+        chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
 
         # the internal state data for this object is held in the
         # class-level _state dictionary, keyed by the chain ID

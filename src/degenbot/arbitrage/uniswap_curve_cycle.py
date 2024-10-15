@@ -10,7 +10,7 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
-from ..config import web3_connection_manager
+from ..config import connection_manager
 from ..constants import MAX_UINT256
 from ..curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from ..curve.types import CurveStableswapPoolState, CurveStableSwapPoolStateUpdated
@@ -543,7 +543,7 @@ class UniswapCurveCycle(AbstractArbitrage):
             assert isinstance(curve_pool, CurveStableswapPool)
             assert isinstance(curve_swap_vector, CurveStableSwapPoolVector)
 
-        block_number = web3_connection_manager.get_web3(curve_pool.chain_id).eth.get_block_number()
+        block_number = connection_manager.get_web3(curve_pool.chain_id).eth.get_block_number()
 
         # Some Curve pools utilize on-chain lookups in their calc, so do a simple pre-calc to
         # cache those values for a given block since the pool will be disconnected once sent

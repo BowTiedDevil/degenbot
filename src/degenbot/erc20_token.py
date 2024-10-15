@@ -11,7 +11,7 @@ from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
 from .chainlink import ChainlinkPriceContract
-from .config import web3_connection_manager
+from .config import connection_manager
 from .exceptions import DegenbotValueError, NoPriceOracle
 from .functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from .logging import logger
@@ -124,9 +124,7 @@ class Erc20Token(AbstractErc20Token):
     ) -> None:
         self.address = to_checksum_address(address)
 
-        self._chain_id = (
-            chain_id if chain_id is not None else web3_connection_manager.default_chain_id
-        )
+        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = self.w3
 
         self.name = self.UNKNOWN_NAME
@@ -323,7 +321,7 @@ class Erc20Token(AbstractErc20Token):
 
     @property
     def w3(self) -> Web3:
-        return web3_connection_manager.get_web3(self.chain_id)
+        return connection_manager.get_web3(self.chain_id)
 
 
 class EtherPlaceholder(Erc20Token):
@@ -341,9 +339,7 @@ class EtherPlaceholder(Erc20Token):
         *,
         chain_id: int | None = None,
     ) -> None:
-        self._chain_id = (
-            chain_id if chain_id is not None else web3_connection_manager.default_chain_id
-        )
+        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         self._cached_balance: dict[tuple[int, ChecksumAddress], int] = {}
         token_registry.add(token_address=self.address, chain_id=self._chain_id, token=self)
 

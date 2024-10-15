@@ -6,7 +6,7 @@ from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from typing_extensions import Self
 
-from ..config import web3_connection_manager
+from ..config import connection_manager
 from ..exceptions import (
     LiquidityPoolError,
     ManagerAlreadyInitialized,
@@ -54,7 +54,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         factory_address = to_checksum_address(factory_address)
 
         if chain_id is None:
-            chain_id = web3_connection_manager.default_chain_id
+            chain_id = connection_manager.default_chain_id
 
         if (chain_id, factory_address) in self.instances:
             raise ManagerAlreadyInitialized(
@@ -227,7 +227,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
         snapshot: UniswapV3LiquiditySnapshot | None = None,
     ):
         if chain_id is None:
-            chain_id = web3_connection_manager.default_chain_id
+            chain_id = connection_manager.default_chain_id
 
         factory_address = to_checksum_address(factory_address)
 

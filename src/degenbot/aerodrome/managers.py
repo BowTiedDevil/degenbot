@@ -6,7 +6,7 @@ from web3 import Web3
 from web3.types import BlockIdentifier
 
 from ..aerodrome.pools import AerodromeV2Pool
-from ..config import web3_connection_manager
+from ..config import connection_manager
 from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from .functions import generate_aerodrome_v3_pool_address
@@ -51,7 +51,7 @@ class AerodromeV2PoolManager(UniswapV2PoolManager):
         token0, token1 = sorted([token_address.lower() for token_address in token_addresses])
 
         pool_address = self.get_pool_address_from_factory_contract(
-            w3=web3_connection_manager.get_web3(self.chain_id),
+            w3=connection_manager.get_web3(self.chain_id),
             token0=to_checksum_address(token0),
             token1=to_checksum_address(token1),
             stable=stable,

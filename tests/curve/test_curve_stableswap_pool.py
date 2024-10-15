@@ -9,7 +9,7 @@ from web3.contract.contract import Contract
 from web3.types import Timestamp
 
 from degenbot import AnvilFork
-from degenbot.config import set_web3, web3_connection_manager
+from degenbot.config import connection_manager, set_web3
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions import BrokenPool, ZeroLiquidityError, ZeroSwapError
@@ -28,7 +28,7 @@ def tripool(ethereum_archive_node_web3: Web3) -> CurveStableswapPool:
 
 def _test_calculations(lp: CurveStableswapPool):
     state_block = lp._update_block
-    w3_contract = web3_connection_manager.get_web3(lp.chain_id).eth.contract(
+    w3_contract = connection_manager.get_web3(lp.chain_id).eth.contract(
         address=lp.address,
         abi=CURVE_V1_POOL_ABI,
     )
@@ -63,7 +63,7 @@ def _test_calculations(lp: CurveStableswapPool):
                     ),
                 }
                 contract_amount, *_ = eth_abi.abi.decode(
-                    data=web3_connection_manager.get_web3(lp.chain_id).eth.call(
+                    data=connection_manager.get_web3(lp.chain_id).eth.call(
                         transaction=tx,  # type: ignore[arg-type]
                         block_identifier=state_block,
                     ),

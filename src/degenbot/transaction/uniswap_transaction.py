@@ -14,7 +14,7 @@ from hexbytes import HexBytes
 from typing_extensions import Self
 from web3 import Web3
 
-from ..config import web3_connection_manager
+from ..config import connection_manager
 from ..constants import WRAPPED_NATIVE_TOKENS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
@@ -174,14 +174,14 @@ class UniswapTransaction(AbstractTransaction):
         self.silent = False
 
     def _raise_if_past_deadline(self, deadline: int) -> None:  # pragma: no cover
-        block = web3_connection_manager.get_web3(self.chain_id).eth.get_block(self.state_block)
+        block = connection_manager.get_web3(self.chain_id).eth.get_block(self.state_block)
         block_timestamp = block.get("timestamp")
         if block_timestamp is not None and block_timestamp > deadline:
             raise TransactionError("Deadline expired")
 
     def _raise_if_block_hash_mismatch(self, block_hash: HexBytes) -> None:  # pragma: no cover
         logger.info(f"Checking previousBlockhash: {block_hash!r}")
-        block = web3_connection_manager.get_web3(self.chain_id).eth.get_block("latest")
+        block = connection_manager.get_web3(self.chain_id).eth.get_block("latest")
         _block_hash = block.get("hash")
         if _block_hash is not None and block_hash != _block_hash:
             raise TransactionError("Previous block hash mismatch")
@@ -2099,7 +2099,7 @@ class UniswapTransaction(AbstractTransaction):
                         logger.info(f"{amount0_desired=}")
                         logger.info(f"{amount1_desired=}")
 
-                        positions_contract = web3_connection_manager.get_web3(
+                        positions_contract = connection_manager.get_web3(
                             self.chain_id
                         ).eth.contract(
                             address=to_checksum_address(
@@ -2237,7 +2237,7 @@ class UniswapTransaction(AbstractTransaction):
         self.silent = silent
 
         self.state_block = (
-            web3_connection_manager.get_web3(self.chain_id).eth.get_block_number()
+            connection_manager.get_web3(self.chain_id).eth.get_block_number()
             if state_block is None
             else cast(BlockNumber, state_block)
         )

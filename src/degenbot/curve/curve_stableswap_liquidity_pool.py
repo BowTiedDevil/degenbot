@@ -21,7 +21,7 @@ from web3 import Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
-from ..config import web3_connection_manager
+from ..config import connection_manager
 from ..constants import ZERO_ADDRESS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
@@ -276,7 +276,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         def get_lp_token_address() -> ChecksumAddress:
             for contract_address in (CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS):
                 lp_token_address, *_ = raw_call(
-                    w3=web3_connection_manager.get_web3(chain_id=self.chain_id),
+                    w3=connection_manager.get_web3(chain_id=self.chain_id),
                     address=contract_address,
                     calldata=encode_function_calldata(
                         function_prototype="get_lp_token(address)",
@@ -294,7 +294,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         def get_pool_from_lp_token(token: AnyAddress) -> ChecksumAddress:
             pool_address, *_ = raw_call(
-                w3=web3_connection_manager.get_web3(chain_id=self.chain_id),
+                w3=connection_manager.get_web3(chain_id=self.chain_id),
                 address=CURVE_V1_REGISTRY_ADDRESS,
                 calldata=encode_function_calldata(
                     function_prototype="get_pool_from_lp_token(address)",
@@ -308,7 +308,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         def is_metapool() -> bool:
             for contract_address in (CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS):
                 is_meta, *_ = raw_call(
-                    w3=web3_connection_manager.get_web3(chain_id=self.chain_id),
+                    w3=connection_manager.get_web3(chain_id=self.chain_id),
                     address=contract_address,
                     calldata=encode_function_calldata(
                         function_prototype="is_meta(address)",
@@ -388,10 +388,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
         if self.address in BROKEN_CURVE_V1_POOLS:
             raise BrokenPool(f"Pool {self.address} is broken")
 
-        self._chain_id = (
-            chain_id if chain_id is not None else web3_connection_manager.default_chain_id
-        )
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+        w3 = connection_manager.get_web3(self.chain_id)
         self._update_block = state_block if state_block is not None else w3.eth.block_number
 
         self._state_lock = Lock()
@@ -603,7 +601,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             return self.future_a_coefficient
 
         if timestamp is None:
-            w3 = web3_connection_manager.get_web3(self.chain_id)
+            w3 = connection_manager.get_web3(self.chain_id)
             latest_block = w3.eth.get_block("latest")
             timestamp = latest_block.get("timestamp")
             if TYPE_CHECKING:
@@ -639,7 +637,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         REDEMPTION_PRICE_SCALE = 10**9
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
 
         snap_contract_address: str
         snap_contract_address, *_ = eth_abi.abi.decode(
@@ -706,7 +704,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         block_number = (
             get_number_for_block_identifier(
                 block_identifier,
-                web3_connection_manager.get_web3(self.chain_id),
+                connection_manager.get_web3(self.chain_id),
             )
             if block_identifier is None
             else cast(int, block_identifier)
@@ -780,7 +778,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 with contextlib.suppress(KeyError):
                     return self._cached_contract_D[block_number]
 
-                w3 = web3_connection_manager.get_web3(self.chain_id)
+                w3 = connection_manager.get_web3(self.chain_id)
 
                 D: int
                 D, *_ = eth_abi.abi.decode(
@@ -800,7 +798,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 with contextlib.suppress(KeyError):
                     return self._cached_gamma[block_number]
 
-                w3 = web3_connection_manager.get_web3(self.chain_id)
+                w3 = connection_manager.get_web3(self.chain_id)
 
                 gamma: int
                 gamma, *_ = eth_abi.abi.decode(
@@ -822,7 +820,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
                 N_COINS = len(self.tokens)
 
-                w3 = web3_connection_manager.get_web3(self.chain_id)
+                w3 = connection_manager.get_web3(self.chain_id)
 
                 price_scale = [0] * (N_COINS - 1)
                 for token_index in range(N_COINS - 1):
@@ -1240,7 +1238,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         else:
             pool_balances = self.balances.copy()
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
 
         block_number = get_number_for_block_identifier(block_identifier, w3)
 
@@ -1478,7 +1476,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return self._cached_base_cache_updated[block_number]
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
 
         base_cache_updated: int
         base_cache_updated, *_ = eth_abi.abi.decode(
@@ -1498,7 +1496,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return self._cached_base_virtual_price[block_number]
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
 
         base_virtual_price: int
         base_virtual_price, *_ = eth_abi.abi.decode(
@@ -1523,7 +1521,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         BASE_CACHE_EXPIRES = 10 * 60  # 10 minutes
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
         block = w3.eth.get_block(block_identifier=block_number)
         timestamp = block.get("timestamp")
         if TYPE_CHECKING:
@@ -1575,7 +1573,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         else:
             pool_balances = self.balances.copy()
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
         block_number = get_number_for_block_identifier(block_identifier, w3)
 
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
@@ -1599,7 +1597,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
     def _calc_withdraw_one_coin(
         self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, ...]:
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
         block_number = get_number_for_block_identifier(block_identifier, w3)
 
         N_COINS = len(self.tokens)
@@ -1630,7 +1628,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         admin_balance: int
         admin_balance, *_ = raw_call(
-            w3=web3_connection_manager.get_web3(chain_id=self.chain_id),
+            w3=connection_manager.get_web3(chain_id=self.chain_id),
             address=self.address,
             calldata=encode_function_calldata(
                 function_prototype="admin_balances(uint256)",
@@ -1973,7 +1971,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_ctokens[block_number]
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
 
         result = []
         for token, use_lending, multiplier in zip(
@@ -2027,7 +2025,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_ytokens[block_number]
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
 
         # ref: https://etherscan.io/address/0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27#code
 
@@ -2061,7 +2059,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_cytokens[block_number]
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
 
         result = []
         for token, precision_multiplier in zip(
@@ -2110,7 +2108,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return [self.PRECISION, self._cached_rates_from_reth[block_number]]
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
 
         # ref: https://etherscan.io/address/0xF9440930043eb3997fc70e1339dBb11F341de7A8#code
         ratio, *_ = eth_abi.abi.decode(
@@ -2135,7 +2133,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 // self._cached_rates_from_aeth[block_number],
             ]
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
 
         # ref: https://etherscan.io/address/0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2#code
         _ratio, *_ = eth_abi.abi.decode(
@@ -2160,7 +2158,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_oracle[block_number]
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
 
         # ref: https://etherscan.io/address/0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492#code
         ORACLE_BIT_MASK = (2**32 - 1) * 256**28
@@ -2196,7 +2194,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         Retrieve updated balances from the contract
         """
 
-        w3 = web3_connection_manager.get_web3(self.chain_id)
+        w3 = connection_manager.get_web3(self.chain_id)
         if block_number is None:
             block_number = w3.eth.get_block_number()
 
@@ -2247,7 +2245,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         block_number = (
             get_number_for_block_identifier(
                 block_identifier,
-                web3_connection_manager.get_web3(self.chain_id),
+                connection_manager.get_web3(self.chain_id),
             )
             if block_identifier is None
             else cast(int, block_identifier)
