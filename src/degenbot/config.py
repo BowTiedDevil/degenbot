@@ -20,9 +20,11 @@ class ConnectionManager:
         except KeyError:
             raise DegenbotValueError("Chain ID does not have a registered Web3 instance.") from None
 
-    def register_web3(self, w3: web3.Web3) -> None:
+    def register_web3(self, w3: web3.Web3, optimize_middleware: bool = True) -> None:
         if w3.is_connected() is False:
             raise DegenbotValueError("Web3 instance is not connected.")
+        if optimize_middleware:
+            w3.middleware_onion.clear()
         self.connections[w3.eth.chain_id] = w3
 
     def set_default_chain(self, chain_id: int) -> None:
