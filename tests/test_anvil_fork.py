@@ -1,18 +1,17 @@
 from typing import TYPE_CHECKING
 
 import pytest
-import ujson
 import web3.middleware
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3.providers.ipc import IPCProvider
-from web3.types import Wei
 
 from degenbot import AnvilFork
 from degenbot.config import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
+from degenbot.exceptions import DegenbotValueError, EVMRevertError, InvalidUint256
 
-from ..conftest import BASE_FULL_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from .conftest import BASE_FULL_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
@@ -28,6 +27,16 @@ def test_anvil_forks():
     AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI, base_fee=10 * 10**9)
 
 
+def test_http_and_endpoints():
+    fork = AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+    assert fork.http_url == f"http://localhost:{fork.port}"
+    assert fork.ws_url == f"ws://localhost:{fork.port}"
+
+    current_block = fork.w3.eth.block_number
+    assert web3.Web3(web3.HTTPProvider(fork.http_url)).eth.block_number == current_block
+    assert web3.Web3(web3.LegacyWebSocketProvider(fork.ws_url)).eth.block_number == current_block
+
+
 def test_set_bytecode():
     FAKE_BYTECODE = HexBytes("0x42069")
     fork = AnvilFork(
@@ -40,9 +49,9 @@ def test_set_bytecode():
 
 
 def test_rpc_methods(fork_mainnet: AnvilFork):
-    with pytest.raises(ValueError, match="Fee outside valid range"):
+    with pytest.raises(InvalidUint256):
         fork_mainnet.set_next_base_fee(-1)
-    with pytest.raises(ValueError, match="Fee outside valid range"):
+    with pytest.raises(InvalidUint256):
         fork_mainnet.set_next_base_fee(MAX_UINT256 + 1)
     fork_mainnet.set_next_base_fee(11 * 10**9)
 
@@ -56,37 +65,17 @@ def test_rpc_methods(fork_mainnet: AnvilFork):
     assert fork_mainnet.return_to_snapshot(100) is False
 
     # Negative IDs are not allowed
-    with pytest.raises(ValueError, match="ID cannot be negative"):
+    with pytest.raises(DegenbotValueError, match="ID cannot be negative"):
         fork_mainnet.return_to_snapshot(-1)
-
-    # Generate a 1 wei WETH deposit transaction from Vitalik.eth
-    weth_contract = fork_mainnet.w3.eth.contract(
-        address=WETH_ADDRESS,
-        abi=ujson.loads(
-            """
-            [{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"guy","type":"address"},{"name":"wad","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"totalSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"src","type":"address"},{"name":"dst","type":"address"},{"name":"wad","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"wad","type":"uint256"}],"name":"withdraw","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[{"name":"","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"dst","type":"address"},{"name":"wad","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"deposit","outputs":[],"payable":true,"stateMutability":"payable","type":"function"},{"constant":true,"inputs":[{"name":"","type":"address"},{"name":"","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"payable":true,"stateMutability":"payable","type":"fallback"},{"anonymous":false,"inputs":[{"indexed":true,"name":"src","type":"address"},{"indexed":true,"name":"guy","type":"address"},{"indexed":false,"name":"wad","type":"uint256"}],"name":"Approval","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"src","type":"address"},{"indexed":true,"name":"dst","type":"address"},{"indexed":false,"name":"wad","type":"uint256"}],"name":"Transfer","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"dst","type":"address"},{"indexed":false,"name":"wad","type":"uint256"}],"name":"Deposit","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"src","type":"address"},{"indexed":false,"name":"wad","type":"uint256"}],"name":"Withdrawal","type":"event"}]
-            """
-        ),
-    )
-    deposit_transaction = weth_contract.functions.deposit().build_transaction(
-        {
-            "from": VITALIK_ADDRESS,
-            "value": Wei(1),
-        },
-    )
-    access_list = fork_mainnet.create_access_list(
-        transaction=deposit_transaction,  # type: ignore[arg-type]
-    )
-    assert isinstance(access_list, list)
 
     for balance in [MIN_UINT256, MAX_UINT256]:
         fork_mainnet.set_balance(VITALIK_ADDRESS, balance)
         assert fork_mainnet.w3.eth.get_balance(VITALIK_ADDRESS) == balance
 
     # Balances outside of uint256 should be rejected
-    with pytest.raises(ValueError):
+    with pytest.raises(EVMRevertError):
         fork_mainnet.set_balance(VITALIK_ADDRESS, MIN_UINT256 - 1)
-    with pytest.raises(ValueError):
+    with pytest.raises(EVMRevertError):
         fork_mainnet.set_balance(VITALIK_ADDRESS, MAX_UINT256 + 1)
 
     FAKE_COINBASE = to_checksum_address("0x0420042004200420042004200420042004200420")
@@ -96,7 +85,7 @@ def test_rpc_methods(fork_mainnet: AnvilFork):
 
     fork_mainnet.mine()
     block = fork_mainnet.w3.eth.get_block("latest")
-    assert block["miner"] == FAKE_COINBASE
+    assert block.get("miner") == FAKE_COINBASE
 
 
 def test_mine_and_reset(fork_mainnet: AnvilFork):
@@ -107,6 +96,14 @@ def test_mine_and_reset(fork_mainnet: AnvilFork):
     assert fork_mainnet.w3.eth.get_block_number() == starting_block + 3
     fork_mainnet.reset(block_number=starting_block)
     assert fork_mainnet.w3.eth.get_block_number() == starting_block
+
+
+def test_fork_from_transaction_hash():
+    fork = AnvilFork(
+        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_transaction_hash="0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6",
+    )
+    assert fork.w3.eth.block_number == 20987963
 
 
 def test_set_next_block_base_fee(fork_mainnet: AnvilFork):
@@ -121,7 +118,8 @@ def test_reset_and_set_next_block_base_fee(fork_mainnet: AnvilFork):
     BASE_FEE_OVERRIDE = 69 * 10**9
 
     starting_block = fork_mainnet.w3.eth.get_block_number()
-    fork_mainnet.reset(block_number=starting_block - 10, base_fee=BASE_FEE_OVERRIDE)
+    fork_mainnet.reset(block_number=starting_block - 10)
+    fork_mainnet.set_next_base_fee(BASE_FEE_OVERRIDE)
     fork_mainnet.mine()
     assert fork_mainnet.w3.eth.get_block_number() == starting_block - 9
     assert fork_mainnet.w3.eth.get_block(starting_block - 9)["baseFeePerGas"] == BASE_FEE_OVERRIDE
@@ -130,6 +128,13 @@ def test_reset_and_set_next_block_base_fee(fork_mainnet: AnvilFork):
 def test_reset_to_new_endpoint(fork_mainnet: AnvilFork):
     fork_mainnet.reset(fork_url=BASE_FULL_NODE_HTTP_URI)
     assert fork_mainnet.fork_url == BASE_FULL_NODE_HTTP_URI
+
+
+def test_reset_to_new_transaction_hash(fork_mainnet: AnvilFork):
+    fork_mainnet.reset_to_transaction_hash(
+        transaction_hash="0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6"
+    )
+    assert fork_mainnet.w3.eth.block_number == 20987963
 
 
 def test_ipc_kwargs():
