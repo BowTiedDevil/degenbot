@@ -280,9 +280,9 @@ class UniswapV2Pool(AbstractLiquidityPool):
 
             factory, token0, token1, reserves = batch.execute()
 
-        factory, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, factory))
-        token0, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token0))
-        token1, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token1))
+        (factory,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, factory))
+        (token0,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token0))
+        (token1,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token1))
         reserves0, reserves1, *_ = eth_abi.abi.decode(
             types=self.RESERVES_STRUCT_TYPES, data=cast(HexBytes, reserves)
         )
@@ -579,7 +579,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             raise DegenbotValueError(message=f"Unknown token {token}")
 
     def get_reserves(self, w3: Web3, block_identifier: BlockIdentifier) -> tuple[int, int]:
-        reserves_token0, reserves_token1, *_ = raw_call(
+        reserves_token0, reserves_token1 = raw_call(
             w3=w3,
             address=self.address,
             calldata=encode_function_calldata(

@@ -24,7 +24,7 @@ class AerodromeV2PoolManager(UniswapV2PoolManager):
         stable: bool,
         block_identifier: BlockIdentifier | None = None,
     ) -> ChecksumAddress:
-        pool_address, *_ = raw_call(
+        (pool_address,) = raw_call(
             w3=w3,
             address=self._factory_address,
             calldata=encode_function_calldata(

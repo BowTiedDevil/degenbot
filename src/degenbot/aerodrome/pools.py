@@ -273,15 +273,15 @@ class AerodromeV2Pool(AbstractLiquidityPool):
 
             factory, token0, token1, stable, reserves = batch.execute()
 
-        factory, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, factory))
-        token0, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token0))
-        token1, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token1))
-        stable, *_ = eth_abi.abi.decode(types=["bool"], data=cast(HexBytes, stable))
-        reserves0, reserves1, *_ = eth_abi.abi.decode(
+        (factory,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, factory))
+        (token0,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token0))
+        (token1,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token1))
+        (stable,) = eth_abi.abi.decode(types=["bool"], data=cast(HexBytes, stable))
+        reserves0, reserves1 = eth_abi.abi.decode(
             types=["uint112", "uint112"], data=cast(HexBytes, reserves)
         )
 
-        fee, *_ = eth_abi.abi.decode(
+        (fee,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
                 transaction={
@@ -398,7 +398,7 @@ class AerodromeV2Pool(AbstractLiquidityPool):
     def get_reserves(
         self, w3: Web3, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, int]:
-        reserves_token0, reserves_token1, *_ = raw_call(
+        reserves_token0, reserves_token1 = raw_call(
             w3=w3,
             address=self.address,
             block_identifier=get_number_for_block_identifier(block_identifier, w3),

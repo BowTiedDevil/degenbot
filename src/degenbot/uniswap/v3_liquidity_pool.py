@@ -656,16 +656,16 @@ class UniswapV3Pool(AbstractLiquidityPool):
 
             factory, token0, token1, fee, tick_spacing, slot0, liquidity = batch.execute()
 
-        factory, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, factory))
-        token0, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token0))
-        token1, *_ = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token1))
-        fee, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, fee))
-        tick_spacing, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, tick_spacing))
+        (factory,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, factory))
+        (token0,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token0))
+        (token1,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token1))
+        (fee,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, fee))
+        (tick_spacing,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, tick_spacing))
 
         price, tick, *_ = eth_abi.abi.decode(
             types=self.SLOT0_STRUCT_TYPES, data=cast(HexBytes, slot0)
         )
-        liquidity, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, liquidity))
+        (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, liquidity))
 
         return (
             to_checksum_address(cast(str, factory)),
@@ -835,7 +835,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
             _sqrt_price_x96, _tick, *_ = eth_abi.abi.decode(
                 types=self.SLOT0_STRUCT_TYPES, data=cast(HexBytes, slot0)
             )
-            _liquidity, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, liquidity))
+            (_liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, liquidity))
 
             if TYPE_CHECKING:
                 assert isinstance(_sqrt_price_x96, int)

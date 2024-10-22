@@ -62,7 +62,7 @@ def test_low_level_call_for_factory_address(ethereum_archive_node_web3: web3.Web
 
     function_prototype = "factory()"
 
-    result, *_ = raw_call(
+    (result,) = raw_call(
         w3=ethereum_archive_node_web3,
         block_identifier=ethereum_archive_node_web3.eth.block_number,
         address=POOL_ADDRESS,

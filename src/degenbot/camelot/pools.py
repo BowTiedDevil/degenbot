@@ -34,7 +34,7 @@ class CamelotLiquidityPool(UniswapV2Pool):
 
         fee_token0: int
         fee_token1: int
-        _, _, fee_token0, fee_token1, *_ = raw_call(
+        _, _, fee_token0, fee_token1 = raw_call(
             w3=w3,
             address=address,
             calldata=encode_function_calldata(
@@ -45,7 +45,7 @@ class CamelotLiquidityPool(UniswapV2Pool):
         )
 
         self.fee_denominator: int
-        self.fee_denominator, *_ = raw_call(
+        (self.fee_denominator,) = raw_call(
             w3=w3,
             address=address,
             calldata=encode_function_calldata(
@@ -68,7 +68,7 @@ class CamelotLiquidityPool(UniswapV2Pool):
         )
 
         self.stable_swap: bool
-        self.stable_swap, *_ = raw_call(
+        (self.stable_swap,) = raw_call(
             w3=w3,
             address=address,
             calldata=encode_function_calldata(

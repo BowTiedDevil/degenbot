@@ -153,14 +153,12 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
                 initial_a, initial_a_time, future_a, future_a_time = batch.execute()
 
-                initial_a, *_ = eth_abi.abi.decode(
-                    types=["uint256"], data=cast(HexBytes, initial_a)
-                )
-                initial_a_time, *_ = eth_abi.abi.decode(
+                (initial_a,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, initial_a))
+                (initial_a_time,) = eth_abi.abi.decode(
                     types=["uint256"], data=cast(HexBytes, initial_a_time)
                 )
-                future_a, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, future_a))
-                future_a_time, *_ = eth_abi.abi.decode(
+                (future_a,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, future_a))
+                (future_a_time,) = eth_abi.abi.decode(
                     types=["uint256"], data=cast(HexBytes, future_a_time)
                 )
 
@@ -214,13 +212,11 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
                 a_coefficient, pool_fee, admin_fee = batch.execute()
 
-                a_coefficient, *_ = eth_abi.abi.decode(
+                (a_coefficient,) = eth_abi.abi.decode(
                     types=["uint256"], data=cast(HexBytes, a_coefficient)
                 )
-                pool_fee, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, pool_fee))
-                admin_fee, *_ = eth_abi.abi.decode(
-                    types=["uint256"], data=cast(HexBytes, admin_fee)
-                )
+                (pool_fee,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, pool_fee))
+                (admin_fee,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, admin_fee))
 
                 self.a_coefficient = cast(int, a_coefficient)
                 self.fee = cast(int, pool_fee)
@@ -259,7 +255,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             for token_id in range(self.MAX_COINS):
                 try:
                     token_address: str
-                    token_address, *_ = raw_call(
+                    (token_address,) = raw_call(
                         w3=w3,
                         address=self.address,
                         calldata=encode_function_calldata(
@@ -277,7 +273,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         def get_lp_token_address() -> ChecksumAddress:
             for contract_address in (CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS):
-                lp_token_address, *_ = raw_call(
+                (lp_token_address,) = raw_call(
                     w3=connection_manager.get_web3(chain_id=self.chain_id),
                     address=contract_address,
                     calldata=encode_function_calldata(
@@ -295,7 +291,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             )  # pragma: no cover
 
         def get_pool_from_lp_token(token: AnyAddress) -> ChecksumAddress:
-            pool_address, *_ = raw_call(
+            (pool_address,) = raw_call(
                 w3=connection_manager.get_web3(chain_id=self.chain_id),
                 address=CURVE_V1_REGISTRY_ADDRESS,
                 calldata=encode_function_calldata(
@@ -357,7 +353,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     self.use_lending = [True, True, True, False]
                 case "0xDeBF20617708857ebe4F679508E7b7863a8A8EeE":
                     self.precision_multipliers = [1, 10**12, 10**12]
-                    self.offpeg_fee_multiplier, *_ = eth_abi.abi.decode(
+                    (self.offpeg_fee_multiplier,) = eth_abi.abi.decode(
                         types=["uint256"],
                         data=w3.eth.call(
                             transaction={
@@ -381,7 +377,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     "0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492"
                     | "0xBfAb6FA95E0091ed66058ad493189D2cB29385E6"
                 ):
-                    self.oracle_method, *_ = eth_abi.abi.decode(
+                    (self.oracle_method,) = eth_abi.abi.decode(
                         types=["uint256"],
                         data=w3.eth.call(
                             transaction={
@@ -392,7 +388,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                         ),
                     )
                 case "0xEB16Ae0052ed37f479f7fe63849198Df1765a733":
-                    self.offpeg_fee_multiplier, *_ = eth_abi.abi.decode(
+                    (self.offpeg_fee_multiplier,) = eth_abi.abi.decode(
                         types=["uint256"],
                         data=w3.eth.call(
                             transaction={
@@ -517,7 +513,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         self.balances = []
         for token_id, _ in enumerate(self.tokens):
-            token_balance, *_ = eth_abi.abi.decode(
+            (token_balance,) = eth_abi.abi.decode(
                 types=[self._coin_index_type],
                 data=w3.eth.call(
                     transaction={
@@ -659,7 +655,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         w3 = connection_manager.get_web3(self.chain_id)
 
         snap_contract_address: str
-        snap_contract_address, *_ = eth_abi.abi.decode(
+        (snap_contract_address,) = eth_abi.abi.decode(
             types=["address"],
             data=w3.eth.call(
                 transaction={
@@ -671,7 +667,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         )
 
         rate: int
-        rate, *_ = eth_abi.abi.decode(
+        (rate,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
                 transaction={
@@ -800,7 +796,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 w3 = connection_manager.get_web3(self.chain_id)
 
                 D: int
-                D, *_ = eth_abi.abi.decode(
+                (D,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
                         transaction={
@@ -820,7 +816,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 w3 = connection_manager.get_web3(self.chain_id)
 
                 gamma: int
-                gamma, *_ = eth_abi.abi.decode(
+                (gamma,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
                         transaction={
@@ -843,7 +839,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
                 price_scale = [0] * (N_COINS - 1)
                 for token_index in range(N_COINS - 1):
-                    price_scale[token_index], *_ = eth_abi.abi.decode(
+                    (price_scale[token_index],) = eth_abi.abi.decode(
                         types=["uint256"],
                         data=w3.eth.call(
                             transaction={
@@ -1498,7 +1494,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         w3 = connection_manager.get_web3(self.chain_id)
 
         base_cache_updated: int
-        base_cache_updated, *_ = eth_abi.abi.decode(
+        (base_cache_updated,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
                 transaction={
@@ -1518,7 +1514,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         w3 = connection_manager.get_web3(self.chain_id)
 
         base_virtual_price: int
-        base_virtual_price, *_ = eth_abi.abi.decode(
+        (base_virtual_price,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
                 transaction={
@@ -1551,7 +1547,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             self.base_cache_updated is None
             or timestamp > self.base_cache_updated + BASE_CACHE_EXPIRES
         ):
-            base_virtual_price, *_ = eth_abi.abi.decode(
+            (base_virtual_price,) = eth_abi.abi.decode(
                 types=["uint256"],
                 data=w3.eth.call(
                     transaction={
@@ -1646,7 +1642,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             return self._cached_admin_balance[block_number, token_index]
 
         admin_balance: int
-        admin_balance, *_ = raw_call(
+        (admin_balance,) = raw_call(
             w3=connection_manager.get_web3(chain_id=self.chain_id),
             address=self.address,
             calldata=encode_function_calldata(
@@ -2002,7 +1998,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             if not use_lending:
                 rate = self.PRECISION
             else:
-                rate, *_ = eth_abi.abi.decode(
+                (rate,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
                         transaction={
@@ -2012,7 +2008,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                         block_identifier=block_number,
                     ),
                 )
-                supply_rate, *_ = eth_abi.abi.decode(
+                (supply_rate,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
                         transaction={
@@ -2022,7 +2018,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                         block_identifier=block_number,
                     ),
                 )
-                old_block, *_ = eth_abi.abi.decode(
+                (old_block,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
                         transaction={
@@ -2056,7 +2052,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             strict=False,
         ):
             if use_lending:
-                rate, *_ = eth_abi.abi.decode(
+                (rate,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
                         transaction={
@@ -2084,7 +2080,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         for token, precision_multiplier in zip(
             self.tokens, self.precision_multipliers, strict=False
         ):
-            rate, *_ = eth_abi.abi.decode(
+            (rate,) = eth_abi.abi.decode(
                 types=["uint256"],
                 data=(
                     w3.eth.call(
@@ -2096,7 +2092,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     )
                 ),
             )
-            supply_rate, *_ = eth_abi.abi.decode(
+            (supply_rate,) = eth_abi.abi.decode(
                 types=["uint256"],
                 data=w3.eth.call(
                     transaction={
@@ -2106,7 +2102,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     block_identifier=block_number,
                 ),
             )
-            old_block, *_ = eth_abi.abi.decode(
+            (old_block,) = eth_abi.abi.decode(
                 types=["uint256"],
                 data=w3.eth.call(
                     transaction={
@@ -2130,7 +2126,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         w3 = connection_manager.get_web3(self.chain_id)
 
         # ref: https://etherscan.io/address/0xF9440930043eb3997fc70e1339dBb11F341de7A8#code
-        ratio, *_ = eth_abi.abi.decode(
+        (ratio,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
                 transaction={
@@ -2155,7 +2151,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         w3 = connection_manager.get_web3(self.chain_id)
 
         # ref: https://etherscan.io/address/0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2#code
-        _ratio, *_ = eth_abi.abi.decode(
+        (_ratio,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
                 transaction={
@@ -2188,7 +2184,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             assert oracle is not None
 
         if oracle != 0:
-            oracle_rate, *_ = eth_abi.abi.decode(
+            (oracle_rate,) = eth_abi.abi.decode(
                 types=["uint256"],
                 data=w3.eth.call(
                     transaction={
@@ -2221,7 +2217,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         token_balances = []
         coin_index_type = self._coin_index_type
         for token_id, _ in enumerate(self.tokens):
-            token_balance, *_ = eth_abi.abi.decode(
+            (token_balance,) = eth_abi.abi.decode(
                 types=[coin_index_type],
                 data=w3.eth.call(
                     transaction={
