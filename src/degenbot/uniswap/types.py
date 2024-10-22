@@ -97,8 +97,8 @@ class UniswapV3PoolState(AbstractPoolState):
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV3PoolSimulationResult(UniswapSimulationResult):
-    initial_state: UniswapV3PoolState = dataclasses.field(compare=False)
-    final_state: UniswapV3PoolState = dataclasses.field(compare=False)
+    initial_state: UniswapV3PoolState
+    final_state: UniswapV3PoolState
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
