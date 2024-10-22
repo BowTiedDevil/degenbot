@@ -735,9 +735,6 @@ class UniswapV3Pool(AbstractLiquidityPool):
 
     @property
     def tick_bitmap(self) -> dict[int, UniswapV3BitmapAtWord]:
-        if TYPE_CHECKING:
-            # TODO: remove this check once tick_bitmap and tick_data are not optional
-            assert self.state.tick_bitmap is not None
         return self.state.tick_bitmap
 
     @tick_bitmap.setter
@@ -754,9 +751,6 @@ class UniswapV3Pool(AbstractLiquidityPool):
 
     @property
     def tick_data(self) -> dict[int, UniswapV3LiquidityAtTick]:
-        if TYPE_CHECKING:
-            # TODO: remove this check once tick_bitmap and tick_data are not optional
-            assert self.state.tick_data is not None
         return self.state.tick_data
 
     @tick_data.setter
@@ -1259,6 +1253,8 @@ class UniswapV3Pool(AbstractLiquidityPool):
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrt_price_x96,
                     tick=end_tick,
+                    tick_bitmap=self.state.tick_bitmap,
+                    tick_data=self.state.tick_data,
                 ),
             )
 
@@ -1302,5 +1298,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrtprice,
                     tick=end_tick,
+                    tick_bitmap=self.state.tick_bitmap,
+                    tick_data=self.state.tick_data,
                 ),
             )

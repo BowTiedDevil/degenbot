@@ -245,6 +245,8 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
                     liquidity=69_420,
                     sqrt_price_x96=0,  # <--- value triggering the exception
                     tick=1,
+                    tick_bitmap=uniswap_v3_weth_usdc_lp.tick_bitmap,
+                    tick_data=uniswap_v3_weth_usdc_lp.tick_data,
                 ),
             }
         )
@@ -261,6 +263,7 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
                     sqrt_price_x96=1,
                     tick=1,
                     tick_bitmap={},  # <--- value triggering the exception
+                    tick_data=uniswap_v3_weth_usdc_lp.tick_data,
                 ),
             }
         )
@@ -279,6 +282,8 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
                         MIN_SQRT_RATIO + 1  # <--- value triggering the exception
                     ),
                     tick=1,
+                    tick_bitmap=uniswap_v3_weth_usdc_lp.tick_bitmap,
+                    tick_data=uniswap_v3_weth_usdc_lp.tick_data,
                 ),
             }
         )
@@ -303,6 +308,8 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
                         MAX_SQRT_RATIO - 1  # <--- value triggering the exception
                     ),
                     tick=1,
+                    tick_bitmap=uniswap_v3_weth_usdc_lp.tick_bitmap,
+                    tick_data=uniswap_v3_weth_usdc_lp.tick_data,
                 ),
             }
         )

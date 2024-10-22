@@ -362,6 +362,8 @@ def test_calculate_tokens_out_from_tokens_in_with_override(
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
         tick=258116,
+        tick_bitmap=lp.tick_bitmap,
+        tick_data=lp.tick_data,
     )
 
     assert (
@@ -409,6 +411,8 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
         tick=258116,
+        tick_bitmap=lp.tick_bitmap,
+        tick_data=lp.tick_data,
     )
 
     assert (
@@ -435,6 +439,8 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool, dai: Er
             liquidity=1612978974357835825,
             sqrt_price_x96=31549266832914462409708360853542079,
             tick=257907,
+            tick_bitmap=lp.tick_bitmap,
+            tick_data=lp.tick_data,
         ),
     )
 
@@ -466,6 +472,8 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool, dai: Er
             liquidity=1612978974357835825,
             sqrt_price_x96=31548441339817807300885591332345643,
             tick=257906,
+            tick_bitmap=lp.tick_bitmap,
+            tick_data=lp.tick_data,
         ),
     )
 
@@ -517,6 +525,8 @@ def test_simulations_with_override(
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
         tick=258116,
+        tick_bitmap=lp.tick_bitmap,
+        tick_data=lp.tick_data,
     )
 
     assert lp.simulate_exact_input_swap(
@@ -532,6 +542,8 @@ def test_simulations_with_override(
             sqrt_price_x96=31881342483860761583159860586051776,
             liquidity=1533143241938066251,
             tick=258116,
+            tick_bitmap=lp.tick_bitmap,
+            tick_data=lp.tick_data,
         ),
     )
 
@@ -548,6 +560,8 @@ def test_simulations_with_override(
             sqrt_price_x96=31881342483855216967760245337454994,
             liquidity=1533143241938066251,
             tick=258116,
+            tick_bitmap=lp.tick_bitmap,
+            tick_data=lp.tick_data,
         ),
     )
 

@@ -91,8 +91,8 @@ class UniswapV3PoolState(AbstractPoolState):
     liquidity: int
     sqrt_price_x96: int
     tick: int
-    tick_bitmap: dict[int, UniswapV3BitmapAtWord] | None = dataclasses.field(default=None)
-    tick_data: dict[int, UniswapV3LiquidityAtTick] | None = dataclasses.field(default=None)
+    tick_bitmap: dict[int, UniswapV3BitmapAtWord]
+    tick_data: dict[int, UniswapV3LiquidityAtTick]
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
