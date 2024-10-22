@@ -330,10 +330,9 @@ class UniswapLpCycle(AbstractArbitrage):
                                 message=f"Override {pool_override} is not valid for pool {pool}."
                             )
                 except (EVMRevertError, LiquidityPoolError):  # pragma: no cover
-                    # The optimizer might send invalid amounts into the swap
-                    # calculation during iteration. We don't want it to stop,
-                    # so catch the exception and pretend the swap results in
-                    # token_out_quantity = 0.
+                    # The optimizer might send invalid amounts into the swap calculation during
+                    # iteration. We don't want it to stop, so catch the exception and pretend the
+                    # swap resulted in zero output
                     token_out_quantity = 0
                     break
 

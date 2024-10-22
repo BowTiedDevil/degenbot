@@ -18,11 +18,14 @@ def least_significant_bit(number: int) -> int:
     if number > MAX_UINT256:
         raise EVMRevertError(error="required: number <= max(uint256)")
 
-    # Reverse the binary string and search for LSB by returning the position of the first "1" value
-    #
-    # e.g. bin(69) == '0b1000101'
-    # trim the '0b' and reverse the string to '1010001'
-    # LSB occurs at position 0
+    """
+    Reverse the binary string and search for LSB by returning the position of the first "1" value
+
+    e.g. bin(69) == '0b1000101', trim the '0b' and reverse the string
+    '1010001'
+           ^---- LSB @ position 0
+    """
+
     num_string = bin(number)[2:][::-1]
     return num_string.find("1")
 
@@ -40,9 +43,13 @@ def most_significant_bit(number: int) -> int:
     if number > MAX_UINT256:
         raise EVMRevertError(error="required: number <= max(uint256) ")
 
-    # Reverse the binary string and search for LSB by returning the position of the first "1" value
-    #
-    # e.g. bin(69) == '0b1000101', trim the '0b'
-    # LSB occurs at position 6
+    """
+    Search for MSB by returning the position of the first "1" value
+
+    e.g. bin(69) == '0b1000101', trim the '0b'
+    '1000101'
+     ^-------- MSB @ index 0 (position 7 after reversing)
+    """
+
     num_string = bin(number)[2:]
     return (len(num_string) - 1) - num_string.find("1")

@@ -526,13 +526,14 @@ class CurveStableswapPool(AbstractLiquidityPool):
             )
             self.balances.append(token_balance)
 
-        # 3pool example
-        # rate_multipliers = [
-        #   10**12000000,             <------ 10**18 == 10**(18 + 18 - 18)
-        #   10**12000000000000000000, <------ 10**30 == 10**(18 + 18 - 6)
-        #   10**12000000000000000000, <------ 10**30 == 10**(18 + 18 - 6)
-        # ]
-
+        """
+        3pool example
+        rate_multipliers = [
+          10**12000000,             <------ 10**18 == 10**(18 + 18 - 18)
+          10**12000000000000000000, <------ 10**30 == 10**(18 + 18 - 6)
+          10**12000000000000000000, <------ 10**30 == 10**(18 + 18 - 6)
+        ]
+        """
         self.rate_multipliers = [
             10 ** (2 * self.PRECISION_DECIMALS - token.decimals) for token in self.tokens
         ]
@@ -907,10 +908,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     _g1k0 = gamma + 10**18
                     _g1k0 = _g1k0 - K0 + 1 if _g1k0 > K0 else K0 - _g1k0 + 1
 
-                    # D // (A * N**N) * _g1k0**2 // gamma**2
                     mul1 = 10**18 * D // gamma * _g1k0 // gamma * _g1k0 * A_MULTIPLIER // ann
-
-                    # 2*K0 // _g1k0
                     mul2 = 10**18 + (2 * 10**18) * K0 // _g1k0
 
                     yfprime = 10**18 * y + S * mul2 + mul1

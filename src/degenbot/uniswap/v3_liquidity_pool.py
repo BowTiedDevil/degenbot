@@ -470,7 +470,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     def get_tick_bitmap_at_word(
         self, w3: Web3, word_position: int, block_identifier: BlockIdentifier
     ) -> int:
-        bitmap_at_word, *_ = raw_call(
+        (bitmap_at_word,) = raw_call(
             w3=w3,
             address=self.address,
             calldata=encode_function_calldata(
@@ -1235,21 +1235,17 @@ class UniswapV3Pool(AbstractLiquidityPool):
         zero_for_one = token_in == self.token0
 
         try:
-            (
-                amount0_delta,
-                amount1_delta,
-                end_sqrt_price_x96,
-                end_liquidity,
-                end_tick,
-            ) = self._calculate_swap(
-                zero_for_one=zero_for_one,
-                amount_specified=token_in_quantity,
-                sqrt_price_limit_x96=(
-                    sqrt_price_limit_x96
-                    if sqrt_price_limit_x96 is not None
-                    else (MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1)
-                ),
-                override_state=override_state,
+            amount0_delta, amount1_delta, end_sqrt_price_x96, end_liquidity, end_tick = (
+                self._calculate_swap(
+                    zero_for_one=zero_for_one,
+                    amount_specified=token_in_quantity,
+                    sqrt_price_limit_x96=(
+                        sqrt_price_limit_x96
+                        if sqrt_price_limit_x96 is not None
+                        else (MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1)
+                    ),
+                    override_state=override_state,
+                )
             )
         except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
@@ -1257,7 +1253,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
             return UniswapV3PoolSimulationResult(
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
-                initial_state=override_state or self.state,
+                initial_state=override_state if override_state is not None else self.state,
                 final_state=self.PoolState(
                     pool=self.address,
                     liquidity=end_liquidity,
@@ -1282,21 +1278,17 @@ class UniswapV3Pool(AbstractLiquidityPool):
         zero_for_one = token_out == self.token1
 
         try:
-            (
-                amount0_delta,
-                amount1_delta,
-                end_sqrtprice,
-                end_liquidity,
-                end_tick,
-            ) = self._calculate_swap(
-                zero_for_one=zero_for_one,
-                amount_specified=-token_out_quantity,
-                sqrt_price_limit_x96=(
-                    sqrt_price_limit_x96
-                    if sqrt_price_limit_x96 is not None
-                    else (MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1)
-                ),
-                override_state=override_state,
+            amount0_delta, amount1_delta, end_sqrtprice, end_liquidity, end_tick = (
+                self._calculate_swap(
+                    zero_for_one=zero_for_one,
+                    amount_specified=-token_out_quantity,
+                    sqrt_price_limit_x96=(
+                        sqrt_price_limit_x96
+                        if sqrt_price_limit_x96 is not None
+                        else (MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1)
+                    ),
+                    override_state=override_state,
+                )
             )
         except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
@@ -1304,7 +1296,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
             return UniswapV3PoolSimulationResult(
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
-                initial_state=override_state or self.state,
+                initial_state=override_state if override_state is not None else self.state,
                 final_state=self.PoolState(
                     pool=self.address,
                     liquidity=end_liquidity,

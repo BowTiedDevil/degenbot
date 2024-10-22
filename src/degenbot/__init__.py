@@ -1,8 +1,3 @@
-# TODO:
-# - AllTokens and AllPools improvements
-#   - singleton created at import
-#   - make getter/setter methods with chain ID
-
 from . import (
     aerodrome,
     arbitrage,

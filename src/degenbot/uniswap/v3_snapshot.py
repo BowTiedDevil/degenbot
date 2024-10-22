@@ -182,9 +182,10 @@ class UniswapV3LiquiditySnapshot:
             tick_bitmap: dict[int, UniswapV3BitmapAtWord] = self._liquidity_snapshot[pool_address][
                 "tick_bitmap"
             ]
-            return tick_bitmap
         except KeyError:
             return dict()
+        else:
+            return tick_bitmap
 
     def get_tick_data(self, pool: ChecksumAddress | str) -> dict[int, UniswapV3LiquidityAtTick]:
         pool_address = to_checksum_address(pool)
@@ -193,9 +194,10 @@ class UniswapV3LiquiditySnapshot:
             tick_data: dict[int, UniswapV3LiquidityAtTick] = self._liquidity_snapshot[pool_address][
                 "tick_data"
             ]
-            return tick_data
         except KeyError:
             return {}
+        else:
+            return tick_data
 
     def update_snapshot(
         self,

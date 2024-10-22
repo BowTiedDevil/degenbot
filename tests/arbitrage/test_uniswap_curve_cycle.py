@@ -353,16 +353,12 @@ def test_arb_payload_encoding(ethereum_archive_node_web3: Web3, weth: Erc20Token
             max_input=10 * 10**18,
         )
 
-        try:
-            calc_result = arb.calculate(state_overrides=overrides)
-        except ArbitrageError:
-            raise
-        else:
-            arb.generate_payloads(
-                from_address=FAKE_ADDRESS,
-                swap_amount=calc_result.input_amount,
-                pool_swap_amounts=calc_result.swap_amounts,
-            )
+        calc_result = arb.calculate(state_overrides=overrides)
+        arb.generate_payloads(
+            from_address=FAKE_ADDRESS,
+            swap_amount=calc_result.input_amount,
+            pool_swap_amounts=calc_result.swap_amounts,
+        )
 
 
 async def test_process_pool_calculation(ethereum_archive_node_web3: Web3, weth: Erc20Token) -> None:

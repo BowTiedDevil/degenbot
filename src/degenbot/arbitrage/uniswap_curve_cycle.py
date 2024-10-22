@@ -368,8 +368,6 @@ class UniswapCurveCycle(AbstractArbitrage):
                         message=f"Could not process pool {pool}, state {pool_state}, and vector {vector}"  # noqa:E501
                     )
 
-            # print(f"{profit_factor=}")
-
         if profit_factor < 1.0:
             raise ArbitrageError(
                 message=f"No profitable arbitrage at current prices. Profit factor: {profit_factor}"
@@ -441,10 +439,9 @@ class UniswapCurveCycle(AbstractArbitrage):
                             )
 
                 except (EVMRevertError, LiquidityPoolError):
-                    # The optimizer might send invalid amounts into the swap
-                    # calculation during iteration. We don't want it to stop,
-                    # so catch the exception and pretend the swap results in
-                    # token_out_quantity = 0.
+                    # The optimizer might send invalid amounts into the swap calculation during
+                    # iteration. We don't want it to stop, so catch the exception and pretend the
+                    # swap resulted in zero output
                     token_out_quantity = 0
                     break
 

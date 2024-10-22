@@ -762,7 +762,7 @@ class UniswapTransaction(AbstractTransaction):
             match command:
                 case "SWEEP":
                     """
-                    This function transfers the current token balance held by the contract to 
+                    This function transfers the current token balance held by the contract to
                     `recipient`
                     """
 
@@ -1031,7 +1031,7 @@ class UniswapTransaction(AbstractTransaction):
                     """
                     Decode an exact input swap through Uniswap V3 liquidity pools.
 
-                    Returns: a list of tuples representing the pool object and the final state of 
+                    Returns: a list of tuples representing the pool object and the final state of
                     the pool after the swap completes.
                     """
 
@@ -1919,10 +1919,7 @@ class UniswapTransaction(AbstractTransaction):
                             if not last_swap:
                                 # pool states are appended to `future_pool_states`
                                 # so the previous swap will be in the last position
-                                (
-                                    _,
-                                    _last_sim_result,
-                                ) = self.simulated_pool_states[-1]
+                                _, _last_sim_result = self.simulated_pool_states[-1]
 
                                 if TYPE_CHECKING:
                                     assert isinstance(
@@ -2079,15 +2076,16 @@ class UniswapTransaction(AbstractTransaction):
 
                             return liquidity
 
-                        # struct IncreaseLiquidityParams {
-                        #     address token0;
-                        #     address token1;
-                        #     uint256 tokenId;
-                        #     uint256 amount0Min;
-                        #     uint256 amount1Min;
-                        # }
-
                         # Decode inputs
+                        """
+                        struct IncreaseLiquidityParams {
+                            address token0;
+                            address token1;
+                            uint256 tokenId;
+                            uint256 amount0Min;
+                            uint256 amount1Min;
+                        }
+                        """
 
                         logger.info(f"{func_params=}")
 
