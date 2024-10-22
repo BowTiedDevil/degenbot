@@ -16,6 +16,9 @@ from .pools import AerodromeV3Pool
 class AerodromeV2PoolManager(UniswapV2PoolManager):
     Pool: TypeAlias = AerodromeV2Pool
 
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"AerodromeV2PoolManager(factory={self._factory_address})"
+
     def get_pool_address_from_factory_contract(
         self,
         w3: Web3,
