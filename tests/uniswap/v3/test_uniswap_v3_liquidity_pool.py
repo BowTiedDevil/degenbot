@@ -536,7 +536,7 @@ def test_simulations_with_override(
     ) == UniswapV3PoolSimulationResult(
         amount0_delta=-6157179,
         amount1_delta=1 * 10**18,
-        initial_state=lp.state,
+        initial_state=pool_state_override,
         final_state=UniswapV3PoolState(
             pool=lp.address,
             sqrt_price_x96=31881342483860761583159860586051776,
@@ -554,7 +554,7 @@ def test_simulations_with_override(
     ) == UniswapV3PoolSimulationResult(
         amount0_delta=-6157179,
         amount1_delta=999999892383362636,
-        initial_state=lp.state,
+        initial_state=pool_state_override,
         final_state=UniswapV3PoolState(
             pool=lp.address,
             sqrt_price_x96=31881342483855216967760245337454994,
