@@ -3,7 +3,7 @@ import dataclasses
 from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
@@ -40,6 +40,7 @@ from .types import (
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
+    UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
 from .v3_functions import (
@@ -62,7 +63,7 @@ from .v3_libraries.tick_math import (
 
 
 class UniswapV3Pool(AbstractLiquidityPool):
-    from .types import UniswapV3PoolState as PoolState
+    PoolState: TypeAlias = UniswapV3PoolState
 
     UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
         "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"

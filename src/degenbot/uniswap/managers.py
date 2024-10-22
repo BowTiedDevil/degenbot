@@ -1,6 +1,6 @@
 import contextlib
 from threading import Lock
-from typing import Any
+from typing import Any, TypeAlias
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -30,7 +30,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
     A class that generates and tracks Uniswap V2 liquidity pool helpers.
     """
 
-    from .v2_liquidity_pool import UniswapV2Pool as Pool
+    Pool: TypeAlias = UniswapV2Pool
 
     @classmethod
     def from_exchange(
@@ -205,7 +205,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
     A class that generates and tracks Uniswap V3 liquidity pool helpers.
     """
 
-    from .v3_liquidity_pool import UniswapV3Pool as Pool
+    Pool: TypeAlias = UniswapV3Pool
 
     @classmethod
     def from_exchange(

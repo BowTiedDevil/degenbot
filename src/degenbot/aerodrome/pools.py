@@ -1,6 +1,6 @@
 from fractions import Fraction
 from threading import Lock
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeAlias, cast
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -30,11 +30,16 @@ from .functions import (
     generate_aerodrome_v2_pool_address,
     generate_aerodrome_v3_pool_address,
 )
-from .types import AerodromeV2PoolExternalUpdate, AerodromeV2PoolStateUpdated
+from .types import (
+    AerodromeV2PoolExternalUpdate,
+    AerodromeV2PoolState,
+    AerodromeV2PoolStateUpdated,
+    AerodromeV3PoolState,
+)
 
 
 class AerodromeV2Pool(AbstractLiquidityPool):
-    from .types import AerodromeV2PoolState as PoolState
+    PoolState: TypeAlias = AerodromeV2PoolState
 
     FEE_DENOMINATOR = 10_000
 
@@ -408,7 +413,7 @@ class AerodromeV2Pool(AbstractLiquidityPool):
 
 
 class AerodromeV3Pool(UniswapV3Pool):
-    from .types import AerodromeV3PoolState as PoolState
+    PoolState: TypeAlias = AerodromeV3PoolState
 
     TICK_STRUCT_TYPES = [
         "uint128",

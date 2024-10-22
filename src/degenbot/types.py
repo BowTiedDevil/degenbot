@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeAlias
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -82,6 +82,11 @@ class AbstractPoolManager:
     mechanisms for implementing a singleton strategy so only one pool manager is created for a given
     DEX factory.
     """
+
+    # All pool managers are associated with certain types of pools. Specifying them as a class-level
+    # alias allows the type hints to be generalized. Each concrete pool manager should set this
+    # class attribute
+    Pool: TypeAlias = "AbstractLiquidityPool"
 
     instances: dict[
         tuple[int, ChecksumAddress],

@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, TypeAlias
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -10,10 +10,11 @@ from ..config import connection_manager
 from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from .functions import generate_aerodrome_v3_pool_address
+from .pools import AerodromeV3Pool
 
 
 class AerodromeV2PoolManager(UniswapV2PoolManager):
-    from .pools import AerodromeV2Pool as Pool
+    Pool: TypeAlias = AerodromeV2Pool
 
     def get_pool_address_from_factory_contract(
         self,
@@ -69,7 +70,7 @@ class AerodromeV2PoolManager(UniswapV2PoolManager):
 
 
 class AerodromeV3PoolManager(UniswapV3PoolManager):
-    from .pools import AerodromeV3Pool as Pool
+    Pool: TypeAlias = AerodromeV3Pool
 
     IMPLEMENTATION_ADDRESS = to_checksum_address("0xeC8E5342B19977B4eF8892e02D8DAEcfa1315831")
 

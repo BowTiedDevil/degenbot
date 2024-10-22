@@ -2,7 +2,7 @@ from bisect import bisect_left
 from collections.abc import Iterable
 from fractions import Fraction
 from threading import Lock
-from typing import Any, cast
+from typing import Any, TypeAlias, cast
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
@@ -48,7 +48,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
 
-    from .types import UniswapV2PoolState as PoolState
+    PoolState: TypeAlias = UniswapV2PoolState
 
     RESERVES_STRUCT_TYPES = ["uint112", "uint112"]
     UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
