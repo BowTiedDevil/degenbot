@@ -15,10 +15,10 @@ from degenbot.exceptions import (
     AddressMismatch,
     DegenbotValueError,
     ExternalUpdateError,
+    InvalidSwapInputAmount,
     LateUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
-    ZeroSwapError,
 )
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.pancakeswap.pools import PancakeV2Pool
@@ -489,7 +489,7 @@ def test_calculate_tokens_out_from_tokens_in(
         == 5154005339
     )
 
-    with pytest.raises(ValueError, match="Could not identify token_in"):
+    with pytest.raises(DegenbotValueError, match="Could not identify token_in"):
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.calculate_tokens_out_from_tokens_in(
             token_in=dai,
             token_in_quantity=1 * 10**18,
@@ -577,7 +577,7 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
         == 13752842264
     )
 
-    with pytest.raises(ValueError, match="Could not identify token_out"):
+    with pytest.raises(DegenbotValueError, match="Could not identify token_out"):
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.calculate_tokens_in_from_tokens_out(
             token_out=dai,
             token_out_quantity=1200000000000000000000,
@@ -948,7 +948,7 @@ def test_swap_for_all(
 
 
 def test_zero_swaps(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool):
-    with pytest.raises(ZeroSwapError):
+    with pytest.raises(InvalidSwapInputAmount):
         assert (
             ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.calculate_tokens_out_from_tokens_in(
                 ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.token0,
@@ -957,7 +957,7 @@ def test_zero_swaps(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_
             == 0
         )
 
-    with pytest.raises(ZeroSwapError):
+    with pytest.raises(InvalidSwapInputAmount):
         assert (
             ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.calculate_tokens_out_from_tokens_in(
                 ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.token1,

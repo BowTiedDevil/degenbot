@@ -46,7 +46,7 @@ class UniswapV3LiquiditySnapshot:
                 with open(file) as file_handle:
                     json_liquidity_snapshot = ujson.load(file_handle)
             case _:  # pragma: no cover
-                raise DegenbotValueError(f"Unrecognized file type {type(file)}")
+                raise DegenbotValueError(message=f"Unrecognized file type {type(file)}")
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
 

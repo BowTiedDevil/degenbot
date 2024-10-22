@@ -18,7 +18,7 @@ class PoolRegistry(AbstractRegistry):
     def __init__(self) -> None:
         if self.__class__.instance is not None:
             raise RegistryAlreadyInitialized(
-                "A registry has already been initialized. Access it using the get_instance() class method"  # noqa:E501
+                message="A registry has already been initialized. Access it using the get_instance() class method"  # noqa:E501
             )
         self.__class__.instance = self
 
@@ -38,7 +38,7 @@ class PoolRegistry(AbstractRegistry):
     def add(self, pool_address: str, chain_id: int, pool: AbstractLiquidityPool) -> None:
         pool_address = to_checksum_address(pool_address)
         if self.get(pool_address=pool_address, chain_id=chain_id):
-            raise DegenbotValueError("Pool is already registered")
+            raise DegenbotValueError(message="Pool is already registered")
         self._all_pools[(chain_id, pool_address)] = pool
 
     def remove(self, pool_address: str, chain_id: int) -> None:

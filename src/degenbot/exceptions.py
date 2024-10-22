@@ -1,20 +1,38 @@
-# Base exceptions
+from fractions import Fraction
+
+from eth_typing import ChecksumAddress
+
+
 class DegenbotError(Exception):
     """
-    Base exception, intended as a generic exception and a base class for specific exceptions raised
-    by various degenbot modules.
+    Base exception used as the parent class for all exceptions raised by this package.
+
+    This allows client code to catch `DegenbotError` and specific derived classes separately, e.g.:
+
+    ```
+    try:
+        degenbot.some_function()
+    except DegenbotError:
+        # deal with degenbot exception
+    except Exception:
+        # deal with other exceptions
+    ```
+
+    An optional string-formatted message may be attached to the exception.
     """
 
+    message: str | None = None
 
-class DegenbotValueError(ValueError): ...
+    def __init__(self, message: str | None = None) -> None:
+        if message:
+            self.message = message
+            super().__init__(message)
 
 
-class DeprecationError(DegenbotValueError):
-    """
-    Raised when a feature, class, method, etc. is deprecated.
+class DegenbotValueError(DegenbotError): ...
 
-    Subclasses `DegenbotValueError` instead of `Exception`, which is less likely to be ignored
-    """
+
+class DegenbotTypeError(DegenbotError): ...
 
 
 # 1st level exceptions (derived from `DegenbotError`)
@@ -35,11 +53,19 @@ class EVMRevertError(DegenbotError):
     Raised when a simulated EVM contract operation would revert.
     """
 
+    def __init__(self, error: str) -> None:
+        self.error = error
+        super().__init__(message=f"EVM Revert: {error}")
+
 
 class ExternalServiceError(DegenbotError):
     """
     Raised on errors resulting to some call to an external service.
     """
+
+    def __init__(self, error: str) -> None:
+        self.error = error
+        super().__init__(message=f"External service error: {error}")
 
 
 class LiquidityPoolError(DegenbotError):
@@ -73,6 +99,16 @@ class ArbCalculationError(ArbitrageError):
     """
 
 
+class RateOfExchangeBelowMinimum(ArbitrageError):
+    """
+    The rate of exchange for the path is below the minimum.
+    """
+
+    def __init__(self, rate: Fraction) -> None:
+        self.rate = rate
+        super().__init__(message=f"Rate of exchange {rate} below minimum.")
+
+
 class InvalidSwapPathError(ArbitrageError):
     """
     Raised in arbitrage helper constructors when the provided path is invalid.
@@ -81,7 +117,7 @@ class InvalidSwapPathError(ArbitrageError):
     pass
 
 
-class ZeroLiquidityError(ArbitrageError):
+class NoLiquidity(ArbitrageError):
     """
     Raised by the arbitrage helper if a pool in the path has no liquidity in the direction of the
     proposed swap.
@@ -94,26 +130,37 @@ class NoPriceOracle(Erc20TokenError):
     Raised when `.price` is called on a token without a price oracle.
     """
 
+    def __init__(self) -> None:
+        super().__init__(message="Token does not have a price oracle.")
+
 
 # 2nd level exceptions for Liquidity Pool classes
 class AddressMismatch(LiquidityPoolError):
     """
-    Raised when the expected pool address does not match the provided address.
+    The expected pool address does not match the provided address.
     """
 
+    def __init__(self) -> None:
+        super().__init__(message="Pool address verification failed.")
 
-class BitmapWordUnavailableError(LiquidityPoolError):
+
+class LiquidityMapWordMissing(LiquidityPoolError):
     """
-    Raised by the ported V3 swap function when the bitmap word is not available. This should be
-    caught by the helper to perform automatic fetching, and should not be raised to the calling
-    function.
+    A word bitmap is not included in the liquidity map.
     """
+
+    def __init__(self, word: int) -> None:
+        self.word = word
+        super().__init__(message=f"Word {word} is unknown.")
 
 
 class BrokenPool(LiquidityPoolError):
-    """
-    Raised when an pool cannot or should not be built.
-    """
+    def __init__(self) -> None:
+        """
+        Raised when an pool cannot or should not be built.
+        """
+
+        super().__init__(message="This pool is known to be broken.")
 
 
 class ExternalUpdateError(LiquidityPoolError):
@@ -134,31 +181,63 @@ class LateUpdateError(LiquidityPoolError):
     """
 
 
-class MissingTickWordError(LiquidityPoolError):
-    """
-    Raised by the TickBitmap library when calling for an operation on a word that.
-    should be available, but is not
-    """
-
-
 class NoPoolStateAvailable(LiquidityPoolError):
     """
     Raised by the `restore_state_before_block` method when a previous pool state is not available.
     This can occur, e.g. if a pool was created in a block at or after a re-organization.
     """
 
+    def __init__(self, block: int) -> None:
+        super().__init__(message=f"No pool state known prior to block {block}")
 
-class ZeroSwapError(LiquidityPoolError):
-    """
-    Raised if a swap calculation resulted or would result in zero output.
-    """
+
+class InvalidSwapInputAmount(LiquidityPoolError):
+    def __init__(self) -> None:
+        """
+        Raised if a swap input amount is invalid.
+        """
+
+        super().__init__(message="The swap input is invalid.")
 
 
 # 2nd level exceptions for Transaction classes
-class LedgerError(TransactionError):
-    """
-    Raised when the ledger does not align with the expected state.
-    """
+
+
+class DeadlineExpired(TransactionError): ...
+
+
+class InsufficientOutput(TransactionError):
+    def __init__(self, minimum: int, received: int):
+        """
+        The received amount was less than the minimum.
+        """
+        super().__init__(message=f"Insufficient output: {received} received, {minimum} required.")
+
+
+class InsufficientInput(TransactionError):
+    def __init__(self, minimum: int, deposited: int):
+        """
+        The deposited amount was less than the minimum.
+        """
+        super().__init__(message=f"Insufficient input: {deposited} deposited, {minimum} required.")
+
+
+class LeftoverRouterBalance(TransactionError):
+    def __init__(
+        self,
+        balances: dict[
+            ChecksumAddress,  # token address
+            int,  # balance
+        ],
+    ):
+        self.balances = balances
+        super().__init__(message="Leftover balance at router after transaction")
+
+
+class PreviousBlockMismatch(TransactionError): ...
+
+
+class UnknownRouterAddress(TransactionError): ...
 
 
 # 2nd level exceptions for Registry classes
@@ -174,6 +253,9 @@ class PoolNotAssociated(ManagerError):
     Raised by a Uniswap pool manager if a requested pool address is not associated with the DEX.
     """
 
+    def __init__(self, pool_address: str) -> None:
+        super().__init__(message=f"Pool {pool_address} is not associated with this DEX")
+
 
 class PoolCreationFailed(ManagerError): ...
 
@@ -182,3 +264,16 @@ class ManagerAlreadyInitialized(ManagerError):
     """
     Raised by a Uniswap pool manager if a caller attempts to create from a known factory address.
     """
+
+
+# 2nd level exceptions for bounded value integers
+
+
+class InvalidUint160(EVMRevertError):
+    def __init__(self) -> None:
+        super().__init__(error="Not a valid uint160")
+
+
+class InvalidUint256(EVMRevertError):
+    def __init__(self) -> None:
+        super().__init__(error="Not a valid uint256")

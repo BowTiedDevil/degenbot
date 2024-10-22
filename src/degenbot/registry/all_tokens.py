@@ -21,7 +21,7 @@ class TokenRegistry:
     def __init__(self) -> None:
         if self.__class__.instance is not None:
             raise RegistryAlreadyInitialized(
-                "A registry has already been initialized. Access it using the get_instance() class method"  # noqa:E501
+                message="A registry has already been initialized. Access it using the get_instance() class method"  # noqa:E501
             )
         self.__class__.instance = self
 
@@ -41,7 +41,7 @@ class TokenRegistry:
     def add(self, token_address: str, chain_id: int, token: "Erc20Token") -> None:
         token_address = to_checksum_address(token_address)
         if self.get(token_address=token_address, chain_id=chain_id):
-            raise DegenbotValueError("Token is already registered")
+            raise DegenbotValueError(message="Token is already registered")
         self._all_tokens[(chain_id, token_address)] = token
 
     def remove(self, token_address: str, chain_id: int) -> None:

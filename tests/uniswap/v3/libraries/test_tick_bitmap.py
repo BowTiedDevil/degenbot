@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from degenbot.exceptions import EVMRevertError, MissingTickWordError
+from degenbot.exceptions import DegenbotValueError, LiquidityMapWordMissing
 from degenbot.uniswap.types import UniswapV3BitmapAtWord
 from degenbot.uniswap.v3_libraries.tick_bitmap import (
     flip_tick,
@@ -92,14 +92,14 @@ def test_flipTick() -> None:
 
 def test_flipTick_sparse() -> None:
     tick_bitmap = empty_sparse_bitmap()
-    with pytest.raises(MissingTickWordError, match="Called flipTick on missing word"):
+    with pytest.raises(LiquidityMapWordMissing):
         flip_tick(tick_bitmap, tick=-230, tick_spacing=1)
 
 
 def test_incorrect_tick_spacing_flip() -> None:
     tick_spacing = 3
     tick_bitmap = empty_full_bitmap(tick_spacing)
-    with pytest.raises(EVMRevertError, match="Tick not correctly spaced"):
+    with pytest.raises(DegenbotValueError, match="Tick not correctly spaced"):
         flip_tick(tick_bitmap, tick=2, tick_spacing=tick_spacing)
 
 

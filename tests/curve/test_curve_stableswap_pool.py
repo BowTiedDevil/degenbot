@@ -12,7 +12,7 @@ from degenbot import AnvilFork
 from degenbot.config import connection_manager, set_web3
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.exceptions import BrokenPool, ZeroLiquidityError, ZeroSwapError
+from degenbot.exceptions import BrokenPool, InvalidSwapInputAmount, NoLiquidity
 
 FRXETH_WETH_CURVE_POOL_ADDRESS = to_checksum_address("0x9c3B46C0Ceb5B9e304FCd6D88Fc50f7DD24B31Bc")
 CURVE_V1_FACTORY_ADDRESS = to_checksum_address("0x127db66E7F0b16470Bec194d0f496F9Fa065d0A9")
@@ -47,7 +47,7 @@ def _test_calculations(lp: CurveStableswapPool):
                     token_in_quantity=amount,
                     block_identifier=state_block,
                 )
-            except (ZeroSwapError, ZeroLiquidityError):
+            except (InvalidSwapInputAmount, NoLiquidity):
                 continue
             except Exception:
                 print(f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}:")
@@ -102,7 +102,7 @@ def _test_calculations(lp: CurveStableswapPool):
                         token_in_quantity=amount,
                         block_identifier=state_block,
                     )
-                except (ZeroSwapError, ZeroLiquidityError):
+                except (InvalidSwapInputAmount, NoLiquidity):
                     continue
 
                 contract_amount = w3_contract.functions.get_dy_underlying(
@@ -299,7 +299,7 @@ def test_factory_stableswap_pools(fork_mainnet: AnvilFork):
     with fork_mainnet.w3.batch_requests() as batch:
         batch.add_mapping(
             {
-                stableswap_factory.functions.pool_list: [pool for pool in range(pool_count)],
+                stableswap_factory.functions.pool_list: list(range(pool_count)),
             }
         )
         pool_addresses = batch.execute()
@@ -310,7 +310,7 @@ def test_factory_stableswap_pools(fork_mainnet: AnvilFork):
         try:
             lp = CurveStableswapPool(address=cast(str, pool_address), silent=True)
             _test_calculations(lp)
-        except (BrokenPool, ZeroLiquidityError):
+        except (BrokenPool, NoLiquidity):
             continue
         except Exception as e:
             print(f"{type(e)}: {e} - pool {i}, {pool_address=}")

@@ -14,7 +14,7 @@ from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
 from degenbot.config import set_web3
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20_token import Erc20Token
-from degenbot.exceptions import ArbitrageError, ZeroLiquidityError
+from degenbot.exceptions import ArbitrageError, DegenbotValueError, NoLiquidity
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.uniswap.types import UniswapV2PoolState, UniswapV3PoolState
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
@@ -62,7 +62,9 @@ def test_create_arb(ethereum_archive_node_web3: Web3, weth: Erc20Token, dai: Erc
         max_input=10 * 10**18,
     )
 
-    with pytest.raises(ValueError, match="Not implemented for Curve pools at position != 1"):
+    with pytest.raises(
+        DegenbotValueError, match="Not implemented for Curve pools at position != 1."
+    ):
         UniswapCurveCycle(
             input_token=dai,
             swap_pools=[
@@ -74,7 +76,9 @@ def test_create_arb(ethereum_archive_node_web3: Web3, weth: Erc20Token, dai: Erc
             max_input=10 * 10**18,
         )
 
-    with pytest.raises(ValueError, match="Not implemented for Curve pools at position != 1"):
+    with pytest.raises(
+        DegenbotValueError, match="Not implemented for Curve pools at position != 1."
+    ):
         UniswapCurveCycle(
             input_token=dai,
             swap_pools=[
@@ -153,7 +157,7 @@ def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3: Web3, weth: E
 
     # Test with zero reserves for each token
     with pytest.raises(
-        ZeroLiquidityError, match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity"
+        NoLiquidity, match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity"
     ):
         arb.calculate(
             state_overrides={
@@ -165,7 +169,7 @@ def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3: Web3, weth: E
             }
         )
     with pytest.raises(
-        ZeroLiquidityError, match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity"
+        NoLiquidity, match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity"
     ):
         arb.calculate(
             state_overrides={
@@ -179,7 +183,7 @@ def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3: Web3, weth: E
 
     # Test with no liquidity in the 0 -> 1 direction
     with pytest.raises(
-        ZeroLiquidityError,
+        NoLiquidity,
         match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity for a 0 -> 1 swap",
     ):
         arb.calculate(
@@ -202,7 +206,7 @@ def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3: Web3, weth: E
 
     # Test with no liquidity in the 1 -> 0 direction
     with pytest.raises(
-        ZeroLiquidityError,
+        NoLiquidity,
         match=f"V2 pool {uniswap_v2_weth_usdc_lp.address} has no liquidity for a 1 -> 0 swap",
     ):
         arb.calculate(
@@ -231,7 +235,7 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
 
     # Test with uninitialized pool (price=0)
     with pytest.raises(
-        ZeroLiquidityError,
+        NoLiquidity,
         match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity \\(not initialized\\)",
     ):
         arb.calculate(
@@ -246,7 +250,7 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
         )
     # Test with uninitialized pool (empty tick_bitmap)
     with pytest.raises(
-        ZeroLiquidityError,
+        NoLiquidity,
         match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity \\(empty bitmap\\)",
     ):
         arb.calculate(
@@ -263,7 +267,7 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
 
     # Test with min. price pool
     with pytest.raises(
-        ZeroLiquidityError,
+        NoLiquidity,
         match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity for a 0 -> 1 swap",
     ):
         arb.calculate(
@@ -287,7 +291,7 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
         max_input=10 * 10**18,
     )
     with pytest.raises(
-        ZeroLiquidityError,
+        NoLiquidity,
         match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity for a 1 -> 0 swap",
     ):
         arb.calculate(
@@ -464,7 +468,9 @@ def test_bad_pool_in_constructor(ethereum_archive_node_web3: Web3, weth: Erc20To
     uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
     uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
-    with pytest.raises(ValueError, match=f"Incompatible pool type \\({type(None)}\\) provided."):
+    with pytest.raises(
+        DegenbotValueError, match=f"Incompatible pool type \\({type(None)}\\) provided."
+    ):
         UniswapCurveCycle(
             input_token=weth,
             swap_pools=[uniswap_v2_weth_dai_lp, None, uniswap_v2_weth_usdc_lp],  # type: ignore[list-item]
@@ -494,7 +500,7 @@ def test_zero_max_input(ethereum_archive_node_web3: Web3, weth: Erc20Token):
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
     uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
-    with pytest.raises(ValueError, match="Maximum input must be positive."):
+    with pytest.raises(DegenbotValueError, match="Maximum input must be positive."):
         UniswapCurveCycle(
             id="test_arb",
             input_token=weth,

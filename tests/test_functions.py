@@ -7,6 +7,7 @@ from hexbytes import HexBytes
 
 import degenbot.config
 from degenbot import AnvilFork
+from degenbot.exceptions import DegenbotValueError
 from degenbot.functions import (
     create2_address,
     encode_function_calldata,
@@ -183,10 +184,10 @@ def test_converting_block_identifier_to_int(fork_mainnet: AnvilFork):
     assert isinstance(get_number_for_block_identifier(1, w3), int)
 
     for invalid_tag in ["Latest", "latest ", "next", "previous"]:
-        with pytest.raises(ValueError):
+        with pytest.raises(DegenbotValueError):
             get_number_for_block_identifier(invalid_tag, w3)  # type: ignore[arg-type]
 
-    with pytest.raises(ValueError):
+    with pytest.raises(DegenbotValueError):
         get_number_for_block_identifier(1.0, w3)  # type: ignore[arg-type]
 
 

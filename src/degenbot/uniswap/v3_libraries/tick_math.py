@@ -1,7 +1,7 @@
 from functools import cache
 
 from ...constants import MAX_UINT128, MAX_UINT160, MAX_UINT256, MIN_UINT160
-from ...exceptions import EVMRevertError
+from ...exceptions import EVMRevertError, InvalidUint160
 
 MIN_TICK = -887272
 MAX_TICK = -MIN_TICK
@@ -16,7 +16,7 @@ def get_sqrt_ratio_at_tick(tick: int) -> int:
     """
     abs_tick = abs(tick)
     if not (0 <= abs_tick <= MAX_TICK):
-        raise EVMRevertError("T")
+        raise EVMRevertError(error="T")
 
     ratio = 340265354078544963557816517032075149313 if abs_tick & 1 != 0 else MAX_UINT128
 
@@ -60,11 +60,11 @@ def get_tick_at_sqrt_ratio(sqrt_price_x96: int) -> int:
     """
 
     if not (MIN_UINT160 <= sqrt_price_x96 <= MAX_UINT160):
-        raise EVMRevertError("Not a valid uint160")
+        raise InvalidUint160
 
     # Second inequality must be < because the price can never reach the price at the max tick
     if not (MIN_SQRT_RATIO <= sqrt_price_x96 < MAX_SQRT_RATIO):
-        raise EVMRevertError("R")
+        raise EVMRevertError(error="R")
 
     ratio = sqrt_price_x96 << 32
 

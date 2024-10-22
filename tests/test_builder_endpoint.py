@@ -5,6 +5,7 @@ from eth_account.signers.local import LocalAccount
 
 from degenbot import AnvilFork
 from degenbot.builder_endpoint import BuilderEndpoint
+from degenbot.exceptions import DegenbotValueError
 
 BEAVERBUILD_URL = "https://rpc.beaverbuild.org"
 BUILDER0X69_URL = "https://builder0x69.io"
@@ -90,7 +91,7 @@ def test_create_builders(builder_name: str, request: pytest.FixtureRequest):
 
 
 async def test_bad_url():
-    with pytest.raises(ValueError):
+    with pytest.raises(DegenbotValueError):
         BuilderEndpoint(url="ws://www.google.com", endpoints=["eth_sendBundle"])
 
 

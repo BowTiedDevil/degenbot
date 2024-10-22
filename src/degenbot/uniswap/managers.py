@@ -58,7 +58,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
 
         if (chain_id, factory_address) in self.instances:
             raise ManagerAlreadyInitialized(
-                "A manager has already been initialized for this address. Access it using the get_instance() class method"  # noqa:E501
+                message="A manager has already been initialized for this address. Access it using the get_instance() class method"  # noqa:E501
             )
         else:
             self.instances[(chain_id, factory_address)] = self  # type:ignore[assignment]
@@ -137,7 +137,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
             return result
 
         if pool_address in self._untracked_pools:
-            raise PoolNotAssociated(f"Pool {pool_address} is not associated with this DEX")
+            raise PoolNotAssociated(pool_address)
 
         # Check if the pool registry already has this pool
         if (
@@ -152,7 +152,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
                 return pool_from_registry
             else:
                 self._untracked_pools.add(pool_address)
-                raise PoolNotAssociated(f"Pool {pool_address} is not associated with this DEX")
+                raise PoolNotAssociated(pool_address)
 
         try:
             new_pool = self._build_pool(
@@ -162,7 +162,9 @@ class UniswapV2PoolManager(AbstractPoolManager):
                 pool_class_kwargs=pool_class_kwargs,
             )
         except LiquidityPoolError as exc:
-            raise PoolCreationFailed(f"Could not build V2 pool {pool_address}: {exc}") from exc
+            raise PoolCreationFailed(
+                message=f"Could not build V2 pool {pool_address}: {exc}"
+            ) from exc
         else:
             self._add_tracked_pool(new_pool)
             return new_pool
@@ -233,7 +235,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
 
         if (chain_id, factory_address) in self.instances:
             raise ManagerAlreadyInitialized(
-                "A manager has already been initialized for this address. Access it using the get_instance() class method"  # noqa:E501
+                message="A manager has already been initialized for this address. Access it using the get_instance() class method"  # noqa:E501
             )
         else:
             self.instances[(chain_id, factory_address)] = self  # type:ignore[assignment]
@@ -345,7 +347,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
             return result
 
         if pool_address in self._untracked_pools:
-            raise PoolNotAssociated(f"Pool {pool_address} is not associated with this DEX")
+            raise PoolNotAssociated(pool_address)
 
         # Check if the pool registry already has this pool
         pool_from_registry = pool_registry.get(
@@ -359,7 +361,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
                 return pool_from_registry
             else:
                 self._untracked_pools.add(pool_address)
-                raise PoolNotAssociated(f"Pool {pool_address} is not associated with this DEX")
+                raise PoolNotAssociated(pool_address)
 
         try:
             new_pool = self._build_pool(
@@ -368,8 +370,10 @@ class UniswapV3PoolManager(AbstractPoolManager):
                 state_block=state_block,
                 pool_class_kwargs=pool_class_kwargs,
             )
-        except LiquidityPoolError as exc:
-            raise PoolCreationFailed(f"Could not build V3 pool {pool_address}: {exc}") from exc
+        except LiquidityPoolError as exc:  # pragma: no cover
+            raise PoolCreationFailed(
+                message=f"Could not build V3 pool {pool_address}: {exc}"
+            ) from exc
         else:
             self._apply_pending_liquidity_updates(new_pool)
             self._add_tracked_pool(new_pool)

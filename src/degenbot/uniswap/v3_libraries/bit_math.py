@@ -14,9 +14,9 @@ def least_significant_bit(number: int) -> int:
     """
 
     if number <= MIN_UINT256:
-        raise EVMRevertError("FAIL: x <= 0")
+        raise EVMRevertError(error="required: number > 0")
     if number > MAX_UINT256:
-        raise EVMRevertError("Number is not a valid uint256")
+        raise EVMRevertError(error="required: number <= max(uint256)")
 
     # Reverse the binary string and search for LSB by returning the position of the first "1" value
     #
@@ -34,10 +34,11 @@ def most_significant_bit(number: int) -> int:
     This function is rewritten to use simple string manipulation instead of the binary search
     implemented by the official Solidity contract.
     """
+
     if number <= MIN_UINT256:
-        raise EVMRevertError("FAIL: x <= 0")
+        raise EVMRevertError(error="required: number >= 0 ")
     if number > MAX_UINT256:
-        raise EVMRevertError("Number is not a valid uint256")
+        raise EVMRevertError(error="required: number <= max(uint256) ")
 
     # Reverse the binary string and search for LSB by returning the position of the first "1" value
     #

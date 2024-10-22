@@ -19,12 +19,12 @@ from ..config import connection_manager
 from ..erc20_token import Erc20Token
 from ..exceptions import (
     AddressMismatch,
-    BitmapWordUnavailableError,
     DegenbotValueError,
     EVMRevertError,
     ExternalUpdateError,
     InsufficientAmountOutError,
     LateUpdateError,
+    LiquidityMapWordMissing,
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
@@ -184,7 +184,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         except (ContractLogicError, DecodingError) as exc:
             # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
             # here and raise as a pool-specific exception
-            raise LiquidityPoolError("Could not decode contract data") from exc
+            raise LiquidityPoolError(message="Could not decode contract data") from exc
 
         self.factory = to_checksum_address(factory)
         self.deployer_address = (
@@ -217,12 +217,12 @@ class UniswapV3Pool(AbstractLiquidityPool):
         )
 
         if verify_address and self.address != self._verified_address():  # pragma: no branch
-            raise AddressMismatch("Pool address verification failed.")
+            raise AddressMismatch
 
         self.name = f"{self.token0}-{self.token1} (V3, {self.fee / 10000:.2f}%)"
 
         if (tick_bitmap is not None) != (tick_data is not None):
-            raise DegenbotValueError("Provide both tick_bitmap and tick_data.")
+            raise DegenbotValueError(message="Provide both tick_bitmap and tick_data.")
 
         # If liquidity info was not provided, treat the mapping as sparse
         self.sparse_liquidity_map = tick_bitmap is None or tick_data is None
@@ -337,7 +337,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         """
 
         if amount_specified == 0:  # pragma: no branch
-            raise EVMRevertError("AS")
+            raise EVMRevertError(error="AS")
 
         _liquidity = override_state.liquidity if override_state is not None else self.liquidity
         _sqrt_price_x96 = (
@@ -358,12 +358,12 @@ class UniswapV3Pool(AbstractLiquidityPool):
         if zero_for_one is True and not (
             MIN_SQRT_RATIO < sqrt_price_limit_x96 < _sqrt_price_x96
         ):  # pragma: no cover
-            raise EVMRevertError("SPL")
+            raise EVMRevertError(error="SPL")
 
         if zero_for_one is False and not (
             _sqrt_price_x96 < sqrt_price_limit_x96 < MAX_SQRT_RATIO
         ):  # pragma: no cover
-            raise EVMRevertError("SPL")
+            raise EVMRevertError(error="SPL")
 
         exact_input = amount_specified > 0
         cache = self.SwapCache(liquidity_start=_liquidity, tick_cumulative=0)
@@ -388,8 +388,8 @@ class UniswapV3Pool(AbstractLiquidityPool):
                     self.tick_spacing,
                     zero_for_one,
                 )
-            except BitmapWordUnavailableError as exc:
-                _, missing_word = exc.args
+            except LiquidityMapWordMissing as exc:
+                missing_word = exc.word
                 assert (
                     self.sparse_liquidity_map is True
                 )  # non-sparse liquidity mappings should populate all bitmaps in the constructor
@@ -793,9 +793,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
 
         with self._state_lock:
             if block_number is not None and block_number < self.update_block:
-                raise LateUpdateError(
-                    f"Current state recorded at block {self.update_block}, update requested for stale block {block_number}"  # noqa:E501
-                )
+                raise LateUpdateError
 
             state_updated = False
 
@@ -900,7 +898,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         """
 
         if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError("token_in not found!")
+            raise DegenbotValueError(message="token_in not found!")
 
         zero_for_one = token_in == self.token0
 
@@ -912,7 +910,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
-            raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
+            raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
         else:
             return -amount1_delta if zero_for_one else -amount0_delta
 
@@ -944,7 +942,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         """
 
         if token_out not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError("token_out not found!")
+            raise DegenbotValueError(message="token_out not found!")
 
         _is_zero_for_one = token_out == self.token1
 
@@ -958,15 +956,15 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
-            raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
+            raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
         else:
             if _is_zero_for_one is True and -amount1_delta < token_out_quantity:
                 raise InsufficientAmountOutError(
-                    "Insufficient liquidity to swap for the requested amount."
+                    message="Insufficient liquidity to swap for the requested amount."
                 )
             if _is_zero_for_one is False and -amount0_delta < token_out_quantity:
                 raise InsufficientAmountOutError(
-                    "Insufficient liquidity to swap for the requested amount."
+                    message="Insufficient liquidity to swap for the requested amount."
                 )
 
             return amount0_delta if _is_zero_for_one else amount1_delta
@@ -997,8 +995,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
 
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
-                f"Rejected update for block {update.block_number} in the past, "
-                f"current update block is {self.update_block}"
+                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
             )
 
         with self._state_lock:
@@ -1117,7 +1114,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         elif token == self.token1:
             return exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
         else:  # pragma: no cover
-            raise DegenbotValueError(f"Unknown token {token}")
+            raise DegenbotValueError(message=f"Unknown token {token}")
 
     def get_nominal_price(
         self,
@@ -1153,7 +1150,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 10**self.token0.decimals, 10**self.token1.decimals
             )
         else:  # pragma: no cover
-            raise DegenbotValueError(f"Unknown token {token}")
+            raise DegenbotValueError(message=f"Unknown token {token}")
 
     def discard_states_before_block(self, block: int) -> None:
         """
@@ -1161,7 +1158,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         """
 
         if self._pool_state_archive is None:  # pragma: no cover
-            raise NoPoolStateAvailable("No archived states are available")
+            return
 
         with self._state_lock:
             known_blocks = sorted(list(self._pool_state_archive.keys()))
@@ -1174,7 +1171,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 return
 
             if block_index == len(known_blocks):
-                raise NoPoolStateAvailable(f"No pool state known prior to block {block}")
+                raise NoPoolStateAvailable(block)
 
             for known_block in known_blocks[:block_index]:
                 del self._pool_state_archive[known_block]
@@ -1196,17 +1193,16 @@ class UniswapV3Pool(AbstractLiquidityPool):
         # states at blocks 100, 101, 102, 103, 104. `bisect_left()` returns
         # block_index=3, since block 104 is at index=4. The state held at
         # index=3 is for block 103.
-        # block_index = self._pool_state_archive.bisect_left(block)
 
         if self._pool_state_archive is None:  # pragma: no cover
-            raise NoPoolStateAvailable("No archived states are available")
+            return
 
         with self._state_lock:
             known_blocks = sorted(list(self._pool_state_archive.keys()))
             block_index = bisect_left(known_blocks, block)
 
             if block_index == 0:
-                raise NoPoolStateAvailable(f"No pool state known prior to block {block}")
+                raise NoPoolStateAvailable(block)
 
             # The last known state already meets the criterion, so return early
             if block_index == len(known_blocks):
@@ -1233,7 +1229,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         Simulate an exact input swap.
         """
         if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError("token_in is unknown.")
+            raise DegenbotValueError(message="token_in is unknown.")
 
         zero_for_one = token_in == self.token0
 
@@ -1255,7 +1251,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
-            raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
+            raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
         else:
             return UniswapV3PoolSimulationResult(
                 amount0_delta=amount0_delta,
@@ -1280,7 +1276,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         Simulate an exact output swap.
         """
         if token_out not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError("token_out is unknown.")
+            raise DegenbotValueError(message="token_out is unknown.")
 
         zero_for_one = token_out == self.token1
 
@@ -1302,7 +1298,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
-            raise LiquidityPoolError(f"Simulated execution reverted: {e}") from e
+            raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
         else:
             return UniswapV3PoolSimulationResult(
                 amount0_delta=amount0_delta,

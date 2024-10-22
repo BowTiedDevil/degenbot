@@ -23,7 +23,7 @@ def get_amount0_delta(
         numerator2 = sqrt_ratio_b_x96 - sqrt_ratio_a_x96
 
         if not (sqrt_ratio_a_x96 > 0):
-            raise EVMRevertError("require sqrtRatioAX96 > 0")
+            raise EVMRevertError(error="required: sqrt_ratio_a_x96 > 0")
 
         return (
             div_rounding_up(
@@ -90,7 +90,9 @@ def get_next_sqrt_price_from_amount0_rounding_up(
     else:
         product = amount * sqrt_price_x96
         if not (product // amount == sqrt_price_x96 and numerator1 > product):
-            raise EVMRevertError("product / amount == sqrtPX96 && numerator1 > product")
+            raise EVMRevertError(
+                error="required: product // amount == sqrtPX96, numerator1 > product"
+            )
 
         denominator = numerator1 - product
         return to_uint160(muldiv_rounding_up(numerator1, sqrt_price_x96, denominator))
@@ -117,7 +119,7 @@ def get_next_sqrt_price_from_amount1_rounding_down(
         )
 
         if not (sqrt_price_x96 > quotient):
-            raise EVMRevertError("require sqrtPX96 > quotient")
+            raise EVMRevertError(error="require sqrtPX96 > quotient")
 
         # always fits 160 bits
         return sqrt_price_x96 - quotient
@@ -130,10 +132,10 @@ def get_next_sqrt_price_from_input(
     zero_for_one: bool,
 ) -> int:
     if not (sqrt_price_x96 > MIN_UINT160):
-        raise EVMRevertError("sqrtPX96 must be greater than 0")
+        raise EVMRevertError(error="required: sqrt_price_x96 > 0")
 
     if not (liquidity > MIN_UINT160):
-        raise EVMRevertError("liquidity must be greater than 0")
+        raise EVMRevertError(error="required: liquidity > 0")
 
     # round to make sure that we don't pass the target price
     return (
@@ -152,10 +154,10 @@ def get_next_sqrt_price_from_output(
     zero_for_one: bool,
 ) -> int:
     if not (sqrt_price_x96 > 0):
-        raise EVMRevertError
+        raise EVMRevertError(error="required: sqrt_price_x96 > 0")
 
     if not (liquidity > 0):
-        raise EVMRevertError
+        raise EVMRevertError(error="required: liquidity must be > 0")
 
     # round to make sure that we pass the target price
     return (

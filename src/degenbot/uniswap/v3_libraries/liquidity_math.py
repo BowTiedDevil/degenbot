@@ -10,15 +10,15 @@ def add_delta(x: int, y: int) -> int:
     """
 
     if not (MIN_UINT128 <= x <= MAX_UINT128):
-        raise EVMRevertError("x not a valid uint128")
+        raise EVMRevertError(error="x not a valid uint128")
     if not (MIN_INT128 <= y <= MAX_INT128):
-        raise EVMRevertError("y not a valid int128")
+        raise EVMRevertError(error="y not a valid int128")
 
     z = x + y
 
     if y < 0 and not (MIN_UINT128 <= z <= MAX_UINT128):
-        raise EVMRevertError("LS")
+        raise EVMRevertError(error="LS")
     elif not (MIN_UINT128 <= z <= MAX_UINT128):
-        raise EVMRevertError("LA")
+        raise EVMRevertError(error="LA")
 
     return z

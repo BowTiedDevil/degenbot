@@ -161,7 +161,7 @@ class Erc20Token(AbstractErc20Token):
                 self.decimals == self.UNKNOWN_DECIMALS,
             ]
         ) and not w3.eth.get_code(self.address):
-            raise DegenbotValueError("No contract deployed at this address") from None
+            raise DegenbotValueError(message="No contract deployed at this address") from None
 
         self._price_oracle: ChainlinkPriceContract | None
         self._price_oracle = (
@@ -317,7 +317,7 @@ class Erc20Token(AbstractErc20Token):
         if self._price_oracle is not None:
             return self._price_oracle.price
         else:  # pragma: no cover
-            raise NoPriceOracle(f"{self} does not have a price oracle.")
+            raise NoPriceOracle
 
     @property
     def w3(self) -> Web3:

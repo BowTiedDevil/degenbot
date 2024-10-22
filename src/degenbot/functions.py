@@ -12,7 +12,7 @@ from web3 import Web3
 from web3.types import BlockIdentifier
 
 from .constants import MAX_UINT256, MIN_UINT256
-from .exceptions import DegenbotValueError, EVMRevertError
+from .exceptions import DegenbotValueError, InvalidUint256
 
 
 def create2_address(
@@ -123,11 +123,16 @@ def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3
                 assert block_number is not None
             return cast(int, block_number)
         case str() as block_number_as_str:
-            return int(block_number_as_str, 16)
+            try:
+                return int(block_number_as_str, 16)
+            except ValueError:
+                raise DegenbotValueError(
+                    message=f"Invalid block identifier {identifier!r}"
+                ) from None
         case bytes() as block_number_as_bytes:
             return int.from_bytes(block_number_as_bytes, byteorder="big")
         case _:
-            raise DegenbotValueError(f"Invalid block identifier {identifier!r}")
+            raise DegenbotValueError(message=f"Invalid block identifier {identifier!r}")
 
 
 def next_base_fee(
@@ -172,7 +177,7 @@ def next_base_fee(
 
 def raise_if_invalid_uint256(number: int) -> None:
     if (MIN_UINT256 <= number <= MAX_UINT256) is False:
-        raise EVMRevertError(f"underflow/overflow for {number}")
+        raise InvalidUint256
 
 
 def raw_call(

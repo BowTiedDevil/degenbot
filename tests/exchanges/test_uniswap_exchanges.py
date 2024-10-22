@@ -4,6 +4,7 @@ import pytest
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
+from degenbot.exceptions import DegenbotValueError
 from degenbot.uniswap.deployments import (
     FACTORY_DEPLOYMENTS,
     ROUTER_DEPLOYMENTS,
@@ -35,7 +36,7 @@ def test_register_v2_exchange() -> None:
     )
 
     register_exchange(exchange)
-    with pytest.raises(ValueError):
+    with pytest.raises(DegenbotValueError):
         register_exchange(exchange)
     assert DEPLOYMENT_CHAIN in FACTORY_DEPLOYMENTS
     assert FACTORY_DEPLOYMENT_ADDRESS in FACTORY_DEPLOYMENTS[DEPLOYMENT_CHAIN]
@@ -86,7 +87,7 @@ def test_register_router() -> None:
     )
 
     register_router(router)
-    with pytest.raises(ValueError):
+    with pytest.raises(DegenbotValueError):
         register_router(router)
     assert DEPLOYMENT_CHAIN in ROUTER_DEPLOYMENTS
     assert router.address in ROUTER_DEPLOYMENTS[DEPLOYMENT_CHAIN]

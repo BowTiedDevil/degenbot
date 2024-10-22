@@ -4,7 +4,7 @@ from eth_utils.address import to_checksum_address
 
 from ..config import connection_manager
 from ..erc20_token import Erc20Token
-from ..exceptions import ZeroSwapError
+from ..exceptions import DegenbotValueError
 from ..functions import encode_function_calldata, raw_call
 from ..logging import logger
 from ..uniswap.types import UniswapV2PoolState
@@ -93,7 +93,7 @@ class CamelotLiquidityPool(UniswapV2Pool):
             logger.debug(f"State overrides applied: {override_state}")
 
         if token_in_quantity <= 0:  # pragma: no cover
-            raise ZeroSwapError("token_in_quantity must be positive")
+            raise DegenbotValueError(message="token_in_quantity must be positive")
 
         precision_multiplier_token0: int = 10**self.token0.decimals
         precision_multiplier_token1: int = 10**self.token1.decimals

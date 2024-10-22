@@ -4,6 +4,7 @@ from eth_utils.address import to_checksum_address
 
 from degenbot.config import set_web3
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.exceptions import DegenbotValueError
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.registry.all_tokens import token_registry
 
@@ -46,7 +47,7 @@ def test_get_erc20tokens(ethereum_archive_node_web3: web3.Web3):
 def test_get_bad_token(ethereum_archive_node_web3: web3.Web3):
     set_web3(ethereum_archive_node_web3)
     token_manager = Erc20TokenManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
-    with pytest.raises(ValueError):
+    with pytest.raises(DegenbotValueError):
         token_manager.get_erc20token(address=ZERO_ADDRESS)
 
 

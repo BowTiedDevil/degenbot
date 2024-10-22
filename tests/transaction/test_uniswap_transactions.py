@@ -5,7 +5,7 @@ from hexbytes import HexBytes
 
 from degenbot import AnvilFork
 from degenbot.config import set_web3
-from degenbot.exceptions import TransactionError
+from degenbot.exceptions import DeadlineExpired, TransactionError, UnknownRouterAddress
 from degenbot.transaction.uniswap_transaction import UniswapTransaction
 
 
@@ -34,7 +34,7 @@ from degenbot.transaction.uniswap_transaction import UniswapTransaction
                 },
                 router_address="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
             ),
-            "Required input 823900578 exceeds maximum 710077583",
+            "Insufficient input: 710077583 deposited, 823900578 required.",
         ),
         (
             17582974,
@@ -958,7 +958,7 @@ def test_v3_router_transactions(
                 },
                 router_address="0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD",
             ),
-            "exceeds maximum",
+            "Insufficient input: 327834453655960088 deposited, 343703158171727411 required.",
         ),
         (
             19469214 - 1,
@@ -983,7 +983,7 @@ def test_v3_router_transactions(
                 },
                 router_address="0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD",
             ),
-            "Insufficient output for swap!",
+            "Insufficient output: 1284639942327 received, 1368810481905 required.",
         ),
         (
             19742711 - 1,
@@ -1071,7 +1071,7 @@ def test_universal_router_transactions(
 def test_invalid_router():
     INVALID_ROUTER_ADDRESS = "0x6969696969696969696969696969696969696969"
 
-    with pytest.raises(ValueError, match=f"address {INVALID_ROUTER_ADDRESS} unknown"):
+    with pytest.raises(UnknownRouterAddress):
         UniswapTransaction(
             chain_id=1,
             tx_hash="0xbc96aa9e03d61d6a3ea1928274e2b1df1533a8c5c30f6fb936ea3c04c512329f",
@@ -1105,7 +1105,7 @@ def test_expired_transaction(fork_mainnet: AnvilFork):
     fork_mainnet.w3.provider.timeout = 600  # type: ignore[attr-defined]
     set_web3(fork_mainnet.w3)
 
-    with pytest.raises(TransactionError, match="Deadline expired"):
+    with pytest.raises(DeadlineExpired):
         tx = UniswapTransaction(
             chain_id=1,
             tx_hash="0xbc96aa9e03d61d6a3ea1928274e2b1df1533a8c5c30f6fb936ea3c04c512329f",

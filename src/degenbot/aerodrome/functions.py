@@ -80,7 +80,7 @@ def _get_y_aerodrome(
                     return y
                 dy = 1
             y = y - dy
-    raise EVMRevertError("Failed to converge on a value for y")
+    raise EVMRevertError(error="Failed to converge on a value for y")
 
 
 def _k_aerodrome(

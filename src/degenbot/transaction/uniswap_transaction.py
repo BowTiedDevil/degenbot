@@ -18,13 +18,18 @@ from ..config import connection_manager
 from ..constants import WRAPPED_NATIVE_TOKENS
 from ..erc20_token import Erc20Token
 from ..exceptions import (
+    DeadlineExpired,
     DegenbotError,
     DegenbotValueError,
     EVMRevertError,
-    LedgerError,
+    InsufficientInput,
+    InsufficientOutput,
+    LeftoverRouterBalance,
     LiquidityPoolError,
     ManagerError,
+    PreviousBlockMismatch,
     TransactionError,
+    UnknownRouterAddress,
 )
 from ..logging import logger
 from ..managers.erc20_token_manager import Erc20TokenManager
@@ -82,9 +87,6 @@ class V3RouterSpecialValues:
 
 
 class UniswapTransaction(AbstractTransaction):
-    class LeftoverRouterBalance(LedgerError):
-        pass
-
     @classmethod
     def from_router(cls, router: UniswapRouterDeployment, **kwargs: Any) -> Self:
         return cls(
@@ -138,7 +140,7 @@ class UniswapTransaction(AbstractTransaction):
         self.chain_id = int(chain_id, 16) if isinstance(chain_id, str) else chain_id
         self.router_address = to_checksum_address(router_address)
         if self.router_address not in ROUTER_DEPLOYMENTS[self.chain_id]:
-            raise DegenbotValueError(f"Router address {router_address} unknown!")
+            raise UnknownRouterAddress
 
         router_deployment = ROUTER_DEPLOYMENTS[self.chain_id][self.router_address]
 
@@ -158,7 +160,7 @@ class UniswapTransaction(AbstractTransaction):
                         factory_address=exchange.factory.address, chain_id=self.chain_id
                     )
                 case _:
-                    raise DegenbotValueError(f"Could not identify DEX type for {exchange}")
+                    raise DegenbotValueError(message=f"Could not identify DEX type for {exchange}")
 
         self.sender = to_checksum_address(tx_sender)
         self.recipients: set[ChecksumAddress] = set()
@@ -177,14 +179,14 @@ class UniswapTransaction(AbstractTransaction):
         block = connection_manager.get_web3(self.chain_id).eth.get_block(self.state_block)
         block_timestamp = block.get("timestamp")
         if block_timestamp is not None and block_timestamp > deadline:
-            raise TransactionError("Deadline expired")
+            raise DeadlineExpired
 
     def _raise_if_block_hash_mismatch(self, block_hash: HexBytes) -> None:  # pragma: no cover
         logger.info(f"Checking previousBlockhash: {block_hash!r}")
         block = connection_manager.get_web3(self.chain_id).eth.get_block("latest")
         _block_hash = block.get("hash")
         if _block_hash is not None and block_hash != _block_hash:
-            raise TransactionError("Previous block hash mismatch")
+            raise PreviousBlockMismatch
 
     @staticmethod
     def _show_pool_states(
@@ -301,8 +303,9 @@ class UniswapTransaction(AbstractTransaction):
             self.recipients.add(to_checksum_address(recipient))
 
         if last_swap and amount_out_min is not None and _amount_out < amount_out_min:
-            raise TransactionError(
-                f"Insufficient output for swap! {_amount_out} {token_out} received, {amount_out_min} required"  # noqa:E501
+            raise InsufficientOutput(
+                minimum=amount_out_min,
+                received=_amount_out,
             )
 
         if not self.silent:
@@ -368,7 +371,7 @@ class UniswapTransaction(AbstractTransaction):
         )
 
         if first_swap and amount_in_max is not None and _amount_in > amount_in_max:
-            raise TransactionError(f"Required input {_amount_in} exceeds maximum {amount_in_max}")
+            raise InsufficientInput(minimum=_amount_in, deposited=amount_in_max)
 
         if not self.silent:
             self._show_pool_states(pool, sim_result)
@@ -413,7 +416,7 @@ class UniswapTransaction(AbstractTransaction):
                 sqrt_price_limit_x96=sqrt_price_limit_x96,
             )
         except EVMRevertError as exc:
-            raise TransactionError(f"V3 revert: {exc}") from exc
+            raise TransactionError(message=f"V3 revert: {exc}") from exc
 
         _amount_out = -min(
             _sim_result.amount0_delta,
@@ -446,9 +449,7 @@ class UniswapTransaction(AbstractTransaction):
         )
 
         if amount_out_min is not None and _amount_out < amount_out_min:
-            raise TransactionError(
-                f"Insufficient output for swap! {_amount_out} {token_out} received, {amount_out_min} required"  # noqa:E501
-            )
+            raise InsufficientOutput(minimum=amount_out_min, received=_amount_out)
 
         if not self.silent:
             self._show_pool_states(pool, _sim_result)
@@ -479,7 +480,7 @@ class UniswapTransaction(AbstractTransaction):
                 sqrt_price_limit_x96=sqrt_price_limit_x96,
             )
         except EVMRevertError as exc:
-            raise TransactionError(f"V3 revert: {exc}") from exc
+            raise TransactionError(message=f"V3 revert: {exc}") from exc
 
         _amount_in = max(
             _sim_result.amount0_delta,
@@ -521,9 +522,7 @@ class UniswapTransaction(AbstractTransaction):
                 )
 
             if amount_in_max is not None and amount_in_max < _amount_in:
-                raise TransactionError(
-                    f"Insufficient input for exact output swap! {_amount_in} {token_in} required, {amount_in_max} provided"  # noqa:E501
-                )
+                raise InsufficientInput(minimum=_amount_in, deposited=amount_in_max)
 
         if last_swap:
             match recipient:
@@ -786,8 +785,9 @@ class UniswapTransaction(AbstractTransaction):
                     )
 
                     if sweep_token_balance < sweep_amount_min:
-                        raise TransactionError(
-                            f"Requested sweep of min. {sweep_amount_min} WETH, received {sweep_token_balance}"  # noqa:E501
+                        raise InsufficientOutput(
+                            minimum=sweep_amount_min,
+                            received=sweep_token_balance,
                         )
 
                     self._simulate_sweep(sweep_token_address, sweep_recipient)
@@ -873,8 +873,9 @@ class UniswapTransaction(AbstractTransaction):
                     )
 
                     if _wrapped_token_balance < _unwrap_amount_min:
-                        raise TransactionError(
-                            f"Requested unwrap of min. {_unwrap_amount_min} WETH, received {_wrapped_token_balance}"  # noqa:E501
+                        raise InsufficientOutput(
+                            minimum=_unwrap_amount_min,
+                            received=_wrapped_token_balance,
                         )
 
                     self._simulate_unwrap(_wrapped_token_address)
@@ -906,7 +907,7 @@ class UniswapTransaction(AbstractTransaction):
                         pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
                     except (LiquidityPoolError, ManagerError):
                         raise TransactionError(
-                            f"Pools could not be built for all steps in path {tx_path}"
+                            message=f"Pools could not be built for all steps in path {tx_path}"
                         ) from None
 
                     last_pool_pos = len(tx_path) - 2
@@ -980,7 +981,7 @@ class UniswapTransaction(AbstractTransaction):
                         pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
                     except (LiquidityPoolError, ManagerError):
                         raise TransactionError(
-                            f"Pools could not be built for all steps in path {tx_path}"
+                            message=f"Pools could not be built for all steps in path {tx_path}"
                         ) from None
 
                     last_pool_pos = len(pools) - 1
@@ -1213,8 +1214,7 @@ class UniswapTransaction(AbstractTransaction):
 
                             if _amount_out != _last_amount_in:
                                 raise TransactionError(
-                                    f"Insufficient swap amount through requested pool {v3_pool}. "
-                                    f"Needed {_last_amount_in}, received {_amount_out}"
+                                    message=f"Insufficient swap amount through requested pool {v3_pool}. Needed {_last_amount_in}, received {_amount_out}"  # noqa:E501
                                 )
 
                         self.simulated_pool_states.append((v3_pool, v3_sim_result))
@@ -1223,7 +1223,7 @@ class UniswapTransaction(AbstractTransaction):
                     if command in UNIMPLEMENTED_UNIVERAL_ROUTER_COMMANDS:
                         logger.debug(f"UNIMPLEMENTED COMMAND: {command}")
                     else:  # pragma: no cover
-                        raise DegenbotValueError(f"Invalid command {command}")
+                        raise DegenbotValueError(message=f"Invalid command {command}")
 
         def _process_v3_multicall(
             params: dict[str, Any],
@@ -1250,7 +1250,7 @@ class UniswapTransaction(AbstractTransaction):
                     )
 
                 if payload_func is None or payload_args is None:  # pragma: no cover
-                    raise DegenbotValueError("Failed to decode payload.")
+                    raise DegenbotValueError(message="Failed to decode payload.")
 
                 # special case to handle a multicall encoded within
                 # another multicall
@@ -1277,7 +1277,9 @@ class UniswapTransaction(AbstractTransaction):
                             )
 
                         if _func is None or _params is None:  # pragma: no cover
-                            raise DegenbotValueError("Failed to decode function parameters.")
+                            raise DegenbotValueError(
+                                message="Failed to decode function parameters."
+                            )
 
                         self._simulate(
                             func_name=_func.fn_name,
@@ -1331,7 +1333,7 @@ class UniswapTransaction(AbstractTransaction):
                             pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
                         except (LiquidityPoolError, ManagerError):
                             raise TransactionError(
-                                f"Pools could not be built for all steps in path {tx_path}"
+                                message=f"Pools could not be built for all steps in path {tx_path}"
                             ) from None
 
                         last_pool_pos = len(tx_path) - 2
@@ -1390,7 +1392,7 @@ class UniswapTransaction(AbstractTransaction):
                             pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
                         except (LiquidityPoolError, ManagerError) as exc:  # pragma: no cover
                             raise TransactionError(
-                                f"Pools could not be built for all steps in path {tx_path}"
+                                message=f"Pools could not be built for all steps in path {tx_path}"
                             ) from exc
 
                         last_pool_pos = len(pools) - 1
@@ -1524,7 +1526,7 @@ class UniswapTransaction(AbstractTransaction):
                         self.simulated_pool_states.append((_pool, _sim_result))
 
                     case _:
-                        raise DegenbotValueError(f"Unknown function: {func_name}!")
+                        raise DegenbotValueError(message=f"Unknown function: {func_name}!")
 
             except TransactionError:
                 # Catch specific subclass exception to prevent nested
@@ -1532,7 +1534,7 @@ class UniswapTransaction(AbstractTransaction):
                 # e.g. 'Simulation failed: Simulation failed: {error}'
                 raise
             except DegenbotError as e:
-                raise TransactionError(f"Simulation failed: {e}") from e
+                raise TransactionError(message=f"Simulation failed: {e}") from e
 
         def _process_uniswap_v3_transaction() -> None:
             logger.debug(f"{func_name}: {self.hash.to_0x_hex()=}")
@@ -1585,7 +1587,7 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_deadline = None
                             case _:
                                 raise DegenbotValueError(
-                                    f"Could not identify function parameters. Got {(func_params['params'])}"  # noqa:E501
+                                    message=f"Could not identify function parameters. Got {(func_params['params'])}"  # noqa:E501
                                 )
 
                         if tx_deadline:
@@ -1652,7 +1654,7 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_deadline = None
                             case _:
                                 raise DegenbotValueError(
-                                    f"Could not identify function parameters. Got {(func_params['params'])}"  # noqa:E501
+                                    message=f"Could not identify function parameters. Got {(func_params['params'])}"  # noqa:E501
                                 )
 
                         if tx_deadline:
@@ -1758,7 +1760,7 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_deadline = None
                             case _:
                                 raise DegenbotValueError(
-                                    f"Could not identify function parameters. Got {(func_params['params'])}"  # noqa:E501
+                                    message=f"Could not identify function parameters. Got {(func_params['params'])}"  # noqa:E501
                                 )
 
                         if tx_deadline:
@@ -1795,8 +1797,9 @@ class UniswapTransaction(AbstractTransaction):
                         )
 
                         if amount_deposited > tx_amount_in_max:
-                            raise TransactionError(
-                                f"Maximum input exceeded. Specified {tx_amount_in_max}, {amount_deposited} required."  # noqa:E501
+                            raise InsufficientInput(
+                                minimum=amount_deposited,
+                                deposited=tx_amount_in_max,
                             )
 
                     case "exactOutput":
@@ -1829,7 +1832,7 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_deadline = None
                             case _:
                                 raise DegenbotValueError(
-                                    f"Could not identify function parameters. Got {(func_params['params'])}"  # noqa:E501
+                                    message=f"Could not identify function parameters. Got {(func_params['params'])}"  # noqa:E501
                                 )
 
                         if tx_deadline:
@@ -1934,8 +1937,9 @@ class UniswapTransaction(AbstractTransaction):
                                 )
 
                                 if _amount_out != _last_amount_in:
-                                    raise TransactionError(
-                                        f"Insufficient swap amount through requested pool {v3_pool}. Needed {_last_amount_in}, received {_amount_out}"  # noqa:E501
+                                    raise InsufficientOutput(
+                                        minimum=_last_amount_in,
+                                        received=_amount_out,
                                     )
 
                             self.simulated_pool_states.append((v3_pool, v3_sim_result))
@@ -1951,8 +1955,9 @@ class UniswapTransaction(AbstractTransaction):
                             )
 
                             if amount_deposited > tx_amount_in_max:
-                                raise TransactionError(
-                                    f"Maximum input exceeded. Specified {tx_amount_in_max}, {amount_deposited} required."  # noqa:E501
+                                raise InsufficientInput(
+                                    minimum=amount_deposited,
+                                    deposited=tx_amount_in_max,
                                 )
 
                     case "unwrapWETH9":
@@ -1964,8 +1969,9 @@ class UniswapTransaction(AbstractTransaction):
                             self.router_address, wrapped_token_address
                         )
                         if wrapped_token_balance < amountMin:
-                            raise TransactionError(
-                                f"Requested unwrap of min. {amountMin} WETH, received {wrapped_token_balance}"  # noqa:E501
+                            raise InsufficientOutput(
+                                minimum=amountMin,
+                                received=wrapped_token_balance,
                             )
 
                         self._simulate_unwrap(wrapped_token_address)
@@ -1983,8 +1989,9 @@ class UniswapTransaction(AbstractTransaction):
                             self.router_address, wrapped_token_address
                         )
                         if wrapped_token_balance < _amount_in:
-                            raise TransactionError(
-                                f"Requested unwrap of min. {_amount_in} WETH, received {wrapped_token_balance}"  # noqa:E501
+                            raise InsufficientOutput(
+                                minimum=_amount_in,
+                                received=wrapped_token_balance,
                             )
 
                         self._simulate_unwrap(wrapped_token_address)
@@ -2009,8 +2016,9 @@ class UniswapTransaction(AbstractTransaction):
                         _balance = self.ledger.token_balance(self.router_address, tx_token_address)
 
                         if _balance < tx_amount_out_minimum:
-                            raise TransactionError(
-                                f"Requested sweep of min. {tx_amount_out_minimum} {tx_token_address}, received {_balance}"  # noqa:E501
+                            raise InsufficientOutput(
+                                minimum=tx_amount_out_minimum,
+                                received=_balance,
                             )
 
                         self._simulate_sweep(tx_token_address, tx_recipient)
@@ -2164,21 +2172,17 @@ class UniswapTransaction(AbstractTransaction):
                         # Simulate mint
                         ...
 
-            # Catch and re-raise without special handling. These are raised by this class, so
-            # short-circuit if one has bubbled up. This prevents nested multicalls from adding
-            # redundant strings to exception message.
-            # e.g. 'Simulation failed: Simulation failed: Simulation failed: {error}'
-            except TransactionError:
-                raise
-            # Catch errors from pool helper simulation attempts
-            except DegenbotError as e:
-                raise TransactionError(f"Simulation failed: {e}") from e
+            # Wrap exceptions from pool helper simulation attempts
+            except LiquidityPoolError as exc:
+                raise TransactionError(message=f"Simulation failed: {exc}") from exc
 
         def _process_uniswap_universal_router_transaction() -> None:
             logger.debug(f"{func_name}: {self.hash.to_0x_hex()=}")
 
             if func_name != "execute":
-                raise DegenbotValueError(f"UNHANDLED UNIVERSAL ROUTER FUNCTION: {func_name}")
+                raise DegenbotValueError(
+                    message=f"UNHANDLED UNIVERSAL ROUTER FUNCTION: {func_name}"
+                )
 
             try:
                 with contextlib.suppress(KeyError):
@@ -2197,7 +2201,7 @@ class UniswapTransaction(AbstractTransaction):
             except TransactionError:
                 raise
             except DegenbotError as e:
-                raise TransactionError(f"Simulation failed: {e}") from e
+                raise TransactionError(message=f"Simulation failed: {e}") from e
 
         if func_name in V2_FUNCTIONS:
             _process_uniswap_v2_transaction()
@@ -2206,14 +2210,15 @@ class UniswapTransaction(AbstractTransaction):
         elif func_name in UNIVERSAL_ROUTER_FUNCTIONS:
             _process_uniswap_universal_router_transaction()
         elif func_name in UNHANDLED_FUNCTIONS:
-            logger.debug(f"TODO: {func_name}")
             raise TransactionError(
-                f"Aborting simulation involving un-implemented function: {func_name}"
+                message=f"Aborting simulation involving un-implemented function: {func_name}"
             )
         elif func_name in NO_OP_FUNCTIONS:
             logger.debug(f"NON-OP: {func_name}")
         else:
-            raise TransactionError(f"Aborting simulation involving unknown function: {func_name}")
+            raise TransactionError(
+                message=f"Aborting simulation involving unknown function: {func_name}"
+            )
 
     def simulate(
         self,
@@ -2253,8 +2258,6 @@ class UniswapTransaction(AbstractTransaction):
         )
 
         if self.router_address in self.ledger.balances:
-            raise self.LeftoverRouterBalance(
-                "Unaccounted router balance", self.ledger.balances[self.router_address]
-            )
+            raise LeftoverRouterBalance(balances=self.ledger.balances[self.router_address])
 
         return self.simulated_pool_states

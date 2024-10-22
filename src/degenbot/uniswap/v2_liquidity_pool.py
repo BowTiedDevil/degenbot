@@ -19,10 +19,10 @@ from ..exceptions import (
     AddressMismatch,
     DegenbotValueError,
     ExternalUpdateError,
+    InvalidSwapInputAmount,
     LateUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
-    ZeroSwapError,
 )
 from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..logging import logger
@@ -129,7 +129,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
             # Contracts differ slightly across Uniswap V2 forks, so decoding may fail. Catch this
             # here and raise as a pool-specific exception
-            raise LiquidityPoolError("Could not decode contract data") from exc
+            raise LiquidityPoolError(message="Could not decode contract data") from exc
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
         self.token0, self.token1 = (
@@ -172,7 +172,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             self.fee_token0 = self.fee_token1 = fee
 
         if verify_address and self.address != self._verified_address():  # pragma: no branch
-            raise AddressMismatch("Pool address verification failed.")
+            raise AddressMismatch
 
         fee_string = (
             f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
@@ -349,7 +349,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         """
 
         if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(f"Token in {token_in} not held by this pool.")
+            raise DegenbotValueError(message=f"Token in {token_in} not held by this pool.")
 
         if token_in == self.token0:
             # formula: dx = y0/C - x0/(1-FEE), where C = token1/token0
@@ -385,7 +385,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         """
 
         if token_out_quantity <= 0:  # pragma: no cover
-            raise ZeroSwapError("token_out_quantity must be positive")
+            raise InvalidSwapInputAmount
 
         if override_state:  # pragma: no cover
             logger.debug(f"State overrides applied: {override_state}")
@@ -416,13 +416,13 @@ class UniswapV2Pool(AbstractLiquidityPool):
             fee = self.fee_token1
         else:  # pragma: no cover
             raise DegenbotValueError(
-                f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"  # noqa:E501
+                message=f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"  # noqa:E501
             )
 
         # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
         if token_out_quantity > reserves_out - 1:
             raise LiquidityPoolError(
-                f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})"
+                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})"  # noqa:E501
             )
 
         return constant_product_calc_exact_out(
@@ -443,7 +443,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         """
 
         if token_in_quantity <= 0:  # pragma: no cover
-            raise ZeroSwapError("token_in_quantity must be positive")
+            raise InvalidSwapInputAmount
 
         if override_state:  # pragma: no cover
             logger.debug(f"State overrides applied: {override_state}")
@@ -474,7 +474,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             fee = self.fee_token1
         else:  # pragma: no cover
             raise DegenbotValueError(
-                f"Could not identify token_in: {token_in}! Pool holds: {self.token0} {self.token1}"
+                message=f"Could not identify token_in: {token_in}! Pool holds: {self.token0} {self.token1}"  # noqa:E501
             )
 
         return constant_product_calc_exact_in(
@@ -490,8 +490,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
     ) -> bool:
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
-                f"Rejected update for block {update.block_number} in the past, "
-                f"current update block is {self.update_block}"
+                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
             )
 
         with self._state_lock:
@@ -542,7 +541,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         elif token == self.token1:
             return Fraction(state.reserves_token1) / Fraction(state.reserves_token0)
         else:  # pragma: no cover
-            raise DegenbotValueError(f"Unknown token {token}")
+            raise DegenbotValueError(message=f"Unknown token {token}")
 
     def get_nominal_price(
         self,
@@ -577,7 +576,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
                 10**self.token0.decimals, state.reserves_token0
             )
         else:  # pragma: no cover
-            raise DegenbotValueError(f"Unknown token {token}")
+            raise DegenbotValueError(message=f"Unknown token {token}")
 
     def get_reserves(self, w3: Web3, block_identifier: BlockIdentifier) -> tuple[int, int]:
         reserves_token0, reserves_token1, *_ = raw_call(
@@ -598,7 +597,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         """
 
         if self._pool_state_archive is None:  # pragma: no cover
-            raise NoPoolStateAvailable("No archived states are available")
+            raise DegenbotValueError(message="No archived states are available")
 
         with self._state_lock:
             known_blocks = sorted(list(self._pool_state_archive.keys()))
@@ -611,7 +610,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
                 return
 
             if block_index == len(known_blocks):
-                raise NoPoolStateAvailable(f"No pool state known prior to block {block}")
+                raise NoPoolStateAvailable(block=block)
 
             for known_block in known_blocks[:block_index]:
                 del self._pool_state_archive[known_block]
@@ -627,7 +626,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         """
 
         if self._pool_state_archive is None:  # pragma: no cover
-            raise NoPoolStateAvailable("No archived states are available")
+            raise DegenbotValueError(message="No archived states are available")
 
         with self._state_lock:
             known_blocks = sorted(list(self._pool_state_archive.keys()))
@@ -636,7 +635,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             block_index = bisect_left(known_blocks, block)
 
             if block_index == 0:
-                raise NoPoolStateAvailable(f"No pool state known prior to block {block}")
+                raise NoPoolStateAvailable(block=block)
 
             # The last known state already meets the criterion, so return early
             if block_index == len(known_blocks):
@@ -716,7 +715,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         Simulate an exact input swap.
         """
         if token_in not in self.tokens:
-            raise DegenbotValueError("token_in is unknown.")
+            raise DegenbotValueError(message="token_in is unknown.")
 
         zero_for_one = token_in == self.token0
         token_out_quantity = self.calculate_tokens_out_from_tokens_in(
@@ -745,7 +744,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
         override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
         if token_out not in self.tokens:
-            raise DegenbotValueError("token_out is unknown.")
+            raise DegenbotValueError(message="token_out is unknown.")
 
         zero_for_one = token_out == self.token1
 
@@ -783,9 +782,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
 
         with self._state_lock:
             if block_number is not None and block_number < self.update_block:
-                raise LateUpdateError(
-                    f"Current state recorded at block {self.update_block}, update requested for stale block {block_number}"  # noqa:E501
-                )
+                raise LateUpdateError
 
             state_updated = False
             w3 = self.w3

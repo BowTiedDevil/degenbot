@@ -20,7 +20,7 @@ from ..exceptions import (
     DegenbotValueError,
     EVMRevertError,
     LiquidityPoolError,
-    ZeroLiquidityError,
+    NoLiquidity,
 )
 from ..logging import logger
 from ..types import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
@@ -66,7 +66,9 @@ class UniswapCurveCycle(AbstractArbitrage):
     ):
         for swap_pool in swap_pools:
             if not isinstance(swap_pool, CurveOrUniswapPool):
-                raise DegenbotValueError(f"Incompatible pool type ({type(swap_pool)}) provided.")
+                raise DegenbotValueError(
+                    message=f"Incompatible pool type ({type(swap_pool)}) provided."
+                )
 
         self.swap_pools = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
@@ -76,7 +78,7 @@ class UniswapCurveCycle(AbstractArbitrage):
         self.curve_discount_factor = CURVE_V1_DEFAULT_DISCOUNT_FACTOR
 
         if max_input == 0:
-            raise DegenbotValueError("Maximum input must be positive.")
+            raise DegenbotValueError(message="Maximum input must be positive.")
 
         if max_input is None:
             logger.warning("No maximum input provided, setting to 100 WETH")
@@ -108,7 +110,9 @@ class UniswapCurveCycle(AbstractArbitrage):
                                     )
                                 )
                             case _:  # pragma: no cover
-                                raise DegenbotValueError("Input token could not be identified!")
+                                raise DegenbotValueError(
+                                    message="Input token could not be identified!"
+                                )
                     else:
                         match _swap_vectors[-1].token_out:
                             case pool.token0:
@@ -128,14 +132,16 @@ class UniswapCurveCycle(AbstractArbitrage):
                                     )
                                 )
                             case _:  # pragma: no cover
-                                raise DegenbotValueError("Input token could not be identified!")
+                                raise DegenbotValueError(
+                                    message="Input token could not be identified!"
+                                )
                 case CurveStableswapPool():
                     # A Curve pool may have 3 or more tokens, so instead of a binary
                     # token0/token1 choice, determine the forward token by comparing
                     # current and next pool
                     if i != 1:
                         raise DegenbotValueError(
-                            "Not implemented for Curve pools at position != 1."
+                            message="Not implemented for Curve pools at position != 1."
                         )
 
                     token_in = _swap_vectors[-1].token_out
@@ -152,7 +158,7 @@ class UniswapCurveCycle(AbstractArbitrage):
                         CurveStableSwapPoolVector(token_in=token_in, token_out=token_out)
                     )
                 case _:  # pragma: no cover
-                    raise DegenbotValueError("Pool type could not be identified")
+                    raise DegenbotValueError(message="Pool type could not be identified")
         self._swap_vectors = tuple(_swap_vectors)
 
         self._subscribers: set[Subscriber] = set()
@@ -198,7 +204,7 @@ class UniswapCurveCycle(AbstractArbitrage):
                         )
                         if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
-                                f"Zero-output swap through pool {pool} @ {pool.address}"
+                                message=f"Zero-output swap through pool {pool} @ {pool.address}"
                             )
                         swap_amounts.append(
                             UniswapV2PoolSwapAmounts(
@@ -219,7 +225,7 @@ class UniswapCurveCycle(AbstractArbitrage):
                         )
                         if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
-                                f"Zero-output swap through pool {pool} @ {pool.address}"
+                                message=f"Zero-output swap through pool {pool} @ {pool.address}"
                             )
                         swap_amounts.append(
                             UniswapV3PoolSwapAmounts(
@@ -249,7 +255,7 @@ class UniswapCurveCycle(AbstractArbitrage):
                         )
                         if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
-                                f"Zero-output swap through pool {pool} @ {pool.address}"
+                                message=f"Zero-output swap through pool {pool} @ {pool.address}"
                             )
                         swap_amounts.append(
                             CurveStableSwapPoolSwapAmounts(
@@ -270,10 +276,10 @@ class UniswapCurveCycle(AbstractArbitrage):
                         )
                     case _:  # pragma: no cover
                         raise DegenbotValueError(
-                            f"Could not process pool {pool} and override {pool_state_override}"
+                            message=f"Could not process pool {pool} and override {pool_state_override}"  # noqa:E501
                         )
-            except LiquidityPoolError as e:  # pragma: no cover
-                raise ArbitrageError(f"(calculate_tokens_out_from_tokens_in): {e}") from None
+            except LiquidityPoolError as exc:  # pragma: no cover
+                raise ArbitrageError(message=str(exc)) from exc
 
         return swap_amounts
 
@@ -305,14 +311,14 @@ class UniswapCurveCycle(AbstractArbitrage):
             match pool, pool_state, vector:
                 case UniswapV2Pool(), UniswapV2PoolState(), UniswapPoolSwapVector():
                     if pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:
-                        raise ZeroLiquidityError(f"V2 pool {pool.address} has no liquidity")
+                        raise NoLiquidity(message=f"V2 pool {pool.address} has no liquidity")
                     if pool_state.reserves_token1 == 1 and vector.zero_for_one:
-                        raise ZeroLiquidityError(
-                            f"V2 pool {pool.address} has no liquidity for a 0 -> 1 swap"
+                        raise NoLiquidity(
+                            message=f"V2 pool {pool.address} has no liquidity for a 0 -> 1 swap"
                         )
                     if pool_state.reserves_token0 == 1 and not vector.zero_for_one:
-                        raise ZeroLiquidityError(
-                            f"V2 pool {pool.address} has no liquidity for a 1 -> 0 swap"
+                        raise NoLiquidity(
+                            message=f"V2 pool {pool.address} has no liquidity for a 1 -> 0 swap"
                         )
 
                     price = pool_state.reserves_token1 / pool_state.reserves_token0
@@ -322,19 +328,19 @@ class UniswapCurveCycle(AbstractArbitrage):
                     )
                 case UniswapV3Pool(), UniswapV3PoolState(), UniswapPoolSwapVector():
                     if pool_state.sqrt_price_x96 == 0:
-                        raise ZeroLiquidityError(
-                            f"V3 pool {pool.address} has no liquidity (not initialized)"
+                        raise NoLiquidity(
+                            message=f"V3 pool {pool.address} has no liquidity (not initialized)"
                         )
                     if pool_state.tick_bitmap == {}:
-                        raise ZeroLiquidityError(
-                            f"V3 pool {pool.address} has no liquidity (empty bitmap)"
+                        raise NoLiquidity(
+                            message=f"V3 pool {pool.address} has no liquidity (empty bitmap)"
                         )
                     if pool_state.liquidity == 0:  # pragma: no cover
                         # Check if the swap is 0 -> 1 and has reached the lower limit of the price
                         # range
                         if pool_state.sqrt_price_x96 == MIN_SQRT_RATIO + 1 and vector.zero_for_one:
-                            raise ZeroLiquidityError(
-                                f"V3 pool {pool.address} has no liquidity for a 0 -> 1 swap"
+                            raise NoLiquidity(
+                                message=f"V3 pool {pool.address} has no liquidity for a 0 -> 1 swap"
                             )
                         # Check if the swap is 1 -> 0 and has reached the upper limit of the price
                         # range
@@ -342,8 +348,8 @@ class UniswapCurveCycle(AbstractArbitrage):
                             pool_state.sqrt_price_x96 == MAX_SQRT_RATIO - 1
                             and not vector.zero_for_one
                         ):
-                            raise ZeroLiquidityError(
-                                f"V3 pool {pool.address} has no liquidity for a 1 -> 0 swap"
+                            raise NoLiquidity(
+                                message=f"V3 pool {pool.address} has no liquidity for a 1 -> 0 swap"
                             )
 
                     price = pool_state.sqrt_price_x96**2 / (2**192)
@@ -359,14 +365,14 @@ class UniswapCurveCycle(AbstractArbitrage):
                     profit_factor *= price * ((fee.denominator - fee.numerator) / fee.denominator)
                 case _:  # pragma: no cover
                     raise DegenbotValueError(
-                        f"Could not process pool {pool}, state {pool_state}, and vector {vector}"
+                        message=f"Could not process pool {pool}, state {pool_state}, and vector {vector}"  # noqa:E501
                     )
 
             # print(f"{profit_factor=}")
 
         if profit_factor < 1.0:
             raise ArbitrageError(
-                f"No profitable arbitrage at current prices. Profit factor: {profit_factor}"
+                message=f"No profitable arbitrage at current prices. Profit factor: {profit_factor}"
             )
 
     def _calculate(
@@ -533,7 +539,7 @@ class UniswapCurveCycle(AbstractArbitrage):
             ]
         ):  # pragma: no cover
             raise DegenbotValueError(
-                f"Cannot calculate {self} with executor. One or more V3 pools has a sparse liquidity map."  # noqa: E501
+                message=f"Cannot calculate {self} with executor. One or more V3 pools has a sparse liquidity map."  # noqa: E501
             )
 
         curve_pool = self.swap_pools[1]
@@ -629,7 +635,7 @@ class UniswapCurveCycle(AbstractArbitrage):
                     # Set the destination address for the last swap to the sending address
                     swap_destination_address = from_address
                 case _:
-                    raise DegenbotValueError(f"Unknown pool type {next_pool}")
+                    raise DegenbotValueError(message=f"Unknown pool type {next_pool}")
 
             match i, swap_pool, _swap_amounts:
                 case 0, UniswapV2Pool() as first_pool, _:
@@ -834,7 +840,7 @@ class UniswapCurveCycle(AbstractArbitrage):
                         )
                 case _:  # pragma: no cover
                     raise DegenbotValueError(
-                        f"Could not identify pool {swap_pool} and amounts {_swap_amounts}"
+                        message=f"Could not identify pool {swap_pool} and amounts {_swap_amounts}"
                     )
 
         return payloads

@@ -28,8 +28,8 @@ from ..exceptions import (
     BrokenPool,
     DegenbotValueError,
     EVMRevertError,
-    ZeroLiquidityError,
-    ZeroSwapError,
+    InvalidSwapInputAmount,
+    NoLiquidity,
 )
 from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..logging import logger
@@ -250,7 +250,9 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 else:
                     return _type
 
-            raise DegenbotValueError("Could not determine input type for pool")  # pragma: no cover
+            raise DegenbotValueError(
+                message="Could not determine input type for pool"
+            )  # pragma: no cover
 
         def get_token_addresses() -> list[ChecksumAddress]:
             token_addresses = []
@@ -289,7 +291,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     return to_checksum_address(lp_token_address)
 
             raise DegenbotValueError(
-                f"Could not identify LP token for pool {self.address}"
+                message=f"Could not identify LP token for pool {self.address}"
             )  # pragma: no cover
 
         def get_pool_from_lp_token(token: AnyAddress) -> ChecksumAddress:
@@ -306,19 +308,36 @@ class CurveStableswapPool(AbstractLiquidityPool):
             return to_checksum_address(pool_address)
 
         def is_metapool() -> bool:
-            for contract_address in (CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS):
-                is_meta, *_ = raw_call(
-                    w3=connection_manager.get_web3(chain_id=self.chain_id),
-                    address=contract_address,
-                    calldata=encode_function_calldata(
-                        function_prototype="is_meta(address)",
-                        function_arguments=[self.address],
-                    ),
-                    return_types=["bool"],
-                    block_identifier=state_block,
-                )
-                return cast(bool, is_meta)
-            return False
+            """
+            Check if the registry contract and the factory contract report that this is registered
+            as a metapool. Some metapools are not correctly marked in one of the contracts, so this
+            function checks both.
+            """
+            w3 = connection_manager.get_web3(chain_id=self.chain_id)
+
+            is_meta_results = [False]
+
+            for contract_address in (
+                CURVE_V1_REGISTRY_ADDRESS,
+                CURVE_V1_FACTORY_ADDRESS,
+            ):
+                try:
+                    (result,) = raw_call(
+                        w3=w3,
+                        address=contract_address,
+                        calldata=encode_function_calldata(
+                            function_prototype="is_meta(address)",
+                            function_arguments=[self.address],
+                        ),
+                        return_types=["bool"],
+                        block_identifier=state_block,
+                    )
+                except Web3Exception:
+                    continue
+                else:
+                    is_meta_results.append(cast(bool, result))
+
+            return any(is_meta_results)
 
         def set_pool_specific_attributes() -> None:
             match self.address:
@@ -386,7 +405,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         self.address = to_checksum_address(address)
         if self.address in BROKEN_CURVE_V1_POOLS:
-            raise BrokenPool(f"Pool {self.address} is broken")
+            raise BrokenPool
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
@@ -920,7 +939,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                         return y
 
                 raise EVMRevertError(
-                    f"_newton_y() did not converge for pool {self.address}"
+                    error=f"_newton_y() did not converge for pool {self.address}"
                 )  # pragma: no cover
 
             def _reduction_coefficient(x: list[int], fee_gamma: int) -> int:
@@ -1760,7 +1779,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     return D
 
         raise EVMRevertError(
-            f"_get_D() did not converge for pool {self.address}"
+            error=f"_get_D() did not converge for pool {self.address}"
         )  # pragma: no cover
 
     def _get_y(self, i: int, j: int, x: int, xp: list[int]) -> int:
@@ -1869,7 +1888,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     return y
 
         raise EVMRevertError(
-            f"_get_y() did not converge for pool {self.address}"
+            error=f"_get_y() did not converge for pool {self.address}"
         )  # pragma: no cover
 
     def _get_y_D(self, A_: int, i: int, xp: list[int], D: int) -> int:
@@ -1932,7 +1951,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                         return y
                 elif y_prev - y <= 1:
                     return y
-            raise EVMRevertError(f"_get_y_D() failed to converge for pool {self.address}")
+            raise EVMRevertError(error=f"_get_y_D() failed to converge for pool {self.address}")
 
         else:
             # x in the input is converted to the same price/precision
@@ -2252,7 +2271,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         )
 
         if token_in_quantity <= 0:
-            raise ZeroSwapError("token_in_quantity must be positive")
+            raise InvalidSwapInputAmount
 
         if override_state:
             logger.debug("Overrides applied:")
@@ -2274,7 +2293,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         if all(tokens_used_this_pool):
             if any([balance == 0 for balance in self.balances]):
-                raise ZeroLiquidityError("One or more of the tokens has a zero balance.")
+                raise NoLiquidity(message="One or more of the tokens has a zero balance.")
 
             return self._get_dy(
                 i=self.tokens.index(token_in),
@@ -2289,18 +2308,18 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
             # TODO: see if any of these checks are unnecessary (partial zero balanece OK?)
             if any([balance == 0 for balance in self.base_pool.balances]):
-                raise ZeroLiquidityError("One or more of the base pool tokens has a zero balance.")
+                raise NoLiquidity(message="One or more of the base pool tokens has a zero balance.")
             if any([balance == 0 for balance in self.balances]):
-                raise ZeroLiquidityError("One or more of the tokens has a zero balance.")
+                raise NoLiquidity(message="One or more of the tokens has a zero balance.")
 
             token_in_from_metapool = token_in in self.tokens
             token_out_from_metapool = token_out in self.tokens
             assert token_in_from_metapool or token_out_from_metapool
 
             if token_in_from_metapool and self.balances[self.tokens.index(token_in)] == 0:
-                raise ZeroLiquidityError(f"{token_in} has a zero balance.")
+                raise NoLiquidity(message=f"{token_in} has a zero balance.")
             if token_out_from_metapool and self.balances[self.tokens.index(token_out)] == 0:
-                raise ZeroLiquidityError(f"{token_out} has a zero balance.")
+                raise NoLiquidity(message=f"{token_out} has a zero balance.")
 
             token_in_from_basepool = token_in in self.base_pool.tokens
             token_out_from_basepool = token_out in self.base_pool.tokens
@@ -2310,12 +2329,12 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 token_in_from_basepool
                 and self.base_pool.balances[self.base_pool.tokens.index(token_in)] == 0
             ):
-                raise ZeroLiquidityError(f"{token_in} has a zero balance.")
+                raise NoLiquidity(message=f"{token_in} has a zero balance.")
             if (
                 token_out_from_basepool
                 and self.base_pool.balances[self.base_pool.tokens.index(token_out)] == 0
             ):
-                raise ZeroLiquidityError(f"{token_out} has a zero balance.")
+                raise NoLiquidity(message=f"{token_out} has a zero balance.")
 
             return self._get_dy_underlying(
                 i=(
@@ -2346,5 +2365,5 @@ class CurveStableswapPool(AbstractLiquidityPool):
             )
         else:
             raise DegenbotValueError(
-                "Tokens not held by pool or in underlying base pool"
+                message="Tokens not held by pool or in underlying base pool"
             )  # pragma: no cover

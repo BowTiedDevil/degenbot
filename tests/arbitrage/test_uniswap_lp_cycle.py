@@ -28,7 +28,7 @@ from degenbot.arbitrage.types import (
     UniswapV3PoolSwapAmounts,
 )
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.exceptions import ArbitrageError
+from degenbot.exceptions import ArbitrageError, DegenbotValueError, RateOfExchangeBelowMinimum
 from degenbot.uniswap.types import (
     UniswapV2PoolState,
     UniswapV2PoolStateUpdated,
@@ -2335,7 +2335,7 @@ async def test_process_pool_calculation(
 
         assert isinstance(wbtc_weth_arb.swap_pools[1], UniswapV3Pool)
         wbtc_weth_arb.swap_pools[1].sparse_liquidity_map = True
-        with pytest.raises(ValueError, match="One or more V3 pools has a sparse bitmap."):
+        with pytest.raises(DegenbotValueError, match="One or more V3 pools has a sparse bitmap."):
             await wbtc_weth_arb.calculate_with_pool(
                 executor=executor,
                 state_overrides=overrides,
@@ -2395,7 +2395,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
     # price is lower in the second pool.
     # i.e. sell underpriced token0 (WETH) in pool0 for token1 (WBTC),
     # buy overpriced token0 (WETH) in pool1 with token1 (WBTC)
-    with pytest.raises(ArbitrageError, match="No acceptable arbitrage at current rate of exchange"):
+    with pytest.raises(RateOfExchangeBelowMinimum):
         arb = UniswapLpCycle(
             id="test_arb",
             input_token=weth_token,
@@ -2408,7 +2408,9 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
 def test_bad_pool_in_constructor(
     wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
 ):
-    with pytest.raises(ValueError, match=f"Incompatible pool type \\({type(None)}\\) provided."):
+    with pytest.raises(
+        DegenbotValueError, match=f"Incompatible pool type \\({type(None)}\\) provided."
+    ):
         UniswapLpCycle(
             id="test_arb",
             input_token=weth_token,
@@ -2431,7 +2433,7 @@ def test_no_max_input(
 def test_zero_max_input(
     wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
 ):
-    with pytest.raises(ValueError, match="Maximum input must be positive."):
+    with pytest.raises(DegenbotValueError, match="Maximum input must be positive."):
         UniswapLpCycle(
             id="test_arb",
             input_token=weth_token,

@@ -52,7 +52,7 @@ def general_calc_exact_in_stable(
     """
 
     if token_in not in (0, 1):  # pragma: no cover
-        raise DegenbotValueError("Invalid token_in identifier")
+        raise DegenbotValueError(message="Invalid token_in identifier")
 
     try:
         amount_in_after_fee = amount_in - amount_in * fee.numerator // fee.denominator
@@ -75,7 +75,7 @@ def general_calc_exact_in_stable(
         return (y * (decimals1 if token_in == 0 else decimals0)) // 10**18
     except ZeroDivisionError:
         # Pools with very low reserves can throw division by zero errors because _d() returns 0
-        raise EVMRevertError("Division by zero") from None
+        raise EVMRevertError(error="Division by zero") from None
 
 
 def general_calc_exact_in_volatile(
@@ -90,7 +90,7 @@ def general_calc_exact_in_volatile(
     """
 
     if token_in not in (0, 1):  # pragma: no cover
-        raise DegenbotValueError("Invalid token_in identifier")
+        raise DegenbotValueError(message="Invalid token_in identifier")
 
     amount_in_after_fee = amount_in - amount_in * fee.numerator // fee.denominator
     reserves_a, reserves_b = (reserves0, reserves1) if token_in == 0 else (reserves1, reserves0)

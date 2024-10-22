@@ -15,8 +15,8 @@ from ..exceptions import (
     AddressMismatch,
     DegenbotValueError,
     ExternalUpdateError,
+    InvalidSwapInputAmount,
     LateUpdateError,
-    ZeroSwapError,
 )
 from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from ..logging import logger
@@ -84,7 +84,7 @@ class AerodromeV2Pool(AbstractLiquidityPool):
         )
 
         if verify_address and self.address != self._verified_address():  # pragma: no cover
-            raise AddressMismatch("Pool address verification failed.")
+            raise AddressMismatch
 
         self.name = f"{self.token0}-{self.token1} (AerodromeV2, {100*self.fee.numerator/self.fee.denominator:.2f}%)"  # noqa:E501
 
@@ -142,9 +142,7 @@ class AerodromeV2Pool(AbstractLiquidityPool):
         """
         with self._state_lock:
             if block_number is not None and block_number < self.update_block:
-                raise LateUpdateError(
-                    f"Current state recorded at block {self.update_block}, update requested for stale block {block_number}"  # noqa:E501
-                )
+                raise LateUpdateError
 
             state_updated = False
             w3 = self.w3
@@ -180,8 +178,7 @@ class AerodromeV2Pool(AbstractLiquidityPool):
     ) -> bool:
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
-                f"Rejected update for block {update.block_number} in the past, "
-                f"current update block is {self.update_block}"
+                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
             )
 
         with self._state_lock:
@@ -357,12 +354,12 @@ class AerodromeV2Pool(AbstractLiquidityPool):
         """
 
         if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError("token_in not recognized.")
+            raise DegenbotValueError(message="token_in not recognized.")
 
         TOKEN_IN: Literal[0, 1] = 0 if token_in == self.token0 else 1
 
         if token_in_quantity <= 0:  # pragma: no cover
-            raise ZeroSwapError("token_in_quantity must be positive")
+            raise InvalidSwapInputAmount
 
         if override_state:  # pragma: no cover
             logger.debug(f"State overrides applied: {override_state}")

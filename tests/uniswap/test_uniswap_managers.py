@@ -221,12 +221,14 @@ def test_manager_behavior_for_unassociated_pools(ethereum_archive_node_web3: Web
     assert MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS not in sushiswap_v3_pool_manager._untracked_pools
     # The manager will find the registered pool first, compare the factory address, and then reject
     # it as unassociated
-    with pytest.raises(ManagerError, match="is not associated with this DEX"):
+    with pytest.raises(PoolNotAssociated):
         sushiswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
 
     # The manager will now have this pool in its untracked set, and repeated calls can be rejected
     # faster with the short-circuit check
     assert MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS in sushiswap_v3_pool_manager._untracked_pools
+    with pytest.raises(PoolNotAssociated):
+        sushiswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
 
 
 def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):

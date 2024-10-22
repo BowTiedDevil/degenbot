@@ -17,18 +17,18 @@ def muldiv(
     """
 
     if not (MIN_UINT256 <= a <= MAX_UINT256):
-        raise EVMRevertError(f"Invalid input, {a} does not fit into uint256")
+        raise EVMRevertError(error=f"Invalid input, {a} does not fit into uint256")
 
     if not (MIN_UINT256 <= b <= MAX_UINT256):
-        raise EVMRevertError(f"Invalid input, {b} does not fit into uint256")
+        raise EVMRevertError(error=f"Invalid input, {b} does not fit into uint256")
 
     if denominator == 0:
-        raise EVMRevertError("DIVISION BY ZERO")
+        raise EVMRevertError(error="DIVISION BY ZERO")
 
     result = (a * b) // denominator
 
     if not (MIN_UINT256 <= result <= MAX_UINT256):
-        raise EVMRevertError("Invalid result, does not fit in uint256")
+        raise EVMRevertError(error="Invalid result, does not fit in uint256")
 
     return result
 
@@ -38,6 +38,6 @@ def muldiv_rounding_up(a: int, b: int, denominator: int) -> int:
     if mulmod(a, b, denominator) > 0:
         # must be less than max uint256 since we're rounding up
         if not (MIN_UINT256 <= result < MAX_UINT256):
-            raise EVMRevertError("FAIL!")
+            raise EVMRevertError(error="FAIL!")
         result += 1
     return result

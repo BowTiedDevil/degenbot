@@ -26,7 +26,7 @@ class BuilderEndpoint:  # pragma: no cover
         authentication_header_label: str | None = None,
     ):
         if not url.startswith(("http://", "https://")):
-            raise DegenbotValueError("Invalid URL")
+            raise DegenbotValueError(message="Invalid URL")
         self.url = url
 
         self.endpoints = tuple(endpoints)
@@ -78,7 +78,7 @@ class BuilderEndpoint:  # pragma: no cover
                     content_type=None,
                 )
         except aiohttp.ClientError as exc:
-            raise ExternalServiceError(f"HTTP Error: {exc}") from None
+            raise ExternalServiceError(error=str(exc)) from exc
         else:
             return (
                 relay_response["error"] if "error" in relay_response else relay_response["result"]
@@ -105,7 +105,7 @@ class BuilderEndpoint:  # pragma: no cover
 
         if ENDPOINT_METHOD not in self.endpoints:
             raise DegenbotValueError(
-                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         bundle_params: dict[str, Any] = {
@@ -122,7 +122,7 @@ class BuilderEndpoint:  # pragma: no cover
         if isinstance(state_block, str):
             if state_block != "latest":
                 raise DegenbotValueError(
-                    "state_block tag may only be an integer, or the string 'latest'"
+                    message="state_block tag may only be an integer, or the string 'latest'"
                 )
             bundle_params["stateBlockNumber"] = state_block
         elif isinstance(state_block, int):
@@ -172,12 +172,12 @@ class BuilderEndpoint:  # pragma: no cover
 
         if ENDPOINT_METHOD not in self.endpoints:
             raise DegenbotValueError(
-                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         if self.authentication_header_label is not None and signer_key is None:
             raise DegenbotValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa: E501
+                message=f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa: E501
             )
 
         payload = ujson.dumps(
@@ -223,7 +223,7 @@ class BuilderEndpoint:  # pragma: no cover
 
         if ENDPOINT_METHOD not in self.endpoints:
             raise DegenbotValueError(
-                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         if isinstance(tx_hash, HexBytes):
@@ -270,7 +270,7 @@ class BuilderEndpoint:  # pragma: no cover
 
         if ENDPOINT_METHOD not in self.endpoints:
             raise DegenbotValueError(
-                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         payload = ujson.dumps(
@@ -315,7 +315,7 @@ class BuilderEndpoint:  # pragma: no cover
 
         if ENDPOINT_METHOD not in self.endpoints:
             raise DegenbotValueError(
-                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         payload = ujson.dumps(
@@ -365,12 +365,12 @@ class BuilderEndpoint:  # pragma: no cover
 
         if ENDPOINT_METHOD not in self.endpoints:
             raise DegenbotValueError(
-                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         if self.authentication_header_label is not None and signer_key is None:
             raise DegenbotValueError(
-                f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
+                message=f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa:E501
             )
 
         bundle_params: dict[str, Any] = {
@@ -449,7 +449,7 @@ class BuilderEndpoint:  # pragma: no cover
 
         if ENDPOINT_METHOD not in self.endpoints:
             raise DegenbotValueError(
-                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         if isinstance(raw_transaction, HexBytes):
@@ -505,7 +505,7 @@ class BuilderEndpoint:  # pragma: no cover
 
         if ENDPOINT_METHOD not in self.endpoints:
             raise DegenbotValueError(
-                f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
             )
 
         if isinstance(raw_transaction, HexBytes):

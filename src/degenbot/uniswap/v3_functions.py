@@ -34,7 +34,7 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
             len(path) % (ADDRESS_BYTES + FEE_BYTES) != ADDRESS_BYTES,
         ]
     ):  # pragma: no cover
-        raise DegenbotValueError("Invalid path.")
+        raise DegenbotValueError(message="Invalid path.")
 
     chunk_length_and_decoder_function: Iterator[
         tuple[

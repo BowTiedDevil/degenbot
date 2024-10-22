@@ -4,7 +4,7 @@ from ...exceptions import EVMRevertError
 
 def mulmod(x: int, y: int, k: int) -> int:
     if k == 0:
-        raise EVMRevertError
+        raise EVMRevertError(error="division by zero")
     return (x * y) % k
 
 
@@ -13,17 +13,17 @@ def mulmod(x: int, y: int, k: int) -> int:
 # for this type
 def to_int128(x: int) -> int:
     if not (MIN_INT128 <= x <= MAX_INT128):
-        raise EVMRevertError(f"{x} outside range of int128 values")
+        raise EVMRevertError(error=f"{x} outside range of int128 values")
     return x
 
 
 def to_int256(x: int) -> int:
     if not (MIN_INT256 <= x <= MAX_INT256):
-        raise EVMRevertError(f"{x} outside range of int256 values")
+        raise EVMRevertError(error=f"{x} outside range of int256 values")
     return x
 
 
 def to_uint160(x: int) -> int:
     if x > MAX_UINT160:
-        raise EVMRevertError(f"{x} greater than maximum uint160 value")
+        raise EVMRevertError(error=f"{x} greater than maximum uint160 value")
     return x

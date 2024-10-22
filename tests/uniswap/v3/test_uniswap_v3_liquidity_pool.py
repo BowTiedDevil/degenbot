@@ -103,10 +103,10 @@ def test_pool_creation_with_liquidity_map(ethereum_archive_node_web3: Web3) -> N
 
 def test_creation_with_bad_liquidity_overrides(ethereum_archive_node_web3: Web3) -> None:
     set_web3(ethereum_archive_node_web3)
-    with pytest.raises(ValueError, match="Provide both tick_bitmap and tick_data."):
+    with pytest.raises(DegenbotValueError, match="Provide both tick_bitmap and tick_data."):
         UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={0: {}})
 
-    with pytest.raises(ValueError, match="Provide both tick_bitmap and tick_data."):
+    with pytest.raises(DegenbotValueError, match="Provide both tick_bitmap and tick_data."):
         UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_data={0: {}})
 
 
