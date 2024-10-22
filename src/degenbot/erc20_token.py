@@ -60,9 +60,9 @@ class Erc20Token(AbstractErc20Token):
 
             name, symbol, decimals = batch.execute()
 
-            name, *_ = eth_abi.abi.decode(types=["string"], data=cast(HexBytes, name))
-            symbol, *_ = eth_abi.abi.decode(types=["string"], data=cast(HexBytes, symbol))
-            decimals, *_ = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, decimals))
+            (name,) = eth_abi.abi.decode(types=["string"], data=cast(HexBytes, name))
+            (symbol,) = eth_abi.abi.decode(types=["string"], data=cast(HexBytes, symbol))
+            (decimals,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, decimals))
 
             return cast(str, name), cast(str, symbol), cast(int, decimals)
 
@@ -78,10 +78,10 @@ class Erc20Token(AbstractErc20Token):
         )
 
         try:
-            name, *_ = eth_abi.abi.decode(types=["string"], data=result)
+            (name,) = eth_abi.abi.decode(types=["string"], data=result)
             return cast(str, name)
         except DecodingError:
-            name, *_ = eth_abi.abi.decode(types=["bytes32"], data=result)
+            (name,) = eth_abi.abi.decode(types=["bytes32"], data=result)
             return cast(HexBytes, name).decode("utf-8", errors="ignore").strip("\x00")
 
     def get_symbol(self, w3: Web3, func_prototype: str) -> str:
@@ -96,14 +96,14 @@ class Erc20Token(AbstractErc20Token):
         )
 
         try:
-            symbol, *_ = eth_abi.abi.decode(types=["string"], data=result)
+            (symbol,) = eth_abi.abi.decode(types=["string"], data=result)
             return cast(str, symbol)
         except DecodingError:
-            symbol, *_ = eth_abi.abi.decode(types=["bytes32"], data=result)
+            (symbol,) = eth_abi.abi.decode(types=["bytes32"], data=result)
             return cast(HexBytes, symbol).decode("utf-8", errors="ignore").strip("\x00")
 
     def get_decimals(self, w3: Web3, func_prototype: str) -> int:
-        result, *_ = raw_call(
+        (result,) = raw_call(
             w3=w3,
             address=self.address,
             calldata=encode_function_calldata(
@@ -191,7 +191,7 @@ class Erc20Token(AbstractErc20Token):
         with contextlib.suppress(KeyError):
             return self._cached_approval[block_number, owner, spender]
 
-        approval, *_ = eth_abi.abi.decode(
+        (approval,) = eth_abi.abi.decode(
             types=["uint256"],
             data=self.w3.eth.call(
                 transaction={
@@ -237,7 +237,7 @@ class Erc20Token(AbstractErc20Token):
         with contextlib.suppress(KeyError):
             return self._cached_balance[block_number, address]
 
-        balance, *_ = eth_abi.abi.decode(
+        (balance,) = eth_abi.abi.decode(
             types=["uint256"],
             data=self.w3.eth.call(
                 transaction={
@@ -277,7 +277,7 @@ class Erc20Token(AbstractErc20Token):
         with contextlib.suppress(KeyError):
             return self._cached_total_supply[block_number]
 
-        total_supply, *_ = eth_abi.abi.decode(
+        (total_supply,) = eth_abi.abi.decode(
             types=["uint256"],
             data=self.w3.eth.call(
                 transaction={
