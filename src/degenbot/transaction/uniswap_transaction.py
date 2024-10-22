@@ -744,7 +744,6 @@ class UniswapTransaction(AbstractTransaction):
                 "SUDOSWAP",
                 "SWEEP_ERC1155",
                 "SWEEP_ERC721",
-                "TRANSFER",
                 "X2Y2_1155",
                 "X2Y2_721",
             }
@@ -822,6 +821,22 @@ class UniswapTransaction(AbstractTransaction):
                             _pay_portion_recipient,
                         )
                         self.recipients.add(to_checksum_address(_pay_portion_recipient))
+
+                case "TRANSFER":
+                    """
+                    Transfer an `amount` of `token` to `recipient`
+                    """
+
+                    transfer_token, transfer_recipient, transfer_value = eth_abi.abi.decode(
+                        types=("address", "address", "uint256"), data=inputs
+                    )
+                    transfer_recipient = to_checksum_address(transfer_recipient)
+                    self.ledger.adjust(
+                        address=self.router_address, token=transfer_token, amount=-transfer_value
+                    )
+                    self.ledger.adjust(
+                        address=transfer_recipient, token=transfer_token, amount=transfer_value
+                    )
 
                 case "WRAP_ETH":
                     """
