@@ -3,7 +3,7 @@ from eth_typing import ChainId
 from eth_utils.address import to_checksum_address
 from web3 import Web3
 
-from degenbot import AnvilFork, PancakeV3Pool
+from degenbot import AnvilFork
 from degenbot.config import set_web3
 from degenbot.exceptions import (
     ManagerAlreadyInitialized,
@@ -13,7 +13,14 @@ from degenbot.exceptions import (
 from degenbot.pancakeswap.managers import PancakeV3PoolManager
 from degenbot.registry.all_pools import pool_registry
 from degenbot.sushiswap.managers import SushiswapV2PoolManager, SushiswapV3PoolManager
-from degenbot.uniswap.deployments import UniswapFactoryDeployment, UniswapV3ExchangeDeployment
+from degenbot.uniswap.deployments import (
+    EthereumMainnetSushiswapV2,
+    EthereumMainnetSushiswapV3,
+    EthereumMainnetUniswapV2,
+    EthereumMainnetUniswapV3,
+    UniswapFactoryDeployment,
+    UniswapV3ExchangeDeployment,
+)
 from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
 
@@ -99,25 +106,6 @@ def test_create_base_chain_managers(base_full_node_web3: Web3):
         UniswapV3PoolManager(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS)
 
 
-def test_base_pancakeswap_v3(base_full_node_web3: Web3):
-    set_web3(base_full_node_web3)
-
-    # Exchange provided explicitly
-    PancakeV3Pool.from_exchange(
-        address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
-        exchange=BASE_PANCAKESWAP_V3_EXCHANGE,
-    )
-
-
-def test_base_pancakeswap_v3_with_builtin_exchange(base_full_node_web3: Web3):
-    set_web3(base_full_node_web3)
-
-    # Exchange looked up implicitly from degenbot deployment module
-    PancakeV3Pool(
-        address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
-    )
-
-
 def test_base_pancake_v3_pool_manager(base_full_node_web3: Web3):
     set_web3(base_full_node_web3)
     pancakev3_lp_manager = PancakeV3PoolManager(
@@ -134,6 +122,21 @@ def test_base_pancake_v3_pool_manager(base_full_node_web3: Web3):
         )
         is v3_pool
     )
+
+
+def test_base_pancake_v3_pool_manager_from_exchange(base_full_node_web3: Web3):
+    set_web3(base_full_node_web3)
+    PancakeV3PoolManager.from_exchange(BASE_PANCAKESWAP_V3_EXCHANGE)
+
+
+def test_create_mainnet_managers_from_exchange(ethereum_archive_node_web3: Web3):
+    set_web3(ethereum_archive_node_web3)
+
+    UniswapV2PoolManager.from_exchange(EthereumMainnetUniswapV2)
+    SushiswapV2PoolManager.from_exchange(EthereumMainnetSushiswapV2)
+
+    UniswapV3PoolManager.from_exchange(EthereumMainnetUniswapV3)
+    SushiswapV3PoolManager.from_exchange(EthereumMainnetSushiswapV3)
 
 
 def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):

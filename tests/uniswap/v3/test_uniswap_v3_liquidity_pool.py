@@ -928,3 +928,22 @@ def test_complex_liquidity_transaction_2(fork_mainnet: AnvilFork):
     assert lp.tick_data[3].liquidityNet == convert_unsigned_integer_to_signed(
         340282366920938463463373611250495718043
     )
+
+
+def test_base_pancakeswap_v3(base_full_node_web3: Web3):
+    set_web3(base_full_node_web3)
+
+    # Exchange provided explicitly
+    PancakeV3Pool.from_exchange(
+        address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
+        exchange=BASE_PANCAKESWAP_V3_EXCHANGE,
+    )
+
+
+def test_base_pancakeswap_v3_with_builtin_exchange(base_full_node_web3: Web3):
+    set_web3(base_full_node_web3)
+
+    # Exchange looked up implicitly from degenbot deployment module
+    PancakeV3Pool(
+        address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
+    )
