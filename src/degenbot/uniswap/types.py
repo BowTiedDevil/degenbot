@@ -52,8 +52,8 @@ class UniswapV3BitmapAtWord:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV3LiquidityAtTick:
-    liquidityNet: int = 0
-    liquidityGross: int = 0
+    liquidity_net: int = 0
+    liquidity_gross: int = 0
     block: int | None = dataclasses.field(compare=False, default=None)
 
     def to_dict(self) -> dict[str, Any]:

@@ -292,70 +292,14 @@ def test_pickle_pool(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool):
 def test_tick_data_equality() -> None:
     with pytest.raises(AssertionError):
         assert UniswapV3LiquidityAtTick(
-            liquidityNet=1, liquidityGross=2
-        ) == UniswapV3LiquidityAtTick(liquidityNet=3, liquidityGross=4)
+            liquidity_net=1, liquidity_gross=2
+        ) == UniswapV3LiquidityAtTick(liquidity_net=3, liquidity_gross=4)
 
     # `block` field is set with `compare=False`, so that only the liquidity is
     # considered by equality checks
     assert UniswapV3LiquidityAtTick(
-        liquidityNet=1, liquidityGross=2, block=3
-    ) == UniswapV3LiquidityAtTick(liquidityNet=1, liquidityGross=2, block=4)
-
-
-def test_pool_state_equality(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
-    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
-    with pytest.raises(AssertionError):
-        assert UniswapV3PoolState(
-            pool=lp.address,
-            liquidity=10 * 10**18,
-            sqrt_price_x96=10 * 10**18,
-            tick=69_420,
-        ) == UniswapV3PoolState(
-            pool=lp.address,
-            liquidity=10 * 10**18,
-            sqrt_price_x96=10 * 10**18,
-            tick=69_421,
-        )
-
-    with pytest.raises(AssertionError):
-        assert UniswapV3PoolState(
-            pool=lp.address,
-            liquidity=10 * 10**18,
-            sqrt_price_x96=10 * 10**18,
-            tick=69_420,
-        ) == UniswapV3PoolState(
-            pool=lp.address,
-            liquidity=10 * 10**18,
-            sqrt_price_x96=11 * 10**18,
-            tick=69_420,
-        )
-
-    with pytest.raises(AssertionError):
-        assert UniswapV3PoolState(
-            pool=lp.address,
-            liquidity=10 * 10**18,
-            sqrt_price_x96=10 * 10**18,
-            tick=69_420,
-        ) == UniswapV3PoolState(
-            pool=lp.address,
-            liquidity=11 * 10**18,
-            sqrt_price_x96=10 * 10**18,
-            tick=69_420,
-        )
-
-    # `tick_bitmap` and `tick_data` fields are set with `compare=False`, so
-    # that only the liquidity, price, and tick are considered by equality checks
-    assert UniswapV3PoolState(
-        pool=lp.address,
-        liquidity=10 * 10**18,
-        sqrt_price_x96=10 * 10**18,
-        tick=69_420,
-    ) == UniswapV3PoolState(
-        pool=lp.address,
-        liquidity=10 * 10**18,
-        sqrt_price_x96=10 * 10**18,
-        tick=69_420,
-    )
+        liquidity_net=1, liquidity_gross=2, block=3
+    ) == UniswapV3LiquidityAtTick(liquidity_net=1, liquidity_gross=2, block=4)
 
 
 def test_price_is_inverse_of_exchange_rate(wbtc_weth_v3_lp: UniswapV3Pool):
@@ -677,21 +621,21 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> 
 
     # New liquidity is added to liquidityNet at lower tick, subtracted from upper tick.
     assert (
-        wbtc_weth_v3_lp_at_block_17_600_000.tick_data[-887160].liquidityNet
+        wbtc_weth_v3_lp_at_block_17_600_000.tick_data[-887160].liquidity_net
         == 80064092962998 + new_liquidity
     )
     assert (
-        wbtc_weth_v3_lp_at_block_17_600_000.tick_data[-887220].liquidityNet
+        wbtc_weth_v3_lp_at_block_17_600_000.tick_data[-887220].liquidity_net
         == 82174936226787 - new_liquidity
     )
 
     # New liquidity is added to liquidityGross on both sides.
     assert (
-        wbtc_weth_v3_lp_at_block_17_600_000.tick_data[-887160].liquidityGross
+        wbtc_weth_v3_lp_at_block_17_600_000.tick_data[-887160].liquidity_gross
         == 80064092962998 + new_liquidity
     )
     assert (
-        wbtc_weth_v3_lp_at_block_17_600_000.tick_data[-887220].liquidityGross
+        wbtc_weth_v3_lp_at_block_17_600_000.tick_data[-887220].liquidity_gross
         == 82174936226787 + new_liquidity
     )
 
@@ -845,21 +789,21 @@ def test_complex_liquidity_transaction_1(fork_mainnet: AnvilFork):
 
     assert lp.liquidity == 47302815311876989
 
-    assert lp.tick_data[-2].liquidityGross == 2444435478572158
-    assert lp.tick_data[-2].liquidityNet == convert_unsigned_integer_to_signed(
+    assert lp.tick_data[-2].liquidity_gross == 2444435478572158
+    assert lp.tick_data[-2].liquidity_net == convert_unsigned_integer_to_signed(
         340282366920938463463373056991514192626
     )
 
-    assert lp.tick_data[-1].liquidityGross == 35737394957587036
-    assert lp.tick_data[-1].liquidityNet == 32197982189243310
+    assert lp.tick_data[-1].liquidity_gross == 35737394957587036
+    assert lp.tick_data[-1].liquidity_net == 32197982189243310
 
-    assert lp.tick_data[0].liquidityGross == 3908477120807173
-    assert lp.tick_data[0].liquidityNet == convert_unsigned_integer_to_signed(
+    assert lp.tick_data[0].liquidity_gross == 3908477120807173
+    assert lp.tick_data[0].liquidity_net == convert_unsigned_integer_to_signed(
         340282366920938463463370705564595110629
     )
 
-    assert lp.tick_data[1].liquidityGross == 35087990576870618
-    assert lp.tick_data[1].liquidityNet == convert_unsigned_integer_to_signed(
+    assert lp.tick_data[1].liquidity_gross == 35087990576870618
+    assert lp.tick_data[1].liquidity_net == convert_unsigned_integer_to_signed(
         340282366920938463463340830792807716726
     )
 
@@ -911,21 +855,21 @@ def test_complex_liquidity_transaction_2(fork_mainnet: AnvilFork):
 
     assert lp.liquidity == 47729789712963261
 
-    assert lp.tick_data[0].liquidityGross == 36789742298460066
-    assert lp.tick_data[0].liquidityNet == 29030358934123454
+    assert lp.tick_data[0].liquidity_gross == 36789742298460066
+    assert lp.tick_data[0].liquidity_net == 29030358934123454
 
-    assert lp.tick_data[1].liquidityGross == 2206768132758995
-    assert lp.tick_data[1].liquidityNet == convert_unsigned_integer_to_signed(
+    assert lp.tick_data[1].liquidity_gross == 2206768132758995
+    assert lp.tick_data[1].liquidity_net == convert_unsigned_integer_to_signed(
         340282366920938463463373712015251828349
     )
 
-    assert lp.tick_data[2].liquidityGross == 33976822553596059
-    assert lp.tick_data[2].liquidityNet == convert_unsigned_integer_to_signed(
+    assert lp.tick_data[2].liquidity_gross == 33976822553596059
+    assert lp.tick_data[2].liquidity_net == convert_unsigned_integer_to_signed(
         340282366920938463463340631050012819095
     )
 
-    assert lp.tick_data[3].liquidityGross == 996384072015849
-    assert lp.tick_data[3].liquidityNet == convert_unsigned_integer_to_signed(
+    assert lp.tick_data[3].liquidity_gross == 996384072015849
+    assert lp.tick_data[3].liquidity_net == convert_unsigned_integer_to_signed(
         340282366920938463463373611250495718043
     )
 

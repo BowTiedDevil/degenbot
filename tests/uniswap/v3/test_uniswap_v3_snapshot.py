@@ -164,16 +164,16 @@ def test_apply_update_to_snapshot(
 
     tick_data = {
         253320: UniswapV3LiquidityAtTick(
-            liquidityNet=34399999543676, liquidityGross=34399999543676, block=12369821
+            liquidity_net=34399999543676, liquidity_gross=34399999543676, block=12369821
         ),
         264600: UniswapV3LiquidityAtTick(
-            liquidityNet=-34399999543676, liquidityGross=34399999543676, block=12369821
+            liquidity_net=-34399999543676, liquidity_gross=34399999543676, block=12369821
         ),
         255540: UniswapV3LiquidityAtTick(
-            liquidityNet=2154941425, liquidityGross=2154941425, block=12369846
+            liquidity_net=2154941425, liquidity_gross=2154941425, block=12369846
         ),
         262440: UniswapV3LiquidityAtTick(
-            liquidityNet=-2154941425, liquidityGross=2154941425, block=12369846
+            liquidity_net=-2154941425, liquidity_gross=2154941425, block=12369846
         ),
     }
     tick_bitmap = {
@@ -228,13 +228,13 @@ def test_pool_manager_applies_snapshots(
             case "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801":
                 assert pool.tick_data == {
                     -50580: UniswapV3LiquidityAtTick(
-                        liquidityNet=383995753785830744,
-                        liquidityGross=383995753785830744,
+                        liquidity_net=383995753785830744,
+                        liquidity_gross=383995753785830744,
                         block=12369739,
                     ),
                     -36720: UniswapV3LiquidityAtTick(
-                        liquidityNet=-383995753785830744,
-                        liquidityGross=383995753785830744,
+                        liquidity_net=-383995753785830744,
+                        liquidity_gross=383995753785830744,
                         block=12369739,
                     ),
                 }
@@ -251,23 +251,23 @@ def test_pool_manager_applies_snapshots(
             case "0x6c6Bc977E13Df9b0de53b251522280BB72383700":
                 assert pool.tick_data == {
                     -276330: UniswapV3LiquidityAtTick(
-                        liquidityNet=3964498619038659,
-                        liquidityGross=3964498619038659,
+                        liquidity_net=3964498619038659,
+                        liquidity_gross=3964498619038659,
                         block=12369760,
                     ),
                     -276320: UniswapV3LiquidityAtTick(
-                        liquidityNet=-3964498619038659,
-                        liquidityGross=3964498619038659,
+                        liquidity_net=-3964498619038659,
+                        liquidity_gross=3964498619038659,
                         block=12369760,
                     ),
                     -276400: UniswapV3LiquidityAtTick(
-                        liquidityNet=2698389804940873511,
-                        liquidityGross=2698389804940873511,
+                        liquidity_net=2698389804940873511,
+                        liquidity_gross=2698389804940873511,
                         block=12369823,
                     ),
                     -276250: UniswapV3LiquidityAtTick(
-                        liquidityNet=-2698389804940873511,
-                        liquidityGross=2698389804940873511,
+                        liquidity_net=-2698389804940873511,
+                        liquidity_gross=2698389804940873511,
                         block=12369823,
                     ),
                 }
@@ -279,11 +279,13 @@ def test_pool_manager_applies_snapshots(
             case "0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387":
                 assert pool.tick_data == {
                     192200: UniswapV3LiquidityAtTick(
-                        liquidityNet=123809464957093, liquidityGross=123809464957093, block=12369811
+                        liquidity_net=123809464957093,
+                        liquidity_gross=123809464957093,
+                        block=12369811,
                     ),
                     198000: UniswapV3LiquidityAtTick(
-                        liquidityNet=-123809464957093,
-                        liquidityGross=123809464957093,
+                        liquidity_net=-123809464957093,
+                        liquidity_gross=123809464957093,
                         block=12369811,
                     ),
                 }
@@ -297,16 +299,18 @@ def test_pool_manager_applies_snapshots(
             case "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD":
                 assert pool.tick_data == {
                     253320: UniswapV3LiquidityAtTick(
-                        liquidityNet=34399999543676, liquidityGross=34399999543676, block=12369821
+                        liquidity_net=34399999543676, liquidity_gross=34399999543676, block=12369821
                     ),
                     264600: UniswapV3LiquidityAtTick(
-                        liquidityNet=-34399999543676, liquidityGross=34399999543676, block=12369821
+                        liquidity_net=-34399999543676,
+                        liquidity_gross=34399999543676,
+                        block=12369821,
                     ),
                     255540: UniswapV3LiquidityAtTick(
-                        liquidityNet=2154941425, liquidityGross=2154941425, block=12369846
+                        liquidity_net=2154941425, liquidity_gross=2154941425, block=12369846
                     ),
                     262440: UniswapV3LiquidityAtTick(
-                        liquidityNet=-2154941425, liquidityGross=2154941425, block=12369846
+                        liquidity_net=-2154941425, liquidity_gross=2154941425, block=12369846
                     ),
                 }
                 for word, bitmap in {
@@ -319,13 +323,13 @@ def test_pool_manager_applies_snapshots(
             case "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8":
                 assert pool.tick_data == {
                     -84120: UniswapV3LiquidityAtTick(
-                        liquidityNet=80059851033970806503,
-                        liquidityGross=80059851033970806503,
+                        liquidity_net=80059851033970806503,
+                        liquidity_gross=80059851033970806503,
                         block=12369854,
                     ),
                     -78240: UniswapV3LiquidityAtTick(
-                        liquidityNet=-80059851033970806503,
-                        liquidityGross=80059851033970806503,
+                        liquidity_net=-80059851033970806503,
+                        liquidity_gross=80059851033970806503,
                         block=12369854,
                     ),
                 }
@@ -339,10 +343,12 @@ def test_pool_manager_applies_snapshots(
             case "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf":
                 assert pool.tick_data == {
                     -10: UniswapV3LiquidityAtTick(
-                        liquidityNet=21206360421978, liquidityGross=21206360421978, block=12369863
+                        liquidity_net=21206360421978, liquidity_gross=21206360421978, block=12369863
                     ),
                     10: UniswapV3LiquidityAtTick(
-                        liquidityNet=-21206360421978, liquidityGross=21206360421978, block=12369863
+                        liquidity_net=-21206360421978,
+                        liquidity_gross=21206360421978,
+                        block=12369863,
                     ),
                 }
                 for word, bitmap in {

@@ -442,7 +442,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
             if state.sqrt_price_x96 == step.sqrt_price_next_x96:  # pragma: no branch
                 # If the tick is initialized, run the tick transition
                 if step.initialized:
-                    liquidity_net_at_next_tick = _tick_data[step.tick_next].liquidityNet
+                    liquidity_net_at_next_tick = _tick_data[step.tick_next].liquidity_net
                     if zero_for_one:
                         liquidity_net_at_next_tick = -liquidity_net_at_next_tick
                     state.liquidity = add_delta(state.liquidity, liquidity_net_at_next_tick)
@@ -557,8 +557,8 @@ class UniswapV3Pool(AbstractLiquidityPool):
         )
         for tick, liquidity_gross, liquidity_net in _tick_data:
             self.tick_data[tick] = UniswapV3LiquidityAtTick(
-                liquidityNet=liquidity_net,
-                liquidityGross=liquidity_gross,
+                liquidity_net=liquidity_net,
+                liquidity_gross=liquidity_gross,
                 block=block_number,
             )
 
@@ -1038,8 +1038,8 @@ class UniswapV3Pool(AbstractLiquidityPool):
                     # Get the liquidity info for this tick
                     try:
                         tick_liquidity_net, tick_liquidity_gross = (
-                            self.tick_data[tick].liquidityNet,
-                            self.tick_data[tick].liquidityGross,
+                            self.tick_data[tick].liquidity_net,
+                            self.tick_data[tick].liquidity_gross,
                         )
                     except (KeyError, AttributeError):
                         tick_liquidity_net = 0
@@ -1073,8 +1073,8 @@ class UniswapV3Pool(AbstractLiquidityPool):
                         )
                     else:
                         self.tick_data[tick] = UniswapV3LiquidityAtTick(
-                            liquidityNet=new_liquidity_net,
-                            liquidityGross=new_liquidity_gross,
+                            liquidity_net=new_liquidity_net,
+                            liquidity_gross=new_liquidity_gross,
                             block=update.block_number,
                         )
 
