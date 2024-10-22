@@ -20,7 +20,11 @@ from degenbot.exceptions import (
 )
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.pancakeswap.pools import PancakeV3Pool
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
+from degenbot.uniswap.deployments import (
+    FACTORY_DEPLOYMENTS,
+    UniswapFactoryDeployment,
+    UniswapV3ExchangeDeployment,
+)
 from degenbot.uniswap.types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
@@ -37,6 +41,22 @@ WETH_CONTRACT_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083
 WBTC_CONTRACT_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 DAI_CONTRACT_ADDRESS = to_checksum_address("0x6B175474E89094C44Da98b954EedeAC495271d0F")
 UNISWAP_V3_FACTORY_ADDRESS = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
+BASE_CBETH_WETH_V3_POOL_ADDRESS = to_checksum_address("0x257fcbae4ac6b26a02e4fc5e1a11e4174b5ce395")
+BASE_PANCAKESWAP_V3_FACTORY_ADDRESS = to_checksum_address(
+    "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"
+)
+BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS = to_checksum_address(
+    "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9"
+)
+BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
+    name="PancakeSwap V3",
+    chain_id=ChainId.BASE,
+    factory=UniswapFactoryDeployment(
+        address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
+        deployer=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
+        pool_init_hash="0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2",
+    ),
+)
 
 
 @pytest.fixture(autouse=True)
