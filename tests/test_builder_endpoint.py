@@ -26,7 +26,7 @@ BUILDER_FIXTURES = [
 SIGNER_KEY = "52661f05c0512d64e2dc681900f45996e9946856ec352b7a2950203b150dbd28"
 
 
-@pytest.fixture()
+@pytest.fixture
 def beaverbuild() -> BuilderEndpoint:
     return BuilderEndpoint(
         url=BEAVERBUILD_URL,
@@ -34,7 +34,7 @@ def beaverbuild() -> BuilderEndpoint:
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def builder0x69() -> BuilderEndpoint:
     return BuilderEndpoint(
         url=BUILDER0X69_URL,
@@ -44,7 +44,7 @@ def builder0x69() -> BuilderEndpoint:
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def flashbots() -> BuilderEndpoint:
     return BuilderEndpoint(
         url=FLASHBOTS_URL,
@@ -58,7 +58,7 @@ def flashbots() -> BuilderEndpoint:
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def rsyncbuilder() -> BuilderEndpoint:
     return BuilderEndpoint(
         url=RSYNCBUILDER_URL,
@@ -71,7 +71,7 @@ def rsyncbuilder() -> BuilderEndpoint:
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def titanbuilder() -> BuilderEndpoint:
     return BuilderEndpoint(
         url=TITANBUILDER_URL,

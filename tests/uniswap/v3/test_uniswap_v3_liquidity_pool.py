@@ -77,7 +77,7 @@ def weth(ethereum_archive_node_web3: Web3) -> Erc20Token:
     return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WETH_CONTRACT_ADDRESS)
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def wbtc_weth_v3_lp_at_block_17_600_000(fork_mainnet: AnvilFork) -> UniswapV3Pool:
     fork_mainnet.reset(block_number=17_600_000)
     set_web3(fork_mainnet.w3)

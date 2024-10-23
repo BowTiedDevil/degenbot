@@ -878,8 +878,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 for index in range(3):
                     if index != token_index:
                         frac = xp[index] * 10**18 // D
-                        assert (frac > 10**16 - 1) and (
-                            frac < 10**20 + 1
+                        assert (
+                            10**16 - 1 < frac < 10**20 + 1
                         ), f"{frac=} out of range"  # dev: unsafe values x[i]
 
                 y = D // N_COINS
@@ -929,7 +929,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
                     if diff < max(convergence_limit, y // 10**14):
                         frac = y * 10**18 // D
-                        assert (frac > 10**16 - 1) and (frac < 10**20 + 1), "unsafe value for y"
+                        assert 10**16 - 1 < frac < 10**20 + 1, "unsafe value for y"
                         return y
 
                 raise EVMRevertError(
@@ -957,7 +957,9 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
             N_COINS = len(self.tokens)
 
-            assert i != j and i < N_COINS and j < N_COINS, "coin index out of range"
+            assert i != j, "coin index out of range"
+            assert i < N_COINS, "coin index out of range"
+            assert j < N_COINS, "coin index out of range"
             assert dx > 0, "do not exchange 0 coins"
 
             precisions = [

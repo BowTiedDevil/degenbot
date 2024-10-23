@@ -46,7 +46,7 @@ CAMELOT_WETH_USDC_LP_ADDRESS = to_checksum_address("0x84652bb2539513BAf36e225c93
 CAMELOT_MIM_USDC_LP_ADDRESS = to_checksum_address("0x68A0859de50B4Dfc6EFEbE981cA906D38Cdb0D1F")
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000(
     fork_mainnet: AnvilFork,
 ) -> UniswapV2Pool:
@@ -58,7 +58,7 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000(
     )
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool_reserves_at_block_17_650_000(
     fork_mainnet: AnvilFork,
 ) -> tuple[int, int]:
@@ -76,7 +76,7 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_reserves_at_block_17_650_000(
     return reserves_token0, reserves_token1
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool(
     fork_mainnet: AnvilFork, wbtc, weth
 ) -> UniswapV2Pool:

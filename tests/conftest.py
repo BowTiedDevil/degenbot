@@ -47,7 +47,7 @@ def ethereum_archive_node_web3() -> web3.Web3:
 
 
 @pytest.fixture(autouse=True)
-def initialize_and_reset_after_each_test():
+def _initialize_and_reset_after_each_test():
     """
     After each test, clear and reset global values & singletons to a fresh state
     """
@@ -61,20 +61,20 @@ def initialize_and_reset_after_each_test():
 
 
 @pytest.fixture(scope="session", autouse=True)
-def set_degenbot_logging():
+def _set_degenbot_logging():
     degenbot.logging.logger.setLevel(logging.DEBUG)
 
 
-@pytest.fixture()
+@pytest.fixture
 def fork_base() -> AnvilFork:
     return AnvilFork(fork_url=BASE_FULL_NODE_WS_URI, storage_caching=False)
 
 
-@pytest.fixture()
+@pytest.fixture
 def fork_mainnet() -> AnvilFork:
     return AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_WS_URI, storage_caching=False)
 
 
-@pytest.fixture()
+@pytest.fixture
 def fork_arbitrum() -> AnvilFork:
     return AnvilFork(fork_url=ARBITRUM_ARCHIVE_NODE_HTTP_URI, storage_caching=False)

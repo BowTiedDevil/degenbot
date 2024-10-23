@@ -20,7 +20,7 @@ CURVE_V1_REGISTRY_ADDRESS = to_checksum_address("0x90E00ACe148ca3b23Ac1bC8C240C2
 TRIPOOL_ADDRESS = to_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7")
 
 
-@pytest.fixture()
+@pytest.fixture
 def tripool(ethereum_archive_node_web3: Web3) -> CurveStableswapPool:
     set_web3(ethereum_archive_node_web3)
     return CurveStableswapPool(TRIPOOL_ADDRESS)

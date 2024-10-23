@@ -10,7 +10,11 @@ from degenbot.transaction.uniswap_transaction import UniswapTransaction
 
 
 @pytest.mark.parametrize(
-    "block_number, tx_dict, exception_match",
+    (
+        "block_number",
+        "tx_dict",
+        "exception_match",
+    ),
     [
         (
             17581149,
@@ -161,7 +165,11 @@ def test_v2_router_transactions(
 
 
 @pytest.mark.parametrize(
-    "block_number, tx_dict,exception_match",
+    (
+        "block_number",
+        "tx_dict",
+        "exception_match",
+    ),
     [
         (
             17560200,
@@ -794,7 +802,11 @@ def test_v3_router_transactions(
 
 
 @pytest.mark.parametrize(
-    "block_number, tx_dict, exception_match",
+    (
+        "block_number",
+        "tx_dict",
+        "exception_match",
+    ),
     [
         (
             17715663,
@@ -1172,29 +1184,29 @@ def test_expired_transaction(fork_mainnet: AnvilFork):
 
     fork_mainnet.w3.provider.timeout = 600  # type: ignore[attr-defined]
 
+    tx = UniswapTransaction(
+        chain_id=1,
+        tx_hash="0xbc96aa9e03d61d6a3ea1928274e2b1df1533a8c5c30f6fb936ea3c04c512329f",
+        tx_nonce=499,
+        tx_value=int(0.067163565815370351 * 10**18),
+        tx_sender="0xc9F869C08e6303340118C1B9eb498DAeA2505E60",
+        func_name="execute",
+        func_params={
+            "commands": HexBytes("0x0b010c"),
+            "inputs": [
+                HexBytes(
+                    "0x000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000ee9ce84246126f"
+                ),
+                HexBytes(
+                    "0x000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000003782dace9d9000000000000000000000000000000000000000000000000000000ee9ce84246126f00000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002b6c061d18d2b5bbfbe8a8d1eeb9ee27efd544cc5d002710c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000000000000000000000"
+                ),
+                HexBytes(
+                    "0x00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000"
+                ),
+            ],
+            "deadline": 1707545831 - 1000,
+        },
+        router_address="0x3FC91A3AFD70395CD496C647D5A6CC9D4B2B7FAD",
+    )
     with pytest.raises(DeadlineExpired):
-        tx = UniswapTransaction(
-            chain_id=1,
-            tx_hash="0xbc96aa9e03d61d6a3ea1928274e2b1df1533a8c5c30f6fb936ea3c04c512329f",
-            tx_nonce=499,
-            tx_value=int(0.067163565815370351 * 10**18),
-            tx_sender="0xc9F869C08e6303340118C1B9eb498DAeA2505E60",
-            func_name="execute",
-            func_params={
-                "commands": HexBytes("0x0b010c"),
-                "inputs": [
-                    HexBytes(
-                        "0x000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000ee9ce84246126f"
-                    ),
-                    HexBytes(
-                        "0x000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000003782dace9d9000000000000000000000000000000000000000000000000000000ee9ce84246126f00000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002b6c061d18d2b5bbfbe8a8d1eeb9ee27efd544cc5d002710c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000000000000000000000"
-                    ),
-                    HexBytes(
-                        "0x00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000"
-                    ),
-                ],
-                "deadline": 1707545831 - 1000,
-            },
-            router_address="0x3FC91A3AFD70395CD496C647D5A6CC9D4B2B7FAD",
-        )
         tx.simulate()

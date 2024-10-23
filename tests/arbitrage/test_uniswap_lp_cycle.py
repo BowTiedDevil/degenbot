@@ -2399,13 +2399,10 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
     # price is lower in the second pool.
     # i.e. sell underpriced token0 (WETH) in pool0 for token1 (WBTC),
     # buy overpriced token0 (WETH) in pool1 with token1 (WBTC)
+    arb = UniswapLpCycle(
+        id="test_arb", input_token=weth_token, swap_pools=[lp_2, lp_1], max_input=100 * 10**18
+    )
     with pytest.raises(RateOfExchangeBelowMinimum):
-        arb = UniswapLpCycle(
-            id="test_arb",
-            input_token=weth_token,
-            swap_pools=[lp_2, lp_1],
-            max_input=100 * 10**18,
-        )
         arb.calculate()
 
 
