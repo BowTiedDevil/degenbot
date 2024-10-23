@@ -99,7 +99,6 @@ class AnvilFork:
             raise AnvilNotFound
         path_to_anvil = pathlib.Path(_path_to_anvil)
 
-        self.fork_url = fork_url
         self.port = self._get_free_port_number()
         self.ipc_path = ipc_path
         self.ipc_provider_kwargs = (
@@ -112,9 +111,10 @@ class AnvilFork:
         )
         self.w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
 
-        self._initial_block_number = (
+        self._block_number = (
             fork_block if fork_block is not None else self.w3.eth.get_block_number()
         )
+        self._fork_url = fork_url
 
         if middlewares is not None:
             for middleware, layer in middlewares:
@@ -134,6 +134,14 @@ class AnvilFork:
 
         if coinbase is not None:
             self.set_coinbase(coinbase)
+
+    @property
+    def block_number(self) -> int:
+        return self._block_number
+
+    @property
+    def fork_url(self) -> str:
+        return self._fork_url
 
     @property
     def http_url(self) -> str:
@@ -199,31 +207,28 @@ class AnvilFork:
             params=[],
         )
 
-    def _reset(
-        self,
-        fork_url: str,
-        block_number: int | None,
-    ) -> None:
-        forking_params: dict[str, Any] = {"jsonRpcUrl": fork_url}
-        if block_number:
-            forking_params["blockNumber"] = block_number
-
-        self.w3.provider.make_request(
-            method=RPCEndpoint("anvil_reset"),
-            params=[{"forking": forking_params}],
-        )
-
     def reset(
         self,
         fork_url: str | None = None,
         block_number: int | None = None,
     ) -> None:
-        self._reset(
-            fork_url=fork_url if fork_url is not None else self.fork_url,
-            block_number=block_number,
+        self.w3.provider.make_request(
+            method=RPCEndpoint("anvil_reset"),
+            params=[
+                {
+                    "forking": {
+                        "jsonRpcUrl": fork_url if fork_url is not None else self.fork_url,
+                        "blockNumber": block_number
+                        if block_number is not None
+                        else self.block_number,
+                    }
+                }
+            ],
         )
-        if fork_url:
-            self.fork_url = fork_url
+        if fork_url is not None:
+            self._fork_url = fork_url
+        if block_number is not None:
+            self._block_number = block_number
 
     def reset_to_transaction_hash(self, transaction_hash: str) -> None:
         """
