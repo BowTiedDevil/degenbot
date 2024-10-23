@@ -11,7 +11,7 @@ dependencies = [
     "scipy >=1.14.1, <1.15",
     "ujson >= 5.10.0, <6",
     "watchdog >= 5.0.3",
-    "web3 >=7.2.0, <8",
+    "web3 >=7.4.0, <8",
 ]
 license = {text = "MIT"}
 classifiers = [
@@ -35,13 +35,13 @@ build-backend = "setuptools.build_meta"
 
 [tool.coverage.report]
 exclude_also = [
-    "if TYPE_CHECKING:", # exclude type checking imports and checks    
+    "if TYPE_CHECKING:", # exclude type checking imports and checks
     "return NotImplemented", # required for __eq__, __lt__, __gt__
     "def __hash__",
     "def __repr__",
     "def __str__",
     "logger.debug",
-    "case _:", # exclude catch-all 
+    "case _:", # exclude catch-all
 ]
 
 [tool.coverage.run]
