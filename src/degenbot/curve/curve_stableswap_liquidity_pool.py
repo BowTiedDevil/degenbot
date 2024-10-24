@@ -105,6 +105,37 @@ class CurveStableswapPool(AbstractLiquidityPool):
         )
     )
 
+    Y_VARIANT_GROUP_0 = frozenset(
+        (
+            "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
+            "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
+            "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
+            "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
+            "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
+        )
+    )
+    Y_VARIANT_GROUP_1 = frozenset(
+        (
+            "0x06364f10B501e868329afBc005b3492902d6C763",
+            "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
+            "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
+            "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
+            "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
+            "0x7fC77b5c7614E1533320Ea6DDc2Eb61fa00A9714",
+            "0x93054188d876f558f4a66B2EF1d97d16eDf0895B",
+            "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
+            "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
+            "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
+        )
+    )
+
+    Y_D_VARIANT_GROUP_0 = frozenset(
+        (
+            "0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2",
+            "0xf253f83AcA21aAbD2A20553AE0BF7F65C755A07F",
+        )
+    )
+
     def __init__(
         self,
         address: ChecksumAddress | str,
@@ -1795,181 +1826,74 @@ class CurveStableswapPool(AbstractLiquidityPool):
         assert i >= 0
         assert i < n_coins
 
-        if self.address in (
-            "0x06364f10B501e868329afBc005b3492902d6C763",
-            "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
-            "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
-            "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
-            "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
-            "0x7fC77b5c7614E1533320Ea6DDc2Eb61fa00A9714",
-            "0x93054188d876f558f4a66B2EF1d97d16eDf0895B",
-            "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
-            "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
-            "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
-        ):
-            if self.address in (
-                "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
-                "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
-                "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
-                "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
-                "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
-            ):
-                amp = self._a() // self.A_PRECISION
+        amp = self._a() // self.A_PRECISION if self.address in self.Y_VARIANT_GROUP_0 else self._a()
+        c = y = d = self._get_d(xp, amp)
+
+        s = 0
+        for coin_index in range(n_coins):
+            if coin_index == i:
+                _x = x
+            elif coin_index != j:
+                _x = xp[coin_index]
             else:
-                amp = self._a()
+                continue
+            s += _x
+            c = c * d // (_x * n_coins)
 
-            d = self._get_d(xp, amp)
-            c = d
-            s = 0
-            a_nn = amp * n_coins
-
-            for _i in range(n_coins):  # pragma: no branch
-                if _i == i:
-                    _x = x
-                elif _i != j:
-                    _x = xp[_i]
-                else:
-                    continue
-                s += _x
-                c = c * d // (_x * n_coins)
-
+        a_nn = amp * n_coins
+        if self.address in self.Y_VARIANT_GROUP_1:
             c = c * d // (a_nn * n_coins)
             b = s + d // a_nn
-            y = d
-            for _ in range(255):  # pragma: no branch
-                y_prev = y
-                y = (y * y + c) // (2 * y + b - d)
-                if y > y_prev:
-                    if y - y_prev <= 1:
-                        return y
-                elif y_prev - y <= 1:
-                    return y
-
         else:
-            amp = self._a()
-            d = self._get_d(xp, amp)
-
-            s = 0
-            c = d
-            a_nn = amp * n_coins
-
-            for _i in range(n_coins):  # pragma: no branch
-                if _i == i:
-                    _x = x
-                elif _i != j:
-                    _x = xp[_i]
-                else:
-                    continue
-                s += _x
-                c = c * d // (_x * n_coins)
-
             c = c * d * self.A_PRECISION // (a_nn * n_coins)
             b = s + d * self.A_PRECISION // a_nn
-            y = d
-            for _ in range(255):  # pragma: no branch
-                y_prev = y
-                y = (y * y + c) // (2 * y + b - d)
-                if y > y_prev:
-                    if y - y_prev <= 1:
-                        return y
-                elif y_prev - y <= 1:
-                    return y
 
-        raise EVMRevertError(
-            error=f"_get_y() did not converge for pool {self.address}"
-        )  # pragma: no cover
+        for _ in range(255):  # pragma: no branch
+            y_prev = y
+            y = (y * y + c) // (2 * y + b - d)
+            if y > y_prev:
+                if y - y_prev <= 1:
+                    return y
+            elif y_prev - y <= 1:
+                return y
+
+        raise EVMRevertError(error="y calculation did not converge.")  # pragma: no cover
 
     def _get_y_d(self, a: int, i: int, xp: Sequence[int], d: int) -> int:
-        """
-        Calculate x[i] if one reduces D from being calculated for xp to D
-
-        Done by solving quadratic equation iteratively.
-        x_1**2 + x1 * (sum' - (A*n**n - 1) * D / (A * n**n)) = D ** (n + 1) / (
-            n ** (2 * n) * prod' * A
-        )
-        x_1**2 + b*x_1 = c
-
-        x_1 = (x_1**2 + c) / (2*x_1 + b)
-        """
-
-        if self.address in (
-            "0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2",
-            "0xf253f83AcA21aAbD2A20553AE0BF7F65C755A07F",
-        ):
-            """
-            Calculate x[i] if one reduces D from being calculated for xp to D
-
-            Done by solving quadratic equation iteratively.
-            x_1**2 + x_1 * (sum' - (A*n**n - 1) * D / (A * n**n)) = D ** (n + 1) / (
-                n ** (2 * n) * prod' * A
-            )
-            x_1**2 + b*x_1 = c
-
-            x_1 = (x_1**2 + c) / (2*x_1 + b)
-            """
-
-            n_coins = len(self.tokens)
-
-            # x in the input is converted to the same price/precision
-
-            assert i >= 0  # dev: i below zero
-            assert i < n_coins  # dev: i above N_COINS
-
-            a_nn = a * n_coins
-            c = d
-            s = 0
-            _x = 0
-
-            for _i in range(n_coins):  # pragma: no branch
-                if _i != i:
-                    _x = xp[_i]
-                else:
-                    continue
-                s += _x
-                c = c * d // (_x * n_coins)
-            b = s + d * self.A_PRECISION // a_nn
-            c = c * d * self.A_PRECISION // (a_nn * n_coins)
-            y = d
-
-            for _i in range(255):  # pragma: no branch
-                y_prev = y
-                y = (y * y + c) // (2 * y + b - d)
-                if y > y_prev:
-                    if y - y_prev <= 1:
-                        return y
-                elif y_prev - y <= 1:
-                    return y
-            raise EVMRevertError(error=f"_get_y_D() failed to converge for pool {self.address}")
-
         n_coins = len(self.tokens)
 
         assert i >= 0  # dev: i below zero
         assert i < n_coins  # dev: i above N_COINS
 
-        c = d
-        s = 0
-        a_nn = a * n_coins
+        c = y = d
 
-        _x = 0
-        for _i in range(n_coins):  # pragma: no branch
-            if _i != i:
-                _x = xp[_i]
+        s = 0
+        for coin_index in range(n_coins):
+            if coin_index != i:
+                x = xp[coin_index]
             else:
                 continue
-            s += _x
-            c = c * d // (_x * n_coins)
-        c = c * d // (a_nn * n_coins)
-        b = s + d // a_nn
-        y = d
-        for _i in range(255):  # pragma: no branch
+            s += x
+            c = c * d // (x * n_coins)
+
+        a_nn = a * n_coins
+        if self.address in self.Y_D_VARIANT_GROUP_0:
+            b = s + d * self.A_PRECISION // a_nn
+            c = c * d * self.A_PRECISION // (a_nn * n_coins)
+        else:
+            b = s + d // a_nn
+            c = c * d // (a_nn * n_coins)
+
+        for _ in range(255):  # pragma: no branch
             y_prev = y
             y = (y * y + c) // (2 * y + b - d)
             if y > y_prev:
                 if y - y_prev <= 1:
-                    break
+                    return y
             elif y_prev - y <= 1:
-                break
-        return y
+                return y
+
+        raise EVMRevertError(error="y_d calculation did not converge.")  # pragma: no cover
 
     def _stored_rates_from_ctokens(self, block_number: BlockNumber) -> tuple[int, ...]:
         with contextlib.suppress(KeyError):
