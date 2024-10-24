@@ -26,8 +26,8 @@ from degenbot.config import connection_manager
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.curve.deployments import (
     BROKEN_CURVE_V1_POOLS,
-    CACHED_CURVE_V1_POOL_ATTRIBUTES,
     CURVE_V1_FACTORY_ADDRESS,
+    CURVE_V1_METAREGISTRY_ADDRESS,
     CURVE_V1_REGISTRY_ADDRESS,
 )
 from degenbot.erc20_token import Erc20Token
@@ -44,11 +44,7 @@ from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.registry.all_pools import pool_registry
 from degenbot.types import AbstractLiquidityPool
 
-from .types import (
-    CurveStableSwapPoolAttributes,
-    CurveStableswapPoolState,
-    CurveStableSwapPoolStateUpdated,
-)
+from .types import CurveStableswapPoolState, CurveStableSwapPoolStateUpdated
 
 
 class CurveStableswapPool(AbstractLiquidityPool):
@@ -334,18 +330,24 @@ class CurveStableswapPool(AbstractLiquidityPool):
             return tuple(token_addresses)
 
         def get_lp_token_address() -> ChecksumAddress:
-            for contract_address in (CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS):
-                (lp_token_address,) = raw_call(
-                    w3=connection_manager.get_web3(chain_id=self.chain_id),
-                    address=contract_address,
-                    calldata=encode_function_calldata(
-                        function_prototype="get_lp_token(address)",
-                        function_arguments=[self.address],
-                    ),
-                    return_types=["address"],
-                    block_identifier=state_block,
-                )
-                if lp_token_address != ZERO_ADDRESS:
+            for contract_address in (
+                CURVE_V1_METAREGISTRY_ADDRESS,
+                CURVE_V1_REGISTRY_ADDRESS,
+                CURVE_V1_FACTORY_ADDRESS,
+            ):
+                with contextlib.suppress(Web3Exception, DecodingError):
+                    (lp_token_address,) = raw_call(
+                        w3=connection_manager.get_web3(chain_id=self.chain_id),
+                        address=contract_address,
+                        calldata=encode_function_calldata(
+                            function_prototype="get_lp_token(address)",
+                            function_arguments=[self.address],
+                        ),
+                        return_types=["address"],
+                        block_identifier=state_block,
+                    )
+                    if lp_token_address == ZERO_ADDRESS:
+                        continue
                     return to_checksum_address(lp_token_address)
 
             raise DegenbotValueError(
@@ -353,17 +355,27 @@ class CurveStableswapPool(AbstractLiquidityPool):
             )  # pragma: no cover
 
         def get_pool_from_lp_token(token: AnyAddress) -> ChecksumAddress:
-            (pool_address,) = raw_call(
-                w3=connection_manager.get_web3(chain_id=self.chain_id),
-                address=CURVE_V1_REGISTRY_ADDRESS,
-                calldata=encode_function_calldata(
-                    function_prototype="get_pool_from_lp_token(address)",
-                    function_arguments=[to_checksum_address(token)],
-                ),
-                return_types=["address"],
-                block_identifier=state_block,
-            )
-            return to_checksum_address(pool_address)
+            for contract_address in (
+                CURVE_V1_METAREGISTRY_ADDRESS,
+                CURVE_V1_REGISTRY_ADDRESS,
+                CURVE_V1_FACTORY_ADDRESS,
+            ):
+                with contextlib.suppress(Web3Exception, DecodingError):
+                    (pool_address,) = raw_call(
+                        w3=connection_manager.get_web3(chain_id=self.chain_id),
+                        address=contract_address,
+                        calldata=encode_function_calldata(
+                            function_prototype="get_pool_from_lp_token(address)",
+                            function_arguments=[to_checksum_address(token)],
+                        ),
+                        return_types=["address"],
+                        block_identifier=state_block,
+                    )
+                    return to_checksum_address(pool_address)
+
+            raise DegenbotValueError(
+                message=f"Could not identify base pool from LP token for {self.address}"
+            )  # pragma: no cover
 
         def is_metapool() -> bool:
             """
@@ -376,10 +388,11 @@ class CurveStableswapPool(AbstractLiquidityPool):
             is_meta_results = [False]
 
             for contract_address in (
+                CURVE_V1_METAREGISTRY_ADDRESS,
                 CURVE_V1_REGISTRY_ADDRESS,
                 CURVE_V1_FACTORY_ADDRESS,
             ):
-                with contextlib.suppress(Web3Exception):
+                with contextlib.suppress(Web3Exception, DecodingError):
                     (result,) = raw_call(
                         w3=w3,
                         address=contract_address,
@@ -497,28 +510,12 @@ class CurveStableswapPool(AbstractLiquidityPool):
         get_a_scaling_values()
         get_coefficient_and_fees()
 
-        cached_pool_attributes = None
-        with contextlib.suppress(KeyError):
-            cached_pool_attributes = CurveStableSwapPoolAttributes(
-                **CACHED_CURVE_V1_POOL_ATTRIBUTES[self.chain_id][self.address]
-            )
-
         # token setup
-        self._coin_index_type: str
-        if cached_pool_attributes is not None:
-            self._coin_index_type = cached_pool_attributes.coin_index_type
-            token_addresses = tuple(
-                to_checksum_address(coin) for coin in cached_pool_attributes.coin_addresses
-            )
-            lp_token_address = to_checksum_address(cached_pool_attributes.lp_token_address)
-        else:
-            self._coin_index_type = get_coin_index_type()
-            token_addresses = get_token_addresses()
-            lp_token_address = get_lp_token_address()
+        self._coin_index_type = get_coin_index_type()
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
         self.lp_token = token_manager.get_erc20token(
-            address=lp_token_address,
+            address=get_lp_token_address(),
             silent=silent,
         )
         self.tokens: tuple[Erc20Token, ...] = tuple(
@@ -526,25 +523,15 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 address=token_address,
                 silent=silent,
             )
-            for token_address in token_addresses
+            for token_address in get_token_addresses()
         )
 
         # metapool setup
         self.base_pool: CurveStableswapPool | None = None
-        self.is_metapool = (
-            cached_pool_attributes.is_metapool
-            if cached_pool_attributes is not None
-            else is_metapool()
-        )
+        self.is_metapool = is_metapool()
         if self.is_metapool is True:
             # Curve metapools hold the LP token for the base pool at index 1
-            base_pool_lp_token_address = token_addresses[1]
-            base_pool_address = (
-                to_checksum_address(cached_pool_attributes.base_pool_address)
-                if cached_pool_attributes is not None
-                and cached_pool_attributes.base_pool_address is not None
-                else get_pool_from_lp_token(base_pool_lp_token_address)
-            )
+            base_pool_address = get_pool_from_lp_token(self.tokens[1].address)
 
             if (
                 base_pool := pool_registry.get(
