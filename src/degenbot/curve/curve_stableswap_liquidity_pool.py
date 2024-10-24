@@ -1309,9 +1309,14 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         pool_balances = override_state.balances if override_state is not None else self.balances
 
-        w3 = connection_manager.get_web3(self.chain_id)
-
-        block_number = get_number_for_block_identifier(block_identifier, w3)
+        block_number = (
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else get_number_for_block_identifier(
+                identifier=block_identifier,
+                w3=connection_manager.get_web3(self.chain_id),
+            )
+        )
 
         if self.address == "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d":
             base_n_coins = len(self.base_pool.tokens)
@@ -1640,8 +1645,14 @@ class CurveStableswapPool(AbstractLiquidityPool):
             override_state.balances.copy() if override_state is not None else self.balances.copy()
         )
 
-        w3 = connection_manager.get_web3(self.chain_id)
-        block_number = get_number_for_block_identifier(block_identifier, w3)
+        block_number = (
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else get_number_for_block_identifier(
+                block_identifier,
+                connection_manager.get_web3(self.chain_id),
+            )
+        )
 
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
         amp = self._a()
@@ -1664,8 +1675,14 @@ class CurveStableswapPool(AbstractLiquidityPool):
     def _calc_withdraw_one_coin(
         self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, ...]:
-        w3 = connection_manager.get_web3(self.chain_id)
-        block_number = get_number_for_block_identifier(block_identifier, w3)
+        block_number = (
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else get_number_for_block_identifier(
+                block_identifier,
+                connection_manager.get_web3(self.chain_id),
+            )
+        )
 
         n_coins = len(self.tokens)
 
@@ -2173,12 +2190,12 @@ class CurveStableswapPool(AbstractLiquidityPool):
         """
 
         block_number = (
-            get_number_for_block_identifier(
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else get_number_for_block_identifier(
                 block_identifier,
                 connection_manager.get_web3(self.chain_id),
             )
-            if block_identifier is None
-            else cast(int, block_identifier)
         )
 
         if token_in_quantity <= 0:
