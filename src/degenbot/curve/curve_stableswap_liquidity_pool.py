@@ -266,7 +266,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         def get_token_addresses() -> tuple[ChecksumAddress, ...]:
             token_addresses = []
-            for token_id in range(self.MAX_COINS):
+            for token_id in range(self.MAX_COINS):  # pragma: no branch
                 try:
                     token_address: str
                     (token_address,) = raw_call(
@@ -904,7 +904,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 for _k in range(n_coins - 1):
                     k_0_i = k_0_i * x_sorted[_k] * n_coins // d  # Large _x first
 
-                for _ in range(255):
+                for _ in range(255):  # pragma: no branch
                     y_prev = y
 
                     k_0 = k_0_i * y * n_coins // d
@@ -1834,7 +1834,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             s = 0
             a_nn = amp * n_coins
 
-            for _i in range(n_coins):
+            for _i in range(n_coins):  # pragma: no branch
                 if _i == i:
                     _x = x
                 elif _i != j:
@@ -1847,7 +1847,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             c = c * d // (a_nn * n_coins)
             b = s + d // a_nn
             y = d
-            for _ in range(255):
+            for _ in range(255):  # pragma: no branch
                 y_prev = y
                 y = (y * y + c) // (2 * y + b - d)
                 if y > y_prev:
@@ -1864,7 +1864,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             c = d
             a_nn = amp * n_coins
 
-            for _i in range(n_coins):
+            for _i in range(n_coins):  # pragma: no branch
                 if _i == i:
                     _x = x
                 elif _i != j:
@@ -1877,7 +1877,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             c = c * d * self.A_PRECISION // (a_nn * n_coins)
             b = s + d * self.A_PRECISION // a_nn
             y = d
-            for _ in range(255):
+            for _ in range(255):  # pragma: no branch
                 y_prev = y
                 y = (y * y + c) // (2 * y + b - d)
                 if y > y_prev:
@@ -1931,7 +1931,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             s = 0
             _x = 0
 
-            for _i in range(n_coins):
+            for _i in range(n_coins):  # pragma: no branch
                 if _i != i:
                     _x = xp[_i]
                 else:
@@ -1942,7 +1942,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             c = c * d * self.A_PRECISION // (a_nn * n_coins)
             y = d
 
-            for _i in range(255):
+            for _i in range(255):  # pragma: no branch
                 y_prev = y
                 y = (y * y + c) // (2 * y + b - d)
                 if y > y_prev:
@@ -1962,7 +1962,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         a_nn = a * n_coins
 
         _x = 0
-        for _i in range(n_coins):
+        for _i in range(n_coins):  # pragma: no branch
             if _i != i:
                 _x = xp[_i]
             else:
@@ -1972,7 +1972,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         c = c * d // (a_nn * n_coins)
         b = s + d // a_nn
         y = d
-        for _i in range(255):
+        for _i in range(255):  # pragma: no branch
             y_prev = y
             y = (y * y + c) // (2 * y + b - d)
             if y > y_prev:

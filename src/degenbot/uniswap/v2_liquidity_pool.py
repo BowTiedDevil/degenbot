@@ -539,7 +539,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             return Fraction(state.reserves_token0) / Fraction(state.reserves_token1)
         if token == self.token1:
             return Fraction(state.reserves_token1) / Fraction(state.reserves_token0)
-        raise DegenbotValueError(message=f"Unknown token {token}")
+        raise DegenbotValueError(message=f"Unknown token {token}")  # pragma: no cover
 
     def get_nominal_price(
         self,
@@ -573,7 +573,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             return Fraction(state.reserves_token1, 10**self.token1.decimals) * Fraction(
                 10**self.token0.decimals, state.reserves_token0
             )
-        raise DegenbotValueError(message=f"Unknown token {token}")
+        raise DegenbotValueError(message=f"Unknown token {token}")  # pragma: no cover
 
     def get_reserves(self, w3: Web3, block_identifier: BlockIdentifier) -> tuple[int, int]:
         reserves_token0, reserves_token1 = raw_call(
