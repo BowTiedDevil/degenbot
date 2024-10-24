@@ -8,9 +8,13 @@ from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from ..exceptions import EVMRevertError
-from ..functions import eip_1167_clone_address, raise_if_invalid_uint256
-from ..solidly.solidly_functions import general_calc_d, general_calc_exact_in_stable, general_calc_k
+from degenbot.exceptions import EVMRevertError
+from degenbot.functions import eip_1167_clone_address, raise_if_invalid_uint256
+from degenbot.solidly.solidly_functions import (
+    general_calc_d,
+    general_calc_exact_in_stable,
+    general_calc_k,
+)
 
 
 def _f_aerodrome(

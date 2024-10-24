@@ -23,14 +23,14 @@ getcontext().prec = 256
 getcontext().rounding = "ROUND_FLOOR"
 
 
-def encodePriceSqrt(reserve1: int, reserve0: int) -> int:
+def encode_price_sqrt(reserve1: int, reserve0: int) -> int:
     """
     Returns the sqrt price as a Q64.96 value
     """
     return round((Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96))
 
 
-def test_getSqrtRatioAtTick() -> None:
+def test_get_sqrt_ratio_at_tick() -> None:
     with pytest.raises(EVMRevertError, match="T"):
         get_sqrt_ratio_at_tick(MIN_TICK - 1)
 
@@ -43,24 +43,22 @@ def test_getSqrtRatioAtTick() -> None:
 
     assert get_sqrt_ratio_at_tick(MAX_TICK - 1) == 1461373636630004318706518188784493106690254656249
 
-    assert get_sqrt_ratio_at_tick(MIN_TICK) < (encodePriceSqrt(1, 2**127))
+    assert get_sqrt_ratio_at_tick(MIN_TICK) < (encode_price_sqrt(1, 2**127))
 
-    assert get_sqrt_ratio_at_tick(MAX_TICK) > encodePriceSqrt(2**127, 1)
+    assert get_sqrt_ratio_at_tick(MAX_TICK) > encode_price_sqrt(2**127, 1)
 
     assert get_sqrt_ratio_at_tick(MAX_TICK) == 1461446703485210103287273052203988822378723970342
 
 
-def test_minSqrtRatio() -> None:
-    min = get_sqrt_ratio_at_tick(MIN_TICK)
-    assert min == MIN_SQRT_RATIO
+def test_min_sqrt_ratio() -> None:
+    assert get_sqrt_ratio_at_tick(MIN_TICK) == MIN_SQRT_RATIO
 
 
-def test_maxSqrtRatio() -> None:
-    max = get_sqrt_ratio_at_tick(MAX_TICK)
-    assert max == MAX_SQRT_RATIO
+def test_max_sqrt_ratio() -> None:
+    assert get_sqrt_ratio_at_tick(MAX_TICK) == MAX_SQRT_RATIO
 
 
-def test_getTickAtSqrtRatio() -> None:
+def test_get_tick_at_sqrt_ratio() -> None:
     with pytest.raises(EVMRevertError, match="Not a valid uint160"):
         get_tick_at_sqrt_ratio(MIN_UINT160 - 1)
 
@@ -83,17 +81,17 @@ def test_getTickAtSqrtRatio() -> None:
 
     for ratio in [
         MIN_SQRT_RATIO,
-        encodePriceSqrt((10) ** (12), 1),
-        encodePriceSqrt((10) ** (6), 1),
-        encodePriceSqrt(1, 64),
-        encodePriceSqrt(1, 8),
-        encodePriceSqrt(1, 2),
-        encodePriceSqrt(1, 1),
-        encodePriceSqrt(2, 1),
-        encodePriceSqrt(8, 1),
-        encodePriceSqrt(64, 1),
-        encodePriceSqrt(1, (10) ** (6)),
-        encodePriceSqrt(1, (10) ** (12)),
+        encode_price_sqrt((10) ** (12), 1),
+        encode_price_sqrt((10) ** (6), 1),
+        encode_price_sqrt(1, 64),
+        encode_price_sqrt(1, 8),
+        encode_price_sqrt(1, 2),
+        encode_price_sqrt(1, 1),
+        encode_price_sqrt(2, 1),
+        encode_price_sqrt(8, 1),
+        encode_price_sqrt(64, 1),
+        encode_price_sqrt(1, (10) ** (6)),
+        encode_price_sqrt(1, (10) ** (12)),
         MAX_SQRT_RATIO - 1,
     ]:
         math_result = floor(log(((ratio / 2**96) ** 2), 1.0001))

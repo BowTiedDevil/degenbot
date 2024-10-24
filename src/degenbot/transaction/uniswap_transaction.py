@@ -14,10 +14,10 @@ from hexbytes import HexBytes
 from typing_extensions import Self
 from web3 import Web3
 
-from ..config import connection_manager
-from ..constants import WRAPPED_NATIVE_TOKENS
-from ..erc20_token import Erc20Token
-from ..exceptions import (
+from degenbot.config import connection_manager
+from degenbot.constants import WRAPPED_NATIVE_TOKENS
+from degenbot.erc20_token import Erc20Token
+from degenbot.exceptions import (
     DeadlineExpired,
     DegenbotError,
     DegenbotValueError,
@@ -31,31 +31,31 @@ from ..exceptions import (
     TransactionError,
     UnknownRouterAddress,
 )
-from ..logging import logger
-from ..managers.erc20_token_manager import Erc20TokenManager
-from ..types import AbstractSimulationResult, AbstractTransaction
-from ..uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
-from ..uniswap.deployments import (
+from degenbot.logging import logger
+from degenbot.managers.erc20_token_manager import Erc20TokenManager
+from degenbot.transaction.simulation_ledger import SimulationLedger
+from degenbot.types import AbstractSimulationResult, AbstractTransaction
+from degenbot.uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
+from degenbot.uniswap.deployments import (
     ROUTER_DEPLOYMENTS,
     UniswapRouterDeployment,
     UniswapV2ExchangeDeployment,
     UniswapV3ExchangeDeployment,
 )
-from ..uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
-from ..uniswap.types import (
+from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
+from degenbot.uniswap.types import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
-from ..uniswap.v2_functions import generate_v2_pool_address, get_v2_pools_from_token_path
-from ..uniswap.v2_liquidity_pool import UniswapV2Pool, UnregisteredLiquidityPool
-from ..uniswap.v3_functions import decode_v3_path
-from ..uniswap.v3_libraries.constants import Q96
-from ..uniswap.v3_libraries.full_math import muldiv
-from ..uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
-from ..uniswap.v3_liquidity_pool import UniswapV3Pool
-from .simulation_ledger import SimulationLedger
+from degenbot.uniswap.v2_functions import generate_v2_pool_address, get_v2_pools_from_token_path
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool, UnregisteredLiquidityPool
+from degenbot.uniswap.v3_functions import decode_v3_path
+from degenbot.uniswap.v3_libraries.constants import Q96
+from degenbot.uniswap.v3_libraries.full_math import muldiv
+from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
 class UniversalRouterSpecialAddress:
@@ -587,7 +587,7 @@ class UniswapTransaction(AbstractTransaction):
         dictionaries for all pools used by the transaction
         """
 
-        V2_FUNCTIONS = {
+        v2_functions = {
             "addLiquidity",
             "addLiquidityETH",
             "swapExactTokensForETH",
@@ -601,7 +601,7 @@ class UniswapTransaction(AbstractTransaction):
             "swapETHForExactTokens",
         }
 
-        V3_FUNCTIONS = {
+        v3_functions = {
             "exactInputSingle",
             "exactInput",
             "exactOutputSingle",
@@ -614,11 +614,11 @@ class UniswapTransaction(AbstractTransaction):
             "wrapETH",
         }
 
-        UNIVERSAL_ROUTER_FUNCTIONS = {
+        universal_router_functions = {
             "execute",
         }
 
-        UNHANDLED_FUNCTIONS = {
+        unhandled_functions = {
             # TODO: handle these
             "removeLiquidity",
             "removeLiquidityETH",
@@ -632,7 +632,7 @@ class UniswapTransaction(AbstractTransaction):
             "mint",
         }
 
-        NO_OP_FUNCTIONS = {
+        no_op_functions = {
             # These functions do not affect the pool state.
             # ---
             # ref: https://docs.uniswap.org/contracts/v3/reference/periphery/interfaces/IPeripheryPayments#refundeth
@@ -655,7 +655,7 @@ class UniswapTransaction(AbstractTransaction):
             inputs: bytes,
         ) -> None:
             # ref: https://github.com/Uniswap/universal-router/blob/main/contracts/libraries/Commands.sol
-            UNIVERSAL_ROUTER_COMMAND_VALUES: dict[int, str | None] = {
+            universal_router_command_values: dict[int, str | None] = {
                 0x00: "V3_SWAP_EXACT_IN",
                 0x01: "V3_SWAP_EXACT_OUT",
                 0x02: "PERMIT2_TRANSFER_FROM",
@@ -722,7 +722,7 @@ class UniswapTransaction(AbstractTransaction):
                 0x3F: None,  # COMMAND_PLACEHOLDER
             }
 
-            UNIMPLEMENTED_UNIVERAL_ROUTER_COMMANDS = {
+            unimplemented_universal_router_commands = {
                 "APPROVE_ERC20",
                 "BALANCE_CHECK_ERC20",
                 "CRYPTOPUNKS",
@@ -748,8 +748,8 @@ class UniswapTransaction(AbstractTransaction):
                 "X2Y2_721",
             }
 
-            COMMAND_TYPE_MASK = 0x3F
-            command = UNIVERSAL_ROUTER_COMMAND_VALUES[command_type & COMMAND_TYPE_MASK]
+            command_type_mask = 0x3F
+            command = universal_router_command_values[command_type & command_type_mask]
 
             logger.debug(f"Processing Universal Router command: {command}")
 
@@ -1235,7 +1235,7 @@ class UniswapTransaction(AbstractTransaction):
                         self.simulated_pool_states.append((v3_pool, v3_sim_result))
 
                 case _:
-                    if command in UNIMPLEMENTED_UNIVERAL_ROUTER_COMMANDS:
+                    if command in unimplemented_universal_router_commands:
                         logger.debug(f"UNIMPLEMENTED COMMAND: {command}")
                     else:  # pragma: no cover
                         raise DegenbotValueError(message=f"Invalid command {command}")
@@ -1975,14 +1975,14 @@ class UniswapTransaction(AbstractTransaction):
                     case "unwrapWETH9":
                         # TODO: if ETH balances are ever needed, handle the
                         # ETH transfer resulting from this function
-                        amountMin = func_params["amountMinimum"]
+                        amount_min = func_params["amountMinimum"]
                         wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
                         wrapped_token_balance = self.ledger.token_balance(
                             self.router_address, wrapped_token_address
                         )
-                        if wrapped_token_balance < amountMin:
+                        if wrapped_token_balance < amount_min:
                             raise InsufficientOutput(
-                                minimum=amountMin,
+                                minimum=amount_min,
                                 received=wrapped_token_balance,
                             )
 
@@ -2046,47 +2046,58 @@ class UniswapTransaction(AbstractTransaction):
 
                     case "increaseLiquidity":
 
-                        def getLiquidityForAmount0(
-                            sqrtRatioAX96: int, sqrtRatioBX96: int, amount0: int
+                        def get_liquidity_for_amount_0(
+                            sqrt_ratio_a_x96: int, sqrt_ratio_b_x96: int, amount0: int
                         ) -> int:
-                            if sqrtRatioAX96 > sqrtRatioBX96:
-                                (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96)
-                            intermediate = muldiv(sqrtRatioAX96, sqrtRatioBX96, Q96)
-                            return muldiv(amount0, intermediate, sqrtRatioBX96 - sqrtRatioAX96)
+                            if sqrt_ratio_a_x96 > sqrt_ratio_b_x96:
+                                (sqrt_ratio_a_x96, sqrt_ratio_b_x96) = (
+                                    sqrt_ratio_b_x96,
+                                    sqrt_ratio_a_x96,
+                                )
+                            intermediate = muldiv(sqrt_ratio_a_x96, sqrt_ratio_b_x96, Q96)
+                            return muldiv(
+                                amount0, intermediate, sqrt_ratio_b_x96 - sqrt_ratio_a_x96
+                            )
 
-                        def getLiquidityForAmount1(
-                            sqrtRatioAX96: int, sqrtRatioBX96: int, amount1: int
+                        def get_liquidity_for_amount_1(
+                            sqrt_ratio_a_x96: int, sqrt_ratio_b_x96: int, amount1: int
                         ) -> int:
-                            if sqrtRatioAX96 > sqrtRatioBX96:
-                                (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96)
-                            return muldiv(amount1, Q96, sqrtRatioBX96 - sqrtRatioAX96)
+                            if sqrt_ratio_a_x96 > sqrt_ratio_b_x96:
+                                (sqrt_ratio_a_x96, sqrt_ratio_b_x96) = (
+                                    sqrt_ratio_b_x96,
+                                    sqrt_ratio_a_x96,
+                                )
+                            return muldiv(amount1, Q96, sqrt_ratio_b_x96 - sqrt_ratio_a_x96)
 
-                        def getLiquidityForAmounts(
-                            sqrtRatioX96: int,
-                            sqrtRatioAX96: int,
-                            sqrtRatioBX96: int,
+                        def get_liquidity_for_amounts(
+                            sqrt_ratio_x96: int,
+                            sqrt_ratio_a_x96: int,
+                            sqrt_ratio_b_x96: int,
                             amount0: int,
                             amount1: int,
                         ) -> int:
-                            if sqrtRatioAX96 > sqrtRatioBX96:
-                                (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96)
-
-                            if sqrtRatioX96 <= sqrtRatioAX96:
-                                liquidity = getLiquidityForAmount0(
-                                    sqrtRatioAX96, sqrtRatioBX96, amount0
-                                )
-                            elif sqrtRatioX96 < sqrtRatioBX96:
-                                liquidity0 = getLiquidityForAmount0(
-                                    sqrtRatioX96, sqrtRatioBX96, amount0
-                                )
-                                liquidity1 = getLiquidityForAmount1(
-                                    sqrtRatioAX96, sqrtRatioX96, amount1
+                            if sqrt_ratio_a_x96 > sqrt_ratio_b_x96:
+                                (sqrt_ratio_a_x96, sqrt_ratio_b_x96) = (
+                                    sqrt_ratio_b_x96,
+                                    sqrt_ratio_a_x96,
                                 )
 
-                                liquidity = liquidity0 if liquidity0 < liquidity1 else liquidity1
+                            if sqrt_ratio_x96 <= sqrt_ratio_a_x96:
+                                liquidity = get_liquidity_for_amount_0(
+                                    sqrt_ratio_a_x96, sqrt_ratio_b_x96, amount0
+                                )
+                            elif sqrt_ratio_x96 < sqrt_ratio_b_x96:
+                                liquidity0 = get_liquidity_for_amount_0(
+                                    sqrt_ratio_x96, sqrt_ratio_b_x96, amount0
+                                )
+                                liquidity1 = get_liquidity_for_amount_1(
+                                    sqrt_ratio_a_x96, sqrt_ratio_x96, amount1
+                                )
+
+                                liquidity = min(liquidity1, liquidity0)
                             else:
-                                liquidity = getLiquidityForAmount1(
-                                    sqrtRatioAX96, sqrtRatioBX96, amount1
+                                liquidity = get_liquidity_for_amount_1(
+                                    sqrt_ratio_a_x96, sqrt_ratio_b_x96, amount1
                                 )
 
                             return liquidity
@@ -2155,8 +2166,8 @@ class UniswapTransaction(AbstractTransaction):
                             silent=self.silent,
                         )
 
-                        sqrtRatioAX96 = get_sqrt_ratio_at_tick(_tick_lower)
-                        sqrtRatioBX96 = get_sqrt_ratio_at_tick(_tick_upper)
+                        sqrt_ratio_a_x96 = get_sqrt_ratio_at_tick(_tick_lower)
+                        sqrt_ratio_b_x96 = get_sqrt_ratio_at_tick(_tick_upper)
 
                         current_sqrt_price_x96 = (
                             # TODO: review this, check for earlier pool states that may differ
@@ -2164,10 +2175,10 @@ class UniswapTransaction(AbstractTransaction):
                         )
 
                         # Get added liquidity (LiquidityManagement.sol)
-                        added_liquidity = getLiquidityForAmounts(
+                        added_liquidity = get_liquidity_for_amounts(
                             current_sqrt_price_x96,
-                            sqrtRatioAX96,
-                            sqrtRatioBX96,
+                            sqrt_ratio_a_x96,
+                            sqrt_ratio_b_x96,
                             amount0_desired,
                             amount1_desired,
                         )
@@ -2216,17 +2227,17 @@ class UniswapTransaction(AbstractTransaction):
             except DegenbotError as e:
                 raise TransactionError(message=f"Simulation failed: {e}") from e
 
-        if func_name in V2_FUNCTIONS:
+        if func_name in v2_functions:
             _process_uniswap_v2_transaction()
-        elif func_name in V3_FUNCTIONS:
+        elif func_name in v3_functions:
             _process_uniswap_v3_transaction()
-        elif func_name in UNIVERSAL_ROUTER_FUNCTIONS:
+        elif func_name in universal_router_functions:
             _process_uniswap_universal_router_transaction()
-        elif func_name in UNHANDLED_FUNCTIONS:
+        elif func_name in unhandled_functions:
             raise TransactionError(
                 message=f"Aborting simulation involving un-implemented function: {func_name}"
             )
-        elif func_name in NO_OP_FUNCTIONS:
+        elif func_name in no_op_functions:
             logger.debug(f"NON-OP: {func_name}")
         else:
             raise TransactionError(

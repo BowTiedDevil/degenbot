@@ -2,7 +2,7 @@ import dataclasses
 
 from eth_typing import ChecksumAddress, HexAddress
 
-from ..types import AbstractPoolState, Message
+from degenbot.types import AbstractPoolState, Message
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

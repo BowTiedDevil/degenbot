@@ -1,10 +1,10 @@
 from decimal import Decimal
 
-from ...constants import MAX_UINT8
-from ...exceptions import DegenbotValueError, LiquidityMapWordMissing
-from ...logging import logger
-from ..types import UniswapV3BitmapAtWord
-from .bit_math import least_significant_bit, most_significant_bit
+from degenbot.constants import MAX_UINT8
+from degenbot.exceptions import DegenbotValueError, LiquidityMapWordMissing
+from degenbot.logging import logger
+from degenbot.uniswap.types import UniswapV3BitmapAtWord
+from degenbot.uniswap.v3_libraries.bit_math import least_significant_bit, most_significant_bit
 
 
 def flip_tick(

@@ -15,9 +15,9 @@ from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import BlockIdentifier
 
-from ..config import connection_manager
-from ..erc20_token import Erc20Token
-from ..exceptions import (
+from degenbot.config import connection_manager
+from degenbot.erc20_token import Erc20Token
+from degenbot.exceptions import (
     AddressMismatch,
     DegenbotValueError,
     EVMRevertError,
@@ -28,14 +28,13 @@ from ..exceptions import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from ..functions import encode_function_calldata, raw_call
-from ..logging import logger
-from ..managers.erc20_token_manager import Erc20TokenManager
-from ..registry.all_pools import pool_registry
-from ..types import AbstractLiquidityPool
-from ..uniswap.deployments import UniswapV3ExchangeDeployment
-from .deployments import FACTORY_DEPLOYMENTS
-from .types import (
+from degenbot.functions import encode_function_calldata, raw_call
+from degenbot.logging import logger
+from degenbot.managers.erc20_token_manager import Erc20TokenManager
+from degenbot.registry.all_pools import pool_registry
+from degenbot.types import AbstractLiquidityPool
+from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV3ExchangeDeployment
+from degenbot.uniswap.types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
@@ -43,16 +42,19 @@ from .types import (
     UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
-from .v3_functions import (
+from degenbot.uniswap.v3_functions import (
     exchange_rate_from_sqrt_price_x96,
     generate_v3_pool_address,
     get_tick_word_and_bit_position,
 )
-from .v3_libraries.functions import to_int256
-from .v3_libraries.liquidity_math import add_delta
-from .v3_libraries.swap_math import compute_swap_step
-from .v3_libraries.tick_bitmap import flip_tick, next_initialized_tick_within_one_word
-from .v3_libraries.tick_math import (
+from degenbot.uniswap.v3_libraries.functions import to_int256
+from degenbot.uniswap.v3_libraries.liquidity_math import add_delta
+from degenbot.uniswap.v3_libraries.swap_math import compute_swap_step
+from degenbot.uniswap.v3_libraries.tick_bitmap import (
+    flip_tick,
+    next_initialized_tick_within_one_word,
+)
+from degenbot.uniswap.v3_libraries.tick_math import (
     MAX_SQRT_RATIO,
     MAX_TICK,
     MIN_SQRT_RATIO,
@@ -68,7 +70,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
     UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
         "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
     )
-    TICK_STRUCT_TYPES = [
+    TICK_STRUCT_TYPES = (
         "uint128",
         "int128",
         "uint256",
@@ -77,8 +79,8 @@ class UniswapV3Pool(AbstractLiquidityPool):
         "uint160",
         "uint32",
         "bool",
-    ]
-    SLOT0_STRUCT_TYPES = [
+    )
+    SLOT0_STRUCT_TYPES = (
         "uint160",
         "int24",
         "uint16",
@@ -86,7 +88,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
         "uint16",
         "uint8",
         "bool",
-    ]
+    )
 
     @dataclasses.dataclass(slots=True, repr=False, eq=False)
     class SwapCache:
@@ -1106,10 +1108,9 @@ class UniswapV3Pool(AbstractLiquidityPool):
 
         if token == self.token0:
             return 1 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-        elif token == self.token1:
+        if token == self.token1:
             return exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-        else:  # pragma: no cover
-            raise DegenbotValueError(message=f"Unknown token {token}")
+        raise DegenbotValueError(message=f"Unknown token {token}")
 
     def get_nominal_price(
         self,
@@ -1140,12 +1141,11 @@ class UniswapV3Pool(AbstractLiquidityPool):
                 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
                 * Fraction(10**self.token1.decimals, 10**self.token0.decimals)
             )
-        elif token == self.token1:
+        if token == self.token1:
             return exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96) * Fraction(
                 10**self.token0.decimals, 10**self.token1.decimals
             )
-        else:  # pragma: no cover
-            raise DegenbotValueError(message=f"Unknown token {token}")
+        raise DegenbotValueError(message=f"Unknown token {token}")
 
     def discard_states_before_block(self, block: int) -> None:
         """
@@ -1156,7 +1156,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
             return
 
         with self._state_lock:
-            known_blocks = sorted(list(self._pool_state_archive.keys()))
+            known_blocks = sorted(self._pool_state_archive.keys())
 
             # Finds the index prior to the requested block number
             block_index = bisect_left(known_blocks, block)
@@ -1193,7 +1193,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
             return
 
         with self._state_lock:
-            known_blocks = sorted(list(self._pool_state_archive.keys()))
+            known_blocks = sorted(self._pool_state_archive.keys())
             block_index = bisect_left(known_blocks, block)
 
             if block_index == 0:

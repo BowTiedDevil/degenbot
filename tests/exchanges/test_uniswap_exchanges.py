@@ -22,14 +22,14 @@ def _generate_random_address() -> ChecksumAddress:
 
 
 def test_register_v2_exchange() -> None:
-    DEPLOYMENT_CHAIN = 69
-    FACTORY_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
+    deployment_chain = 69
+    factory_deployment_address = to_checksum_address(_generate_random_address())
 
     exchange = UniswapV2ExchangeDeployment(
         name="V2 DEX",
-        chain_id=DEPLOYMENT_CHAIN,
+        chain_id=deployment_chain,
         factory=UniswapFactoryDeployment(
-            address=FACTORY_DEPLOYMENT_ADDRESS,
+            address=factory_deployment_address,
             deployer=None,
             pool_init_hash="0x0420",
         ),
@@ -38,50 +38,50 @@ def test_register_v2_exchange() -> None:
     register_exchange(exchange)
     with pytest.raises(DegenbotValueError):
         register_exchange(exchange)
-    assert DEPLOYMENT_CHAIN in FACTORY_DEPLOYMENTS
-    assert FACTORY_DEPLOYMENT_ADDRESS in FACTORY_DEPLOYMENTS[DEPLOYMENT_CHAIN]
-    assert FACTORY_DEPLOYMENTS[DEPLOYMENT_CHAIN][FACTORY_DEPLOYMENT_ADDRESS] is exchange.factory
+    assert deployment_chain in FACTORY_DEPLOYMENTS
+    assert factory_deployment_address in FACTORY_DEPLOYMENTS[deployment_chain]
+    assert FACTORY_DEPLOYMENTS[deployment_chain][factory_deployment_address] is exchange.factory
 
 
 def test_register_v3_exchange() -> None:
-    DEPLOYMENT_CHAIN = 69
-    FACTORY_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
+    deployment_chain = 69
+    factory_deployment_address = to_checksum_address(_generate_random_address())
 
     exchange = UniswapV3ExchangeDeployment(
         name="V3 DEX",
-        chain_id=DEPLOYMENT_CHAIN,
+        chain_id=deployment_chain,
         factory=UniswapFactoryDeployment(
-            address=FACTORY_DEPLOYMENT_ADDRESS,
+            address=factory_deployment_address,
             deployer=None,
             pool_init_hash="0x0420",
         ),
     )
 
     register_exchange(exchange)
-    assert DEPLOYMENT_CHAIN in FACTORY_DEPLOYMENTS
-    assert FACTORY_DEPLOYMENT_ADDRESS in FACTORY_DEPLOYMENTS[DEPLOYMENT_CHAIN]
-    assert FACTORY_DEPLOYMENTS[DEPLOYMENT_CHAIN][FACTORY_DEPLOYMENT_ADDRESS] is exchange.factory
+    assert deployment_chain in FACTORY_DEPLOYMENTS
+    assert factory_deployment_address in FACTORY_DEPLOYMENTS[deployment_chain]
+    assert FACTORY_DEPLOYMENTS[deployment_chain][factory_deployment_address] is exchange.factory
 
 
 def test_register_router() -> None:
-    DEPLOYMENT_CHAIN = 69
-    FACTORY_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
+    deployment_chain = 69
+    factory_deployment_address = to_checksum_address(_generate_random_address())
 
     exchange = UniswapV3ExchangeDeployment(
         name="V3 DEX",
-        chain_id=DEPLOYMENT_CHAIN,
+        chain_id=deployment_chain,
         factory=UniswapFactoryDeployment(
-            address=FACTORY_DEPLOYMENT_ADDRESS,
+            address=factory_deployment_address,
             deployer=None,
             pool_init_hash="0x0420",
         ),
     )
 
-    ROUTER_DEPLOYMENT_ADDRESS = to_checksum_address(_generate_random_address())
+    router_deployment_address = to_checksum_address(_generate_random_address())
 
     router = UniswapRouterDeployment(
-        address=ROUTER_DEPLOYMENT_ADDRESS,
-        chain_id=DEPLOYMENT_CHAIN,
+        address=router_deployment_address,
+        chain_id=deployment_chain,
         name="Router",
         exchanges=[exchange],
     )
@@ -89,6 +89,6 @@ def test_register_router() -> None:
     register_router(router)
     with pytest.raises(DegenbotValueError):
         register_router(router)
-    assert DEPLOYMENT_CHAIN in ROUTER_DEPLOYMENTS
-    assert router.address in ROUTER_DEPLOYMENTS[DEPLOYMENT_CHAIN]
-    assert ROUTER_DEPLOYMENTS[DEPLOYMENT_CHAIN][router.address] is router
+    assert deployment_chain in ROUTER_DEPLOYMENTS
+    assert router.address in ROUTER_DEPLOYMENTS[deployment_chain]
+    assert ROUTER_DEPLOYMENTS[deployment_chain][router.address] is router

@@ -1,7 +1,7 @@
 from typing import TypeAlias
 
-from ..uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
-from .pools import PancakeV2Pool, PancakeV3Pool
+from degenbot.pancakeswap.pools import PancakeV2Pool, PancakeV3Pool
+from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 
 
 class PancakeV2PoolManager(UniswapV2PoolManager):

@@ -2,14 +2,14 @@ from fractions import Fraction
 
 from eth_utils.address import to_checksum_address
 
-from ..config import connection_manager
-from ..erc20_token import Erc20Token
-from ..exceptions import DegenbotValueError
-from ..functions import encode_function_calldata, raw_call
-from ..logging import logger
-from ..uniswap.types import UniswapV2PoolState
-from ..uniswap.v2_liquidity_pool import UniswapV2Pool
-from .functions import get_y_camelot, k_camelot
+from degenbot.camelot.functions import get_y_camelot, k_camelot
+from degenbot.config import connection_manager
+from degenbot.erc20_token import Erc20Token
+from degenbot.exceptions import DegenbotValueError
+from degenbot.functions import encode_function_calldata, raw_call
+from degenbot.logging import logger
+from degenbot.uniswap.types import UniswapV2PoolState
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 
 class CamelotLiquidityPool(UniswapV2Pool):
@@ -153,9 +153,8 @@ class CamelotLiquidityPool(UniswapV2Pool):
                 token_in_quantity=token_in_quantity,
                 override_state=override_state,
             )
-        else:
-            return super().calculate_tokens_out_from_tokens_in(
-                token_in=token_in,
-                token_in_quantity=token_in_quantity,
-                override_state=override_state,
-            )
+        return super().calculate_tokens_out_from_tokens_in(
+            token_in=token_in,
+            token_in_quantity=token_in_quantity,
+            override_state=override_state,
+        )

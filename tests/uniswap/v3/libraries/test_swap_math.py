@@ -16,11 +16,11 @@ getcontext().prec = 256
 getcontext().rounding = "ROUND_FLOOR"
 
 
-def expandTo18Decimals(x: int):
+def expand_to_18_decimals(x: int):
     return x * 10**18
 
 
-def encodePriceSqrt(reserve1: int, reserve0: int):
+def encode_price_sqrt(reserve1: int, reserve0: int):
     """
     Returns the sqrt price as a Q64.96 value
     """
@@ -29,102 +29,102 @@ def encodePriceSqrt(reserve1: int, reserve0: int):
 
 def test_compute_swap_step():
     # exact amount in that gets capped at price target in one for zero
-    price = encodePriceSqrt(1, 1)
-    priceTarget = encodePriceSqrt(101, 100)
-    liquidity = expandTo18Decimals(2)
-    amount = expandTo18Decimals(1)
+    price = encode_price_sqrt(1, 1)
+    price_target = encode_price_sqrt(101, 100)
+    liquidity = expand_to_18_decimals(2)
+    amount = expand_to_18_decimals(1)
     fee = 600
-    zeroForOne = False
+    zero_for_one = False
 
-    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
-        price, priceTarget, liquidity, amount, fee
+    sqrt_q, amount_in, amount_out, fee_amount = compute_swap_step(
+        price, price_target, liquidity, amount, fee
     )
 
-    assert amountIn == 9975124224178055
-    assert feeAmount == 5988667735148
-    assert amountOut == 9925619580021728
-    assert amountIn + feeAmount < amount
+    assert amount_in == 9975124224178055
+    assert fee_amount == 5988667735148
+    assert amount_out == 9925619580021728
+    assert amount_in + fee_amount < amount
 
-    priceAfterWholeInputAmount = get_next_sqrt_price_from_input(
-        price, liquidity, amount, zeroForOne
+    price_after_whole_input_amount = get_next_sqrt_price_from_input(
+        price, liquidity, amount, zero_for_one
     )
 
-    assert sqrtQ == priceTarget
-    assert sqrtQ < priceAfterWholeInputAmount
+    assert sqrt_q == price_target
+    assert sqrt_q < price_after_whole_input_amount
 
     # exact amount out that gets capped at price target in one for zero
-    price = encodePriceSqrt(1, 1)
-    priceTarget = encodePriceSqrt(101, 100)
-    liquidity = expandTo18Decimals(2)
-    amount = -expandTo18Decimals(1)
+    price = encode_price_sqrt(1, 1)
+    price_target = encode_price_sqrt(101, 100)
+    liquidity = expand_to_18_decimals(2)
+    amount = -expand_to_18_decimals(1)
     fee = 600
-    zeroForOne = False
+    zero_for_one = False
 
-    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
-        price, priceTarget, liquidity, amount, fee
+    sqrt_q, amount_in, amount_out, fee_amount = compute_swap_step(
+        price, price_target, liquidity, amount, fee
     )
 
-    assert amountIn == 9975124224178055
-    assert feeAmount == 5988667735148
-    assert amountOut == 9925619580021728
-    assert amountOut < -amount
+    assert amount_in == 9975124224178055
+    assert fee_amount == 5988667735148
+    assert amount_out == 9925619580021728
+    assert amount_out < -amount
 
-    priceAfterWholeOutputAmount = get_next_sqrt_price_from_output(
-        price, liquidity, -amount, zeroForOne
+    price_after_whole_output_amount = get_next_sqrt_price_from_output(
+        price, liquidity, -amount, zero_for_one
     )
 
-    assert sqrtQ == priceTarget
-    assert sqrtQ < priceAfterWholeOutputAmount
+    assert sqrt_q == price_target
+    assert sqrt_q < price_after_whole_output_amount
 
     # exact amount in that is fully spent in one for zero
-    price = encodePriceSqrt(1, 1)
-    priceTarget = encodePriceSqrt(1000, 100)
-    liquidity = expandTo18Decimals(2)
-    amount = expandTo18Decimals(1)
+    price = encode_price_sqrt(1, 1)
+    price_target = encode_price_sqrt(1000, 100)
+    liquidity = expand_to_18_decimals(2)
+    amount = expand_to_18_decimals(1)
     fee = 600
-    zeroForOne = False
+    zero_for_one = False
 
-    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
-        price, priceTarget, liquidity, amount, fee
+    sqrt_q, amount_in, amount_out, fee_amount = compute_swap_step(
+        price, price_target, liquidity, amount, fee
     )
 
-    assert amountIn == 999400000000000000
-    assert feeAmount == 600000000000000
-    assert amountOut == 666399946655997866
-    assert amountIn + feeAmount == amount
+    assert amount_in == 999400000000000000
+    assert fee_amount == 600000000000000
+    assert amount_out == 666399946655997866
+    assert amount_in + fee_amount == amount
 
-    priceAfterWholeInputAmountLessFee = get_next_sqrt_price_from_input(
-        price, liquidity, amount - feeAmount, zeroForOne
+    price_after_whole_input_amount_less_fee = get_next_sqrt_price_from_input(
+        price, liquidity, amount - fee_amount, zero_for_one
     )
 
-    assert sqrtQ < priceTarget
-    assert sqrtQ == priceAfterWholeInputAmountLessFee
+    assert sqrt_q < price_target
+    assert sqrt_q == price_after_whole_input_amount_less_fee
 
     # exact amount out that is fully received in one for zero
-    price = encodePriceSqrt(1, 1)
-    priceTarget = encodePriceSqrt(10000, 100)
-    liquidity = expandTo18Decimals(2)
-    amount = -expandTo18Decimals(1)
+    price = encode_price_sqrt(1, 1)
+    price_target = encode_price_sqrt(10000, 100)
+    liquidity = expand_to_18_decimals(2)
+    amount = -expand_to_18_decimals(1)
     fee = 600
-    zeroForOne = False
+    zero_for_one = False
 
-    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
-        price, priceTarget, liquidity, amount, fee
+    sqrt_q, amount_in, amount_out, fee_amount = compute_swap_step(
+        price, price_target, liquidity, amount, fee
     )
 
-    assert amountIn == 2000000000000000000
-    assert feeAmount == 1200720432259356
-    assert amountOut == -amount
+    assert amount_in == 2000000000000000000
+    assert fee_amount == 1200720432259356
+    assert amount_out == -amount
 
-    priceAfterWholeOutputAmount = get_next_sqrt_price_from_output(
-        price, liquidity, -amount, zeroForOne
+    price_after_whole_output_amount = get_next_sqrt_price_from_output(
+        price, liquidity, -amount, zero_for_one
     )
 
-    assert sqrtQ < priceTarget
-    assert sqrtQ == priceAfterWholeOutputAmount
+    assert sqrt_q < price_target
+    assert sqrt_q == price_after_whole_output_amount
 
     # amount out is capped at the desired amount out
-    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
+    sqrt_q, amount_in, amount_out, fee_amount = compute_swap_step(
         417332158212080721273783715441582,
         1452870262520218020823638996,
         159344665391607089467575320103,
@@ -132,66 +132,66 @@ def test_compute_swap_step():
         1,
     )
 
-    assert amountIn == 1
-    assert feeAmount == 1
-    assert amountOut == 1  # would be 2 if not capped
-    assert sqrtQ == 417332158212080721273783715441581
+    assert amount_in == 1
+    assert fee_amount == 1
+    assert amount_out == 1  # would be 2 if not capped
+    assert sqrt_q == 417332158212080721273783715441581
 
     # target price of 1 uses partial input amount
-    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
+    sqrt_q, amount_in, amount_out, fee_amount = compute_swap_step(
         2,
         1,
         1,
         3915081100057732413702495386755767,
         1,
     )
-    assert amountIn == 39614081257132168796771975168
-    assert feeAmount == 39614120871253040049813
-    assert amountIn + feeAmount <= 3915081100057732413702495386755767
-    assert amountOut == 0
-    assert sqrtQ == 1
+    assert amount_in == 39614081257132168796771975168
+    assert fee_amount == 39614120871253040049813
+    assert amount_in + fee_amount <= 3915081100057732413702495386755767
+    assert amount_out == 0
+    assert sqrt_q == 1
 
     # entire input amount taken as fee
-    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
+    sqrt_q, amount_in, amount_out, fee_amount = compute_swap_step(
         2413,
         79887613182836312,
         1985041575832132834610021537970,
         10,
         1872,
     )
-    assert amountIn == 0
-    assert feeAmount == 10
-    assert amountOut == 0
-    assert sqrtQ == 2413
+    assert amount_in == 0
+    assert fee_amount == 10
+    assert amount_out == 0
+    assert sqrt_q == 2413
 
     # handles intermediate insufficient liquidity in zero for one exact output case
-    sqrtP = 20282409603651670423947251286016
-    sqrtPTarget = sqrtP * 11 // 10
+    sqrt_p = 20282409603651670423947251286016
+    sqrt_p_target = sqrt_p * 11 // 10
     liquidity = 1024
     # virtual reserves of one are only 4
     # https://www.wolframalpha.com/input/?i=1024+%2F+%2820282409603651670423947251286016+%2F+2**96%29
-    amountRemaining = -4
-    feePips = 3000
-    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
-        sqrtP, sqrtPTarget, liquidity, amountRemaining, feePips
+    amount_remaining = -4
+    fee_pips = 3000
+    sqrt_q, amount_in, amount_out, fee_amount = compute_swap_step(
+        sqrt_p, sqrt_p_target, liquidity, amount_remaining, fee_pips
     )
-    assert amountOut == 0
-    assert sqrtQ == sqrtPTarget
-    assert amountIn == 26215
-    assert feeAmount == 79
+    assert amount_out == 0
+    assert sqrt_q == sqrt_p_target
+    assert amount_in == 26215
+    assert fee_amount == 79
 
     # handles intermediate insufficient liquidity in one for zero exact output case
-    sqrtP = 20282409603651670423947251286016
-    sqrtPTarget = sqrtP * 9 // 10
+    sqrt_p = 20282409603651670423947251286016
+    sqrt_p_target = sqrt_p * 9 // 10
     liquidity = 1024
     # virtual reserves of zero are only 262144
     # https://www.wolframalpha.com/input/?i=1024+*+%2820282409603651670423947251286016+%2F+2**96%29
-    amountRemaining = -263000
-    feePips = 3000
-    sqrtQ, amountIn, amountOut, feeAmount = compute_swap_step(
-        sqrtP, sqrtPTarget, liquidity, amountRemaining, feePips
+    amount_remaining = -263000
+    fee_pips = 3000
+    sqrt_q, amount_in, amount_out, fee_amount = compute_swap_step(
+        sqrt_p, sqrt_p_target, liquidity, amount_remaining, fee_pips
     )
-    assert amountOut == 26214
-    assert sqrtQ == sqrtPTarget
-    assert amountIn == 1
-    assert feeAmount == 1
+    assert amount_out == 26214
+    assert sqrt_q == sqrt_p_target
+    assert amount_in == 1
+    assert fee_amount == 1

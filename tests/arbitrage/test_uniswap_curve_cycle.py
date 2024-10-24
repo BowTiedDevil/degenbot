@@ -116,21 +116,21 @@ def test_arb_calculation(ethereum_archive_node_web3: Web3, weth: Erc20Token):
     uniswap_v3_weth_usdc_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDC_ADDRESS)
     uniswap_v3_weth_usdt_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDT_ADDRESS)
 
-    for swap_pools in [
-        (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
-        (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
-        (uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_dai_lp),
-        (uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
-        (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_dai_lp),
-        (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
-        (uniswap_v3_weth_dai_lp, curve_tripool, uniswap_v3_weth_usdc_lp),
-        (uniswap_v3_weth_dai_lp, curve_tripool, uniswap_v3_weth_usdt_lp),
-        (uniswap_v3_weth_usdc_lp, curve_tripool, uniswap_v3_weth_dai_lp),
-        (uniswap_v3_weth_usdc_lp, curve_tripool, uniswap_v3_weth_usdt_lp),
-        (uniswap_v3_weth_usdt_lp, curve_tripool, uniswap_v3_weth_dai_lp),
-        (uniswap_v3_weth_usdt_lp, curve_tripool, uniswap_v3_weth_usdc_lp),
-    ]:
-        try:
+    try:
+        for swap_pools in [
+            (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
+            (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
+            (uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_dai_lp),
+            (uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
+            (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_dai_lp),
+            (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
+            (uniswap_v3_weth_dai_lp, curve_tripool, uniswap_v3_weth_usdc_lp),
+            (uniswap_v3_weth_dai_lp, curve_tripool, uniswap_v3_weth_usdt_lp),
+            (uniswap_v3_weth_usdc_lp, curve_tripool, uniswap_v3_weth_dai_lp),
+            (uniswap_v3_weth_usdc_lp, curve_tripool, uniswap_v3_weth_usdt_lp),
+            (uniswap_v3_weth_usdt_lp, curve_tripool, uniswap_v3_weth_dai_lp),
+            (uniswap_v3_weth_usdt_lp, curve_tripool, uniswap_v3_weth_usdc_lp),
+        ]:
             arb = UniswapCurveCycle(
                 input_token=weth,
                 swap_pools=swap_pools,  # type: ignore[arg-type]
@@ -138,8 +138,8 @@ def test_arb_calculation(ethereum_archive_node_web3: Web3, weth: Erc20Token):
                 max_input=10 * 10**18,
             )
             arb.calculate()
-        except ArbitrageError:
-            pass
+    except ArbitrageError:
+        pass
 
 
 def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3: Web3, weth: Erc20Token):
@@ -446,23 +446,22 @@ async def test_process_pool_calculation(ethereum_archive_node_web3: Web3, weth: 
 
             # Saturate the process pool executor with multiple calculations.
             # Should reveal cases of excessive latency.
-            _NUM_FUTURES = 64
-            calculation_futures = []
-            for _ in range(_NUM_FUTURES):
-                calculation_futures.append(
-                    await arb.calculate_with_pool(
-                        executor=executor,
-                        state_overrides=overrides,
-                    )
+            num_futures = 64
+            calculation_futures = [
+                await arb.calculate_with_pool(
+                    executor=executor,
+                    state_overrides=overrides,
                 )
+                for _ in range(num_futures)
+            ]
 
-            assert len(calculation_futures) == _NUM_FUTURES
+            assert len(calculation_futures) == num_futures
             for i, task in enumerate(asyncio.as_completed(calculation_futures)):
                 await task
                 print(
                     f"Completed process_pool calc #{i}, {time.perf_counter()-start:.2f}s since start"  # noqa:E501
                 )
-            print(f"Completed {_NUM_FUTURES} calculations in {time.perf_counter() - start:.1f}s")
+            print(f"Completed {num_futures} calculations in {time.perf_counter() - start:.1f}s")
 
 
 def test_bad_pool_in_constructor(ethereum_archive_node_web3: Web3, weth: Erc20Token):

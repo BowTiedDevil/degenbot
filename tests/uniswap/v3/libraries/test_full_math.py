@@ -11,7 +11,7 @@ from degenbot.uniswap.v3_libraries.full_math import muldiv, muldiv_rounding_up
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/FullMath.spec.ts
 
 
-def test_mulDiv():
+def test_muldiv():
     with pytest.raises(EVMRevertError):
         # this test should fail
         muldiv(Q128, 5, 0)
@@ -57,7 +57,7 @@ def test_mulDiv():
         muldiv(Q128, -1, Q128)
 
 
-def test_mulDivRoundingUp():
+def test_muldiv_rounding_up():
     with pytest.raises(EVMRevertError):
         muldiv_rounding_up(Q128, 5, 0)
 
@@ -110,7 +110,7 @@ def test_mulDivRoundingUp():
         == Q128 // 3 + 1
     )
 
-    def pseudoRandomBigNumber() -> int:
+    def pseudo_random_big_number() -> int:
         return int(MAX_UINT256 * random.random())
 
     def floored(x, y, d) -> int:
@@ -121,9 +121,9 @@ def test_mulDivRoundingUp():
 
     for i in range(1000):
         # override x, y for first two runs to cover the x == 0 and y == 0 cases
-        x = pseudoRandomBigNumber() if i != 0 else 0
-        y = pseudoRandomBigNumber() if i != 1 else 0
-        d = pseudoRandomBigNumber()
+        x = pseudo_random_big_number() if i != 0 else 0
+        y = pseudo_random_big_number() if i != 1 else 0
+        d = pseudo_random_big_number()
 
         if x == 0 or y == 0:
             assert floored(x, y, d) == 0

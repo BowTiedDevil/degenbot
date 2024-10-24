@@ -2,8 +2,8 @@ from collections.abc import Callable
 from fractions import Fraction
 from typing import Literal
 
-from ..exceptions import DegenbotValueError, EVMRevertError
-from ..functions import raise_if_invalid_uint256
+from degenbot.exceptions import DegenbotValueError, EVMRevertError
+from degenbot.functions import raise_if_invalid_uint256
 
 
 def general_calc_d(

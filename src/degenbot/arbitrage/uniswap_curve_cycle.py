@@ -10,30 +10,7 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
-from ..config import connection_manager
-from ..constants import MAX_UINT256
-from ..curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from ..curve.types import CurveStableswapPoolState, CurveStableSwapPoolStateUpdated
-from ..erc20_token import Erc20Token
-from ..exceptions import (
-    ArbitrageError,
-    DegenbotValueError,
-    EVMRevertError,
-    LiquidityPoolError,
-    NoLiquidity,
-)
-from ..logging import logger
-from ..types import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
-from ..uniswap.types import (
-    UniswapV2PoolState,
-    UniswapV2PoolStateUpdated,
-    UniswapV3PoolState,
-    UniswapV3PoolStateUpdated,
-)
-from ..uniswap.v2_liquidity_pool import UniswapV2Pool
-from ..uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
-from ..uniswap.v3_liquidity_pool import UniswapV3Pool
-from .types import (
+from degenbot.arbitrage.types import (
     ArbitrageCalculationResult,
     CurveStableSwapPoolSwapAmounts,
     CurveStableSwapPoolVector,
@@ -41,6 +18,29 @@ from .types import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
+from degenbot.config import connection_manager
+from degenbot.constants import MAX_UINT256
+from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.curve.types import CurveStableswapPoolState, CurveStableSwapPoolStateUpdated
+from degenbot.erc20_token import Erc20Token
+from degenbot.exceptions import (
+    ArbitrageError,
+    DegenbotValueError,
+    EVMRevertError,
+    LiquidityPoolError,
+    NoLiquidity,
+)
+from degenbot.logging import logger
+from degenbot.types import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
+from degenbot.uniswap.types import (
+    UniswapV2PoolState,
+    UniswapV2PoolStateUpdated,
+    UniswapV3PoolState,
+    UniswapV3PoolStateUpdated,
+)
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 CurveOrUniswapPoolState: TypeAlias = (
     UniswapV2PoolState | UniswapV3PoolState | CurveStableswapPoolState
@@ -61,7 +61,7 @@ class UniswapCurveCycle(AbstractArbitrage):
         self,
         input_token: Erc20Token,
         swap_pools: Iterable[CurveOrUniswapPool],
-        id: str,
+        id: str,  # noqa:A002
         max_input: int | None = None,
     ):
         for swap_pool in swap_pools:
@@ -529,11 +529,7 @@ class UniswapCurveCycle(AbstractArbitrage):
         self._pre_calculation_check(state_overrides=state_overrides)
 
         if isinstance(executor, ProcessPoolExecutor) and any(
-            [
-                pool.sparse_liquidity_map
-                for pool in self.swap_pools
-                if isinstance(pool, UniswapV3Pool)
-            ]
+            pool.sparse_liquidity_map for pool in self.swap_pools if isinstance(pool, UniswapV3Pool)
         ):  # pragma: no cover
             raise DegenbotValueError(
                 message=f"Cannot calculate {self} with executor. One or more V3 pools has a sparse liquidity map."  # noqa: E501
@@ -607,7 +603,7 @@ class UniswapCurveCycle(AbstractArbitrage):
 
         from_address = to_checksum_address(from_address)
 
-        MSG_VALUE = 0  # This arbitrage does not require a `msg.value` payment
+        msg_value = 0  # This arbitrage does not require a `msg.value` payment
         payloads = []
 
         for i, (swap_pool, _swap_amounts) in enumerate(
@@ -657,7 +653,7 @@ class UniswapCurveCycle(AbstractArbitrage):
                                     swap_amount,
                                 ),
                             ),
-                            MSG_VALUE,
+                            msg_value,
                         )
                     )
                 case _, UniswapV2Pool(), UniswapV2PoolSwapAmounts():
@@ -692,7 +688,7 @@ class UniswapCurveCycle(AbstractArbitrage):
                                     b"",
                                 ),
                             ),
-                            MSG_VALUE,
+                            msg_value,
                         )
                     )
                 case _, UniswapV3Pool(), UniswapV3PoolSwapAmounts():
@@ -730,7 +726,7 @@ class UniswapCurveCycle(AbstractArbitrage):
                                     b"",
                                 ),
                             ),
-                            MSG_VALUE,
+                            msg_value,
                         )
                     )
                 case _, CurveStableswapPool(), CurveStableSwapPoolSwapAmounts():
@@ -765,7 +761,7 @@ class UniswapCurveCycle(AbstractArbitrage):
                                     types=["address", "uint256"],
                                     args=[swap_pool.address, amount_to_approve],
                                 ),
-                                MSG_VALUE,
+                                msg_value,
                             )
                         )
 
@@ -790,7 +786,7 @@ class UniswapCurveCycle(AbstractArbitrage):
                                         _swap_amounts.min_amount_out,
                                     ],
                                 ),
-                                MSG_VALUE,
+                                msg_value,
                             )
                         )
                     else:
@@ -809,7 +805,7 @@ class UniswapCurveCycle(AbstractArbitrage):
                                         _swap_amounts.min_amount_out,
                                     ],
                                 ),
-                                MSG_VALUE,
+                                msg_value,
                             )
                         )
                     if isinstance(next_pool, UniswapV2Pool):
@@ -832,7 +828,7 @@ class UniswapCurveCycle(AbstractArbitrage):
                                         _swap_amounts.min_amount_out,
                                     ),
                                 ),
-                                MSG_VALUE,
+                                msg_value,
                             )
                         )
                 case _:  # pragma: no cover

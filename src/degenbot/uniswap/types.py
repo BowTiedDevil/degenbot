@@ -1,7 +1,7 @@
 import dataclasses
 from typing import Any
 
-from ..types import AbstractPoolState, AbstractSimulationResult, Message
+from degenbot.types import AbstractPoolState, AbstractSimulationResult, Message
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

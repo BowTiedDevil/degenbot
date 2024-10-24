@@ -11,7 +11,7 @@ from .exceptions import DegenbotValueError
 
 class ConnectionManager:
     def __init__(self) -> None:
-        self.connections: dict[int, web3.Web3] = dict()
+        self.connections: dict[int, web3.Web3] = {}
         self._default_chain_id: int | None = None
 
     def get_web3(self, chain_id: int) -> web3.Web3:
@@ -44,8 +44,7 @@ def get_web3() -> web3.Web3:
         raise DegenbotValueError(
             message="A default Web3 instance has not been registered."
         ) from None
-    else:
-        return connection_manager.get_web3(chain_id=connection_manager.default_chain_id)
+    return connection_manager.get_web3(chain_id=connection_manager.default_chain_id)
 
 
 def set_web3(w3: web3.Web3, optimize_middleware: bool = True) -> None:

@@ -1,7 +1,7 @@
 from functools import cache
 
-from ...constants import MAX_UINT128, MAX_UINT160, MAX_UINT256, MIN_UINT160
-from ...exceptions import EVMRevertError, InvalidUint160
+from degenbot.constants import MAX_UINT128, MAX_UINT160, MAX_UINT256, MIN_UINT160
+from degenbot.exceptions import EVMRevertError, InvalidUint160
 
 MIN_TICK = -887272
 MAX_TICK = -MIN_TICK
@@ -89,19 +89,19 @@ def get_tick_at_sqrt_ratio(sqrt_price_x96: int) -> int:
     f = r > 1
     msb = msb | f
 
-    MOST_SIGNIFICANT_BIT_FOR_MAX_INT128 = 128
-    r = ratio >> msb - 127 if msb >= MOST_SIGNIFICANT_BIT_FOR_MAX_INT128 else ratio << 127 - msb
+    most_significant_bit_for_max_int128 = 128
+    r = ratio >> msb - 127 if msb >= most_significant_bit_for_max_int128 else ratio << 127 - msb
 
-    log_2 = (msb - MOST_SIGNIFICANT_BIT_FOR_MAX_INT128) << 64
+    log_2 = (msb - most_significant_bit_for_max_int128) << 64
 
     for factor in (63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51):
         r = (r * r) >> 127
-        f = r >> MOST_SIGNIFICANT_BIT_FOR_MAX_INT128
+        f = r >> most_significant_bit_for_max_int128
         log_2 = log_2 | (f << factor)
         r = r >> f
 
     r = (r * r) >> 127
-    f = r >> MOST_SIGNIFICANT_BIT_FOR_MAX_INT128
+    f = r >> most_significant_bit_for_max_int128
     log_2 = log_2 | (f << 50)
 
     log_sqrt10001 = log_2 * 255738958999603826347141  # 128.128 number

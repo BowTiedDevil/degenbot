@@ -1,5 +1,4 @@
 import contextlib
-import os
 import pathlib
 import shutil
 import socket
@@ -101,9 +100,7 @@ class AnvilFork:
 
         self.port = self._get_free_port_number()
         self.ipc_path = ipc_path
-        self.ipc_provider_kwargs = (
-            ipc_provider_kwargs if ipc_provider_kwargs is not None else dict()
-        )
+        self.ipc_provider_kwargs = ipc_provider_kwargs if ipc_provider_kwargs is not None else {}
 
         self._anvil_command = build_anvil_command(path_to_anvil=path_to_anvil)
         self._process = self._setup_subprocess(
@@ -199,7 +196,7 @@ class AnvilFork:
         self._process.terminate()
         self._process.wait()
         with contextlib.suppress(FileNotFoundError):
-            os.remove(self.ipc_filename)
+            pathlib.Path.unlink(self.ipc_filename)
 
     def mine(self) -> None:
         self.w3.provider.make_request(
@@ -241,7 +238,7 @@ class AnvilFork:
         self._process.terminate()
         self._process.wait()
         with contextlib.suppress(FileNotFoundError):
-            os.remove(self.ipc_filename)
+            pathlib.Path.unlink(self.ipc_filename)
 
         self.port = self._get_free_port_number()
 
@@ -264,13 +261,13 @@ class AnvilFork:
         self._process = self._setup_subprocess(anvil_command=anvil_command, ipc_path=self.ipc_path)
         self.w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
 
-    def return_to_snapshot(self, id: int) -> bool:
-        if id < 0:
+    def return_to_snapshot(self, snapshot_id: int) -> bool:
+        if snapshot_id < 0:
             raise DegenbotValueError(message="ID cannot be negative")
         return bool(
             self.w3.provider.make_request(
                 method=RPCEndpoint("evm_revert"),
-                params=[id],
+                params=[snapshot_id],
             )["result"]
         )
 

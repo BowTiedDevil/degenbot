@@ -1,11 +1,14 @@
 import pickle
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
 import pytest
 import web3
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
-from web3.contract.contract import Contract
+
+if TYPE_CHECKING:
+    from web3.contract.contract import Contract
 
 import degenbot.uniswap.deployments
 from degenbot import AnvilFork, CamelotLiquidityPool, Erc20Token, UniswapV2Pool, set_web3
@@ -34,7 +37,8 @@ from degenbot.uniswap.v2_liquidity_pool import UnregisteredLiquidityPool
 
 UNISWAP_V2_ROUTER02 = to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
 UNISWAP_V2_WBTC_WETH_POOL = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
-UNISWAPV2_FACTORY_POOL_INIT_HASH = (
+UNISWAP_V2_FACTORY_ADDRESS = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+UNISWAP_V2_FACTORY_POOL_INIT_HASH = (
     "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
 )
 
@@ -54,7 +58,7 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000(
     set_web3(fork_mainnet.w3)
     return UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
-        init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
+        init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
     )
 
 
@@ -77,9 +81,7 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_reserves_at_block_17_650_000(
 
 
 @pytest.fixture
-def ethereum_uniswap_v2_wbtc_weth_liquiditypool(
-    fork_mainnet: AnvilFork, wbtc, weth
-) -> UniswapV2Pool:
+def ethereum_uniswap_v2_wbtc_weth_liquiditypool(fork_mainnet: AnvilFork) -> UniswapV2Pool:
     set_web3(fork_mainnet.w3)
     return UniswapV2Pool(address=UNISWAP_V2_WBTC_WETH_POOL)
 
@@ -107,7 +109,7 @@ def test_create_pool(ethereum_archive_node_web3: web3.Web3):
 
     UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
-        init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
+        init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
     )
     pool_registry.remove(
         pool_address=UNISWAP_V2_WBTC_WETH_POOL, chain_id=ethereum_archive_node_web3.eth.chain_id
@@ -127,8 +129,6 @@ def test_create_pancake_v2_pool(base_full_node_web3: web3.Web3):
 
 def test_from_exchange_deployment(ethereum_archive_node_web3: web3.Web3):
     set_web3(ethereum_archive_node_web3)
-
-    UNISWAP_V2_FACTORY_ADDRESS = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
 
     # Delete the preset deployment for this factory so the test uses the provided override instead
     # of preferring the known valid deployment data
@@ -302,7 +302,6 @@ def test_create_nonstandard_pools(
     assert lp.fee_token0 == Fraction(2, 1000)
     assert lp.fee_token1 == Fraction(6, 1000)
 
-    UNISWAP_V2_FACTORY_ADDRESS = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     # Delete the preset deployment for this factory so the test uses the provided override instead
     # of preferring the known valid deployment data
     factory_deployment = FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][
@@ -311,7 +310,7 @@ def test_create_nonstandard_pools(
     del FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
 
     # Create pool with a malformed init hash
-    bad_init_hash = UNISWAPV2_FACTORY_POOL_INIT_HASH.replace("a", "b")
+    bad_init_hash = UNISWAP_V2_FACTORY_POOL_INIT_HASH.replace("a", "b")
     with pytest.raises(AddressMismatch, match="Pool address verification failed"):
         UniswapV2Pool(
             address=UNISWAP_V2_WBTC_WETH_POOL,
@@ -326,7 +325,7 @@ def test_create_nonstandard_pools(
     # Create with non-standard fee
     _lp = UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
-        init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
+        init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
         fee=Fraction(2, 1000),
     )
     assert _lp.fee_token0 == Fraction(2, 1000)
@@ -420,8 +419,8 @@ def test_pickle_pool(ethereum_uniswap_v2_wbtc_weth_liquiditypool: UniswapV2Pool)
 
 
 def test_calculate_tokens_out_from_ratio_out(fork_mainnet: AnvilFork):
-    _BLOCK_NUMBER = 17_600_000
-    fork_mainnet.reset(block_number=_BLOCK_NUMBER)
+    block_number = 17_600_000
+    fork_mainnet.reset(block_number=block_number)
     set_web3(fork_mainnet.w3)
 
     router_contract = fork_mainnet.w3.eth.contract(
@@ -603,7 +602,7 @@ def test_comparisons(
 
     other_lp = UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
-        init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
+        init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
         fee=Fraction(3, 1000),
     )
 
@@ -622,10 +621,10 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: 
 
     pprint(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive)
 
-    _FIRST_UPDATE_BLOCK = (
+    first_update_block = (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block + 1
     )
-    _LAST_UPDATE_BLOCK = (
+    last_update_block = (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block + 10
     )
 
@@ -635,16 +634,16 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: 
     expected_block_states: dict[int, UniswapV2PoolState] = {starting_block: starting_state}
 
     # Provide some dummy updates, then simulate a reorg back to the starting state
-    for block_number in range(_FIRST_UPDATE_BLOCK, _LAST_UPDATE_BLOCK + 1):
+    for block_number in range(first_update_block, last_update_block + 1):
         assert block_number not in expected_block_states
         print(f"Updating at block {block_number}")
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.external_update(
             update=UniswapV2PoolExternalUpdate(
                 block_number=block_number,
                 reserves_token0=starting_token0_reserves
-                + 10_000 * (1 + block_number - _FIRST_UPDATE_BLOCK),
+                + 10_000 * (1 + block_number - first_update_block),
                 reserves_token1=starting_token1_reserves
-                + 10_000 * (1 + block_number - _FIRST_UPDATE_BLOCK),
+                + 10_000 * (1 + block_number - first_update_block),
             )
         )
         assert (
@@ -671,12 +670,12 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: 
 
     # Last state is before this block, so this will succeed but have no effect on the current state
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.restore_state_before_block(
-        _LAST_UPDATE_BLOCK + 1
+        last_update_block + 1
     )
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state == last_block_state
 
     # Unwind the updates and compare to the stored states at previous blocks
-    for block_number in range(_LAST_UPDATE_BLOCK, _FIRST_UPDATE_BLOCK - 1, -1):
+    for block_number in range(last_update_block, first_update_block - 1, -1):
         print(f"Restoring block before {block_number}")
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.restore_state_before_block(
             block_number
@@ -701,10 +700,10 @@ def test_discard_before_finalized(
         is not None
     )
 
-    _FIRST_UPDATE_BLOCK = (
+    first_update_block = (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block + 1
     )
-    _LAST_UPDATE_BLOCK = (
+    last_update_block = (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block + 10
     )
 
@@ -714,16 +713,16 @@ def test_discard_before_finalized(
     expected_block_states: dict[int, UniswapV2PoolState] = {starting_block: starting_state}
 
     # Provide some dummy updates, then simulate a reorg back to the starting state
-    for block_number in range(_FIRST_UPDATE_BLOCK, _LAST_UPDATE_BLOCK + 1):
+    for block_number in range(first_update_block, last_update_block + 1):
         assert block_number not in expected_block_states
 
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.external_update(
             update=UniswapV2PoolExternalUpdate(
                 block_number=block_number,
                 reserves_token0=starting_token0_reserves
-                + 10_000 * (1 + block_number - _FIRST_UPDATE_BLOCK),
+                + 10_000 * (1 + block_number - first_update_block),
                 reserves_token1=starting_token1_reserves
-                + 10_000 * (1 + block_number - _FIRST_UPDATE_BLOCK),
+                + 10_000 * (1 + block_number - first_update_block),
             )
         )
         assert (
@@ -735,11 +734,11 @@ def test_discard_before_finalized(
         )
 
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.discard_states_before_block(
-        _LAST_UPDATE_BLOCK
+        last_update_block
     )
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive.keys()
-        == set([_LAST_UPDATE_BLOCK])
+        == set([last_update_block])
     )
 
 
@@ -814,37 +813,37 @@ def test_simulations(
         == sim_result
     )
 
-    ADDED_LIQUIDITY = 10_000_000
+    added_liquidity = 10_000_000
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.simulate_add_liquidity(
-        added_reserves_token0=ADDED_LIQUIDITY, added_reserves_token1=ADDED_LIQUIDITY
+        added_reserves_token0=added_liquidity, added_reserves_token1=added_liquidity
     ) == UniswapV2PoolSimulationResult(
-        amount0_delta=ADDED_LIQUIDITY,
-        amount1_delta=ADDED_LIQUIDITY,
+        amount0_delta=added_liquidity,
+        amount1_delta=added_liquidity,
         initial_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
         final_state=UniswapV2PoolState(
             pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
-            + ADDED_LIQUIDITY,
+            + added_liquidity,
             reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1
-            + ADDED_LIQUIDITY,
+            + added_liquidity,
         ),
     )
 
-    REMOVED_LIQUIDITY = 10_000_000
+    removed_liquidity = 10_000_000
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.simulate_remove_liquidity(
-            removed_reserves_token0=REMOVED_LIQUIDITY, removed_reserves_token1=REMOVED_LIQUIDITY
+            removed_reserves_token0=removed_liquidity, removed_reserves_token1=removed_liquidity
         )
         == UniswapV2PoolSimulationResult(
-            amount0_delta=-REMOVED_LIQUIDITY,
-            amount1_delta=-REMOVED_LIQUIDITY,
+            amount0_delta=-removed_liquidity,
+            amount1_delta=-removed_liquidity,
             initial_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
             final_state=UniswapV2PoolState(
                 pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
                 reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
-                - REMOVED_LIQUIDITY,
+                - removed_liquidity,
                 reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1
-                - REMOVED_LIQUIDITY,
+                - removed_liquidity,
             ),
         )
     )
@@ -971,8 +970,8 @@ def test_auto_update(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
     fork_mainnet: AnvilFork,
 ):
-    _BLOCK_NUMBER = 18_000_000
-    fork_mainnet.reset(block_number=_BLOCK_NUMBER)
+    block_number = 18_000_000
+    fork_mainnet.reset(block_number=block_number)
     set_web3(fork_mainnet.w3)
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update() is True
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update() is False
@@ -980,7 +979,7 @@ def test_auto_update(
     # Attempt an update in the past
     with pytest.raises(LateUpdateError):
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update(
-            block_number=_BLOCK_NUMBER - 10
+            block_number=block_number - 10
         )
 
 

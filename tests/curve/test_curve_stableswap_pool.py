@@ -1,11 +1,13 @@
 import itertools
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
 import pytest
 from eth_utils.address import to_checksum_address
 from web3 import Web3
-from web3.contract.contract import Contract
+
+if TYPE_CHECKING:
+    from web3.contract.contract import Contract
 from web3.types import Timestamp
 
 from degenbot import AnvilFork
@@ -128,22 +130,22 @@ def test_tripool(tripool: CurveStableswapPool):
 
 def test_auto_update(fork_mainnet: AnvilFork):
     # Build the pool at a known historical block
-    _BLOCK_NUMBER = 18849427 - 1
-    fork_mainnet.reset(block_number=_BLOCK_NUMBER)
+    block_number = 18849427 - 1
+    fork_mainnet.reset(block_number=block_number)
     set_web3(fork_mainnet.w3)
 
     _tripool = CurveStableswapPool(TRIPOOL_ADDRESS)
 
-    assert fork_mainnet.w3.eth.get_block_number() == _BLOCK_NUMBER
-    assert _tripool._update_block == _BLOCK_NUMBER
+    assert fork_mainnet.w3.eth.get_block_number() == block_number
+    assert _tripool._update_block == block_number
 
-    _EXPECTED_BALANCES = [75010632422398781503259123, 76382820384826, 34653521595900]
-    assert _tripool.balances == _EXPECTED_BALANCES
+    expected_balances = [75010632422398781503259123, 76382820384826, 34653521595900]
+    assert _tripool.balances == expected_balances
 
-    fork_mainnet.reset(block_number=_BLOCK_NUMBER + 1)
-    assert fork_mainnet.w3.eth.get_block_number() == _BLOCK_NUMBER + 1
+    fork_mainnet.reset(block_number=block_number + 1)
+    assert fork_mainnet.w3.eth.get_block_number() == block_number + 1
     _tripool.auto_update()
-    assert _tripool._update_block == _BLOCK_NUMBER + 1
+    assert _tripool._update_block == block_number + 1
     assert _tripool.balances == [
         75010632422398781503259123,
         76437030384826,
@@ -151,14 +153,14 @@ def test_auto_update(fork_mainnet: AnvilFork):
     ]
 
 
-def test_A_ramping(fork_mainnet: AnvilFork):
+def test_a_ramping(fork_mainnet: AnvilFork):
     # A range:      5000 -> 2000
     # A time :      1653559305 -> 1654158027
-    INITIAL_A = 5000
-    FINAL_A = 2000
+    initial_a = 5000
+    final_a = 2000
 
-    INITIAL_A_TIME = 1653559305
-    FINAL_A_TIME = 1654158027
+    initial_a_time = 1653559305
+    final_a_time = 1654158027
 
     fork_mainnet.reset(block_number=14_900_000)
     set_web3(fork_mainnet.w3)
@@ -166,27 +168,26 @@ def test_A_ramping(fork_mainnet: AnvilFork):
     tripool = CurveStableswapPool(address=TRIPOOL_ADDRESS)
     tripool._create_timestamp = cast(Timestamp, 0)  # defeat the timestamp optimization
 
-    assert tripool._A(timestamp=INITIAL_A_TIME) == INITIAL_A
-    assert tripool._A(timestamp=FINAL_A_TIME) == FINAL_A
-    assert tripool._A(timestamp=(INITIAL_A_TIME + FINAL_A_TIME) // 2) == (INITIAL_A + FINAL_A) // 2
+    assert tripool._a(timestamp=initial_a_time) == initial_a
+    assert tripool._a(timestamp=final_a_time) == final_a
+    assert tripool._a(timestamp=(initial_a_time + final_a_time) // 2) == (initial_a + final_a) // 2
 
 
 def test_single_pool(
     fork_mainnet: AnvilFork,
 ):
-    _POOL_ADDRESS = ""
+    single_pool_address = "0x663aC72a1c3E1C4186CD3dCb184f216291F4878C"
 
-    if not _POOL_ADDRESS:
+    if not single_pool_address:
         return
 
-    _block_identifier = None
-    # _block_identifier = 20651129
+    _block_identifier = 21030935
 
     set_web3(fork_mainnet.w3)
-    if _block_identifier is not None:
+    if _block_identifier:
         fork_mainnet.reset(block_number=_block_identifier)
 
-    lp = CurveStableswapPool(address=_POOL_ADDRESS)
+    lp = CurveStableswapPool(address=single_pool_address)
     _test_calculations(lp)
 
 
@@ -194,28 +195,28 @@ def test_tricrypto_pool(fork_mainnet: AnvilFork):
     """
     Tricrypto (WETH-wBTC-USDT) has a lot of one-off functions, so always test it
     """
-    _POOL_ADDRESS = "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"
+    pool_address = "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"
     set_web3(fork_mainnet.w3)
-    lp = CurveStableswapPool(address=_POOL_ADDRESS)
+    lp = CurveStableswapPool(address=pool_address)
     _test_calculations(lp)
 
 
 def test_metapool_over_multiple_blocks_to_verify_cache_behavior(fork_mainnet: AnvilFork):
-    _POOL_ADDRESS = "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d"
-    _START_BLOCK = 18_850_000
-    _END_BLOCK = 18_850_500
+    pool_address = "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d"
+    start_block = 18_850_000
+    end_block = 18_850_500
 
     # Pool has a 10 minute base rate cache expiry, so choose a 30 block interval (5 minutes)
     # to capture calcs at both cached and cache-expired states
-    _SPAN = 30
+    span = 30
 
-    fork_mainnet.reset(block_number=_START_BLOCK)
+    fork_mainnet.reset(block_number=start_block)
     fork_mainnet.w3.provider.timeout = 60  # type: ignore[attr-defined]
     set_web3(fork_mainnet.w3)
 
-    lp = CurveStableswapPool(address=_POOL_ADDRESS)
+    lp = CurveStableswapPool(address=pool_address)
 
-    for block in range(_START_BLOCK + _SPAN, _END_BLOCK, _SPAN):
+    for block in range(start_block + span, end_block, span):
         fork_mainnet.reset(block_number=block)
         lp.auto_update()
         _test_calculations(lp)
@@ -224,9 +225,7 @@ def test_metapool_over_multiple_blocks_to_verify_cache_behavior(fork_mainnet: An
 def test_base_pool(fork_mainnet: AnvilFork):
     set_web3(fork_mainnet.w3)
 
-    POOL_ADDRESS = TRIPOOL_ADDRESS
-
-    basepool = CurveStableswapPool(address=POOL_ADDRESS, silent=True)
+    basepool = CurveStableswapPool(address=TRIPOOL_ADDRESS, silent=True)
 
     # Compare withdrawal calc for all tokens in the pool
     for token_index, token in enumerate(basepool.tokens):
@@ -343,6 +342,6 @@ def test_base_registry_pools(fork_mainnet: AnvilFork):
         _test_calculations(lp)
 
 
-def test_get_D(tripool: CurveStableswapPool):
+def test_get_d(tripool: CurveStableswapPool):
     # Check that D=0 for an empty pool
-    assert tripool._get_D(_xp=[0, 0, 0], _amp=1000) == 0
+    assert tripool._get_d(_xp=[0, 0, 0], _amp=1000) == 0

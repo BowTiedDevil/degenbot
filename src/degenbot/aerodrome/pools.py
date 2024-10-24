@@ -1,6 +1,6 @@
 from fractions import Fraction
 from threading import Lock
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, TypeAlias, cast
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -9,33 +9,33 @@ from hexbytes import HexBytes
 from web3 import Web3
 from web3.types import BlockIdentifier
 
-from ..config import connection_manager
-from ..erc20_token import Erc20Token
-from ..exceptions import (
+from degenbot.aerodrome.functions import (
+    calc_exact_in_stable,
+    generate_aerodrome_v2_pool_address,
+    generate_aerodrome_v3_pool_address,
+)
+from degenbot.aerodrome.types import (
+    AerodromeV2PoolExternalUpdate,
+    AerodromeV2PoolState,
+    AerodromeV2PoolStateUpdated,
+    AerodromeV3PoolState,
+)
+from degenbot.config import connection_manager
+from degenbot.erc20_token import Erc20Token
+from degenbot.exceptions import (
     AddressMismatch,
     DegenbotValueError,
     ExternalUpdateError,
     InvalidSwapInputAmount,
     LateUpdateError,
 )
-from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
-from ..logging import logger
-from ..managers.erc20_token_manager import Erc20TokenManager
-from ..registry.all_pools import pool_registry
-from ..solidly.solidly_functions import general_calc_exact_in_volatile
-from ..types import AbstractLiquidityPool
-from ..uniswap.v3_liquidity_pool import UniswapV3Pool
-from .functions import (
-    calc_exact_in_stable,
-    generate_aerodrome_v2_pool_address,
-    generate_aerodrome_v3_pool_address,
-)
-from .types import (
-    AerodromeV2PoolExternalUpdate,
-    AerodromeV2PoolState,
-    AerodromeV2PoolStateUpdated,
-    AerodromeV3PoolState,
-)
+from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
+from degenbot.logging import logger
+from degenbot.managers.erc20_token_manager import Erc20TokenManager
+from degenbot.registry.all_pools import pool_registry
+from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
+from degenbot.types import AbstractLiquidityPool
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
 class AerodromeV2Pool(AbstractLiquidityPool):
@@ -361,8 +361,6 @@ class AerodromeV2Pool(AbstractLiquidityPool):
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_in not recognized.")
 
-        TOKEN_IN: Literal[0, 1] = 0 if token_in == self.token0 else 1
-
         if token_in_quantity <= 0:  # pragma: no cover
             raise InvalidSwapInputAmount
 
@@ -379,21 +377,20 @@ class AerodromeV2Pool(AbstractLiquidityPool):
         if self.stable:
             return calc_exact_in_stable(
                 amount_in=token_in_quantity,
-                token_in=TOKEN_IN,
+                token_in=0 if token_in == self.token0 else 1,
                 reserves0=reserves_0,
                 reserves1=reserves_1,
                 decimals0=10**self.token0.decimals,
                 decimals1=10**self.token1.decimals,
                 fee=self.fee,
             )
-        else:
-            return general_calc_exact_in_volatile(
-                amount_in=token_in_quantity,
-                token_in=TOKEN_IN,
-                reserves0=reserves_0,
-                reserves1=reserves_1,
-                fee=self.fee,
-            )
+        return general_calc_exact_in_volatile(
+            amount_in=token_in_quantity,
+            token_in=0 if token_in == self.token0 else 1,
+            reserves0=reserves_0,
+            reserves1=reserves_1,
+            fee=self.fee,
+        )
 
     def get_reserves(
         self, w3: Web3, block_identifier: BlockIdentifier | None = None
@@ -415,7 +412,7 @@ class AerodromeV2Pool(AbstractLiquidityPool):
 class AerodromeV3Pool(UniswapV3Pool):
     PoolState: TypeAlias = AerodromeV3PoolState
 
-    TICK_STRUCT_TYPES = [
+    TICK_STRUCT_TYPES = (
         "uint128",
         "int128",
         "int128",
@@ -426,15 +423,16 @@ class AerodromeV3Pool(UniswapV3Pool):
         "uint160",
         "uint32",
         "bool",
-    ]
-    SLOT0_STRUCT_TYPES = [
+    )  # type:ignore[assignment]
+
+    SLOT0_STRUCT_TYPES = (
         "uint160",
         "int24",
         "uint16",
         "uint16",
         "uint16",
         "bool",
-    ]
+    )  # type:ignore[assignment]
 
     def _verified_address(self) -> ChecksumAddress:
         # The implementation address is hard-coded into the contract

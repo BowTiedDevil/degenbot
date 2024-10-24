@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeAlias
+from typing import Any, ClassVar, Protocol, TypeAlias
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -88,10 +88,12 @@ class AbstractPoolManager:
     # class attribute
     Pool: TypeAlias = "AbstractLiquidityPool"
 
-    instances: dict[
-        tuple[int, ChecksumAddress],
-        Self,
-    ] = dict()
+    instances: ClassVar[
+        dict[
+            tuple[int, ChecksumAddress],
+            Self,
+        ]
+    ] = {}
 
     @classmethod
     def get_instance(cls, factory_address: str, chain_id: int) -> Self | None:
@@ -113,7 +115,7 @@ class AbstractLiquidityPool(Publisher):
     address: ChecksumAddress
     name: str
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         match other:
             case AbstractLiquidityPool():
                 return self.address == other.address
@@ -182,7 +184,7 @@ class AbstractErc20Token:
     name: str
     decimals: int
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         match other:
             case AbstractErc20Token():
                 return self.address == other.address

@@ -1,3 +1,5 @@
+# ruff:noqa:C408
+
 from typing import Any
 
 from eth_typing import ChainId

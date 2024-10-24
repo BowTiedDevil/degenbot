@@ -114,8 +114,6 @@ class InvalidSwapPathError(ArbitrageError):
     Raised in arbitrage helper constructors when the provided path is invalid.
     """
 
-    pass
-
 
 class NoLiquidity(ArbitrageError):
     """

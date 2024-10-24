@@ -1,5 +1,5 @@
-from ...constants import MAX_UINT256, MIN_UINT256
-from ...exceptions import EVMRevertError
+from degenbot.constants import MAX_UINT256, MIN_UINT256
+from degenbot.exceptions import EVMRevertError
 
 # This module is adapted from the Uniswap V3 BitMath.sol library.
 # Reference: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/BitMath.sol

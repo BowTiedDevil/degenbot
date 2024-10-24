@@ -1,12 +1,14 @@
 from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import eth_account.datastructures
 import eth_account.messages
 import eth_account.signers.local
 import ujson
-from eth_account.signers.local import LocalAccount
+
+if TYPE_CHECKING:
+    from eth_account.signers.local import LocalAccount
 from hexbytes import HexBytes
 
 from .exceptions import DegenbotValueError, ExternalServiceError
@@ -28,7 +30,6 @@ class BuilderEndpoint:  # pragma: no cover
         if not url.startswith(("http://", "https://")):
             raise DegenbotValueError(message="Invalid URL")
         self.url = url
-
         self.endpoints = tuple(endpoints)
         self.authentication_header_label = authentication_header_label
 
@@ -101,11 +102,11 @@ class BuilderEndpoint:  # pragma: no cover
         state
         """
 
-        ENDPOINT_METHOD = "eth_callBundle"
+        endpoint_method = "eth_callBundle"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if endpoint_method not in self.endpoints:
             raise DegenbotValueError(
-                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{endpoint_method} was not included in the list of supported endpoints."
             )
 
         bundle_params: dict[str, Any] = {
@@ -139,7 +140,7 @@ class BuilderEndpoint:  # pragma: no cover
             {
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": ENDPOINT_METHOD,
+                "method": endpoint_method,
                 "params": [bundle_params],
             }
         )
@@ -150,13 +151,12 @@ class BuilderEndpoint:  # pragma: no cover
             signer_key=signer_key,
         )
 
-        result = await self.send_payload(
+        return await self.send_payload(
             url=self.url,
             http_session=http_session,
             headers=bundle_headers,
             data=payload,
         )
-        return result
 
     async def cancel_eth_bundle(
         self,
@@ -168,11 +168,11 @@ class BuilderEndpoint:  # pragma: no cover
         Send a cancellation for the specified UUID.
         """
 
-        ENDPOINT_METHOD = "eth_cancelBundle"
+        endpoint_method = "eth_cancelBundle"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if endpoint_method not in self.endpoints:
             raise DegenbotValueError(
-                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{endpoint_method} was not included in the list of supported endpoints."
             )
 
         if self.authentication_header_label is not None and signer_key is None:
@@ -184,7 +184,7 @@ class BuilderEndpoint:  # pragma: no cover
             {
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": ENDPOINT_METHOD,
+                "method": endpoint_method,
                 "params": [
                     {
                         "replacementUuid": uuid,
@@ -199,13 +199,12 @@ class BuilderEndpoint:  # pragma: no cover
             header_label=self.authentication_header_label,
         )
 
-        result = await self.send_payload(
+        return await self.send_payload(
             url=self.url,
             http_session=http_session,
             headers=bundle_headers,
             data=payload,
         )
-        return result
 
     async def cancel_private_transaction(
         self,
@@ -219,11 +218,11 @@ class BuilderEndpoint:  # pragma: no cover
         The signer key used for the request must match the signer key for the transaction.
         """
 
-        ENDPOINT_METHOD = "eth_cancelPrivateTransaction"
+        endpoint_method = "eth_cancelPrivateTransaction"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if endpoint_method not in self.endpoints:
             raise DegenbotValueError(
-                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{endpoint_method} was not included in the list of supported endpoints."
             )
 
         if isinstance(tx_hash, HexBytes):
@@ -233,7 +232,7 @@ class BuilderEndpoint:  # pragma: no cover
             {
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": ENDPOINT_METHOD,
+                "method": endpoint_method,
                 "params": [
                     {
                         "txHash": tx_hash,
@@ -248,13 +247,12 @@ class BuilderEndpoint:  # pragma: no cover
             header_label=self.authentication_header_label,
         )
 
-        result = await self.send_payload(
+        return await self.send_payload(
             url=self.url,
             http_session=http_session,
             headers=bundle_headers,
             data=payload,
         )
-        return result
 
     async def get_user_stats(
         self,
@@ -266,18 +264,18 @@ class BuilderEndpoint:  # pragma: no cover
         Get the Flashbots V2 user stats for the given searcher identity.
         """
 
-        ENDPOINT_METHOD = "flashbots_getUserStatsV2"
+        endpoint_method = "flashbots_getUserStatsV2"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if endpoint_method not in self.endpoints:
             raise DegenbotValueError(
-                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{endpoint_method} was not included in the list of supported endpoints."
             )
 
         payload = ujson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": ENDPOINT_METHOD,
+                "method": endpoint_method,
                 "params": [
                     {
                         "blockNumber": hex(recent_block_number),
@@ -292,13 +290,12 @@ class BuilderEndpoint:  # pragma: no cover
             header_label=self.authentication_header_label,
         )
 
-        result = await self.send_payload(
+        return await self.send_payload(
             url=self.url,
             http_session=http_session,
             headers=bundle_headers,
             data=payload,
         )
-        return result
 
     async def get_bundle_stats(
         self,
@@ -311,18 +308,18 @@ class BuilderEndpoint:  # pragma: no cover
         Get the Flashbots V2 bundle stats for the given searcher identity.
         """
 
-        ENDPOINT_METHOD = "flashbots_getBundleStatsV2"
+        endpoint_method = "flashbots_getBundleStatsV2"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if endpoint_method not in self.endpoints:
             raise DegenbotValueError(
-                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{endpoint_method} was not included in the list of supported endpoints."
             )
 
         payload = ujson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": ENDPOINT_METHOD,
+                "method": endpoint_method,
                 "params": [
                     {
                         "bundleHash": bundle_hash,
@@ -338,13 +335,12 @@ class BuilderEndpoint:  # pragma: no cover
             header_label=self.authentication_header_label,
         )
 
-        result = await self.send_payload(
+        return await self.send_payload(
             url=self.url,
             http_session=http_session,
             headers=bundle_headers,
             data=payload,
         )
-        return result
 
     async def send_eth_bundle(
         self,
@@ -361,11 +357,11 @@ class BuilderEndpoint:  # pragma: no cover
         Send a formatted bundle to the eth_sendBundle endpoint
         """
 
-        ENDPOINT_METHOD = "eth_sendBundle"
+        endpoint_method = "eth_sendBundle"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if endpoint_method not in self.endpoints:
             raise DegenbotValueError(
-                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{endpoint_method} was not included in the list of supported endpoints."
             )
 
         if self.authentication_header_label is not None and signer_key is None:
@@ -414,7 +410,7 @@ class BuilderEndpoint:  # pragma: no cover
             {
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": ENDPOINT_METHOD,
+                "method": endpoint_method,
                 "params": [bundle_params],
             }
         )
@@ -425,13 +421,12 @@ class BuilderEndpoint:  # pragma: no cover
             header_label=self.authentication_header_label,
         )
 
-        result = await self.send_payload(
+        return await self.send_payload(
             url=self.url,
             headers=bundle_headers,
             data=payload,
             http_session=http_session,
         )
-        return result
 
     async def send_private_transaction(
         self,
@@ -445,11 +440,11 @@ class BuilderEndpoint:  # pragma: no cover
         Send a private raw transaction.
         """
 
-        ENDPOINT_METHOD = "eth_sendPrivateTransaction"
+        endpoint_method = "eth_sendPrivateTransaction"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if endpoint_method not in self.endpoints:
             raise DegenbotValueError(
-                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{endpoint_method} was not included in the list of supported endpoints."
             )
 
         if isinstance(raw_transaction, HexBytes):
@@ -469,7 +464,7 @@ class BuilderEndpoint:  # pragma: no cover
             {
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": ENDPOINT_METHOD,
+                "method": endpoint_method,
                 "params": [
                     params_dict,
                 ],
@@ -482,13 +477,12 @@ class BuilderEndpoint:  # pragma: no cover
             header_label=self.authentication_header_label,
         )
 
-        result = await self.send_payload(
+        return await self.send_payload(
             url=self.url,
             http_session=http_session,
             headers=bundle_headers,
             data=payload,
         )
-        return result
 
     async def send_private_raw_transaction(
         self,
@@ -501,11 +495,11 @@ class BuilderEndpoint:  # pragma: no cover
         Send a private raw transaction.
         """
 
-        ENDPOINT_METHOD = "eth_sendPrivateRawTransaction"
+        endpoint_method = "eth_sendPrivateRawTransaction"
 
-        if ENDPOINT_METHOD not in self.endpoints:
+        if endpoint_method not in self.endpoints:
             raise DegenbotValueError(
-                message=f"{ENDPOINT_METHOD} was not included in the list of supported endpoints."
+                message=f"{endpoint_method} was not included in the list of supported endpoints."
             )
 
         if isinstance(raw_transaction, HexBytes):
@@ -522,7 +516,7 @@ class BuilderEndpoint:  # pragma: no cover
             {
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": ENDPOINT_METHOD,
+                "method": endpoint_method,
                 "params": params,
             }
         )
@@ -533,10 +527,9 @@ class BuilderEndpoint:  # pragma: no cover
             header_label=self.authentication_header_label,
         )
 
-        result = await self.send_payload(
+        return await self.send_payload(
             url=self.url,
             http_session=http_session,
             headers=bundle_headers,
             data=payload,
         )
-        return result

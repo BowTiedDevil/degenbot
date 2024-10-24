@@ -3,7 +3,7 @@ from typing import Any
 
 from eth_typing import ChecksumAddress
 
-from ..erc20_token import Erc20Token
+from degenbot.erc20_token import Erc20Token
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

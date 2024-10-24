@@ -10,9 +10,15 @@ from eth_utils.address import to_checksum_address
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
-from ..aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
-from ..erc20_token import Erc20Token
-from ..exceptions import (
+from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
+from degenbot.arbitrage.types import (
+    ArbitrageCalculationResult,
+    UniswapPoolSwapVector,
+    UniswapV2PoolSwapAmounts,
+    UniswapV3PoolSwapAmounts,
+)
+from degenbot.erc20_token import Erc20Token
+from degenbot.exceptions import (
     ArbitrageError,
     DegenbotValueError,
     EVMRevertError,
@@ -20,23 +26,17 @@ from ..exceptions import (
     NoLiquidity,
     RateOfExchangeBelowMinimum,
 )
-from ..logging import logger
-from ..types import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
-from ..uniswap.types import (
+from degenbot.logging import logger
+from degenbot.types import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
+from degenbot.uniswap.types import (
     UniswapV2PoolState,
     UniswapV2PoolStateUpdated,
     UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
-from ..uniswap.v2_liquidity_pool import UniswapV2Pool
-from ..uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
-from ..uniswap.v3_liquidity_pool import UniswapV3Pool
-from .types import (
-    ArbitrageCalculationResult,
-    UniswapPoolSwapVector,
-    UniswapV2PoolSwapAmounts,
-    UniswapV3PoolSwapAmounts,
-)
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 Pool: TypeAlias = UniswapV2Pool | UniswapV3Pool | AerodromeV2Pool | AerodromeV3Pool
 PoolState: TypeAlias = UniswapV2PoolState | UniswapV3PoolState
@@ -48,7 +48,7 @@ class UniswapLpCycle(AbstractArbitrage):
         self,
         input_token: Erc20Token,
         swap_pools: Iterable[Pool],
-        id: str,
+        id: str,  # noqa:A002
         max_input: int | None = None,
     ):
         for swap_pool in swap_pools:
@@ -207,11 +207,11 @@ class UniswapLpCycle(AbstractArbitrage):
     ) -> None:
         if pool_state.reserves_token0 > 1 and pool_state.reserves_token1 > 1:
             return  # No liquidity issues
-        elif pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:  # pragma: no cover
+        if pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:  # pragma: no cover
             raise NoLiquidity(message="Pool has no liquidity")
-        elif pool_state.reserves_token1 == 1 and vector.zero_for_one is True:  # pragma: no cover
+        if pool_state.reserves_token1 == 1 and vector.zero_for_one is True:  # pragma: no cover
             raise NoLiquidity(message="Pool has no liquidity for a 0 -> 1 swap")
-        elif pool_state.reserves_token0 == 1 and vector.zero_for_one is False:  # pragma: no cover
+        if pool_state.reserves_token0 == 1 and vector.zero_for_one is False:  # pragma: no cover
             raise NoLiquidity(message="Pool has no liquidity for a 1 -> 0 swap")
 
     @staticmethod
@@ -232,7 +232,7 @@ class UniswapLpCycle(AbstractArbitrage):
             ):  # pragma: no cover
                 # Swap is 0 -> 1 and cannot swap any more token0 for token1
                 raise NoLiquidity(message="Pool has no liquidity for a 0 -> 1 swap")
-            elif (
+            if (
                 pool_state.sqrt_price_x96 == MAX_SQRT_RATIO - 1 and vector.zero_for_one is False
             ):  # pragma: no cover
                 # Swap is 1 -> 0  and cannot swap any more token1 for token0
@@ -422,11 +422,7 @@ class UniswapLpCycle(AbstractArbitrage):
         """
 
         if isinstance(executor, ProcessPoolExecutor) and any(
-            [
-                pool.sparse_liquidity_map
-                for pool in self.swap_pools
-                if isinstance(pool, UniswapV3Pool)
-            ]
+            pool.sparse_liquidity_map for pool in self.swap_pools if isinstance(pool, UniswapV3Pool)
         ):
             raise DegenbotValueError(
                 message="Cannot perform calculation with process pool executor. One or more V3 pools has a sparse bitmap."  # noqa:E501
@@ -480,7 +476,7 @@ class UniswapLpCycle(AbstractArbitrage):
 
         from_address = to_checksum_address(from_address)
 
-        MSG_VALUE = 0  # This arbitrage does not require a `msg.value` payment
+        msg_value = 0  # This arbitrage does not require a `msg.value` payment
         payloads = []
         for i, (swap_pool, _swap_amounts) in enumerate(
             zip(self.swap_pools, pool_swap_amounts, strict=True)
@@ -513,7 +509,7 @@ class UniswapLpCycle(AbstractArbitrage):
                                     swap_amount,
                                 ),
                             ),
-                            MSG_VALUE,
+                            msg_value,
                         )
                     )
                 case _, UniswapV2Pool(), UniswapV2PoolSwapAmounts():
@@ -541,7 +537,7 @@ class UniswapLpCycle(AbstractArbitrage):
                                     b"",
                                 ),
                             ),
-                            MSG_VALUE,
+                            msg_value,
                         )
                     )
                 case _, UniswapV3Pool(), UniswapV3PoolSwapAmounts():
@@ -572,7 +568,7 @@ class UniswapLpCycle(AbstractArbitrage):
                                     b"",
                                 ),
                             ),
-                            MSG_VALUE,
+                            msg_value,
                         )
                     )
                 case _:  # pragma: no cover

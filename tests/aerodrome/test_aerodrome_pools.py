@@ -1,3 +1,4 @@
+import pathlib
 import pickle
 from typing import Any
 
@@ -42,7 +43,7 @@ AERODROME_V3_QUOTER_ABI = ujson.loads(
 
 @pytest.fixture
 def test_pools() -> Any:
-    with open("tests/aerodrome/first_200_aerodrome_v2_pools.json") as file:
+    with pathlib.Path("tests/aerodrome/first_200_aerodrome_v2_pools.json").open() as file:
         return ujson.load(file)
 
 
@@ -154,12 +155,9 @@ def test_create_pool(
 
 
 def test_calculation_volatile(fork_base: AnvilFork, test_pools: list[Any]):
-    TEST_BLOCK = None
-    if TEST_BLOCK:
-        fork_base.reset(block_number=TEST_BLOCK)
     set_web3(fork_base.w3)
 
-    TOKEN_AMOUNT_MULTIPLIERS = [
+    token_amount_multipliers = [
         0.000000001,
         0.00000001,
         0.0000001,
@@ -184,7 +182,7 @@ def test_calculation_volatile(fork_base: AnvilFork, test_pools: list[Any]):
         w3_contract = fork_base.w3.eth.contract(address=pool_address, abi=AERODROME_V2_POOL_ABI)
 
         if max_reserves_token1 >= 2:
-            for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+            for token_mult in token_amount_multipliers:
                 token_in_amount = int(token_mult * max_reserves_token0)
                 if token_in_amount == 0:
                     continue
@@ -206,7 +204,7 @@ def test_calculation_volatile(fork_base: AnvilFork, test_pools: list[Any]):
                     assert contract_amount_out == helper_amount_out, f"{pool_address=}"
 
         if max_reserves_token0 >= 2:
-            for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+            for token_mult in token_amount_multipliers:
                 token_in_amount = int(token_mult * max_reserves_token1)
                 if token_in_amount == 0 or max_reserves_token1 <= 1:
                     continue
@@ -228,12 +226,9 @@ def test_calculation_volatile(fork_base: AnvilFork, test_pools: list[Any]):
 
 
 def test_calculation_stable(fork_base: AnvilFork, test_pools: list[Any]):
-    TEST_BLOCK = None
-    if TEST_BLOCK:
-        fork_base.reset(block_number=TEST_BLOCK)
     set_web3(fork_base.w3)
 
-    TOKEN_AMOUNT_MULTIPLIERS = [
+    token_amount_multipliers = [
         0.000000001,
         0.00000001,
         0.0000001,
@@ -258,7 +253,7 @@ def test_calculation_stable(fork_base: AnvilFork, test_pools: list[Any]):
         w3_contract = fork_base.w3.eth.contract(address=pool_address, abi=AERODROME_V2_POOL_ABI)
 
         if max_reserves_token1 >= 2:
-            for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+            for token_mult in token_amount_multipliers:
                 token_in_amount = int(token_mult * max_reserves_token0)
                 if token_in_amount == 0:
                     continue
@@ -278,7 +273,7 @@ def test_calculation_stable(fork_base: AnvilFork, test_pools: list[Any]):
                     assert contract_amount_out == helper_amount_out, f"{pool_address=}"
 
         if max_reserves_token0 >= 2:
-            for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+            for token_mult in token_amount_multipliers:
                 token_in_amount = int(token_mult * max_reserves_token1)
                 if token_in_amount == 0 or max_reserves_token1 <= 1:
                     continue
@@ -320,7 +315,7 @@ def test_aerodrome_v3_pool_calculation(fork_base: AnvilFork) -> None:
 
     max_reserves_token0 = max_reserves_token1 = 3_000_000 * 10**6
 
-    TOKEN_AMOUNT_MULTIPLIERS = [
+    token_amount_multipliers = [
         0.000000001,
         0.00000001,
         0.0000001,
@@ -336,7 +331,7 @@ def test_aerodrome_v3_pool_calculation(fork_base: AnvilFork) -> None:
         0.75,
     ]
 
-    for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+    for token_mult in token_amount_multipliers:
         token_in_amount = int(token_mult * max_reserves_token0)
         if token_in_amount == 0:
             continue

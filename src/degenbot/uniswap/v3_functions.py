@@ -2,6 +2,7 @@ from collections.abc import Callable, Iterable, Iterator
 from decimal import Decimal
 from fractions import Fraction
 from itertools import cycle
+from typing import Final
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -9,9 +10,9 @@ from eth_utils.address import to_checksum_address
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from ..exceptions import DegenbotValueError
-from ..functions import create2_address
-from .v3_libraries import tick_bitmap as TickBitmap
+from degenbot.exceptions import DegenbotValueError
+from degenbot.functions import create2_address
+from degenbot.uniswap.v3_libraries import tick_bitmap
 
 
 def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
@@ -19,8 +20,8 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
     Decode the `path` bytes used by the Uniswap V3 Router/Router2 contracts. `path` is a
     close-packed encoding of 20 byte pool addresses, interleaved with 3 byte fees.
     """
-    ADDRESS_BYTES = 20
-    FEE_BYTES = 3
+    address_bytes: Final = 20
+    fee_bytes: Final = 3
 
     def _extract_address(chunk: bytes) -> ChecksumAddress:
         return to_checksum_address(chunk)
@@ -30,8 +31,8 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
 
     if any(
         [
-            len(path) < ADDRESS_BYTES + FEE_BYTES + ADDRESS_BYTES,
-            len(path) % (ADDRESS_BYTES + FEE_BYTES) != ADDRESS_BYTES,
+            len(path) < address_bytes + fee_bytes + address_bytes,
+            len(path) % (address_bytes + fee_bytes) != address_bytes,
         ]
     ):  # pragma: no cover
         raise DegenbotValueError(message="Invalid path.")
@@ -46,8 +47,8 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
         ]
     ] = cycle(
         [
-            (ADDRESS_BYTES, _extract_address),
-            (FEE_BYTES, _extract_fee),
+            (address_bytes, _extract_address),
+            (fee_bytes, _extract_fee),
         ]
     )
 
@@ -103,4 +104,4 @@ def get_tick_word_and_bit_position(
     """
     Retrieves the word and bit position for the tick, accounting for tick spacing.
     """
-    return TickBitmap.position(int(Decimal(tick) // tick_spacing))
+    return tick_bitmap.position(int(Decimal(tick) // tick_spacing))

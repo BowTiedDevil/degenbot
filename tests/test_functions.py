@@ -58,14 +58,14 @@ def test_encode_function_calldata():
 def test_low_level_call_for_factory_address(ethereum_archive_node_web3: web3.Web3):
     degenbot.config.set_web3(ethereum_archive_node_web3)
 
-    POOL_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
+    pool_address = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
     function_prototype = "factory()"
 
     (result,) = raw_call(
         w3=ethereum_archive_node_web3,
         block_identifier=ethereum_archive_node_web3.eth.block_number,
-        address=POOL_ADDRESS,
+        address=pool_address,
         calldata=encode_function_calldata(
             function_prototype=function_prototype,
             function_arguments=extract_argument_types_from_function_prototype(function_prototype),
@@ -192,22 +192,22 @@ def test_converting_block_identifier_to_int(fork_mainnet: AnvilFork):
 
 
 def test_fee_calcs():
-    BASE_FEE = 100 * 10**9
+    base_fee = 100 * 10**9
 
     # EIP-1559 target is 50% full blocks, so a 50% full block should return the same base fee
     assert (
         next_base_fee(
-            parent_base_fee=BASE_FEE,
+            parent_base_fee=base_fee,
             parent_gas_used=15_000_000,
             parent_gas_limit=30_000_000,
         )
-        == BASE_FEE
+        == base_fee
     )
 
     # Fee should be higher
     assert (
         next_base_fee(
-            parent_base_fee=BASE_FEE,
+            parent_base_fee=base_fee,
             parent_gas_used=20_000_000,
             parent_gas_limit=30_000_000,
         )
@@ -217,22 +217,22 @@ def test_fee_calcs():
     # Fee should be lower
     assert (
         next_base_fee(
-            parent_base_fee=BASE_FEE,
+            parent_base_fee=base_fee,
             parent_gas_used=10_000_000,
             parent_gas_limit=30_000_000,
         )
         == 95833333334
     )
 
-    MIN_BASE_FEE = 95 * 10**9
+    min_base_fee = 95 * 10**9
 
     # Enforce minimum fee
     assert (
         next_base_fee(
-            parent_base_fee=BASE_FEE,
+            parent_base_fee=base_fee,
             parent_gas_used=0,
             parent_gas_limit=30_000_000,
-            min_base_fee=MIN_BASE_FEE,
+            min_base_fee=min_base_fee,
         )
-        == MIN_BASE_FEE
+        == min_base_fee
     )

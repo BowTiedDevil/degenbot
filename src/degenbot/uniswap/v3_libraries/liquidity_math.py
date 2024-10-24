@@ -1,5 +1,5 @@
-from ...constants import MAX_INT128, MAX_UINT128, MIN_INT128, MIN_UINT128
-from ...exceptions import EVMRevertError
+from degenbot.constants import MAX_INT128, MAX_UINT128, MIN_INT128, MIN_UINT128
+from degenbot.exceptions import EVMRevertError
 
 
 def add_delta(x: int, y: int) -> int:
@@ -18,7 +18,7 @@ def add_delta(x: int, y: int) -> int:
 
     if y < 0 and not (MIN_UINT128 <= z <= MAX_UINT128):
         raise EVMRevertError(error="LS")
-    elif not (MIN_UINT128 <= z <= MAX_UINT128):
+    if not (MIN_UINT128 <= z <= MAX_UINT128):
         raise EVMRevertError(error="LA")
 
     return z

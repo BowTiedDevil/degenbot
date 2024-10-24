@@ -2,7 +2,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 import eth_account.messages
-from eth_account.datastructures import SignedMessage
+
+if TYPE_CHECKING:
+    from eth_account.datastructures import SignedMessage
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from eth_utils.conversions import to_hex
@@ -64,8 +66,8 @@ def extract_argument_types_from_function_prototype(function_prototype: str) -> l
         function_prototype.find("(") + 1 : function_prototype.find(")") :
     ]:
         return function_args.split(",")
-    else:
-        return []
+
+    return []
 
 
 def eip_1167_clone_address(
@@ -83,7 +85,7 @@ def eip_1167_clone_address(
         - https://www.rareskills.io/post/eip-1167-minimal-proxy-standard-with-initialization-clone-pattern
     """
 
-    MINIMAL_PROXY_CODE = (
+    minimal_proxy_code = (
         HexBytes("0x3d602d80600a3d3981f3")
         + HexBytes("0x363d3d373d3d3d363d73")
         + HexBytes(implementation_contract)
@@ -93,7 +95,7 @@ def eip_1167_clone_address(
     return create2_address(
         deployer=deployer,
         salt=salt,
-        init_code_hash=keccak(MINIMAL_PROXY_CODE),
+        init_code_hash=keccak(minimal_proxy_code),
     )
 
 

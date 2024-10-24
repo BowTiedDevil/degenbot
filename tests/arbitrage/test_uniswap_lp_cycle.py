@@ -4,13 +4,16 @@ import contextlib
 import multiprocessing
 import pickle
 import time
-from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from eth_typing import ChecksumAddress
 from fractions import Fraction
 from threading import Lock
-from typing import Any
 
 import pytest
-from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
 from degenbot import (
@@ -60,8 +63,8 @@ def weth_token(ethereum_archive_node_web3) -> Erc20Token:
 @pytest.fixture
 def wbtc_weth_v2_lp(
     fork_mainnet: AnvilFork,
-    wbtc_token,
-    weth_token,
+    wbtc_token,  # noqa:ARG001
+    weth_token,  # noqa:ARG001
 ) -> UniswapV2Pool:
     set_web3(fork_mainnet.w3)
     pool = UniswapV2Pool(WBTC_WETH_V2_POOL_ADDRESS)
@@ -2226,18 +2229,17 @@ def test_arbitrage_with_overrides(
 @pytest.mark.skip(reason="Unreliable RPC")
 async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum: AnvilFork):
     # Arbitrum-specific token addresses
-    _WBTC_ADDRESS = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"
-    _WETH_ADDRESS = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+    weth_address = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
 
-    _CAMELOT_WETH_WBTC_LP_ADDRESS = "0x96059759C6492fb4e8a9777b65f307F2C811a34F"
-    _SUSHI_V2_WETH_WBTC_LP_ADDRESS = "0x515e252b2b5c22b4b2b6Df66c2eBeeA871AA4d69"
+    camelot_weth_wbtc_pool_address = "0x96059759C6492fb4e8a9777b65f307F2C811a34F"
+    sushi_v2_weth_wbtc_pool_address = "0x515e252b2b5c22b4b2b6Df66c2eBeeA871AA4d69"
 
     set_web3(fork_arbitrum.w3)
 
-    _weth = Erc20Token(_WETH_ADDRESS)
+    _weth = Erc20Token(weth_address)
 
-    camelot_lp = CamelotLiquidityPool(address=_CAMELOT_WETH_WBTC_LP_ADDRESS)
-    sushi_lp = UniswapV2Pool(address=_SUSHI_V2_WETH_WBTC_LP_ADDRESS)
+    camelot_lp = CamelotLiquidityPool(address=camelot_weth_wbtc_pool_address)
+    sushi_lp = UniswapV2Pool(address=sushi_v2_weth_wbtc_pool_address)
 
     arb = UniswapLpCycle(
         id="test_arb",
@@ -2252,14 +2254,13 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum: AnvilFor
     with concurrent.futures.ProcessPoolExecutor(
         mp_context=multiprocessing.get_context("spawn"),
     ) as executor:
-        _tasks = []
-        for _ in range(8):
-            _tasks.append(
-                loop.run_in_executor(
-                    executor,
-                    arb.calculate,
-                )
+        _tasks = [
+            loop.run_in_executor(
+                executor,
+                arb.calculate,
             )
+            for _ in range(8)
+        ]
 
         for task in asyncio.as_completed(_tasks):
             with contextlib.suppress(ArbitrageError):
@@ -2321,21 +2322,20 @@ async def test_process_pool_calculation(
 
         # Saturate the process pool executor with multiple calculations.
         # Should reveal cases of excessive latency.
-        _NUM_FUTURES = 64
-        calculation_futures = []
-        for _ in range(_NUM_FUTURES):
-            calculation_futures.append(
-                await wbtc_weth_arb.calculate_with_pool(
-                    executor=executor,
-                    state_overrides=overrides,
-                )
+        num_futures = 64
+        calculation_futures = [
+            await wbtc_weth_arb.calculate_with_pool(
+                executor=executor,
+                state_overrides=overrides,
             )
+            for _ in range(num_futures)
+        ]
 
-        assert len(calculation_futures) == _NUM_FUTURES
+        assert len(calculation_futures) == num_futures
         for i, task in enumerate(asyncio.as_completed(calculation_futures)):
             await task
             print(f"Completed process_pool calc #{i}, {time.perf_counter()-start:.2f}s since start")
-        print(f"Completed {_NUM_FUTURES} calculations in {time.perf_counter() - start:.1f}s")
+        print(f"Completed {num_futures} calculations in {time.perf_counter() - start:.1f}s")
 
         assert isinstance(wbtc_weth_arb.swap_pools[1], UniswapV3Pool)
         wbtc_weth_arb.swap_pools[1].sparse_liquidity_map = True
@@ -2455,7 +2455,11 @@ def test_arbitrage_helper_subscriptions(
         def __init__(self) -> None:
             self.inbox: list[Any] = list()
 
-        def notify(self, publisher, message) -> None:
+        def notify(
+            self,
+            publisher,  # noqa:ARG002
+            message,
+        ) -> None:
             self.inbox.append(message)
 
     subscriber = TestSubscriber()

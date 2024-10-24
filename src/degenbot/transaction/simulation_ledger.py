@@ -1,9 +1,8 @@
-
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
-from ..erc20_token import Erc20Token
-from ..logging import logger
+from degenbot.erc20_token import Erc20Token
+from degenbot.logging import logger
 
 
 class SimulationLedger:
@@ -23,7 +22,7 @@ class SimulationLedger:
                 ChecksumAddress,  # token address
                 int,  # balance
             ],
-        ] = dict()
+        ] = {}
 
     def adjust(
         self,

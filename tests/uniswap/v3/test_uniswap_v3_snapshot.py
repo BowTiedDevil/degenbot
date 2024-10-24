@@ -1,3 +1,5 @@
+import pathlib
+
 import pytest
 from eth_utils.address import to_checksum_address
 from web3 import Web3
@@ -42,7 +44,7 @@ def test_create_snapshot_from_file_path(ethereum_archive_node_web3: Web3):
 
 def test_create_snapshot_from_file_handle(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
-    with open(EMPTY_SNAPSHOT_FILENAME) as file:
+    with pathlib.Path(EMPTY_SNAPSHOT_FILENAME).open() as file:
         UniswapV3LiquiditySnapshot(file)
 
 
@@ -158,7 +160,7 @@ def test_apply_update_to_snapshot(
     empty_snapshot: UniswapV3LiquiditySnapshot,
     fork_mainnet: AnvilFork,
 ):
-    POOL_ADDRESS = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
+    pool_address = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 
     set_web3(fork_mainnet.w3)
 
@@ -183,25 +185,25 @@ def test_apply_update_to_snapshot(
         17: UniswapV3BitmapAtWord(bitmap=288230376155906048, block=12369846),
     }
     empty_snapshot.update_snapshot(
-        pool=POOL_ADDRESS,
+        pool=pool_address,
         tick_data=tick_data,
         tick_bitmap=tick_bitmap,
     )
     empty_snapshot.update_snapshot(
-        pool=POOL_ADDRESS,
+        pool=pool_address,
         tick_data=tick_data,
         tick_bitmap=tick_bitmap,
     )
 
-    assert empty_snapshot.get_tick_data(POOL_ADDRESS) is tick_data
-    assert empty_snapshot.get_tick_bitmap(POOL_ADDRESS) is tick_bitmap
+    assert empty_snapshot.get_tick_data(pool_address) is tick_data
+    assert empty_snapshot.get_tick_bitmap(pool_address) is tick_bitmap
 
     pool_manager = UniswapV3PoolManager(
         factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
         chain_id=1,
         snapshot=empty_snapshot,
     )
-    pool = pool_manager.get_pool(POOL_ADDRESS)
+    pool = pool_manager.get_pool(pool_address)
     for word in tick_bitmap:
         assert pool.tick_bitmap[word] == tick_bitmap[word]
     assert pool.tick_data == tick_data

@@ -83,31 +83,51 @@ indent-width = 4
 target-version = "py310"
 
 [tool.ruff.lint]
-select = [
+select = [    
+#    "SLF",      # flake8-self
+#    "PIE",      # flake8-pie
 #    "C90",      # mccabe
 #    "D",        # pydocstyle
-    "ERA",
-    "E", "W",   # pycodestyle
-    "F",        # Pyflakes
-    "UP",       # pyupgrade
+    "PTH",      # builtin-open
+    "ERA",      # eradicate
     "B",        # flake8-bugbear
-    "SIM",      # flake8-simplify
+    "A",        # flake8-builtins
+    "C4",       # flake8-comprehensions
+    "EM",       # flake8-errmsg
+    "FA",       # flake8-future-annotations
+    "N",        # flake8-naming
+    "T20",      # flake8-print
+    "PYI",      # flake8-pyi
     "PT",       # flake8-pytest-style
+    "RET",      # flake8-return
+    "SIM",      # flake8-simplify
+    "TID",      # flake8-tidy-imports
+    "TCH",      # flake8-type-checking
+    "ARG",      # flake8-unused-arguments
     "I",        # isort
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
     "PL",       # pylint
+    "PERF",     # perflint
+    "UP",       # pyupgrade
+    "FURB",     # refurb
+    "RUF",      # ruff-specific rules
     "TRY",      # tryceratops
 ]
 ignore = [
-    "PLR0911", # too-many-return-statements
-    "PLR0912", # too-many-branches
-    "PLR0913", # too-many-arguments
-    "PLR0915", # too-many-statements
+    "PLR0911",  # too-many-return-statements
+    "PLR0912",  # too-many-branches
+    "PLR0913",  # too-many-arguments
+    "PLR0915",  # too-many-statements
+    "N818",     # error-suffix-on-exception-name
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
     "PLR2004", # Many swap amount tests compare "magic" values — transforming to named constants is not worthwhile
-    "ERA",    
+    "ERA",
+    "C4",
+    "T20",
 ]
 
 [tool.pytest.ini_options]

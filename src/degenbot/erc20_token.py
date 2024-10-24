@@ -316,8 +316,7 @@ class Erc20Token(AbstractErc20Token):
     def price(self) -> float:
         if self._price_oracle is not None:
             return self._price_oracle.price
-        else:  # pragma: no cover
-            raise NoPriceOracle
+        raise NoPriceOracle
 
     @property
     def w3(self) -> Web3:

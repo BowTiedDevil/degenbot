@@ -31,18 +31,18 @@ def test_bad_address(ethereum_archive_node_web3):
 
 
 def test_caches(ethereum_archive_node_web3: Web3, wbtc: Erc20Token):
-    FAKE_BALANCE = 69_420_000
+    fake_balance = 69_420_000
     current_block = ethereum_archive_node_web3.eth.block_number
     balance_actual = wbtc.get_balance(VITALIK_ADDRESS)
-    wbtc._cached_balance[(current_block, VITALIK_ADDRESS)] = FAKE_BALANCE
-    assert wbtc.get_balance(VITALIK_ADDRESS) == FAKE_BALANCE
+    wbtc._cached_balance[(current_block, VITALIK_ADDRESS)] = fake_balance
+    assert wbtc.get_balance(VITALIK_ADDRESS) == fake_balance
     wbtc._cached_balance.clear()
     assert wbtc.get_balance(VITALIK_ADDRESS) == balance_actual
 
     current_total_supply = wbtc.get_total_supply()
-    FAKE_SUPPLY = 69_420_000_000
-    wbtc._cached_total_supply[current_block] = FAKE_SUPPLY
-    assert wbtc.get_total_supply() == FAKE_SUPPLY
+    fake_supply = 69_420_000_000
+    wbtc._cached_total_supply[current_block] = fake_supply
+    assert wbtc.get_total_supply() == fake_supply
     wbtc._cached_total_supply.clear()
     assert wbtc.get_total_supply() == current_total_supply
 
@@ -135,10 +135,10 @@ def test_ether_placeholder(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
     ether = EtherPlaceholder()
 
-    FAKE_BALANCE = 69_420_000
+    fake_balance = 69_420_000
     current_block = ethereum_archive_node_web3.eth.block_number
     balance_actual = ether.get_balance(VITALIK_ADDRESS)
-    ether._cached_balance[(current_block, VITALIK_ADDRESS)] = FAKE_BALANCE
-    assert ether.get_balance(VITALIK_ADDRESS) == FAKE_BALANCE
+    ether._cached_balance[(current_block, VITALIK_ADDRESS)] = fake_balance
+    assert ether.get_balance(VITALIK_ADDRESS) == fake_balance
     ether._cached_balance.clear()
     assert ether.get_balance(VITALIK_ADDRESS) == balance_actual

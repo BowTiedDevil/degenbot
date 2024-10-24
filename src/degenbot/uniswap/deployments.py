@@ -3,8 +3,8 @@ from dataclasses import dataclass
 from eth_typing import ChainId, ChecksumAddress
 from eth_utils.address import to_checksum_address
 
-from ..exceptions import DegenbotValueError
-from ..types import AbstractExchangeDeployment
+from degenbot.exceptions import DegenbotValueError
+from degenbot.types import AbstractExchangeDeployment
 
 
 @dataclass(slots=True, frozen=True)

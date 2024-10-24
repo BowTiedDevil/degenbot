@@ -1,7 +1,11 @@
+from typing import TYPE_CHECKING
+
 import aiohttp
 import eth_account
 import pytest
-from eth_account.signers.local import LocalAccount
+
+if TYPE_CHECKING:
+    from eth_account.signers.local import LocalAccount
 
 from degenbot import AnvilFork
 from degenbot.builder_endpoint import BuilderEndpoint
@@ -132,15 +136,15 @@ async def test_eth_call_bundle(
     current_block_timestamp = fork_mainnet.w3.eth.get_block("latest")["timestamp"]
 
     signer: LocalAccount = eth_account.Account.from_key(SIGNER_KEY)
-    SIGNER_ADDRESS = signer.address
+    signer_address = signer.address
 
     transaction_1 = {
         "chainId": 1,
         "data": b"",
-        "from": SIGNER_ADDRESS,
-        "to": SIGNER_ADDRESS,
+        "from": signer_address,
+        "to": signer_address,
         "value": 1,
-        "nonce": fork_mainnet.w3.eth.get_transaction_count(SIGNER_ADDRESS),
+        "nonce": fork_mainnet.w3.eth.get_transaction_count(signer_address),
         "gas": 50_000,
         "maxFeePerGas": int(1.5 * current_base_fee),
         "maxPriorityFeePerGas": 0,
@@ -148,10 +152,10 @@ async def test_eth_call_bundle(
     transaction_2 = {
         "chainId": 1,
         "data": b"",
-        "from": SIGNER_ADDRESS,
-        "to": SIGNER_ADDRESS,
+        "from": signer_address,
+        "to": signer_address,
         "value": 1,
-        "nonce": fork_mainnet.w3.eth.get_transaction_count(SIGNER_ADDRESS) + 1,
+        "nonce": fork_mainnet.w3.eth.get_transaction_count(signer_address) + 1,
         "gas": 50_000,
         "maxFeePerGas": int(1.5 * current_base_fee),
         "maxPriorityFeePerGas": 0,
@@ -199,15 +203,15 @@ async def test_eth_send_bundle(
     current_base_fee = fork_mainnet.w3.eth.get_block("latest")["baseFeePerGas"]
 
     signer: LocalAccount = eth_account.Account.from_key(SIGNER_KEY)
-    SIGNER_ADDRESS = signer.address
+    signer_address = signer.address
 
     transaction_1 = {
         "chainId": 1,
         "data": b"",
-        "from": SIGNER_ADDRESS,
-        "to": SIGNER_ADDRESS,
+        "from": signer_address,
+        "to": signer_address,
         "value": 1,
-        "nonce": fork_mainnet.w3.eth.get_transaction_count(SIGNER_ADDRESS),
+        "nonce": fork_mainnet.w3.eth.get_transaction_count(signer_address),
         "gas": 50_000,
         "maxFeePerGas": int(1.5 * current_base_fee),
         "maxPriorityFeePerGas": 0,
@@ -215,10 +219,10 @@ async def test_eth_send_bundle(
     transaction_2 = {
         "chainId": 1,
         "data": b"",
-        "from": SIGNER_ADDRESS,
-        "to": SIGNER_ADDRESS,
+        "from": signer_address,
+        "to": signer_address,
         "value": 1,
-        "nonce": fork_mainnet.w3.eth.get_transaction_count(SIGNER_ADDRESS) + 1,
+        "nonce": fork_mainnet.w3.eth.get_transaction_count(signer_address) + 1,
         "gas": 50_000,
         "maxFeePerGas": int(1.5 * current_base_fee),
         "maxPriorityFeePerGas": 0,

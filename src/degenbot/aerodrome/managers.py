@@ -5,12 +5,11 @@ from eth_utils.address import to_checksum_address
 from web3 import Web3
 from web3.types import BlockIdentifier
 
-from ..aerodrome.pools import AerodromeV2Pool
-from ..config import connection_manager
-from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
-from ..uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
-from .functions import generate_aerodrome_v3_pool_address
-from .pools import AerodromeV3Pool
+from degenbot.aerodrome.functions import generate_aerodrome_v3_pool_address
+from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
+from degenbot.config import connection_manager
+from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
+from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 
 
 class AerodromeV2PoolManager(UniswapV2PoolManager):

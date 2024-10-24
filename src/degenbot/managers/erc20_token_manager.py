@@ -1,13 +1,14 @@
 from threading import Lock
-from typing import Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from eth_typing import ChecksumAddress
+if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
-from ..config import connection_manager
-from ..erc20_token import Erc20Token, EtherPlaceholder
-from ..registry.all_tokens import token_registry
-from ..types import AbstractManager
+from degenbot.config import connection_manager
+from degenbot.erc20_token import Erc20Token, EtherPlaceholder
+from degenbot.registry.all_tokens import token_registry
+from degenbot.types import AbstractManager
 
 
 class Erc20TokenManager(AbstractManager):
@@ -18,7 +19,7 @@ class Erc20TokenManager(AbstractManager):
     ensures that all instances of the class have access to the same state data
     """
 
-    _state: dict[int, dict[str, Any]] = {}
+    _state: ClassVar[dict[int, dict[str, Any]]] = {}
 
     def __init__(
         self,

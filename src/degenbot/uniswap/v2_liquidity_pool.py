@@ -13,9 +13,9 @@ from typing_extensions import Self
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
-from ..config import connection_manager
-from ..erc20_token import Erc20Token
-from ..exceptions import (
+from degenbot.config import connection_manager
+from degenbot.erc20_token import Erc20Token
+from degenbot.exceptions import (
     AddressMismatch,
     DegenbotValueError,
     ExternalUpdateError,
@@ -24,19 +24,19 @@ from ..exceptions import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
-from ..logging import logger
-from ..managers.erc20_token_manager import Erc20TokenManager
-from ..registry.all_pools import pool_registry
-from ..types import AbstractLiquidityPool
-from ..uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
-from .types import (
+from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
+from degenbot.logging import logger
+from degenbot.managers.erc20_token_manager import Erc20TokenManager
+from degenbot.registry.all_pools import pool_registry
+from degenbot.types import AbstractLiquidityPool
+from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
+from degenbot.uniswap.types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
     UniswapV2PoolStateUpdated,
 )
-from .v2_functions import (
+from degenbot.uniswap.v2_functions import (
     constant_product_calc_exact_in,
     constant_product_calc_exact_out,
     generate_v2_pool_address,
@@ -50,7 +50,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
 
     PoolState: TypeAlias = UniswapV2PoolState
 
-    RESERVES_STRUCT_TYPES = ["uint112", "uint112"]
+    RESERVES_STRUCT_TYPES = ("uint112", "uint112")
     UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
         "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
     )
@@ -178,7 +178,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
             if self.fee_token0 == self.fee_token1
             else (
-                f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"  # noqa:E501
+                f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
             )
         )
         self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
@@ -360,15 +360,14 @@ class UniswapV2Pool(AbstractLiquidityPool):
                     - self.reserves_token0 / (1 - self.fee_token0)
                 ),
             )
-        else:
-            # formula: dy = x0/C - y0/(1-FEE), where C = token0/token1
-            return max(
-                0,
-                int(
-                    self.reserves_token0 / ratio_absolute
-                    - self.reserves_token1 / (1 - self.fee_token1)
-                ),
-            )
+
+        # formula: dy = x0/C - y0/(1-FEE), where C = token0/token1
+        return max(
+            0,
+            int(
+                self.reserves_token0 / ratio_absolute - self.reserves_token1 / (1 - self.fee_token1)
+            ),
+        )
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -538,10 +537,9 @@ class UniswapV2Pool(AbstractLiquidityPool):
 
         if token == self.token0:
             return Fraction(state.reserves_token0) / Fraction(state.reserves_token1)
-        elif token == self.token1:
+        if token == self.token1:
             return Fraction(state.reserves_token1) / Fraction(state.reserves_token0)
-        else:  # pragma: no cover
-            raise DegenbotValueError(message=f"Unknown token {token}")
+        raise DegenbotValueError(message=f"Unknown token {token}")
 
     def get_nominal_price(
         self,
@@ -571,12 +569,11 @@ class UniswapV2Pool(AbstractLiquidityPool):
             return Fraction(state.reserves_token0, 10**self.token0.decimals) * Fraction(
                 10**self.token1.decimals, state.reserves_token1
             )
-        elif token == self.token1:
+        if token == self.token1:
             return Fraction(state.reserves_token1, 10**self.token1.decimals) * Fraction(
                 10**self.token0.decimals, state.reserves_token0
             )
-        else:  # pragma: no cover
-            raise DegenbotValueError(message=f"Unknown token {token}")
+        raise DegenbotValueError(message=f"Unknown token {token}")
 
     def get_reserves(self, w3: Web3, block_identifier: BlockIdentifier) -> tuple[int, int]:
         reserves_token0, reserves_token1 = raw_call(
@@ -600,7 +597,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             raise DegenbotValueError(message="No archived states are available")
 
         with self._state_lock:
-            known_blocks = sorted(list(self._pool_state_archive.keys()))
+            known_blocks = sorted(self._pool_state_archive.keys())
 
             # Finds the index prior to the requested block number
             block_index = bisect_left(known_blocks, block)
@@ -629,7 +626,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
             raise DegenbotValueError(message="No archived states are available")
 
         with self._state_lock:
-            known_blocks = sorted(list(self._pool_state_archive.keys()))
+            known_blocks = sorted(self._pool_state_archive.keys())
 
             # Finds the index prior to the requested block number
             block_index = bisect_left(known_blocks, block)

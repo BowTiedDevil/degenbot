@@ -141,12 +141,12 @@ def test_creation_with_invalid_hash(ethereum_archive_node_web3: Web3) -> None:
     del FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
 
     # Change last byte of true init hash
-    BAD_INIT_HASH = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH[:-1] + "f"
+    bad_init_hash = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH[:-1] + "f"
 
     with pytest.raises(AddressMismatch, match="Pool address verification failed"):
         UniswapV3Pool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
-            init_hash=BAD_INIT_HASH,
+            init_hash=bad_init_hash,
         )
 
     # Restore the preset deployments
@@ -160,9 +160,9 @@ def test_creation_with_wrong_pool_type(base_full_node_web3: Web3) -> None:
 
     # Attempting to build a Pancake V3 pool with a Uniswap V3 (vanilla) helper should fail during
     # the contract value lookup
-    PANCAKE_POOL_ADDRESS = "0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E"
+    pancake_pool_address = "0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E"
     with pytest.raises(LiquidityPoolError, match="Could not decode contract data"):
-        UniswapV3Pool(PANCAKE_POOL_ADDRESS)
+        UniswapV3Pool(pancake_pool_address)
 
 
 def test_pancake_v3_pool_creation(base_full_node_web3: Web3) -> None:
@@ -212,8 +212,8 @@ def test_external_update_with_sparse_liquidity_map(ethereum_archive_node_web3: W
 def test_reorg(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
     lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
 
-    _START_BLOCK = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
-    _END_BLOCK = _START_BLOCK + 10
+    start_block = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
+    end_block = start_block + 10
 
     # Provide some dummy updates, then simulate a reorg back to the starting state
     starting_state = lp.state
@@ -223,11 +223,11 @@ def test_reorg(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
         wbtc_weth_v3_lp_at_block_17_600_000._update_block: lp.state
     }
 
-    for block_number in range(_START_BLOCK, _END_BLOCK + 1, 1):
+    for block_number in range(start_block, end_block + 1, 1):
         lp.external_update(
             update=UniswapV3PoolExternalUpdate(
                 block_number=block_number,
-                liquidity=starting_liquidity + 10_000 * (block_number - _START_BLOCK),
+                liquidity=starting_liquidity + 10_000 * (block_number - start_block),
             ),
         )
         block_states[block_number] = lp.state
@@ -239,11 +239,11 @@ def test_reorg(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
         lp.restore_state_before_block(0)
 
     # Non-op, the pool should already meet the requested condition
-    lp.restore_state_before_block(_END_BLOCK + 1)
+    lp.restore_state_before_block(end_block + 1)
     assert lp.state == last_block_state
 
     # Unwind the updates and compare to the stored states at previous blocks
-    for block_number in range(_END_BLOCK + 1, _START_BLOCK, -1):
+    for block_number in range(end_block + 1, start_block, -1):
         lp.restore_state_before_block(block_number)
         assert lp.state == block_states[block_number - 1]
 
@@ -254,8 +254,8 @@ def test_reorg(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
 def test_discard_before_finalized(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
     lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
 
-    _START_BLOCK = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
-    _END_BLOCK = _START_BLOCK + 10
+    start_block = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
+    end_block = start_block + 10
 
     # Provide some dummy updates, then simulate a reorg back to the starting state
     starting_liquidity = lp.liquidity
@@ -264,18 +264,18 @@ def test_discard_before_finalized(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3
         wbtc_weth_v3_lp_at_block_17_600_000._update_block: lp.state
     }
 
-    for block_number in range(_START_BLOCK, _END_BLOCK + 1, 1):
+    for block_number in range(start_block, end_block + 1, 1):
         lp.external_update(
             update=UniswapV3PoolExternalUpdate(
                 block_number=block_number,
-                liquidity=starting_liquidity + 10_000 * (block_number - _START_BLOCK),
+                liquidity=starting_liquidity + 10_000 * (block_number - start_block),
             ),
         )
         block_states[block_number] = lp.state
 
-    wbtc_weth_v3_lp_at_block_17_600_000.discard_states_before_block(_END_BLOCK)
+    wbtc_weth_v3_lp_at_block_17_600_000.discard_states_before_block(end_block)
     assert wbtc_weth_v3_lp_at_block_17_600_000._pool_state_archive is not None
-    assert wbtc_weth_v3_lp_at_block_17_600_000._pool_state_archive.keys() == set([_END_BLOCK])
+    assert wbtc_weth_v3_lp_at_block_17_600_000._pool_state_archive.keys() == set([end_block])
 
 
 def test_discard_earlier_than_created(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
@@ -445,7 +445,7 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
     )
 
 
-def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool, dai: Erc20Token) -> None:
+def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
     lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
     # 1 WETH -> WBTC swap
     weth_amount_in = 1 * 10**18
@@ -623,17 +623,17 @@ def test_swap_for_all(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> Non
 
 
 def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
-    _START_BLOCK = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
+    start_block = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
 
     wbtc_weth_v3_lp_at_block_17_600_000.sparse_liquidity_map = False
 
     wbtc_weth_v3_lp_at_block_17_600_000.external_update(
         update=UniswapV3PoolExternalUpdate(
-            block_number=_START_BLOCK,
+            block_number=start_block,
             liquidity=69,
         ),
     )
-    assert wbtc_weth_v3_lp_at_block_17_600_000._update_block == _START_BLOCK
+    assert wbtc_weth_v3_lp_at_block_17_600_000._update_block == start_block
 
     # Ensure liquidity data is available for the manipulated tick range
     tick_spacing = wbtc_weth_v3_lp_at_block_17_600_000.tick_spacing
@@ -646,12 +646,12 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> 
 
     wbtc_weth_v3_lp_at_block_17_600_000.external_update(
         update=UniswapV3PoolExternalUpdate(
-            block_number=_START_BLOCK,
+            block_number=start_block,
             liquidity_change=(new_liquidity, -887160, -887220),
         ),
     )
 
-    assert wbtc_weth_v3_lp_at_block_17_600_000._update_block == _START_BLOCK
+    assert wbtc_weth_v3_lp_at_block_17_600_000._update_block == start_block
 
     # New liquidity is added to liquidityNet at lower tick, subtracted from upper tick.
     assert (
@@ -677,7 +677,7 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> 
     with pytest.raises(ExternalUpdateError):
         wbtc_weth_v3_lp_at_block_17_600_000.external_update(
             update=UniswapV3PoolExternalUpdate(
-                block_number=_START_BLOCK - 1,
+                block_number=start_block - 1,
                 liquidity=10,
             ),
         )
@@ -687,7 +687,7 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> 
     # NOTE: tick = 257907
     wbtc_weth_v3_lp_at_block_17_600_000.external_update(
         update=UniswapV3PoolExternalUpdate(
-            block_number=_START_BLOCK + 1,
+            block_number=start_block + 1,
             liquidity=69_420_000,
         ),
     )
@@ -696,7 +696,7 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> 
     # adjusted
     wbtc_weth_v3_lp_at_block_17_600_000.external_update(
         update=UniswapV3PoolExternalUpdate(
-            block_number=_START_BLOCK + 1,
+            block_number=start_block + 1,
             liquidity_change=(1, 257880, 257940),
         ),
     )
@@ -704,14 +704,14 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> 
 
     wbtc_weth_v3_lp_at_block_17_600_000.external_update(
         update=UniswapV3PoolExternalUpdate(
-            block_number=_START_BLOCK + 2,
+            block_number=start_block + 2,
             tick=69,
         )
     )
     # Update twice to test branches that check for a no-change update
     wbtc_weth_v3_lp_at_block_17_600_000.external_update(
         update=UniswapV3PoolExternalUpdate(
-            block_number=_START_BLOCK + 2,
+            block_number=start_block + 2,
             tick=69,
         )
     )
@@ -722,44 +722,44 @@ def test_mint_and_burn_in_empty_word(fork_mainnet: AnvilFork) -> None:
     Test that minting and burning an equal position inside an empty word results in no net
     liquidity in the mapping, and the removal of the position.
     """
-    TEST_BLOCK_NUMBER = 20751740
-    fork_mainnet.reset(block_number=TEST_BLOCK_NUMBER)
+    block_number = 20751740
+    fork_mainnet.reset(block_number=block_number)
     set_web3(fork_mainnet.w3)
 
     lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
     assert lp.sparse_liquidity_map is True
 
-    EMPTY_WORD = -57
-    LOWER_TICK = -871860
-    UPPER_TICK = LOWER_TICK + lp.tick_spacing
+    empty_word = -57
+    lower_tick = -871860
+    upper_tick = lower_tick + lp.tick_spacing
 
-    assert LOWER_TICK not in lp.tick_data
-    assert UPPER_TICK not in lp.tick_data
+    assert lower_tick not in lp.tick_data
+    assert upper_tick not in lp.tick_data
 
     lp._fetch_tick_data_at_word(-57)
-    assert lp.tick_bitmap[EMPTY_WORD] == UniswapV3BitmapAtWord()
+    assert lp.tick_bitmap[empty_word] == UniswapV3BitmapAtWord()
 
-    assert LOWER_TICK not in lp.tick_data
-    assert UPPER_TICK not in lp.tick_data
+    assert lower_tick not in lp.tick_data
+    assert upper_tick not in lp.tick_data
 
     lp.external_update(
         # Mint
         update=UniswapV3PoolExternalUpdate(
-            block_number=TEST_BLOCK_NUMBER,
-            liquidity_change=(69_420, LOWER_TICK, UPPER_TICK),
+            block_number=block_number,
+            liquidity_change=(69_420, lower_tick, upper_tick),
         )
     )
-    assert LOWER_TICK in lp.tick_data
-    assert UPPER_TICK in lp.tick_data
+    assert lower_tick in lp.tick_data
+    assert upper_tick in lp.tick_data
     lp.external_update(
         # Burn
         update=UniswapV3PoolExternalUpdate(
-            block_number=TEST_BLOCK_NUMBER,
-            liquidity_change=(-69_420, LOWER_TICK, UPPER_TICK),
+            block_number=block_number,
+            liquidity_change=(-69_420, lower_tick, upper_tick),
         )
     )
-    assert LOWER_TICK not in lp.tick_data
-    assert UPPER_TICK not in lp.tick_data
+    assert lower_tick not in lp.tick_data
+    assert upper_tick not in lp.tick_data
 
 
 def test_auto_update(fork_mainnet: AnvilFork) -> None:
@@ -784,12 +784,12 @@ def test_complex_liquidity_transaction_1(fork_mainnet: AnvilFork):
     State values taken from Tenderly: https://dashboard.tenderly.co/tx/mainnet/0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d/state-diff
     """
 
-    STATE_BLOCK = 19619258
-    LP_ADDRESS = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
+    state_block = 19619258
+    lp_address = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
 
-    fork_mainnet.reset(block_number=STATE_BLOCK)
+    fork_mainnet.reset(block_number=state_block)
     set_web3(fork_mainnet.w3)
-    lp = UniswapV3Pool(LP_ADDRESS)
+    lp = UniswapV3Pool(lp_address)
 
     # Verify initial state
     assert lp.liquidity == 14421592867765366
@@ -800,14 +800,14 @@ def test_complex_liquidity_transaction_1(fork_mainnet: AnvilFork):
     lp.external_update(
         # Burn
         update=UniswapV3PoolExternalUpdate(
-            block_number=STATE_BLOCK + 1,
+            block_number=state_block + 1,
             liquidity_change=(-32898296636481156, -2, 0),
         )
     )
     lp.external_update(
         # Swap
         update=UniswapV3PoolExternalUpdate(
-            block_number=STATE_BLOCK + 1,
+            block_number=state_block + 1,
             liquidity=14421592867765366,
             sqrt_price_x96=79231240136335768538165178627,
             tick=0,
@@ -816,7 +816,7 @@ def test_complex_liquidity_transaction_1(fork_mainnet: AnvilFork):
     lp.external_update(
         # Mint
         update=UniswapV3PoolExternalUpdate(
-            block_number=STATE_BLOCK + 1,
+            block_number=state_block + 1,
             liquidity_change=(32881222444111623, -1, 1),
         )
     )
@@ -850,12 +850,12 @@ def test_complex_liquidity_transaction_2(fork_mainnet: AnvilFork):
     State values taken from Tenderly: https://dashboard.tenderly.co/tx/mainnet/0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b/state-diff
     """
 
-    STATE_BLOCK = 19624318
-    LP_ADDRESS = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
+    state_block = 19624318
+    lp_address = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
 
-    fork_mainnet.reset(block_number=STATE_BLOCK)
+    fork_mainnet.reset(block_number=state_block)
     set_web3(fork_mainnet.w3)
-    lp = UniswapV3Pool(LP_ADDRESS)
+    lp = UniswapV3Pool(lp_address)
 
     # Verify initial state
     assert lp.liquidity == 14823044070524674
@@ -866,14 +866,14 @@ def test_complex_liquidity_transaction_2(fork_mainnet: AnvilFork):
     lp.external_update(
         # Burn
         update=UniswapV3PoolExternalUpdate(
-            block_number=STATE_BLOCK + 1,
+            block_number=state_block + 1,
             liquidity_change=(-32832176391550116, 1, 3),
         )
     )
     lp.external_update(
         # Swap
         update=UniswapV3PoolExternalUpdate(
-            block_number=STATE_BLOCK + 1,
+            block_number=state_block + 1,
             liquidity=14823044070524674,
             sqrt_price_x96=79229207277353295810379307480,
             tick=0,
@@ -882,7 +882,7 @@ def test_complex_liquidity_transaction_2(fork_mainnet: AnvilFork):
     lp.external_update(
         # Mint
         update=UniswapV3PoolExternalUpdate(
-            block_number=STATE_BLOCK + 1,
+            block_number=state_block + 1,
             liquidity_change=(32906745642438587, 0, 2),
         )
     )

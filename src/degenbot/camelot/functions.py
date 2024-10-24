@@ -1,5 +1,5 @@
-from ..functions import raise_if_invalid_uint256
-from ..solidly.solidly_functions import general_calc_d
+from degenbot.functions import raise_if_invalid_uint256
+from degenbot.solidly.solidly_functions import general_calc_d
 
 
 def f_camelot(x0: int, y: int) -> int:

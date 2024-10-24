@@ -6,23 +6,26 @@ from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from typing_extensions import Self
 
-from ..config import connection_manager
-from ..exceptions import (
+from degenbot.config import connection_manager
+from degenbot.exceptions import (
     LiquidityPoolError,
     ManagerAlreadyInitialized,
     PoolCreationFailed,
     PoolNotAssociated,
 )
-from ..logging import logger
-from ..registry.all_pools import pool_registry
-from ..types import AbstractLiquidityPool, AbstractPoolManager
-from ..uniswap.deployments import UniswapV2ExchangeDeployment, UniswapV3ExchangeDeployment
-from ..uniswap.v2_functions import generate_v2_pool_address
-from ..uniswap.v2_liquidity_pool import UniswapV2Pool
-from ..uniswap.v3_liquidity_pool import UniswapV3Pool
-from .deployments import FACTORY_DEPLOYMENTS
-from .v3_functions import generate_v3_pool_address
-from .v3_snapshot import UniswapV3LiquiditySnapshot
+from degenbot.logging import logger
+from degenbot.registry.all_pools import pool_registry
+from degenbot.types import AbstractLiquidityPool, AbstractPoolManager
+from degenbot.uniswap.deployments import (
+    FACTORY_DEPLOYMENTS,
+    UniswapV2ExchangeDeployment,
+    UniswapV3ExchangeDeployment,
+)
+from degenbot.uniswap.v2_functions import generate_v2_pool_address
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v3_functions import generate_v3_pool_address
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 
 
 class UniswapV2PoolManager(AbstractPoolManager):
@@ -60,8 +63,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
             raise ManagerAlreadyInitialized(
                 message="A manager has already been initialized for this address. Access it using the get_instance() class method"  # noqa:E501
             )
-        else:
-            self.instances[(chain_id, factory_address)] = self  # type:ignore[assignment]
+        self.instances[(chain_id, factory_address)] = self  # type:ignore[assignment]
 
         try:
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
@@ -86,7 +88,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         self._factory_address = factory_address
         self._deployer_address = deployer_address
         self._pool_init_hash = pool_init_hash
-        self._tracked_pools: dict[ChecksumAddress, AbstractLiquidityPool] = dict()
+        self._tracked_pools: dict[ChecksumAddress, AbstractLiquidityPool] = {}
         self._untracked_pools: set[ChecksumAddress] = set()
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -108,7 +110,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         pool_class_kwargs: dict[str, Any] | None,
     ) -> Pool:
         if pool_class_kwargs is None:
-            pool_class_kwargs = dict()
+            pool_class_kwargs = {}
 
         return self.Pool(
             address=pool_address,
@@ -150,9 +152,8 @@ class UniswapV2PoolManager(AbstractPoolManager):
             if pool_from_registry.factory == self._factory_address:
                 self._add_tracked_pool(pool_from_registry)
                 return pool_from_registry
-            else:
-                self._untracked_pools.add(pool_address)
-                raise PoolNotAssociated(pool_address)
+            self._untracked_pools.add(pool_address)
+            raise PoolNotAssociated(pool_address)
 
         try:
             new_pool = self._build_pool(
@@ -237,8 +238,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
             raise ManagerAlreadyInitialized(
                 message="A manager has already been initialized for this address. Access it using the get_instance() class method"  # noqa:E501
             )
-        else:
-            self.instances[(chain_id, factory_address)] = self  # type:ignore[assignment]
+        self.instances[(chain_id, factory_address)] = self  # type:ignore[assignment]
 
         try:
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
@@ -264,7 +264,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
         self._deployer_address = deployer_address
         self._pool_init_hash = pool_init_hash
         self._snapshot = snapshot
-        self._tracked_pools: dict[ChecksumAddress, AbstractLiquidityPool] = dict()
+        self._tracked_pools: dict[ChecksumAddress, AbstractLiquidityPool] = {}
         self._untracked_pools: set[ChecksumAddress] = set()
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -307,7 +307,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
         pool_class_kwargs: dict[str, Any] | None,
     ) -> Pool:
         if pool_class_kwargs is None:
-            pool_class_kwargs = dict()
+            pool_class_kwargs = {}
 
         if self._snapshot is not None:
             pool_class_kwargs.update(
@@ -359,9 +359,8 @@ class UniswapV3PoolManager(AbstractPoolManager):
             if pool_from_registry.factory == self._factory_address:
                 self._add_tracked_pool(pool_from_registry)
                 return pool_from_registry
-            else:
-                self._untracked_pools.add(pool_address)
-                raise PoolNotAssociated(pool_address)
+            self._untracked_pools.add(pool_address)
+            raise PoolNotAssociated(pool_address)
 
         try:
             new_pool = self._build_pool(

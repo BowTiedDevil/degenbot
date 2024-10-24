@@ -1,4 +1,4 @@
-from ..uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
+from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 
 
 class SushiswapV2PoolManager(UniswapV2PoolManager): ...

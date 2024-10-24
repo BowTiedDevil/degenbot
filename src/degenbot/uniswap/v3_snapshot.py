@@ -1,6 +1,7 @@
 # TODO: support unwinding updates for re-org
 
 
+import pathlib
 from io import TextIOWrapper
 from typing import Any, TextIO
 
@@ -14,11 +15,11 @@ from web3.contract.base_contract import BaseContractEvent
 from web3.types import EventData, FilterParams, LogReceipt
 from web3.utils import get_event_abi
 
-from ..config import connection_manager
-from ..exceptions import DegenbotValueError
-from ..logging import logger
-from .abi import UNISWAP_V3_POOL_ABI
-from .types import (
+from degenbot.config import connection_manager
+from degenbot.exceptions import DegenbotValueError
+from degenbot.logging import logger
+from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
+from degenbot.uniswap.types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3LiquidityEvent,
@@ -43,7 +44,7 @@ class UniswapV3LiquiditySnapshot:
             case TextIOWrapper():
                 json_liquidity_snapshot = ujson.load(file)
             case str():
-                with open(file) as file_handle:
+                with pathlib.Path(file).open() as file_handle:
                     json_liquidity_snapshot = ujson.load(file_handle)
             case _:  # pragma: no cover
                 raise DegenbotValueError(message=f"Unrecognized file type {type(file)}")
@@ -70,7 +71,7 @@ class UniswapV3LiquiditySnapshot:
             f"Loaded LP snapshot: {len(json_liquidity_snapshot)} pools @ block {self.newest_block}"
         )
 
-        self._liquidity_events: dict[ChecksumAddress, list[UniswapV3LiquidityEvent]] = dict()
+        self._liquidity_events: dict[ChecksumAddress, list[UniswapV3LiquidityEvent]] = {}
 
     @property
     def chain_id(self) -> int:
@@ -145,16 +146,15 @@ class UniswapV3LiquiditySnapshot:
 
                 if end_block == to_block:
                     break
-                else:
-                    start_block = end_block + 1
+                start_block = end_block + 1
 
         logger.info(f"Updated snapshot to block {to_block}")
         self.newest_block = to_block
 
     def get_new_liquidity_updates(self, pool_address: str) -> list[UniswapV3PoolExternalUpdate]:
         pool_address = to_checksum_address(pool_address)
-        pool_updates = self._liquidity_events.get(pool_address, list())
-        self._liquidity_events[pool_address] = list()
+        pool_updates = self._liquidity_events.get(pool_address, [])
+        self._liquidity_events[pool_address] = []
 
         # Liquidity events from a block prior to the current update block will be rejected, so they
         # must be applied in chronological order
@@ -183,7 +183,7 @@ class UniswapV3LiquiditySnapshot:
                 "tick_bitmap"
             ]
         except KeyError:
-            return dict()
+            return {}
         else:
             return tick_bitmap
 

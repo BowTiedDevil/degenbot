@@ -1,11 +1,13 @@
 import contextlib
+from typing import TYPE_CHECKING
 
-from eth_typing import ChecksumAddress
+if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from typing_extensions import Self
 
-from ..exceptions import DegenbotValueError, RegistryAlreadyInitialized
-from ..types import AbstractLiquidityPool, AbstractRegistry
+from degenbot.exceptions import DegenbotValueError, RegistryAlreadyInitialized
+from degenbot.types import AbstractLiquidityPool, AbstractRegistry
 
 
 class PoolRegistry(AbstractRegistry):
@@ -28,7 +30,7 @@ class PoolRegistry(AbstractRegistry):
                 ChecksumAddress,  # pool address
             ],
             AbstractLiquidityPool,
-        ] = dict()
+        ] = {}
 
     def get(self, pool_address: str, chain_id: int) -> AbstractLiquidityPool | None:
         return self._all_pools.get(

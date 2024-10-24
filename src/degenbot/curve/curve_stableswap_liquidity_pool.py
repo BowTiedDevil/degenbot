@@ -21,27 +21,28 @@ from web3 import Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
-from ..config import connection_manager
-from ..constants import ZERO_ADDRESS
-from ..erc20_token import Erc20Token
-from ..exceptions import (
+from degenbot.config import connection_manager
+from degenbot.constants import ZERO_ADDRESS
+from degenbot.curve.deployments import (
+    BROKEN_CURVE_V1_POOLS,
+    CACHED_CURVE_V1_POOL_ATTRIBUTES,
+    CURVE_V1_FACTORY_ADDRESS,
+    CURVE_V1_REGISTRY_ADDRESS,
+)
+from degenbot.erc20_token import Erc20Token
+from degenbot.exceptions import (
     BrokenPool,
     DegenbotValueError,
     EVMRevertError,
     InvalidSwapInputAmount,
     NoLiquidity,
 )
-from ..functions import encode_function_calldata, get_number_for_block_identifier, raw_call
-from ..logging import logger
-from ..managers.erc20_token_manager import Erc20TokenManager
-from ..registry.all_pools import pool_registry
-from ..types import AbstractLiquidityPool
-from .deployments import (
-    BROKEN_CURVE_V1_POOLS,
-    CACHED_CURVE_V1_POOL_ATTRIBUTES,
-    CURVE_V1_FACTORY_ADDRESS,
-    CURVE_V1_REGISTRY_ADDRESS,
-)
+from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
+from degenbot.logging import logger
+from degenbot.managers.erc20_token_manager import Erc20TokenManager
+from degenbot.registry.all_pools import pool_registry
+from degenbot.types import AbstractLiquidityPool
+
 from .types import (
     CurveStableSwapPoolAttributes,
     CurveStableswapPoolState,
@@ -225,26 +226,43 @@ class CurveStableswapPool(AbstractLiquidityPool):
         def get_coin_index_type() -> str:
             # Identify the coins input format (int128 or uint256)
             # Some contracts accept token_id as an int128, some accept uint256
-            for _type in ["int128", "uint256"]:
-                try:
-                    eth_abi.abi.decode(
-                        types=["address"],
-                        data=w3.eth.call(
-                            transaction={
-                                "to": self.address,
-                                "data": Web3.keccak(text=f"coins({_type})")[:4]
-                                + eth_abi.abi.encode(types=[_type], args=[0]),
-                            },
-                            block_identifier=state_block,
-                        ),
-                    )
-                except (
-                    InsufficientDataBytes,
-                    web3.exceptions.ContractLogicError,
-                ):
-                    continue
-                else:
-                    return _type
+            _type = "int128"
+            with contextlib.suppress(
+                InsufficientDataBytes,
+                web3.exceptions.ContractLogicError,
+            ):
+                eth_abi.abi.decode(
+                    types=["address"],
+                    data=w3.eth.call(
+                        transaction={
+                            "to": self.address,
+                            "data": Web3.keccak(text=f"coins({_type})")[:4]
+                            + eth_abi.abi.encode(types=[_type], args=[0]),
+                        },
+                        block_identifier=state_block,
+                    ),
+                )
+
+                return _type
+
+            _type = "uint256"
+            with contextlib.suppress(
+                InsufficientDataBytes,
+                web3.exceptions.ContractLogicError,
+            ):
+                eth_abi.abi.decode(
+                    types=["address"],
+                    data=w3.eth.call(
+                        transaction={
+                            "to": self.address,
+                            "data": Web3.keccak(text=f"coins({_type})")[:4]
+                            + eth_abi.abi.encode(types=[_type], args=[0]),
+                        },
+                        block_identifier=state_block,
+                    ),
+                )
+
+                return _type
 
             raise DegenbotValueError(
                 message="Could not determine input type for pool"
@@ -266,7 +284,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                         block_identifier=state_block,
                     )
                     token_addresses.append(to_checksum_address(token_address))
-                except web3.exceptions.ContractLogicError:
+                except web3.exceptions.ContractLogicError:  # noqa:PERF203
                     break
 
             return token_addresses
@@ -317,7 +335,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 CURVE_V1_REGISTRY_ADDRESS,
                 CURVE_V1_FACTORY_ADDRESS,
             ):
-                try:
+                with contextlib.suppress(Web3Exception):
                     (result,) = raw_call(
                         w3=w3,
                         address=contract_address,
@@ -328,9 +346,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
                         return_types=["bool"],
                         block_identifier=state_block,
                     )
-                except Web3Exception:
-                    continue
-                else:
                     is_meta_results.append(cast(bool, result))
 
             return any(is_meta_results)
@@ -501,7 +516,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 assert isinstance(base_pool, CurveStableswapPool)
 
             self.base_pool = base_pool
-            self.tokens_underlying = tuple([self.tokens[0]] + list(self.base_pool.tokens))
+            self.tokens_underlying = (self.tokens[0], *self.base_pool.tokens)
 
             self.base_cache_updated: int | None = None
             with contextlib.suppress(web3.exceptions.ContractLogicError):
@@ -596,7 +611,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             message=CurveStableSwapPoolStateUpdated(self.state),
         )
 
-    def _A(self, timestamp: int | None = None) -> int:
+    def _a(self, timestamp: int | None = None) -> int:
         """
         Handle ramping A up or down
         """
@@ -623,35 +638,35 @@ class CurveStableswapPool(AbstractLiquidityPool):
             if TYPE_CHECKING:
                 assert timestamp is not None
 
-        A1 = self.future_a_coefficient
-        t1 = self.future_a_coefficient_time
+        a_1 = self.future_a_coefficient
+        t_1 = self.future_a_coefficient_time
 
         if TYPE_CHECKING:
-            assert A1 is not None
-            assert t1 is not None
+            assert a_1 is not None
+            assert t_1 is not None
 
         # Modified from contract template to check timestamp argument instead
         # of block.timestamp
-        if timestamp < t1:
-            A0 = self.initial_a_coefficient
-            t0 = self.initial_a_coefficient_time
+        if timestamp < t_1:
+            a_0 = self.initial_a_coefficient
+            t_0 = self.initial_a_coefficient_time
             if TYPE_CHECKING:
-                assert A0 is not None
-                assert t0 is not None
-            if A1 > A0:
-                scaled_A = A0 + (A1 - A0) * (timestamp - t0) // (t1 - t0)
+                assert a_0 is not None
+                assert t_0 is not None
+            if a_1 > a_0:
+                scaled_a = a_0 + (a_1 - a_0) * (timestamp - t_0) // (t_1 - t_0)
             else:
-                scaled_A = A0 - (A0 - A1) * (timestamp - t0) // (t1 - t0)
+                scaled_a = a_0 - (a_0 - a_1) * (timestamp - t_0) // (t_1 - t_0)
         else:
-            scaled_A = A1
+            scaled_a = a_1
 
-        return scaled_A
+        return scaled_a
 
     def _get_scaled_redemption_price(self, block_number: int) -> int:
         with contextlib.suppress(KeyError):
             return self._cached_scaled_redemption_price[block_number]
 
-        REDEMPTION_PRICE_SCALE = 10**9
+        redemption_price_scale = 10**9
 
         w3 = connection_manager.get_web3(self.chain_id)
 
@@ -678,7 +693,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 block_identifier=block_number,
             ),
         )
-        result = rate // REDEMPTION_PRICE_SCALE
+        result = rate // redemption_price_scale
         self._cached_scaled_redemption_price[block_number] = result
         return result
 
@@ -704,11 +719,10 @@ class CurveStableswapPool(AbstractLiquidityPool):
         def _dynamic_fee(xpi: int, xpj: int, _fee: int, _feemul: int) -> int:
             if _feemul <= self.FEE_DENOMINATOR:
                 return _fee
-            else:
-                xps2 = (xpi + xpj) ** 2
-                return (_feemul * _fee) // (
-                    (_feemul - self.FEE_DENOMINATOR) * 4 * xpi * xpj // xps2 + self.FEE_DENOMINATOR
-                )
+            xps2 = (xpi + xpj) ** 2
+            return (_feemul * _fee) // (
+                (_feemul - self.FEE_DENOMINATOR) * 4 * xpi * xpj // xps2 + self.FEE_DENOMINATOR
+            )
 
         result: int
 
@@ -755,7 +769,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             result = (dy - fee) * self.PRECISION // rates[j]
             return result
 
-        elif self.address == "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d":
+        if self.address == "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d":
             rates = [
                 self._get_scaled_redemption_price(block_number=block_number),
                 self._get_virtual_price(block_number=block_number),
@@ -768,7 +782,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             result = (dy - fee) * self.PRECISION // rates[j]
             return result
 
-        elif self.is_metapool:
+        if self.is_metapool:
             rates = self.rate_multipliers.copy()
             if self.address in (
                 "0xC61557C5d177bd7DC889A3b621eEC333e168f68A",
@@ -786,18 +800,18 @@ class CurveStableswapPool(AbstractLiquidityPool):
             result = (dy - _fee) * self.PRECISION // rates[j]
             return result
 
-        elif self.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
+        if self.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
             # TODO: check if any functions (price_scale, gamma, D, fee_calc) can be calculated
             # off-chain
 
-            def _D(block_number: int) -> int:
+            def _d(block_number: int) -> int:
                 with contextlib.suppress(KeyError):
                     return self._cached_contract_D[block_number]
 
                 w3 = connection_manager.get_web3(self.chain_id)
 
-                D: int
-                (D,) = eth_abi.abi.decode(
+                d: int
+                (d,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
                         transaction={
@@ -807,8 +821,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
                         block_identifier=block_number,
                     ),
                 )
-                self._cached_contract_D[block_number] = D
-                return D
+                self._cached_contract_D[block_number] = d
+                return d
 
             def _gamma(block_number: int) -> int:
                 with contextlib.suppress(KeyError):
@@ -834,12 +848,12 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 with contextlib.suppress(KeyError):
                     return self._cached_price_scale[block_number]
 
-                N_COINS = len(self.tokens)
+                n_coins = len(self.tokens)
 
                 w3 = connection_manager.get_web3(self.chain_id)
 
-                price_scale = [0] * (N_COINS - 1)
-                for token_index in range(N_COINS - 1):
+                price_scale = [0] * (n_coins - 1)
+                for token_index in range(n_coins - 1):
                     (price_scale[token_index],) = eth_abi.abi.decode(
                         types=["uint256"],
                         data=w3.eth.call(
@@ -857,78 +871,79 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 self._cached_price_scale[block_number] = price_scale
                 return price_scale
 
-            def _newton_y(ann: int, gamma: int, xp: list[int], D: int, token_index: int) -> int:
+            def _newton_y(ann: int, gamma: int, xp: list[int], d: int, token_index: int) -> int:
                 """
                 Calculating xp[i] given other balances xp[0..N_COINS-1] and invariant D
                 _ann = A * N**N
                 """
 
-                N_COINS = len(self.tokens)
-                A_MULTIPLIER = self.A_PRECISION
+                n_coins = len(self.tokens)
+                a_multiplier = self.A_PRECISION
 
                 # Safety checks
                 assert (
-                    N_COINS**N_COINS * A_MULTIPLIER - 1
+                    n_coins**n_coins * a_multiplier - 1
                     < ann
-                    < 10000 * N_COINS**N_COINS * A_MULTIPLIER + 1
+                    < 10000 * n_coins**n_coins * a_multiplier + 1
                 ), "unsafe value for A"
                 assert 10**10 - 1 < gamma < 10**16 + 1, "unsafe values for gamma"
-                assert 10**17 - 1 < D < 10**15 * 10**18 + 1, "unsafe values for D"
+                assert 10**17 - 1 < d < 10**15 * 10**18 + 1, "unsafe values for D"
 
                 for index in range(3):
                     if index != token_index:
-                        frac = xp[index] * 10**18 // D
+                        frac = xp[index] * 10**18 // d
                         assert (
                             10**16 - 1 < frac < 10**20 + 1
                         ), f"{frac=} out of range"  # dev: unsafe values x[i]
 
-                y = D // N_COINS
-                K0_i = 10**18
-                S_i = 0
+                y = d // n_coins
+                k_0_i = 10**18
+                s_i = 0
 
                 x_sorted = xp.copy()
                 x_sorted[token_index] = 0
                 x_sorted = sorted(x_sorted, reverse=True)  # From high to low
 
-                convergence_limit = max(x_sorted[0] // 10**14, D // 10**14, 100)
-                for _j in range(2, N_COINS + 1):
-                    _x = x_sorted[N_COINS - _j]
-                    y = y * D // (_x * N_COINS)  # Small _x first
-                    S_i += _x
+                convergence_limit = max(x_sorted[0] // 10**14, d // 10**14, 100)
+                for _j in range(2, n_coins + 1):
+                    _x = x_sorted[n_coins - _j]
+                    y = y * d // (_x * n_coins)  # Small _x first
+                    s_i += _x
 
-                for _k in range(N_COINS - 1):
-                    K0_i = K0_i * x_sorted[_k] * N_COINS // D  # Large _x first
+                for _k in range(n_coins - 1):
+                    k_0_i = k_0_i * x_sorted[_k] * n_coins // d  # Large _x first
 
                 for _ in range(255):
                     y_prev = y
 
-                    K0 = K0_i * y * N_COINS // D
-                    S = S_i + y
+                    k_0 = k_0_i * y * n_coins // d
+                    s = s_i + y
 
                     _g1k0 = gamma + 10**18
-                    _g1k0 = _g1k0 - K0 + 1 if _g1k0 > K0 else K0 - _g1k0 + 1
+                    _g1k0 = _g1k0 - k_0 + 1 if _g1k0 > k_0 else k_0 - _g1k0 + 1
 
-                    mul1 = 10**18 * D // gamma * _g1k0 // gamma * _g1k0 * A_MULTIPLIER // ann
-                    mul2 = 10**18 + (2 * 10**18) * K0 // _g1k0
+                    mul1 = 10**18 * d // gamma * _g1k0 // gamma * _g1k0 * a_multiplier // ann
+                    mul2 = 10**18 + (2 * 10**18) * k_0 // _g1k0
 
-                    yfprime = 10**18 * y + S * mul2 + mul1
-                    _dyfprime = D * mul2
+                    yfprime = 10**18 * y + s * mul2 + mul1
+                    _dyfprime = d * mul2
+
                     if yfprime < _dyfprime:
                         y = y_prev // 2
                         continue
-                    else:
-                        yfprime -= _dyfprime
+
+                    yfprime -= _dyfprime
                     fprime = yfprime // y
 
                     y_minus = mul1 // fprime
-                    y_plus = (yfprime + 10**18 * D) // fprime + y_minus * 10**18 // K0
-                    y_minus += 10**18 * S // fprime
+                    y_plus = (yfprime + 10**18 * d) // fprime + y_minus * 10**18 // k_0
+                    y_minus += 10**18 * s // fprime
 
                     y = y_prev // 2 if y_plus < y_minus else y_plus - y_minus
                     diff = y - y_prev if y > y_prev else y_prev - y
 
                     if diff < max(convergence_limit, y // 10**14):
-                        frac = y * 10**18 // D
+                        frac = y * 10**18 // d
                         assert 10**16 - 1 < frac < 10**20 + 1, "unsafe value for y"
                         return y
 
@@ -943,23 +958,23 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 K = prod(x) / (sum(x) / N)**N
                 (all normalized to 1e18)
                 """
-                K = 10**18
-                S = 0
+                k = 10**18
+                s = 0
                 for x_i in x:
-                    S += x_i
+                    s += x_i
                 # Could be good to pre-sort x, but it is used only for dynamic fee,
                 # so that is not so important
                 for x_i in x:
-                    K = K * N_COINS * x_i // S
+                    k = k * n_coins * x_i // s
                 if fee_gamma > 0:
-                    K = fee_gamma * 10**18 // (fee_gamma + 10**18 - K)
-                return K
+                    k = fee_gamma * 10**18 // (fee_gamma + 10**18 - k)
+                return k
 
-            N_COINS = len(self.tokens)
+            n_coins = len(self.tokens)
 
             assert i != j, "coin index out of range"
-            assert i < N_COINS, "coin index out of range"
-            assert j < N_COINS, "coin index out of range"
+            assert i < n_coins, "coin index out of range"
+            assert j < n_coins, "coin index out of range"
             assert dx > 0, "do not exchange 0 coins"
 
             precisions = [
@@ -974,13 +989,13 @@ class CurveStableswapPool(AbstractLiquidityPool):
             xp[i] += dx
             xp[0] *= precisions[0]
 
-            for k in range(N_COINS - 1):
+            for k in range(n_coins - 1):
                 xp[k + 1] = xp[k + 1] * price_scale[k] * precisions[k + 1] // self.PRECISION
 
-            A = self._A()
+            amp = self._a()
             gamma = _gamma(block_number=block_number)
-            D = _D(block_number=block_number)
-            y = _newton_y(A, gamma, xp, D, j)
+            d = _d(block_number=block_number)
+            y = _newton_y(amp, gamma, xp, d, j)
             dy = xp[j] - y - 1
 
             xp[j] = y
@@ -994,7 +1009,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             dy -= fee_calc * dy // 10**10
             return dy
 
-        elif self.address in (
+        if self.address in (
             "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
             "0x7fC77b5c7614E1533320Ea6DDc2Eb61fa00A9714",
             "0x93054188d876f558f4a66B2EF1d97d16eDf0895B",
@@ -1008,7 +1023,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             _fee = self.fee * dy // self.FEE_DENOMINATOR
             return dy - _fee
 
-        elif self.address in (
+        if self.address in (
             "0x0Ce6a5fF5217e38315f87032CF90686C96627CAA",
             "0x19b080FE1ffA0553469D20Ca36219F17Fcf03859",
             "0x1C5F80b6B68A9E1Ef25926EeE00b5255791b996B",
@@ -1050,7 +1065,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             result = (dy - fee) * self.PRECISION // rates[j]
             return result
 
-        elif self.address in (
+        if self.address in (
             "0x04c90C198b2eFF55716079bc06d7CCc4aa4d7512",
             "0x320B564Fb9CF36933eC507a846ce230008631fd3",
             "0x48fF31bBbD8Ab553Ebe7cBD84e1eA3dBa8f54957",
@@ -1070,23 +1085,23 @@ class CurveStableswapPool(AbstractLiquidityPool):
             result = dy - fee
             return result
 
-        elif self.address in (
+        if self.address in (
             "0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492",
             "0xBfAb6FA95E0091ed66058ad493189D2cB29385E6",
         ):
-            ETH_COIN_INDEX = 0
-            DERIVATIVE_ETH_COIN_INDEX = 1
+            eth_coin_index = 0
+            derivative_eth_coin_index = 1
 
             balances = [
-                self.tokens[ETH_COIN_INDEX].get_balance(
+                self.tokens[eth_coin_index].get_balance(
                     address=self.address, block_identifier=block_number
                 )
-                - self._get_admin_balance(token_index=ETH_COIN_INDEX, block_number=block_number),
-                self.tokens[DERIVATIVE_ETH_COIN_INDEX].get_balance(
+                - self._get_admin_balance(token_index=eth_coin_index, block_number=block_number),
+                self.tokens[derivative_eth_coin_index].get_balance(
                     address=self.address, block_identifier=block_number
                 )
                 - self._get_admin_balance(
-                    token_index=DERIVATIVE_ETH_COIN_INDEX, block_number=block_number
+                    token_index=derivative_eth_coin_index, block_number=block_number
                 ),
             ]
             rates = self._stored_rates_from_oracle(block_number=block_number)
@@ -1098,7 +1113,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             result = (dy - fee) * self.PRECISION // rates[j]
             return result
 
-        elif self.address in (
+        if self.address in (
             "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
             "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
             "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
@@ -1111,7 +1126,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             fee = self.fee * dy // self.FEE_DENOMINATOR
             return dy - fee
 
-        elif self.address in ("0x2dded6Da1BF5DBdF597C45fcFaa3194e53EcfeAF",):
+        if self.address in ("0x2dded6Da1BF5DBdF597C45fcFaa3194e53EcfeAF",):
             assert self.precision_multipliers == [1, 10**12, 10**12]
             rates = self._stored_rates_from_cytokens(block_number=block_number)
             xp = self._xp(rates=rates, balances=pool_balances)
@@ -1121,7 +1136,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             result = (dy - (self.fee * dy // self.FEE_DENOMINATOR)) * self.PRECISION // rates[j]
             return result
 
-        elif self.address in ("0x06364f10B501e868329afBc005b3492902d6C763",):
+        if self.address in ("0x06364f10B501e868329afBc005b3492902d6C763",):
             rates = self._stored_rates_from_ytokens(block_number=block_number)
             xp = self._xp(rates=rates, balances=pool_balances)
             x = xp[i] + (dx * rates[i] // self.PRECISION)
@@ -1131,7 +1146,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             result = dy - fee
             return result
 
-        elif self.address in (
+        if self.address in (
             "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
             "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
         ):
@@ -1144,7 +1159,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             result = dy - fee
             return result
 
-        elif self.address in ("0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2",):
+        if self.address in ("0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2",):
             rates = self._stored_rates_from_aeth(block_number=block_number)
             xp = self._xp(rates=rates, balances=pool_balances)
             x = xp[i] + (dx * rates[i] // self.PRECISION)
@@ -1154,7 +1169,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             result = (dy - fee) * self.PRECISION // rates[j]
             return result
 
-        elif self.address in ("0xF9440930043eb3997fc70e1339dBb11F341de7A8",):
+        if self.address in ("0xF9440930043eb3997fc70e1339dBb11F341de7A8",):
             rates = self._stored_rates_from_reth(block_number=block_number)
             xp = self._xp(rates=rates, balances=pool_balances)
             x = xp[i] + (dx * rates[i] // self.PRECISION)
@@ -1164,7 +1179,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             result = (dy - fee) * self.PRECISION // rates[j]
             return result
 
-        elif self.address in ("0xEB16Ae0052ed37f479f7fe63849198Df1765a733",):
+        if self.address in ("0xEB16Ae0052ed37f479f7fe63849198Df1765a733",):
             live_balances = [
                 token.get_balance(self.address, block_identifier=block_number)
                 for token in self.tokens
@@ -1194,7 +1209,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             )
             return dy - _fee
 
-        elif self.address in ("0xDeBF20617708857ebe4F679508E7b7863a8A8EeE",):
+        if self.address in ("0xDeBF20617708857ebe4F679508E7b7863a8A8EeE",):
             live_balances = [
                 token.get_balance(self.address, block_identifier=block_number)
                 for token in self.tokens
@@ -1227,15 +1242,16 @@ class CurveStableswapPool(AbstractLiquidityPool):
             )
             result = dy - _fee
             return result
-        else:
-            rates = self.rate_multipliers
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            result = (dy - fee) * self.PRECISION // rates[j]
-            return result
+
+        # default pool behavior
+        rates = self.rate_multipliers
+        xp = self._xp(rates=rates, balances=pool_balances)
+        x = xp[i] + (dx * rates[i] // self.PRECISION)
+        y = self._get_y(i, j, x, xp)
+        dy = xp[j] - y - 1
+        fee = self.fee * dy // self.FEE_DENOMINATOR
+        result = (dy - fee) * self.PRECISION // rates[j]
+        return result
 
     def _get_dy_underlying(
         self,
@@ -1258,9 +1274,9 @@ class CurveStableswapPool(AbstractLiquidityPool):
         block_number = get_number_for_block_identifier(block_identifier, w3)
 
         if self.address == "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d":
-            BASE_N_COINS = len(self.base_pool.tokens)
-            MAX_COIN = len(self.tokens) - 1
-            REDEMPTION_COIN = 0
+            base_n_coins = len(self.base_pool.tokens)
+            max_coin = len(self.tokens) - 1
+            redemption_coin = 0
 
             # dx and dy in underlying units
             rates = [
@@ -1270,10 +1286,10 @@ class CurveStableswapPool(AbstractLiquidityPool):
             xp = self._xp(rates=rates, balances=pool_balances)
 
             # Use base_i or base_j if they are >= 0
-            base_i = i - MAX_COIN
-            base_j = j - MAX_COIN
-            meta_i = MAX_COIN
-            meta_j = MAX_COIN
+            base_i = i - max_coin
+            base_j = j - max_coin
+            meta_i = max_coin
+            meta_j = max_coin
             if base_i < 0:
                 meta_i = i
             if base_j < 0:
@@ -1288,7 +1304,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             elif base_j < 0:
                 # i is from BasePool
                 # At first, get the amount of pool tokens
-                base_inputs = [0] * BASE_N_COINS
+                base_inputs = [0] * base_n_coins
                 base_inputs[base_i] = dx
                 # Token amount transformed to underlying "dollars"
                 x = (
@@ -1306,7 +1322,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 # Accounting for deposit/withdraw fees approximately
                 x -= x * self.base_pool.fee // (2 * self.FEE_DENOMINATOR)
                 # Adding number of pool tokens
-                x += xp[MAX_COIN]
+                x += xp[max_coin]
             else:
                 # If both are from the base pool
                 return self.base_pool._get_dy(
@@ -1320,7 +1336,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             y = self._get_y(meta_i, meta_j, x, xp)
             dy = xp[meta_j] - y - 1
             dy = dy - self.fee * dy // self.FEE_DENOMINATOR
-            if j == REDEMPTION_COIN:
+            if j == redemption_coin:
                 dy = (dy * self.PRECISION) // self._get_scaled_redemption_price(
                     block_number=block_number
                 )
@@ -1337,12 +1353,12 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
             return dy
 
-        elif self.address in (
+        if self.address in (
             "0xC61557C5d177bd7DC889A3b621eEC333e168f68A",
             "0x4606326b4Db89373F5377C316d3b0F6e55Bc6A20",
         ):
-            BASE_N_COINS = len(self.base_pool.tokens)
-            MAX_COIN = len(self.tokens) - 1
+            base_n_coins = len(self.base_pool.tokens)
+            max_coin = len(self.tokens) - 1
 
             rates = [self.PRECISION, self._get_virtual_price(block_number=block_number)]
             xp = self._xp(rates=rates, balances=pool_balances)
@@ -1353,10 +1369,10 @@ class CurveStableswapPool(AbstractLiquidityPool):
             meta_j = 0
 
             if i != 0:
-                base_i = i - MAX_COIN
+                base_i = i - max_coin
                 meta_i = 1
             if j != 0:
-                base_j = j - MAX_COIN
+                base_j = j - max_coin
                 meta_j = 1
 
             if i == 0:
@@ -1364,7 +1380,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             elif j == 0:
                 # i is from BasePool
                 # At first, get the amount of pool tokens
-                base_inputs = [0] * BASE_N_COINS
+                base_inputs = [0] * base_n_coins
                 base_inputs[base_i] = dx
                 # Token amount transformed to underlying "dollars"
                 x = (
@@ -1382,7 +1398,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 # Accounting for deposit/withdraw fees approximately
                 x -= x * self.base_pool.fee // (2 * self.FEE_DENOMINATOR)
                 # Adding number of pool tokens
-                x += xp[MAX_COIN]
+                x += xp[max_coin]
             else:
                 # If both are from the base pool
                 return self.base_pool._get_dy(
@@ -1412,80 +1428,77 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
             return dy
 
-        else:
-            rates = self.rate_multipliers.copy()
+        rates = self.rate_multipliers.copy()
 
-            vp_rate = self._get_virtual_price(block_number=block_number)
-            rates[-1] = vp_rate
+        vp_rate = self._get_virtual_price(block_number=block_number)
+        rates[-1] = vp_rate
 
-            xp = self._xp(rates=rates, balances=pool_balances)
-            precisions = self.precision_multipliers
+        xp = self._xp(rates=rates, balances=pool_balances)
+        precisions = self.precision_multipliers
 
-            BASE_N_COINS = len(self.base_pool.tokens)
-            MAX_COIN = len(self.tokens) - 1
+        base_n_coins = len(self.base_pool.tokens)
+        max_coin = len(self.tokens) - 1
 
-            # Use base_i or base_j if they are >= 0
-            base_i = i - MAX_COIN
-            base_j = j - MAX_COIN
-            meta_i = MAX_COIN
-            meta_j = MAX_COIN
-            if base_i < 0:
-                meta_i = i
-            if base_j < 0:
-                meta_j = j
+        # Use base_i or base_j if they are >= 0
+        base_i = i - max_coin
+        base_j = j - max_coin
+        meta_i = max_coin
+        meta_j = max_coin
+        if base_i < 0:
+            meta_i = i
+        if base_j < 0:
+            meta_j = j
 
-            if base_i < 0:
-                x = xp[i] + dx * precisions[i]
-            elif base_j < 0:
-                # i is from BasePool
-                # At first, get the amount of pool tokens
-                base_inputs = [0] * BASE_N_COINS
-                base_inputs[base_i] = dx
-                # Token amount transformed to underlying "dollars"
-                x = (
-                    self.base_pool._calc_token_amount(
-                        amounts=base_inputs,
-                        deposit=True,
-                        block_identifier=block_number,
-                        override_state=(
-                            override_state.base if override_state is not None else None
-                        ),
-                    )
-                    * vp_rate
-                    // self.PRECISION
-                )
-                # Accounting for deposit/withdraw fees approximately
-                x -= x * self.base_pool.fee // (2 * self.FEE_DENOMINATOR)
-                # Adding number of pool tokens
-                x += xp[MAX_COIN]
-            else:
-                # If both are from the base pool
-                return self.base_pool._get_dy(
-                    i=base_i,
-                    j=base_j,
-                    dx=dx,
+        if base_i < 0:
+            x = xp[i] + dx * precisions[i]
+        elif base_j < 0:
+            # i is from BasePool
+            # At first, get the amount of pool tokens
+            base_inputs = [0] * base_n_coins
+            base_inputs[base_i] = dx
+            # Token amount transformed to underlying "dollars"
+            x = (
+                self.base_pool._calc_token_amount(
+                    amounts=base_inputs,
+                    deposit=True,
                     block_identifier=block_number,
                     override_state=(override_state.base if override_state is not None else None),
                 )
+                * vp_rate
+                // self.PRECISION
+            )
+            # Accounting for deposit/withdraw fees approximately
+            x -= x * self.base_pool.fee // (2 * self.FEE_DENOMINATOR)
+            # Adding number of pool tokens
+            x += xp[max_coin]
+        else:
+            # If both are from the base pool
+            return self.base_pool._get_dy(
+                i=base_i,
+                j=base_j,
+                dx=dx,
+                block_identifier=block_number,
+                override_state=(override_state.base if override_state is not None else None),
+            )
 
-            # This pool is involved only when in-pool assets are used
-            y = self._get_y(meta_i, meta_j, x, xp)
-            dy = xp[meta_j] - y - 1
-            dy = dy - self.fee * dy // self.FEE_DENOMINATOR
+        # This pool is involved only when in-pool assets are used
+        y = self._get_y(meta_i, meta_j, x, xp)
+        dy = xp[meta_j] - y - 1
+        dy = dy - self.fee * dy // self.FEE_DENOMINATOR
 
-            # If output is going via the metapool
-            if base_j < 0:
-                dy //= precisions[meta_j]
-            else:
-                # j is from BasePool
-                # The fee is already accounted for
-                dy, *_ = self.base_pool._calc_withdraw_one_coin(
-                    _token_amount=dy * self.PRECISION // vp_rate,
-                    i=base_j,
-                    block_identifier=block_number,
-                )
+        # If output is going via the metapool
+        if base_j < 0:
+            dy //= precisions[meta_j]
+        else:
+            # j is from BasePool
+            # The fee is already accounted for
+            dy, *_ = self.base_pool._calc_withdraw_one_coin(
+                _token_amount=dy * self.PRECISION // vp_rate,
+                i=base_j,
+                block_identifier=block_number,
+            )
 
-            return dy
+        return dy
 
     def _get_base_cache_updated(self, block_number: int) -> int:
         with contextlib.suppress(KeyError):
@@ -1534,7 +1547,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return self._cached_virtual_price[block_number]
 
-        BASE_CACHE_EXPIRES = 10 * 60  # 10 minutes
+        base_cache_expires = 10 * 60  # 10 minutes
 
         w3 = connection_manager.get_web3(self.chain_id)
         block = w3.eth.get_block(block_identifier=block_number)
@@ -1545,7 +1558,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         base_virtual_price: int
         if (
             self.base_cache_updated is None
-            or timestamp > self.base_cache_updated + BASE_CACHE_EXPIRES
+            or timestamp > self.base_cache_updated + base_cache_expires
         ):
             (base_virtual_price,) = eth_abi.abi.decode(
                 types=["uint256"],
@@ -1581,7 +1594,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         Needed to prevent front-running, not for precise calculations!
         """
 
-        N_COINS = len(self.tokens)
+        n_coins = len(self.tokens)
 
         if override_state is not None:
             pool_balances = override_state.balances.copy()
@@ -1592,22 +1605,22 @@ class CurveStableswapPool(AbstractLiquidityPool):
         block_number = get_number_for_block_identifier(block_identifier, w3)
 
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
-        amp = self._A()
-        D0 = self._get_D(_xp=xp, _amp=amp)
+        amp = self._a()
+        d_0 = self._get_d(_xp=xp, _amp=amp)
 
-        for i in range(N_COINS):
+        for i in range(n_coins):
             if deposit:
                 pool_balances[i] += amounts[i]
             else:
                 pool_balances[i] -= amounts[i]
 
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
-        D1: int = self._get_D(xp, amp)
+        d_1 = self._get_d(xp, amp)
         token_amount: int = self.lp_token.get_total_supply(block_identifier=block_number)
 
-        diff = D1 - D0 if deposit else D0 - D1
+        diff = d_1 - d_0 if deposit else d_0 - d_1
 
-        return diff * token_amount // D0
+        return diff * token_amount // d_0
 
     def _calc_withdraw_one_coin(
         self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
@@ -1615,24 +1628,24 @@ class CurveStableswapPool(AbstractLiquidityPool):
         w3 = connection_manager.get_web3(self.chain_id)
         block_number = get_number_for_block_identifier(block_identifier, w3)
 
-        N_COINS = len(self.tokens)
+        n_coins = len(self.tokens)
 
-        amp = self._A()
+        amp = self._a()
         total_supply = self.lp_token.get_total_supply(block_identifier=block_number)
         precisions = self.precision_multipliers
         xp = self._xp(rates=self.rate_multipliers, balances=self.balances)
-        D0 = self._get_D(xp, amp)
-        D1 = D0 - _token_amount * D0 // total_supply
-        new_y = self._get_y_D(amp, i, xp, D1)
+        d_0 = self._get_d(xp, amp)
+        d_1 = d_0 - _token_amount * d_0 // total_supply
+        new_y = self._get_y_d(amp, i, xp, d_1)
         dy_0 = (xp[i] - new_y) // precisions[i]
 
         xp_reduced = xp.copy()
-        _fee = self.fee * N_COINS // (4 * (N_COINS - 1))
-        for j in range(N_COINS):
-            dx_expected = xp[j] * D1 // D0 - new_y if j == i else xp[j] - xp[j] * D1 // D0
+        _fee = self.fee * n_coins // (4 * (n_coins - 1))
+        for j in range(n_coins):
+            dx_expected = xp[j] * d_1 // d_0 - new_y if j == i else xp[j] - xp[j] * d_1 // d_0
             xp_reduced[j] -= _fee * dx_expected // self.FEE_DENOMINATOR
 
-        dy = xp_reduced[i] - self._get_y_D(amp, i, xp_reduced, D1)
+        dy = xp_reduced[i] - self._get_y_d(amp, i, xp_reduced, d_1)
         dy = (dy - 1) // precisions[i]
 
         return dy, dy_0 - dy, total_supply
@@ -1656,15 +1669,15 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self._cached_admin_balance[block_number, token_index] = admin_balance
         return admin_balance
 
-    def _get_D(self, _xp: list[int], _amp: int) -> int:
-        N_COINS = len(self.tokens)
+    def _get_d(self, _xp: list[int], _amp: int) -> int:
+        n_coins = len(self.tokens)
 
-        S = sum(_xp)
-        if S == 0:
+        s = sum(_xp)
+        if s == 0:
             return 0
 
-        D = S
-        Ann = _amp * N_COINS
+        d = s
+        a_nn = _amp * n_coins
 
         if self.address in (
             "0x06364f10B501e868329afBc005b3492902d6C763",
@@ -1675,16 +1688,16 @@ class CurveStableswapPool(AbstractLiquidityPool):
             "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
         ):
             for _ in range(255):
-                D_P = D
+                d_p = d
                 for _x in _xp:
-                    D_P = D_P * D // (_x * N_COINS)
-                Dprev = D
-                D = (Ann * S + D_P * N_COINS) * D // ((Ann - 1) * D + (N_COINS + 1) * D_P)
-                if Dprev < D:
-                    if D - Dprev <= 1:
-                        return D
-                elif Dprev - D <= 1:
-                    return D
+                    d_p = d_p * d // (_x * n_coins)
+                d_prev = d
+                d = (a_nn * s + d_p * n_coins) * d // ((a_nn - 1) * d + (n_coins + 1) * d_p)
+                if d_prev < d:
+                    if d - d_prev <= 1:
+                        return d
+                elif d_prev - d <= 1:
+                    return d
 
         elif self.address in (
             "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
@@ -1693,16 +1706,16 @@ class CurveStableswapPool(AbstractLiquidityPool):
             "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
         ):
             for _ in range(255):
-                D_P = D
+                d_p = d
                 for _x in _xp:
-                    D_P = D_P * D // (_x * N_COINS + 1)
-                Dprev = D
-                D = (Ann * S + D_P * N_COINS) * D // ((Ann - 1) * D + (N_COINS + 1) * D_P)
-                if Dprev < D:
-                    if D - Dprev <= 1:
-                        return D
-                elif Dprev - D <= 1:
-                    return D
+                    d_p = d_p * d // (_x * n_coins + 1)
+                d_prev = d
+                d = (a_nn * s + d_p * n_coins) * d // ((a_nn - 1) * d + (n_coins + 1) * d_p)
+                if d_prev < d:
+                    if d - d_prev <= 1:
+                        return d
+                elif d_prev - d <= 1:
+                    return d
 
         elif self.address in (
             "0x0AD66FeC8dB84F8A3365ADA04aB23ce607ac6E24",
@@ -1723,18 +1736,18 @@ class CurveStableswapPool(AbstractLiquidityPool):
             "0xD6Ac1CB9019137a896343Da59dDE6d097F710538",
         ):
             for _ in range(255):
-                D_P = D * D // _xp[0] * D // _xp[1] // N_COINS**2
-                Dprev = D
-                D = (
-                    (Ann * S // self.A_PRECISION + D_P * N_COINS)
-                    * D
-                    // ((Ann - self.A_PRECISION) * D // self.A_PRECISION + (N_COINS + 1) * D_P)
+                d_p = d * d // _xp[0] * d // _xp[1] // n_coins**2
+                d_prev = d
+                d = (
+                    (a_nn * s // self.A_PRECISION + d_p * n_coins)
+                    * d
+                    // ((a_nn - self.A_PRECISION) * d // self.A_PRECISION + (n_coins + 1) * d_p)
                 )
-                if Dprev < D:
-                    if D - Dprev <= 1:
-                        return D
-                elif Dprev - D <= 1:
-                    return D
+                if d_prev < d:
+                    if d - d_prev <= 1:
+                        return d
+                elif d_prev - d <= 1:
+                    return d
 
         elif self.address in (
             "0xDC24316b9AE028F1497c275EB9192a3Ea0f67022",
@@ -1742,37 +1755,37 @@ class CurveStableswapPool(AbstractLiquidityPool):
             "0xEB16Ae0052ed37f479f7fe63849198Df1765a733",
         ):
             for _ in range(255):
-                D_P = D
+                d_p = d
                 for _x in _xp:
-                    D_P = D_P * D // (_x * N_COINS + 1)
-                Dprev = D
-                D = (
-                    (Ann * S // self.A_PRECISION + D_P * N_COINS)
-                    * D
-                    // ((Ann - self.A_PRECISION) * D // self.A_PRECISION + (N_COINS + 1) * D_P)
+                    d_p = d_p * d // (_x * n_coins + 1)
+                d_prev = d
+                d = (
+                    (a_nn * s // self.A_PRECISION + d_p * n_coins)
+                    * d
+                    // ((a_nn - self.A_PRECISION) * d // self.A_PRECISION + (n_coins + 1) * d_p)
                 )
-                if Dprev < D:
-                    if D - Dprev <= 1:
-                        return D
-                elif Dprev - D <= 1:
-                    return D
+                if d_prev < d:
+                    if d - d_prev <= 1:
+                        return d
+                elif d_prev - d <= 1:
+                    return d
 
-        else:
-            for _ in range(255):
-                D_P = D
-                for _x in _xp:
-                    D_P = D_P * D // (_x * N_COINS)
-                Dprev = D
-                D = (
-                    (Ann * S // self.A_PRECISION + D_P * N_COINS)
-                    * D
-                    // ((Ann - self.A_PRECISION) * D // self.A_PRECISION + (N_COINS + 1) * D_P)
-                )
-                if Dprev < D:
-                    if D - Dprev <= 1:
-                        return D
-                elif Dprev - D <= 1:
-                    return D
+        # default pool behavior
+        for _ in range(255):
+            d_p = d
+            for _x in _xp:
+                d_p = d_p * d // (_x * n_coins)
+            d_prev = d
+            d = (
+                (a_nn * s // self.A_PRECISION + d_p * n_coins)
+                * d
+                // ((a_nn - self.A_PRECISION) * d // self.A_PRECISION + (n_coins + 1) * d_p)
+            )
+            if d_prev < d:
+                if d - d_prev <= 1:
+                    return d
+            elif d_prev - d <= 1:
+                return d
 
         raise EVMRevertError(
             error=f"_get_D() did not converge for pool {self.address}"
@@ -1793,15 +1806,15 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         # x in the input is converted to the same price/precision
 
-        N_COINS = len(self.tokens)
+        n_coins = len(self.tokens)
 
         assert i != j, "same coin"
         assert j >= 0, "j below zero"
-        assert j < N_COINS, "j above N_COINS"
+        assert j < n_coins, "j above N_COINS"
 
         # should be unreachable, but good for safety
         assert i >= 0
-        assert i < N_COINS
+        assert i < n_coins
 
         if self.address in (
             "0x06364f10B501e868329afBc005b3492902d6C763",
@@ -1822,31 +1835,31 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
                 "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
             ):
-                amp = self._A() // self.A_PRECISION
+                amp = self._a() // self.A_PRECISION
             else:
-                amp = self._A()
+                amp = self._a()
 
-            D = self._get_D(xp, amp)
-            c = D
-            S_ = 0
-            Ann = amp * N_COINS
+            d = self._get_d(xp, amp)
+            c = d
+            s = 0
+            a_nn = amp * n_coins
 
-            for _i in range(N_COINS):
+            for _i in range(n_coins):
                 if _i == i:
                     _x = x
                 elif _i != j:
                     _x = xp[_i]
                 else:
                     continue
-                S_ += _x
-                c = c * D // (_x * N_COINS)
+                s += _x
+                c = c * d // (_x * n_coins)
 
-            c = c * D // (Ann * N_COINS)
-            b = S_ + D // Ann
-            y = D
+            c = c * d // (a_nn * n_coins)
+            b = s + d // a_nn
+            y = d
             for _ in range(255):
                 y_prev = y
-                y = (y * y + c) // (2 * y + b - D)
+                y = (y * y + c) // (2 * y + b - d)
                 if y > y_prev:
                     if y - y_prev <= 1:
                         return y
@@ -1854,29 +1867,29 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     return y
 
         else:
-            amp = self._A()
-            D = self._get_D(xp, amp)
+            amp = self._a()
+            d = self._get_d(xp, amp)
 
-            S_ = 0
-            c = D
-            Ann = amp * N_COINS
+            s = 0
+            c = d
+            a_nn = amp * n_coins
 
-            for _i in range(N_COINS):
+            for _i in range(n_coins):
                 if _i == i:
                     _x = x
                 elif _i != j:
                     _x = xp[_i]
                 else:
                     continue
-                S_ += _x
-                c = c * D // (_x * N_COINS)
+                s += _x
+                c = c * d // (_x * n_coins)
 
-            c = c * D * self.A_PRECISION // (Ann * N_COINS)
-            b = S_ + D * self.A_PRECISION // Ann
-            y = D
+            c = c * d * self.A_PRECISION // (a_nn * n_coins)
+            b = s + d * self.A_PRECISION // a_nn
+            y = d
             for _ in range(255):
                 y_prev = y
-                y = (y * y + c) // (2 * y + b - D)
+                y = (y * y + c) // (2 * y + b - d)
                 if y > y_prev:
                     if y - y_prev <= 1:
                         return y
@@ -1887,7 +1900,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             error=f"_get_y() did not converge for pool {self.address}"
         )  # pragma: no cover
 
-    def _get_y_D(self, A_: int, i: int, xp: list[int], D: int) -> int:
+    def _get_y_d(self, a: int, i: int, xp: list[int], d: int) -> int:
         """
         Calculate x[i] if one reduces D from being calculated for xp to D
 
@@ -1916,32 +1929,32 @@ class CurveStableswapPool(AbstractLiquidityPool):
             x_1 = (x_1**2 + c) / (2*x_1 + b)
             """
 
-            N_COINS = len(self.tokens)
+            n_coins = len(self.tokens)
 
             # x in the input is converted to the same price/precision
 
             assert i >= 0  # dev: i below zero
-            assert i < N_COINS  # dev: i above N_COINS
+            assert i < n_coins  # dev: i above N_COINS
 
-            Ann = A_ * N_COINS
-            c = D
-            S = 0
+            a_nn = a * n_coins
+            c = d
+            s = 0
             _x = 0
 
-            for _i in range(N_COINS):
+            for _i in range(n_coins):
                 if _i != i:
                     _x = xp[_i]
                 else:
                     continue
-                S += _x
-                c = c * D // (_x * N_COINS)
-            b = S + D * self.A_PRECISION // Ann
-            c = c * D * self.A_PRECISION // (Ann * N_COINS)
-            y = D
+                s += _x
+                c = c * d // (_x * n_coins)
+            b = s + d * self.A_PRECISION // a_nn
+            c = c * d * self.A_PRECISION // (a_nn * n_coins)
+            y = d
 
             for _i in range(255):
                 y_prev = y
-                y = (y * y + c) // (2 * y + b - D)
+                y = (y * y + c) // (2 * y + b - d)
                 if y > y_prev:
                     if y - y_prev <= 1:
                         return y
@@ -1949,38 +1962,35 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     return y
             raise EVMRevertError(error=f"_get_y_D() failed to converge for pool {self.address}")
 
-        else:
-            # x in the input is converted to the same price/precision
+        n_coins = len(self.tokens)
 
-            N_COINS = len(self.tokens)
+        assert i >= 0  # dev: i below zero
+        assert i < n_coins  # dev: i above N_COINS
 
-            assert i >= 0  # dev: i below zero
-            assert i < N_COINS  # dev: i above N_COINS
+        c = d
+        s = 0
+        a_nn = a * n_coins
 
-            c = D
-            S_ = 0
-            Ann = A_ * N_COINS
-
-            _x = 0
-            for _i in range(N_COINS):
-                if _i != i:
-                    _x = xp[_i]
-                else:
-                    continue
-                S_ += _x
-                c = c * D // (_x * N_COINS)
-            c = c * D // (Ann * N_COINS)
-            b = S_ + D // Ann
-            y = D
-            for _i in range(255):
-                y_prev = y
-                y = (y * y + c) // (2 * y + b - D)
-                if y > y_prev:
-                    if y - y_prev <= 1:
-                        break
-                elif y_prev - y <= 1:
+        _x = 0
+        for _i in range(n_coins):
+            if _i != i:
+                _x = xp[_i]
+            else:
+                continue
+            s += _x
+            c = c * d // (_x * n_coins)
+        c = c * d // (a_nn * n_coins)
+        b = s + d // a_nn
+        y = d
+        for _i in range(255):
+            y_prev = y
+            y = (y * y + c) // (2 * y + b - d)
+            if y > y_prev:
+                if y - y_prev <= 1:
                     break
-            return y
+            elif y_prev - y <= 1:
+                break
+        return y
 
     def _stored_rates_from_ctokens(self, block_number: int) -> list[int]:
         with contextlib.suppress(KeyError):
@@ -2176,7 +2186,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         w3 = connection_manager.get_web3(self.chain_id)
 
         # ref: https://etherscan.io/address/0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492#code
-        ORACLE_BIT_MASK = (2**32 - 1) * 256**28
+        oracle_bit_mask = (2**32 - 1) * 256**28
 
         rates = self.rate_multipliers
         oracle = self.oracle_method
@@ -2189,7 +2199,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 data=w3.eth.call(
                     transaction={
                         "to": to_checksum_address(HexBytes(oracle % 2**160)),
-                        "data": HexBytes(oracle & ORACLE_BIT_MASK),
+                        "data": HexBytes(oracle & oracle_bit_mask),
                     },
                     block_identifier=block_number,
                 ),
@@ -2288,7 +2298,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             ]
 
         if all(tokens_used_this_pool):
-            if any([balance == 0 for balance in self.balances]):
+            if any(balance == 0 for balance in self.balances):
                 raise NoLiquidity(message="One or more of the tokens has a zero balance.")
 
             return self._get_dy(
@@ -2298,14 +2308,14 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 block_identifier=block_number,
                 override_state=override_state,
             )
-        elif any(tokens_used_this_pool) and self.is_metapool and any(tokens_used_in_base_pool):
+        if any(tokens_used_this_pool) and self.is_metapool and any(tokens_used_in_base_pool):
             if TYPE_CHECKING:
                 assert self.base_pool is not None
 
             # TODO: see if any of these checks are unnecessary (partial zero balanece OK?)
-            if any([balance == 0 for balance in self.base_pool.balances]):
+            if any(balance == 0 for balance in self.base_pool.balances):
                 raise NoLiquidity(message="One or more of the base pool tokens has a zero balance.")
-            if any([balance == 0 for balance in self.balances]):
+            if any(balance == 0 for balance in self.balances):
                 raise NoLiquidity(message="One or more of the tokens has a zero balance.")
 
             token_in_from_metapool = token_in in self.tokens
@@ -2347,7 +2357,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 block_identifier=block_number,
                 override_state=override_state,
             )
-        elif self.is_metapool and all(tokens_used_in_base_pool):
+        if self.is_metapool and all(tokens_used_in_base_pool):
             token_in_from_basepool = token_in in self.tokens_underlying
             token_out_from_basepool = token_out in self.tokens_underlying
             assert token_in_from_basepool or token_out_from_basepool
@@ -2359,7 +2369,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 block_identifier=block_number,
                 override_state=override_state,
             )
-        else:
-            raise DegenbotValueError(
-                message="Tokens not held by pool or in underlying base pool"
-            )  # pragma: no cover
+
+        raise DegenbotValueError(
+            message="Tokens not held by pool or in underlying base pool"
+        )  # pragma: no cover

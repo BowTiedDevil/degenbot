@@ -4,7 +4,9 @@ import pytest
 import web3.middleware
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
-from web3.providers.ipc import IPCProvider
+
+if TYPE_CHECKING:
+    from web3.providers.ipc import IPCProvider
 
 from degenbot import AnvilFork
 from degenbot.config import set_web3
@@ -38,14 +40,14 @@ def test_http_and_endpoints():
 
 
 def test_set_bytecode():
-    FAKE_BYTECODE = HexBytes("0x42069")
+    fake_bytecode = HexBytes("0x42069")
     fork = AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         bytecode_overrides=[
-            (VITALIK_ADDRESS, FAKE_BYTECODE),
+            (VITALIK_ADDRESS, fake_bytecode),
         ],
     )
-    assert fork.w3.eth.get_code(VITALIK_ADDRESS) == FAKE_BYTECODE
+    assert fork.w3.eth.get_code(VITALIK_ADDRESS) == fake_bytecode
 
 
 def test_rpc_methods(fork_mainnet: AnvilFork):
@@ -56,11 +58,9 @@ def test_rpc_methods(fork_mainnet: AnvilFork):
     fork_mainnet.set_next_base_fee(11 * 10**9)
 
     # Set several snapshot IDs and return to them
-    snapshot_ids = []
-    for _ in range(10):
-        snapshot_ids.append(fork_mainnet.set_snapshot())
-    for id in snapshot_ids:
-        assert fork_mainnet.return_to_snapshot(id) is True
+    snapshot_ids = [fork_mainnet.set_snapshot() for _ in range(10)]
+    for snapshot_id in snapshot_ids:
+        assert fork_mainnet.return_to_snapshot(snapshot_id) is True
     # No snapshot ID with this value
     assert fork_mainnet.return_to_snapshot(100) is False
 
@@ -78,14 +78,14 @@ def test_rpc_methods(fork_mainnet: AnvilFork):
     with pytest.raises(EVMRevertError):
         fork_mainnet.set_balance(VITALIK_ADDRESS, MAX_UINT256 + 1)
 
-    FAKE_COINBASE = to_checksum_address("0x0420042004200420042004200420042004200420")
-    fork_mainnet.set_coinbase(FAKE_COINBASE)
+    fake_coinbase = to_checksum_address("0x0420042004200420042004200420042004200420")
+    fork_mainnet.set_coinbase(fake_coinbase)
     # @dev the eth_coinbase method fails when called on Anvil,
     # so check by mining a block and comparing the miner address
 
     fork_mainnet.mine()
     block = fork_mainnet.w3.eth.get_block("latest")
-    assert block.get("miner") == FAKE_COINBASE
+    assert block.get("miner") == fake_coinbase
 
 
 def test_mine_and_reset(fork_mainnet: AnvilFork):
@@ -107,22 +107,22 @@ def test_fork_from_transaction_hash():
 
 
 def test_set_next_block_base_fee(fork_mainnet: AnvilFork):
-    BASE_FEE_OVERRIDE = 69 * 10**9
+    base_fee_override = 69 * 10**9
 
-    fork_mainnet.set_next_base_fee(BASE_FEE_OVERRIDE)
+    fork_mainnet.set_next_base_fee(base_fee_override)
     fork_mainnet.mine()
-    assert fork_mainnet.w3.eth.get_block("latest")["baseFeePerGas"] == BASE_FEE_OVERRIDE
+    assert fork_mainnet.w3.eth.get_block("latest")["baseFeePerGas"] == base_fee_override
 
 
 def test_reset_and_set_next_block_base_fee(fork_mainnet: AnvilFork):
-    BASE_FEE_OVERRIDE = 69 * 10**9
+    base_fee_override = 69 * 10**9
 
     starting_block = fork_mainnet.w3.eth.get_block_number()
     fork_mainnet.reset(block_number=starting_block - 10)
-    fork_mainnet.set_next_base_fee(BASE_FEE_OVERRIDE)
+    fork_mainnet.set_next_base_fee(base_fee_override)
     fork_mainnet.mine()
     assert fork_mainnet.w3.eth.get_block_number() == starting_block - 9
-    assert fork_mainnet.w3.eth.get_block(starting_block - 9)["baseFeePerGas"] == BASE_FEE_OVERRIDE
+    assert fork_mainnet.w3.eth.get_block(starting_block - 9)["baseFeePerGas"] == base_fee_override
 
 
 def test_reset_to_new_endpoint(fork_mainnet: AnvilFork):
@@ -148,47 +148,47 @@ def test_ipc_kwargs():
 
 
 def test_balance_overrides_in_constructor():
-    FAKE_BALANCE = 100 * 10**18
+    fake_balance = 100 * 10**18
     fork = AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         balance_overrides=[
-            (VITALIK_ADDRESS, FAKE_BALANCE),
+            (VITALIK_ADDRESS, fake_balance),
         ],
     )
-    assert fork.w3.eth.get_balance(VITALIK_ADDRESS) == FAKE_BALANCE
+    assert fork.w3.eth.get_balance(VITALIK_ADDRESS) == fake_balance
 
 
 def test_nonce_overrides_in_constructor():
-    FAKE_NONCE = 69
+    fake_nonce = 69
     fork = AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         nonce_overrides=[
-            (VITALIK_ADDRESS, FAKE_NONCE),
+            (VITALIK_ADDRESS, fake_nonce),
         ],
     )
-    assert fork.w3.eth.get_transaction_count(VITALIK_ADDRESS) == FAKE_NONCE
+    assert fork.w3.eth.get_transaction_count(VITALIK_ADDRESS) == fake_nonce
 
 
 def test_bytecode_overrides_in_constructor():
-    FAKE_ADDRESS = to_checksum_address("0x6969696969696969696969696969696969696969")
-    FAKE_BYTECODE = HexBytes("0x0420")
+    fake_address = to_checksum_address("0x6969696969696969696969696969696969696969")
+    fake_bytecode = HexBytes("0x0420")
 
     fork = AnvilFork(
-        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI, bytecode_overrides=[(FAKE_ADDRESS, FAKE_BYTECODE)]
+        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI, bytecode_overrides=[(fake_address, fake_bytecode)]
     )
-    assert fork.w3.eth.get_code(FAKE_ADDRESS) == FAKE_BYTECODE
+    assert fork.w3.eth.get_code(fake_address) == fake_bytecode
 
 
 def test_coinbase_override_in_constructor():
-    FAKE_COINBASE = to_checksum_address("0x6969696969696969696969696969696969696969")
+    fake_coinbase = to_checksum_address("0x6969696969696969696969696969696969696969")
 
     fork = AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
-        coinbase=FAKE_COINBASE,
+        coinbase=fake_coinbase,
     )
     fork.mine()
     block = fork.w3.eth.get_block("latest")
-    assert block["miner"] == FAKE_COINBASE
+    assert block["miner"] == fake_coinbase
 
 
 def test_injecting_middleware():

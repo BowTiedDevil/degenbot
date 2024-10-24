@@ -1147,7 +1147,7 @@ def test_universal_router_transactions(
 
 
 def test_invalid_router():
-    INVALID_ROUTER_ADDRESS = "0x6969696969696969696969696969696969696969"
+    invalid_router_address = "0x6969696969696969696969696969696969696969"
 
     with pytest.raises(UnknownRouterAddress):
         UniswapTransaction(
@@ -1172,7 +1172,7 @@ def test_invalid_router():
                 ],
                 "deadline": 1707545831,
             },
-            router_address=INVALID_ROUTER_ADDRESS,
+            router_address=invalid_router_address,
         )
 
 
