@@ -1,4 +1,5 @@
 import itertools
+import pickle
 from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
@@ -126,6 +127,10 @@ def test_create_pool(ethereum_archive_node_web3: Web3):
 
 def test_tripool(tripool: CurveStableswapPool):
     _test_calculations(tripool)
+
+
+def test_pickle_tripool(tripool: CurveStableswapPool):
+    pickle.dumps(tripool)
 
 
 def test_auto_update(fork_mainnet: AnvilFork):
