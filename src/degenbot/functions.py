@@ -5,7 +5,7 @@ import eth_account.messages
 
 if TYPE_CHECKING:
     from eth_account.datastructures import SignedMessage
-from eth_typing import ChecksumAddress
+from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from eth_utils.conversions import to_hex
 from eth_utils.crypto import keccak
@@ -112,27 +112,27 @@ def eip_191_hash(message: str, private_key: str) -> str:
     return result.signature.to_0x_hex()
 
 
-def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3) -> int:
+def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3) -> BlockNumber:
     match identifier:
         case None:
-            return cast(int, w3.eth.get_block_number())
+            return w3.eth.get_block_number()
         case int() as block_number_as_int:
-            return block_number_as_int
+            return cast(BlockNumber, block_number_as_int)
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
             block = w3.eth.get_block(block_tag)
             block_number = block.get("number")
             if TYPE_CHECKING:
                 assert block_number is not None
-            return cast(int, block_number)
+            return block_number
         case str() as block_number_as_str:
             try:
-                return int(block_number_as_str, 16)
+                return cast(BlockNumber, int(block_number_as_str, 16))
             except ValueError:
                 raise DegenbotValueError(
                     message=f"Invalid block identifier {identifier!r}"
                 ) from None
         case bytes() as block_number_as_bytes:
-            return int.from_bytes(block_number_as_bytes, byteorder="big")
+            return cast(BlockNumber, int.from_bytes(block_number_as_bytes, byteorder="big"))
         case _:
             raise DegenbotValueError(message=f"Invalid block identifier {identifier!r}")
 

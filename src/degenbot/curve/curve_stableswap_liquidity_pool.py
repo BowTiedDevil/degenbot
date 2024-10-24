@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 import eth_abi.abi
 import web3.exceptions
 from eth_abi.exceptions import DecodingError, InsufficientDataBytes
-from eth_typing import AnyAddress, ChecksumAddress
+from eth_typing import AnyAddress, BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
@@ -110,7 +110,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         address: ChecksumAddress | str,
         *,
         chain_id: int | None = None,
-        state_block: int | None = None,
+        state_block: BlockNumber | None = None,
         silent: bool = False,
     ) -> None:
         """
@@ -492,20 +492,20 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         # @dev These dicts are simple caches to hold retrieved values from on-chain calls.
         # @dev They have no functionality to evict old values and will grow without bound
-        self._cached_admin_balance: dict[tuple[int, int], int] = {}
-        self._cached_base_cache_updated: dict[int, int] = {}
-        self._cached_base_virtual_price: dict[int, int] = {}
-        self._cached_contract_D: dict[int, int] = {}
-        self._cached_gamma: dict[int, int] = {}
-        self._cached_price_scale: dict[int, tuple[int, ...]] = {}
-        self._cached_rates_from_aeth: dict[int, int] = {}
-        self._cached_rates_from_ctokens: dict[int, tuple[int]] = {}
-        self._cached_rates_from_cytokens: dict[int, tuple[int]] = {}
-        self._cached_rates_from_oracle: dict[int, tuple[int, ...]] = {}
-        self._cached_rates_from_reth: dict[int, int] = {}
-        self._cached_rates_from_ytokens: dict[int, tuple[int]] = {}
-        self._cached_scaled_redemption_price: dict[int, int] = {}
-        self._cached_virtual_price: dict[int, int] = {}
+        self._cached_admin_balance: dict[tuple[BlockNumber, int], int] = {}
+        self._cached_base_cache_updated: dict[BlockNumber, int] = {}
+        self._cached_base_virtual_price: dict[BlockNumber, int] = {}
+        self._cached_contract_D: dict[BlockNumber, int] = {}
+        self._cached_gamma: dict[BlockNumber, int] = {}
+        self._cached_price_scale: dict[BlockNumber, tuple[int, ...]] = {}
+        self._cached_rates_from_aeth: dict[BlockNumber, int] = {}
+        self._cached_rates_from_ctokens: dict[BlockNumber, tuple[int, ...]] = {}
+        self._cached_rates_from_cytokens: dict[BlockNumber, tuple[int]] = {}
+        self._cached_rates_from_oracle: dict[BlockNumber, tuple[int, ...]] = {}
+        self._cached_rates_from_reth: dict[BlockNumber, int] = {}
+        self._cached_rates_from_ytokens: dict[BlockNumber, tuple[int]] = {}
+        self._cached_scaled_redemption_price: dict[BlockNumber, int] = {}
+        self._cached_virtual_price: dict[BlockNumber, int] = {}
 
         get_a_scaling_values()
         get_coefficient_and_fees()
@@ -691,7 +691,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         return scaled_a
 
-    def _get_scaled_redemption_price(self, block_number: int) -> int:
+    def _get_scaled_redemption_price(self, block_number: BlockNumber) -> int:
         with contextlib.suppress(KeyError):
             return self._cached_scaled_redemption_price[block_number]
 
@@ -758,12 +758,12 @@ class CurveStableswapPool(AbstractLiquidityPool):
         pool_balances = override_state.balances if override_state is not None else self.balances
 
         block_number = (
-            get_number_for_block_identifier(
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else get_number_for_block_identifier(
                 block_identifier,
                 connection_manager.get_web3(self.chain_id),
             )
-            if block_identifier is None
-            else cast(int, block_identifier)
         )
 
         if self.address in (
@@ -830,7 +830,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             # TODO: check if any functions (price_scale, gamma, D, fee_calc) can be calculated
             # off-chain
 
-            def _d(block_number: int) -> int:
+            def _d(block_number: BlockNumber) -> int:
                 with contextlib.suppress(KeyError):
                     return self._cached_contract_D[block_number]
 
@@ -850,7 +850,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 self._cached_contract_D[block_number] = d
                 return d
 
-            def _gamma(block_number: int) -> int:
+            def _gamma(block_number: BlockNumber) -> int:
                 with contextlib.suppress(KeyError):
                     return self._cached_gamma[block_number]
 
@@ -870,7 +870,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 self._cached_gamma[block_number] = gamma
                 return gamma
 
-            def _price_scale(block_number: int) -> tuple[int, ...]:
+            def _price_scale(block_number: BlockNumber) -> tuple[int, ...]:
                 with contextlib.suppress(KeyError):
                     return self._cached_price_scale[block_number]
 
@@ -1524,7 +1524,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         return dy
 
-    def _get_base_cache_updated(self, block_number: int) -> int:
+    def _get_base_cache_updated(self, block_number: BlockNumber) -> int:
         with contextlib.suppress(KeyError):
             return self._cached_base_cache_updated[block_number]
 
@@ -1544,7 +1544,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self._cached_base_cache_updated[block_number] = base_cache_updated
         return base_cache_updated
 
-    def _get_base_virtual_price(self, block_number: int) -> int:
+    def _get_base_virtual_price(self, block_number: BlockNumber) -> int:
         with contextlib.suppress(KeyError):
             return self._cached_base_virtual_price[block_number]
 
@@ -1564,7 +1564,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self._cached_base_virtual_price[block_number] = base_virtual_price
         return base_virtual_price
 
-    def _get_virtual_price(self, block_number: int) -> int:
+    def _get_virtual_price(self, block_number: BlockNumber) -> int:
         if TYPE_CHECKING:
             assert self.base_pool is not None
 
@@ -1673,7 +1673,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         return dy, dy_0 - dy, total_supply
 
-    def _get_admin_balance(self, token_index: int, block_number: int) -> int:
+    def _get_admin_balance(self, token_index: int, block_number: BlockNumber) -> int:
         with contextlib.suppress(KeyError):
             return self._cached_admin_balance[block_number, token_index]
 
@@ -1986,7 +1986,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 break
         return y
 
-    def _stored_rates_from_ctokens(self, block_number: int) -> tuple[int, ...]:
+    def _stored_rates_from_ctokens(self, block_number: BlockNumber) -> tuple[int, ...]:
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_ctokens[block_number]
 
@@ -2040,7 +2040,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self._cached_rates_from_ctokens[block_number] = tuple(result)
         return tuple(result)
 
-    def _stored_rates_from_ytokens(self, block_number: int) -> tuple[int, ...]:
+    def _stored_rates_from_ytokens(self, block_number: BlockNumber) -> tuple[int, ...]:
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_ytokens[block_number]
 
@@ -2074,7 +2074,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self._cached_rates_from_ytokens[block_number] = tuple(result)
         return tuple(result)
 
-    def _stored_rates_from_cytokens(self, block_number: int) -> tuple[int, ...]:
+    def _stored_rates_from_cytokens(self, block_number: BlockNumber) -> tuple[int, ...]:
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_cytokens[block_number]
 
@@ -2123,7 +2123,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self._cached_rates_from_cytokens[block_number] = tuple(result)
         return tuple(result)
 
-    def _stored_rates_from_reth(self, block_number: int) -> tuple[int, ...]:
+    def _stored_rates_from_reth(self, block_number: BlockNumber) -> tuple[int, ...]:
         with contextlib.suppress(KeyError):
             return (self.PRECISION, self._cached_rates_from_reth[block_number])
 
@@ -2143,7 +2143,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         self._cached_rates_from_reth[block_number] = ratio
         return (self.PRECISION, ratio)
 
-    def _stored_rates_from_aeth(self, block_number: int) -> tuple[int, ...]:
+    def _stored_rates_from_aeth(self, block_number: BlockNumber) -> tuple[int, ...]:
         with contextlib.suppress(KeyError):
             return (
                 self.PRECISION,
@@ -2173,7 +2173,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             self.PRECISION * self.LENDING_PRECISION // _ratio,
         )
 
-    def _stored_rates_from_oracle(self, block_number: int) -> tuple[int, ...]:
+    def _stored_rates_from_oracle(self, block_number: BlockNumber) -> tuple[int, ...]:
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_oracle[block_number]
 
@@ -2208,7 +2208,9 @@ class CurveStableswapPool(AbstractLiquidityPool):
             rate * balance // self.PRECISION for rate, balance in zip(rates, balances, strict=True)
         )
 
-    def auto_update(self, block_number: int | None = None) -> tuple[bool, CurveStableswapPoolState]:
+    def auto_update(
+        self, block_number: BlockNumber | None = None
+    ) -> tuple[bool, CurveStableswapPoolState]:
         """
         Retrieve updated balances from the contract
         """
