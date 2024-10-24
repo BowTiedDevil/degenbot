@@ -753,8 +753,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 (_feemul - self.FEE_DENOMINATOR) * 4 * xpi * xpj // xps2 + self.FEE_DENOMINATOR
             )
 
-        result: int
-
         pool_balances = override_state.balances if override_state is not None else self.balances
 
         block_number = (
@@ -792,8 +790,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             y = self._get_y(i, j, x, xp)
             dy = xp[j] - y - 1
             fee = self.fee * dy // self.FEE_DENOMINATOR
-            result = (dy - fee) * self.PRECISION // rates[j]
-            return result
+            return (dy - fee) * self.PRECISION // rates[j]
 
         if self.address == "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d":
             rates = (
@@ -805,8 +802,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             y = self._get_y(i, j, x, xp)
             dy = xp[j] - y - 1
             fee = self.fee * dy // self.FEE_DENOMINATOR
-            result = (dy - fee) * self.PRECISION // rates[j]
-            return result
+            return (dy - fee) * self.PRECISION // rates[j]
 
         if self.is_metapool:
             _rates = list(self.rate_multipliers)
@@ -823,8 +819,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             y = self._get_y(i, j, x, xp)
             dy = xp[j] - y - 1
             _fee = self.fee * dy // self.FEE_DENOMINATOR
-            result = (dy - _fee) * self.PRECISION // _rates[j]
-            return result
+            return (dy - _fee) * self.PRECISION // _rates[j]
 
         if self.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
             # TODO: check if any functions (price_scale, gamma, D, fee_calc) can be calculated
@@ -1046,8 +1041,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
             x = xp[i] + (dx * rates[i] // self.PRECISION)
             y = self._get_y(i, j, x, xp)
             dy = (xp[j] - y - 1) * self.PRECISION // rates[j]
-            _fee = self.fee * dy // self.FEE_DENOMINATOR
-            return dy - _fee
+            fee = self.fee * dy // self.FEE_DENOMINATOR
+            return dy - fee
 
         if self.address in (
             "0x0Ce6a5fF5217e38315f87032CF90686C96627CAA",
@@ -1088,8 +1083,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             y = self._get_y(i, j, x, xp)
             dy = xp[j] - y - 1
             fee = self.fee * dy // self.FEE_DENOMINATOR
-            result = (dy - fee) * self.PRECISION // rates[j]
-            return result
+            return (dy - fee) * self.PRECISION // rates[j]
 
         if self.address in (
             "0x04c90C198b2eFF55716079bc06d7CCc4aa4d7512",
@@ -1108,8 +1102,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             y = self._get_y(i, j, x, xp)
             dy = xp[j] - y - 1
             fee = self.fee * dy // self.FEE_DENOMINATOR
-            result = dy - fee
-            return result
+            return dy - fee
 
         if self.address in (
             "0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492",
@@ -1136,8 +1129,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             y = self._get_y(i, j, x, xp)
             dy = xp[j] - y - 1
             fee = self.fee * dy // self.FEE_DENOMINATOR
-            result = (dy - fee) * self.PRECISION // rates[j]
-            return result
+            return (dy - fee) * self.PRECISION // rates[j]
 
         if self.address in (
             "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
@@ -1159,8 +1151,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             x = xp[i] + (dx * rates[i] // self.PRECISION)
             y = self._get_y(i, j, x, xp)
             dy = xp[j] - y - 1
-            result = (dy - (self.fee * dy // self.FEE_DENOMINATOR)) * self.PRECISION // rates[j]
-            return result
+            return (dy - (self.fee * dy // self.FEE_DENOMINATOR)) * self.PRECISION // rates[j]
 
         if self.address in ("0x06364f10B501e868329afBc005b3492902d6C763",):
             rates = self._stored_rates_from_ytokens(block_number=block_number)
@@ -1169,8 +1160,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             y = self._get_y(i, j, x, xp)
             dy = (xp[j] - y - 1) * self.PRECISION // rates[j]
             fee = self.fee * dy // self.FEE_DENOMINATOR
-            result = dy - fee
-            return result
+            return dy - fee
 
         if self.address in (
             "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
@@ -1182,8 +1172,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             y = self._get_y(i, j, x, xp)
             dy = (xp[j] - y) * self.PRECISION // rates[j]
             fee = self.fee * dy // self.FEE_DENOMINATOR
-            result = dy - fee
-            return result
+            return dy - fee
 
         if self.address in ("0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2",):
             rates = self._stored_rates_from_aeth(block_number=block_number)
@@ -1192,8 +1181,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             y = self._get_y(i, j, x, xp)
             dy = xp[j] - y
             fee = self.fee * dy // self.FEE_DENOMINATOR
-            result = (dy - fee) * self.PRECISION // rates[j]
-            return result
+            return (dy - fee) * self.PRECISION // rates[j]
 
         if self.address in ("0xF9440930043eb3997fc70e1339dBb11F341de7A8",):
             rates = self._stored_rates_from_reth(block_number=block_number)
@@ -1202,8 +1190,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             y = self._get_y(i, j, x, xp)
             dy = xp[j] - y
             fee = self.fee * dy // self.FEE_DENOMINATOR
-            result = (dy - fee) * self.PRECISION // rates[j]
-            return result
+            return (dy - fee) * self.PRECISION // rates[j]
 
         if self.address in ("0xEB16Ae0052ed37f479f7fe63849198Df1765a733",):
             live_balances = [
@@ -1267,8 +1254,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 * dy
                 // self.FEE_DENOMINATOR
             )
-            result = dy - _fee
-            return result
+            return dy - _fee
 
         # default pool behavior
         rates = self.rate_multipliers
@@ -1277,8 +1263,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         y = self._get_y(i, j, x, xp)
         dy = xp[j] - y - 1
         fee = self.fee * dy // self.FEE_DENOMINATOR
-        result = (dy - fee) * self.PRECISION // rates[j]
-        return result
+        return (dy - fee) * self.PRECISION // rates[j]
 
     def _get_dy_underlying(
         self,
