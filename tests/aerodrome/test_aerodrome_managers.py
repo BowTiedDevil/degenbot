@@ -23,7 +23,7 @@ def test_create_base_chain_aerodrome_managers(base_full_node_web3: Web3):
     assert aerodrome_v3_pool_manager._factory_address == BASE_AERODROME_V3_FACTORY
 
     aerodrome_v2_lp = aerodrome_v2_pool_manager.get_pool(BASE_AERO_WETH_V2_POOL)
-    aerodrome_v2_lp_from_tokens = aerodrome_v2_pool_manager.get_pool_from_tokens(
+    aerodrome_v2_lp_from_tokens = aerodrome_v2_pool_manager.get_pool_from_tokens_and_stable_type(
         token_addresses=(BASE_WETH_TOKEN, BASE_AERO_TOKEN),
         stable=False,
     )

@@ -1,44 +1,23 @@
 from typing import Any, TypeAlias
 
-from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from web3 import Web3
-from web3.types import BlockIdentifier
 
-from degenbot.aerodrome.functions import generate_aerodrome_v3_pool_address
+from degenbot.aerodrome.functions import (
+    generate_aerodrome_v2_pool_address,
+    generate_aerodrome_v3_pool_address,
+)
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
-from degenbot.config import connection_manager
-from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 
 
 class AerodromeV2PoolManager(UniswapV2PoolManager):
     Pool: TypeAlias = AerodromeV2Pool
+    POOL_IMPLEMENTATION_ADDRESS = to_checksum_address("0xA4e46b4f701c62e14DF11B48dCe76A7d793CD6d7")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"AerodromeV2PoolManager(factory={self._factory_address})"
 
-    def get_pool_address_from_factory_contract(
-        self,
-        w3: Web3,
-        token0: ChecksumAddress,
-        token1: ChecksumAddress,
-        stable: bool,
-        block_identifier: BlockIdentifier | None = None,
-    ) -> ChecksumAddress:
-        (pool_address,) = raw_call(
-            w3=w3,
-            address=self._factory_address,
-            calldata=encode_function_calldata(
-                function_prototype="getPool(address,address,bool)",
-                function_arguments=[token0, token1, stable],
-            ),
-            return_types=["address"],
-            block_identifier=get_number_for_block_identifier(block_identifier, w3),
-        )
-        return to_checksum_address(pool_address)
-
-    def get_pool_from_tokens(  # type: ignore[override]
+    def get_pool_from_tokens_and_stable_type(
         self,
         token_addresses: tuple[str, str],
         stable: bool,
@@ -51,14 +30,11 @@ class AerodromeV2PoolManager(UniswapV2PoolManager):
         any order.
         """
 
-        token0, token1 = sorted([token_address.lower() for token_address in token_addresses])
-
-        pool_address = self.get_pool_address_from_factory_contract(
-            w3=connection_manager.get_web3(self.chain_id),
-            token0=to_checksum_address(token0),
-            token1=to_checksum_address(token1),
+        pool_address = generate_aerodrome_v2_pool_address(
+            deployer_address=self._deployer_address,
+            token_addresses=sorted(token_addresses),
+            implementation_address=self.POOL_IMPLEMENTATION_ADDRESS,
             stable=stable,
-            block_identifier=None,
         )
 
         pool = self.get_pool(
@@ -73,15 +49,14 @@ class AerodromeV2PoolManager(UniswapV2PoolManager):
 
 class AerodromeV3PoolManager(UniswapV3PoolManager):
     Pool: TypeAlias = AerodromeV3Pool
+    POOL_IMPLEMENTATION_ADDRESS = to_checksum_address("0xeC8E5342B19977B4eF8892e02D8DAEcfa1315831")
 
-    IMPLEMENTATION_ADDRESS = to_checksum_address("0xeC8E5342B19977B4eF8892e02D8DAEcfa1315831")
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"AerodromeV3PoolManager(factory={self._factory_address})"
 
     def get_pool_from_tokens_and_tick_spacing(
         self,
-        token_addresses: tuple[
-            ChecksumAddress | str,
-            ChecksumAddress | str,
-        ],
+        token_addresses: tuple[str, str],
         tick_spacing: int,
         silent: bool = False,
         state_block: int | None = None,
@@ -91,7 +66,7 @@ class AerodromeV3PoolManager(UniswapV3PoolManager):
         pool_address = generate_aerodrome_v3_pool_address(
             deployer_address=self._deployer_address,
             token_addresses=sorted(token_addresses),
-            implementation_address=self.IMPLEMENTATION_ADDRESS,
+            implementation_address=self.POOL_IMPLEMENTATION_ADDRESS,
             tick_spacing=tick_spacing,
         )
 
