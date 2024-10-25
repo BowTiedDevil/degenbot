@@ -1784,8 +1784,8 @@ class CurveStableswapPool(AbstractLiquidityPool):
             d: int,
             d_p: int,  # noqa:ARG001
             xp: Sequence[int],
-        ):
-            return d * d // xp[0] * d // xp[1] // n_coins**n_coins
+        ) -> int:
+            return d * d // xp[0] * d // xp[1] // cast(int, n_coins**n_coins)
 
         d_func = calc_d
         dp_func = calc_dp
