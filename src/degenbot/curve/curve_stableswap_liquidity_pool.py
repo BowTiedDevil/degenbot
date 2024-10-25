@@ -5,7 +5,7 @@
 # high          create a manager for Curve pools
 # medium        add liquidity modifying mode for external_update
 # medium        investigate differences in get_dy_underlying vs exchange_underlying at GUSD-3Crv
-
+# low           investigate providing overrides for live-lookup contracts
 
 import contextlib
 from collections.abc import Iterable, Sequence
@@ -780,7 +780,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 (_feemul - self.FEE_DENOMINATOR) * 4 * xpi * xpj // xps2 + self.FEE_DENOMINATOR
             )
 
-        rates: tuple[int, ...]
         pool_balances = override_state.balances if override_state is not None else self.balances
         rates = self.rate_multipliers
 
@@ -810,7 +809,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     self._get_virtual_price(block_number=block_number),
                 )
 
-            xp = self._xp(rates=tuple(rates), balances=pool_balances)
+            xp = self._xp(rates=rates, balances=pool_balances)
             x = xp[i] + (dx * rates[i] // self.PRECISION)
             y = self._get_y(i, j, x, xp)
             dy = xp[j] - y - 1
@@ -824,7 +823,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
             "0xb9446c4Ef5EBE66268dA6700D26f96273DE3d571",
             "0x3Fb78e61784C9c637D560eDE23Ad57CA1294c14a",
         ):
-            # TODO: investigate providing overrides for live-lookup contracts
             live_balances = [
                 token.get_balance(self.address, block_identifier=block_number)
                 for token in self.tokens
@@ -1167,7 +1165,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
             return dy - fee
 
         if self.address in ("0x2dded6Da1BF5DBdF597C45fcFaa3194e53EcfeAF",):
-            assert self.precision_multipliers == (1, 10**12, 10**12)
             rates = self._stored_rates_from_cytokens(block_number=block_number)
             xp = self._xp(rates=rates, balances=pool_balances)
             x = xp[i] + (dx * rates[i] // self.PRECISION)
@@ -1279,7 +1276,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
             return dy - _fee
 
         # default pool behavior
-
         xp = self._xp(rates=rates, balances=pool_balances)
         x = xp[i] + (dx * rates[i] // self.PRECISION)
         y = self._get_y(i, j, x, xp)
