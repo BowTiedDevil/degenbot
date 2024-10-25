@@ -485,16 +485,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     "0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492"
                     | "0xBfAb6FA95E0091ed66058ad493189D2cB29385E6"
                 ):
-                    (self.oracle_method,) = eth_abi.abi.decode(
-                        types=["uint256"],
-                        data=w3.eth.call(
-                            transaction={
-                                "to": self.address,
-                                "data": Web3.keccak(text="oracle_method()")[:4],
-                            },
-                            block_identifier=state_block,
-                        ),
-                    )
+                    self._set_oracle_method(block_number=state_block)
                 case "0xEB16Ae0052ed37f479f7fe63849198Df1765a733":
                     (self.offpeg_fee_multiplier,) = eth_abi.abi.decode(
                         types=["uint256"],
@@ -1922,6 +1913,19 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         raise EVMRevertError(error="y_d calculation did not converge.")  # pragma: no cover
 
+    def _set_oracle_method(self, block_number: BlockNumber) -> None:
+        w3 = connection_manager.get_web3(self.chain_id)
+        (self.oracle_method,) = eth_abi.abi.decode(
+            types=["uint256"],
+            data=w3.eth.call(
+                transaction={
+                    "to": self.address,
+                    "data": Web3.keccak(text="oracle_method()")[:4],
+                },
+                block_identifier=block_number,
+            ),
+        )
+
     def _stored_rates_from_ctokens(self, block_number: BlockNumber) -> tuple[int, ...]:
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_ctokens[block_number]
@@ -2110,23 +2114,28 @@ class CurveStableswapPool(AbstractLiquidityPool):
         )
 
     def _stored_rates_from_oracle(self, block_number: BlockNumber) -> tuple[int, ...]:
+        """
+        Get rates from on-chain oracle
+
+        Ref: https://etherscan.io/address/0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492#code
+        """
+
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_oracle[block_number]
 
-        w3 = connection_manager.get_web3(self.chain_id)
-
-        # ref: https://etherscan.io/address/0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492#code
-        oracle_bit_mask = (2**32 - 1) * 256**28
-
-        rates = self.rate_multipliers
+        self._set_oracle_method(block_number=block_number)
         oracle = self.oracle_method
         if TYPE_CHECKING:
             assert oracle is not None
 
-        if oracle != 0:
+        if oracle == 0:
+            rates = self.rate_multipliers
+        else:
+            oracle_bit_mask = (2**32 - 1) * 256**28
+            oracle_rate: int
             (oracle_rate,) = eth_abi.abi.decode(
                 types=["uint256"],
-                data=w3.eth.call(
+                data=connection_manager.get_web3(self.chain_id).eth.call(
                     transaction={
                         "to": to_checksum_address(HexBytes(oracle % 2**160)),
                         "data": HexBytes(oracle & oracle_bit_mask),
@@ -2134,12 +2143,15 @@ class CurveStableswapPool(AbstractLiquidityPool):
                     block_identifier=block_number,
                 ),
             )
-            rates = (rates[0], rates[1] * oracle_rate // self.PRECISION)
+            rates = (
+                self.rate_multipliers[0],
+                self.rate_multipliers[1] * oracle_rate // self.PRECISION,
+            )
 
         self._cached_rates_from_oracle[block_number] = rates
         return rates
 
-    def _xp(self, rates: tuple[int, ...], balances: Iterable[int]) -> tuple[int, ...]:
+    def _xp(self, rates: Iterable[int], balances: Iterable[int]) -> tuple[int, ...]:
         return tuple(
             rate * balance // self.PRECISION for rate, balance in zip(rates, balances, strict=True)
         )
