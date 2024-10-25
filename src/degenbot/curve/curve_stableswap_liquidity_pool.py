@@ -791,6 +791,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
 
         rates: tuple[int, ...]
         pool_balances = override_state.balances if override_state is not None else self.balances
+        rates = self.rate_multipliers
 
         block_number = (
             cast(BlockNumber, block_identifier)
@@ -845,7 +846,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 pool_balance - admin_balance
                 for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
             ]
-            rates = self.rate_multipliers
+
             xp = self._xp(rates=rates, balances=balances)
             x = xp[i] + (dx * rates[i] // self.PRECISION)
             y = self._get_y(i, j, x, xp)
@@ -1068,7 +1069,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
             "0x93054188d876f558f4a66B2EF1d97d16eDf0895B",
             "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
         ):
-            rates = self.rate_multipliers
             xp = self._xp(rates=rates, balances=pool_balances)
             x = xp[i] + (dx * rates[i] // self.PRECISION)
             y = self._get_y(i, j, x, xp)
@@ -1109,7 +1109,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
             "0xfC8c34a3B3CFE1F1Dd6DBCCEC4BC5d3103b80FF0",
             "0xFD5dB7463a3aB53fD211b4af195c5BCCC1A03890",
         ):
-            rates = self.rate_multipliers
             xp = self._xp(rates=rates, balances=pool_balances)
             x = xp[i] + (dx * rates[i] // self.PRECISION)
             y = self._get_y(i, j, x, xp)
@@ -1289,7 +1288,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
             return dy - _fee
 
         # default pool behavior
-        rates = self.rate_multipliers
+
         xp = self._xp(rates=rates, balances=pool_balances)
         x = xp[i] + (dx * rates[i] // self.PRECISION)
         y = self._get_y(i, j, x, xp)
