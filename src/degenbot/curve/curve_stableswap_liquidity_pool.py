@@ -784,6 +784,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 (_feemul - self.FEE_DENOMINATOR) * 4 * xpi * xpj // xps2 + self.FEE_DENOMINATOR
             )
 
+        rates: tuple[int, ...]
         pool_balances = override_state.balances if override_state is not None else self.balances
 
         block_number = (
@@ -794,6 +795,30 @@ class CurveStableswapPool(AbstractLiquidityPool):
                 connection_manager.get_web3(self.chain_id),
             )
         )
+
+        if self.is_metapool:
+            if self.address in ("0xC61557C5d177bd7DC889A3b621eEC333e168f68A",):
+                rates = (
+                    self.PRECISION,
+                    self._get_virtual_price(block_number=block_number),
+                )
+            elif self.address in ("0x618788357D0EBd8A37e763ADab3bc575D54c2C7d",):
+                rates = (
+                    self._get_scaled_redemption_price(block_number=block_number),
+                    self._get_virtual_price(block_number=block_number),
+                )
+            else:
+                rates = (
+                    self.rate_multipliers[0],
+                    self._get_virtual_price(block_number=block_number),
+                )
+
+            xp = self._xp(rates=tuple(rates), balances=pool_balances)
+            x = xp[i] + (dx * rates[i] // self.PRECISION)
+            y = self._get_y(i, j, x, xp)
+            dy = xp[j] - y - 1
+            fee = self.fee * dy // self.FEE_DENOMINATOR
+            return (dy - fee) * self.PRECISION // rates[j]
 
         if self.address in (
             "0x4e0915C88bC70750D68C481540F081fEFaF22273",
@@ -822,35 +847,6 @@ class CurveStableswapPool(AbstractLiquidityPool):
             dy = xp[j] - y - 1
             fee = self.fee * dy // self.FEE_DENOMINATOR
             return (dy - fee) * self.PRECISION // rates[j]
-
-        if self.address == "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d":
-            rates = (
-                self._get_scaled_redemption_price(block_number=block_number),
-                self._get_virtual_price(block_number=block_number),
-            )
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return (dy - fee) * self.PRECISION // rates[j]
-
-        if self.is_metapool:
-            _rates = list(self.rate_multipliers)
-            if self.address in (
-                "0xC61557C5d177bd7DC889A3b621eEC333e168f68A",
-                "0x8038C01A0390a8c547446a0b2c18fc9aEFEcc10c",
-            ):
-                _rates[0] = 10**self.PRECISION_DECIMALS
-
-            _rates[1] = self._get_virtual_price(block_number=block_number)
-
-            xp = self._xp(rates=tuple(_rates), balances=pool_balances)
-            x = xp[i] + (dx * _rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            _fee = self.fee * dy // self.FEE_DENOMINATOR
-            return (dy - _fee) * self.PRECISION // _rates[j]
 
         if self.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
             # TODO: check if any functions (price_scale, gamma, D, fee_calc) can be calculated
