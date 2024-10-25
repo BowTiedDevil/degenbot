@@ -313,10 +313,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
             }
 
     def __repr__(self) -> str:  # pragma: no cover
-        return (
-            f"UniswapV3Pool(address={self.address}, token0={self.token0}, token1={self.token1}, "
-            f"fee={self.fee})"
-        )
+        return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self.fee}, tick spacing={self.tick_spacing})"  # noqa:E501
 
     def __str__(self) -> str:
         return self.name

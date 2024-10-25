@@ -120,6 +120,9 @@ class AerodromeV2Pool(AbstractLiquidityPool):
                 if k not in dropped_attributes
             }
 
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1}, stable={self.stable})"  # noqa:E501
+
     def _verified_address(self) -> ChecksumAddress:
         # The implementation address is hard-coded into the contract
         implementation_address = to_checksum_address(
