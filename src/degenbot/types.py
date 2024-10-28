@@ -9,13 +9,16 @@ from typing_extensions import Self
 
 class Message:
     """
-    A message sent by a `Publisher`
+    A message sent by a `Publisher` to a `Subscriber`
     """
 
 
 class PlaintextMessage(Message):
     def __init__(self, text: str) -> None:
         self.text = text
+
+    def __repr__(self) -> str:
+        return f"PlaintextMessage(text={self.text})"
 
     def __str__(self) -> str:
         return self.text
@@ -39,29 +42,32 @@ class Publisher(Protocol):
         """
 
 
-class Subscriber(Protocol):
+class PublisherMixin:
     """
-    Can receive messages from a `Publisher`
+    A set of default methods to accept subscribe & unsubscribe requests. Classes using this mixin
+    meet the `Publisher` protocol requirements.
     """
 
-    def notify(self, publisher: "Publisher", message: "Message") -> None:
+    def subscribe(self: Publisher, subscriber: "Subscriber") -> None:
+        self._subscribers.add(subscriber)
+
+    def unsubscribe(self: Publisher, subscriber: "Subscriber") -> None:
+        self._subscribers.discard(subscriber)
+
+
+class Subscriber(Protocol):
+    """
+    Can subscribe to messages from a `Publisher`
+    """
+
+    def notify(self, publisher: Publisher, message: Message) -> None:
         """
         Deliver `message` to `Subscriber`
         """
 
 
-class AbstractArbitrage(Publisher, Subscriber):
+class AbstractArbitrage:
     id: str
-
-    def _notify_subscribers(self: Publisher, message: Message) -> None:
-        for subscriber in self._subscribers:
-            subscriber.notify(publisher=self, message=message)
-
-    def subscribe(self: Publisher, subscriber: Subscriber) -> None:
-        self._subscribers.add(subscriber)
-
-    def unsubscribe(self: Publisher, subscriber: Subscriber) -> None:
-        self._subscribers.discard(subscriber)
 
 
 @dataclass(slots=True, frozen=True)
@@ -111,7 +117,7 @@ class AbstractPoolState:
 class AbstractSimulationResult: ...
 
 
-class AbstractLiquidityPool(Publisher):
+class AbstractLiquidityPool:
     address: ChecksumAddress
     name: str
 
@@ -159,23 +165,6 @@ class AbstractLiquidityPool(Publisher):
 
     def __str__(self) -> str:
         return self.name
-
-    def _notify_subscribers(self: Publisher, message: Message) -> None:
-        for subscriber in self._subscribers:
-            subscriber.notify(self, message)
-
-    def get_arbitrage_helpers(self: Publisher) -> list[AbstractArbitrage]:
-        return [
-            subscriber
-            for subscriber in self._subscribers
-            if isinstance(subscriber, AbstractArbitrage)
-        ]
-
-    def subscribe(self: Publisher, subscriber: Subscriber) -> None:
-        self._subscribers.add(subscriber)
-
-    def unsubscribe(self: Publisher, subscriber: Subscriber) -> None:
-        self._subscribers.discard(subscriber)
 
 
 class AbstractErc20Token:

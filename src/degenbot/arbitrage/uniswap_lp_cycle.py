@@ -27,7 +27,14 @@ from degenbot.exceptions import (
     RateOfExchangeBelowMinimum,
 )
 from degenbot.logging import logger
-from degenbot.types import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
+from degenbot.types import (
+    AbstractArbitrage,
+    Message,
+    PlaintextMessage,
+    Publisher,
+    PublisherMixin,
+    Subscriber,
+)
 from degenbot.uniswap.types import (
     UniswapV2PoolState,
     UniswapV2PoolStateUpdated,
@@ -43,7 +50,11 @@ PoolState: TypeAlias = UniswapV2PoolState | UniswapV3PoolState
 SwapAmount: TypeAlias = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
 
 
-class UniswapLpCycle(AbstractArbitrage):
+class UniswapLpCycle(AbstractArbitrage, PublisherMixin):
+    def _notify_subscribers(self: Publisher, message: Message) -> None:
+        for subscriber in self._subscribers:
+            subscriber.notify(publisher=self, message=message)
+
     def __init__(
         self,
         input_token: Erc20Token,

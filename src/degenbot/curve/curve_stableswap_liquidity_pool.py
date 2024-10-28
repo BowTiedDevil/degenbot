@@ -42,12 +42,19 @@ from degenbot.functions import encode_function_calldata, get_number_for_block_id
 from degenbot.logging import logger
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.registry.all_pools import pool_registry
-from degenbot.types import AbstractLiquidityPool
+from degenbot.types import (
+    AbstractArbitrage,
+    AbstractLiquidityPool,
+    Message,
+    Publisher,
+    PublisherMixin,
+    Subscriber,
+)
 
 from .types import CurveStableswapPoolState, CurveStableSwapPoolStateUpdated
 
 
-class CurveStableswapPool(AbstractLiquidityPool):
+class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
     # Constants from contract
     # ref: https://github.com/curvefi/curve-contract/blob/master/contracts/pool-templates/base/SwapTemplateBase.vy
     PRECISION_DECIMALS: int = 18
@@ -140,6 +147,10 @@ class CurveStableswapPool(AbstractLiquidityPool):
             "0xf253f83AcA21aAbD2A20553AE0BF7F65C755A07F",
         )
     )
+
+    def _notify_subscribers(self: Publisher, message: Message) -> None:
+        for subscriber in self._subscribers:
+            subscriber.notify(publisher=self, message=message)
 
     def __init__(
         self,
@@ -618,7 +629,7 @@ class CurveStableswapPool(AbstractLiquidityPool):
         token_string = "-".join([token.symbol for token in self.tokens])
         self.name = f"{token_string} (CurveStable, {fee_string}%)"
 
-        self._subscribers = set()
+        self._subscribers: set[Subscriber] = set()
 
         self.state: CurveStableswapPoolState
         self._update_pool_state()
@@ -2150,6 +2161,13 @@ class CurveStableswapPool(AbstractLiquidityPool):
     def _xp(self, rates: Iterable[int], balances: Iterable[int]) -> tuple[int, ...]:
         return tuple(
             rate * balance // self.PRECISION for rate, balance in zip(rates, balances, strict=True)
+        )
+
+    def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
+        return tuple(
+            subscriber
+            for subscriber in self._subscribers
+            if isinstance(subscriber, AbstractArbitrage)
         )
 
     def auto_update(

@@ -42,3 +42,8 @@ class AerodromeV2PoolStateUpdated(Message):
 
 
 class AerodromeV3PoolState(UniswapV3PoolState): ...
+
+
+@dataclass(slots=True, frozen=True)
+class AerodromeV3PoolStateUpdated(Message):
+    state: AerodromeV3PoolState

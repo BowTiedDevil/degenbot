@@ -34,14 +34,18 @@ from degenbot.logging import logger
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.registry.all_pools import pool_registry
 from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
-from degenbot.types import AbstractLiquidityPool
+from degenbot.types import AbstractLiquidityPool, Message, Publisher, PublisherMixin, Subscriber
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
-class AerodromeV2Pool(AbstractLiquidityPool):
+class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
     PoolState: TypeAlias = AerodromeV2PoolState
 
     FEE_DENOMINATOR = 10_000
+
+    def _notify_subscribers(self: Publisher, message: Message) -> None:
+        for subscriber in self._subscribers:
+            subscriber.notify(publisher=self, message=message)
 
     def __init__(
         self,
@@ -97,7 +101,7 @@ class AerodromeV2Pool(AbstractLiquidityPool):
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
-        self._subscribers = set()
+        self._subscribers: set[Subscriber] = set()
 
         if not silent:  # pragma: no cover
             logger.info(self.name)

@@ -31,7 +31,14 @@ from degenbot.exceptions import (
     NoLiquidity,
 )
 from degenbot.logging import logger
-from degenbot.types import AbstractArbitrage, PlaintextMessage, Publisher, Subscriber
+from degenbot.types import (
+    AbstractArbitrage,
+    Message,
+    PlaintextMessage,
+    Publisher,
+    PublisherMixin,
+    Subscriber,
+)
 from degenbot.uniswap.types import (
     UniswapV2PoolState,
     UniswapV2PoolStateUpdated,
@@ -56,7 +63,11 @@ CurveOrUniswapSwapAmount: TypeAlias = (
 CURVE_V1_DEFAULT_DISCOUNT_FACTOR = 0.9999
 
 
-class UniswapCurveCycle(AbstractArbitrage):
+class UniswapCurveCycle(AbstractArbitrage, PublisherMixin):
+    def _notify_subscribers(self: Publisher, message: Message) -> None:
+        for subscriber in self._subscribers:
+            subscriber.notify(publisher=self, message=message)
+
     def __init__(
         self,
         input_token: Erc20Token,

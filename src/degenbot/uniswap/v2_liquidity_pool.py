@@ -28,7 +28,14 @@ from degenbot.functions import encode_function_calldata, get_number_for_block_id
 from degenbot.logging import logger
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.registry.all_pools import pool_registry
-from degenbot.types import AbstractLiquidityPool
+from degenbot.types import (
+    AbstractArbitrage,
+    AbstractLiquidityPool,
+    Message,
+    Publisher,
+    PublisherMixin,
+    Subscriber,
+)
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
 from degenbot.uniswap.types import (
     UniswapV2PoolExternalUpdate,
@@ -43,7 +50,7 @@ from degenbot.uniswap.v2_functions import (
 )
 
 
-class UniswapV2Pool(AbstractLiquidityPool):
+class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
     """
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
@@ -72,6 +79,10 @@ class UniswapV2Pool(AbstractLiquidityPool):
             init_hash=exchange.factory.pool_init_hash,
             **kwargs,
         )
+
+    def _notify_subscribers(self: Publisher, message: Message) -> None:
+        for subscriber in self._subscribers:
+            subscriber.notify(publisher=self, message=message)
 
     def __init__(
         self,
@@ -187,7 +198,7 @@ class UniswapV2Pool(AbstractLiquidityPool):
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
-        self._subscribers = set()
+        self._subscribers: set[Subscriber] = set()
 
         if not silent:  # pragma: no cover
             logger.info(self.name)
@@ -334,6 +345,51 @@ class UniswapV2Pool(AbstractLiquidityPool):
     @property
     def w3(self) -> Web3:
         return connection_manager.get_web3(self.chain_id)
+
+    def auto_update(
+        self,
+        block_number: int | None = None,
+        silent: bool = True,
+    ) -> bool:
+        """
+        Retrieves the current reserves from the pool, stores any that have changed, and returns a
+        status boolean indicating whether any update was found.
+
+        @dev this method uses a lock to guard state-modifying methods that might cause race
+        conditions when used with threads.
+        """
+
+        with self._state_lock:
+            if block_number is not None and block_number < self.update_block:
+                raise LateUpdateError
+
+            state_updated = False
+            w3 = self.w3
+            block_number = w3.eth.get_block_number() if block_number is None else block_number
+
+            reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
+
+            if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
+                state_updated = True
+                self.reserves_token0 = reserves0
+                self.reserves_token1 = reserves1
+
+            self._update_block = block_number
+
+            if state_updated:
+                if self._pool_state_archive is not None:  # pragma: no cover
+                    self._pool_state_archive[block_number] = self.state
+
+                self._notify_subscribers(
+                    message=UniswapV2PoolStateUpdated(self.state),
+                )
+
+                if not silent:  # pragma: no cover
+                    logger.info(f"[{self.name}]")
+                    logger.info(f"{self.token0}: {self.reserves_token0}")
+                    logger.info(f"{self.token1}: {self.reserves_token1}")
+
+            return state_updated
 
     def calculate_tokens_in_from_ratio_out(
         self,
@@ -764,50 +820,12 @@ class UniswapV2Pool(AbstractLiquidityPool):
             ),
         )
 
-    def auto_update(
-        self,
-        block_number: int | None = None,
-        silent: bool = True,
-    ) -> bool:
-        """
-        Retrieves the current reserves from the pool, stores any that have changed, and returns a
-        status boolean indicating whether any update was found.
-
-        @dev this method uses a lock to guard state-modifying methods that might cause race
-        conditions when used with threads.
-        """
-
-        with self._state_lock:
-            if block_number is not None and block_number < self.update_block:
-                raise LateUpdateError
-
-            state_updated = False
-            w3 = self.w3
-            block_number = w3.eth.get_block_number() if block_number is None else block_number
-
-            reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
-
-            if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
-                state_updated = True
-                self.reserves_token0 = reserves0
-                self.reserves_token1 = reserves1
-
-            self._update_block = block_number
-
-            if state_updated:
-                if self._pool_state_archive is not None:  # pragma: no cover
-                    self._pool_state_archive[block_number] = self.state
-
-                self._notify_subscribers(
-                    message=UniswapV2PoolStateUpdated(self.state),
-                )
-
-                if not silent:  # pragma: no cover
-                    logger.info(f"[{self.name}]")
-                    logger.info(f"{self.token0}: {self.reserves_token0}")
-                    logger.info(f"{self.token1}: {self.reserves_token1}")
-
-            return state_updated
+    def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
+        return tuple(
+            subscriber
+            for subscriber in self._subscribers
+            if isinstance(subscriber, AbstractArbitrage)
+        )
 
 
 class UnregisteredLiquidityPool(UniswapV2Pool):

@@ -32,7 +32,14 @@ from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.registry.all_pools import pool_registry
-from degenbot.types import AbstractLiquidityPool
+from degenbot.types import (
+    AbstractArbitrage,
+    AbstractLiquidityPool,
+    Message,
+    Publisher,
+    PublisherMixin,
+    Subscriber,
+)
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV3ExchangeDeployment
 from degenbot.uniswap.types import (
     UniswapV3BitmapAtWord,
@@ -64,7 +71,7 @@ from degenbot.uniswap.v3_libraries.tick_math import (
 )
 
 
-class UniswapV3Pool(AbstractLiquidityPool):
+class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
     PoolState: TypeAlias = UniswapV3PoolState
 
     UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
@@ -140,6 +147,10 @@ class UniswapV3Pool(AbstractLiquidityPool):
             init_hash=exchange.factory.pool_init_hash,
             **kwargs,
         )
+
+    def _notify_subscribers(self: Publisher, message: Message) -> None:
+        for subscriber in self._subscribers:
+            subscriber.notify(publisher=self, message=message)
 
     def __init__(
         self,
@@ -279,7 +290,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
-        self._subscribers = set()
+        self._subscribers: set[Subscriber] = set()
 
         if not silent:  # pragma: no branch
             logger.info(self.name)
@@ -1053,6 +1064,7 @@ class UniswapV3Pool(AbstractLiquidityPool):
                         else tick_liquidity_net - liquidity_delta
                     )
                     new_liquidity_gross = tick_liquidity_gross + liquidity_delta
+                    assert new_liquidity_gross >= 0, "Negative gross liquidity!"
 
                     if new_liquidity_gross == 0:
                         # Delete if there is no remaining liquidity referencing this tick, then
@@ -1108,6 +1120,13 @@ class UniswapV3Pool(AbstractLiquidityPool):
         if token == self.token1:
             return exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
         raise DegenbotValueError(message=f"Unknown token {token}")  # pragma: no cover
+
+    def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
+        return tuple(
+            subscriber
+            for subscriber in self._subscribers
+            if isinstance(subscriber, AbstractArbitrage)
+        )
 
     def get_nominal_price(
         self,
