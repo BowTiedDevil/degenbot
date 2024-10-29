@@ -50,9 +50,8 @@ def ethereum_archive_node_web3() -> web3.Web3:
 @pytest.fixture(autouse=True)
 def _initialize_and_reset_after_each_test():
     """
-    After each test, clear and reset global values & singletons to a fresh state
+    Before each test, clear/reset global values and singletons
     """
-    yield  # the fixture will pause here until the test completes
     degenbot.config.connection_manager.connections.clear()
     degenbot.config.connection_manager._default_chain_id = None
     degenbot.managers.erc20_token_manager.Erc20TokenManager._state.clear()
