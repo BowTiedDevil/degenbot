@@ -238,7 +238,9 @@ VT = TypeVar("VT")
 class BoundedCache(OrderedDict[KT, VT]):
     """
     A cache holding key-value pairs, tracked by entry order. The cache automatically removes old
-    items if the number of items would exceed the maximum.
+    items if the number of items would exceed the maximum number of entries set by `max_items`.
+
+    Setting a value at an existing key will overwrite that value without affecting ordering.
     """
 
     def __init__(self, max_items: int) -> None:
@@ -256,6 +258,6 @@ class BoundedCache(OrderedDict[KT, VT]):
         )
 
     def __setitem__(self, key: KT, value: VT) -> None:
-        if len(self) >= self.max_items:
+        if len(self) >= self.max_items and key not in self:
             self.popitem(last=False)
         super().__setitem__(key, value)
