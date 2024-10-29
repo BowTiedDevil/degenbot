@@ -2,7 +2,7 @@ import ujson
 from eth_utils.address import to_checksum_address
 from web3.contract.contract import Contract
 
-from . import config
+from degenbot import config
 
 CHAINLINK_PRICE_FEED_ABI = ujson.loads(
     """

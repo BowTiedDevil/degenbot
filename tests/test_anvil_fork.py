@@ -5,15 +5,16 @@ import web3.middleware
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 
-if TYPE_CHECKING:
-    from web3.providers.ipc import IPCProvider
-
 from degenbot import AnvilFork
 from degenbot.config import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import DegenbotValueError, EVMRevertError, InvalidUint256
 
 from .conftest import BASE_FULL_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE_HTTP_URI
+
+if TYPE_CHECKING:
+    from web3.providers.ipc import IPCProvider
+
 
 VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")

@@ -10,13 +10,13 @@ from web3 import Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
-from .chainlink import ChainlinkPriceContract
-from .config import connection_manager
-from .exceptions import DegenbotValueError, NoPriceOracle
-from .functions import encode_function_calldata, get_number_for_block_identifier, raw_call
-from .logging import logger
-from .registry.all_tokens import token_registry
-from .types import AbstractErc20Token
+from degenbot.chainlink import ChainlinkPriceContract
+from degenbot.config import connection_manager
+from degenbot.exceptions import DegenbotValueError, NoPriceOracle
+from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
+from degenbot.logging import logger
+from degenbot.registry.all_tokens import token_registry
+from degenbot.types import AbstractErc20Token, BoundedCache
 
 
 class Erc20Token(AbstractErc20Token):

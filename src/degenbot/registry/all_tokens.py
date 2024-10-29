@@ -1,14 +1,14 @@
 import contextlib
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from typing_extensions import Self
 
 from degenbot.exceptions import DegenbotValueError, RegistryAlreadyInitialized
 
 if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
+
     from degenbot.erc20_token import Erc20Token
 
 

@@ -83,7 +83,7 @@ def _test_calculations(lp: CurveStableswapPool):
                 calc_amount == contract_amount
             ), f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}: {amount} {token_in} for {token_out}"  # noqa:E501
 
-    if lp.is_metapool:
+    if lp.base_pool is not None:
         assert lp.base_pool is not None
         for token_in, token_out in itertools.permutations(lp.tokens_underlying, 2):
             token_in_index = lp.tokens_underlying.index(token_in)

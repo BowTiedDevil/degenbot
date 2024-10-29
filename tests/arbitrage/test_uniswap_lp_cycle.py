@@ -4,14 +4,9 @@ import contextlib
 import multiprocessing
 import pickle
 import time
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
-
-    from eth_typing import ChecksumAddress
 from fractions import Fraction
 from threading import Lock
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from eth_utils.address import to_checksum_address
@@ -41,6 +36,11 @@ from degenbot.uniswap.types import (
     UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from eth_typing import ChecksumAddress
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"

@@ -277,7 +277,7 @@ class UniswapCurveCycle(AbstractArbitrage, PublisherMixin):
                                 amount_in=_token_in_quantity,
                                 min_amount_out=_token_out_quantity,
                                 underlying=(
-                                    pool.is_metapool
+                                    pool.base_pool is not None
                                     and (
                                         swap_vector.token_in in pool.tokens_underlying
                                         or swap_vector.token_out in pool.tokens_underlying
@@ -461,15 +461,13 @@ class UniswapCurveCycle(AbstractArbitrage, PublisherMixin):
             # negated profit
             return -float(token_out_quantity - token_in_quantity)
 
-        opt = minimize_scalar(
+        opt: OptimizeResult = minimize_scalar(
             fun=arb_profit,
             method="bounded",
             bounds=bounds,
             bracket=bracket,
             options={"xatol": 1.0},
         )
-        if TYPE_CHECKING:
-            assert isinstance(opt, OptimizeResult)
 
         # Negate the result to convert to a sensible value (positive profit)
         best_profit = -int(opt.fun)

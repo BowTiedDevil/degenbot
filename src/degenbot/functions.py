@@ -2,9 +2,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 import eth_account.messages
-
-if TYPE_CHECKING:
-    from eth_account.datastructures import SignedMessage
 from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from eth_utils.conversions import to_hex
@@ -13,8 +10,11 @@ from hexbytes import HexBytes
 from web3 import Web3
 from web3.types import BlockIdentifier
 
-from .constants import MAX_UINT256, MIN_UINT256
-from .exceptions import DegenbotValueError, InvalidUint256
+from degenbot.constants import MAX_UINT256, MIN_UINT256
+from degenbot.exceptions import DegenbotValueError, InvalidUint256
+
+if TYPE_CHECKING:
+    from eth_account.datastructures import SignedMessage
 
 
 def create2_address(

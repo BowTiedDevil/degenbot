@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import Any, TypeAlias
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -352,15 +352,13 @@ class UniswapLpCycle(AbstractArbitrage, PublisherMixin):
             # negated profit
             return -float(token_out_quantity - token_in_quantity)
 
-        opt = minimize_scalar(
+        opt: OptimizeResult = minimize_scalar(
             fun=arb_profit,
             method="bounded",
             bounds=bounds,
             bracket=bracket,
             options={"xatol": 1.0},
         )
-        if TYPE_CHECKING:
-            assert isinstance(opt, OptimizeResult)
 
         # Negate the result to convert to a sensible value (positive profit)
         best_profit = -int(opt.fun)

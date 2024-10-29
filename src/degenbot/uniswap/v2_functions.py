@@ -11,8 +11,8 @@ from hexbytes import HexBytes
 from degenbot.functions import create2_address
 
 if TYPE_CHECKING:
-    from .managers import UniswapV2PoolManager
-    from .v2_liquidity_pool import UniswapV2Pool
+    from degenbot.uniswap.managers import UniswapV2PoolManager
+    from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 
 def generate_v2_pool_address(

@@ -210,21 +210,15 @@ class UniswapTransaction(AbstractTransaction):
 
         logger.info(f"Simulating swap through pool: {pool}")
         logger.info(f"\t{amount_in} {token_in} -> {amount_out} {token_out}")
-        match sim_result:
-            case UniswapV2PoolSimulationResult():
-                if TYPE_CHECKING:
-                    assert isinstance(current_state, UniswapV2PoolState)
-                    assert isinstance(future_state, UniswapV2PoolState)
+        match current_state, future_state, sim_result:
+            case UniswapV2PoolState(), UniswapV2PoolState(), UniswapV2PoolSimulationResult():
                 logger.info("\t(CURRENT)")
                 logger.info(f"\t{pool.token0}: {current_state.reserves_token0}")
                 logger.info(f"\t{pool.token1}: {current_state.reserves_token1}")
                 logger.info("\t(FUTURE)")
                 logger.info(f"\t{pool.token0}: {future_state.reserves_token0}")
                 logger.info(f"\t{pool.token1}: {future_state.reserves_token1}")
-            case UniswapV3PoolSimulationResult():
-                if TYPE_CHECKING:
-                    assert isinstance(current_state, UniswapV3PoolState)
-                    assert isinstance(future_state, UniswapV3PoolState)
+            case UniswapV3PoolState(), UniswapV3PoolState(), UniswapV3PoolSimulationResult():
                 logger.info(f"\t{amount_in} {token_in} -> {amount_out} {token_out}")
                 logger.info("\t(CURRENT)")
                 logger.info(f"\tprice={current_state.sqrt_price_x96}")

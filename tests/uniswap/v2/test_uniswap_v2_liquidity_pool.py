@@ -7,9 +7,6 @@ import web3
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 
-if TYPE_CHECKING:
-    from web3.contract.contract import Contract
-
 import degenbot.uniswap.deployments
 from degenbot import AnvilFork, CamelotLiquidityPool, Erc20Token, UniswapV2Pool, set_web3
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
@@ -34,6 +31,9 @@ from degenbot.uniswap.types import (
     UniswapV2PoolState,
 )
 from degenbot.uniswap.v2_liquidity_pool import UnregisteredLiquidityPool
+
+if TYPE_CHECKING:
+    from web3.contract.contract import Contract
 
 UNISWAP_V2_ROUTER02 = to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
 UNISWAP_V2_WBTC_WETH_POOL = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")

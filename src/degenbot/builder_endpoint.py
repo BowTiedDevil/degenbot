@@ -7,12 +7,12 @@ import eth_account.messages
 import eth_account.signers.local
 import ujson
 
+from degenbot.exceptions import DegenbotValueError, ExternalServiceError
+from degenbot.functions import eip_191_hash
+
 if TYPE_CHECKING:
     from eth_account.signers.local import LocalAccount
 from hexbytes import HexBytes
-
-from .exceptions import DegenbotValueError, ExternalServiceError
-from .functions import eip_191_hash
 
 
 class BuilderEndpoint:  # pragma: no cover

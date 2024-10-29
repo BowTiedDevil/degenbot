@@ -6,7 +6,7 @@ __all__ = (
 
 import web3
 
-from .exceptions import DegenbotValueError
+from degenbot.exceptions import DegenbotValueError
 
 
 class ConnectionManager:
