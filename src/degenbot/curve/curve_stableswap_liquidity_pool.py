@@ -46,6 +46,7 @@ from degenbot.registry.all_pools import pool_registry
 from degenbot.types import (
     AbstractArbitrage,
     AbstractLiquidityPool,
+    BoundedCache,
     Message,
     Publisher,
     PublisherMixin,
@@ -517,28 +518,49 @@ class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
         self._update_block = state_block if state_block is not None else w3.eth.get_block_number()
         self._state_lock = Lock()
 
-        creation_block = w3.eth.get_block(self._update_block)
-        creation_block_timestamp = creation_block.get("timestamp")
-        if TYPE_CHECKING:
-            assert creation_block_timestamp is not None
-        self._create_timestamp = creation_block_timestamp
+        self._create_timestamp = w3.eth.get_block(self._update_block)["timestamp"]
 
-        # @dev These dicts are simple caches to hold retrieved values from on-chain calls.
-        # @dev They have no functionality to evict old values and will grow without bound
-        self._cached_admin_balance: dict[tuple[BlockNumber, int], int] = {}
-        self._cached_base_cache_updated: dict[BlockNumber, int] = {}
-        self._cached_base_virtual_price: dict[BlockNumber, int] = {}
-        self._cached_contract_D: dict[BlockNumber, int] = {}
-        self._cached_gamma: dict[BlockNumber, int] = {}
-        self._cached_price_scale: dict[BlockNumber, tuple[int, ...]] = {}
-        self._cached_rates_from_aeth: dict[BlockNumber, int] = {}
-        self._cached_rates_from_ctokens: dict[BlockNumber, tuple[int, ...]] = {}
-        self._cached_rates_from_cytokens: dict[BlockNumber, tuple[int]] = {}
-        self._cached_rates_from_oracle: dict[BlockNumber, tuple[int, ...]] = {}
-        self._cached_rates_from_reth: dict[BlockNumber, int] = {}
-        self._cached_rates_from_ytokens: dict[BlockNumber, tuple[int]] = {}
-        self._cached_scaled_redemption_price: dict[BlockNumber, int] = {}
-        self._cached_virtual_price: dict[BlockNumber, int] = {}
+        max_cache_size = 5
+        self._cached_admin_balances: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=max_cache_size
+        )
+        self._cached_base_cache_updated: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=max_cache_size
+        )
+        self._cached_base_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=max_cache_size
+        )
+        self._cached_contract_D: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=max_cache_size
+        )
+        self._cached_gamma: BoundedCache[BlockNumber, int] = BoundedCache(max_items=max_cache_size)
+        self._cached_price_scale: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=max_cache_size
+        )
+        self._cached_rates_from_aeth: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=max_cache_size
+        )
+        self._cached_rates_from_ctokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=max_cache_size
+        )
+        self._cached_rates_from_cytokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=max_cache_size
+        )
+        self._cached_rates_from_oracle: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=max_cache_size
+        )
+        self._cached_rates_from_reth: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=max_cache_size
+        )
+        self._cached_rates_from_ytokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=max_cache_size
+        )
+        self._cached_scaled_redemption_price: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=max_cache_size
+        )
+        self._cached_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=max_cache_size
+        )
 
         get_a_scaling_values()
         get_coefficient_and_fees()
@@ -618,7 +640,7 @@ class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
             10 ** (2 * self.PRECISION_DECIMALS - token.decimals) for token in self.tokens
         )
         self.precision_multipliers = tuple(
-            10 ** (self.PRECISION_DECIMALS - token.decimals) for token in self.tokens
+            cast(int, 10 ** (self.PRECISION_DECIMALS - token.decimals)) for token in self.tokens
         )
 
         set_pool_specific_attributes()
@@ -714,6 +736,87 @@ class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
             scaled_a = a_1
 
         return scaled_a
+
+    def _calc_token_amount(
+        self,
+        amounts: Sequence[int],
+        deposit: bool,
+        block_identifier: BlockIdentifier | None = None,
+        override_state: CurveStableswapPoolState | None = None,
+    ) -> int:
+        """
+        Simplified method to calculate addition or reduction in token supply at
+        deposit or withdrawal without taking fees into account (but looking at
+        slippage).
+        Needed to prevent front-running, not for precise calculations!
+        """
+
+        n_coins = len(self.tokens)
+
+        pool_balances = (
+            override_state.balances.copy() if override_state is not None else self.balances.copy()
+        )
+
+        block_number = (
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else get_number_for_block_identifier(
+                block_identifier,
+                connection_manager.get_web3(self.chain_id),
+            )
+        )
+
+        xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
+        amp = self._a()
+        d_0 = self._get_d(_xp=xp, _amp=amp)
+
+        for i in range(n_coins):
+            if deposit:
+                pool_balances[i] += amounts[i]
+            else:
+                pool_balances[i] -= amounts[i]
+
+        xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
+        d_1 = self._get_d(xp, amp)
+        token_amount: int = self.lp_token.get_total_supply(block_identifier=block_number)
+
+        diff = d_1 - d_0 if deposit else d_0 - d_1
+
+        return diff * token_amount // d_0
+
+    def _calc_withdraw_one_coin(
+        self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
+    ) -> tuple[int, ...]:
+        block_number = (
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else get_number_for_block_identifier(
+                block_identifier,
+                connection_manager.get_web3(self.chain_id),
+            )
+        )
+
+        n_coins = len(self.tokens)
+
+        amp = self._a()
+        total_supply = self.lp_token.get_total_supply(block_identifier=block_number)
+        precisions = self.precision_multipliers
+        xp = self._xp(rates=self.rate_multipliers, balances=self.balances)
+        d_0 = self._get_d(xp, amp)
+        d_1 = d_0 - _token_amount * d_0 // total_supply
+        new_y = self._get_y_d(amp, i, xp, d_1)
+        dy_0 = (xp[i] - new_y) // precisions[i]
+
+        xp_reduced = list(xp)
+        _fee = self.fee * n_coins // (4 * (n_coins - 1))
+        for j in range(n_coins):
+            dx_expected = xp[j] * d_1 // d_0 - new_y if j == i else xp[j] - xp[j] * d_1 // d_0
+            xp_reduced[j] -= _fee * dx_expected // self.FEE_DENOMINATOR
+
+        dy = xp_reduced[i] - self._get_y_d(amp, i, xp_reduced, d_1)
+        dy = (dy - 1) // precisions[i]
+
+        return dy, dy_0 - dy, total_supply
 
     def _get_scaled_redemption_price(self, block_number: BlockNumber) -> int:
         with contextlib.suppress(KeyError):
@@ -824,10 +927,8 @@ class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
                 token.get_balance(self.address, block_identifier=block_number)
                 for token in self.tokens
             ]
-            admin_balances = [
-                self._get_admin_balance(token_index=token_index, block_number=block_number)
-                for token_index, _ in enumerate(self.tokens)
-            ]
+            admin_balances = self._get_admin_balances(block_number=block_number)
+
             balances = [
                 pool_balance - admin_balance
                 for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
@@ -1125,20 +1226,14 @@ class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
             "0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492",
             "0xBfAb6FA95E0091ed66058ad493189D2cB29385E6",
         ):
-            eth_coin_index = 0
-            derivative_eth_coin_index = 1
-
+            live_balances = [
+                token.get_balance(self.address, block_identifier=block_number)
+                for token in self.tokens
+            ]
+            admin_balances = self._get_admin_balances(block_number=block_number)
             balances = [
-                self.tokens[eth_coin_index].get_balance(
-                    address=self.address, block_identifier=block_number
-                )
-                - self._get_admin_balance(token_index=eth_coin_index, block_number=block_number),
-                self.tokens[derivative_eth_coin_index].get_balance(
-                    address=self.address, block_identifier=block_number
-                )
-                - self._get_admin_balance(
-                    token_index=derivative_eth_coin_index, block_number=block_number
-                ),
+                pool_balance - admin_balance
+                for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
             ]
             rates = self._stored_rates_from_oracle(block_number=block_number)
             xp = self._xp(rates=rates, balances=balances)
@@ -1213,10 +1308,7 @@ class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
                 token.get_balance(self.address, block_identifier=block_number)
                 for token in self.tokens
             ]
-            admin_balances = [
-                self._get_admin_balance(token_index=token_index, block_number=block_number)
-                for token_index, _ in enumerate(self.tokens)
-            ]
+            admin_balances = self._get_admin_balances(block_number=block_number)
 
             _xp = [
                 pool_balance - admin_balance
@@ -1242,10 +1334,7 @@ class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
                 token.get_balance(self.address, block_identifier=block_number)
                 for token in self.tokens
             ]
-            admin_balances = [
-                self._get_admin_balance(token_index=token_index, block_number=block_number)
-                for token_index, _ in enumerate(self.tokens)
-            ]
+            admin_balances = self._get_admin_balances(block_number=block_number)
             balances = [
                 pool_balance - admin_balance
                 for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
@@ -1605,105 +1694,27 @@ class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
         self.base_virtual_price = base_virtual_price
         return base_virtual_price
 
-    def _calc_token_amount(
-        self,
-        amounts: Sequence[int],
-        deposit: bool,
-        block_identifier: BlockIdentifier | None = None,
-        override_state: CurveStableswapPoolState | None = None,
-    ) -> int:
-        """
-        Simplified method to calculate addition or reduction in token supply at
-        deposit or withdrawal without taking fees into account (but looking at
-        slippage).
-        Needed to prevent front-running, not for precise calculations!
-        """
-
-        n_coins = len(self.tokens)
-
-        pool_balances = (
-            override_state.balances.copy() if override_state is not None else self.balances.copy()
-        )
-
-        block_number = (
-            cast(BlockNumber, block_identifier)
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                connection_manager.get_web3(self.chain_id),
-            )
-        )
-
-        xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
-        amp = self._a()
-        d_0 = self._get_d(_xp=xp, _amp=amp)
-
-        for i in range(n_coins):
-            if deposit:
-                pool_balances[i] += amounts[i]
-            else:
-                pool_balances[i] -= amounts[i]
-
-        xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
-        d_1 = self._get_d(xp, amp)
-        token_amount: int = self.lp_token.get_total_supply(block_identifier=block_number)
-
-        diff = d_1 - d_0 if deposit else d_0 - d_1
-
-        return diff * token_amount // d_0
-
-    def _calc_withdraw_one_coin(
-        self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
-    ) -> tuple[int, ...]:
-        block_number = (
-            cast(BlockNumber, block_identifier)
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                connection_manager.get_web3(self.chain_id),
-            )
-        )
-
-        n_coins = len(self.tokens)
-
-        amp = self._a()
-        total_supply = self.lp_token.get_total_supply(block_identifier=block_number)
-        precisions = self.precision_multipliers
-        xp = self._xp(rates=self.rate_multipliers, balances=self.balances)
-        d_0 = self._get_d(xp, amp)
-        d_1 = d_0 - _token_amount * d_0 // total_supply
-        new_y = self._get_y_d(amp, i, xp, d_1)
-        dy_0 = (xp[i] - new_y) // precisions[i]
-
-        xp_reduced = list(xp)
-        _fee = self.fee * n_coins // (4 * (n_coins - 1))
-        for j in range(n_coins):
-            dx_expected = xp[j] * d_1 // d_0 - new_y if j == i else xp[j] - xp[j] * d_1 // d_0
-            xp_reduced[j] -= _fee * dx_expected // self.FEE_DENOMINATOR
-
-        dy = xp_reduced[i] - self._get_y_d(amp, i, xp_reduced, d_1)
-        dy = (dy - 1) // precisions[i]
-
-        return dy, dy_0 - dy, total_supply
-
-    def _get_admin_balance(self, token_index: int, block_number: BlockNumber) -> int:
+    def _get_admin_balances(self, block_number: BlockNumber) -> tuple[int, ...]:
         with contextlib.suppress(KeyError):
-            return self._cached_admin_balance[block_number, token_index]
+            return self._cached_admin_balances[block_number]
 
-        admin_balance: int
-        (admin_balance,) = raw_call(
-            w3=connection_manager.get_web3(chain_id=self.chain_id),
-            address=self.address,
-            calldata=encode_function_calldata(
-                function_prototype="admin_balances(uint256)",
-                function_arguments=[token_index],
-            ),
-            return_types=["uint256"],
-            block_identifier=block_number,
-        )
+        admin_balances: list[int] = []
+        for token_index, _ in enumerate(self.tokens):
+            admin_balance: int
+            (admin_balance,) = raw_call(
+                w3=connection_manager.get_web3(chain_id=self.chain_id),
+                address=self.address,
+                calldata=encode_function_calldata(
+                    function_prototype="admin_balances(uint256)",
+                    function_arguments=[token_index],
+                ),
+                return_types=["uint256"],
+                block_identifier=block_number,
+            )
+            admin_balances.append(admin_balance)
 
-        self._cached_admin_balance[block_number, token_index] = admin_balance
-        return admin_balance
+        self._cached_admin_balances[block_number] = tuple(admin_balances)
+        return tuple(admin_balances)
 
     def _get_d(self, _xp: Sequence[int], _amp: int) -> int:
         """
@@ -2146,16 +2157,7 @@ class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
             rate * balance // self.PRECISION for rate, balance in zip(rates, balances, strict=True)
         )
 
-    def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
-        return tuple(
-            subscriber
-            for subscriber in self._subscribers
-            if isinstance(subscriber, AbstractArbitrage)
-        )
-
-    def auto_update(
-        self, block_number: BlockNumber | None = None
-    ) -> tuple[bool, CurveStableswapPoolState]:
+    def auto_update(self, block_number: BlockNumber | None = None) -> bool:
         """
         Retrieve and set updated balances from the contract
         """
@@ -2320,3 +2322,10 @@ class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
         raise DegenbotValueError(
             message="Tokens not held by pool or in underlying base pool"
         )  # pragma: no cover
+
+    def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
+        return tuple(
+            subscriber
+            for subscriber in self._subscribers
+            if isinstance(subscriber, AbstractArbitrage)
+        )
