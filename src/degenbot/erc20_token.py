@@ -1,9 +1,9 @@
 import contextlib
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
-from eth_typing import AnyAddress, ChecksumAddress
+from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
@@ -27,6 +27,7 @@ class Erc20Token(AbstractErc20Token):
     UNKNOWN_NAME = "Unknown"
     UNKNOWN_SYMBOL = "UNKN"
     UNKNOWN_DECIMALS = 0
+    MAX_CACHE_ITEMS = 5
 
     def get_name_symbol_decimals_batched(self, w3: Web3) -> tuple[str, str, int]:
         with w3.batch_requests() as batch:
@@ -173,8 +174,10 @@ class Erc20Token(AbstractErc20Token):
         token_registry.add(token_address=self.address, chain_id=self.chain_id, token=self)
 
         self._cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
-        self._cached_balance: dict[tuple[int, ChecksumAddress], int] = {}
-        self._cached_total_supply: dict[int, int] = {}
+        self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
+        self._cached_total_supply: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=self.MAX_CACHE_ITEMS
+        )
 
         if not silent:  # pragma: no cover
             logger.info(f"• {self.symbol} ({self.name})")
@@ -182,15 +185,32 @@ class Erc20Token(AbstractErc20Token):
     def __repr__(self) -> str:  # pragma: no cover
         return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"  # noqa:E501
 
-    def _get_approval_cachable(
+    def get_approval(
         self,
-        owner: ChecksumAddress,
-        spender: ChecksumAddress,
-        block_number: int,
+        owner: str,
+        spender: str,
+        block_identifier: BlockIdentifier | None = None,
     ) -> int:
+        """
+        Retrieve the amount that can be spent by `spender` on behalf of `owner`.
+        """
+
+        owner = to_checksum_address(owner)
+        spender = to_checksum_address(spender)
+
+        block_number = (
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else get_number_for_block_identifier(
+                block_identifier,
+                self.w3,
+            )
+        )
+
         with contextlib.suppress(KeyError):
             return self._cached_approval[block_number, owner, spender]
 
+        approval: int
         (approval,) = eth_abi.abi.decode(
             types=["uint256"],
             data=self.w3.eth.call(
@@ -202,41 +222,33 @@ class Erc20Token(AbstractErc20Token):
                 block_identifier=block_number,
             ),
         )
-        if TYPE_CHECKING:
-            assert isinstance(approval, int)
         self._cached_approval[block_number, owner, spender] = approval
         return approval
 
-    def get_approval(
+    def get_balance(
         self,
-        owner: AnyAddress,
-        spender: AnyAddress,
+        address: str,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """
-        Retrieve the amount that can be spent by `spender` on behalf of `owner`.
+        Retrieve the ERC-20 balance for the given address.
         """
 
+        address = to_checksum_address(address)
+
         block_number = (
-            get_number_for_block_identifier(block_identifier, self.w3)
-            if block_identifier is None
-            else cast(int, block_identifier)
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else get_number_for_block_identifier(
+                block_identifier,
+                self.w3,
+            )
         )
 
-        return self._get_approval_cachable(
-            to_checksum_address(owner),
-            to_checksum_address(spender),
-            block_number=block_number,
-        )
-
-    def _get_balance_cachable(
-        self,
-        address: ChecksumAddress,
-        block_number: int,
-    ) -> int:
         with contextlib.suppress(KeyError):
-            return self._cached_balance[block_number, address]
+            return self._cached_balance[address][block_number]
 
+        balance: int
         (balance,) = eth_abi.abi.decode(
             types=["uint256"],
             data=self.w3.eth.call(
@@ -248,35 +260,35 @@ class Erc20Token(AbstractErc20Token):
                 block_identifier=block_number,
             ),
         )
-        if TYPE_CHECKING:
-            assert isinstance(balance, int)
-        self._cached_balance[block_number, address] = balance
+
+        balance_cache_at_address: BoundedCache[BlockNumber, int]
+        try:
+            balance_cache_at_address = self._cached_balance[address]
+        except KeyError:
+            balance_cache_at_address = BoundedCache(max_items=self.MAX_CACHE_ITEMS)
+
+        balance_cache_at_address[block_number] = balance
+        self._cached_balance[address] = balance_cache_at_address
         return balance
 
-    def get_balance(
-        self,
-        address: AnyAddress,
-        block_identifier: BlockIdentifier | None = None,
-    ) -> int:
+    def get_total_supply(self, block_identifier: BlockIdentifier | None = None) -> int:
         """
-        Retrieve the ERC-20 balance for the given address.
+        Retrieve the total supply for this token.
         """
 
         block_number = (
-            get_number_for_block_identifier(block_identifier, self.w3)
-            if block_identifier is None
-            else cast(int, block_identifier)
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else get_number_for_block_identifier(
+                block_identifier,
+                self.w3,
+            )
         )
 
-        return self._get_balance_cachable(
-            address=to_checksum_address(address),
-            block_number=block_number,
-        )
-
-    def _get_total_supply_cachable(self, block_number: int) -> int:
         with contextlib.suppress(KeyError):
             return self._cached_total_supply[block_number]
 
+        total_supply: int
         (total_supply,) = eth_abi.abi.decode(
             types=["uint256"],
             data=self.w3.eth.call(
@@ -287,26 +299,8 @@ class Erc20Token(AbstractErc20Token):
                 block_identifier=block_number,
             ),
         )
-        if TYPE_CHECKING:
-            assert isinstance(total_supply, int)
         self._cached_total_supply[block_number] = total_supply
         return total_supply
-
-    def get_total_supply(self, block_identifier: BlockIdentifier | None = None) -> int:
-        """
-        Retrieve the total supply for this token.
-        """
-
-        block_number = (
-            get_number_for_block_identifier(
-                block_identifier,
-                self.w3,
-            )
-            if block_identifier is None
-            else cast(int, block_identifier)
-        )
-
-        return self._get_total_supply_cachable(block_number=block_number)
 
     @property
     def chain_id(self) -> int:
@@ -339,35 +333,39 @@ class EtherPlaceholder(Erc20Token):
         chain_id: int | None = None,
     ) -> None:
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        self._cached_balance: dict[tuple[int, ChecksumAddress], int] = {}
+        self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
         token_registry.add(token_address=self.address, chain_id=self._chain_id, token=self)
 
-    def _get_balance_cachable(
+    def get_balance(
         self,
-        address: ChecksumAddress,
-        block_number: int,
+        address: str,
+        block_identifier: BlockIdentifier | None = None,
     ) -> int:
+        address = to_checksum_address(address)
+
+        block_number = (
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else get_number_for_block_identifier(
+                block_identifier,
+                self.w3,
+            )
+        )
+
         with contextlib.suppress(KeyError):
-            return self._cached_balance[block_number, address]
+            return self._cached_balance[address][block_number]
 
         balance = self.w3.eth.get_balance(
             address,
             block_identifier=block_number,
         )
-        self._cached_balance[block_number, address] = balance
-        return balance
 
-    def get_balance(
-        self,
-        address: AnyAddress,
-        block_identifier: BlockIdentifier | None = None,
-    ) -> int:
-        block_number = (
-            get_number_for_block_identifier(block_identifier, self.w3)
-            if block_identifier is None
-            else cast(int, block_identifier)
-        )
-        return self._get_balance_cachable(
-            address=to_checksum_address(address),
-            block_number=block_number,
-        )
+        balance_cache_at_address: BoundedCache[BlockNumber, int]
+        try:
+            balance_cache_at_address = self._cached_balance[address]
+        except KeyError:
+            balance_cache_at_address = BoundedCache(max_items=self.MAX_CACHE_ITEMS)
+
+        balance_cache_at_address[block_number] = balance
+        self._cached_balance[address] = balance_cache_at_address
+        return balance
