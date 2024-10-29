@@ -284,8 +284,8 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
         (token0,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token0))
         (token1,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token1))
         (stable,) = eth_abi.abi.decode(types=["bool"], data=cast(HexBytes, stable))
-        reserves0, reserves1 = eth_abi.abi.decode(
-            types=["uint112", "uint112"], data=cast(HexBytes, reserves)
+        reserves0, reserves1, _ = eth_abi.abi.decode(
+            types=["uint256", "uint256", "uint256"], data=cast(HexBytes, reserves)
         )
 
         (fee,) = eth_abi.abi.decode(
