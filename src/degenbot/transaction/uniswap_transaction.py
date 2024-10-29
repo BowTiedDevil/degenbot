@@ -175,8 +175,10 @@ class UniswapTransaction(AbstractTransaction):
 
         self.silent = False
 
-    def _raise_if_past_deadline(self, deadline: int) -> None:  # pragma: no cover
-        block = connection_manager.get_web3(self.chain_id).eth.get_block(self.state_block)
+    def _raise_if_past_deadline(
+        self, deadline: int, block_number: BlockNumber
+    ) -> None:  # pragma: no cover
+        block = connection_manager.get_web3(self.chain_id).eth.get_block(block_number)
         block_timestamp = block.get("timestamp")
         if block_timestamp is not None and block_timestamp > deadline:
             raise DeadlineExpired
@@ -574,6 +576,7 @@ class UniswapTransaction(AbstractTransaction):
         self,
         func_name: str,
         func_params: dict[str, Any],
+        block_number: BlockNumber,
     ) -> None:
         """
         Take a Uniswap V2 / V3 transaction (specified by name and a dictionary
@@ -1293,12 +1296,14 @@ class UniswapTransaction(AbstractTransaction):
                         self._simulate(
                             func_name=_func.fn_name,
                             func_params=_params,
+                            block_number=block_number,
                         )
 
                 else:
                     self._simulate(
                         func_name=payload_func.fn_name,
                         func_params=payload_args,
+                        block_number=block_number,
                     )
 
         def _process_uniswap_v2_transaction() -> None:
@@ -1336,7 +1341,10 @@ class UniswapTransaction(AbstractTransaction):
                         except KeyError:
                             pass
                         else:
-                            self._raise_if_past_deadline(tx_deadline)
+                            self._raise_if_past_deadline(
+                                tx_deadline,
+                                block_number=block_number,
+                            )
 
                         try:
                             pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
@@ -1395,7 +1403,10 @@ class UniswapTransaction(AbstractTransaction):
 
                         with contextlib.suppress(KeyError):
                             tx_deadline = func_params["deadline"]
-                            self._raise_if_past_deadline(tx_deadline)
+                            self._raise_if_past_deadline(
+                                tx_deadline,
+                                block_number=block_number,
+                            )
 
                         try:
                             pools = get_v2_pools_from_token_path(tx_path, self.v2_pool_manager)
@@ -1491,7 +1502,10 @@ class UniswapTransaction(AbstractTransaction):
                             )
 
                         tx_deadline = func_params["deadline"]
-                        self._raise_if_past_deadline(tx_deadline)
+                        self._raise_if_past_deadline(
+                            tx_deadline,
+                            block_number=block_number,
+                        )
 
                         try:
                             _pool = self.v2_pool_manager.get_pool_from_tokens(
@@ -1600,7 +1614,10 @@ class UniswapTransaction(AbstractTransaction):
                                 )
 
                         if tx_deadline:
-                            self._raise_if_past_deadline(tx_deadline)
+                            self._raise_if_past_deadline(
+                                tx_deadline,
+                                block_number=block_number,
+                            )
 
                         if TYPE_CHECKING:
                             assert isinstance(self.v3_pool_manager, UniswapV3PoolManager)
@@ -1667,7 +1684,10 @@ class UniswapTransaction(AbstractTransaction):
                                 )
 
                         if tx_deadline:
-                            self._raise_if_past_deadline(tx_deadline)
+                            self._raise_if_past_deadline(
+                                tx_deadline,
+                                block_number=block_number,
+                            )
 
                         tx_path_decoded = decode_v3_path(tx_path)
 
@@ -1773,7 +1793,10 @@ class UniswapTransaction(AbstractTransaction):
                                 )
 
                         if tx_deadline:
-                            self._raise_if_past_deadline(tx_deadline)
+                            self._raise_if_past_deadline(
+                                tx_deadline,
+                                block_number=block_number,
+                            )
 
                         if TYPE_CHECKING:
                             assert isinstance(self.v3_pool_manager, UniswapV3PoolManager)
@@ -1845,7 +1868,10 @@ class UniswapTransaction(AbstractTransaction):
                                 )
 
                         if tx_deadline:
-                            self._raise_if_past_deadline(tx_deadline)
+                            self._raise_if_past_deadline(
+                                tx_deadline,
+                                block_number=block_number,
+                            )
 
                         tx_path_decoded = decode_v3_path(tx_path)
 
@@ -2205,7 +2231,10 @@ class UniswapTransaction(AbstractTransaction):
             try:
                 with contextlib.suppress(KeyError):
                     tx_deadline = func_params["deadline"]
-                    self._raise_if_past_deadline(tx_deadline)
+                    self._raise_if_past_deadline(
+                        tx_deadline,
+                        block_number=block_number,
+                    )
 
                 tx_commands = func_params["commands"]
                 tx_inputs = func_params["inputs"]
@@ -2259,12 +2288,6 @@ class UniswapTransaction(AbstractTransaction):
 
         self.silent = silent
 
-        self.state_block = (
-            connection_manager.get_web3(self.chain_id).eth.get_block_number()
-            if state_block is None
-            else cast(BlockNumber, state_block)
-        )
-
         self.simulated_pool_states: list[
             tuple[UniswapV2Pool, UniswapV2PoolSimulationResult]
             | tuple[UniswapV3Pool, UniswapV3PoolSimulationResult]
@@ -2273,6 +2296,11 @@ class UniswapTransaction(AbstractTransaction):
         self._simulate(
             self.func_name,
             self.func_params,
+            block_number=(
+                connection_manager.get_web3(self.chain_id).eth.get_block_number()
+                if state_block is None
+                else cast(BlockNumber, state_block)
+            ),
         )
 
         if self.router_address in self.ledger.balances:
