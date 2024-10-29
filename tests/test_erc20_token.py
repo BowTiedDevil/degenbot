@@ -5,12 +5,13 @@ from web3 import Web3
 
 from degenbot.config import set_web3
 from degenbot.erc20_token import Erc20Token, EtherPlaceholder
-from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions import DegenbotValueError, NoPriceOracle
 from degenbot.types import BoundedCache
 
 VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 WBTC_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
+CHAINLINK_WETH_PRICE_FEED = to_checksum_address("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419")
 
 
 @pytest.fixture
@@ -115,22 +116,22 @@ def test_non_compliant_tokens(ethereum_archive_node_web3: Web3):
 
 def test_erc20token_with_price_feed(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
-    Erc20Token(
-        address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        oracle_address="0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419",
-    )
+    weth = Erc20Token(address=WETH_ADDRESS, oracle_address=CHAINLINK_WETH_PRICE_FEED)
+    _ = weth.price
 
 
-def test_erc20token_functions(ethereum_archive_node_web3: Web3):
+def test_erc20token_without_price_feed(ethereum_archive_node_web3: Web3, weth: Erc20Token):
     set_web3(ethereum_archive_node_web3)
-    weth = Erc20Token(
-        address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        oracle_address="0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419",
-    )
+
+    with pytest.raises(NoPriceOracle):
+        _ = weth.price
+
+
+def test_erc20token_functions(ethereum_archive_node_web3: Web3, weth: Erc20Token):
+    set_web3(ethereum_archive_node_web3)
     weth.get_total_supply()
     weth.get_approval(VITALIK_ADDRESS, weth.address)
     weth.get_balance(VITALIK_ADDRESS)
-    _ = weth.price
 
 
 def test_ether_placeholder(ethereum_archive_node_web3: Web3):
