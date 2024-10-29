@@ -34,10 +34,10 @@ from degenbot.logging import logger
 from degenbot.types import (
     AbstractArbitrage,
     Message,
-    PlaintextMessage,
     Publisher,
     PublisherMixin,
     Subscriber,
+    TextMessage,
 )
 from degenbot.uniswap.types import (
     UniswapV2PoolState,
@@ -859,7 +859,7 @@ class UniswapCurveCycle(AbstractArbitrage, PublisherMixin):
             ):
                 if message.state.pool in self.swap_pools:
                     self._notify_subscribers(
-                        PlaintextMessage(f"Received update from pool {message.state.pool}")
+                        TextMessage(f"Received update from pool {message.state.pool}")
                     )
             case _:  # pragma: no cover
                 logger.info(f"Unhandled message {message} from publisher {publisher}")

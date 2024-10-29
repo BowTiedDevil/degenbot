@@ -27,6 +27,7 @@ from degenbot.arbitrage.types import (
 )
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import ArbitrageError, DegenbotValueError, RateOfExchangeBelowMinimum
+from degenbot.types import TextMessage
 from degenbot.uniswap.types import (
     UniswapV2PoolState,
     UniswapV2PoolStateUpdated,

@@ -14,7 +14,7 @@ class Message:
     """
 
 
-class PlaintextMessage(Message):
+class TextMessage(Message):
     def __init__(self, text: str) -> None:
         self.text = text
 
