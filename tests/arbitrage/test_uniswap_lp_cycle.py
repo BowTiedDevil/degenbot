@@ -6,7 +6,7 @@ import pickle
 import time
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 from eth_utils.address import to_checksum_address
@@ -29,6 +29,7 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import ArbitrageError, DegenbotValueError, RateOfExchangeBelowMinimum
 from degenbot.types import TextMessage
 from degenbot.uniswap.types import (
+    UniswapV2PoolExternalUpdate,
     UniswapV2PoolState,
     UniswapV2PoolStateUpdated,
     UniswapV3BitmapAtWord,
