@@ -257,7 +257,5 @@ class BoundedCache(OrderedDict[KT, VT]):
 
     def __setitem__(self, key: KT, value: VT) -> None:
         if len(self) >= self.max_items:
-            expired_key, expired_value = self.popitem(last=False)
-            print(f"Evicted key={expired_key}, value={expired_value} from cache")
-
+            self.popitem(last=False)
         super().__setitem__(key, value)
