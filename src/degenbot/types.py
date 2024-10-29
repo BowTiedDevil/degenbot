@@ -258,6 +258,6 @@ class BoundedCache(OrderedDict[KT, VT]):
         )
 
     def __setitem__(self, key: KT, value: VT) -> None:
-        if len(self) >= self.max_items and key not in self:
-            self.popitem(last=False)
         super().__setitem__(key, value)
+        if len(self) > self.max_items:
+            self.popitem(last=False)
