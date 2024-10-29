@@ -18,6 +18,11 @@ class PlaintextMessage(Message):
     def __init__(self, text: str) -> None:
         self.text = text
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, TextMessage):
+            return NotImplemented
+        return self.text == other.text
+
     def __repr__(self) -> str:
         return f"PlaintextMessage(text={self.text})"
 
