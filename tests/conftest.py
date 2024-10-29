@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import dotenv
 import pytest
@@ -78,3 +79,27 @@ def fork_mainnet() -> AnvilFork:
 @pytest.fixture
 def fork_arbitrum() -> AnvilFork:
     return AnvilFork(fork_url=ARBITRUM_ARCHIVE_NODE_HTTP_URI, storage_caching=False)
+
+
+class FakeSubscriber:
+    """
+    This subscriber class provides a record of received messages, and can be used to test that
+    publisher/subscriber methods operate as expected.
+    """
+
+    def __init__(self) -> None:
+        self.inbox: list[dict[str, Any]] = list()
+
+    def notify(self, publisher: degenbot.types.Publisher, message: degenbot.types.Message) -> None:
+        self.inbox.append(
+            {
+                "from": publisher,
+                "message": message,
+            }
+        )
+
+    def subscribe(self, publisher: degenbot.types.Publisher) -> None:
+        publisher.subscribe(self)
+
+    def unsubscribe(self, publisher: degenbot.types.Publisher) -> None:
+        publisher.unsubscribe(self)
