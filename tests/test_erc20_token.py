@@ -6,6 +6,7 @@ from web3 import Web3
 from degenbot.config import set_web3
 from degenbot.erc20_token import Erc20Token, EtherPlaceholder
 from degenbot.exceptions import DegenbotValueError
+from degenbot.types import BoundedCache
 
 VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
@@ -34,7 +35,8 @@ def test_caches(ethereum_archive_node_web3: Web3, wbtc: Erc20Token):
     fake_balance = 69_420_000
     current_block = ethereum_archive_node_web3.eth.block_number
     balance_actual = wbtc.get_balance(VITALIK_ADDRESS)
-    wbtc._cached_balance[(current_block, VITALIK_ADDRESS)] = fake_balance
+    wbtc._cached_balance[VITALIK_ADDRESS] = BoundedCache(max_items=5)
+    wbtc._cached_balance[VITALIK_ADDRESS][current_block] = fake_balance
     assert wbtc.get_balance(VITALIK_ADDRESS) == fake_balance
     wbtc._cached_balance.clear()
     assert wbtc.get_balance(VITALIK_ADDRESS) == balance_actual
@@ -138,7 +140,8 @@ def test_ether_placeholder(ethereum_archive_node_web3: Web3):
     fake_balance = 69_420_000
     current_block = ethereum_archive_node_web3.eth.block_number
     balance_actual = ether.get_balance(VITALIK_ADDRESS)
-    ether._cached_balance[(current_block, VITALIK_ADDRESS)] = fake_balance
+    ether._cached_balance[VITALIK_ADDRESS] = BoundedCache(max_items=5)
+    ether._cached_balance[VITALIK_ADDRESS][current_block] = fake_balance
     assert ether.get_balance(VITALIK_ADDRESS) == fake_balance
     ether._cached_balance.clear()
     assert ether.get_balance(VITALIK_ADDRESS) == balance_actual
