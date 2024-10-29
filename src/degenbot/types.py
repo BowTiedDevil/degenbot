@@ -1,5 +1,6 @@
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, ClassVar, Protocol, TypeAlias
+from typing import Any, ClassVar, Protocol, TypeAlias, TypeVar
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -223,3 +224,35 @@ class AbstractRegistry: ...
 
 
 class AbstractTransaction: ...
+
+
+KT = TypeVar("KT")
+VT = TypeVar("VT")
+
+
+class BoundedCache(OrderedDict[KT, VT]):
+    """
+    A cache holding key-value pairs, tracked by entry order. The cache automatically removes old
+    items if the number of items would exceed the maximum.
+    """
+
+    def __init__(self, max_items: int) -> None:
+        super().__init__()
+        self.max_items = max_items
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        state = super().__reduce__()
+        return (
+            state[0],
+            (self.max_items,),  # max_items argument must be provided to properly unpickle
+            None,
+            None,
+            state[4],
+        )
+
+    def __setitem__(self, key: KT, value: VT) -> None:
+        if len(self) >= self.max_items:
+            expired_key, expired_value = self.popitem(last=False)
+            print(f"Evicted key={expired_key}, value={expired_value} from cache")
+
+        super().__setitem__(key, value)
