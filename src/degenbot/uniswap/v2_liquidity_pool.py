@@ -59,6 +59,7 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
     PoolState: TypeAlias = UniswapV2PoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
+    FEE = Fraction(3, 1000)
     RESERVES_STRUCT_TYPES = ("uint112", "uint112")
     UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
         "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
@@ -93,7 +94,7 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
         chain_id: int | None = None,
         deployer_address: str | None = None,
         init_hash: str | None = None,
-        fee: Fraction | Iterable[Fraction] = Fraction(3, 1000),
+        fee: Fraction | Iterable[Fraction] | None = None,
         state_block: int | None = None,
         verify_address: bool = True,
         silent: bool = False,
@@ -114,9 +115,10 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
             will be searched first. If no matching deployment is found, the default Uniswap V2 hash
             will be used.
         fee:
-            The swap fee imposed by the pool. Defaults to `Fraction(3,1000)` which is equivalent to
-            0.3%. For split-fee pools of unequal value, provide an iterable of fees ordered by
-            token position.
+            The swap fee as a `Fraction`. If not provided, the default will be used. A 0.3% fee
+            can be specified by passing `fee=Fraction(3,1000)`. For split-fee pools of unequal
+            value, provide an iterable of fees ordered by token position, e.g.
+            `fee=[Fraction(3,1000), Fraction(2,1000)]`
         state_block:
             Fetch initial state values from the chain at a particular block height. Defaults to the
             latest block if omitted.
@@ -178,10 +180,13 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
 
         self.deployer = deployer_address if deployer_address is not None else self.factory
 
-        if isinstance(fee, Iterable):
-            self.fee_token0, self.fee_token1 = fee
-        else:
-            self.fee_token0 = self.fee_token1 = fee
+        match fee:
+            case Iterable():
+                self.fee_token0, self.fee_token1 = fee
+            case Fraction():
+                self.fee_token0 = self.fee_token1 = fee
+            case None:
+                self.fee_token0 = self.fee_token1 = self.FEE
 
         if verify_address and self.address != self._verified_address():  # pragma: no branch
             raise AddressMismatch

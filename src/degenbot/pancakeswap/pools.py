@@ -1,8 +1,11 @@
+from fractions import Fraction
+
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
 class PancakeV2Pool(UniswapV2Pool):
+    FEE = Fraction(25, 10000)
     RESERVES_STRUCT_TYPES = (
         "uint112",
         "uint112",
