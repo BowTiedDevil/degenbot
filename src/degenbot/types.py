@@ -261,3 +261,9 @@ class BoundedCache(OrderedDict[KT, VT]):
         super().__setitem__(key, value)
         if len(self) > self.max_items:
             self.popitem(last=False)
+
+    def copy(self) -> Self:
+        new_copy = self.__class__(max_items=self.max_items)
+        for k, v in self.items():
+            new_copy[k] = v
+        return new_copy
