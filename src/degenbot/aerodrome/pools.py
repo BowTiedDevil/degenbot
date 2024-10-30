@@ -3,7 +3,7 @@ from threading import Lock
 from typing import Any, TypeAlias, cast
 
 import eth_abi.abi
-from eth_typing import ChecksumAddress
+from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
@@ -34,12 +34,20 @@ from degenbot.logging import logger
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.registry.all_pools import pool_registry
 from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
-from degenbot.types import AbstractLiquidityPool, Message, Publisher, PublisherMixin, Subscriber
+from degenbot.types import (
+    AbstractLiquidityPool,
+    BoundedCache,
+    Message,
+    Publisher,
+    PublisherMixin,
+    Subscriber,
+)
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
 class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
     PoolState: TypeAlias = AerodromeV2PoolState
+    _state_cache: BoundedCache[BlockNumber, PoolState]
 
     FEE_DENOMINATOR = 10_000
 
@@ -54,7 +62,6 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
         chain_id: int | None = None,
         deployer_address: str | None = None,
         state_block: int | None = None,
-        archive_states: bool = True,
         verify_address: bool = True,
         silent: bool = False,
     ) -> None:
@@ -97,7 +104,8 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
 
         self.name = f"{self.token0}-{self.token1} (AerodromeV2, {100*self.fee.numerator/self.fee.denominator:.2f}%)"  # noqa:E501
 
-        self._pool_state_archive = {self.update_block: self.state} if archive_states else None
+        self._state_cache = BoundedCache(max_items=128)
+        self._state_cache[cast(BlockNumber, self.update_block)] = self.state
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
@@ -113,8 +121,8 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
         copied_attributes = ()
         dropped_attributes = (
             "_state_lock",
+            "_state_cache",
             "_subscribers",
-            "_pool_state_archive",
         )
 
         with self._state_lock:
@@ -170,9 +178,7 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
             self._update_block = block_number
 
             if state_updated:
-                if self._pool_state_archive is not None:  # pragma: no cover
-                    self._pool_state_archive[block_number] = self.state
-
+                self._state_cache[cast(BlockNumber, block_number)] = self.state
                 self._notify_subscribers(
                     message=AerodromeV2PoolStateUpdated(self.state),
                 )
@@ -207,8 +213,7 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
                 logger.debug(f"Token 1 Reserves: {self.reserves_token1}")
 
             if updated_state:
-                if self._pool_state_archive is not None:  # pragma: no branch
-                    self._pool_state_archive[update.block_number] = self.state
+                self._state_cache[cast(BlockNumber, update.block_number)] = self.state
                 self._notify_subscribers(
                     message=AerodromeV2PoolStateUpdated(self.state),
                 )

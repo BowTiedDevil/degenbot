@@ -619,7 +619,7 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: 
     starting_state = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state
     starting_block = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block
 
-    pprint(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive)
+    pprint(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._state_cache)
 
     first_update_block = (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block + 1
@@ -647,19 +647,16 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: 
             )
         )
         assert (
-            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive
-            is not None
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._state_cache is not None
         )
         assert (
             block_number
-            in ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive
+            in ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._state_cache
         )
         expected_block_states[block_number] = (
             ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state
         )
 
-    # pprint(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive)
-    # pprint(expected_block_states)
     last_block_state = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state
 
     # Cannot restore to a pool state before the first
@@ -695,10 +692,7 @@ def test_discard_before_finalized(
     starting_state = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state
     starting_block = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block
 
-    assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive
-        is not None
-    )
+    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._state_cache is not None
 
     first_update_block = (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block + 1
@@ -727,7 +721,7 @@ def test_discard_before_finalized(
         )
         assert (
             block_number
-            in ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive
+            in ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._state_cache
         )
         expected_block_states[block_number] = (
             ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state
@@ -737,7 +731,7 @@ def test_discard_before_finalized(
         last_update_block
     )
     assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._pool_state_archive.keys()
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._state_cache.keys()
         == set([last_update_block])
     )
 
@@ -747,12 +741,12 @@ def test_discard_earlier_than_created(
 ) -> None:
     lp = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000
 
-    assert lp._pool_state_archive is not None
-    state_before_discard = lp._pool_state_archive.copy()
+    assert lp._state_cache is not None
+    state_before_discard = lp._state_cache.copy()
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.discard_states_before_block(
         lp.update_block - 1
     )
-    assert lp._pool_state_archive == state_before_discard
+    assert lp._state_cache == state_before_discard
 
 
 def test_discard_after_last_update(

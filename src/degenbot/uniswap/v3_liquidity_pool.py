@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
-from eth_typing import ChecksumAddress
+from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from typing_extensions import Self
@@ -35,6 +35,7 @@ from degenbot.registry.all_pools import pool_registry
 from degenbot.types import (
     AbstractArbitrage,
     AbstractLiquidityPool,
+    BoundedCache,
     Message,
     Publisher,
     PublisherMixin,
@@ -73,6 +74,7 @@ from degenbot.uniswap.v3_libraries.tick_math import (
 
 class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
     PoolState: TypeAlias = UniswapV3PoolState
+    _state_cache: BoundedCache[BlockNumber, PoolState]
 
     UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
         "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
@@ -162,7 +164,6 @@ class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
         tick_data: dict[int, dict[str, Any] | UniswapV3LiquidityAtTick] | None = None,
         tick_bitmap: dict[int, dict[str, Any] | UniswapV3BitmapAtWord] | None = None,
         state_block: int | None = None,
-        archive_states: bool = True,
         verify_address: bool = True,
         silent: bool = False,
     ):
@@ -171,7 +172,9 @@ class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
-        self._update_block = state_block if state_block is not None else w3.eth.block_number
+        self._update_block = (
+            cast(BlockNumber, state_block) if state_block is not None else w3.eth.block_number
+        )
 
         self._state_lock = Lock()
         self._state = self.PoolState(
@@ -286,7 +289,8 @@ class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
                 block_number=self.update_block,
             )
 
-        self._pool_state_archive = {self.update_block: self.state} if archive_states else None
+        self._state_cache = BoundedCache(max_items=128)
+        self._state_cache[self.update_block] = self.state
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
@@ -780,7 +784,7 @@ class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
         return self.token0, self.token1
 
     @property
-    def update_block(self) -> int:
+    def update_block(self) -> BlockNumber:
         return self._update_block
 
     def auto_update(
@@ -803,8 +807,11 @@ class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
             state_updated = False
 
             w3 = connection_manager.get_web3(self.chain_id)
-            if block_number is None:
-                block_number = w3.eth.get_block_number()
+            block_number = (
+                cast(BlockNumber, block_number)
+                if block_number is not None
+                else w3.eth.get_block_number()
+            )
 
             with w3.batch_requests() as batch:
                 batch.add(
@@ -861,9 +868,7 @@ class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
             self._update_block = block_number
 
             if state_updated:
-                if self._pool_state_archive is not None:  # pragma: no cover
-                    self._pool_state_archive[block_number] = self.state
-
+                self._state_cache[block_number] = self.state
                 self._notify_subscribers(
                     message=UniswapV3PoolStateUpdated(self.state),
                 )
@@ -1084,12 +1089,11 @@ class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
                         )
 
             if updated_state:
-                if self._pool_state_archive is not None:  # pragma: no branch
-                    self._pool_state_archive[update.block_number] = self.state
+                self._state_cache[cast(BlockNumber, update.block_number)] = self.state
                 self._notify_subscribers(
                     message=UniswapV3PoolStateUpdated(self.state),
                 )
-                self._update_block = update.block_number
+                self._update_block = cast(BlockNumber, update.block_number)
 
             return updated_state
 
@@ -1168,11 +1172,8 @@ class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
         Discard states recorded prior to a target block.
         """
 
-        if self._pool_state_archive is None:  # pragma: no cover
-            return
-
         with self._state_lock:
-            known_blocks = sorted(self._pool_state_archive.keys())
+            known_blocks = sorted(self._state_cache.keys())
 
             # Finds the index prior to the requested block number
             block_index = bisect_left(known_blocks, block)
@@ -1185,7 +1186,7 @@ class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
                 raise NoPoolStateAvailable(block)
 
             for known_block in known_blocks[:block_index]:
-                del self._pool_state_archive[known_block]
+                del self._state_cache[known_block]
 
     def restore_state_before_block(
         self,
@@ -1205,11 +1206,8 @@ class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
         # block_index=3, since block 104 is at index=4. The state held at
         # index=3 is for block 103.
 
-        if self._pool_state_archive is None:  # pragma: no cover
-            return
-
         with self._state_lock:
-            known_blocks = sorted(self._pool_state_archive.keys())
+            known_blocks = sorted(self._state_cache.keys())
             block_index = bisect_left(known_blocks, block)
 
             if block_index == 0:
@@ -1221,9 +1219,9 @@ class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
 
             # Remove states at and after the specified block
             for known_block in known_blocks[block_index:]:
-                del self._pool_state_archive[known_block]
+                del self._state_cache[known_block]
 
-            self._update_block, self._state = list(self._pool_state_archive.items())[-1]
+            self._update_block, self._state = list(self._state_cache.items())[-1]
 
         self._notify_subscribers(
             message=UniswapV3PoolStateUpdated(self.state),

@@ -274,17 +274,17 @@ def test_discard_before_finalized(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3
         block_states[block_number] = lp.state
 
     wbtc_weth_v3_lp_at_block_17_600_000.discard_states_before_block(end_block)
-    assert wbtc_weth_v3_lp_at_block_17_600_000._pool_state_archive is not None
-    assert wbtc_weth_v3_lp_at_block_17_600_000._pool_state_archive.keys() == set([end_block])
+    assert wbtc_weth_v3_lp_at_block_17_600_000._state_cache is not None
+    assert wbtc_weth_v3_lp_at_block_17_600_000._state_cache.keys() == set([end_block])
 
 
 def test_discard_earlier_than_created(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
     lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
 
-    assert lp._pool_state_archive is not None
-    state_before_discard = lp._pool_state_archive.copy()
+    assert lp._state_cache is not None
+    state_before_discard = lp._state_cache.copy()
     wbtc_weth_v3_lp_at_block_17_600_000.discard_states_before_block(lp.update_block - 1)
-    assert lp._pool_state_archive == state_before_discard
+    assert lp._state_cache == state_before_discard
 
 
 def test_discard_after_last_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:

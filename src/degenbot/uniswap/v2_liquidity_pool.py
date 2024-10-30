@@ -6,7 +6,7 @@ from typing import Any, TypeAlias, cast
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
-from eth_typing import BlockIdentifier, ChecksumAddress
+from eth_typing import BlockIdentifier, BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from typing_extensions import Self
@@ -31,6 +31,7 @@ from degenbot.registry.all_pools import pool_registry
 from degenbot.types import (
     AbstractArbitrage,
     AbstractLiquidityPool,
+    BoundedCache,
     Message,
     Publisher,
     PublisherMixin,
@@ -56,6 +57,7 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
     """
 
     PoolState: TypeAlias = UniswapV2PoolState
+    _state_cache: BoundedCache[BlockNumber, PoolState]
 
     RESERVES_STRUCT_TYPES = ("uint112", "uint112")
     UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
@@ -93,7 +95,6 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
         init_hash: str | None = None,
         fee: Fraction | Iterable[Fraction] = Fraction(3, 1000),
         state_block: int | None = None,
-        archive_states: bool = True,
         verify_address: bool = True,
         silent: bool = False,
     ) -> None:
@@ -119,8 +120,6 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
         state_block:
             Fetch initial state values from the chain at a particular block height. Defaults to the
             latest block if omitted.
-        archive_states:
-            Control if the pool state is recorded.
         verify_address:
             Control if the pool address is verified against the deterministic address.
         silent:
@@ -131,7 +130,9 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
-        self._update_block = state_block if state_block is not None else w3.eth.block_number
+        self._update_block = (
+            cast(BlockNumber, state_block) if state_block is not None else w3.eth.block_number
+        )
 
         try:
             self.factory, (token0, token1), (reserves0, reserves1) = (
@@ -194,7 +195,8 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
         )
         self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
 
-        self._pool_state_archive = {self.update_block: self.state} if archive_states else None
+        self._state_cache = BoundedCache(max_items=128)
+        self._state_cache[self.update_block] = self.state
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
@@ -214,9 +216,9 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
         copied_attributes = ()
         dropped_attributes = (
             "_contract",
+            "_state_cache",
             "_state_lock",
             "_subscribers",
-            "_pool_state_archive",
         )
 
         with self._state_lock:
@@ -305,7 +307,7 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
         )
 
     @property
-    def update_block(self) -> int:
+    def update_block(self) -> BlockNumber:
         return self._update_block
 
     @property
@@ -365,7 +367,11 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
 
             state_updated = False
             w3 = self.w3
-            block_number = w3.eth.get_block_number() if block_number is None else block_number
+            block_number = (
+                cast(BlockNumber, block_number)
+                if block_number is not None
+                else w3.eth.get_block_number()
+            )
 
             reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
 
@@ -374,12 +380,8 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
                 self.reserves_token0 = reserves0
                 self.reserves_token1 = reserves1
 
-            self._update_block = block_number
-
             if state_updated:
-                if self._pool_state_archive is not None:  # pragma: no cover
-                    self._pool_state_archive[block_number] = self.state
-
+                self._state_cache[block_number] = self.state
                 self._notify_subscribers(
                     message=UniswapV2PoolStateUpdated(self.state),
                 )
@@ -389,6 +391,7 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
                     logger.info(f"{self.token0}: {self.reserves_token0}")
                     logger.info(f"{self.token1}: {self.reserves_token1}")
 
+            self._update_block = block_number
             return state_updated
 
     def calculate_tokens_in_from_ratio_out(
@@ -562,12 +565,11 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
                 logger.debug(f"Token 1 Reserves: {self.reserves_token1}")
 
             if updated_state:
-                if self._pool_state_archive is not None:  # pragma: no branch
-                    self._pool_state_archive[update.block_number] = self.state
+                self._state_cache[cast(BlockNumber, update.block_number)] = self.state
                 self._notify_subscribers(
                     message=UniswapV2PoolStateUpdated(self.state),
                 )
-                self._update_block = update.block_number
+                self._update_block = cast(BlockNumber, update.block_number)
 
             return updated_state
 
@@ -649,11 +651,8 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
         Discard states recorded prior to a target block.
         """
 
-        if self._pool_state_archive is None:  # pragma: no cover
-            raise DegenbotValueError(message="No archived states are available")
-
         with self._state_lock:
-            known_blocks = sorted(self._pool_state_archive.keys())
+            known_blocks = sorted(self._state_cache.keys())
 
             # Finds the index prior to the requested block number
             block_index = bisect_left(known_blocks, block)
@@ -666,7 +665,7 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
                 raise NoPoolStateAvailable(block=block)
 
             for known_block in known_blocks[:block_index]:
-                del self._pool_state_archive[known_block]
+                del self._state_cache[known_block]
 
     def restore_state_before_block(
         self,
@@ -678,11 +677,8 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
         Use this method to maintain consistent state data following a chain re-organization.
         """
 
-        if self._pool_state_archive is None:  # pragma: no cover
-            raise DegenbotValueError(message="No archived states are available")
-
         with self._state_lock:
-            known_blocks = sorted(self._pool_state_archive.keys())
+            known_blocks = sorted(self._state_cache.keys())
 
             # Finds the index prior to the requested block number
             block_index = bisect_left(known_blocks, block)
@@ -696,10 +692,10 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
 
             # Remove states at and after the specified block
             for known_block in known_blocks[block_index:]:
-                del self._pool_state_archive[known_block]
+                del self._state_cache[known_block]
 
             # Restore previous state and block
-            self._update_block, self._state = list(self._pool_state_archive.items())[-1]
+            self._update_block, self._state = list(self._state_cache.items())[-1]
             self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
 
     def simulate_add_liquidity(

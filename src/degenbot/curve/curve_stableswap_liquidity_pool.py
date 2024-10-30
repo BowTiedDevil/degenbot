@@ -10,7 +10,7 @@
 import contextlib
 from collections.abc import Iterable, Sequence
 from threading import Lock
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import eth_abi.abi
 import web3.exceptions
@@ -55,6 +55,9 @@ from degenbot.types import (
 
 
 class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
+    PoolState: TypeAlias = CurveStableswapPoolState
+    _state_cache: BoundedCache[BlockNumber, PoolState]
+
     # Constants from contract
     # ref: https://github.com/curvefi/curve-contract/blob/master/contracts/pool-templates/base/SwapTemplateBase.vy
     PRECISION_DECIMALS: int = 18
@@ -653,9 +656,9 @@ class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
 
         self.state: CurveStableswapPoolState
         self._update_pool_state()
-        self._pool_state_archive: dict[int, CurveStableswapPoolState] = {
-            self._update_block: self.state
-        }
+
+        self._state_cache = BoundedCache(max_items=128)
+        self._state_cache[self._update_block] = self.state
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 

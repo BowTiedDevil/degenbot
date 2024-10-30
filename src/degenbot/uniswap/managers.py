@@ -1,8 +1,8 @@
 import contextlib
 from threading import Lock
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 
-from eth_typing import ChecksumAddress
+from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from typing_extensions import Self
 
@@ -293,7 +293,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
             self._snapshot.get_new_liquidity_updates(pool.address)
         ):
             if i == 0:
-                pool._update_block = liquidity_update.block_number
+                pool._update_block = cast(BlockNumber, liquidity_update.block_number)
             pool.external_update(liquidity_update)
 
         # Restore the slot0 values state at the original creation block
