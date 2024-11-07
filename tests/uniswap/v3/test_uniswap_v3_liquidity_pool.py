@@ -1,10 +1,14 @@
+import pathlib
 import pickle
+from typing import Any
 
 import pytest
+import ujson
 from eth_typing import ChainId
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
+from web3.exceptions import ContractLogicError
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.config import set_web3
@@ -33,7 +37,12 @@ from degenbot.uniswap.types import (
     UniswapV3PoolState,
 )
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
-from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK
+from degenbot.uniswap.v3_libraries.tick_math import (
+    MAX_SQRT_RATIO,
+    MAX_TICK,
+    MIN_SQRT_RATIO,
+    MIN_TICK,
+)
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 WBTC_WETH_V3_POOL_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
@@ -41,6 +50,7 @@ WETH_CONTRACT_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083
 WBTC_CONTRACT_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 DAI_CONTRACT_ADDRESS = to_checksum_address("0x6B175474E89094C44Da98b954EedeAC495271d0F")
 UNISWAP_V3_FACTORY_ADDRESS = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
+UNISWAP_V3_QUOTER_ADDRESS = to_checksum_address("0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6")
 BASE_CBETH_WETH_V3_POOL_ADDRESS = to_checksum_address("0x257fcbae4ac6b26a02e4fc5e1a11e4174b5ce395")
 BASE_PANCAKESWAP_V3_FACTORY_ADDRESS = to_checksum_address(
     "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"
@@ -56,6 +66,12 @@ BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
         deployer=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
         pool_init_hash="0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2",
     ),
+)
+
+UNISWAP_V3_QUOTER_ABI = ujson.loads(
+    """
+    [{"inputs":[{"internalType":"address","name":"_factory","type":"address"},{"internalType":"address","name":"_WETH9","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[],"name":"WETH9","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"factory","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountIn","type":"uint256"}],"name":"quoteExactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountOut","type":"uint256"}],"name":"quoteExactOutput","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"name":"quoteExactOutputSingle","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"int256","name":"amount0Delta","type":"int256"},{"internalType":"int256","name":"amount1Delta","type":"int256"},{"internalType":"bytes","name":"path","type":"bytes"}],"name":"uniswapV3SwapCallback","outputs":[],"stateMutability":"view","type":"function"}]
+    """
 )
 
 
@@ -90,12 +106,205 @@ def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> UniswapV3Pool:
     return UniswapV3Pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
+@pytest.fixture
+def testing_pools() -> Any:
+    # return [{"pool_address": "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801"}]
+    with pathlib.Path("tests/uniswap/v3/first_200_uniswap_v3_pools.json").open() as file:
+        return ujson.load(file)
+
+
+@pytest.fixture
+def liquidity_snapshot() -> dict[str, Any]:
+    with pathlib.Path(
+        "tests/uniswap/v3/main_v3_liquidity_snapshot_block_21_123_218.json"
+    ).open() as file:
+        return ujson.load(file)
+
+
 def convert_unsigned_integer_to_signed(num: int):
     """
     Workaround for the values shown on Tenderly's "State Changes" view, which converts signed
     integers in a tuple to their unsigned representation
     """
     return int.from_bytes(HexBytes(num), byteorder="big", signed=True)
+
+
+def test_first_200_pools(fork_mainnet: AnvilFork, testing_pools, liquidity_snapshot):
+    set_web3(fork_mainnet.w3)
+    fork_mainnet.reset(block_number=liquidity_snapshot["snapshot_block"])
+
+    quoter = fork_mainnet.w3.eth.contract(
+        address=UNISWAP_V3_QUOTER_ADDRESS, abi=UNISWAP_V3_QUOTER_ABI
+    )
+
+    token_amount_multipliers = [
+        0.000000001,
+        0.00000001,
+        0.0000001,
+        0.000001,
+        0.00001,
+        0.0001,
+        0.001,
+        0.01,
+        0.1,
+        0.25,
+        0.5,
+        0.75,
+    ]
+
+    for pool in testing_pools:
+        pool_address: str = pool["pool_address"]
+
+        lp = UniswapV3Pool(address=pool_address)
+
+        max_reserves_token0 = lp.token0.get_balance(lp.address)
+        max_reserves_token1 = lp.token1.get_balance(lp.address)
+
+        for token_mult in token_amount_multipliers:
+            token_in_amount = int(token_mult * max_reserves_token0)
+            if token_in_amount == 0:
+                continue
+
+            try:
+                helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
+                    token_in=lp.token0,
+                    token_in_quantity=token_in_amount,
+                )
+            except LiquidityPoolError:
+                continue
+
+            try:
+                quoter_amount_out = quoter.functions.quoteExactInputSingle(
+                    lp.token0.address,  # tokenIn
+                    lp.token1.address,  # tokenOut
+                    lp.fee,  # fee
+                    token_in_amount,  # amountIn
+                    MIN_SQRT_RATIO + 1,  # sqrtPriceLimitX96
+                ).call()
+            except ContractLogicError:
+                continue
+
+            assert helper_amount_out == quoter_amount_out
+
+            token_in_amount = int(token_mult * max_reserves_token1)
+            if token_in_amount == 0:
+                continue
+
+            try:
+                helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
+                    token_in=lp.token1,
+                    token_in_quantity=token_in_amount,
+                )
+            except LiquidityPoolError:
+                continue
+
+            try:
+                quoter_amount_out = quoter.functions.quoteExactInputSingle(
+                    lp.token1.address,  # tokenIn
+                    lp.token0.address,  # tokenOut
+                    lp.fee,  # fee
+                    token_in_amount,  # amountIn
+                    MAX_SQRT_RATIO - 1,  # sqrtPriceLimitX96
+                ).call()
+            except ContractLogicError:
+                continue
+
+            assert helper_amount_out == quoter_amount_out
+
+
+def test_first_200_pools_with_snapshot(
+    fork_mainnet: AnvilFork,
+    testing_pools,
+    liquidity_snapshot,
+):
+    fork_mainnet.reset(block_number=liquidity_snapshot["snapshot_block"])
+    set_web3(fork_mainnet.w3)
+
+    quoter = fork_mainnet.w3.eth.contract(
+        address=UNISWAP_V3_QUOTER_ADDRESS, abi=UNISWAP_V3_QUOTER_ABI
+    )
+
+    token_amount_multipliers = [
+        0.000000001,
+        0.00000001,
+        0.0000001,
+        0.000001,
+        0.00001,
+        0.0001,
+        0.001,
+        0.01,
+        0.1,
+        0.25,
+        0.5,
+        0.75,
+    ]
+
+    for pool in testing_pools:
+        pool_address: str = pool["pool_address"]
+
+        pool_tick_data = liquidity_snapshot[pool_address]["tick_data"]
+        pool_tick_bitmap = liquidity_snapshot[pool_address]["tick_bitmap"]
+        lp = UniswapV3Pool(
+            address=pool_address, tick_bitmap=pool_tick_bitmap, tick_data=pool_tick_data
+        )
+
+        max_reserves_token0 = lp.token0.get_balance(lp.address)
+        max_reserves_token1 = lp.token1.get_balance(lp.address)
+
+        for token_mult in token_amount_multipliers:
+            token_in_amount = int(token_mult * max_reserves_token0)
+            if token_in_amount == 0:
+                continue
+
+            try:
+                helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
+                    token_in=lp.token0,
+                    token_in_quantity=token_in_amount,
+                )
+            except LiquidityPoolError:
+                continue
+
+            try:
+                quoter_amount_out = quoter.functions.quoteExactInputSingle(
+                    lp.token0.address,  # tokenIn
+                    lp.token1.address,  # tokenOut
+                    lp.fee,  # fee
+                    token_in_amount,  # amountIn
+                    MIN_SQRT_RATIO + 1,  # sqrtPriceLimitX96
+                ).call()
+            except ContractLogicError:
+                continue
+
+            assert (
+                helper_amount_out == quoter_amount_out
+            ), f"Failed calc with {token_mult}x mult, token0 in"
+
+            token_in_amount = int(token_mult * max_reserves_token1)
+            if token_in_amount == 0:
+                continue
+
+            try:
+                helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
+                    token_in=lp.token1,
+                    token_in_quantity=token_in_amount,
+                )
+            except LiquidityPoolError:
+                continue
+
+            try:
+                quoter_amount_out = quoter.functions.quoteExactInputSingle(
+                    lp.token1.address,  # tokenIn
+                    lp.token0.address,  # tokenOut
+                    lp.fee,  # fee
+                    token_in_amount,  # amountIn
+                    MAX_SQRT_RATIO - 1,  # sqrtPriceLimitX96
+                ).call()
+            except ContractLogicError:
+                continue
+
+            assert (
+                helper_amount_out == quoter_amount_out
+            ), f"Failed calc with {token_mult}x mult, token1 in"
 
 
 def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool):
