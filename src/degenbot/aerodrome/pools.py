@@ -28,6 +28,7 @@ from degenbot.exceptions import (
     ExternalUpdateError,
     InvalidSwapInputAmount,
     LateUpdateError,
+    LiquidityPoolError,
 )
 from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from degenbot.logging import logger
@@ -42,6 +43,7 @@ from degenbot.types import (
     PublisherMixin,
     Subscriber,
 )
+from degenbot.uniswap.v2_functions import constant_product_calc_exact_out
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
@@ -221,6 +223,32 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
 
             return updated_state
 
+    def get_absolute_price(
+        self, token: Erc20Token, override_state: PoolState | None = None
+    ) -> Fraction:
+        """
+        Get the absolute price for the given token, expressed in units of the other.
+        """
+
+        return 1 / self.get_absolute_rate(token, override_state=override_state)
+
+    def get_absolute_rate(
+        self,
+        token: Erc20Token,
+        override_state: PoolState | None = None,
+    ) -> Fraction:
+        """
+        Get the absolute rate for the given token, expressed in units of the other.
+        """
+
+        state = self.state if override_state is None else override_state
+
+        if token == self.token0:
+            return Fraction(state.reserves_token0) / Fraction(state.reserves_token1)
+        if token == self.token1:
+            return Fraction(state.reserves_token1) / Fraction(state.reserves_token0)
+        raise DegenbotValueError(message=f"Unknown token {token}")  # pragma: no cover
+
     def get_factory_tokens_stable_reserves_batched(
         self,
         w3: Web3,
@@ -359,6 +387,71 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
     @property
     def w3(self) -> Web3:
         return connection_manager.get_web3(self.chain_id)
+
+    def calculate_tokens_in_from_tokens_out(
+        self,
+        token_out_quantity: int,
+        token_out: Erc20Token,
+        override_state: PoolState | None = None,
+    ) -> int:
+        """
+        Calculates the required token INPUT of token_in for a target OUTPUT at current pool
+        reserves.
+
+        Accepts a `PoolState` state override for calculation against an arbitrary state
+        in lieu of the recorded state.
+        """
+
+        if token_out_quantity <= 0:  # pragma: no cover
+            raise InvalidSwapInputAmount
+
+        if override_state:  # pragma: no cover
+            logger.debug(f"State overrides applied: {override_state}")
+
+        if token_out == self.token1:
+            reserves_in = (
+                override_state.reserves_token0
+                if override_state is not None
+                else self.reserves_token0
+            )
+            reserves_out = (
+                override_state.reserves_token1
+                if override_state is not None
+                else self.reserves_token1
+            )
+
+        elif token_out == self.token0:
+            reserves_in = (
+                override_state.reserves_token1
+                if override_state is not None
+                else self.reserves_token1
+            )
+            reserves_out = (
+                override_state.reserves_token0
+                if override_state is not None
+                else self.reserves_token0
+            )
+
+        else:  # pragma: no cover
+            raise DegenbotValueError(
+                message=f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"  # noqa:E501
+            )
+
+        # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
+        if token_out_quantity > reserves_out - 1:
+            raise LiquidityPoolError(
+                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})"  # noqa:E501
+            )
+
+        if self.stable:
+            raise NotImplementedError
+
+        return constant_product_calc_exact_out(
+            amount_out=token_out_quantity,
+            reserves_in=reserves_in,
+            reserves_out=reserves_out,
+            fee=self.fee,
+        )
 
     def calculate_tokens_out_from_tokens_in(
         self,
