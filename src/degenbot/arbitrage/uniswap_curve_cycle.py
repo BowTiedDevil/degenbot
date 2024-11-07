@@ -63,7 +63,7 @@ CurveOrUniswapSwapAmount: TypeAlias = (
 CURVE_V1_DEFAULT_DISCOUNT_FACTOR = 0.9999
 
 
-class UniswapCurveCycle(AbstractArbitrage, PublisherMixin):
+class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
     def _notify_subscribers(self: Publisher, message: Message) -> None:
         for subscriber in self._subscribers:
             subscriber.notify(publisher=self, message=message)

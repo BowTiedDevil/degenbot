@@ -72,7 +72,7 @@ from degenbot.uniswap.v3_libraries.tick_math import (
 )
 
 
-class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
+class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
     PoolState: TypeAlias = UniswapV3PoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
 

@@ -50,7 +50,7 @@ PoolState: TypeAlias = UniswapV2PoolState | UniswapV3PoolState
 SwapAmount: TypeAlias = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
 
 
-class UniswapLpCycle(AbstractArbitrage, PublisherMixin):
+class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
     def _notify_subscribers(self: Publisher, message: Message) -> None:
         for subscriber in self._subscribers:
             subscriber.notify(publisher=self, message=message)

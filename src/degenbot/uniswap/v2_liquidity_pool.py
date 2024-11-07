@@ -51,7 +51,7 @@ from degenbot.uniswap.v2_functions import (
 )
 
 
-class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
+class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
     """
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """

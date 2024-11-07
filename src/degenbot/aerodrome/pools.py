@@ -47,7 +47,7 @@ from degenbot.uniswap.v2_functions import constant_product_calc_exact_out
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
-class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
+class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
     PoolState: TypeAlias = AerodromeV2PoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
