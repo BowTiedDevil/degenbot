@@ -95,6 +95,6 @@ def compute_swap_step(
         # we didn't reach the target, so take the remainder of the maximum input as fee
         fee_amount = amount_remaining - amount_in
     else:
-        fee_amount = full_math.muldiv_rounding_up(amount_in, fee_pips, 10**6 - fee_pips)
+        fee_amount = full_math.muldiv_rounding_up(amount_in, fee_pips, 1000000 - fee_pips)
 
     return sqrt_ratio_x96_next, amount_in, amount_out, fee_amount
