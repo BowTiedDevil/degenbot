@@ -1,4 +1,5 @@
 from decimal import Decimal
+from functools import lru_cache
 
 from degenbot.constants import MAX_UINT8
 from degenbot.exceptions import DegenbotValueError, LiquidityMapWordMissing
@@ -30,6 +31,7 @@ def flip_tick(
     logger.debug(f"Flipped {tick=} @ {word_pos=}, {bit_pos=}")
 
 
+@lru_cache
 def position(tick: int) -> tuple[int, int]:
     word_pos: int = tick >> 8
     bit_pos: int = tick % 256

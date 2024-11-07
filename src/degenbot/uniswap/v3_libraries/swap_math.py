@@ -1,6 +1,9 @@
+from functools import lru_cache
+
 from degenbot.uniswap.v3_libraries import full_math, sqrt_price_math
 
 
+@lru_cache
 def compute_swap_step(
     sqrt_ratio_x96_current: int,
     sqrt_ratio_x96_target: int,

@@ -1,4 +1,4 @@
-from functools import cache
+from functools import lru_cache
 
 from degenbot.constants import MAX_UINT128, MAX_UINT160, MAX_UINT256, MIN_UINT160
 from degenbot.exceptions import EVMRevertError, InvalidUint160
@@ -9,7 +9,7 @@ MIN_SQRT_RATIO = 4295128739
 MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342
 
 
-@cache
+@lru_cache
 def get_sqrt_ratio_at_tick(tick: int) -> int:
     """
     Find the square root ratio in Q128.96 form for the given tick.
@@ -53,7 +53,7 @@ def get_sqrt_ratio_at_tick(tick: int) -> int:
     return (ratio >> 32) + (0 if (ratio % (1 << 32) == 0) else 1)
 
 
-@cache
+@lru_cache
 def get_tick_at_sqrt_ratio(sqrt_price_x96: int) -> int:
     """
     Calculates the greatest tick value such that get_tick_at_sqrt_ratio(tick) <= ratio
