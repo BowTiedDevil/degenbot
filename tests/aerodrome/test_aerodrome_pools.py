@@ -313,7 +313,8 @@ def test_aerodrome_v3_pool_calculation(fork_base: AnvilFork) -> None:
     )
     lp = AerodromeV3Pool(address="0x98c7A2338336d2d354663246F64676009c7bDa97")
 
-    max_reserves_token0 = max_reserves_token1 = 3_000_000 * 10**6
+    max_reserves_token0 = lp.token0.get_balance(lp.address)
+    max_reserves_token1 = lp.token1.get_balance(lp.address)
 
     token_amount_multipliers = [
         0.000000001,
@@ -350,7 +351,7 @@ def test_aerodrome_v3_pool_calculation(fork_base: AnvilFork) -> None:
             ]
         ).call()
 
-        assert quoter_amount_out == helper_amount_out
+        assert helper_amount_out == quoter_amount_out
 
         token_in_amount = int(token_mult * max_reserves_token1)
         if token_in_amount == 0:
@@ -370,4 +371,4 @@ def test_aerodrome_v3_pool_calculation(fork_base: AnvilFork) -> None:
             ]
         ).call()
 
-        assert quoter_amount_out == helper_amount_out
+        assert helper_amount_out == quoter_amount_out
