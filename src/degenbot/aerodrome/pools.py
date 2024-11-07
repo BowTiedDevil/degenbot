@@ -53,10 +53,6 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
 
     FEE_DENOMINATOR = 10_000
 
-    def _notify_subscribers(self: Publisher, message: Message) -> None:
-        for subscriber in self._subscribers:
-            subscriber.notify(publisher=self, message=message)
-
     def __init__(
         self,
         address: ChecksumAddress | str,
@@ -137,6 +133,10 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
     def __repr__(self) -> str:  # pragma: no cover
         return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1}, stable={self.stable})"  # noqa:E501
 
+    def _notify_subscribers(self: Publisher, message: Message) -> None:
+        for subscriber in self._subscribers:
+            subscriber.notify(publisher=self, message=message)
+
     def _verified_address(self) -> ChecksumAddress:
         # The implementation address is hard-coded into the contract
         implementation_address = to_checksum_address(
@@ -149,6 +149,51 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
             implementation_address=to_checksum_address(implementation_address),
             stable=self.stable,
         )
+
+    @property
+    def chain_id(self) -> int:
+        return self._chain_id
+
+    @property
+    def reserves_token0(self) -> int:
+        return self.state.reserves_token0
+
+    @reserves_token0.setter
+    def reserves_token0(self, new_reserves: int) -> None:
+        current_state = self.state
+        self._state = self.PoolState(
+            pool=current_state.pool,
+            reserves_token0=new_reserves,
+            reserves_token1=current_state.reserves_token1,
+        )
+
+    @property
+    def reserves_token1(self) -> int:
+        return self.state.reserves_token1
+
+    @reserves_token1.setter
+    def reserves_token1(self, new_reserves: int) -> None:
+        self._state = self.PoolState(
+            pool=self.address,
+            reserves_token0=self.reserves_token0,
+            reserves_token1=new_reserves,
+        )
+
+    @property
+    def state(self) -> PoolState:
+        return self._state
+
+    @property
+    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
+        return self.token0, self.token1
+
+    @property
+    def update_block(self) -> int:
+        return self._update_block
+
+    @property
+    def w3(self) -> Web3:
+        return connection_manager.get_web3(self.chain_id)
 
     def auto_update(
         self,
@@ -191,6 +236,115 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
                     logger.info(f"{self.token1}: {self.reserves_token1}")
 
             return state_updated
+
+    def calculate_tokens_in_from_tokens_out(
+        self,
+        token_out_quantity: int,
+        token_out: Erc20Token,
+        override_state: PoolState | None = None,
+    ) -> int:
+        """
+        Calculates the required token INPUT of token_in for a target OUTPUT at current pool
+        reserves.
+
+        Accepts a `PoolState` state override for calculation against an arbitrary state
+        in lieu of the recorded state.
+        """
+
+        if token_out_quantity <= 0:  # pragma: no cover
+            raise InvalidSwapInputAmount
+
+        if override_state:  # pragma: no cover
+            logger.debug(f"State overrides applied: {override_state}")
+
+        if token_out == self.token1:
+            reserves_in = (
+                override_state.reserves_token0
+                if override_state is not None
+                else self.reserves_token0
+            )
+            reserves_out = (
+                override_state.reserves_token1
+                if override_state is not None
+                else self.reserves_token1
+            )
+
+        elif token_out == self.token0:
+            reserves_in = (
+                override_state.reserves_token1
+                if override_state is not None
+                else self.reserves_token1
+            )
+            reserves_out = (
+                override_state.reserves_token0
+                if override_state is not None
+                else self.reserves_token0
+            )
+
+        else:  # pragma: no cover
+            raise DegenbotValueError(
+                message=f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"  # noqa:E501
+            )
+
+        # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
+        if token_out_quantity > reserves_out - 1:
+            raise LiquidityPoolError(
+                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})"  # noqa:E501
+            )
+
+        if self.stable:
+            raise NotImplementedError
+
+        return constant_product_calc_exact_out(
+            amount_out=token_out_quantity,
+            reserves_in=reserves_in,
+            reserves_out=reserves_out,
+            fee=self.fee,
+        )
+
+    def calculate_tokens_out_from_tokens_in(
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        override_state: PoolState | None = None,
+    ) -> int:
+        """
+        Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
+        """
+
+        if token_in not in self.tokens:  # pragma: no cover
+            raise DegenbotValueError(message="token_in not recognized.")
+
+        if token_in_quantity <= 0:  # pragma: no cover
+            raise InvalidSwapInputAmount
+
+        if override_state:  # pragma: no cover
+            logger.debug(f"State overrides applied: {override_state}")
+
+        reserves_0 = (
+            override_state.reserves_token0 if override_state is not None else self.reserves_token0
+        )
+        reserves_1 = (
+            override_state.reserves_token1 if override_state is not None else self.reserves_token1
+        )
+
+        if self.stable:
+            return calc_exact_in_stable(
+                amount_in=token_in_quantity,
+                token_in=0 if token_in == self.token0 else 1,
+                reserves0=reserves_0,
+                reserves1=reserves_1,
+                decimals0=10**self.token0.decimals,
+                decimals1=10**self.token1.decimals,
+                fee=self.fee,
+            )
+        return general_calc_exact_in_volatile(
+            amount_in=token_in_quantity,
+            token_in=0 if token_in == self.token0 else 1,
+            reserves0=reserves_0,
+            reserves1=reserves_1,
+            fee=self.fee,
+        )
 
     def external_update(
         self,
@@ -340,161 +494,6 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
             cast(bool, stable),
             cast(int, fee),
             (cast(int, reserves0), cast(int, reserves1)),
-        )
-
-    @property
-    def chain_id(self) -> int:
-        return self._chain_id
-
-    @property
-    def reserves_token0(self) -> int:
-        return self.state.reserves_token0
-
-    @reserves_token0.setter
-    def reserves_token0(self, new_reserves: int) -> None:
-        current_state = self.state
-        self._state = self.PoolState(
-            pool=current_state.pool,
-            reserves_token0=new_reserves,
-            reserves_token1=current_state.reserves_token1,
-        )
-
-    @property
-    def reserves_token1(self) -> int:
-        return self.state.reserves_token1
-
-    @reserves_token1.setter
-    def reserves_token1(self, new_reserves: int) -> None:
-        current_state = self.state
-        self._state = self.PoolState(
-            pool=current_state.pool,
-            reserves_token0=current_state.reserves_token0,
-            reserves_token1=new_reserves,
-        )
-
-    @property
-    def state(self) -> PoolState:
-        return self._state
-
-    @property
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
-        return self.token0, self.token1
-
-    @property
-    def update_block(self) -> int:
-        return self._update_block
-
-    @property
-    def w3(self) -> Web3:
-        return connection_manager.get_web3(self.chain_id)
-
-    def calculate_tokens_in_from_tokens_out(
-        self,
-        token_out_quantity: int,
-        token_out: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> int:
-        """
-        Calculates the required token INPUT of token_in for a target OUTPUT at current pool
-        reserves.
-
-        Accepts a `PoolState` state override for calculation against an arbitrary state
-        in lieu of the recorded state.
-        """
-
-        if token_out_quantity <= 0:  # pragma: no cover
-            raise InvalidSwapInputAmount
-
-        if override_state:  # pragma: no cover
-            logger.debug(f"State overrides applied: {override_state}")
-
-        if token_out == self.token1:
-            reserves_in = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            reserves_out = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-
-        elif token_out == self.token0:
-            reserves_in = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            reserves_out = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-
-        else:  # pragma: no cover
-            raise DegenbotValueError(
-                message=f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"  # noqa:E501
-            )
-
-        # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
-        if token_out_quantity > reserves_out - 1:
-            raise LiquidityPoolError(
-                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})"  # noqa:E501
-            )
-
-        if self.stable:
-            raise NotImplementedError
-
-        return constant_product_calc_exact_out(
-            amount_out=token_out_quantity,
-            reserves_in=reserves_in,
-            reserves_out=reserves_out,
-            fee=self.fee,
-        )
-
-    def calculate_tokens_out_from_tokens_in(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-        override_state: PoolState | None = None,
-    ) -> int:
-        """
-        Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
-        """
-
-        if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message="token_in not recognized.")
-
-        if token_in_quantity <= 0:  # pragma: no cover
-            raise InvalidSwapInputAmount
-
-        if override_state:  # pragma: no cover
-            logger.debug(f"State overrides applied: {override_state}")
-
-        reserves_0 = (
-            override_state.reserves_token0 if override_state is not None else self.reserves_token0
-        )
-        reserves_1 = (
-            override_state.reserves_token1 if override_state is not None else self.reserves_token1
-        )
-
-        if self.stable:
-            return calc_exact_in_stable(
-                amount_in=token_in_quantity,
-                token_in=0 if token_in == self.token0 else 1,
-                reserves0=reserves_0,
-                reserves1=reserves_1,
-                decimals0=10**self.token0.decimals,
-                decimals1=10**self.token1.decimals,
-                fee=self.fee,
-            )
-        return general_calc_exact_in_volatile(
-            amount_in=token_in_quantity,
-            token_in=0 if token_in == self.token0 else 1,
-            reserves0=reserves_0,
-            reserves1=reserves_1,
-            fee=self.fee,
         )
 
     def get_reserves(
