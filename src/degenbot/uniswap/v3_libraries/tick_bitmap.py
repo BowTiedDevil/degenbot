@@ -33,8 +33,8 @@ def flip_tick(
 
 @lru_cache
 def position(tick: int) -> tuple[int, int]:
-    word_pos: int = tick >> 8
-    bit_pos: int = tick % 256
+    word_pos = tick >> 8
+    bit_pos = tick % 256
     return word_pos, bit_pos
 
 

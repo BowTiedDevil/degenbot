@@ -11,15 +11,11 @@ def compute_swap_step(
     amount_remaining: int,
     fee_pips: int,
 ) -> tuple[int, int, int, int]:
-    zero_for_one: bool = sqrt_ratio_x96_current >= sqrt_ratio_x96_target
-    exact_in: bool = amount_remaining >= 0
-    amount_in = 0
-    amount_out = 0
+    zero_for_one = sqrt_ratio_x96_current >= sqrt_ratio_x96_target
+    exact_in = amount_remaining >= 0
 
     if exact_in:
-        amount_remaining_minus_fee: int = full_math.muldiv(
-            amount_remaining, 10**6 - fee_pips, 10**6
-        )
+        amount_remaining_minus_fee = full_math.muldiv(amount_remaining, 1000000 - fee_pips, 1000000)
         amount_in = (
             sqrt_price_math.get_amount0_delta(
                 sqrt_ratio_x96_target, sqrt_ratio_x96_current, liquidity, True
@@ -101,9 +97,4 @@ def compute_swap_step(
     else:
         fee_amount = full_math.muldiv_rounding_up(amount_in, fee_pips, 10**6 - fee_pips)
 
-    return (
-        sqrt_ratio_x96_next,
-        amount_in,
-        amount_out,
-        fee_amount,
-    )
+    return sqrt_ratio_x96_next, amount_in, amount_out, fee_amount
