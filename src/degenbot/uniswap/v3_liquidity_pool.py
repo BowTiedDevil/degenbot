@@ -703,14 +703,13 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
     @liquidity.setter
     def liquidity(self, new_liquidity: int) -> None:
-        current_state = self.state
         self._state = self.PoolState(
-            pool=current_state.pool,
+            pool=self.address,
             liquidity=new_liquidity,
-            sqrt_price_x96=current_state.sqrt_price_x96,
-            tick=current_state.tick,
-            tick_bitmap=current_state.tick_bitmap,
-            tick_data=current_state.tick_data,
+            sqrt_price_x96=self.sqrt_price_x96,
+            tick=self.tick,
+            tick_bitmap=self.tick_bitmap,
+            tick_data=self.tick_data,
         )
 
     @property
@@ -719,14 +718,13 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
     @sqrt_price_x96.setter
     def sqrt_price_x96(self, new_sqrt_price_x96: int) -> None:
-        current_state = self.state
         self._state = self.PoolState(
-            pool=current_state.pool,
-            liquidity=current_state.liquidity,
+            pool=self.address,
+            liquidity=self.liquidity,
             sqrt_price_x96=new_sqrt_price_x96,
-            tick=current_state.tick,
-            tick_bitmap=current_state.tick_bitmap,
-            tick_data=current_state.tick_data,
+            tick=self.tick,
+            tick_bitmap=self.tick_bitmap,
+            tick_data=self.tick_data,
         )
 
     @property
@@ -739,14 +737,13 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
     @tick.setter
     def tick(self, new_tick: int) -> None:
-        current_state = self.state
         self._state = self.PoolState(
-            pool=current_state.pool,
-            liquidity=current_state.liquidity,
-            sqrt_price_x96=current_state.sqrt_price_x96,
+            pool=self.address,
+            liquidity=self.liquidity,
+            sqrt_price_x96=self.sqrt_price_x96,
             tick=new_tick,
-            tick_bitmap=current_state.tick_bitmap,
-            tick_data=current_state.tick_data,
+            tick_bitmap=self.tick_bitmap,
+            tick_data=self.tick_data,
         )
 
     @property
@@ -755,14 +752,13 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
     @tick_bitmap.setter
     def tick_bitmap(self, new_tick_bitmap: dict[int, UniswapV3BitmapAtWord]) -> None:
-        current_state = self.state
         self._state = self.PoolState(
-            pool=current_state.pool,
-            liquidity=current_state.liquidity,
-            sqrt_price_x96=current_state.sqrt_price_x96,
-            tick=current_state.tick,
+            pool=self.address,
+            liquidity=self.liquidity,
+            sqrt_price_x96=self.sqrt_price_x96,
+            tick=self.tick,
             tick_bitmap=new_tick_bitmap,
-            tick_data=current_state.tick_data,
+            tick_data=self.tick_data,
         )
 
     @property
@@ -771,13 +767,12 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
     @tick_data.setter
     def tick_data(self, new_tick_data: dict[int, UniswapV3LiquidityAtTick]) -> None:
-        current_state = self.state
         self._state = self.PoolState(
-            pool=current_state.pool,
-            liquidity=current_state.liquidity,
-            sqrt_price_x96=current_state.sqrt_price_x96,
-            tick=current_state.tick,
-            tick_bitmap=current_state.tick_bitmap,
+            pool=self.address,
+            liquidity=self.liquidity,
+            sqrt_price_x96=self.sqrt_price_x96,
+            tick=self.tick,
+            tick_bitmap=self.tick_bitmap,
             tick_data=new_tick_data,
         )
 

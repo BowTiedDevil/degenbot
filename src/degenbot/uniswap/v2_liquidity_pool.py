@@ -321,11 +321,10 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
     @reserves_token0.setter
     def reserves_token0(self, new_reserves: int) -> None:
-        current_state = self.state
         self._state = self.PoolState(
-            pool=current_state.pool,
+            pool=self.address,
             reserves_token0=new_reserves,
-            reserves_token1=current_state.reserves_token1,
+            reserves_token1=self.reserves_token1,
         )
 
     @property
@@ -334,10 +333,9 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
     @reserves_token1.setter
     def reserves_token1(self, new_reserves: int) -> None:
-        current_state = self.state
         self._state = self.PoolState(
-            pool=current_state.pool,
-            reserves_token0=current_state.reserves_token0,
+            pool=self.address,
+            reserves_token0=self.reserves_token0,
             reserves_token1=new_reserves,
         )
 
