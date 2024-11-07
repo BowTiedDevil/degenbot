@@ -198,7 +198,7 @@ class UniswapV2Pool(AbstractLiquidityPool, PublisherMixin):
                 f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
             )
         )
-        self.name = f"{self.token0}-{self.token1} (V2, {fee_string}%)"
+        self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {fee_string}%)"
 
         self._state_cache = BoundedCache(max_items=128)
         self._state_cache[self.update_block] = self.state

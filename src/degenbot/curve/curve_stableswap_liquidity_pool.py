@@ -651,7 +651,7 @@ class CurveStableswapPool(AbstractLiquidityPool, PublisherMixin):
 
         fee_string = f"{100*self.fee/self.FEE_DENOMINATOR:.2f}"
         token_string = "-".join([token.symbol for token in self.tokens])
-        self.name = f"{token_string} (CurveStable, {fee_string}%)"
+        self.name = f"{token_string} ({self.__class__.__name__}, {fee_string}%)"
 
         self._subscribers: set[Subscriber] = set()
 

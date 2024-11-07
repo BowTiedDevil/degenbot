@@ -100,7 +100,7 @@ class AerodromeV2Pool(AbstractLiquidityPool, PublisherMixin):
         if verify_address and self.address != self._verified_address():  # pragma: no cover
             raise AddressMismatch
 
-        self.name = f"{self.token0}-{self.token1} (AerodromeV2, {100*self.fee.numerator/self.fee.denominator:.2f}%)"  # noqa:E501
+        self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {100*self.fee.numerator/self.fee.denominator:.2f}%)"  # noqa:E501
 
         self._state_cache = BoundedCache(max_items=128)
         self._state_cache[cast(BlockNumber, self.update_block)] = self.state

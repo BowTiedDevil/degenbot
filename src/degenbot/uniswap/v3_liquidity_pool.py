@@ -236,7 +236,9 @@ class UniswapV3Pool(AbstractLiquidityPool, PublisherMixin):
         if verify_address and self.address != self._verified_address():  # pragma: no branch
             raise AddressMismatch
 
-        self.name = f"{self.token0}-{self.token1} (V3, {self.fee / 10000:.2f}%)"
+        self.name = (
+            f"{self.token0}-{self.token1} ({self.__class__.__name__}, {self.fee / 10000:.2f}%)"
+        )
 
         if (tick_bitmap is not None) != (tick_data is not None):
             raise DegenbotValueError(message="Provide both tick_bitmap and tick_data.")
