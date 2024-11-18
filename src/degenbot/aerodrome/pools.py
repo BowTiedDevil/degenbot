@@ -83,7 +83,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
             reserves_token1=reserves1,
         )
 
-        self.fee = Fraction(fee, self.FEE_DENOMINATOR)
+        self.fee = self.fee_token0 = self.fee_token1 = Fraction(fee, self.FEE_DENOMINATOR)
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
         self.token0, self.token1 = (
