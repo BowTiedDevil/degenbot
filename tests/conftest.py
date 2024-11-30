@@ -47,6 +47,15 @@ def ethereum_archive_node_web3() -> web3.Web3:
     return web3.Web3(web3.LegacyWebSocketProvider(ETHEREUM_ARCHIVE_NODE_WS_URI))
 
 
+# Set up an async web3 connection to an Ethereum archive node
+@pytest.fixture
+async def ethereum_archive_node_async_web3() -> web3.AsyncWeb3:
+    async_w3: web3.AsyncWeb3 = await web3.AsyncWeb3(
+        web3.WebSocketProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
+    )
+    return async_w3
+
+
 @pytest.fixture(autouse=True)
 def _initialize_and_reset_after_each_test():
     """
