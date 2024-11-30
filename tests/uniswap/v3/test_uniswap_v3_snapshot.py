@@ -204,8 +204,8 @@ def test_apply_update_to_snapshot(
         snapshot=empty_snapshot,
     )
     pool = pool_manager.get_pool(pool_address)
-    for word in tick_bitmap:
-        assert pool.tick_bitmap[word] == tick_bitmap[word]
+    for word, bitmap in tick_bitmap.items():
+        assert pool.tick_bitmap[word] == bitmap
     assert pool.tick_data == tick_data
 
 

@@ -363,7 +363,9 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                                 message=f"V3 pool {pool.address} has no liquidity for a 1 -> 0 swap"
                             )
 
-                    price = pool_state.sqrt_price_x96**2 / (2**192)
+                    price = (pool_state.sqrt_price_x96 * pool_state.sqrt_price_x96) / (
+                        6277101735386680763835789423207666416102355444464034512896  # 2**192
+                    )
                     # V3 fees are integer values representing hundredths of a bip (0.0001)
                     # e.g. fee=3000 represents 0.3%
                     fee = Fraction(pool.fee, 1000000)

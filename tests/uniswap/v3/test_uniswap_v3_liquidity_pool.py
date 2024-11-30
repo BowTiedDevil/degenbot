@@ -108,7 +108,6 @@ def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> UniswapV3Pool:
 
 @pytest.fixture
 def testing_pools() -> Any:
-    # return [{"pool_address": "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801"}]
     with pathlib.Path("tests/uniswap/v3/first_200_uniswap_v3_pools.json").open() as file:
         return ujson.load(file)
 
@@ -118,7 +117,8 @@ def liquidity_snapshot() -> dict[str, Any]:
     with pathlib.Path(
         "tests/uniswap/v3/main_v3_liquidity_snapshot_block_21_123_218.json"
     ).open() as file:
-        return ujson.load(file)
+        snapshot: dict[str, Any] = ujson.load(file)
+        return snapshot
 
 
 def convert_unsigned_integer_to_signed(num: int):

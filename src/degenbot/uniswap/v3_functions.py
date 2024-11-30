@@ -65,7 +65,10 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
 
 def exchange_rate_from_sqrt_price_x96(sqrt_price_x96: int) -> Fraction:
     # ref: https://blog.uniswap.org/uniswap-v3-math-primer
-    return Fraction(sqrt_price_x96**2, 2**192)
+    return Fraction(
+        sqrt_price_x96 * sqrt_price_x96,
+        6277101735386680763835789423207666416102355444464034512896,  # 2**192
+    )
 
 
 def generate_v3_pool_address(

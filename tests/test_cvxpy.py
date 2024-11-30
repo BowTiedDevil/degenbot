@@ -1,13 +1,20 @@
-import time
+# ruff: noqa: E501
+
 from fractions import Fraction
 from threading import Lock
+from typing import cast
 
 import cvxpy
+import cvxpy.atoms.geo_mean
 import cvxpy.settings
 import cvxpy.transforms
 import cvxpy.transforms.indicator
 import numpy
 import pytest
+from cvxpy.atoms.affine.binary_operators import multiply as cvxpy_multiply
+from cvxpy.atoms.affine.bmat import bmat as cvxpy_bmat
+from cvxpy.atoms.affine.sum import sum as cvxpy_sum
+from cvxpy.atoms.geo_mean import geo_mean
 from eth_utils.address import to_checksum_address
 
 from degenbot.config import set_web3
@@ -158,7 +165,7 @@ def test_2pool_uniswap_v2_decimal_corrected(
 
     pool_hi_fees = [pool_hi.fee_token0, pool_hi.fee_token1]
     pool_lo_fees = [pool_lo.fee_token0, pool_lo.fee_token1]
-    fee_multiplier = cvxpy.bmat(
+    fee_multiplier = cvxpy_bmat(
         (
             pool_hi_fees,
             pool_lo_fees,
@@ -196,11 +203,11 @@ def test_2pool_uniswap_v2_decimal_corrected(
 
     pool_hi_pre_swap_k = cvxpy.Parameter(
         name="pool_hi_pre_swap_k",
-        value=cvxpy.geo_mean(compressed_reserves_pre_swap[pool_hi_index]).value,
+        value=geo_mean(compressed_reserves_pre_swap[pool_hi_index]).value,
     )
     pool_lo_pre_swap_k = cvxpy.Parameter(
         name="pool_lo_pre_swap_k",
-        value=cvxpy.geo_mean(compressed_reserves_pre_swap[pool_lo_index]).value,
+        value=geo_mean(compressed_reserves_pre_swap[pool_lo_index]).value,
     )
 
     pool_lo_profit_token_in = cvxpy.Variable(
@@ -222,7 +229,7 @@ def test_2pool_uniswap_v2_decimal_corrected(
     pool_lo_deposits = (
         (0, pool_lo_profit_token_in) if forward_token_index == 0 else (pool_lo_profit_token_in, 0)
     )
-    deposits = cvxpy.bmat(
+    deposits = cvxpy_bmat(
         (
             pool_hi_deposits,
             pool_lo_deposits,
@@ -235,14 +242,14 @@ def test_2pool_uniswap_v2_decimal_corrected(
     pool_lo_withdrawals = (
         (forward_token_amount, 0) if forward_token_index == 0 else (0, forward_token_amount)
     )
-    withdrawals = cvxpy.bmat(
+    withdrawals = cvxpy_bmat(
         (
             pool_hi_withdrawals,
             pool_lo_withdrawals,
         )
     )
 
-    fees_removed = cvxpy.multiply(fee_multiplier, deposits)
+    fees_removed = cvxpy_multiply(fee_multiplier, deposits)
 
     compressed_reserves_post_swap = (
         compressed_reserves_pre_swap + deposits - withdrawals - fees_removed
@@ -250,21 +257,21 @@ def test_2pool_uniswap_v2_decimal_corrected(
 
     final_reserves = compressed_reserves_post_swap + fees_removed
 
-    pool_hi_post_swap_k = cvxpy.geo_mean(compressed_reserves_post_swap[pool_hi_index])
-    pool_lo_post_swap_k = cvxpy.geo_mean(compressed_reserves_post_swap[pool_lo_index])
+    pool_hi_post_swap_k = geo_mean(compressed_reserves_post_swap[pool_hi_index])
+    pool_lo_post_swap_k = geo_mean(compressed_reserves_post_swap[pool_lo_index])
 
-    pool_hi_final_k = cvxpy.geo_mean(final_reserves[pool_hi_index])
-    pool_lo_final_k = cvxpy.geo_mean(final_reserves[pool_lo_index])
+    pool_hi_final_k = geo_mean(final_reserves[pool_hi_index])
+    pool_lo_final_k = geo_mean(final_reserves[pool_lo_index])
 
-    objective = cvxpy.Maximize(cvxpy.sum((withdrawals - deposits)[:, profit_token_index]))
-    constraints = (
+    objective = cvxpy.Maximize(cvxpy_sum((withdrawals - deposits)[:, profit_token_index]))
+    constraints = [
         # Pool invariant (x*y=k)
         pool_hi_post_swap_k >= pool_hi_pre_swap_k,
         pool_lo_post_swap_k >= pool_lo_pre_swap_k,
         # Withdrawals can't exceed pool reserves
         pool_hi_profit_token_out <= compressed_reserves_pre_swap[pool_hi_index, profit_token_index],
         forward_token_amount <= compressed_reserves_pre_swap[pool_lo_index, forward_token_index],
-    )
+    ]
 
     problem = cvxpy.Problem(objective, constraints)
     problem.solve(
@@ -275,7 +282,11 @@ def test_2pool_uniswap_v2_decimal_corrected(
     assert problem.status in cvxpy.settings.SOLUTION_PRESENT
 
     uncompressed_forward_token_amount = min(
-        int(forward_token_amount.value * compression_factor * 10**forward_token.decimals),
+        int(
+            cast(float, forward_token_amount.value)
+            * compression_factor
+            * 10**forward_token.decimals
+        ),
         (
             pool_lo.state.reserves_token0
             if forward_token_index == 0
@@ -373,7 +384,7 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
 
     pool_hi_fees = [pool_hi.fee_token0, pool_hi.fee_token1]
     pool_lo_fees = [pool_lo.fee_token0, pool_lo.fee_token1]
-    fee_multiplier = cvxpy.bmat(
+    fee_multiplier = cvxpy_bmat(
         (
             pool_hi_fees,
             pool_lo_fees,
@@ -418,11 +429,11 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
 
     pool_hi_pre_swap_k = cvxpy.Parameter(
         name="pool_hi_pre_swap_k",
-        value=cvxpy.geo_mean(compressed_reserves_pre_swap[pool_hi_index]).value,
+        value=geo_mean(compressed_reserves_pre_swap[pool_hi_index]).value,
     )
     pool_lo_pre_swap_k = cvxpy.Parameter(
         name="pool_lo_pre_swap_k",
-        value=cvxpy.geo_mean(compressed_reserves_pre_swap[pool_lo_index]).value,
+        value=geo_mean(compressed_reserves_pre_swap[pool_lo_index]).value,
     )
 
     pool_lo_profit_token_in = cvxpy.Variable(
@@ -444,7 +455,7 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
     pool_lo_deposits = (
         (0, pool_lo_profit_token_in) if forward_token_index == 0 else (pool_lo_profit_token_in, 0)
     )
-    deposits = cvxpy.bmat(
+    deposits = cvxpy_bmat(
         (
             pool_hi_deposits,
             pool_lo_deposits,
@@ -457,14 +468,14 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
     pool_lo_withdrawals = (
         (forward_token_amount, 0) if forward_token_index == 0 else (0, forward_token_amount)
     )
-    withdrawals = cvxpy.bmat(
+    withdrawals = cvxpy_bmat(
         (
             pool_hi_withdrawals,
             pool_lo_withdrawals,
         )
     )
 
-    fees_removed = cvxpy.multiply(fee_multiplier, deposits)
+    fees_removed = cvxpy_multiply(fee_multiplier, deposits)
 
     compressed_reserves_post_swap = (
         compressed_reserves_pre_swap + deposits - withdrawals - fees_removed
@@ -472,21 +483,21 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
 
     final_reserves = compressed_reserves_post_swap + fees_removed
 
-    pool_hi_post_swap_k = cvxpy.geo_mean(compressed_reserves_post_swap[pool_hi_index])
-    pool_lo_post_swap_k = cvxpy.geo_mean(compressed_reserves_post_swap[pool_lo_index])
+    pool_hi_post_swap_k = geo_mean(compressed_reserves_post_swap[pool_hi_index])
+    pool_lo_post_swap_k = geo_mean(compressed_reserves_post_swap[pool_lo_index])
 
-    pool_hi_final_k = cvxpy.geo_mean(final_reserves[pool_hi_index])
-    pool_lo_final_k = cvxpy.geo_mean(final_reserves[pool_lo_index])
+    pool_hi_final_k = geo_mean(final_reserves[pool_hi_index])
+    pool_lo_final_k = geo_mean(final_reserves[pool_lo_index])
 
-    objective = cvxpy.Maximize(cvxpy.sum((withdrawals - deposits)[:, profit_token_index]))
-    constraints = (
+    objective = cvxpy.Maximize(cvxpy_sum((withdrawals - deposits)[:, profit_token_index]))
+    constraints = [
         # Pool invariant (x*y=k)
         pool_hi_post_swap_k >= pool_hi_pre_swap_k,
         pool_lo_post_swap_k >= pool_lo_pre_swap_k,
         # Withdrawals can't exceed pool reserves
         pool_hi_profit_token_out <= compressed_reserves_pre_swap[pool_hi_index, profit_token_index],
         forward_token_amount <= compressed_reserves_pre_swap[pool_lo_index, forward_token_index],
-    )
+    ]
 
     problem = cvxpy.Problem(objective, constraints)
     problem.solve(
@@ -498,7 +509,7 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
 
     uncompressed_forward_token_amount = min(
         int(
-            forward_token_amount.value
+            cast(float, forward_token_amount.value)
             * compression_factor_forward_token
             * 10**forward_token.decimals
         ),
@@ -509,10 +520,10 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
         )
         - 1,
     )
-    uncompressed_deposits = cvxpy.multiply(
+    uncompressed_deposits = cvxpy_multiply(
         deposits, numpy.array([compression_factor_token0, compression_factor_token1])
     )
-    uncompressed_withdrawals = cvxpy.multiply(
+    uncompressed_withdrawals = cvxpy_multiply(
         withdrawals, numpy.array([compression_factor_token1, compression_factor_token1])
     )
     # uncompressed_deposits = compression_factor * deposits
@@ -610,7 +621,7 @@ def test_base_2pool(
 
     pool_hi_fees = [pool_hi.fee_token0, pool_hi.fee_token1]
     pool_lo_fees = [pool_lo.fee_token0, pool_lo.fee_token1]
-    fee_multiplier = cvxpy.bmat(
+    fee_multiplier = cvxpy_bmat(
         (
             pool_hi_fees,
             pool_lo_fees,
@@ -652,11 +663,11 @@ def test_base_2pool(
 
     pool_hi_pre_swap_k = cvxpy.Parameter(
         name="pool_hi_pre_swap_k",
-        value=cvxpy.geo_mean(compressed_reserves_pre_swap[pool_hi_index]).value,
+        value=geo_mean(compressed_reserves_pre_swap[pool_hi_index]).value,
     )
     pool_lo_pre_swap_k = cvxpy.Parameter(
         name="pool_lo_pre_swap_k",
-        value=cvxpy.geo_mean(compressed_reserves_pre_swap[pool_lo_index]).value,
+        value=geo_mean(compressed_reserves_pre_swap[pool_lo_index]).value,
     )
 
     pool_lo_profit_token_in = cvxpy.Variable(
@@ -678,7 +689,7 @@ def test_base_2pool(
     pool_lo_deposits = (
         (0, pool_lo_profit_token_in) if forward_token_index == 0 else (pool_lo_profit_token_in, 0)
     )
-    deposits = cvxpy.bmat(
+    deposits = cvxpy_bmat(
         (
             pool_hi_deposits,
             pool_lo_deposits,
@@ -691,14 +702,14 @@ def test_base_2pool(
     pool_lo_withdrawals = (
         (forward_token_amount, 0) if forward_token_index == 0 else (0, forward_token_amount)
     )
-    withdrawals = cvxpy.bmat(
+    withdrawals = cvxpy_bmat(
         (
             pool_hi_withdrawals,
             pool_lo_withdrawals,
         )
     )
 
-    fees_removed = cvxpy.multiply(fee_multiplier, deposits)
+    fees_removed = cvxpy_multiply(fee_multiplier, deposits)
 
     compressed_reserves_post_swap = (
         compressed_reserves_pre_swap + deposits - withdrawals - fees_removed
@@ -706,21 +717,21 @@ def test_base_2pool(
 
     final_reserves = compressed_reserves_post_swap + fees_removed
 
-    pool_hi_post_swap_k = cvxpy.geo_mean(compressed_reserves_post_swap[pool_hi_index])
-    pool_lo_post_swap_k = cvxpy.geo_mean(compressed_reserves_post_swap[pool_lo_index])
+    pool_hi_post_swap_k = geo_mean(compressed_reserves_post_swap[pool_hi_index])
+    pool_lo_post_swap_k = geo_mean(compressed_reserves_post_swap[pool_lo_index])
 
-    pool_hi_final_k = cvxpy.geo_mean(final_reserves[pool_hi_index])
-    pool_lo_final_k = cvxpy.geo_mean(final_reserves[pool_lo_index])
+    pool_hi_final_k = geo_mean(final_reserves[pool_hi_index])
+    pool_lo_final_k = geo_mean(final_reserves[pool_lo_index])
 
-    objective = cvxpy.Maximize(cvxpy.sum((withdrawals - deposits)[:, profit_token_index]))
-    constraints = (
+    objective = cvxpy.Maximize(cvxpy_sum((withdrawals - deposits)[:, profit_token_index]))
+    constraints = [
         # Pool invariant (x*y=k)
         pool_hi_post_swap_k >= pool_hi_pre_swap_k,
         pool_lo_post_swap_k >= pool_lo_pre_swap_k,
         # Withdrawals can't exceed pool reserves
         pool_hi_profit_token_out <= compressed_reserves_pre_swap[pool_hi_index, profit_token_index],
         forward_token_amount <= compressed_reserves_pre_swap[pool_lo_index, forward_token_index],
-    )
+    ]
 
     problem = cvxpy.Problem(objective, constraints)
     clarabel_tols = 1e-10
@@ -738,7 +749,7 @@ def test_base_2pool(
 
     uncompressed_forward_token_amount = min(
         int(
-            forward_token_amount.value
+            cast(float, forward_token_amount.value)
             * compression_factor_forward_token
             * 10**forward_token.decimals
         ),
@@ -749,10 +760,10 @@ def test_base_2pool(
         )
         - 1,
     )
-    uncompressed_deposits = cvxpy.multiply(
+    uncompressed_deposits = cvxpy_multiply(
         deposits, numpy.array([compression_factor_token0, compression_factor_token1])
     )
-    uncompressed_withdrawals = cvxpy.multiply(
+    uncompressed_withdrawals = cvxpy_multiply(
         withdrawals, numpy.array([compression_factor_token1, compression_factor_token1])
     )
     print()
