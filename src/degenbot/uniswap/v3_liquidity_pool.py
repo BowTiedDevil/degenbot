@@ -22,6 +22,7 @@ from degenbot.exceptions import (
     DegenbotValueError,
     EVMRevertError,
     ExternalUpdateError,
+    IncompleteSwap,
     InsufficientAmountOutError,
     LateUpdateError,
     LiquidityMapWordMissing,
@@ -55,11 +56,10 @@ from degenbot.uniswap.v3_functions import (
     generate_v3_pool_address,
     get_tick_word_and_bit_position,
 )
-from degenbot.uniswap.v3_libraries.functions import to_int256
-from degenbot.uniswap.v3_libraries.liquidity_math import add_delta
 from degenbot.uniswap.v3_libraries.swap_math import compute_swap_step
 from degenbot.uniswap.v3_libraries.tick_bitmap import (
     flip_tick,
+    gen_ticks,
     next_initialized_tick_within_one_word,
 )
 from degenbot.uniswap.v3_libraries.tick_math import (
@@ -310,16 +310,13 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
     def __getstate__(self) -> dict[str, Any]:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
-        copied_attributes = (
-            "tick_bitmap",
-            "tick_data",
-        )
+        copied_attributes = ()
 
         dropped_attributes = (
             "_contract",
+            "_state_cache",
             "_state_lock",
             "_subscribers",
-            "lens",
         )
 
         with self._state_lock:
@@ -382,39 +379,44 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         ):  # pragma: no cover
             raise EVMRevertError(error="SPL")
 
-        exact_input = amount_specified > 0
-        cache = self.SwapCache(liquidity_start=_liquidity, tick_cumulative=0)
-        state = self.SwapState(
+        if not self.sparse_liquidity_map:
+            # The liquidity mapping is complete. Optimize loop by building a generator that yields
+            # ticks and initialization status along the swap path
+            ticks_along_swap_path = gen_ticks(_tick_data, _tick, self.tick_spacing, zero_for_one)
+
+        swap_state = self.SwapState(
             amount_specified_remaining=amount_specified,
             amount_calculated=0,
             sqrt_price_x96=_sqrt_price_x96,
             tick=_tick,
-            liquidity=cache.liquidity_start,
+            liquidity=_liquidity,
         )
+        step = self.StepComputations()
+        exact_input = amount_specified > 0
 
         while (
-            state.amount_specified_remaining != 0 and state.sqrt_price_x96 != sqrt_price_limit_x96
+            swap_state.amount_specified_remaining != 0
+            and swap_state.sqrt_price_x96 != sqrt_price_limit_x96
         ):
-            step = self.StepComputations()
-            step.sqrt_price_start_x96 = state.sqrt_price_x96
+            step.sqrt_price_start_x96 = swap_state.sqrt_price_x96
 
-            try:
-                step.tick_next, step.initialized = next_initialized_tick_within_one_word(
-                    _tick_bitmap,
-                    state.tick,
-                    self.tick_spacing,
-                    zero_for_one,
-                )
-            except LiquidityMapWordMissing as exc:
-                missing_word = exc.word
-                assert (
-                    self.sparse_liquidity_map is True
-                )  # non-sparse liquidity mappings should populate all bitmaps in the constructor
-                self._fetch_tick_data_at_word(
-                    word_position=missing_word,
-                    block_number=self.update_block,
-                )
-                continue
+            if not self.sparse_liquidity_map:
+                step.tick_next, step.initialized = next(ticks_along_swap_path)
+            else:
+                try:
+                    step.tick_next, step.initialized = next_initialized_tick_within_one_word(
+                        _tick_bitmap,
+                        _tick_data,
+                        swap_state.tick,
+                        self.tick_spacing,
+                        zero_for_one,
+                    )
+                except LiquidityMapWordMissing as exc:
+                    missing_word = exc.word
+                    self._fetch_tick_data_at_word(
+                        word_position=missing_word, block_number=self.update_block
+                    )
+                    continue
 
             # Ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of
             # these bounds
@@ -427,9 +429,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
             # compute values to swap to the target tick, price limit, or point where input/output
             # amount is exhausted
-            state.sqrt_price_x96, step.amount_in, step.amount_out, step.fee_amount = (
+            swap_state.sqrt_price_x96, step.amount_in, step.amount_out, step.fee_amount = (
                 compute_swap_step(
-                    state.sqrt_price_x96,
+                    swap_state.sqrt_price_x96,
                     sqrt_price_limit_x96
                     if (
                         (zero_for_one is True and step.sqrt_price_next_x96 < sqrt_price_limit_x96)
@@ -439,49 +441,49 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                         )
                     )
                     else step.sqrt_price_next_x96,
-                    state.liquidity,
-                    state.amount_specified_remaining,
+                    swap_state.liquidity,
+                    swap_state.amount_specified_remaining,
                     self.fee,
                 )
             )
 
             if exact_input:
-                state.amount_specified_remaining -= to_int256(step.amount_in + step.fee_amount)
-                state.amount_calculated = to_int256(state.amount_calculated - step.amount_out)
+                swap_state.amount_specified_remaining -= step.amount_in + step.fee_amount
+                swap_state.amount_calculated = swap_state.amount_calculated - step.amount_out
             else:
-                state.amount_specified_remaining += to_int256(step.amount_out)
-                state.amount_calculated = to_int256(
-                    state.amount_calculated + step.amount_in + step.fee_amount
+                swap_state.amount_specified_remaining += step.amount_out
+                swap_state.amount_calculated = (
+                    swap_state.amount_calculated + step.amount_in + step.fee_amount
                 )
 
-            # Shift tick if we reached the next price
-            if state.sqrt_price_x96 == step.sqrt_price_next_x96:  # pragma: no branch
-                # If the tick is initialized, run the tick transition
+            # Shift tick if the swap has reached the next price
+            if swap_state.sqrt_price_x96 == step.sqrt_price_next_x96:  # pragma: no branch
+                # If the tick is initialized, adjust the liquidity range
                 if step.initialized:
                     liquidity_net_at_next_tick = _tick_data[step.tick_next].liquidity_net
-                    if zero_for_one:
-                        liquidity_net_at_next_tick = -liquidity_net_at_next_tick
-                    state.liquidity = add_delta(state.liquidity, liquidity_net_at_next_tick)
-                state.tick = step.tick_next - 1 if zero_for_one else step.tick_next
+                    swap_state.liquidity += (
+                        -liquidity_net_at_next_tick if zero_for_one else liquidity_net_at_next_tick
+                    )
+                swap_state.tick = step.tick_next - 1 if zero_for_one else step.tick_next
 
-            elif state.sqrt_price_x96 != step.sqrt_price_start_x96:  # pragma: no branch
+            elif swap_state.sqrt_price_x96 != step.sqrt_price_start_x96:  # pragma: no branch
                 # Recompute unless we're on a lower tick boundary (i.e. already transitioned ticks),
                 # and haven't moved
-                state.tick = get_tick_at_sqrt_ratio(state.sqrt_price_x96)
+                swap_state.tick = get_tick_at_sqrt_ratio(swap_state.sqrt_price_x96)
 
         amount0, amount1 = (
             (
-                amount_specified - state.amount_specified_remaining,
-                state.amount_calculated,
+                amount_specified - swap_state.amount_specified_remaining,
+                swap_state.amount_calculated,
             )
             if zero_for_one == exact_input
             else (
-                state.amount_calculated,
-                amount_specified - state.amount_specified_remaining,
+                swap_state.amount_calculated,
+                amount_specified - swap_state.amount_specified_remaining,
             )
         )
 
-        return amount0, amount1, state.sqrt_price_x96, state.liquidity, state.tick
+        return amount0, amount1, swap_state.sqrt_price_x96, swap_state.liquidity, swap_state.tick
 
     def get_tick_bitmap_at_word(
         self, w3: Web3, word_position: int, block_identifier: BlockIdentifier
@@ -685,7 +687,10 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
         return (
             to_checksum_address(cast(str, factory)),
-            (to_checksum_address(cast(str, token0)), to_checksum_address(cast(str, token1))),
+            (
+                to_checksum_address(cast(str, token0)),
+                to_checksum_address(cast(str, token1)),
+            ),
             cast(int, fee),
             cast(int, tick_spacing),
             cast(int, price),
@@ -919,6 +924,11 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
         else:
+            if zero_for_one is True and amount0_delta < token_in_quantity:
+                raise IncompleteSwap(amount_in=amount0_delta, amount_out=-amount1_delta)
+            if zero_for_one is False and amount1_delta < token_in_quantity:
+                raise IncompleteSwap(amount_in=amount1_delta, amount_out=-amount0_delta)
+
             return -amount1_delta if zero_for_one else -amount0_delta
 
     def calculate_tokens_in_from_tokens_out(
@@ -966,13 +976,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
         else:
             if _is_zero_for_one is True and -amount1_delta < token_out_quantity:
-                raise InsufficientAmountOutError(
-                    message="Insufficient liquidity to swap for the requested amount."
-                )
+                raise InsufficientAmountOutError(amount_in=amount0_delta, amount_out=-amount1_delta)
             if _is_zero_for_one is False and -amount0_delta < token_out_quantity:
-                raise InsufficientAmountOutError(
-                    message="Insufficient liquidity to swap for the requested amount."
-                )
+                raise InsufficientAmountOutError(amount_in=amount1_delta, amount_out=-amount0_delta)
 
             return amount0_delta if _is_zero_for_one else amount1_delta
 

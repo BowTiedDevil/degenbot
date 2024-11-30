@@ -2,10 +2,11 @@ from functools import lru_cache
 
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import EVMRevertError
+from degenbot.uniswap.v3_libraries._config import LRU_CACHE_SIZE
 from degenbot.uniswap.v3_libraries.functions import mulmod
 
 
-@lru_cache
+@lru_cache(maxsize=LRU_CACHE_SIZE)
 def muldiv(
     a: int,
     b: int,
@@ -36,12 +37,12 @@ def muldiv(
     return result
 
 
-@lru_cache
+@lru_cache(maxsize=LRU_CACHE_SIZE)
 def muldiv_rounding_up(a: int, b: int, denominator: int) -> int:
-    result: int = muldiv(a, b, denominator)
+    result = muldiv(a, b, denominator)
     if mulmod(a, b, denominator) > 0:
         # must be less than max uint256 since we're rounding up
         if not (MIN_UINT256 <= result < MAX_UINT256):
             raise EVMRevertError(error="FAIL!")
-        result += 1
+        return result + 1
     return result

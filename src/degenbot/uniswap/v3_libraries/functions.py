@@ -2,9 +2,10 @@ from functools import lru_cache
 
 from degenbot.constants import MAX_INT128, MAX_INT256, MAX_UINT160, MIN_INT128, MIN_INT256
 from degenbot.exceptions import EVMRevertError
+from degenbot.uniswap.v3_libraries._config import LRU_CACHE_SIZE
 
 
-@lru_cache
+@lru_cache(maxsize=LRU_CACHE_SIZE)
 def mulmod(x: int, y: int, k: int) -> int:
     if k == 0:
         raise EVMRevertError(error="division by zero")

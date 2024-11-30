@@ -1,4 +1,4 @@
-from functools import lru_cache
+from functools import cache
 
 from degenbot.constants import MAX_UINT128, MAX_UINT160, MAX_UINT256, MIN_UINT160
 from degenbot.exceptions import EVMRevertError, InvalidUint160
@@ -9,7 +9,7 @@ MIN_SQRT_RATIO = 4295128739
 MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342
 
 
-@lru_cache
+@cache
 def get_sqrt_ratio_at_tick(tick: int) -> int:
     """
     Find the square root ratio in Q128.96 form for the given tick.
@@ -53,7 +53,7 @@ def get_sqrt_ratio_at_tick(tick: int) -> int:
     return (ratio >> 32) + (0 if (ratio % (1 << 32) == 0) else 1)
 
 
-@lru_cache
+@cache
 def get_tick_at_sqrt_ratio(sqrt_price_x96: int) -> int:
     """
     Calculates the greatest tick value such that get_tick_at_sqrt_ratio(tick) <= ratio
@@ -68,17 +68,16 @@ def get_tick_at_sqrt_ratio(sqrt_price_x96: int) -> int:
 
     ratio = sqrt_price_x96 << 32
 
-    f: int
     r = ratio
     msb = 0
     for shift, factor in (
-        (7, 2**128 - 1),
-        (6, 2**64 - 1),
-        (5, 2**32 - 1),
-        (4, 2**16 - 1),
-        (3, 2**8 - 1),
-        (2, 2**4 - 1),
-        (1, 2**2 - 1),
+        (7, 340282366920938463463374607431768211455),
+        (6, 18446744073709551615),
+        (5, 4294967295),
+        (4, 65535),
+        (3, 255),
+        (2, 15),
+        (1, 3),
     ):
         f = (
             r > factor  # Python casts the bool to int when applying the shift operator

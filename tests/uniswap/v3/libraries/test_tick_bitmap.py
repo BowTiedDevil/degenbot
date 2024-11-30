@@ -3,10 +3,11 @@ from typing import Any
 import pytest
 
 from degenbot.exceptions import DegenbotValueError, LiquidityMapWordMissing
-from degenbot.uniswap.types import UniswapV3BitmapAtWord
+from degenbot.uniswap.types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
 from degenbot.uniswap.v3_libraries.tick_bitmap import (
     flip_tick,
     next_initialized_tick_within_one_word,
+    next_initialized_tick_within_one_word_legacy,
     position,
 )
 from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK
@@ -19,7 +20,9 @@ def is_initialized(tick_bitmap: dict[int, UniswapV3BitmapAtWord], tick: int) -> 
     # Adapted from Uniswap test contract
     # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/test/TickBitmapTest.sol
 
-    next_tick, is_initialized = next_initialized_tick_within_one_word(tick_bitmap, tick, 1, True)
+    next_tick, is_initialized = next_initialized_tick_within_one_word_legacy(
+        tick_bitmap, tick, 1, True
+    )
     return next_tick == tick if is_initialized else False
 
 
@@ -44,7 +47,6 @@ def empty_sparse_bitmap() -> dict[int, Any]:
 
 def test_is_initialized():
     tick_bitmap = empty_full_bitmap()
-
     assert is_initialized(tick_bitmap, 1) is False
 
     flip_tick(tick_bitmap, 1, tick_spacing=1)
@@ -107,6 +109,18 @@ def test_next_initialized_tick_within_one_word() -> None:
     tick_spacing = 1
     initialized_ticks = [-200, -55, -4, 70, 78, 84, 139, 240, 535]
 
+    tick_data = {
+        -200: UniswapV3LiquidityAtTick(),  # 0
+        -55: UniswapV3LiquidityAtTick(),  # 1
+        -4: UniswapV3LiquidityAtTick(),  # 2
+        70: UniswapV3LiquidityAtTick(),  # 3
+        78: UniswapV3LiquidityAtTick(),  # 4
+        84: UniswapV3LiquidityAtTick(),  # 5
+        139: UniswapV3LiquidityAtTick(),  # 6
+        240: UniswapV3LiquidityAtTick(),  # 7
+        535: UniswapV3LiquidityAtTick(),  # 8
+    }
+
     # set up a full-sized empty tick bitmap, then initialize the ticks required for the tests
     tick_bitmap: dict[int, UniswapV3BitmapAtWord] = {}
     for tick in range(MIN_TICK, MAX_TICK, tick_spacing):
@@ -119,7 +133,14 @@ def test_next_initialized_tick_within_one_word() -> None:
     # lte = false tests
 
     # returns tick to right if at initialized tick
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=78,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=False,
+    ) == (84, True)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=78,
         tick_spacing=tick_spacing,
@@ -127,7 +148,14 @@ def test_next_initialized_tick_within_one_word() -> None:
     ) == (84, True)
 
     # returns tick to right if at initialized tick
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=-55,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=False,
+    ) == (-4, True)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=-55,
         tick_spacing=tick_spacing,
@@ -135,7 +163,14 @@ def test_next_initialized_tick_within_one_word() -> None:
     ) == (-4, True)
 
     # returns the tick directly to the right
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=77,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=False,
+    ) == (78, True)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=77,
         tick_spacing=tick_spacing,
@@ -143,7 +178,14 @@ def test_next_initialized_tick_within_one_word() -> None:
     ) == (78, True)
 
     # returns the tick directly to the right
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=-56,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=False,
+    ) == (-55, True)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=-56,
         tick_spacing=tick_spacing,
@@ -151,7 +193,14 @@ def test_next_initialized_tick_within_one_word() -> None:
     ) == (-55, True)
 
     # returns the next words initialized tick if on the right boundary
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=255,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=False,
+    ) == (511, False)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=255,
         tick_spacing=tick_spacing,
@@ -159,7 +208,14 @@ def test_next_initialized_tick_within_one_word() -> None:
     ) == (511, False)
 
     # returns the next words initialized tick if on the right boundary
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=-257,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=False,
+    ) == (-200, True)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=-257,
         tick_spacing=tick_spacing,
@@ -167,7 +223,14 @@ def test_next_initialized_tick_within_one_word() -> None:
     ) == (-200, True)
 
     # does not exceed boundary
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=508,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=False,
+    ) == (511, False)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=508,
         tick_spacing=tick_spacing,
@@ -175,7 +238,14 @@ def test_next_initialized_tick_within_one_word() -> None:
     ) == (511, False)
 
     # skips entire word
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=255,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=False,
+    ) == (511, False)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=255,
         tick_spacing=tick_spacing,
@@ -183,7 +253,14 @@ def test_next_initialized_tick_within_one_word() -> None:
     ) == (511, False)
 
     # skips half word
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=383,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=False,
+    ) == (511, False)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=383,
         tick_spacing=tick_spacing,
@@ -192,56 +269,112 @@ def test_next_initialized_tick_within_one_word() -> None:
 
     # lte = true tests
 
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=78,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=True,
+    ) == (78, True)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=78,
         tick_spacing=tick_spacing,
         less_than_or_equal=True,
     ) == (78, True)
 
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=79,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=True,
+    ) == (78, True)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=79,
         tick_spacing=tick_spacing,
         less_than_or_equal=True,
     ) == (78, True)
 
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=258,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=True,
+    ) == (256, False)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=258,
         tick_spacing=tick_spacing,
         less_than_or_equal=True,
     ) == (256, False)
 
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=256,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=True,
+    ) == (256, False)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=256,
         tick_spacing=tick_spacing,
         less_than_or_equal=True,
     ) == (256, False)
 
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=72,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=True,
+    ) == (70, True)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=72,
         tick_spacing=tick_spacing,
         less_than_or_equal=True,
     ) == (70, True)
 
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=-257,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=True,
+    ) == (-512, False)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=-257,
         tick_spacing=tick_spacing,
         less_than_or_equal=True,
     ) == (-512, False)
 
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=1023,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=True,
+    ) == (768, False)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=1023,
         tick_spacing=tick_spacing,
         less_than_or_equal=True,
     ) == (768, False)
 
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=900,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=True,
+    ) == (768, False)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=900,
         tick_spacing=tick_spacing,
@@ -249,7 +382,16 @@ def test_next_initialized_tick_within_one_word() -> None:
     ) == (768, False)
 
     flip_tick(tick_bitmap=tick_bitmap, tick=329, tick_spacing=1)
+    tick_data[329] = UniswapV3LiquidityAtTick()
+
+    assert next_initialized_tick_within_one_word_legacy(
+        tick_bitmap=tick_bitmap,
+        tick=456,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=True,
+    ) == (329, True)
     assert next_initialized_tick_within_one_word(
+        tick_data=tick_data,
         tick_bitmap=tick_bitmap,
         tick=456,
         tick_spacing=tick_spacing,

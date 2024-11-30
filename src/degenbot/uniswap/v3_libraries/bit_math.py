@@ -1,5 +1,3 @@
-from functools import lru_cache
-
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import EVMRevertError
 
@@ -7,7 +5,6 @@ from degenbot.exceptions import EVMRevertError
 # Reference: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/BitMath.sol
 
 
-@lru_cache
 def least_significant_bit(number: int) -> int:
     """
     Find the least significant bit for the given number.
@@ -33,7 +30,6 @@ def least_significant_bit(number: int) -> int:
     return num_string.find("1")
 
 
-@lru_cache
 def most_significant_bit(number: int) -> int:
     """
     Find the most significant bit for the given number.
