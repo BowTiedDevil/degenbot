@@ -59,6 +59,13 @@ files=[
 ]
 python_version = "3.10"
 python_executable = ".venv/bin/python"
+untyped_calls_exclude = "cvxpy"
+
+[[tool.mypy.overrides]]
+module="tests/test_cvxpy.py"
+disable_error_code = [
+    "attr-defined",
+]
 
 [[tool.mypy.overrides]]
 module="degenbot.*"
