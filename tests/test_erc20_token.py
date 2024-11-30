@@ -1,9 +1,9 @@
 import pytest
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
-from web3 import Web3
+from web3 import AsyncWeb3, Web3
 
-from degenbot.config import set_web3
+from degenbot.config import async_connection_manager, set_web3
 from degenbot.erc20_token import Erc20Token, EtherPlaceholder
 from degenbot.exceptions import DegenbotValueError, NoPriceOracle
 from degenbot.types import BoundedCache
@@ -132,6 +132,13 @@ def test_erc20token_functions(ethereum_archive_node_web3: Web3, weth: Erc20Token
     weth.get_total_supply()
     weth.get_approval(VITALIK_ADDRESS, weth.address)
     weth.get_balance(VITALIK_ADDRESS)
+
+
+async def test_async_erc20_functions(ethereum_archive_node_async_web3: AsyncWeb3, weth: Erc20Token):
+    await async_connection_manager.register_web3(w3=ethereum_archive_node_async_web3)
+    await weth.get_total_supply_async()
+    await weth.get_approval_async(VITALIK_ADDRESS, weth.address)
+    await weth.get_balance_async(VITALIK_ADDRESS)
 
 
 def test_ether_placeholder(ethereum_archive_node_web3: Web3):

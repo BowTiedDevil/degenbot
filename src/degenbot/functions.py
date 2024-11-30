@@ -7,7 +7,7 @@ from eth_utils.address import to_checksum_address
 from eth_utils.conversions import to_hex
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
-from web3 import Web3
+from web3 import AsyncWeb3, Web3
 from web3.types import BlockIdentifier
 
 from degenbot.constants import MAX_UINT256, MIN_UINT256
@@ -120,6 +120,33 @@ def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3
             return cast(BlockNumber, block_number_as_int)
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
             block = w3.eth.get_block(block_tag)
+            block_number = block.get("number")
+            if TYPE_CHECKING:
+                assert block_number is not None
+            return block_number
+        case str() as block_number_as_str:
+            try:
+                return cast(BlockNumber, int(block_number_as_str, 16))
+            except ValueError:
+                raise DegenbotValueError(
+                    message=f"Invalid block identifier {identifier!r}"
+                ) from None
+        case bytes() as block_number_as_bytes:
+            return cast(BlockNumber, int.from_bytes(block_number_as_bytes, byteorder="big"))
+        case _:
+            raise DegenbotValueError(message=f"Invalid block identifier {identifier!r}")
+
+
+async def get_number_for_block_identifier_async(
+    identifier: BlockIdentifier | None, w3: AsyncWeb3
+) -> BlockNumber:
+    match identifier:
+        case None:
+            return await w3.eth.get_block_number()
+        case int() as block_number_as_int:
+            return cast(BlockNumber, block_number_as_int)
+        case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
+            block = await w3.eth.get_block(block_tag)
             block_number = block.get("number")
             if TYPE_CHECKING:
                 assert block_number is not None

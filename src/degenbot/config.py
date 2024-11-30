@@ -1,12 +1,42 @@
 __all__ = (
+    "connection_manager",
     "get_web3",
     "set_web3",
-    "connection_manager",
 )
 
 import web3
 
 from degenbot.exceptions import DegenbotValueError
+
+
+class AsyncConnectionManager:
+    def __init__(self) -> None:
+        self.connections: dict[int, web3.AsyncWeb3] = {}
+        self._default_chain_id: int | None = None
+
+    def get_web3(self, chain_id: int) -> web3.AsyncWeb3:
+        try:
+            return self.connections[chain_id]
+        except KeyError:
+            raise DegenbotValueError(
+                message="Chain ID does not have a registered Web3 instance."
+            ) from None
+
+    async def register_web3(self, w3: web3.AsyncWeb3, optimize_middleware: bool = True) -> None:
+        if await w3.is_connected() is False:
+            raise DegenbotValueError(message="Web3 instance is not connected.")
+        if optimize_middleware:
+            w3.middleware_onion.clear()
+        self.connections[await w3.eth.chain_id] = w3
+
+    def set_default_chain(self, chain_id: int) -> None:
+        self._default_chain_id = chain_id
+
+    @property
+    def default_chain_id(self) -> int:
+        if self._default_chain_id is None:
+            raise DegenbotValueError(message="A default chain ID has not been provided.")
+        return self._default_chain_id
 
 
 class ConnectionManager:
@@ -55,3 +85,4 @@ def set_web3(w3: web3.Web3, optimize_middleware: bool = True) -> None:
 
 
 connection_manager = ConnectionManager()
+async_connection_manager = AsyncConnectionManager()

@@ -6,12 +6,12 @@ from eth_abi.exceptions import DecodingError
 from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
-from web3 import Web3
+from web3 import AsyncWeb3, Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
 from degenbot.chainlink import ChainlinkPriceContract
-from degenbot.config import connection_manager
+from degenbot.config import async_connection_manager, connection_manager
 from degenbot.exceptions import DegenbotValueError, NoPriceOracle
 from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from degenbot.logging import logger
@@ -225,6 +225,46 @@ class Erc20Token(AbstractErc20Token):
         self._cached_approval[block_number, owner, spender] = approval
         return approval
 
+    async def get_approval_async(
+        self,
+        owner: str,
+        spender: str,
+        block_identifier: BlockIdentifier | None = None,
+    ) -> int:
+        """
+        Retrieve the amount that can be spent by `spender` on behalf of `owner`.
+        """
+
+        owner = to_checksum_address(owner)
+        spender = to_checksum_address(spender)
+
+        block_number = (
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else await get_number_for_block_identifier_async(
+                block_identifier,
+                self.async_w3,
+            )
+        )
+
+        with contextlib.suppress(KeyError):
+            return self._cached_approval[block_number, owner, spender]
+
+        approval: int
+        (approval,) = eth_abi.abi.decode(
+            types=["uint256"],
+            data=await self.async_w3.eth.call(
+                transaction={
+                    "to": self.address,
+                    "data": Web3.keccak(text="allowance(address,address)")[:4]
+                    + eth_abi.abi.encode(types=["address", "address"], args=[owner, spender]),
+                },
+                block_identifier=block_number,
+            ),
+        )
+        self._cached_approval[block_number, owner, spender] = approval
+        return approval
+
     def get_balance(
         self,
         address: str,
@@ -261,14 +301,52 @@ class Erc20Token(AbstractErc20Token):
             ),
         )
 
-        balance_cache_at_address: BoundedCache[BlockNumber, int]
-        try:
-            balance_cache_at_address = self._cached_balance[address]
-        except KeyError:
-            balance_cache_at_address = BoundedCache(max_items=self.MAX_CACHE_ITEMS)
+        if address not in self._cached_balance:
+            self._cached_balance[address] = BoundedCache(max_items=self.MAX_CACHE_ITEMS)
 
-        balance_cache_at_address[block_number] = balance
-        self._cached_balance[address] = balance_cache_at_address
+        self._cached_balance[address][block_number] = balance
+        return balance
+
+    async def get_balance_async(
+        self,
+        address: str,
+        block_identifier: BlockIdentifier | None = None,
+    ) -> int:
+        """
+        Retrieve the ERC-20 balance for the given address.
+        """
+
+        address = to_checksum_address(address)
+
+        block_number = (
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else await get_number_for_block_identifier_async(
+                block_identifier,
+                self.async_w3,
+            )
+        )
+
+        with contextlib.suppress(KeyError):
+            return self._cached_balance[address][block_number]
+
+        balance: int
+        (balance,) = eth_abi.abi.decode(
+            types=["uint256"],
+            data=await self.async_w3.eth.call(
+                transaction={
+                    "to": self.address,
+                    "data": Web3.keccak(text="balanceOf(address)")[:4]
+                    + eth_abi.abi.encode(types=["address"], args=[address]),
+                },
+                block_identifier=block_number,
+            ),
+        )
+
+        if address not in self._cached_balance:
+            self._cached_balance[address] = BoundedCache(max_items=self.MAX_CACHE_ITEMS)
+
+        self._cached_balance[address][block_number] = balance
         return balance
 
     def get_total_supply(self, block_identifier: BlockIdentifier | None = None) -> int:
@@ -302,6 +380,37 @@ class Erc20Token(AbstractErc20Token):
         self._cached_total_supply[block_number] = total_supply
         return total_supply
 
+    async def get_total_supply_async(self, block_identifier: BlockIdentifier | None = None) -> int:
+        """
+        Retrieve the total supply for this token.
+        """
+
+        block_number = (
+            cast(BlockNumber, block_identifier)
+            if isinstance(block_identifier, int)
+            else await get_number_for_block_identifier_async(
+                block_identifier,
+                self.async_w3,
+            )
+        )
+
+        with contextlib.suppress(KeyError):
+            return self._cached_total_supply[block_number]
+
+        total_supply: int
+        (total_supply,) = eth_abi.abi.decode(
+            types=["uint256"],
+            data=await self.async_w3.eth.call(
+                transaction={
+                    "to": self.address,
+                    "data": Web3.keccak(text="totalSupply()")[:4],
+                },
+                block_identifier=block_number,
+            ),
+        )
+        self._cached_total_supply[block_number] = total_supply
+        return total_supply
+
     @property
     def chain_id(self) -> int:
         return self._chain_id
@@ -315,6 +424,10 @@ class Erc20Token(AbstractErc20Token):
     @property
     def w3(self) -> Web3:
         return connection_manager.get_web3(self.chain_id)
+
+    @property
+    def async_w3(self) -> AsyncWeb3:
+        return async_connection_manager.get_web3(self.chain_id)
 
 
 class EtherPlaceholder(Erc20Token):
