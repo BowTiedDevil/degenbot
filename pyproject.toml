@@ -7,7 +7,7 @@ authors = [
 description = "Python classes to aid rapid development of Uniswap V2 & V3, Curve V1, and Solidly V2 arbitrage bots on EVM-compatible blockchains"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [
+dependencies = [    
     "cvxpy >= 1.6.0, <2",
     "scipy >=1.14.1, <1.15",
     "ujson >= 5.10.0, <6",
@@ -132,7 +132,7 @@ ignore = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--import-mode=importlib --cov=./src/degenbot --cov-branch --cov-report=html --cov-append --numprocesses=auto --dist=loadfile"
+addopts = "--import-mode=importlib --cov=./src/degenbot --cov-branch --cov-report=html"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 pythonpath = "src"
