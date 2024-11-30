@@ -172,6 +172,22 @@ class InsufficientAmountOutError(LiquidityPoolError):
     Raised if an exact output swap results in fewer tokens than requested.
     """
 
+    def __init__(self, amount_in: int, amount_out: int) -> None:
+        self.amount_in = amount_in
+        self.amount_out = amount_out
+        super().__init__(message="Insufficient liquidity to swap for the requested amount.")
+
+
+class IncompleteSwap(LiquidityPoolError):
+    """
+    Raised if a swap calculation would not consume the input or deliver the requested output.
+    """
+
+    def __init__(self, amount_in: int, amount_out: int) -> None:
+        self.amount_in = amount_in
+        self.amount_out = amount_out
+        super().__init__(message="Insufficient liquidity to swap for the requested amount.")
+
 
 class LateUpdateError(LiquidityPoolError):
     """
