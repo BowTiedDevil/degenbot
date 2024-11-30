@@ -162,7 +162,7 @@ class Erc20Token(AbstractErc20Token):
                 self.decimals == self.UNKNOWN_DECIMALS,
             ]
         ) and not w3.eth.get_code(self.address):
-            raise DegenbotValueError(message="No contract deployed at this address") from None
+            raise DegenbotValueError(message="No contract deployed at this address")
 
         self._price_oracle: ChainlinkPriceContract | None
         self._price_oracle = (
