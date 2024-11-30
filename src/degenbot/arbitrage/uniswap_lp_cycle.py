@@ -162,10 +162,28 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
             try:
                 match pool, pool_state_override:
-                    case (
-                        (AerodromeV2Pool(), AerodromeV2PoolState() | None)
-                        | (UniswapV2Pool(), UniswapV2PoolState() | None)
-                    ):
+                    case AerodromeV2Pool(), AerodromeV2PoolState() | None:
+                        _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
+                            token_in=swap_vector.token_in,
+                            token_in_quantity=_token_in_quantity,
+                            override_state=pool_state_override,
+                        )
+                        if _token_out_quantity == 0:  # pragma: no cover
+                            raise ArbitrageError(
+                                message=f"Zero-output swap through pool {pool} @ {pool.address}"
+                            )
+                        swap_amounts.append(
+                            UniswapV2PoolSwapAmounts(
+                                pool=pool.address,
+                                amounts_in=(_token_in_quantity, 0)
+                                if swap_vector.zero_for_one
+                                else (0, _token_in_quantity),
+                                amounts_out=(0, _token_out_quantity)
+                                if swap_vector.zero_for_one
+                                else (_token_out_quantity, 0),
+                            )
+                        )
+                    case UniswapV2Pool(), UniswapV2PoolState() | None:
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=swap_vector.token_in,
                             token_in_quantity=_token_in_quantity,
@@ -217,7 +235,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
     @staticmethod
     def _check_v2_pool_liquidity(
-        pool_state: UniswapV2PoolState,
+        pool_state: AerodromeV2PoolState | UniswapV2PoolState,
         vector: UniswapPoolSwapVector,
     ) -> None:
         if pool_state.reserves_token0 > 1 and pool_state.reserves_token1 > 1:
@@ -275,13 +293,14 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
             pool_state = state_overrides.get(pool.address) or pool.state
 
             match pool, pool_state:
-                case (
-                    (AerodromeV2Pool(stable=False), AerodromeV2PoolState())
-                    | (UniswapV2Pool(), UniswapV2PoolState())
-                ):
-                    self._check_v2_pool_liquidity(pool_state, vector)
-                    exchange_rate = Fraction(pool_state.reserves_token1, pool_state.reserves_token0)
-                    fee = pool.fee_token0 if vector.zero_for_one else pool.fee_token1
+                case AerodromeV2Pool() as _pool, AerodromeV2PoolState() as _state:
+                    self._check_v2_pool_liquidity(_state, vector)
+                    exchange_rate = Fraction(_state.reserves_token1, _state.reserves_token0)
+                    fee = _pool.fee_token0 if vector.zero_for_one else _pool.fee_token1
+                case UniswapV2Pool() as _pool, UniswapV2PoolState() as _state:
+                    self._check_v2_pool_liquidity(_state, vector)
+                    exchange_rate = Fraction(_state.reserves_token1, _state.reserves_token0)
+                    fee = _pool.fee_token0 if vector.zero_for_one else _pool.fee_token1
                 case UniswapV3Pool(), UniswapV3PoolState():
                     self._check_v3_pool_liquidity(pool_state, vector)
                     exchange_rate = Fraction(
@@ -330,10 +349,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
                 try:
                     match pool, pool_override:
-                        case (
-                            (AerodromeV2Pool(), AerodromeV2PoolState() | None)
-                            | (UniswapV2Pool(), UniswapV2PoolState() | None)
-                        ):
+                        case AerodromeV2Pool() | UniswapV2PoolState() | None:
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
@@ -341,7 +357,15 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                                 else token_out_quantity,
                                 override_state=pool_override,
                             )
-                        case AerodromeV3Pool() | UniswapV3Pool(), UniswapV3PoolState() | None:
+                        case UniswapV2Pool(), UniswapV2PoolState() | None:
+                            token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
+                                token_in=swap_vector.token_in,
+                                token_in_quantity=token_in_quantity
+                                if i == 0
+                                else token_out_quantity,
+                                override_state=pool_override,
+                            )
+                        case UniswapV3Pool(), UniswapV3PoolState() | None:
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
