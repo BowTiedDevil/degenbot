@@ -1,19 +1,18 @@
 # TODO: support unwinding updates for re-org
 
-
 import pathlib
 from io import TextIOWrapper
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 
 import ujson
-from eth_typing import ChecksumAddress
+from eth_typing import ABIEvent, ChecksumAddress
 from eth_utils.abi import event_abi_to_log_topic
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.contract.base_contract import BaseContractEvent
 from web3.types import EventData, FilterParams, LogReceipt
-from web3.utils import get_event_abi
+from web3.utils import get_abi_element
 
 from degenbot.config import connection_manager
 from degenbot.exceptions import DegenbotValueError
@@ -121,7 +120,9 @@ class UniswapV3LiquiditySnapshot:
         for event in [v3pool.events.Mint, v3pool.events.Burn]:
             event_instance = event()
             logger.info(f"Processing {event.event_name} events")
-            event_abi = get_event_abi(abi=v3pool.abi, event_name=event.event_name)
+            event_abi = cast(
+                ABIEvent, get_abi_element(abi=v3pool.abi, abi_element_identifier=event.event_name)
+            )
             start_block = self.newest_block + 1
 
             while True:
