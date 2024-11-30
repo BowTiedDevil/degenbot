@@ -13,7 +13,12 @@ from web3.types import BlockIdentifier
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.config import async_connection_manager, connection_manager
 from degenbot.exceptions import DegenbotValueError, NoPriceOracle
-from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
+from degenbot.functions import (
+    encode_function_calldata,
+    get_number_for_block_identifier,
+    get_number_for_block_identifier_async,
+    raw_call,
+)
 from degenbot.logging import logger
 from degenbot.registry.all_tokens import token_registry
 from degenbot.types import AbstractErc20Token, BoundedCache
