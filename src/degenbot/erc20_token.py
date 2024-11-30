@@ -26,7 +26,7 @@ class Erc20Token(AbstractErc20Token):
 
     UNKNOWN_NAME = "Unknown"
     UNKNOWN_SYMBOL = "UNKN"
-    UNKNOWN_DECIMALS = 0
+    UNKNOWN_DECIMALS = 18
     MAX_CACHE_ITEMS = 5
 
     def get_name_symbol_decimals_batched(self, w3: Web3) -> tuple[str, str, int]:
