@@ -840,8 +840,6 @@ def test_base_3pool(
     link_token: Erc20Token,
     wbtc_token: Erc20Token,
     weth_token: Erc20Token,
-    wbtc_pool_a: MockLiquidityPool,
-    wbtc_pool_b: MockLiquidityPool,
 ):
     # fake prices:
     # 1 WTBC = 20 WETH
