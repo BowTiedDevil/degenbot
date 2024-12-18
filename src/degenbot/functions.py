@@ -99,13 +99,13 @@ def eip_1167_clone_address(
     )
 
 
-def eip_191_hash(message: str, private_key: str) -> str:
+def eip_191_hash(message: bytes, private_key: str) -> str:
     """
     Get the signature hash (a hex-formatted string) for a given message and signing key.
     """
     result: SignedMessage = eth_account.Account.sign_message(
         signable_message=eth_account.messages.encode_defunct(
-            text=to_hex(keccak(text=message)),
+            text=to_hex(keccak(message)),
         ),
         private_key=private_key,
     )

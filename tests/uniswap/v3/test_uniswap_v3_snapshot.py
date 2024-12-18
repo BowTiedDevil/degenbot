@@ -42,12 +42,6 @@ def test_create_snapshot_from_file_path(ethereum_archive_node_web3: Web3):
     UniswapV3LiquiditySnapshot(file=EMPTY_SNAPSHOT_FILENAME)
 
 
-def test_create_snapshot_from_file_handle(ethereum_archive_node_web3: Web3):
-    set_web3(ethereum_archive_node_web3)
-    with pathlib.Path(EMPTY_SNAPSHOT_FILENAME).open() as file:
-        UniswapV3LiquiditySnapshot(file)
-
-
 def test_fetch_liquidity_events_first_250_blocks(
     first_250_blocks_snapshot: UniswapV3LiquiditySnapshot,
     fork_mainnet: AnvilFork,

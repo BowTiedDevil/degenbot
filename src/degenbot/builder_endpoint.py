@@ -5,7 +5,7 @@ import aiohttp
 import eth_account.datastructures
 import eth_account.messages
 import eth_account.signers.local
-import ujson
+import orjson
 
 from degenbot.exceptions import DegenbotValueError, ExternalServiceError
 from degenbot.functions import eip_191_hash
@@ -35,7 +35,7 @@ class BuilderEndpoint:  # pragma: no cover
 
     @staticmethod
     def _build_authentication_header(
-        payload: str,
+        payload: bytes,
         header_label: str | None,
         signer_key: str | None,
     ) -> dict[str, Any]:
@@ -58,7 +58,7 @@ class BuilderEndpoint:  # pragma: no cover
     async def send_payload(
         url: str,
         headers: dict[str, Any],
-        data: str,
+        data: bytes,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
         close_session_after_post = http_session is None
@@ -136,7 +136,7 @@ class BuilderEndpoint:  # pragma: no cover
         if block_timestamp is not None:
             bundle_params["timestamp"] = block_timestamp
 
-        payload = ujson.dumps(
+        payload = orjson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -180,7 +180,7 @@ class BuilderEndpoint:  # pragma: no cover
                 message=f"Must provide signing address and key for required header {self.authentication_header_label}"  # noqa: E501
             )
 
-        payload = ujson.dumps(
+        payload = orjson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -228,7 +228,7 @@ class BuilderEndpoint:  # pragma: no cover
         if isinstance(tx_hash, HexBytes):
             tx_hash = tx_hash.to_0x_hex()
 
-        payload = ujson.dumps(
+        payload = orjson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -271,7 +271,7 @@ class BuilderEndpoint:  # pragma: no cover
                 message=f"{endpoint_method} was not included in the list of supported endpoints."
             )
 
-        payload = ujson.dumps(
+        payload = orjson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -315,7 +315,7 @@ class BuilderEndpoint:  # pragma: no cover
                 message=f"{endpoint_method} was not included in the list of supported endpoints."
             )
 
-        payload = ujson.dumps(
+        payload = orjson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -406,7 +406,7 @@ class BuilderEndpoint:  # pragma: no cover
                 "replacementUuid"
             ] = uuid
 
-        payload = ujson.dumps(
+        payload = orjson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -460,7 +460,7 @@ class BuilderEndpoint:  # pragma: no cover
         if preferences is not None:
             params_dict["preferences"] = preferences
 
-        payload = ujson.dumps(
+        payload = orjson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -512,7 +512,7 @@ class BuilderEndpoint:  # pragma: no cover
         if preferences is not None:
             params.append(preferences)
 
-        payload = ujson.dumps(
+        payload = orjson.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 1,

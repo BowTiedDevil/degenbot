@@ -1,10 +1,9 @@
 # TODO: support unwinding updates for re-org
 
 import pathlib
-from io import TextIOWrapper
-from typing import Any, TextIO, cast
+from typing import Any, cast
 
-import ujson
+import orjson
 from eth_typing import ABIEvent, ChecksumAddress
 from eth_utils.abi import event_abi_to_log_topic
 from eth_utils.address import to_checksum_address
@@ -15,7 +14,6 @@ from web3.types import EventData, FilterParams, LogReceipt
 from web3.utils import get_abi_element
 
 from degenbot.config import connection_manager
-from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
 from degenbot.uniswap.types import (
@@ -33,23 +31,14 @@ class UniswapV3LiquiditySnapshot:
 
     def __init__(
         self,
-        file: TextIO | str,
+        file: pathlib.Path | str,
         chain_id: int | None = None,
     ):
-        file_handle: TextIOWrapper
-        json_liquidity_snapshot: dict[str, Any]
-
-        match file:
-            case TextIOWrapper():
-                json_liquidity_snapshot = ujson.load(file)
-            case str():
-                with pathlib.Path(file).open() as file_handle:
-                    json_liquidity_snapshot = ujson.load(file_handle)
-            case _:  # pragma: no cover
-                raise DegenbotValueError(message=f"Unrecognized file type {type(file)}")
+        if isinstance(file, str):
+            file = pathlib.Path(file)
+        json_liquidity_snapshot: dict[str, Any] = orjson.loads(file.read_text())
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-
         self.newest_block = json_liquidity_snapshot.pop("snapshot_block")
 
         self._liquidity_snapshot: dict[ChecksumAddress, dict[str, Any]] = {
