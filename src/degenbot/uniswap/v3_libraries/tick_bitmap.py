@@ -6,7 +6,6 @@ from itertools import count
 
 from degenbot.constants import MAX_UINT8
 from degenbot.exceptions import DegenbotValueError, LiquidityMapWordMissing
-from degenbot.logging import logger
 from degenbot.uniswap.types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
 from degenbot.uniswap.v3_libraries._config import LRU_CACHE_SIZE
 from degenbot.uniswap.v3_libraries.bit_math import least_significant_bit, most_significant_bit
@@ -18,21 +17,18 @@ def flip_tick(
     tick_spacing: int,
     update_block: int | None = None,
 ) -> None:
-    if not (tick % tick_spacing == 0):
+    if tick % tick_spacing != 0:
         raise DegenbotValueError(message="Tick not correctly spaced!")
 
-    word_pos, bit_pos = position(int(Decimal(tick) // tick_spacing))
-    logger.debug(f"Flipping {tick=} @ {word_pos=}, {bit_pos=}")
+    word_pos, bit_pos = position(tick=int(Decimal(tick) // tick_spacing))
 
     if word_pos not in tick_bitmap:
         raise LiquidityMapWordMissing(word_pos)
 
-    mask = 1 << bit_pos
     tick_bitmap[word_pos] = UniswapV3BitmapAtWord(
-        bitmap=tick_bitmap[word_pos].bitmap ^ mask,
+        bitmap=tick_bitmap[word_pos].bitmap ^ (1 << bit_pos),
         block=update_block,
     )
-    logger.debug(f"Flipped {tick=} @ {word_pos=}, {bit_pos=}")
 
 
 @lru_cache(maxsize=LRU_CACHE_SIZE)

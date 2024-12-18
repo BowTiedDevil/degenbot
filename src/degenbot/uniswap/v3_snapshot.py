@@ -22,7 +22,7 @@ from degenbot.uniswap.types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3LiquidityEvent,
-    UniswapV3PoolExternalUpdate,
+    UniswapV3PoolLiquidityMappingUpdate,
 )
 
 
@@ -152,7 +152,9 @@ class UniswapV3LiquiditySnapshot:
         logger.info(f"Updated snapshot to block {to_block}")
         self.newest_block = to_block
 
-    def get_new_liquidity_updates(self, pool_address: str) -> list[UniswapV3PoolExternalUpdate]:
+    def get_new_liquidity_updates(
+        self, pool_address: str
+    ) -> list[UniswapV3PoolLiquidityMappingUpdate]:
         pool_address = to_checksum_address(pool_address)
         pool_updates = self._liquidity_events.get(pool_address, [])
         self._liquidity_events[pool_address] = []
@@ -165,13 +167,11 @@ class UniswapV3LiquiditySnapshot:
         )
 
         return [
-            UniswapV3PoolExternalUpdate(
+            UniswapV3PoolLiquidityMappingUpdate(
                 block_number=event.block_number,
-                liquidity_change=(
-                    event.liquidity,
-                    event.tick_lower,
-                    event.tick_upper,
-                ),
+                liquidity=event.liquidity,
+                tick_lower=event.tick_lower,
+                tick_upper=event.tick_upper,
             )
             for event in sorted_events
         ]

@@ -28,12 +28,11 @@ class UniswapV2PoolSimulationResult(UniswapSimulationResult):
     final_state: UniswapV2PoolState
 
 
-@dataclasses.dataclass(slots=True, eq=False)
+@dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV2PoolExternalUpdate:
     block_number: int = dataclasses.field(compare=False)
     reserves_token0: int
     reserves_token1: int
-    tx: str | None = dataclasses.field(compare=False, default=None)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -69,21 +68,20 @@ class UniswapV3LiquidityEvent:
     tx_index: int
 
 
-@dataclasses.dataclass(slots=True, eq=False)
+@dataclasses.dataclass(slots=True, frozen=True, eq=False)
 class UniswapV3PoolExternalUpdate:
-    block_number: int = dataclasses.field(compare=False)
-    liquidity: int | None = None
-    sqrt_price_x96: int | None = None
-    tick: int | None = None
-    liquidity_change: (
-        tuple[
-            int,  # Liquidity
-            int,  # TickLower
-            int,  # TickUpper
-        ]
-        | None
-    ) = None
-    tx: str | None = dataclasses.field(compare=False, default=None)
+    block_number: int
+    liquidity: int
+    sqrt_price_x96: int
+    tick: int
+
+
+@dataclasses.dataclass(slots=True, frozen=True, eq=False)
+class UniswapV3PoolLiquidityMappingUpdate:
+    block_number: int
+    liquidity: int
+    tick_lower: int
+    tick_upper: int
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)

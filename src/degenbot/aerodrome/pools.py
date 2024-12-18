@@ -159,26 +159,9 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
     def reserves_token0(self) -> int:
         return self.state.reserves_token0
 
-    @reserves_token0.setter
-    def reserves_token0(self, new_reserves: int) -> None:
-        current_state = self.state
-        self._state = self.PoolState(
-            pool=current_state.pool,
-            reserves_token0=new_reserves,
-            reserves_token1=current_state.reserves_token1,
-        )
-
     @property
     def reserves_token1(self) -> int:
         return self.state.reserves_token1
-
-    @reserves_token1.setter
-    def reserves_token1(self, new_reserves: int) -> None:
-        self._state = self.PoolState(
-            pool=self.address,
-            reserves_token0=self.reserves_token0,
-            reserves_token1=new_reserves,
-        )
 
     @property
     def state(self) -> PoolState:
@@ -190,7 +173,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
     @property
     def update_block(self) -> int:
-        return self._update_block
+        return self.state.block
 
     @property
     def w3(self) -> Web3:

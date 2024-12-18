@@ -138,7 +138,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         try:
             self.factory, (token0, token1), (reserves0, reserves1) = (
-                self.get_factory_tokens_reserves_batched(w3=w3, state_block=self._update_block)
+                self.get_factory_tokens_reserves_batched(w3=w3, state_block=state_block)
             )
         except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
             # Contracts differ slightly across Uniswap V2 forks, so decoding may fail. Catch this
@@ -313,32 +313,16 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
     @property
-    def update_block(self) -> BlockNumber:
-        return self._update_block
+    def update_block(self) -> int:
+        return self.state.block
 
     @property
     def reserves_token0(self) -> int:
         return self.state.reserves_token0
 
-    @reserves_token0.setter
-    def reserves_token0(self, new_reserves: int) -> None:
-        self._state = self.PoolState(
-            pool=self.address,
-            reserves_token0=new_reserves,
-            reserves_token1=self.reserves_token1,
-        )
-
     @property
     def reserves_token1(self) -> int:
         return self.state.reserves_token1
-
-    @reserves_token1.setter
-    def reserves_token1(self, new_reserves: int) -> None:
-        self._state = self.PoolState(
-            pool=self.address,
-            reserves_token0=self.reserves_token0,
-            reserves_token1=new_reserves,
-        )
 
     @property
     def state(self) -> PoolState:
@@ -708,7 +692,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                 del self._state_cache[known_block]
 
             # Restore previous state and block
-            self._update_block, self._state = list(self._state_cache.items())[-1]
+            self._state = list(self._state_cache.values())[-1]
             self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
 
     def simulate_add_liquidity(
