@@ -211,16 +211,20 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             )
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
-        self.token0, self.token1 = (
-            token_manager.get_erc20token(
-                address=token0,
-                silent=silent,
-            ),
-            token_manager.get_erc20token(
-                address=token1,
-                silent=silent,
-            ),
-        )
+
+        try:
+            self.token0, self.token1 = (
+                token_manager.get_erc20token(
+                    address=token0,
+                    silent=silent,
+                ),
+                token_manager.get_erc20token(
+                    address=token1,
+                    silent=silent,
+                ),
+            )
+        except DegenbotValueError as e:
+            raise LiquidityPoolError(message="Could not build one or more tokens.") from e
 
         if verify_address and self.address != self._verified_address():  # pragma: no branch
             raise AddressMismatch
