@@ -1,6 +1,6 @@
 from fractions import Fraction
 from threading import Lock
-from typing import Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import eth_abi.abi
 from eth_typing import BlockNumber, ChecksumAddress
@@ -104,7 +104,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {100*self.fee.numerator/self.fee.denominator:.2f}%)"  # noqa:E501
 
         self._state_cache = BoundedCache(max_items=128)
-        self._state_cache[cast(BlockNumber, self.update_block)] = self.state
+        self._state_cache[self.update_block] = self.state
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
@@ -172,7 +172,9 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         return self.token0, self.token1
 
     @property
-    def update_block(self) -> int:
+    def update_block(self) -> BlockNumber:
+        if TYPE_CHECKING:
+            assert self.state.block is not None
         return self.state.block
 
     @property
@@ -365,7 +367,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
                 )
 
             if updated_state:
-                self._state_cache[cast(BlockNumber, update.block_number)] = self.state
+                self._state_cache[update.block_number] = self.state
                 self._notify_subscribers(
                     message=AerodromeV2PoolStateUpdated(self.state),
                 )

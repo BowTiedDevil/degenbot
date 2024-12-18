@@ -28,7 +28,7 @@ _MAX_INVARIANT_RATIO = 3 * 10**18
 _MIN_INVARIANT_RATIO = 7 * 10**17
 
 
-def calculate_invariant(normalized_weights: list[int], balances: list[int]):
+def calculate_invariant(normalized_weights: list[int], balances: list[int]) -> int:
     invariant = ONE
 
     for i in range(len(normalized_weights)):

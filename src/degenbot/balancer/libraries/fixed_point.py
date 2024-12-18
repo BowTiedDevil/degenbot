@@ -22,7 +22,7 @@ def sub(a: int, b: int) -> int:
     return a - b
 
 
-def mulDown(a: int, b: int):
+def mulDown(a: int, b: int) -> int:
     assert isinstance(a, int)
     assert isinstance(b, int)
 
@@ -32,7 +32,7 @@ def mulDown(a: int, b: int):
     return product // ONE
 
 
-def mulUp(a: int, b: int):
+def mulUp(a: int, b: int) -> int:
     assert isinstance(a, int)
     assert isinstance(b, int)
 
@@ -69,7 +69,7 @@ def divUp(a: int, b: int) -> int:
     return 0 if a == 0 else ((a * ONE - 1) // b) + 1
 
 
-def powDown(x: int, y: int):
+def powDown(x: int, y: int) -> int:
     """
     Returns x^y, assuming both are fixed point numbers, rounding down. The result is guaranteed to
     not be above the true value (that is, the error function expected - actual is always positive).

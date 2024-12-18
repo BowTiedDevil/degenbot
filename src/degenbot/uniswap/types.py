@@ -1,6 +1,8 @@
 import dataclasses
 from typing import Any
 
+from eth_typing import BlockNumber
+
 from degenbot.types import AbstractPoolState, AbstractSimulationResult, Message
 
 
@@ -30,7 +32,7 @@ class UniswapV2PoolSimulationResult(UniswapSimulationResult):
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV2PoolExternalUpdate:
-    block_number: int = dataclasses.field(compare=False)
+    block_number: BlockNumber
     reserves_token0: int
     reserves_token1: int
 

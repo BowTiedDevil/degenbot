@@ -55,7 +55,7 @@ x11 = 6250000000000000000  # 2^-4
 a11 = 106449445891785942956  # e^(x11)
 
 
-def pow(x: int, y: int):  # noqa: A001
+def pow(x: int, y: int) -> int:  # noqa: A001
     if y == 0:
         # We solve the 0^0 indetermination by making it equal one.
         return ONE_18
@@ -101,7 +101,7 @@ def pow(x: int, y: int):  # noqa: A001
     return exp(logx_times_y)
 
 
-def exp(x: int):
+def exp(x: int) -> int:
     if not (x >= MIN_NATURAL_EXPONENT and x <= MAX_NATURAL_EXPONENT):
         raise EVMRevertError(error="Invalid exponent")
 
@@ -250,7 +250,7 @@ def log(arg: int, base: int) -> int:
     return (log_arg * ONE_18) // log_base
 
 
-def _ln(a: int):
+def _ln(a: int) -> int:
     if a < ONE_18:
         # Since ln(a^k) = k * ln(a), we can compute ln(a) as ln(a) = ln((1/a)^(-1)) = - ln((1/a)). If a is less
         # than one, 1/a will be greater than one, and this if statement will not be entered in the recursive call.
@@ -371,7 +371,7 @@ def _ln(a: int):
     return (_sum + seriesSum) // 100
 
 
-def _ln_36(x: int):
+def _ln_36(x: int) -> int:
     # Since ln(1) = 0, a value of x close to one will yield a very small result, which makes using 36 digits
     # worthwhile.
 

@@ -2,7 +2,7 @@ from bisect import bisect_left
 from collections.abc import Iterable
 from fractions import Fraction
 from threading import Lock
-from typing import Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
@@ -313,7 +313,9 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
     @property
-    def update_block(self) -> int:
+    def update_block(self) -> BlockNumber:
+        if TYPE_CHECKING:
+            assert self.state.block is not None
         return self.state.block
 
     @property
@@ -563,7 +565,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                 )
 
             if updated_state:
-                self._state_cache[cast(BlockNumber, update.block_number)] = self.state
+                self._state_cache[update.block_number] = self.state
                 self._notify_subscribers(
                     message=UniswapV2PoolStateUpdated(self.state),
                 )

@@ -7,7 +7,7 @@ def bn(x: int | Decimal) -> int:
     return int(x)
 
 
-def fp(x) -> int:
+def fp(x: int | Decimal) -> int:
     return bn(toFp(x))
 
 
@@ -15,5 +15,5 @@ def toFp(x: int | Decimal) -> Decimal:
     return Decimal(x) * Decimal(SCALING_FACTOR)
 
 
-def fromFp(x) -> Decimal:
+def fromFp(x: int | Decimal) -> Decimal:
     return Decimal(x) / Decimal(SCALING_FACTOR)

@@ -1,6 +1,6 @@
 import contextlib
 from threading import Lock
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
@@ -148,7 +148,8 @@ class UniswapV2PoolManager(AbstractPoolManager):
                 chain_id=self.chain_id,
             )
         ) is not None:
-            assert isinstance(pool_from_registry, self.Pool)
+            if TYPE_CHECKING:
+                assert isinstance(pool_from_registry, self.Pool)
             if pool_from_registry.factory == self._factory_address:
                 self._add_tracked_pool(pool_from_registry)
                 return pool_from_registry
@@ -351,7 +352,8 @@ class UniswapV3PoolManager(AbstractPoolManager):
             chain_id=self.chain_id,
         )
         if pool_from_registry is not None:
-            assert isinstance(pool_from_registry, self.Pool)
+            if TYPE_CHECKING:
+                assert isinstance(pool_from_registry, self.Pool)
             if pool_from_registry.factory == self._factory_address:
                 self._add_tracked_pool(pool_from_registry)
                 return pool_from_registry
