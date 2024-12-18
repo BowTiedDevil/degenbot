@@ -5,7 +5,7 @@ from fractions import Fraction
 from typing import Any, TypeAlias
 
 import eth_abi.abi
-from eth_typing import ChecksumAddress
+from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
@@ -273,7 +273,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
     def _pre_calculation_check(
         self,
-        state_overrides: Mapping[ChecksumAddress, PoolState],
+        states: Mapping[ChecksumAddress, PoolState],
         min_rate_of_exchange: Fraction | None = None,
     ) -> None:
         """
@@ -290,7 +290,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         # Check the pool state liquidity in the direction of the trade
         for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=True):
-            pool_state = state_overrides.get(pool.address) or pool.state
+            pool_state = states[pool.address]
 
             match pool, pool_state:
                 case AerodromeV2Pool() as _pool, AerodromeV2PoolState() as _state:
@@ -324,7 +324,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
     def _calculate(
         self,
-        state_overrides: Mapping[ChecksumAddress, PoolState],
+        pool_states: Mapping[ChecksumAddress, PoolState],
     ) -> ArbitrageCalculationResult:
         """
         Calculate the optimal arbitrage profit using the maximum input as an upper bound.
@@ -342,47 +342,46 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
             token_in_quantity = int(x)  # round the input down
             token_out_quantity: int = 0
 
-            for i, (pool, swap_vector) in enumerate(
-                zip(self.swap_pools, self._swap_vectors, strict=True)
-            ):
-                pool_override = state_overrides.get(pool.address)
+            try:
+                for i, (pool, swap_vector) in enumerate(
+                    zip(self.swap_pools, self._swap_vectors, strict=True)
+                ):
+                    state = pool_states[pool.address]
 
-                try:
-                    match pool, pool_override:
-                        case AerodromeV2Pool() | UniswapV2PoolState() | None:
+                    match pool, state:
+                        case AerodromeV2Pool(), AerodromeV2PoolState():
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
                                 if i == 0
                                 else token_out_quantity,
-                                override_state=pool_override,
+                                override_state=state,
                             )
-                        case UniswapV2Pool(), UniswapV2PoolState() | None:
+                        case UniswapV2Pool(), UniswapV2PoolState():
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
                                 if i == 0
                                 else token_out_quantity,
-                                override_state=pool_override,
+                                override_state=state,
                             )
-                        case UniswapV3Pool(), UniswapV3PoolState() | None:
+                        case UniswapV3Pool(), UniswapV3PoolState():
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
                                 if i == 0
                                 else token_out_quantity,
-                                override_state=pool_override,
+                                override_state=state,
                             )
                         case _:  # pragma: no cover
                             raise DegenbotValueError(
-                                message=f"Override {pool_override} is not valid for pool {pool}."
+                                message=f"Unrecognized pool {pool} and state {state}."
                             )
-                except (EVMRevertError, LiquidityPoolError):  # pragma: no cover
-                    # The optimizer might send invalid amounts into the swap calculation during
-                    # iteration. We don't want it to stop, so catch the exception and pretend the
-                    # swap resulted in zero output
-                    token_out_quantity = 0
-                    break
+            except (EVMRevertError, LiquidityPoolError):  # pragma: no cover
+                # The optimizer might send invalid amounts into the swap calculation during
+                # iteration. We don't want it to stop, so catch the exception and pretend the
+                # swap resulted in zero output
+                token_out_quantity = 0
 
             # minimize_scalar requires the function to have a minimum value
             # for the solver to settle on an optimum input, so return the
@@ -403,6 +402,8 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         best_amounts = self._build_swap_amounts(
             token_in_quantity=swap_amount,
+            pool_state_overrides=pool_states,
+        )
 
         newest_state_block: BlockNumber | None = None
         for state in pool_states.values():
@@ -435,15 +436,16 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         overridden pool states if provided.
         """
 
-        if state_overrides is None:
-            state_overrides = {}
+        states = {pool.address: pool.state for pool in self.swap_pools}
+        if state_overrides is not None:
+            states.update(state_overrides)
 
         self._pre_calculation_check(
-            state_overrides=state_overrides,
+            states=states,
             min_rate_of_exchange=min_rate_of_exchange,
         )
 
-        return self._calculate(state_overrides=state_overrides)
+        return self._calculate(pool_states=states)
 
     async def calculate_with_pool(
         self,
@@ -484,18 +486,19 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                 message="Cannot perform calculation with process pool executor. One or more V3 pools has a sparse bitmap."  # noqa:E501
             )
 
-        if state_overrides is None:
-            state_overrides = {}
+        states = {pool.address: pool.state for pool in self.swap_pools}
+        if state_overrides is not None:
+            states.update(state_overrides)
 
         self._pre_calculation_check(
-            state_overrides=state_overrides,
+            states=states,
             min_rate_of_exchange=min_rate_of_exchange,
         )
 
         return asyncio.get_running_loop().run_in_executor(
             executor,
             self._calculate,
-            state_overrides,
+            states,
         )
 
     def generate_payloads(
