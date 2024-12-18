@@ -2,7 +2,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol, TypeAlias, TypeVar
 
-from eth_typing import ChecksumAddress
+from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from typing_extensions import Self
@@ -115,9 +115,10 @@ class AbstractPoolManager:
 class AbstractPoolUpdate: ...
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(slots=True, frozen=True, kw_only=True)
 class AbstractPoolState:
     pool: ChecksumAddress
+    block: BlockNumber | None
 
 
 class AbstractSimulationResult: ...

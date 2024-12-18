@@ -16,7 +16,7 @@ class UniswapSimulationResult(AbstractSimulationResult):
     final_state: AbstractPoolState
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
+@dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class UniswapV2PoolState(AbstractPoolState):
     reserves_token0: int
     reserves_token1: int
@@ -86,7 +86,7 @@ class UniswapV3PoolExternalUpdate:
     tx: str | None = dataclasses.field(compare=False, default=None)
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
+@dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class UniswapV3PoolState(AbstractPoolState):
     liquidity: int
     sqrt_price_x96: int

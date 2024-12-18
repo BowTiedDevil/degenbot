@@ -236,6 +236,7 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum: AnvilFork):
         pool=lp.address,
         reserves_token0=old_reserves[0],
         reserves_token1=old_reserves[1],
+        block=fork_block,
     )
 
     assert contract_amount_old == lp.calculate_tokens_out_from_tokens_in(
@@ -251,6 +252,7 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum: AnvilFork):
             pool=lp.address,
             reserves_token0=current_reserves[0],
             reserves_token1=current_reserves[1],
+            block=fork_block,
         ),
     )
 
@@ -504,6 +506,7 @@ def test_calculate_tokens_out_from_tokens_in_with_override(
         pool=UNISWAP_V2_WBTC_WETH_POOL,
         reserves_token0=reserves0,
         reserves_token1=reserves1,
+        block=None,
     )
     assert pool_state_override.reserves_token0 == 16027096956
     assert pool_state_override.reserves_token1 == 2602647332090181827846
@@ -565,6 +568,7 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
         pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
         reserves_token0=16027096956,
         reserves_token1=2602647332090181827846,
+        block=17_650_000,
     )
 
     assert (
@@ -771,6 +775,7 @@ def test_simulations(
         initial_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
         final_state=UniswapV2PoolState(
             pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
+            block=None,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
             + 8000000000,
             reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1
@@ -792,6 +797,7 @@ def test_simulations(
         initial_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
         final_state=UniswapV2PoolState(
             pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
+            block=None,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
             - 5154005339,
             reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1
@@ -816,6 +822,7 @@ def test_simulations(
         initial_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
         final_state=UniswapV2PoolState(
             pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
+            block=None,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
             + added_liquidity,
             reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1
@@ -834,6 +841,7 @@ def test_simulations(
             initial_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state,
             final_state=UniswapV2PoolState(
                 pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
+                block=None,
                 reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
                 - removed_liquidity,
                 reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1
@@ -859,6 +867,7 @@ def test_simulations_with_override(
 ):
     pool_state_override = UniswapV2PoolState(
         pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
+        block=None,
         reserves_token0=16027096956,
         reserves_token1=2602647332090181827846,
     )
@@ -869,6 +878,7 @@ def test_simulations_with_override(
         initial_state=pool_state_override,
         final_state=UniswapV2PoolState(
             pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
+            block=17_600_000,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
             + 8000000000,
             reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1
@@ -891,6 +901,7 @@ def test_simulations_with_override(
         initial_state=pool_state_override,
         final_state=UniswapV2PoolState(
             pool=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
+            block=17_600_000,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
             + 13752842264,
             reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1

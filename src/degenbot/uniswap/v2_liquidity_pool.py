@@ -132,7 +132,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
-        self._update_block = (
+        state_block = (
             cast(BlockNumber, state_block) if state_block is not None else w3.eth.block_number
         )
 
@@ -162,6 +162,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             pool=self.address,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
+            block=state_block,
         )
 
         deployer_address = None
@@ -371,17 +372,20 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             state_updated = False
             w3 = self.w3
             block_number = (
-                cast(BlockNumber, block_number)
-                if block_number is not None
-                else w3.eth.get_block_number()
+                w3.eth.get_block_number()
+                if block_number is None
+                else cast(BlockNumber, block_number)
             )
-
             reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
 
             if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
                 state_updated = True
-                self.reserves_token0 = reserves0
-                self.reserves_token1 = reserves1
+                self._state = self.PoolState(
+                    pool=self.address,
+                    reserves_token0=reserves0,
+                    reserves_token1=reserves1,
+                    block=block_number,
+                )
 
             if state_updated:
                 self._state_cache[block_number] = self.state
@@ -394,7 +398,6 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                     logger.info(f"{self.token0}: {self.reserves_token0}")
                     logger.info(f"{self.token1}: {self.reserves_token1}")
 
-            self._update_block = block_number
             return state_updated
 
     def calculate_tokens_in_from_ratio_out(
@@ -559,20 +562,27 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
             if update.reserves_token0 != self.reserves_token0:
                 updated_state = True
-                self.reserves_token0 = update.reserves_token0
-                logger.debug(f"Token 0 Reserves: {self.reserves_token0}")
+                self._state = self.PoolState(
+                    pool=self.address,
+                    reserves_token0=update.reserves_token0,
+                    reserves_token1=self.state.reserves_token1,
+                    block=update.block_number,
+                )
 
             if update.reserves_token1 != self.reserves_token1:
                 updated_state = True
-                self.reserves_token1 = update.reserves_token1
-                logger.debug(f"Token 1 Reserves: {self.reserves_token1}")
+                self._state = self.PoolState(
+                    pool=self.address,
+                    reserves_token0=self.state.reserves_token0,
+                    reserves_token1=update.reserves_token1,
+                    block=update.block_number,
+                )
 
             if updated_state:
                 self._state_cache[cast(BlockNumber, update.block_number)] = self.state
                 self._notify_subscribers(
                     message=UniswapV2PoolStateUpdated(self.state),
                 )
-                self._update_block = cast(BlockNumber, update.block_number)
 
             return updated_state
 
@@ -726,6 +736,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                     pool=self.address,
                     reserves_token0=reserves_token0 + added_reserves_token0,
                     reserves_token1=reserves_token1 + added_reserves_token1,
+                    block=self.update_block if override_state is not None else None,
                 ),
             )
 
@@ -754,6 +765,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                     pool=self.address,
                     reserves_token0=reserves_token0 - removed_reserves_token0,
                     reserves_token1=reserves_token1 - removed_reserves_token1,
+                    block=self.update_block if override_state is not None else None,
                 ),
             )
 
@@ -786,6 +798,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                 pool=self.address,
                 reserves_token0=self.reserves_token0 + token0_delta,
                 reserves_token1=self.reserves_token1 + token1_delta,
+                block=self.update_block if override_state is not None else None,
             ),
         )
 
@@ -816,6 +829,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                 pool=self.address,
                 reserves_token0=self.reserves_token0 + token0_delta,
                 reserves_token1=self.reserves_token1 + token1_delta,
+                block=self.update_block if override_state is not None else None,
             ),
         )
 
@@ -843,7 +857,12 @@ class UnregisteredLiquidityPool(UniswapV2Pool):
     ) -> None:
         self.address = to_checksum_address(address)
         self._state_lock = Lock()
-        self._state = UniswapV2PoolState(pool=self.address, reserves_token0=0, reserves_token1=0)
+        self._state = UniswapV2PoolState(
+            pool=self.address,
+            reserves_token0=0,
+            reserves_token1=0,
+            block=None,
+        )
         self.token0 = min(tokens)
         self.token1 = max(tokens)
 

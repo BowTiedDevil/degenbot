@@ -403,8 +403,17 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         best_amounts = self._build_swap_amounts(
             token_in_quantity=swap_amount,
-            pool_state_overrides=state_overrides,
-        )
+
+        newest_state_block: BlockNumber | None = None
+        for state in pool_states.values():
+            if state.block is None:
+                newest_state_block = None
+                break
+            newest_state_block = (
+                max(newest_state_block, state.block)
+                if newest_state_block is not None
+                else state.block
+            )
 
         return ArbitrageCalculationResult(
             id=self.id,
@@ -413,6 +422,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
             input_amount=swap_amount,
             profit_amount=best_profit,
             swap_amounts=best_amounts,
+            state_block=newest_state_block,
         )
 
     def calculate(

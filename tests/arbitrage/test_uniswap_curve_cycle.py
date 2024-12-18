@@ -165,6 +165,7 @@ def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3: Web3, weth: E
                     pool=uniswap_v2_weth_usdc_lp.address,
                     reserves_token0=0,
                     reserves_token1=1,
+                    block=None,
                 )
             }
         )
@@ -177,6 +178,7 @@ def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3: Web3, weth: E
                     pool=uniswap_v2_weth_usdc_lp.address,
                     reserves_token0=1,
                     reserves_token1=0,
+                    block=None,
                 )
             }
         )
@@ -192,6 +194,7 @@ def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3: Web3, weth: E
                     pool=uniswap_v2_weth_usdc_lp.address,
                     reserves_token0=1_000_000,
                     reserves_token1=1,
+                    block=None,
                 ),
             }
         )
@@ -215,6 +218,7 @@ def test_arb_calculation_pre_checks_v2(ethereum_archive_node_web3: Web3, weth: E
                     pool=uniswap_v2_weth_usdc_lp.address,
                     reserves_token0=1,
                     reserves_token1=1_000_000,
+                    block=None,
                 ),
             }
         )
@@ -242,6 +246,7 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
             state_overrides={
                 uniswap_v3_weth_usdc_lp.address: UniswapV3PoolState(
                     pool=uniswap_v3_weth_usdc_lp.address,
+                    block=None,
                     liquidity=69_420,
                     sqrt_price_x96=0,  # <--- value triggering the exception
                     tick=1,
@@ -259,6 +264,7 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
             state_overrides={
                 uniswap_v3_weth_usdc_lp.address: UniswapV3PoolState(
                     pool=uniswap_v3_weth_usdc_lp.address,
+                    block=None,
                     liquidity=69_420,
                     sqrt_price_x96=1,
                     tick=1,
@@ -277,6 +283,7 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
             state_overrides={
                 uniswap_v3_weth_usdc_lp.address: UniswapV3PoolState(
                     pool=uniswap_v3_weth_usdc_lp.address,
+                    block=None,
                     liquidity=0,  # <--- value triggering the exception
                     sqrt_price_x96=(
                         MIN_SQRT_RATIO + 1  # <--- value triggering the exception
@@ -303,6 +310,7 @@ def test_arb_calculation_pre_checks_v3(ethereum_archive_node_web3: Web3, weth: E
             state_overrides={
                 uniswap_v3_weth_usdc_lp.address: UniswapV3PoolState(
                     pool=uniswap_v3_weth_usdc_lp.address,
+                    block=None,
                     liquidity=0,  # <--- value triggering the exception
                     sqrt_price_x96=(
                         MAX_SQRT_RATIO - 1  # <--- value triggering the exception
@@ -327,16 +335,19 @@ def test_arb_payload_encoding(ethereum_archive_node_web3: Web3, weth: Erc20Token
         pool=uniswap_v2_weth_dai_lp.address,
         reserves_token0=7154631418308101780013056,  # DAI <----- overridden, added 10% to DAI supply
         reserves_token1=2641882268814772168174,  # WETH
+        block=None,
     )
     v2_weth_usdc_lp_state_override = UniswapV2PoolState(
         pool=uniswap_v2_weth_usdc_lp.address,
         reserves_token0=51264330493455,  # USDC
         reserves_token1=20822226989581225186276,  # WETH
+        block=None,
     )
     v2_weth_usdt_lp_state_override = UniswapV2PoolState(
         pool=uniswap_v2_weth_usdt_lp.address,
         reserves_token0=33451964234532476269546,  # WETH
         reserves_token1=82374477120833,  # USDT
+        block=None,
     )
 
     overrides = {
@@ -399,16 +410,19 @@ async def test_process_pool_calculation(ethereum_archive_node_web3: Web3, weth: 
         pool=uniswap_v2_weth_dai_lp.address,
         reserves_token0=7154631418308101780013056,  # DAI <----- overridden, added 10% to DAI supply
         reserves_token1=2641882268814772168174,  # WETH
+        block=None,
     )
     v2_weth_usdc_lp_state_override = UniswapV2PoolState(
         pool=uniswap_v2_weth_usdc_lp.address,
         reserves_token0=51264330493455,  # USDC
         reserves_token1=20822226989581225186276,  # WETH
+        block=None,
     )
     v2_weth_usdt_lp_state_override = UniswapV2PoolState(
         pool=uniswap_v2_weth_usdt_lp.address,
         reserves_token0=33451964234532476269546,  # WETH
         reserves_token1=82374477120833,  # USDT
+        block=None,
     )
 
     overrides = {

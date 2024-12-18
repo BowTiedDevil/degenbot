@@ -656,8 +656,9 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         self._subscribers: set[Subscriber] = set()
 
-        self.state: CurveStableswapPoolState
-        self._update_pool_state()
+        self.state = CurveStableswapPoolState(
+            pool=self.address, balances=self.balances, block=self._update_block
+        )
 
         self._state_cache = BoundedCache(max_items=128)
         self._state_cache[self._update_block] = self.state
@@ -2200,10 +2201,17 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             self.balances = token_balances
             self.state = (
                 CurveStableswapPoolState(
-                    pool=self.address, balances=self.balances, base=self.base_pool.state
+                    pool=self.address,
+                    balances=self.balances,
+                    base=self.base_pool.state,
+                    block=block_number,
                 )
                 if self.base_pool is not None
-                else CurveStableswapPoolState(pool=self.address, balances=self.balances)
+                else CurveStableswapPoolState(
+                    pool=self.address,
+                    balances=self.balances,
+                    block=block_number,
+                )
             )
             self._notify_subscribers(
                 message=CurveStableSwapPoolStateUpdated(self.state),

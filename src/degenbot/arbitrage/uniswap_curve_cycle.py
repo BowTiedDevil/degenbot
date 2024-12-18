@@ -481,6 +481,12 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
             block_number=block_number,
         )
 
+        newest_state_block = (
+            None
+            if state_overrides
+            else max([block for pool in self.swap_pools if (block := pool.state.block) is not None])
+        )
+
         return ArbitrageCalculationResult(
             id=self.id,
             input_token=self.input_token,
@@ -488,6 +494,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
             input_amount=swap_amount,
             profit_amount=best_profit,
             swap_amounts=best_amounts,
+            state_block=newest_state_block,
         )
 
     def calculate(

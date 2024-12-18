@@ -172,18 +172,8 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
-        self._update_block = (
+        state_block = (
             cast(BlockNumber, state_block) if state_block is not None else w3.eth.block_number
-        )
-
-        self._state_lock = Lock()
-        self._state = self.PoolState(
-            pool=self.address,
-            liquidity=0,
-            sqrt_price_x96=0,
-            tick=0,
-            tick_bitmap={},
-            tick_data={},
         )
 
         try:
@@ -192,12 +182,10 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 (token0, token1),
                 self.fee,
                 self.tick_spacing,
-                self.sqrt_price_x96,
-                self.tick,
-                self.liquidity,
-            ) = self.get_factory_tokens_liquidity_price_tick_batched(
-                w3=w3, state_block=self._update_block
-            )
+                _sqrt_price_x96,
+                _tick,
+                _liquidity,
+            ) = self.get_factory_tokens_liquidity_price_tick_batched(w3=w3, state_block=state_block)
         except (ContractLogicError, DecodingError) as exc:
             # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
             # here and raise as a pool-specific exception
@@ -246,42 +234,59 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         # If liquidity info was not provided, treat the mapping as sparse
         self.sparse_liquidity_map = tick_bitmap is None or tick_data is None
 
+        _tick_bitmap = {}
+        _tick_data = {}
+
         if tick_bitmap is not None:
             # transform dict to UniswapV3BitmapAtWord
-            self.tick_bitmap = {
-                int(word): (
-                    UniswapV3BitmapAtWord(**bitmap_at_word)
-                    if not isinstance(
-                        bitmap_at_word,
-                        UniswapV3BitmapAtWord,
+            _tick_bitmap.update(
+                {
+                    int(word): (
+                        UniswapV3BitmapAtWord(**bitmap_at_word)
+                        if not isinstance(
+                            bitmap_at_word,
+                            UniswapV3BitmapAtWord,
+                        )
+                        else bitmap_at_word
                     )
-                    else bitmap_at_word
-                )
-                for word, bitmap_at_word in tick_bitmap.items()
-            }
+                    for word, bitmap_at_word in tick_bitmap.items()
+                }
+            )
 
             # Add empty regions to mapping
             min_word_position, _ = get_tick_word_and_bit_position(MIN_TICK, self.tick_spacing)
             max_word_position, _ = get_tick_word_and_bit_position(MAX_TICK, self.tick_spacing)
             known_empty_words = (
-                set(range(min_word_position, max_word_position + 1)) - self.tick_bitmap.keys()
+                set(range(min_word_position, max_word_position + 1)) - _tick_bitmap.keys()
             )
             empty_bitmap = UniswapV3BitmapAtWord()
-            self.tick_bitmap.update({word: empty_bitmap for word in known_empty_words})
+            _tick_bitmap.update({word: empty_bitmap for word in known_empty_words})
 
         if tick_data is not None:
             # transform dict to LiquidityAtTick
-            self.tick_data = {
-                int(tick): (
-                    UniswapV3LiquidityAtTick(**liquidity_at_tick)
-                    if not isinstance(
-                        liquidity_at_tick,
-                        UniswapV3LiquidityAtTick,
+            _tick_data.update(
+                {
+                    int(tick): (
+                        UniswapV3LiquidityAtTick(**liquidity_at_tick)
+                        if not isinstance(
+                            liquidity_at_tick,
+                            UniswapV3LiquidityAtTick,
+                        )
+                        else liquidity_at_tick
                     )
-                    else liquidity_at_tick
-                )
-                for tick, liquidity_at_tick in tick_data.items()
-            }
+                    for tick, liquidity_at_tick in tick_data.items()
+                }
+            )
+
+        state = self.PoolState(
+            pool=self.address,
+            liquidity=_liquidity,
+            sqrt_price_x96=_sqrt_price_x96,
+            tick=_tick,
+            tick_bitmap=_tick_bitmap,
+            tick_data=_tick_data,
+            block=state_block,
+        )
 
         if tick_bitmap is None and tick_data is None:
             word_position, _ = get_tick_word_and_bit_position(self.tick, self.tick_spacing)
@@ -1272,6 +1277,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                     tick=end_tick,
                     tick_bitmap=self.state.tick_bitmap,
                     tick_data=self.state.tick_data,
+                    block=self.update_block if override_state is None else None,
                 ),
             )
 
@@ -1317,5 +1323,6 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                     tick=end_tick,
                     tick_bitmap=self.state.tick_bitmap,
                     tick_data=self.state.tick_data,
+                    block=self.update_block if override_state is None else None,
                 ),
             )

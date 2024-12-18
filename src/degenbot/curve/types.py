@@ -5,7 +5,7 @@ from eth_typing import ChecksumAddress, HexAddress
 from degenbot.types import AbstractPoolState, Message
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
+@dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class CurveStableswapPoolState(AbstractPoolState):
     pool: ChecksumAddress
     balances: list[int]

@@ -1,7 +1,7 @@
 import dataclasses
 from typing import Any
 
-from eth_typing import ChecksumAddress
+from eth_typing import BlockNumber, ChecksumAddress
 
 from degenbot.erc20_token import Erc20Token
 
@@ -14,6 +14,7 @@ class ArbitrageCalculationResult:
     input_amount: int
     profit_amount: int
     swap_amounts: list[Any]
+    state_block: BlockNumber | None
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

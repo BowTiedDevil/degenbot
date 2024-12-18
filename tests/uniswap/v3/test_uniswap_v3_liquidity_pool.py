@@ -33,6 +33,7 @@ from degenbot.uniswap.types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
+    UniswapV3PoolLiquidityMappingUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
@@ -312,7 +313,11 @@ def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool):
         tick=wbtc_weth_v3_lp_at_block_17_600_000.tick,
         tick_spacing=wbtc_weth_v3_lp_at_block_17_600_000.tick_spacing,
     )
-    wbtc_weth_v3_lp_at_block_17_600_000._fetch_tick_data_at_word(word_position + 5)
+    wbtc_weth_v3_lp_at_block_17_600_000._fetch_and_populate_initialized_ticks(
+        word_position + 5,
+        tick_bitmap=wbtc_weth_v3_lp_at_block_17_600_000.tick_bitmap,
+        tick_data=wbtc_weth_v3_lp_at_block_17_600_000.tick_data,
+    )
 
 
 def test_pool_creation(ethereum_archive_node_web3: Web3) -> None:
@@ -388,10 +393,15 @@ def test_sparse_liquidity_map(ethereum_archive_node_web3: Web3) -> None:
     assert lp.sparse_liquidity_map is True
     assert current_word + 1 not in lp.tick_bitmap
 
-    lp._fetch_tick_data_at_word(current_word + 1)
+    _tick_bitmap = lp.tick_bitmap
+    _tick_data = lp.tick_data
+
+    lp._fetch_and_populate_initialized_ticks(
+        current_word + 1, tick_bitmap=_tick_bitmap, tick_data=_tick_data
+    )
     assert lp.sparse_liquidity_map is True
-    assert current_word + 1 in lp.tick_bitmap
-    assert set(lp.tick_bitmap.keys()) == known_words.union([current_word + 1])
+    assert current_word + 1 in _tick_bitmap
+    assert set(_tick_bitmap.keys()) == known_words.union([current_word + 1])
 
     lp.calculate_tokens_out_from_tokens_in(
         token_in=lp.token0, token_in_quantity=100000 * 10**lp.token0.decimals
@@ -402,57 +412,68 @@ def test_external_update_with_sparse_liquidity_map(ethereum_archive_node_web3: W
     set_web3(ethereum_archive_node_web3)
 
     lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
-    current_word, _ = get_tick_word_and_bit_position(MIN_TICK, lp.tick_spacing)
+    print(f"{lp.tick_bitmap.keys()=}")
+    current_word, _ = get_tick_word_and_bit_position(
+        tick=MIN_TICK,
+        tick_spacing=lp.tick_spacing,
+    )
     assert lp.sparse_liquidity_map is True
     assert current_word + 1 not in lp.tick_bitmap
 
-    lp.external_update(
-        update=UniswapV3PoolExternalUpdate(
+    lp.update_liquidity_map(
+        update=UniswapV3PoolLiquidityMappingUpdate(
             block_number=lp.update_block + 1,
-            liquidity_change=(
-                1,
-                lp.tick_spacing * (MIN_TICK // lp.tick_spacing),
-                lp.tick_spacing * (MAX_TICK // lp.tick_spacing),
-            ),
-        )
+            liquidity=1,
+            tick_lower=lp.tick_spacing * (MIN_TICK // lp.tick_spacing),
+            tick_upper=lp.tick_spacing * (MAX_TICK // lp.tick_spacing),
+        ),
     )
 
 
 def test_reorg(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
+    """
+    Provide some updates, then simulate a reorg back to the starting state
+    """
+
+    starting_block = 17_600_000
+
     lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
+    assert lp.update_block == starting_block
 
-    start_block = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
-    end_block = start_block + 10
-
-    # Provide some dummy updates, then simulate a reorg back to the starting state
     starting_state = lp.state
     starting_liquidity = lp.liquidity
 
     block_states: dict[int, UniswapV3PoolState] = {
-        wbtc_weth_v3_lp_at_block_17_600_000._update_block: lp.state
+        wbtc_weth_v3_lp_at_block_17_600_000.update_block: starting_state
     }
 
-    for block_number in range(start_block, end_block + 1, 1):
+    number_of_updates = 10
+
+    for delta in range(number_of_updates):
         lp.external_update(
             update=UniswapV3PoolExternalUpdate(
-                block_number=block_number,
-                liquidity=starting_liquidity + 10_000 * (block_number - start_block),
+                block_number=starting_block + 1 + delta,
+                liquidity=starting_liquidity + 10_000 * (1 + delta),
+                sqrt_price_x96=lp.state.sqrt_price_x96,
+                tick=lp.state.tick,
             ),
         )
-        block_states[block_number] = lp.state
+        block_states[starting_block + 1 + delta] = lp.state
 
     last_block_state = lp.state
+    assert last_block_state.block == 17_600_000 + 10
 
     # Cannot restore to a pool state before the first
     with pytest.raises(NoPoolStateAvailable):
-        lp.restore_state_before_block(0)
+        lp.restore_state_before_block(starting_block)
 
     # Non-op, the pool should already meet the requested condition
-    lp.restore_state_before_block(end_block + 1)
+    lp.restore_state_before_block(starting_block + number_of_updates + 1)
     assert lp.state == last_block_state
 
     # Unwind the updates and compare to the stored states at previous blocks
-    for block_number in range(end_block + 1, start_block, -1):
+    for block_number in range(lp.update_block, starting_block, -1):
+        print(f"Unwinding state before block {block_number}")
         lp.restore_state_before_block(block_number)
         assert lp.state == block_states[block_number - 1]
 
@@ -463,14 +484,14 @@ def test_reorg(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
 def test_discard_before_finalized(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
     lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
 
-    start_block = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
+    start_block = wbtc_weth_v3_lp_at_block_17_600_000.update_block + 1
     end_block = start_block + 10
 
     # Provide some dummy updates, then simulate a reorg back to the starting state
     starting_liquidity = lp.liquidity
 
     block_states: dict[int, UniswapV3PoolState] = {
-        wbtc_weth_v3_lp_at_block_17_600_000._update_block: lp.state
+        wbtc_weth_v3_lp_at_block_17_600_000.update_block: lp.state
     }
 
     for block_number in range(start_block, end_block + 1, 1):
@@ -478,6 +499,8 @@ def test_discard_before_finalized(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3
             update=UniswapV3PoolExternalUpdate(
                 block_number=block_number,
                 liquidity=starting_liquidity + 10_000 * (block_number - start_block),
+                sqrt_price_x96=lp.state.sqrt_price_x96,
+                tick=lp.state.tick,
             ),
         )
         block_states[block_number] = lp.state
@@ -588,6 +611,7 @@ def test_calculate_tokens_out_from_tokens_in_with_override(
 
     pool_state_override = UniswapV3PoolState(
         pool=lp.address,
+        block=None,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
         tick=258116,
@@ -637,6 +661,7 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
 
     pool_state_override = UniswapV3PoolState(
         pool=lp.address,
+        block=None,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
         tick=258116,
@@ -670,6 +695,7 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None
             tick=257907,
             tick_bitmap=lp.tick_bitmap,
             tick_data=lp.tick_data,
+            block=17_600_000,
         ),
     )
 
@@ -703,6 +729,7 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None
             tick=257906,
             tick_bitmap=lp.tick_bitmap,
             tick_data=lp.tick_data,
+            block=17_600_000,
         ),
     )
 
@@ -751,6 +778,7 @@ def test_simulations_with_override(
 
     pool_state_override = UniswapV3PoolState(
         pool=lp.address,
+        block=None,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
         tick=258116,
@@ -768,6 +796,7 @@ def test_simulations_with_override(
         initial_state=pool_state_override,
         final_state=UniswapV3PoolState(
             pool=lp.address,
+            block=None,
             sqrt_price_x96=31881342483860761583159860586051776,
             liquidity=1533143241938066251,
             tick=258116,
@@ -786,6 +815,7 @@ def test_simulations_with_override(
         initial_state=pool_state_override,
         final_state=UniswapV3PoolState(
             pool=lp.address,
+            block=None,
             sqrt_price_x96=31881342483855216967760245337454994,
             liquidity=1533143241938066251,
             tick=258116,
@@ -832,35 +862,33 @@ def test_swap_for_all(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> Non
 
 
 def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
-    start_block = wbtc_weth_v3_lp_at_block_17_600_000._update_block + 1
-
-    wbtc_weth_v3_lp_at_block_17_600_000.sparse_liquidity_map = False
+    start_block = wbtc_weth_v3_lp_at_block_17_600_000.update_block + 1
 
     wbtc_weth_v3_lp_at_block_17_600_000.external_update(
         update=UniswapV3PoolExternalUpdate(
             block_number=start_block,
             liquidity=69,
+            sqrt_price_x96=wbtc_weth_v3_lp_at_block_17_600_000.state.sqrt_price_x96,
+            tick=wbtc_weth_v3_lp_at_block_17_600_000.state.tick,
         ),
     )
-    assert wbtc_weth_v3_lp_at_block_17_600_000._update_block == start_block
+    assert wbtc_weth_v3_lp_at_block_17_600_000.update_block == start_block
 
-    # Ensure liquidity data is available for the manipulated tick range
-    tick_spacing = wbtc_weth_v3_lp_at_block_17_600_000.tick_spacing
-    word_pos_1, _ = get_tick_word_and_bit_position(tick=-887160, tick_spacing=tick_spacing)
-    word_pos_2, _ = get_tick_word_and_bit_position(tick=-887220, tick_spacing=tick_spacing)
-    wbtc_weth_v3_lp_at_block_17_600_000._fetch_tick_data_at_word(word_pos_1)
-    wbtc_weth_v3_lp_at_block_17_600_000._fetch_tick_data_at_word(word_pos_2)
+    assert -887160 not in wbtc_weth_v3_lp_at_block_17_600_000.tick_data
+    assert -887220 not in wbtc_weth_v3_lp_at_block_17_600_000.tick_data
 
-    new_liquidity = 10_000_000_000
-
-    wbtc_weth_v3_lp_at_block_17_600_000.external_update(
-        update=UniswapV3PoolExternalUpdate(
+    new_liquidity = 100_000
+    wbtc_weth_v3_lp_at_block_17_600_000.update_liquidity_map(
+        update=UniswapV3PoolLiquidityMappingUpdate(
             block_number=start_block,
-            liquidity_change=(new_liquidity, -887160, -887220),
+            liquidity=new_liquidity,
+            tick_lower=-887160,
+            tick_upper=-887220,
         ),
     )
 
-    assert wbtc_weth_v3_lp_at_block_17_600_000._update_block == start_block
+    assert -887160 in wbtc_weth_v3_lp_at_block_17_600_000.tick_data
+    assert -887220 in wbtc_weth_v3_lp_at_block_17_600_000.tick_data
 
     # New liquidity is added to liquidityNet at lower tick, subtracted from upper tick.
     assert (
@@ -888,6 +916,8 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> 
             update=UniswapV3PoolExternalUpdate(
                 block_number=start_block - 1,
                 liquidity=10,
+                sqrt_price_x96=wbtc_weth_v3_lp_at_block_17_600_000.state.sqrt_price_x96,
+                tick=wbtc_weth_v3_lp_at_block_17_600_000.state.tick,
             ),
         )
 
@@ -898,15 +928,20 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> 
         update=UniswapV3PoolExternalUpdate(
             block_number=start_block + 1,
             liquidity=69_420_000,
+            sqrt_price_x96=wbtc_weth_v3_lp_at_block_17_600_000.state.sqrt_price_x96,
+            tick=wbtc_weth_v3_lp_at_block_17_600_000.state.tick,
         ),
     )
 
     # Now repeat the liquidity change for a newer block and check that the in-range liquidity was
     # adjusted
-    wbtc_weth_v3_lp_at_block_17_600_000.external_update(
-        update=UniswapV3PoolExternalUpdate(
+
+    wbtc_weth_v3_lp_at_block_17_600_000.update_liquidity_map(
+        update=UniswapV3PoolLiquidityMappingUpdate(
             block_number=start_block + 1,
-            liquidity_change=(1, 257880, 257940),
+            liquidity=1,
+            tick_lower=257880,
+            tick_upper=257940,
         ),
     )
     assert wbtc_weth_v3_lp_at_block_17_600_000.liquidity == 69_420_000 + 1
@@ -915,6 +950,8 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> 
         update=UniswapV3PoolExternalUpdate(
             block_number=start_block + 2,
             tick=69,
+            sqrt_price_x96=wbtc_weth_v3_lp_at_block_17_600_000.state.sqrt_price_x96,
+            liquidity=wbtc_weth_v3_lp_at_block_17_600_000.state.liquidity,
         )
     )
     # Update twice to test branches that check for a no-change update
@@ -922,6 +959,8 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> 
         update=UniswapV3PoolExternalUpdate(
             block_number=start_block + 2,
             tick=69,
+            sqrt_price_x96=wbtc_weth_v3_lp_at_block_17_600_000.state.sqrt_price_x96,
+            liquidity=wbtc_weth_v3_lp_at_block_17_600_000.state.liquidity,
         )
     )
 
@@ -944,27 +983,28 @@ def test_mint_and_burn_in_empty_word(fork_mainnet: AnvilFork) -> None:
 
     assert lower_tick not in lp.tick_data
     assert upper_tick not in lp.tick_data
+    assert empty_word not in lp.tick_bitmap
 
-    lp._fetch_tick_data_at_word(-57)
-    assert lp.tick_bitmap[empty_word] == UniswapV3BitmapAtWord()
-
-    assert lower_tick not in lp.tick_data
-    assert upper_tick not in lp.tick_data
-
-    lp.external_update(
+    lp.update_liquidity_map(
         # Mint
-        update=UniswapV3PoolExternalUpdate(
+        update=UniswapV3PoolLiquidityMappingUpdate(
             block_number=block_number,
-            liquidity_change=(69_420, lower_tick, upper_tick),
+            liquidity=69_420,
+            tick_lower=lower_tick,
+            tick_upper=upper_tick,
         )
     )
     assert lower_tick in lp.tick_data
     assert upper_tick in lp.tick_data
-    lp.external_update(
+    assert empty_word in lp.tick_bitmap
+
+    lp.update_liquidity_map(
         # Burn
-        update=UniswapV3PoolExternalUpdate(
+        update=UniswapV3PoolLiquidityMappingUpdate(
             block_number=block_number,
-            liquidity_change=(-69_420, lower_tick, upper_tick),
+            liquidity=-69_420,
+            tick_lower=lower_tick,
+            tick_upper=upper_tick,
         )
     )
     assert lower_tick not in lp.tick_data
@@ -1006,11 +1046,13 @@ def test_complex_liquidity_transaction_1(fork_mainnet: AnvilFork):
     # Apply relevant updates: Burn -> Swap -> Mint
     # ref: https://dashboard.tenderly.co/tx/mainnet/0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d/logs
 
-    lp.external_update(
+    lp.update_liquidity_map(
         # Burn
-        update=UniswapV3PoolExternalUpdate(
+        update=UniswapV3PoolLiquidityMappingUpdate(
             block_number=state_block + 1,
-            liquidity_change=(-32898296636481156, -2, 0),
+            liquidity=-32898296636481156,
+            tick_lower=-2,
+            tick_upper=0,
         )
     )
     lp.external_update(
@@ -1022,11 +1064,13 @@ def test_complex_liquidity_transaction_1(fork_mainnet: AnvilFork):
             tick=0,
         )
     )
-    lp.external_update(
+    lp.update_liquidity_map(
         # Mint
-        update=UniswapV3PoolExternalUpdate(
+        update=UniswapV3PoolLiquidityMappingUpdate(
             block_number=state_block + 1,
-            liquidity_change=(32881222444111623, -1, 1),
+            liquidity=32881222444111623,
+            tick_lower=-1,
+            tick_upper=1,
         )
     )
 
@@ -1072,11 +1116,13 @@ def test_complex_liquidity_transaction_2(fork_mainnet: AnvilFork):
     # Apply relevant updates: Burn -> Swap -> Mint
     # ref: https://dashboard.tenderly.co/tx/mainnet/0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b/logs
 
-    lp.external_update(
+    lp.update_liquidity_map(
         # Burn
-        update=UniswapV3PoolExternalUpdate(
+        update=UniswapV3PoolLiquidityMappingUpdate(
             block_number=state_block + 1,
-            liquidity_change=(-32832176391550116, 1, 3),
+            liquidity=-32832176391550116,
+            tick_lower=1,
+            tick_upper=3,
         )
     )
     lp.external_update(
@@ -1088,11 +1134,13 @@ def test_complex_liquidity_transaction_2(fork_mainnet: AnvilFork):
             tick=0,
         )
     )
-    lp.external_update(
+    lp.update_liquidity_map(
         # Mint
-        update=UniswapV3PoolExternalUpdate(
+        update=UniswapV3PoolLiquidityMappingUpdate(
             block_number=state_block + 1,
-            liquidity_change=(32906745642438587, 0, 2),
+            liquidity=32906745642438587,
+            tick_lower=0,
+            tick_upper=2,
         )
     )
 

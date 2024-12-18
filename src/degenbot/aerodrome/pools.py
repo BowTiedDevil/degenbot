@@ -67,10 +67,10 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
-        self._update_block = state_block if state_block is not None else w3.eth.block_number
+        state_block = BlockNumber(state_block) if state_block is not None else w3.eth.block_number
 
         self.factory, (token0, token1), self.stable, fee, (reserves0, reserves1) = (
-            self.get_factory_tokens_stable_reserves_batched(w3=w3, state_block=self._update_block)
+            self.get_factory_tokens_stable_reserves_batched(w3=w3, state_block=state_block)
         )
         self.deployer_address = (
             to_checksum_address(deployer_address) if deployer_address is not None else self.factory
@@ -81,6 +81,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
             pool=self.address,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
+            block=state_block,
         )
 
         self.fee = self.fee_token0 = self.fee_token1 = Fraction(fee, self.FEE_DENOMINATOR)
@@ -213,19 +214,23 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
             state_updated = False
             w3 = self.w3
-            block_number = w3.eth.get_block_number() if block_number is None else block_number
+            block_number = (
+                w3.eth.get_block_number() if block_number is None else BlockNumber(block_number)
+            )
 
             reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
 
             if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
                 state_updated = True
-                self.reserves_token0 = reserves0
-                self.reserves_token1 = reserves1
-
-            self._update_block = block_number
+                self._state = self.PoolState(
+                    pool=self.address,
+                    reserves_token0=reserves0,
+                    reserves_token1=reserves1,
+                    block=block_number,
+                )
 
             if state_updated:
-                self._state_cache[cast(BlockNumber, block_number)] = self.state
+                self._state_cache[block_number] = self.state
                 self._notify_subscribers(
                     message=AerodromeV2PoolStateUpdated(self.state),
                 )
@@ -360,20 +365,27 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
             if update.reserves_token0 != self.reserves_token0:
                 updated_state = True
-                self.reserves_token0 = update.reserves_token0
-                logger.debug(f"Token 0 Reserves: {self.reserves_token0}")
+                self._state = self.PoolState(
+                    pool=self.address,
+                    reserves_token0=update.reserves_token0,
+                    reserves_token1=self.state.reserves_token1,
+                    block=update.block_number,
+                )
 
             if update.reserves_token1 != self.reserves_token1:
                 updated_state = True
-                self.reserves_token1 = update.reserves_token1
-                logger.debug(f"Token 1 Reserves: {self.reserves_token1}")
+                self._state = self.PoolState(
+                    pool=self.address,
+                    reserves_token0=self.state.reserves_token0,
+                    reserves_token1=update.reserves_token1,
+                    block=update.block_number,
+                )
 
             if updated_state:
                 self._state_cache[cast(BlockNumber, update.block_number)] = self.state
                 self._notify_subscribers(
                     message=AerodromeV2PoolStateUpdated(self.state),
                 )
-                self._update_block = update.block_number
 
             return updated_state
 

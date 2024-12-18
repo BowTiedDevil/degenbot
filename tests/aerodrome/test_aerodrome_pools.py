@@ -90,6 +90,7 @@ def test_auto_update(
         pool=lp.address,
         reserves_token0=lp.state.reserves_token0 - 1,
         reserves_token1=lp.state.reserves_token1 + 1,
+        block=None,
     )
     assert lp.auto_update() is True
 

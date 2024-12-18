@@ -75,6 +75,7 @@ def wbtc_weth_v2_lp(
         pool=pool.address,
         reserves_token0=16231137593,
         reserves_token1=2571336301536722443178,
+        block=pool.update_block,
     )
 
     return pool
@@ -2078,9 +2079,16 @@ def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> UniswapV3Pool:
             ),
         },
     )
-    pool.liquidity = 1612978974357835825
-    pool.sqrt_price_x96 = 31549217861118002279483878013792428
-    pool.tick = 257907
+
+    pool._state = UniswapV3PoolState(
+        pool=pool.address,
+        liquidity=1612978974357835825,
+        sqrt_price_x96=31549217861118002279483878013792428,
+        tick=257907,
+        tick_bitmap=pool.tick_bitmap,
+        tick_data=pool.tick_data,
+        block=pool.update_block,
+    )
 
     return pool
 
@@ -2101,7 +2109,12 @@ def wbtc_weth_arb(
 
 class MockLiquidityPool(UniswapV2Pool):
     def __init__(self) -> None:
-        self._state = UniswapV2PoolState(ZERO_ADDRESS, 0, 0)
+        self._state = UniswapV2PoolState(
+            pool=ZERO_ADDRESS,
+            reserves_token0=0,
+            reserves_token1=0,
+            block=None,
+        )
         self._state_lock = Lock()
         self._subscribers = set()
 
@@ -2143,10 +2156,12 @@ def test_arbitrage_with_overrides(
         pool=wbtc_weth_v2_lp.address,
         reserves_token0=16027096956,
         reserves_token1=2602647332090181827846,
+        block=None,
     )
 
     v3_pool_state_override = UniswapV3PoolState(
         pool=wbtc_weth_v3_lp.address,
+        block=None,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
         tick=258116,
@@ -2193,6 +2208,7 @@ def test_arbitrage_with_overrides(
         pool=irrelevant_v2_pool.address,
         reserves_token0=16231137593,
         reserves_token1=2571336301536722443178,
+        block=None,
     )
     irrelevant_v2_pool.token0 = wbtc_token
     irrelevant_v2_pool.token1 = weth_token
@@ -2201,9 +2217,10 @@ def test_arbitrage_with_overrides(
     irrelevant_v3_pool.address = to_checksum_address("0x0000000000000000000000000000000000000420")
     irrelevant_v3_pool._state = UniswapV3PoolState(
         pool=irrelevant_v3_pool.address,
-        liquidity=0,
-        sqrt_price_x96=0,
-        tick=0,
+        block=None,
+        liquidity=1612978974357835825,
+        sqrt_price_x96=31549217861118002279483878013792428,
+        tick=257907,
         tick_bitmap={},
         tick_data={},
     )
@@ -2212,10 +2229,7 @@ def test_arbitrage_with_overrides(
     irrelevant_v3_pool.fee = 3000
     irrelevant_v3_pool.token0 = wbtc_token
     irrelevant_v3_pool.token1 = weth_token
-    irrelevant_v3_pool.liquidity = 1612978974357835825
-    irrelevant_v3_pool.sqrt_price_x96 = 31549217861118002279483878013792428
     irrelevant_v3_pool.sparse_liquidity_map = False
-    irrelevant_v3_pool.tick = 257907
     irrelevant_v3_pool.tick_spacing = 60
 
     overrides = {
@@ -2280,6 +2294,7 @@ async def test_process_pool_calculation(
 
     v3_pool_state_override = UniswapV3PoolState(
         pool=wbtc_weth_v3_lp.address,
+        block=None,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
         tick=258116,
@@ -2321,6 +2336,7 @@ async def test_process_pool_calculation(
                     sqrt_price_limit_x96=4295128740,
                 ),
             ],
+            state_block=None,
         )
 
         # Saturate the process pool executor with multiple calculations.
@@ -2360,6 +2376,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
         pool=lp_1.address,
         reserves_token0=16000000000,
         reserves_token1=2500000000000000000000,
+        block=None,
     )
     lp_1.token0 = wbtc_token
     lp_1.token1 = weth_token
@@ -2374,6 +2391,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
         pool=lp_2.address,
         reserves_token0=15000000000,
         reserves_token1=2500000000000000000000,
+        block=None,
     )
     lp_2.token0 = wbtc_token
     lp_2.token1 = weth_token
@@ -2469,6 +2487,7 @@ def test_arbitrage_helper_subscriptions(
                 pool=wbtc_weth_v2_lp.address,
                 reserves_token0=69,
                 reserves_token1=420,
+                block=None,
             )
         ),
     )
@@ -2477,6 +2496,7 @@ def test_arbitrage_helper_subscriptions(
         message=UniswapV3PoolStateUpdated(
             state=UniswapV3PoolState(
                 pool=wbtc_weth_v3_lp.address,
+                block=None,
                 liquidity=69_420,
                 sqrt_price_x96=1,
                 tick=-1,
@@ -2507,6 +2527,8 @@ def test_arbitrage_helper_subscriptions(
     v3_pool_update = UniswapV3PoolExternalUpdate(
         block_number=wbtc_weth_v3_lp.update_block + 1,
         liquidity=420_690_000,
+        sqrt_price_x96=wbtc_weth_v3_lp.state.sqrt_price_x96,
+        tick=wbtc_weth_v3_lp.state.tick,
     )
     wbtc_weth_v3_lp.external_update(update=v3_pool_update)
 

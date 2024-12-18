@@ -1543,6 +1543,7 @@ class UniswapTransaction(AbstractTransaction):
                                 pool=_pool.address,
                                 reserves_token0=0,
                                 reserves_token1=0,
+                                block=None,
                             ),
                         )
 
