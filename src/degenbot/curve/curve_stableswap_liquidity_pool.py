@@ -693,12 +693,6 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
     def chain_id(self) -> int:
         return self._chain_id
 
-    def _update_pool_state(self) -> None:
-        self.state = CurveStableswapPoolState(pool=self.address, balances=self.balances)
-        self._notify_subscribers(
-            message=CurveStableSwapPoolStateUpdated(self.state),
-        )
-
     def _a(self, timestamp: int | None = None) -> int:
         """
         Handle ramping A up or down
