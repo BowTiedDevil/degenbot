@@ -1,9 +1,9 @@
 # TODO: support unwinding updates for re-org
 
+import json
 import pathlib
 from typing import Any, cast
 
-import orjson
 from eth_typing import ABIEvent, ChecksumAddress
 from eth_utils.abi import event_abi_to_log_topic
 from eth_utils.address import to_checksum_address
@@ -36,7 +36,7 @@ class UniswapV3LiquiditySnapshot:
     ):
         if isinstance(file, str):
             file = pathlib.Path(file)
-        json_liquidity_snapshot: dict[str, Any] = orjson.loads(file.read_text())
+        json_liquidity_snapshot: dict[str, Any] = json.loads(file.read_text())
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         self.newest_block = json_liquidity_snapshot.pop("snapshot_block")
