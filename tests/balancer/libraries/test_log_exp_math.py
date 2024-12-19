@@ -1,7 +1,7 @@
 import pytest
 
 from degenbot.balancer.libraries import log_exp_math
-from degenbot.balancer.libraries.helpers import bn, fp, fromFp, toFp
+from degenbot.balancer.libraries.helpers import bn, fp
 from degenbot.exceptions import EVMRevertError
 
 SCALING_FACTOR = 1 * 10**18

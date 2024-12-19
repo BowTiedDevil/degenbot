@@ -1,12 +1,12 @@
-from degenbot.balancer.libraries.constants import FOUR, ONE, TWO
+from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.libraries.fixed_point import (
+    complement,
     divDown,
     divUp,
     mulDown,
     mulUp,
     powDown,
     powUp,
-    complement,
 )
 from degenbot.exceptions import EVMRevertError
 
@@ -41,7 +41,11 @@ def calculate_invariant(normalized_weights: list[int], balances: list[int]) -> i
 
 
 def _calcInGivenOut(
-    balanceIn: int, weightIn: int, balanceOut: int, weightOut: int, amountOut: int
+    balanceIn: int,
+    weightIn: int,
+    balanceOut: int,
+    weightOut: int,
+    amountOut: int,
 ) -> int:
     """
     Computes how many tokens must be sent to a pool in order to take `amountOut`, given the

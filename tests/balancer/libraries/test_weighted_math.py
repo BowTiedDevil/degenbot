@@ -3,7 +3,7 @@ from decimal import Decimal
 import pytest
 
 from degenbot.balancer.libraries import weighted_math
-from degenbot.balancer.libraries.helpers import bn, fp, fromFp, toFp
+from degenbot.balancer.libraries.helpers import bn, fromFp, toFp
 from degenbot.exceptions import EVMRevertError
 
 MAX_RELATIVE_ERROR = 0.0001
