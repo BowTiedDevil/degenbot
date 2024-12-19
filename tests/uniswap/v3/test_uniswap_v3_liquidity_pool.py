@@ -1,8 +1,8 @@
-import json
 import pathlib
 import pickle
 from typing import Any
 
+import pydantic_core
 import pytest
 from eth_typing import ChainId
 from eth_utils.address import to_checksum_address
@@ -69,7 +69,7 @@ BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
     ),
 )
 
-UNISWAP_V3_QUOTER_ABI = json.loads(
+UNISWAP_V3_QUOTER_ABI = pydantic_core.from_json(
     """
     [{"inputs":[{"internalType":"address","name":"_factory","type":"address"},{"internalType":"address","name":"_WETH9","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[],"name":"WETH9","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"factory","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountIn","type":"uint256"}],"name":"quoteExactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountOut","type":"uint256"}],"name":"quoteExactOutput","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"name":"quoteExactOutputSingle","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"int256","name":"amount0Delta","type":"int256"},{"internalType":"int256","name":"amount1Delta","type":"int256"},{"internalType":"bytes","name":"path","type":"bytes"}],"name":"uniswapV3SwapCallback","outputs":[],"stateMutability":"view","type":"function"}]
     """
@@ -109,15 +109,17 @@ def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> UniswapV3Pool:
 
 @pytest.fixture
 def testing_pools() -> Any:
-    return json.loads(pathlib.Path("tests/uniswap/v3/first_200_uniswap_v3_pools.json").read_text())
+    return pydantic_core.from_json(
+        pathlib.Path("tests/uniswap/v3/first_200_uniswap_v3_pools.json").read_bytes()
+    )
 
 
 @pytest.fixture
 def liquidity_snapshot() -> dict[str, Any]:
-    snapshot: dict[str, Any] = json.loads(
+    snapshot: dict[str, Any] = pydantic_core.from_json(
         pathlib.Path(
             "tests/uniswap/v3/main_v3_liquidity_snapshot_block_21_123_218.json"
-        ).read_text()
+        ).read_bytes()
     )
 
     return snapshot
