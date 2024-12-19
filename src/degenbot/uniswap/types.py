@@ -1,6 +1,6 @@
 import dataclasses
-from typing import Any
 
+import pydantic
 from eth_typing import BlockNumber
 
 from degenbot.types import AbstractPoolState, AbstractSimulationResult, Message
@@ -42,23 +42,15 @@ class UniswapV2PoolStateUpdated(Message):
     state: UniswapV2PoolState
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV3BitmapAtWord:
-    bitmap: int = 0
-    block: int | None = dataclasses.field(compare=False, default=None)
-
-    def to_dict(self) -> dict[str, Any]:
-        return dataclasses.asdict(self)
+class UniswapV3BitmapAtWord(pydantic.BaseModel, frozen=True):
+    bitmap: int
+    block: int | None = None
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV3LiquidityAtTick:
-    liquidity_net: int = 0
-    liquidity_gross: int = 0
-    block: int | None = dataclasses.field(compare=False, default=None)
-
-    def to_dict(self) -> dict[str, Any]:
-        return dataclasses.asdict(self)
+class UniswapV3LiquidityAtTick(pydantic.BaseModel, frozen=True):
+    liquidity_net: int
+    liquidity_gross: int
+    block: int | None = None
 
 
 @dataclasses.dataclass(slots=True)

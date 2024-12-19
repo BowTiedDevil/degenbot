@@ -9,6 +9,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [    
     "cvxpy >= 1.6.0, <2",
+    "pydantic >= 2.10.4, <3",
     "scipy >=1.14.1, <1.15",
     "watchdog >= 6.0.0, <7",
     "web3 >=7.6.0, <8",
@@ -52,6 +53,7 @@ omit = [
 ]
 
 [tool.mypy]
+plugins = ["pydantic.mypy"]
 files=[
     "src/degenbot",
     "tests/",

@@ -34,7 +34,7 @@ def empty_full_bitmap(spacing: int = 1) -> dict[int, UniswapV3BitmapAtWord]:
     tick_bitmap = {}
     for tick in range(MIN_TICK, MAX_TICK, spacing):
         word_pos, _ = position(tick=tick)
-        tick_bitmap[word_pos] = UniswapV3BitmapAtWord()
+        tick_bitmap[word_pos] = UniswapV3BitmapAtWord(bitmap=0)
     return tick_bitmap
 
 
@@ -110,15 +110,15 @@ def test_next_initialized_tick_within_one_word() -> None:
     initialized_ticks = [-200, -55, -4, 70, 78, 84, 139, 240, 535]
 
     tick_data = {
-        -200: UniswapV3LiquidityAtTick(),  # 0
-        -55: UniswapV3LiquidityAtTick(),  # 1
-        -4: UniswapV3LiquidityAtTick(),  # 2
-        70: UniswapV3LiquidityAtTick(),  # 3
-        78: UniswapV3LiquidityAtTick(),  # 4
-        84: UniswapV3LiquidityAtTick(),  # 5
-        139: UniswapV3LiquidityAtTick(),  # 6
-        240: UniswapV3LiquidityAtTick(),  # 7
-        535: UniswapV3LiquidityAtTick(),  # 8
+        -200: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 0
+        -55: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 1
+        -4: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 2
+        70: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 3
+        78: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 4
+        84: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 5
+        139: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 6
+        240: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 7
+        535: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 8
     }
 
     # set up a full-sized empty tick bitmap, then initialize the ticks required for the tests
@@ -126,7 +126,7 @@ def test_next_initialized_tick_within_one_word() -> None:
     for tick in range(MIN_TICK, MAX_TICK, tick_spacing):
         word_pos, _ = position(tick=tick)
         if not tick_bitmap.get(word_pos):
-            tick_bitmap[word_pos] = UniswapV3BitmapAtWord()
+            tick_bitmap[word_pos] = UniswapV3BitmapAtWord(bitmap=0)
     for tick in initialized_ticks:
         flip_tick(tick_bitmap=tick_bitmap, tick=tick, tick_spacing=1)
 
@@ -382,7 +382,7 @@ def test_next_initialized_tick_within_one_word() -> None:
     ) == (768, False)
 
     flip_tick(tick_bitmap=tick_bitmap, tick=329, tick_spacing=1)
-    tick_data[329] = UniswapV3LiquidityAtTick()
+    tick_data[329] = UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0)
 
     assert next_initialized_tick_within_one_word_legacy(
         tick_bitmap=tick_bitmap,

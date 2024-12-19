@@ -264,7 +264,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             known_empty_words = (
                 set(range(min_word_position, max_word_position + 1)) - _tick_bitmap.keys()
             )
-            empty_bitmap = UniswapV3BitmapAtWord()
+            empty_bitmap = UniswapV3BitmapAtWord(bitmap=0, block=None)
             _tick_bitmap.update({word: empty_bitmap for word in known_empty_words})
 
         if tick_data is not None:
@@ -1058,6 +1058,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 current_liquidity_gross = _tick_data[tick].liquidity_gross
 
                 new_liquidity_gross = current_liquidity_gross + update.liquidity
+
                 assert (
                     new_liquidity_gross >= 0
                 ), f"Negative gross liquidity ({new_liquidity_gross})!"

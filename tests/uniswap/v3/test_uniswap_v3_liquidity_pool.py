@@ -529,30 +529,32 @@ def test_discard_after_last_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV
         wbtc_weth_v3_lp_at_block_17_600_000.discard_states_before_block(lp.update_block + 1)
 
 
+def test_pickle_pool(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool):
+    pickle.dumps(wbtc_weth_v3_lp_at_block_17_600_000)
+
+
 def test_tick_bitmap_equality() -> None:
     with pytest.raises(AssertionError):
         assert UniswapV3BitmapAtWord(bitmap=1) == UniswapV3BitmapAtWord(bitmap=2)
+    with pytest.raises(AssertionError):
+        assert UniswapV3BitmapAtWord(bitmap=2) == UniswapV3BitmapAtWord(bitmap=4)
 
-    # `block` field is set with `compare=False`, so that only the bitmap is
-    # considered by equality checks
-    assert UniswapV3BitmapAtWord(bitmap=1, block=1) == UniswapV3BitmapAtWord(bitmap=1, block=2)
-
-
-def test_pickle_pool(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool):
-    pickle.dumps(wbtc_weth_v3_lp_at_block_17_600_000)
+    assert UniswapV3BitmapAtWord(bitmap=1, block=1) == UniswapV3BitmapAtWord(bitmap=1, block=1)
 
 
 def test_tick_data_equality() -> None:
     with pytest.raises(AssertionError):
         assert UniswapV3LiquidityAtTick(
             liquidity_net=1, liquidity_gross=2
-        ) == UniswapV3LiquidityAtTick(liquidity_net=3, liquidity_gross=4)
+        ) == UniswapV3LiquidityAtTick(liquidity_net=1, liquidity_gross=4)
+    with pytest.raises(AssertionError):
+        assert UniswapV3LiquidityAtTick(
+            liquidity_net=1, liquidity_gross=2
+        ) == UniswapV3LiquidityAtTick(liquidity_net=4, liquidity_gross=2)
 
-    # `block` field is set with `compare=False`, so that only the liquidity is
-    # considered by equality checks
-    assert UniswapV3LiquidityAtTick(
-        liquidity_net=1, liquidity_gross=2, block=3
-    ) == UniswapV3LiquidityAtTick(liquidity_net=1, liquidity_gross=2, block=4)
+    assert UniswapV3LiquidityAtTick(liquidity_net=1, liquidity_gross=2) == UniswapV3LiquidityAtTick(
+        liquidity_net=1, liquidity_gross=2
+    )
 
 
 def test_price_is_inverse_of_exchange_rate(wbtc_weth_v3_lp: UniswapV3Pool):
