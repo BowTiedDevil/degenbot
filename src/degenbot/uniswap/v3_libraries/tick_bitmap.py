@@ -25,7 +25,7 @@ def flip_tick(
     if word_pos not in tick_bitmap:
         raise LiquidityMapWordMissing(word_pos)
 
-    tick_bitmap[word_pos] = UniswapV3BitmapAtWord(
+    tick_bitmap[word_pos] = UniswapV3BitmapAtWord.model_construct(
         bitmap=tick_bitmap[word_pos].bitmap ^ (1 << bit_pos),
         block=update_block,
     )

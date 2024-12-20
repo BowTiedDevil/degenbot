@@ -264,14 +264,14 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             known_empty_words = (
                 set(range(min_word_position, max_word_position + 1)) - _tick_bitmap.keys()
             )
-            empty_bitmap = UniswapV3BitmapAtWord(bitmap=0, block=None)
+            empty_bitmap = UniswapV3BitmapAtWord.model_construct(bitmap=0, block=None)
             _tick_bitmap.update({word: empty_bitmap for word in known_empty_words})
 
         if tick_data is not None:
-            # transform dict to LiquidityAtTick
             _tick_data.update(
                 {
                     int(tick): (
+                        # transform dict to LiquidityAtTick
                         UniswapV3LiquidityAtTick(**liquidity_at_tick)
                         if not isinstance(
                             liquidity_at_tick,
@@ -590,12 +590,12 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 block_identifier=block_number,
             )
 
-        tick_bitmap[word_position] = UniswapV3BitmapAtWord(
+        tick_bitmap[word_position] = UniswapV3BitmapAtWord.model_construct(
             bitmap=_tick_bitmap,
             block=block_number,
         )
         for tick, liquidity_gross, liquidity_net in _tick_data:
-            tick_data[tick] = UniswapV3LiquidityAtTick(
+            tick_data[tick] = UniswapV3LiquidityAtTick.model_construct(
                 liquidity_net=liquidity_net,
                 liquidity_gross=liquidity_gross,
                 block=block_number,
@@ -1042,7 +1042,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 # uninitialized and must be flipped in the bitmap and initialized as empty in the
                 # mapping
                 if tick not in _tick_data:
-                    _tick_data[tick] = UniswapV3LiquidityAtTick(
+                    _tick_data[tick] = UniswapV3LiquidityAtTick.model_construct(
                         liquidity_net=0,
                         liquidity_gross=0,
                         block=state_block,
@@ -1081,7 +1081,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 else:
                     new_liquidity_net = current_liquidity_net - update.liquidity
 
-                _tick_data[tick] = UniswapV3LiquidityAtTick(
+                _tick_data[tick] = UniswapV3LiquidityAtTick.model_construct(
                     liquidity_net=new_liquidity_net,
                     liquidity_gross=new_liquidity_gross,
                     block=state_block,
