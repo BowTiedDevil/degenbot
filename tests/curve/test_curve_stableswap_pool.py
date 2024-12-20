@@ -30,7 +30,7 @@ def tripool(ethereum_archive_node_web3: Web3) -> CurveStableswapPool:
 
 
 def _test_calculations(lp: CurveStableswapPool):
-    state_block = lp._update_block
+    state_block = lp.update_block
     w3_contract = connection_manager.get_web3(lp.chain_id).eth.contract(
         address=lp.address,
         abi=CURVE_V1_POOL_ABI,
@@ -135,27 +135,23 @@ def test_pickle_tripool(tripool: CurveStableswapPool):
 
 def test_auto_update(fork_mainnet: AnvilFork):
     # Build the pool at a known historical block
-    block_number = 18849427 - 1
+    block_number = 18849426
     fork_mainnet.reset(block_number=block_number)
     set_web3(fork_mainnet.w3)
 
     _tripool = CurveStableswapPool(TRIPOOL_ADDRESS)
 
     assert fork_mainnet.w3.eth.get_block_number() == block_number
-    assert _tripool._update_block == block_number
+    assert _tripool.update_block == block_number
 
-    expected_balances = [75010632422398781503259123, 76382820384826, 34653521595900]
+    expected_balances = (75010632422398781503259123, 76382820384826, 34653521595900)
     assert _tripool.balances == expected_balances
 
     fork_mainnet.reset(block_number=block_number + 1)
     assert fork_mainnet.w3.eth.get_block_number() == block_number + 1
     _tripool.auto_update()
-    assert _tripool._update_block == block_number + 1
-    assert _tripool.balances == [
-        75010632422398781503259123,
-        76437030384826,
-        34599346168546,
-    ]
+    assert _tripool.update_block == block_number + 1
+    assert _tripool.balances == (75010632422398781503259123, 76437030384826, 34599346168546)
 
 
 def test_a_ramping(fork_mainnet: AnvilFork):
@@ -219,10 +215,12 @@ def test_metapool_over_multiple_blocks_to_verify_cache_behavior(fork_mainnet: An
     set_web3(fork_mainnet.w3)
 
     lp = CurveStableswapPool(address=pool_address)
+    assert lp.update_block == start_block
 
     for block in range(start_block + span, end_block, span):
         fork_mainnet.reset(block_number=block)
         lp.auto_update()
+        assert lp.update_block == block
         _test_calculations(lp)
 
 

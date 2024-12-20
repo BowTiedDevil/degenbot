@@ -8,8 +8,8 @@ from degenbot.types import AbstractPoolState, Message
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class CurveStableswapPoolState(AbstractPoolState):
     pool: ChecksumAddress
-    balances: list[int]
-    base: "CurveStableswapPoolState | None" = dataclasses.field(default=None)
+    balances: tuple[int, ...]
+    base: "CurveStableswapPoolState | None" = None
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

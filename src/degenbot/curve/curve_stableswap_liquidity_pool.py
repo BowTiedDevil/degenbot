@@ -181,6 +181,11 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             Suppress status output.
         """
 
+        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+        w3 = connection_manager.get_web3(self.chain_id)
+        if state_block is None:
+            state_block = w3.eth.block_number
+
         self.fee_gamma: int
         self.mid_fee: int
         self.offpeg_fee_multiplier: int
@@ -209,7 +214,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                                 function_arguments=None,
                             ),
                         },
-                        block_identifier=self._update_block,
+                        block_identifier=self.update_block,
                     )
                 )
                 batch.add(
@@ -221,7 +226,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                                 function_arguments=None,
                             ),
                         },
-                        block_identifier=self._update_block,
+                        block_identifier=self.update_block,
                     )
                 )
                 batch.add(
@@ -233,7 +238,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                                 function_arguments=None,
                             ),
                         },
-                        block_identifier=self._update_block,
+                        block_identifier=self.update_block,
                     )
                 )
                 batch.add(
@@ -245,7 +250,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                                 function_arguments=None,
                             ),
                         },
-                        block_identifier=self._update_block,
+                        block_identifier=self.update_block,
                     )
                 )
 
@@ -280,7 +285,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                                 function_arguments=None,
                             ),
                         },
-                        block_identifier=self._update_block,
+                        block_identifier=self.update_block,
                     )
                 )
                 batch.add(
@@ -292,7 +297,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                                 function_arguments=None,
                             ),
                         },
-                        block_identifier=self._update_block,
+                        block_identifier=self.update_block,
                     )
                 )
                 batch.add(
@@ -304,7 +309,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                                 function_arguments=None,
                             ),
                         },
-                        block_identifier=self._update_block,
+                        block_identifier=self.update_block,
                     )
                 )
 
@@ -334,7 +339,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                             "data": Web3.keccak(text=f"coins({_type})")[:4]
                             + eth_abi.abi.encode(types=[_type], args=[0]),
                         },
-                        block_identifier=self._update_block,
+                        block_identifier=state_block,
                     ),
                 )
 
@@ -350,7 +355,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                             "data": Web3.keccak(text=f"coins({_type})")[:4]
                             + eth_abi.abi.encode(types=[_type], args=[0]),
                         },
-                        block_identifier=self._update_block,
+                        block_identifier=state_block,
                     ),
                 )
 
@@ -373,7 +378,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                             function_arguments=[token_id],
                         ),
                         return_types=["address"],
-                        block_identifier=self._update_block,
+                        block_identifier=state_block,
                     )
                     token_addresses.append(to_checksum_address(token_address))
                 except web3.exceptions.ContractLogicError:  # noqa:PERF203
@@ -396,7 +401,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                             function_arguments=[self.address],
                         ),
                         return_types=["address"],
-                        block_identifier=self._update_block,
+                        block_identifier=state_block,
                     )
                     if lp_token_address == ZERO_ADDRESS:
                         continue
@@ -421,7 +426,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                             function_arguments=[to_checksum_address(token)],
                         ),
                         return_types=["address"],
-                        block_identifier=self._update_block,
+                        block_identifier=state_block,
                     )
                     return to_checksum_address(pool_address)
 
@@ -453,7 +458,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                             function_arguments=[self.address],
                         ),
                         return_types=["bool"],
-                        block_identifier=self._update_block,
+                        block_identifier=state_block,
                     )
                     is_meta_results.append(cast(bool, result))
 
@@ -484,7 +489,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                                 "to": self.address,
                                 "data": Web3.keccak(text="offpeg_fee_multiplier()")[:4],
                             },
-                            block_identifier=self._update_block,
+                            block_identifier=state_block,
                         ),
                     )
                 case "0x2dded6Da1BF5DBdF597C45fcFaa3194e53EcfeAF":
@@ -501,7 +506,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                     "0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492"
                     | "0xBfAb6FA95E0091ed66058ad493189D2cB29385E6"
                 ):
-                    self._set_oracle_method(block_number=self._update_block)
+                    self._set_oracle_method(block_number=state_block)
                 case "0xEB16Ae0052ed37f479f7fe63849198Df1765a733":
                     (self.offpeg_fee_multiplier,) = eth_abi.abi.decode(
                         types=["uint256"],
@@ -510,7 +515,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                                 "to": self.address,
                                 "data": Web3.keccak(text="offpeg_fee_multiplier()")[:4],
                             },
-                            block_identifier=self._update_block,
+                            block_identifier=state_block,
                         ),
                     )
 
@@ -518,12 +523,9 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         if self.address in BROKEN_CURVE_V1_POOLS:
             raise BrokenPool
 
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        w3 = connection_manager.get_web3(self.chain_id)
-        self._update_block = state_block if state_block is not None else w3.eth.get_block_number()
         self._state_lock = Lock()
 
-        self._create_timestamp = w3.eth.get_block(self._update_block)["timestamp"]
+        self._create_timestamp = w3.eth.get_block(state_block)["timestamp"]
 
         max_cache_size = 5
         self._cached_admin_balances: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
@@ -567,9 +569,6 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             max_items=max_cache_size
         )
 
-        get_a_scaling_values()
-        get_coefficient_and_fees()
-
         # token setup
         self._coin_index_type = get_coin_index_type()
 
@@ -598,7 +597,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 )
             ) is None:
                 base_pool = CurveStableswapPool(
-                    base_pool_address, state_block=self._update_block, silent=silent
+                    base_pool_address, state_block=state_block, silent=silent
                 )
             if TYPE_CHECKING:
                 assert isinstance(base_pool, CurveStableswapPool)
@@ -608,17 +607,13 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
             self.base_cache_updated: int | None = None
             with contextlib.suppress(web3.exceptions.ContractLogicError):
-                self.base_cache_updated = self._get_base_cache_updated(
-                    block_number=self._update_block
-                )
+                self.base_cache_updated = self._get_base_cache_updated(block_number=state_block)
 
             self.base_virtual_price: int
             with contextlib.suppress(web3.exceptions.ContractLogicError):
-                self.base_virtual_price = self._get_base_virtual_price(
-                    block_number=self._update_block
-                )
+                self.base_virtual_price = self._get_base_virtual_price(block_number=state_block)
 
-        self.balances = []
+        _balances = []
         for token_id, _ in enumerate(self.tokens):
             (token_balance,) = eth_abi.abi.decode(
                 types=[self._coin_index_type],
@@ -628,10 +623,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                         "data": Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
                         + eth_abi.abi.encode(types=[self._coin_index_type], args=[token_id]),
                     },
-                    block_identifier=self._update_block,
+                    block_identifier=state_block,
                 ),
             )
-            self.balances.append(token_balance)
+            _balances.append(token_balance)
 
         """
         3pool example
@@ -648,6 +643,16 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             cast(int, 10 ** (self.PRECISION_DECIMALS - token.decimals)) for token in self.tokens
         )
 
+        self._state = CurveStableswapPoolState(
+            pool=self.address,
+            balances=tuple(_balances),
+            block=state_block,
+        )
+        self._state_cache = BoundedCache(max_items=128)
+        self._state_cache[state_block] = self._state
+
+        get_a_scaling_values()
+        get_coefficient_and_fees()
         set_pool_specific_attributes()
 
         fee_string = f"{100*self.fee/self.FEE_DENOMINATOR:.2f}"
@@ -655,13 +660,6 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         self.name = f"{token_string} ({self.__class__.__name__}, {fee_string}%)"
 
         self._subscribers: set[Subscriber] = set()
-
-        self.state = CurveStableswapPoolState(
-            pool=self.address, balances=self.balances, block=self._update_block
-        )
-
-        self._state_cache = BoundedCache(max_items=128)
-        self._state_cache[self._update_block] = self.state
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
@@ -690,8 +688,22 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         return f"CurveStableswapPool(address={self.address}, tokens={token_string}, fee={100*self.fee/self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"  # noqa:E501
 
     @property
+    def balances(self) -> tuple[int, ...]:
+        return self.state.balances
+
+    @property
     def chain_id(self) -> int:
         return self._chain_id
+
+    @property
+    def state(self) -> CurveStableswapPoolState:
+        return self._state
+
+    @property
+    def update_block(self) -> BlockNumber:
+        if TYPE_CHECKING:
+            assert self.state.block is not None
+        return self.state.block
 
     def _a(self, timestamp: int | None = None) -> int:
         """
@@ -754,7 +766,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         n_coins = len(self.tokens)
 
         pool_balances = (
-            override_state.balances.copy() if override_state is not None else self.balances.copy()
+            list(override_state.balances) if override_state is not None else list(self.balances)
         )
 
         block_number = (
@@ -2162,56 +2174,59 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         Retrieve and set updated balances from the contract
         """
 
-        w3 = connection_manager.get_web3(self.chain_id)
-        if block_number is None:
-            block_number = w3.eth.get_block_number()
+        with self._state_lock:
+            w3 = connection_manager.get_web3(self.chain_id)
+            if block_number is None:
+                block_number = w3.eth.get_block_number()
 
-        token_balances = []
-        token_balance: int
-        for token_id, _ in enumerate(self.tokens):
-            (token_balance,) = eth_abi.abi.decode(
-                types=[self._coin_index_type],
-                data=w3.eth.call(
-                    transaction={
-                        "to": self.address,
-                        "data": Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
-                        + eth_abi.abi.encode(types=[self._coin_index_type], args=[token_id]),
-                    },
-                    block_identifier=block_number,
-                ),
-            )
-            token_balances.append(token_balance)
+            token_balances = []
+            token_balance: int
+            for token_id, _ in enumerate(self.tokens):
+                (token_balance,) = eth_abi.abi.decode(
+                    types=[self._coin_index_type],
+                    data=w3.eth.call(
+                        transaction={
+                            "to": self.address,
+                            "data": Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
+                            + eth_abi.abi.encode(types=[self._coin_index_type], args=[token_id]),
+                        },
+                        block_identifier=block_number,
+                    ),
+                )
+                token_balances.append(token_balance)
 
-        if self.base_pool is not None:
-            self.base_pool.auto_update(block_number=block_number)
-            if self.base_cache_updated is not None:
-                self.base_cache_updated = self._get_base_cache_updated(block_number=block_number)
+            if self.base_pool is not None:
+                self.base_pool.auto_update(block_number=block_number)
+                if self.base_cache_updated is not None:
+                    self.base_cache_updated = self._get_base_cache_updated(
+                        block_number=block_number
+                    )
 
-        self._update_block = block_number
+            found_updates = tuple(token_balances) != self.balances
 
-        found_updates = token_balances != self.balances
-
-        if found_updates:
-            self.balances = token_balances
-            self.state = (
+            state = (
                 CurveStableswapPoolState(
                     pool=self.address,
-                    balances=self.balances,
+                    balances=tuple(token_balances),
                     base=self.base_pool.state,
                     block=block_number,
                 )
                 if self.base_pool is not None
                 else CurveStableswapPoolState(
                     pool=self.address,
-                    balances=self.balances,
+                    balances=tuple(token_balances),
                     block=block_number,
                 )
             )
-            self._notify_subscribers(
-                message=CurveStableSwapPoolStateUpdated(self.state),
-            )
+            self._state_cache[block_number] = state
+            self._state = state
 
-        return found_updates
+            if found_updates:
+                self._notify_subscribers(
+                    message=CurveStableSwapPoolStateUpdated(state),
+                )
+
+            return found_updates
 
     def calculate_tokens_out_from_tokens_in(
         self,
