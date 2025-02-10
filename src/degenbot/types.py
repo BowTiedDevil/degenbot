@@ -1,3 +1,5 @@
+# ruff: noqa: A005
+
 from collections import OrderedDict
 from dataclasses import dataclass
 from numbers import Integral

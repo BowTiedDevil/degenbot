@@ -1,3 +1,5 @@
+# ruff: noqa: A005
+
 from dataclasses import dataclass
 
 from eth_typing import ChecksumAddress

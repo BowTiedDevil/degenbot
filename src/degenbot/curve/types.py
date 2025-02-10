@@ -1,3 +1,5 @@
+# ruff: noqa: A005
+
 import dataclasses
 
 from eth_typing import ChecksumAddress, HexAddress

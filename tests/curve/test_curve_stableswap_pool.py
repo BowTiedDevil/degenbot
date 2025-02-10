@@ -79,9 +79,9 @@ def _test_calculations(lp: CurveStableswapPool):
                     amount,
                 ).call(block_identifier=state_block)
 
-            assert (
-                calc_amount == contract_amount
-            ), f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}: {amount} {token_in} for {token_out}"  # noqa:E501
+            assert calc_amount == contract_amount, (
+                f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}: {amount} {token_in} for {token_out}"  # noqa:E501
+            )
 
     if lp.base_pool is not None:
         assert lp.base_pool is not None
