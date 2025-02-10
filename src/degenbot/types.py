@@ -175,7 +175,7 @@ class Publisher(Protocol):
     Can send a `Message` to a `Subscriber`
     """
 
-    _subscribers: set["Subscriber"]
+    _subscribers: WeakSet["Subscriber"]
 
     def subscribe(self, subscriber: "Subscriber") -> None:
         """

@@ -4,6 +4,7 @@ from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from weakref import WeakSet
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
@@ -310,7 +311,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
-        self._subscribers: set[Subscriber] = set()
+        self._subscribers: WeakSet[Subscriber] = WeakSet()
 
         if not silent:  # pragma: no branch
             logger.info(self.name)

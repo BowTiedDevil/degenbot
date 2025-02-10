@@ -3,6 +3,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
 from typing import Any, TypeAlias
+from weakref import WeakSet
 
 import eth_abi.abi
 from eth_typing import BlockNumber, ChecksumAddress
@@ -125,7 +126,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                         raise DegenbotValueError(message="Input token could not be identified!")
         self._swap_vectors = tuple(_swap_vectors)
 
-        self._subscribers: set[Subscriber] = set()
+        self._subscribers: WeakSet[Subscriber] = WeakSet()
         for pool in swap_pools:
             pool.subscribe(self)
 

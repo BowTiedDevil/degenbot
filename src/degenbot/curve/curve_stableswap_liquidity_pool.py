@@ -11,6 +11,7 @@ import contextlib
 from collections.abc import Iterable, Sequence
 from threading import Lock
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from weakref import WeakSet
 
 import eth_abi.abi
 import web3.exceptions
@@ -660,7 +661,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         token_string = "-".join([token.symbol for token in self.tokens])
         self.name = f"{token_string} ({self.__class__.__name__}, {fee_string}%)"
 
-        self._subscribers: set[Subscriber] = set()
+        self._subscribers: WeakSet[Subscriber] = WeakSet()
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
