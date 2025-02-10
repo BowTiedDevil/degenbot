@@ -26,7 +26,7 @@ ETHEREUM_ARCHIVE_NODE_HTTP_URI = "http://localhost:8545"
 ETHEREUM_ARCHIVE_NODE_WS_URI = "ws://localhost:8546"
 
 BASE_FULL_NODE_HTTP_URI = "http://localhost:8544"
-BASE_FULL_NODE_WS_URI = "ws://localhost:8547"
+BASE_FULL_NODE_WS_URI = "ws://localhost:8548"
 
 
 # Set up a web3 connection to a Base full node
