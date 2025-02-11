@@ -99,6 +99,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         state_block: int | None = None,
         verify_address: bool = True,
         silent: bool = False,
+        state_cache_depth: int = 8,
     ) -> None:
         """
         An abstract representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
@@ -127,6 +128,8 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             Control if the pool address is verified against the deterministic address.
         silent:
             Suppress status output.
+        state_cache_depth:
+            How many unique block-state pairs to hold in the state cache.
         """
 
         self.address = to_checksum_address(address)
@@ -165,6 +168,8 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             reserves_token1=reserves1,
             block=state_block,
         )
+        self._state_cache = BoundedCache(max_items=state_cache_depth)
+        self._state_cache[self.update_block] = self.state
 
         deployer_address = None
         try:

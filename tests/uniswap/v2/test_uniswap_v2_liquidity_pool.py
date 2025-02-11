@@ -59,6 +59,7 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000(
     return UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
+        state_cache_depth=512,  # set high to ensure cache can hold all items for reorg tests
     )
 
 

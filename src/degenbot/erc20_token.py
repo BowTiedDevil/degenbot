@@ -449,10 +449,12 @@ class EtherPlaceholder(Erc20Token):
         self,
         *,
         chain_id: int | None = None,
+        state_cache_depth: int = 8,
     ) -> None:
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
         token_registry.add(token_address=self.address, chain_id=self._chain_id, token=self)
+        self._state_cache_depth = state_cache_depth
 
     def get_balance(
         self,
@@ -482,7 +484,7 @@ class EtherPlaceholder(Erc20Token):
         try:
             balance_cache_at_address = self._cached_balance[address]
         except KeyError:
-            balance_cache_at_address = BoundedCache(max_items=self.MAX_CACHE_ITEMS)
+            balance_cache_at_address = BoundedCache(max_items=self._state_cache_depth)
 
         balance_cache_at_address[block_number] = balance
         self._cached_balance[address] = balance_cache_at_address

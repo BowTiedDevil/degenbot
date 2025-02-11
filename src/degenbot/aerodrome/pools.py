@@ -63,6 +63,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         state_block: int | None = None,
         verify_address: bool = True,
         silent: bool = False,
+        state_cache_depth: int = 8,
     ) -> None:
         self.address = to_checksum_address(address)
 
@@ -104,7 +105,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {100*self.fee.numerator/self.fee.denominator:.2f}%)"  # noqa:E501
 
-        self._state_cache = BoundedCache(max_items=128)
+        self._state_cache = BoundedCache(max_items=state_cache_depth)
         self._state_cache[self.update_block] = self.state
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)

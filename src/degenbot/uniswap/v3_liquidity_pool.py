@@ -168,6 +168,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         state_block: int | None = None,
         verify_address: bool = True,
         silent: bool = False,
+        state_cache_depth: int = 8,
     ):
         self.address = to_checksum_address(address)
         self.factory: ChecksumAddress
@@ -293,12 +294,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             tick_data=_tick_data,
             block=state_block,
         )
-
-        self._state_lock = Lock()
-        self._state = state
-
-        self._state_cache = BoundedCache(max_items=128)
-        self._state_cache[self.update_block] = state
+        self._state_cache = BoundedCache(max_items=state_cache_depth)
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 

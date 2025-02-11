@@ -166,6 +166,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         chain_id: int | None = None,
         state_block: BlockNumber | None = None,
         silent: bool = False,
+        state_cache_depth: int = 8,
     ) -> None:
         """
         A Curve V1 (StableSwap) pool.
@@ -181,6 +182,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             latest block if omitted.
         silent:
             Suppress status output.
+        state_cache_depth:
+            How many unique block-state pairs to hold in the state cache.
         """
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
@@ -529,46 +532,47 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         self._create_timestamp = w3.eth.get_block(state_block)["timestamp"]
 
-        max_cache_size = 5
         self._cached_admin_balances: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=max_cache_size
+            max_items=state_cache_depth
         )
         self._cached_base_cache_updated: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=max_cache_size
+            max_items=state_cache_depth
         )
         self._cached_base_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=max_cache_size
+            max_items=state_cache_depth
         )
         self._cached_contract_D: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=max_cache_size
+            max_items=state_cache_depth
         )
-        self._cached_gamma: BoundedCache[BlockNumber, int] = BoundedCache(max_items=max_cache_size)
+        self._cached_gamma: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth
+        )
         self._cached_price_scale: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=max_cache_size
+            max_items=state_cache_depth
         )
         self._cached_rates_from_aeth: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=max_cache_size
+            max_items=state_cache_depth
         )
         self._cached_rates_from_ctokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=max_cache_size
+            max_items=state_cache_depth
         )
         self._cached_rates_from_cytokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=max_cache_size
+            max_items=state_cache_depth
         )
         self._cached_rates_from_oracle: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=max_cache_size
+            max_items=state_cache_depth
         )
         self._cached_rates_from_reth: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=max_cache_size
+            max_items=state_cache_depth
         )
         self._cached_rates_from_ytokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=max_cache_size
+            max_items=state_cache_depth
         )
         self._cached_scaled_redemption_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=max_cache_size
+            max_items=state_cache_depth
         )
         self._cached_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=max_cache_size
+            max_items=state_cache_depth
         )
 
         # token setup
@@ -650,7 +654,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             balances=tuple(_balances),
             block=state_block,
         )
-        self._state_cache = BoundedCache(max_items=128)
+        self._state_cache = BoundedCache(max_items=state_cache_depth)
         self._state_cache[state_block] = self._state
 
         get_a_scaling_values()
