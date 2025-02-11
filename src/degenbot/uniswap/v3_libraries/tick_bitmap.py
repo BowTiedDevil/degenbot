@@ -1,7 +1,6 @@
 import bisect
 from collections.abc import Generator
-from decimal import Decimal
-from functools import lru_cache
+from functools import cache
 from itertools import count
 
 from degenbot.constants import MAX_UINT8
@@ -13,6 +12,7 @@ from degenbot.uniswap.v3_libraries.bit_math import least_significant_bit, most_s
 
 def flip_tick(
     tick_bitmap: dict[int, UniswapV3BitmapAtWord],
+    sparse: bool,
     tick: int,
     tick_spacing: int,
     update_block: int | None = None,
@@ -23,7 +23,9 @@ def flip_tick(
     word_pos, bit_pos = position(-(-tick // tick_spacing) if tick < 0 else tick // tick_spacing)
 
     if word_pos not in tick_bitmap:
-        raise LiquidityMapWordMissing(word_pos)
+        if sparse:
+            raise LiquidityMapWordMissing(word_pos)
+        tick_bitmap[word_pos] = UniswapV3BitmapAtWord(bitmap=0)
 
     tick_bitmap[word_pos] = UniswapV3BitmapAtWord(
         bitmap=tick_bitmap[word_pos].bitmap ^ (1 << bit_pos),

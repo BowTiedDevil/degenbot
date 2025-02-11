@@ -259,15 +259,6 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 }
             )
 
-            # Add empty regions to mapping
-            min_word_position, _ = get_tick_word_and_bit_position(MIN_TICK, self.tick_spacing)
-            max_word_position, _ = get_tick_word_and_bit_position(MAX_TICK, self.tick_spacing)
-            known_empty_words = (
-                set(range(min_word_position, max_word_position + 1)) - _tick_bitmap.keys()
-            )
-            empty_bitmap = UniswapV3BitmapAtWord(bitmap=0, block=None)
-            _tick_bitmap.update({word: empty_bitmap for word in known_empty_words})
-
         if tick_data is not None:
             _tick_data.update(
                 {
