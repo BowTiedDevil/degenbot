@@ -2353,7 +2353,9 @@ async def test_process_pool_calculation(
         assert len(calculation_futures) == num_futures
         for i, task in enumerate(asyncio.as_completed(calculation_futures)):
             await task
-            print(f"Completed process_pool calc #{i}, {time.perf_counter()-start:.2f}s since start")
+            print(
+                f"Completed process_pool calc #{i}, {time.perf_counter() - start:.2f}s since start"
+            )
         print(f"Completed {num_futures} calculations in {time.perf_counter() - start:.1f}s")
 
         assert isinstance(wbtc_weth_arb.swap_pools[1], UniswapV3Pool)

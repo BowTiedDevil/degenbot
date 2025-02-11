@@ -661,7 +661,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         get_coefficient_and_fees()
         set_pool_specific_attributes()
 
-        fee_string = f"{100*self.fee/self.FEE_DENOMINATOR:.2f}"
+        fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
         token_string = "-".join([token.symbol for token in self.tokens])
         self.name = f"{token_string} ({self.__class__.__name__}, {fee_string}%)"
 
@@ -671,7 +671,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         if not silent:
             logger.info(
-                f"{self.name} @ {self.address}, A={self.a_coefficient}, fee={100*self.fee/self.FEE_DENOMINATOR:.2f}%"  # noqa:E501
+                f"{self.name} @ {self.address}, A={self.a_coefficient}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%"  # noqa:E501
             )
             for token_id, (token, balance) in enumerate(
                 zip(self.tokens, self.balances, strict=True)
@@ -691,7 +691,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
     def __repr__(self) -> str:  # pragma: no cover
         token_string = "-".join([token.symbol for token in self.tokens])
-        return f"CurveStableswapPool(address={self.address}, tokens={token_string}, fee={100*self.fee/self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"  # noqa:E501
+        return f"CurveStableswapPool(address={self.address}, tokens={token_string}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"  # noqa:E501
 
     @property
     def balances(self) -> tuple[int, ...]:
@@ -1051,9 +1051,9 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 for index in range(3):
                     if index != token_index:
                         frac = xp[index] * 10**18 // d
-                        assert (
-                            10**16 - 1 < frac < 10**20 + 1
-                        ), f"{frac=} out of range"  # dev: unsafe values x[i]
+                        assert 10**16 - 1 < frac < 10**20 + 1, (
+                            f"{frac=} out of range"
+                        )  # dev: unsafe values x[i]
 
                 y = d // n_coins
                 k_0_i = 10**18

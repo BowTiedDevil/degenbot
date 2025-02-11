@@ -251,8 +251,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                         )
                     case (
                         CurveStableswapPool(),
-                        CurveStableswapPoolState()
-                        | None,
+                        CurveStableswapPoolState() | None,
                         CurveStableSwapPoolVector(),
                     ):
                         _token_out_quantity = int(

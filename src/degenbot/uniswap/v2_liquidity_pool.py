@@ -199,10 +199,12 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             raise AddressMismatch
 
         fee_string = (
-            f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}"
+            f"{100 * self.fee_token0.numerator / self.fee_token0.denominator:.2f}"
             if self.fee_token0 == self.fee_token1
             else (
-                f"{100*self.fee_token0.numerator/self.fee_token0.denominator:.2f}/{100*self.fee_token1.numerator/self.fee_token1.denominator:.2f}"
+                f"{100 * self.fee_token0.numerator / self.fee_token0.denominator:.2f}"
+                f"/"
+                f"{100 * self.fee_token1.numerator / self.fee_token1.denominator:.2f}"
             )
         )
         self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {fee_string}%)"
