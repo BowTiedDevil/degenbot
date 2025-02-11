@@ -1037,6 +1037,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                     )
                     flip_tick(
                         tick_bitmap=_tick_bitmap,
+                        sparse=self.sparse_liquidity_map,
                         tick=tick,
                         tick_spacing=self.tick_spacing,
                         update_block=state_block,
@@ -1057,6 +1058,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                     del _tick_data[tick]
                     flip_tick(
                         tick_bitmap=_tick_bitmap,
+                        sparse=self.sparse_liquidity_map,
                         tick=tick,
                         tick_spacing=self.tick_spacing,
                         update_block=state_block,
