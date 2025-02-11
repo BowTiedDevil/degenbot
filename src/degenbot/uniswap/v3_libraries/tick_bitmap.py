@@ -20,7 +20,7 @@ def flip_tick(
     if tick % tick_spacing != 0:
         raise DegenbotValueError(message="Tick not correctly spaced!")
 
-    word_pos, bit_pos = position(tick=int(Decimal(tick) // tick_spacing))
+    word_pos, bit_pos = position(-(-tick // tick_spacing) if tick < 0 else tick // tick_spacing)
 
     if word_pos not in tick_bitmap:
         raise LiquidityMapWordMissing(word_pos)
@@ -45,10 +45,7 @@ def next_initialized_tick_within_one_word_legacy(
     tick_spacing: int,
     less_than_or_equal: bool,
 ) -> tuple[int, bool]:
-    compressed = int(
-        # Uses Decimal so floor division of negative ticks round to zero, matching EVM
-        Decimal(tick) // tick_spacing
-    )
+    compressed = -(-tick // tick_spacing) if tick < 0 else tick // tick_spacing
     if tick < 0 and tick % tick_spacing != 0:
         compressed -= 1  # round towards negative infinity
 
@@ -99,9 +96,8 @@ def gen_ticks(
     tick_spacing: int,
     less_than_or_equal: bool,
 ) -> Generator[tuple[int, bool], None, None]:
-    compressed = int(
-        # Uses Decimal so floor division of negative ticks round to zero, matching EVM
-        Decimal(starting_tick) // tick_spacing
+    compressed = (
+        -(-starting_tick // tick_spacing) if starting_tick < 0 else starting_tick // tick_spacing
     )
     if starting_tick < 0 and starting_tick % tick_spacing != 0:
         compressed -= 1  # round towards negative infinity
@@ -175,10 +171,7 @@ def next_initialized_tick_within_one_word(
     tick_spacing: int,
     less_than_or_equal: bool,
 ) -> tuple[int, bool]:
-    compressed = int(
-        # Uses Decimal so floor division of negative ticks round to zero, matching EVM
-        Decimal(tick) // tick_spacing
-    )
+    compressed = -(-tick // tick_spacing) if tick < 0 else tick // tick_spacing
     if tick < 0 and tick % tick_spacing != 0:
         compressed -= 1  # round towards negative infinity
 

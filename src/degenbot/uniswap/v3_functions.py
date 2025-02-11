@@ -1,5 +1,4 @@
 from collections.abc import Callable, Iterable, Iterator
-from decimal import Decimal
 from fractions import Fraction
 from itertools import cycle
 from typing import Final
@@ -107,4 +106,4 @@ def get_tick_word_and_bit_position(
     """
     Retrieves the word and bit position for the tick, accounting for tick spacing.
     """
-    return tick_bitmap.position(int(Decimal(tick) // tick_spacing))
+    return tick_bitmap.position(-(-tick // tick_spacing) if tick < 0 else tick // tick_spacing)
