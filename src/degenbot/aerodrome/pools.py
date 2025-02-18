@@ -79,14 +79,14 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
         self._state_lock = Lock()
-        self._state = self.PoolState(
+        self._state = type(self).PoolState(
             pool=self.address,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
             block=state_block,
         )
 
-        self.fee = self.fee_token0 = self.fee_token1 = Fraction(fee, self.FEE_DENOMINATOR)
+        self.fee = self.fee_token0 = self.fee_token1 = Fraction(fee, type(self).FEE_DENOMINATOR)
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
         self.token0, self.token1 = (

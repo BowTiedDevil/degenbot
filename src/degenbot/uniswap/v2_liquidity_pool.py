@@ -162,7 +162,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
         self._state_lock = Lock()
-        self._state = self.PoolState(
+        self._state = type(self).PoolState(
             pool=self.address,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
