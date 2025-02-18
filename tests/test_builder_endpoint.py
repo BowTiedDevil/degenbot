@@ -1,6 +1,5 @@
 from typing import TYPE_CHECKING
 
-import aiohttp
 import eth_account
 import pytest
 
@@ -97,34 +96,6 @@ def test_create_builders(builder_name: str, request: pytest.FixtureRequest):
 async def test_bad_url():
     with pytest.raises(DegenbotValueError):
         BuilderEndpoint(url="ws://www.google.com", endpoints=["eth_sendBundle"])
-
-
-@pytest.mark.skip
-async def test_blank_eth_send_bundle(
-    beaverbuild: BuilderEndpoint,
-    fork_mainnet: AnvilFork,
-):
-    current_block = fork_mainnet.w3.eth.block_number
-    response = await beaverbuild.send_eth_bundle(
-        bundle=[],
-        block_number=current_block + 1,
-    )
-    assert isinstance(response, dict)
-    assert "bundleHash" in response
-
-
-@pytest.mark.skip
-async def test_blank_eth_send_bundle_with_session(
-    beaverbuild: BuilderEndpoint,
-    fork_mainnet: AnvilFork,
-):
-    async with aiohttp.ClientSession(raise_for_status=True) as session:
-        current_block = fork_mainnet.w3.eth.block_number
-        response = await beaverbuild.send_eth_bundle(
-            bundle=[], block_number=current_block + 1, http_session=session
-        )
-        assert isinstance(response, dict)
-        assert "bundleHash" in response
 
 
 async def test_eth_call_bundle(
