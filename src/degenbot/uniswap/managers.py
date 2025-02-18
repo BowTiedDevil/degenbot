@@ -1,10 +1,15 @@
 import contextlib
+import sys
 from threading import Lock
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
-from typing_extensions import Self
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 from degenbot.config import connection_manager
 from degenbot.exceptions import (

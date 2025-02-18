@@ -1,5 +1,6 @@
 # TODO: add event prototype exporter method and handler for callbacks
 import dataclasses
+import sys
 from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
@@ -11,7 +12,11 @@ from eth_abi.exceptions import DecodingError
 from eth_typing import BlockNumber, ChecksumAddress
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
-from typing_extensions import Self
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import BlockIdentifier

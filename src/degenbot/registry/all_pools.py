@@ -1,8 +1,14 @@
 import contextlib
+import sys
 from typing import TYPE_CHECKING
 
 from eth_utils.address import to_checksum_address
-from typing_extensions import Self
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
+
 
 from degenbot.exceptions import DegenbotValueError, RegistryAlreadyInitialized
 from degenbot.types import AbstractLiquidityPool, AbstractRegistry
