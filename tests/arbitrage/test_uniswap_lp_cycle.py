@@ -2279,10 +2279,10 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum: AnvilFor
         ]
 
         for task in asyncio.as_completed(_tasks):
-            with contextlib.suppress(ArbitrageError):
+            with contextlib.suppress(RateOfExchangeBelowMinimum):
                 await task
 
-    with contextlib.suppress(ArbitrageError):
+    with contextlib.suppress(RateOfExchangeBelowMinimum):
         arb.calculate()
 
 
