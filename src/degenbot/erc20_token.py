@@ -32,7 +32,77 @@ class Erc20Token(AbstractErc20Token):
     UNKNOWN_NAME = "Unknown"
     UNKNOWN_SYMBOL = "UNKN"
     UNKNOWN_DECIMALS = 18
-    MAX_CACHE_ITEMS = 5
+
+    def __init__(
+        self,
+        address: str,
+        *,
+        chain_id: int | None = None,
+        oracle_address: str | None = None,
+        silent: bool = False,
+        state_cache_depth: int = 8,
+    ) -> None:
+        self.address = to_checksum_address(address)
+
+        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+        w3 = self.w3
+
+        self.name = self.UNKNOWN_NAME
+        self.symbol = self.UNKNOWN_SYMBOL
+        self.decimals = self.UNKNOWN_DECIMALS
+        try:
+            self.name, self.symbol, self.decimals = self.get_name_symbol_decimals_batched(w3=w3)
+        except (Web3Exception, DecodingError):
+            for func_prototype in ("name()", "NAME()"):
+                try:
+                    self.name = self.get_name(w3=w3, func_prototype=func_prototype)
+                except (Web3Exception, DecodingError):
+                    continue
+                break
+
+            for func_prototype in ("symbol()", "SYMBOL()"):
+                try:
+                    self.symbol = self.get_symbol(w3=w3, func_prototype=func_prototype)
+                except (Web3Exception, DecodingError):
+                    continue
+                break
+
+            for func_prototype in ("decimals()", "DECIMALS()"):
+                try:
+                    self.decimals = self.get_decimals(w3=w3, func_prototype=func_prototype)
+                except (Web3Exception, DecodingError):
+                    continue
+                break
+
+        if all(
+            [
+                self.name == self.UNKNOWN_NAME,
+                self.symbol == self.UNKNOWN_SYMBOL,
+                self.decimals == self.UNKNOWN_DECIMALS,
+            ]
+        ) and not w3.eth.get_code(self.address):
+            raise DegenbotValueError(message="No contract deployed at this address")
+
+        self._price_oracle = (
+            ChainlinkPriceContract(address=oracle_address, chain_id=self.chain_id)
+            if oracle_address
+            else None
+        )
+
+        token_registry.add(token_address=self.address, chain_id=self.chain_id, token=self)
+
+        self._state_cache_depth = state_cache_depth
+        self._cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
+        self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
+        self._cached_total_supply: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth,
+        )
+
+        if not silent:  # pragma: no cover
+            logger.info(f"• {self.symbol} ({self.name})")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"  # noqa:E501
 
     def get_name_symbol_decimals_batched(self, w3: Web3) -> tuple[str, str, int]:
         with w3.batch_requests() as batch:
@@ -119,76 +189,6 @@ class Erc20Token(AbstractErc20Token):
             return_types=["uint256"],
         )
         return cast(int, result)
-
-    def __init__(
-        self,
-        address: str,
-        *,
-        chain_id: int | None = None,
-        oracle_address: str | None = None,
-        silent: bool = False,
-    ) -> None:
-        self.address = to_checksum_address(address)
-
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        w3 = self.w3
-
-        self.name = self.UNKNOWN_NAME
-        self.symbol = self.UNKNOWN_SYMBOL
-        self.decimals = self.UNKNOWN_DECIMALS
-        try:
-            self.name, self.symbol, self.decimals = self.get_name_symbol_decimals_batched(w3=w3)
-        except (Web3Exception, DecodingError):
-            for func_prototype in ("name()", "NAME()"):
-                try:
-                    self.name = self.get_name(w3=w3, func_prototype=func_prototype)
-                except (Web3Exception, DecodingError):
-                    continue
-                break
-
-            for func_prototype in ("symbol()", "SYMBOL()"):
-                try:
-                    self.symbol = self.get_symbol(w3=w3, func_prototype=func_prototype)
-                except (Web3Exception, DecodingError):
-                    continue
-                break
-
-            for func_prototype in ("decimals()", "DECIMALS()"):
-                try:
-                    self.decimals = self.get_decimals(w3=w3, func_prototype=func_prototype)
-                except (Web3Exception, DecodingError):
-                    continue
-                break
-
-        if all(
-            [
-                self.name == self.UNKNOWN_NAME,
-                self.symbol == self.UNKNOWN_SYMBOL,
-                self.decimals == self.UNKNOWN_DECIMALS,
-            ]
-        ) and not w3.eth.get_code(self.address):
-            raise DegenbotValueError(message="No contract deployed at this address")
-
-        self._price_oracle: ChainlinkPriceContract | None
-        self._price_oracle = (
-            ChainlinkPriceContract(address=oracle_address, chain_id=self.chain_id)
-            if oracle_address
-            else None
-        )
-
-        token_registry.add(token_address=self.address, chain_id=self.chain_id, token=self)
-
-        self._cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
-        self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
-        self._cached_total_supply: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=self.MAX_CACHE_ITEMS
-        )
-
-        if not silent:  # pragma: no cover
-            logger.info(f"• {self.symbol} ({self.name})")
-
-    def __repr__(self) -> str:  # pragma: no cover
-        return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"  # noqa:E501
 
     def get_approval(
         self,
