@@ -39,7 +39,7 @@ class AnvilFork:
         hardfork: str = "latest",
         chain_id: int | None = None,
         mining_mode: Literal["auto", "interval", "none"] = "auto",
-        mining_interval: int = 12,
+        mining_interval: int | None = None,
         storage_caching: bool = True,
         base_fee: int | None = None,
         ipc_path: pathlib.Path = pathlib.Path("/tmp/"),
@@ -83,7 +83,10 @@ class AnvilFork:
                 case "auto":
                     pass
                 case "interval":
-                    logger.debug(f"Using 'interval' mining with {mining_interval}s block times.")
+                    if mining_interval is None:
+                        raise DegenbotValueError(
+                            message="Interval mining mode was specified without an interval value."
+                        )
                     command.append(f"--block-time={mining_interval}")
                 case "none":
                     command.append("--no-mining")
@@ -131,6 +134,9 @@ class AnvilFork:
 
         if coinbase is not None:
             self.set_coinbase(coinbase)
+
+        if mining_interval:
+            self.set_block_timestamp_interval(mining_interval)
 
     @property
     def block_number(self) -> int:
@@ -290,6 +296,12 @@ class AnvilFork:
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setCoinbase"),
             params=[address],
+        )
+
+    def set_block_timestamp_interval(self, interval: int) -> None:
+        self.w3.provider.make_request(
+            method=RPCEndpoint("anvil_setBlockTimestampInterval"),
+            params=[interval],
         )
 
     def set_next_base_fee(self, fee: int) -> None:
