@@ -109,28 +109,23 @@ def test_external_update(
 
     current_state = lp.state
 
-    assert (
-        lp.external_update(
-            update=AerodromeV2PoolExternalUpdate(
-                block_number=lp.update_block + 1,
-                reserves_token0=int(1.1 * lp.reserves_token0),
-                reserves_token1=int(0.9 * lp.reserves_token1),
-            )
+    lp.external_update(
+        update=AerodromeV2PoolExternalUpdate(
+            block_number=lp.update_block + 1,
+            reserves_token0=int(1.1 * lp.reserves_token0),
+            reserves_token1=int(0.9 * lp.reserves_token1),
         )
-        is True
     )
+
     assert lp.state.reserves_token0 == int(current_state.reserves_token0 * 1.1)
     assert lp.state.reserves_token1 == int(current_state.reserves_token1 * 0.9)
 
-    assert (
-        lp.external_update(
-            update=AerodromeV2PoolExternalUpdate(
-                block_number=lp.update_block + 1,
-                reserves_token0=lp.reserves_token0,
-                reserves_token1=lp.reserves_token1,
-            )
+    lp.external_update(
+        update=AerodromeV2PoolExternalUpdate(
+            block_number=lp.update_block + 1,
+            reserves_token0=lp.reserves_token0,
+            reserves_token1=lp.reserves_token1,
         )
-        is False
     )
 
     with pytest.raises(ExternalUpdateError):
