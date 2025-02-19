@@ -5,7 +5,7 @@ import socket
 import subprocess
 from collections.abc import AsyncIterator, Iterable
 from queue import Queue
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import watchdog.events
 import watchdog.observers
