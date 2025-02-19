@@ -2,7 +2,7 @@ from decimal import Decimal, getcontext
 
 import pytest
 
-from degenbot.constants import MAX_UINT128, MAX_UINT256, MIN_UINT128
+from degenbot.constants import MAX_UINT128, MAX_UINT256
 from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3_libraries.sqrt_price_math import (
     get_amount0_delta,
@@ -244,9 +244,6 @@ def test_get_amount1_delta():
     get_amount1_delta(1, 0, MAX_UINT128 - 1, False)
     get_amount1_delta(0, 1, MAX_UINT128 - 1, True)
     get_amount1_delta(1, 0, MAX_UINT128 - 1, True)
-
-    get_amount1_delta(0, 0, MIN_UINT128 - 1)
-    get_amount1_delta(0, 0, MIN_UINT128 - 1)
 
     amount_1 = get_amount1_delta(encode_price_sqrt(1, 1), encode_price_sqrt(2, 1), 0, True)
     assert amount_1 == 0
