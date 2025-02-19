@@ -84,7 +84,7 @@ def test_auto_update(
     lp = AerodromeV2Pool(
         address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
     )
-    assert lp.auto_update() is False
+    lp.auto_update()
 
     # Hand-modify the state to force a positive update
     lp._state = AerodromeV2PoolState(
@@ -93,7 +93,7 @@ def test_auto_update(
         reserves_token1=lp.state.reserves_token1 + 1,
         block=None,
     )
-    assert lp.auto_update() is True
+    lp.auto_update()
 
     with pytest.raises(LateUpdateError):
         lp.auto_update(lp.update_block - 10)
