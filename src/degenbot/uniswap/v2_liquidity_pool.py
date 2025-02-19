@@ -219,9 +219,6 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
         self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {fee_string}%)"
 
-        self._state_cache = BoundedCache(max_items=128)
-        self._state_cache[self.update_block] = self.state
-
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()

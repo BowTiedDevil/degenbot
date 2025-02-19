@@ -300,6 +300,8 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             block=state_block,
         )
         self._state_cache = BoundedCache(max_items=state_cache_depth)
+        self._state_cache[self.update_block] = self.state
+        self._state_lock = Lock()
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
@@ -320,10 +322,14 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         copied_attributes = ()
 
         dropped_attributes = (
+            "_chain_id",
             "_contract",
             "_state_cache",
             "_state_lock",
             "_subscribers",
+            "deployer_address",
+            "factory",
+            "init_hash",
         )
 
         with self._state_lock:
@@ -361,6 +367,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             raise EVMRevertError(error="AS")
 
         _liquidity = override_state.liquidity if override_state is not None else self.liquidity
+
+        assert _liquidity >= 0
+
         _sqrt_price_x96 = (
             override_state.sqrt_price_x96 if override_state is not None else self.sqrt_price_x96
         )
