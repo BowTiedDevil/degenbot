@@ -156,16 +156,20 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             raise LiquidityPoolError(message="Could not decode contract data") from exc
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
-        self.token0, self.token1 = (
-            token_manager.get_erc20token(
-                address=token0,
-                silent=silent,
-            ),
-            token_manager.get_erc20token(
-                address=token1,
-                silent=silent,
-            ),
-        )
+
+        try:
+            self.token0, self.token1 = (
+                token_manager.get_erc20token(
+                    address=token0,
+                    silent=silent,
+                ),
+                token_manager.get_erc20token(
+                    address=token1,
+                    silent=silent,
+                ),
+            )
+        except DegenbotValueError as e:
+            raise LiquidityPoolError(message="Could not build one or more tokens.") from e
 
         self._state_lock = Lock()
         self._state = type(self).PoolState(
