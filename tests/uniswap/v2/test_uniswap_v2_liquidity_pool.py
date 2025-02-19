@@ -1020,15 +1020,12 @@ def test_late_update(
             )
         )
 
-    # Send a duplicate update (reserves already match)
-    assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.external_update(
-            update=UniswapV2PoolExternalUpdate(
-                block_number=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block
-                + 1,
-                reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0,
-                reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1,
-            )
+    # Send a duplicate update
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.external_update(
+        update=UniswapV2PoolExternalUpdate(
+            block_number=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block
+            + 1,
+            reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0,
+            reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1,
         )
-        is False
     )

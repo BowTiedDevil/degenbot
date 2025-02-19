@@ -187,10 +187,10 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         self,
         block_number: int | None = None,
         silent: bool = True,
-    ) -> bool:
+    ) -> None:
         """
-        Retrieves the current reserves from the pool, stores any that have changed, and returns a
-        status boolean indicating whether any update was found.
+        Retrieves and records the current state from the pool at the provided block number, or the
+        latest block if not provided.
 
         @dev this method uses a lock to guard state-modifying methods that might cause race
         conditions when used with threads.
@@ -226,8 +226,6 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
                     logger.info(f"[{self.name}]")
                     logger.info(f"{self.token0}: {self.reserves_token0}")
                     logger.info(f"{self.token1}: {self.reserves_token1}")
-
-            return state_updated
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -341,7 +339,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
     def external_update(
         self,
         update: AerodromeV2PoolExternalUpdate,
-    ) -> bool:
+    ) -> None:
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
                 message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
@@ -358,8 +356,6 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
             self._notify_subscribers(
                 message=AerodromeV2PoolStateUpdated(self.state),
             )
-
-            return updated_state
 
     def get_absolute_price(
         self, token: Erc20Token, override_state: PoolState | None = None

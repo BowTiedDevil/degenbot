@@ -754,10 +754,10 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         self,
         block_number: int | None = None,
         silent: bool = True,
-    ) -> bool:
+    ) -> None:
         """
-        Retrieves the current slot0 and liquidity values from the LP, stores any that have changed,
-        and returns a status boolean indicating whether any update was found.
+        Retrieves and records the current slot0 and liquidity state from the pool at the provided
+        block number, or the latest block if not provided.
 
         @ dev this method uses a lock to guard state-modifying methods that might cause race
         conditions when used with threads.
@@ -836,8 +836,6 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 logger.info(f"Liquidity: {self.liquidity}")
                 logger.info(f"SqrtPriceX96: {self.sqrt_price_x96}")
                 logger.info(f"Tick: {self.tick}")
-
-            return state_updated
 
     def calculate_tokens_out_from_tokens_in(
         self,
