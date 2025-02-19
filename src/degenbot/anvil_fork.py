@@ -3,14 +3,14 @@ import pathlib
 import shutil
 import socket
 import subprocess
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from queue import Queue
 from typing import Any, Literal, cast
 
 import watchdog.events
 import watchdog.observers
 from eth_typing import HexAddress
-from web3 import IPCProvider, Web3
+from web3 import AsyncIPCProvider, AsyncWeb3, IPCProvider, Web3
 from web3.middleware import Middleware
 from web3.types import RPCEndpoint
 
@@ -212,6 +212,20 @@ class AnvilFork:
             method=RPCEndpoint("evm_mine"),
             params=[],
         )
+
+    @property
+    @contextlib.asynccontextmanager
+    async def async_w3(self) -> AsyncIterator[AsyncWeb3]:
+        async with AsyncWeb3(
+            AsyncIPCProvider(
+                self.ipc_filename,
+                cache_allowed_requests=True,
+            )
+        ) as async_w3:
+            if TYPE_CHECKING:
+                assert isinstance(async_w3, AsyncWeb3)
+            async_w3.middleware_onion.clear()
+            yield async_w3
 
     def reset(
         self,
