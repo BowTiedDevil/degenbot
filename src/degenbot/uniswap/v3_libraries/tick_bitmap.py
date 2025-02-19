@@ -6,7 +6,6 @@ from itertools import count
 from degenbot.constants import MAX_UINT8
 from degenbot.exceptions import DegenbotValueError, LiquidityMapWordMissing
 from degenbot.uniswap.types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
-from degenbot.uniswap.v3_libraries._config import LRU_CACHE_SIZE
 from degenbot.uniswap.v3_libraries.bit_math import least_significant_bit, most_significant_bit
 
 
@@ -33,8 +32,14 @@ def flip_tick(
     )
 
 
-@lru_cache(maxsize=LRU_CACHE_SIZE)
+@cache
 def position(tick: int) -> tuple[int, int]:
+    """
+    Computes the position in the tick initialization bitmap for the given tick.
+
+    This function does not account for tick spacing, and ticks must be compressed. For a higher
+    level function that accounts for tick spacing, use `v3_functions.get_tick_word_and_bit_position`
+    """
     return (
         tick >> 8,  # word_pos
         tick % 256,  # bit_pos
@@ -98,6 +103,11 @@ def gen_ticks(
     tick_spacing: int,
     less_than_or_equal: bool,
 ) -> Generator[tuple[int, bool], None, None]:
+    """
+    Yields ticks from the set of all possible ticks at 32 byte (256 bit) word boundaries and
+    initialized ticks found in the liquidity mapping. The ticks are yielded in descending order when
+    `less_than_or_equal` is True, else ascending.
+    """
     compressed = (
         -(-starting_tick // tick_spacing) if starting_tick < 0 else starting_tick // tick_spacing
     )
@@ -106,64 +116,55 @@ def gen_ticks(
 
     word_pos, _ = position(compressed)
 
+    boundary_ticks_iter = (
+        count(tick_spacing * (256 * word_pos), -256 * tick_spacing)
+        if less_than_or_equal
+        else count(tick_spacing * (256 * word_pos + 255), 256 * tick_spacing)
+    )
+    initialized_tick_iter = iter(
+        sorted((tick for tick in tick_data if tick <= starting_tick), reverse=True)
+        if less_than_or_equal
+        else sorted(tick for tick in tick_data if tick > starting_tick)
+    )
+
+    next_initialized_tick = next(initialized_tick_iter, None)
+    next_boundary_tick = next(boundary_ticks_iter)
+
     if less_than_or_equal:
-        lowest_tick_in_starting_word = tick_spacing * (256 * word_pos)
-        initialized_ticks = sorted(
-            (tick for tick in tick_data if tick <= starting_tick), reverse=True
-        )
-
-        boundary_ticks_iter = count(lowest_tick_in_starting_word, -256 * tick_spacing)
-        initialized_tick_iter = iter(initialized_ticks)
-
-        next_initialized_tick = next(initialized_tick_iter, None)
-        next_boundary_tick = next(boundary_ticks_iter, None)
-
-        while True:
-            # Always return the highest value, since this generator will be descending
-            match next_initialized_tick, next_boundary_tick:
-                case int(), int():
-                    if next_initialized_tick > next_boundary_tick:
-                        yield (next_initialized_tick, True)
-                        next_initialized_tick = next(initialized_tick_iter, None)
-                    elif next_boundary_tick > next_initialized_tick:
-                        yield (next_boundary_tick, False)
-                        next_boundary_tick = next(boundary_ticks_iter)
-                    else:
-                        # Initialized tick on a boundary
-                        yield (next_initialized_tick, True)
-                        next_initialized_tick = next(initialized_tick_iter, None)
-                        next_boundary_tick = next(boundary_ticks_iter)
-                case None, int():
-                    yield (next_boundary_tick, False)
-                    next_boundary_tick = next(boundary_ticks_iter)
-
+        # Yield the greater of the nearest initialized and boundary tick until the initialized ticks
+        # are exhausted
+        while next_initialized_tick is not None:
+            if next_initialized_tick > next_boundary_tick:
+                yield (next_initialized_tick, True)
+                next_initialized_tick = next(initialized_tick_iter, None)
+            elif next_boundary_tick > next_initialized_tick:
+                yield (next_boundary_tick, False)
+                next_boundary_tick = next(boundary_ticks_iter)
+            else:
+                # The next initialized tick lies on a boundary, so advance both iterators
+                yield (next_boundary_tick, True)
+                next_initialized_tick = next(initialized_tick_iter, None)
+                next_boundary_tick = next(boundary_ticks_iter)
     else:
-        highest_tick_in_starting_word = tick_spacing * (256 * word_pos + 255)
-        initialized_ticks = sorted(tick for tick in tick_data if tick > starting_tick)
+        # Yield the lesser of the nearest initialized and boundary tick until the initialized ticks
+        # are exhausted
+        while next_initialized_tick is not None:
+            if next_initialized_tick < next_boundary_tick:
+                yield (next_initialized_tick, True)
+                next_initialized_tick = next(initialized_tick_iter, None)
+            elif next_boundary_tick < next_initialized_tick:
+                yield (next_boundary_tick, False)
+                next_boundary_tick = next(boundary_ticks_iter)
+            else:
+                # The next initialized tick lies on a boundary, so advance both iterators
+                yield (next_boundary_tick, True)
+                next_initialized_tick = next(initialized_tick_iter, None)
+                next_boundary_tick = next(boundary_ticks_iter)
 
-        initialized_tick_iter = iter(initialized_ticks)
-        boundary_ticks_iter = count(highest_tick_in_starting_word, 256 * tick_spacing)
-
-        next_initialized_tick = next(initialized_tick_iter, None)
+    # Then yield boundary ticks forever
+    while True:
+        yield (next_boundary_tick, False)
         next_boundary_tick = next(boundary_ticks_iter)
-
-        while True:
-            match next_initialized_tick, next_boundary_tick:
-                case int(), int():
-                    if next_initialized_tick < next_boundary_tick:
-                        yield (next_initialized_tick, True)
-                        next_initialized_tick = next(initialized_tick_iter, None)
-                    elif next_boundary_tick < next_initialized_tick:
-                        yield (next_boundary_tick, False)
-                        next_boundary_tick = next(boundary_ticks_iter)
-                    else:
-                        # Initialized tick on a boundary
-                        yield (next_initialized_tick, True)
-                        next_initialized_tick = next(initialized_tick_iter, None)
-                        next_boundary_tick = next(boundary_ticks_iter)
-                case None, int():
-                    yield (next_boundary_tick, False)
-                    next_boundary_tick = next(boundary_ticks_iter)
 
 
 def next_initialized_tick_within_one_word(

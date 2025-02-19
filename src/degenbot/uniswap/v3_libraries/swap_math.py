@@ -1,10 +1,6 @@
-from functools import lru_cache
-
 from degenbot.uniswap.v3_libraries import full_math, sqrt_price_math
-from degenbot.uniswap.v3_libraries._config import LRU_CACHE_SIZE
 
 
-@lru_cache(maxsize=LRU_CACHE_SIZE)
 def compute_swap_step(
     sqrt_ratio_x96_current: int,
     sqrt_ratio_x96_target: int,
@@ -14,6 +10,8 @@ def compute_swap_step(
 ) -> tuple[int, int, int, int]:
     zero_for_one = sqrt_ratio_x96_current >= sqrt_ratio_x96_target
     exact_in = amount_remaining >= 0
+
+    assert liquidity >= 0
 
     if exact_in:
         amount_remaining_minus_fee = full_math.muldiv(amount_remaining, 1000000 - fee_pips, 1000000)

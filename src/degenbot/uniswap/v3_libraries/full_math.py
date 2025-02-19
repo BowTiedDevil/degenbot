@@ -1,12 +1,8 @@
-from functools import lru_cache
-
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import EVMRevertError
-from degenbot.uniswap.v3_libraries._config import LRU_CACHE_SIZE
 from degenbot.uniswap.v3_libraries.functions import mulmod
 
 
-@lru_cache(maxsize=LRU_CACHE_SIZE)
 def muldiv(
     a: int,
     b: int,
@@ -14,17 +10,21 @@ def muldiv(
 ) -> int:
     """
     The Solidity implementation is designed to calculate a * b / d without risk of overflowing
-    the intermediate result (maximum of 2**256-1).
+    the intermediate result.
 
-    Python does not have this bit depth limitations on integers, so simply check for exceptional
-    conditions before returning the result.
+    Python integers do not overflow and have no bit depth limitation, so this function simply
+    checks for an invalid result.
+
+    ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/FullMath.sol
     """
 
-    if not (MIN_UINT256 <= a <= MAX_UINT256):
-        raise EVMRevertError(error=f"Invalid input, {a} does not fit into uint256")
-
-    if not (MIN_UINT256 <= b <= MAX_UINT256):
-        raise EVMRevertError(error=f"Invalid input, {b} does not fit into uint256")
+    # Assert values are valid for Solidity contract
+    if a < MIN_UINT256 or a > MAX_UINT256:
+        raise EVMRevertError(error="Invalid value for a.")
+    if b < MIN_UINT256 or b > MAX_UINT256:
+        raise EVMRevertError(error="Invalid value for b.")
+    if denominator < MIN_UINT256 or denominator > MAX_UINT256:
+        raise EVMRevertError(error="Invalid value for denominator.")
 
     if denominator == 0:
         raise EVMRevertError(error="DIVISION BY ZERO")
@@ -37,7 +37,6 @@ def muldiv(
     return result
 
 
-@lru_cache(maxsize=LRU_CACHE_SIZE)
 def muldiv_rounding_up(a: int, b: int, denominator: int) -> int:
     result = muldiv(a, b, denominator)
     if mulmod(a, b, denominator) > 0:
