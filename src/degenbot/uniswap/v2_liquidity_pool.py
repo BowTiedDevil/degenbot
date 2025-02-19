@@ -393,10 +393,14 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             )
             self._state_cache[block_number] = self.state
 
+            if state_updated:
                 if not silent:  # pragma: no cover
                     logger.info(f"[{self.name}]")
                     logger.info(f"{self.token0}: {self.reserves_token0}")
                     logger.info(f"{self.token1}: {self.reserves_token1}")
+                self._notify_subscribers(
+                    message=UniswapV2PoolStateUpdated(self.state),
+                )
 
             return state_updated
 

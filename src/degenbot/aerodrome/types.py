@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from eth_typing import ChecksumAddress
 
-from degenbot.types import AbstractExchangeDeployment, AbstractPoolState, Message
+from degenbot.types import AbstractExchangeDeployment, AbstractPoolState, PoolStateMessage
 from degenbot.uniswap.types import UniswapV2PoolExternalUpdate, UniswapV3PoolState
 
 
@@ -39,7 +39,7 @@ class AerodromeV2PoolSimulationResult:
 
 
 @dataclass(slots=True, frozen=True)
-class AerodromeV2PoolStateUpdated(Message):
+class AerodromeV2PoolStateUpdated(PoolStateMessage):
     state: AerodromeV2PoolState
 
 
@@ -47,5 +47,5 @@ class AerodromeV3PoolState(UniswapV3PoolState): ...
 
 
 @dataclass(slots=True, frozen=True)
-class AerodromeV3PoolStateUpdated(Message):
+class AerodromeV3PoolStateUpdated(PoolStateMessage):
     state: AerodromeV3PoolState

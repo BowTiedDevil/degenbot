@@ -22,7 +22,7 @@ from degenbot.arbitrage.types import (
 from degenbot.config import connection_manager
 from degenbot.constants import MAX_UINT256
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.curve.types import CurveStableswapPoolState, CurveStableSwapPoolStateUpdated
+from degenbot.curve.types import CurveStableswapPoolState
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
     ArbitrageError,
@@ -34,18 +34,15 @@ from degenbot.exceptions import (
 from degenbot.logging import logger
 from degenbot.types import (
     AbstractArbitrage,
+    AbstractLiquidityPool,
     Message,
+    PoolStateMessage,
     Publisher,
     PublisherMixin,
     Subscriber,
     TextMessage,
 )
-from degenbot.uniswap.types import (
-    UniswapV2PoolState,
-    UniswapV2PoolStateUpdated,
-    UniswapV3PoolState,
-    UniswapV3PoolStateUpdated,
-)
+from degenbot.uniswap.types import UniswapV2PoolState, UniswapV3PoolState
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -859,16 +856,9 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
     def notify(self, publisher: Publisher, message: Any) -> None:
         match publisher, message:
             case (
-                UniswapV2Pool()
-                | UniswapV3Pool()
-                | CurveStableswapPool(),
-                UniswapV2PoolStateUpdated()
-                | UniswapV3PoolStateUpdated()
-                | CurveStableSwapPoolStateUpdated(),
-            ):
-                if message.state.pool in self.swap_pools:
-                    self._notify_subscribers(
-                        TextMessage(f"Received update from pool {message.state.pool}")
-                    )
+                AbstractLiquidityPool(),
+                PoolStateMessage(),
+            ) if publisher in self.swap_pools:
+                self._notify_subscribers(TextMessage(f"Received pool update from {publisher}"))
             case _:  # pragma: no cover
                 logger.info(f"Unhandled message {message} from publisher {publisher}")

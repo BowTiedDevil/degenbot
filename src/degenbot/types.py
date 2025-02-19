@@ -23,6 +23,10 @@ class Message:
     """
 
 
+class PoolStateMessage(Message):
+    state: "AbstractPoolState"
+
+
 class TextMessage(Message):
     def __init__(self, text: str) -> None:
         self.text = text
@@ -33,7 +37,7 @@ class TextMessage(Message):
         return self.text == other.text
 
     def __repr__(self) -> str:
-        return f"PlaintextMessage(text={self.text})"
+        return f"{type(self).__name__}(text={self.text})"
 
     def __str__(self) -> str:
         return self.text

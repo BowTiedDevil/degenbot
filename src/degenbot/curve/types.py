@@ -4,7 +4,7 @@ import dataclasses
 
 from eth_typing import ChecksumAddress, HexAddress
 
-from degenbot.types import AbstractPoolState, Message
+from degenbot.types import AbstractPoolState, PoolStateMessage
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
@@ -34,5 +34,5 @@ class CurveStableSwapPoolAttributes:
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class CurveStableSwapPoolStateUpdated(Message):
+class CurveStableSwapPoolStateUpdated(PoolStateMessage):
     state: CurveStableswapPoolState

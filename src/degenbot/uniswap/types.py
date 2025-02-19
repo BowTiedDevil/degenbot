@@ -5,7 +5,7 @@ import dataclasses
 import pydantic
 from eth_typing import BlockNumber
 
-from degenbot.types import AbstractPoolState, AbstractSimulationResult, Message
+from degenbot.types import AbstractPoolState, AbstractSimulationResult, PoolStateMessage
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -40,7 +40,7 @@ class UniswapV2PoolExternalUpdate:
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV2PoolStateUpdated(Message):
+class UniswapV2PoolStateUpdated(PoolStateMessage):
     state: UniswapV2PoolState
 
 
@@ -96,5 +96,5 @@ class UniswapV3PoolSimulationResult(UniswapSimulationResult):
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV3PoolStateUpdated(Message):
+class UniswapV3PoolStateUpdated(PoolStateMessage):
     state: UniswapV3PoolState

@@ -37,12 +37,7 @@ from degenbot.types import (
     Subscriber,
     TextMessage,
 )
-from degenbot.uniswap.types import (
-    UniswapV2PoolState,
-    UniswapV2PoolStateUpdated,
-    UniswapV3PoolState,
-    UniswapV3PoolStateUpdated,
-)
+from degenbot.uniswap.types import UniswapV2PoolState, UniswapV3PoolState
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -636,18 +631,28 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         return payloads
 
-    def notify(self, publisher: Publisher, message: Any) -> None:
+    def notify(self, publisher: Publisher, message: Message) -> None:
         match publisher, message:
             case (
-                AerodromeV2Pool()
-                | UniswapV2Pool()
-                | UniswapV3Pool(),
-                UniswapV2PoolStateUpdated()
-                | UniswapV3PoolStateUpdated(),
+                (AerodromeV2Pool() | AerodromeV3Pool() | UniswapV2Pool() | UniswapV3Pool()) as pool,
+                PoolStateMessage() as state_message,
+            ) if pool in self.swap_pools and isinstance(
+                state_message.state,
+                (AerodromeV2PoolState | UniswapV2PoolState | UniswapV3PoolState),
             ):
-                if message.state.pool in self.swap_pools:  # pragma: no branch
-                    self._notify_subscribers(
-                        TextMessage(f"Received update from pool {message.state.pool}")
-                    )
+                # Check the pool's viability at the new state
+                self._pool_viability[pool.address] = self._pool_is_viable(
+                    pool=pool,
+                    state=state_message.state,
+                    vector=self._swap_vectors[self.swap_pools.index(pool)],
+                )
+
+                try:
+                    self._pre_calculation_check()
+                except ArbitrageError:
+                    return
+                else:
+                    self._notify_subscribers(TextMessage("Profitable state discovered."))
+
             case _:  # pragma: no cover
                 logger.info(f"Unhandled message {message} from publisher {publisher}")
