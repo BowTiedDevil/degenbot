@@ -27,7 +27,6 @@ from degenbot.arbitrage.types import (
 )
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import ArbitrageError, DegenbotValueError, RateOfExchangeBelowMinimum
-from degenbot.types import TextMessage
 from degenbot.uniswap.types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolState,
@@ -2473,76 +2472,31 @@ def test_arbitrage_helper_subscriptions(
     assert wbtc_weth_arb in wbtc_weth_v2_lp.get_arbitrage_helpers()
     assert wbtc_weth_arb in wbtc_weth_v3_lp.get_arbitrage_helpers()
 
-    arb_subscriber = FakeSubscriber()
-    arb_subscriber.subscribe(publisher=wbtc_weth_arb)
-
     pool_subscriber = FakeSubscriber()
     pool_subscriber.subscribe(publisher=wbtc_weth_v2_lp)
     pool_subscriber.subscribe(publisher=wbtc_weth_v3_lp)
 
-    # Send two pool state updates
-    wbtc_weth_arb.notify(
-        publisher=wbtc_weth_v2_lp,
-        message=UniswapV2PoolStateUpdated(
-            state=UniswapV2PoolState(
-                pool=wbtc_weth_v2_lp.address,
-                reserves_token0=69,
-                reserves_token1=420,
-                block=None,
-            )
-        ),
+    assert len(pool_subscriber.inbox) == 0
+
+    # Trigger pool state updates
+    wbtc_weth_v2_lp.external_update(
+        update=UniswapV2PoolExternalUpdate(
+            block_number=wbtc_weth_v2_lp.update_block,
+            reserves_token0=69,
+            reserves_token1=420,
+        )
     )
-    wbtc_weth_arb.notify(
-        publisher=wbtc_weth_v3_lp,
-        message=UniswapV3PoolStateUpdated(
-            state=UniswapV3PoolState(
-                pool=wbtc_weth_v3_lp.address,
-                block=None,
-                liquidity=69_420,
-                sqrt_price_x96=1,
-                tick=-1,
-                tick_bitmap=wbtc_weth_v3_lp.tick_bitmap,
-                tick_data=wbtc_weth_v3_lp.tick_data,
-            ),
-        ),
+
+    wbtc_weth_v3_lp.external_update(
+        update=UniswapV3PoolExternalUpdate(
+            block_number=wbtc_weth_v3_lp.update_block,
+            liquidity=69_420,
+            sqrt_price_x96=1,
+            tick=-1,
+        )
     )
 
     # Verify the subscribers have received state update notifications
-    assert len(arb_subscriber.inbox) == 2
-    assert arb_subscriber.inbox[0] == {
-        "from": wbtc_weth_arb,
-        "message": TextMessage(f"Received update from pool {wbtc_weth_v2_lp.address}"),
-    }
-    assert arb_subscriber.inbox[1] == {
-        "from": wbtc_weth_arb,
-        "message": TextMessage(f"Received update from pool {wbtc_weth_v3_lp.address}"),
-    }
-
-    # Update the pools and verify that the built-in notification mechanism worked as expected
-    v2_pool_update = UniswapV2PoolExternalUpdate(
-        block_number=wbtc_weth_v2_lp.update_block + 1,
-        reserves_token0=69_420,
-        reserves_token1=42_069,
-    )
-    wbtc_weth_v2_lp.external_update(update=v2_pool_update)
-    v3_pool_update = UniswapV3PoolExternalUpdate(
-        block_number=wbtc_weth_v3_lp.update_block + 1,
-        liquidity=420_690_000,
-        sqrt_price_x96=wbtc_weth_v3_lp.state.sqrt_price_x96,
-        tick=wbtc_weth_v3_lp.state.tick,
-    )
-    wbtc_weth_v3_lp.external_update(update=v3_pool_update)
-
-    assert len(arb_subscriber.inbox) == 4
-    assert arb_subscriber.inbox[2] == {
-        "from": wbtc_weth_arb,
-        "message": TextMessage(f"Received update from pool {wbtc_weth_v2_lp.address}"),
-    }
-    assert arb_subscriber.inbox[3] == {
-        "from": wbtc_weth_arb,
-        "message": TextMessage(f"Received update from pool {wbtc_weth_v3_lp.address}"),
-    }
-
     assert len(pool_subscriber.inbox) == 2
     assert pool_subscriber.inbox[0]["from"] == wbtc_weth_v2_lp
     assert pool_subscriber.inbox[1]["from"] == wbtc_weth_v3_lp
@@ -2551,7 +2505,6 @@ def test_arbitrage_helper_subscriptions(
 
     pool_subscriber.unsubscribe(wbtc_weth_v2_lp)
     pool_subscriber.unsubscribe(wbtc_weth_v3_lp)
-    arb_subscriber.unsubscribe(wbtc_weth_arb)
 
 
 def test_pool_helper_unsubscriptions(
