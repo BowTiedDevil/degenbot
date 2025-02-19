@@ -282,9 +282,9 @@ def test_first_200_pools_with_snapshot(
             except ContractLogicError:
                 continue
 
-            assert (
-                helper_amount_out == quoter_amount_out
-            ), f"Failed calc with {token_mult}x mult, token0 in"
+            assert helper_amount_out == quoter_amount_out, (
+                f"Failed calc with {token_mult}x mult, token0 in"
+            )
 
             token_in_amount = int(token_mult * max_reserves_token1)
             if token_in_amount == 0:
@@ -309,9 +309,9 @@ def test_first_200_pools_with_snapshot(
             except ContractLogicError:
                 continue
 
-            assert (
-                helper_amount_out == quoter_amount_out
-            ), f"Failed calc with {token_mult}x mult, token1 in"
+            assert helper_amount_out == quoter_amount_out, (
+                f"Failed calc with {token_mult}x mult, token1 in"
+            )
 
 
 def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool):
