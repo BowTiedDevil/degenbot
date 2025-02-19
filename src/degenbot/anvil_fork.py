@@ -217,58 +217,50 @@ class AnvilFork:
         self,
         fork_url: str | None = None,
         block_number: int | None = None,
+        transaction_hash: str | None = None,
     ) -> None:
-        self.w3.provider.make_request(
-            method=RPCEndpoint("anvil_reset"),
-            params=[
-                {
-                    "forking": {
-                        "jsonRpcUrl": fork_url if fork_url is not None else self.fork_url,
-                        "blockNumber": block_number
-                        if block_number is not None
-                        else self.block_number,
-                    }
-                }
-            ],
-        )
+        """
+        Fork from a new block number or transaction hash.
+        """
+
+        # Terminate the old fork process
+        self._process.terminate()
+        self._process.wait(timeout=10)
+
+        if block_number is not None and transaction_hash is not None:
+            block_number = None
+            logger.warning(
+                f"Forking from transaction hash {transaction_hash}, ignoring provided block number."
+            )
+
+        # Sanitize the command by stripping options that may conflict
+        self._anvil_command = [
+            option
+            for option in self._anvil_command.copy()
+            if all(
+                (
+                    "--fork-url" not in option,
+                    "--fork-block-number" not in option,
+                    "--fork-transaction-hash" not in option,
+                )
+            )
+        ]
+
         if fork_url is not None:
             self._fork_url = fork_url
+        self._anvil_command.append(f"--fork-url={self._fork_url}")
+
         if block_number is not None:
-            self._block_number = block_number
+            self._anvil_command.append(f"--fork-block-number={block_number}")
 
-    def reset_to_transaction_hash(self, transaction_hash: str) -> None:
-        """
-        Reset to the state after a given transaction hash.
+        if transaction_hash is not None:
+            self._anvil_command.append(f"--fork-transaction-hash={transaction_hash}")
 
-        This method will launch a new Anvil process since the anvil_reset API endpoint only supports
-        resetting to a block number.
-        """
-
-        self._process.terminate()
-        self._process.wait()
-        with contextlib.suppress(FileNotFoundError):
-            pathlib.Path.unlink(self.ipc_filename)
-
-        self.port = self._get_free_port_number()
-
-        anvil_command = []
-        for option in self._anvil_command:
-            if any(
-                (
-                    "--fork-block-number" in option,
-                    "--fork-transaction-hash" in option,
-                    "--ipc" in option,
-                    "--port" in option,
-                )
-            ):
-                continue
-            anvil_command.append(option)
-        anvil_command.append(f"--fork-transaction-hash={transaction_hash}")
-        anvil_command.append(f"--port={self.port}")
-        anvil_command.append(f"--ipc={self.ipc_filename}")
-
-        self._process = self._setup_subprocess(anvil_command=anvil_command, ipc_path=self.ipc_path)
-        self.w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
+        self._process = self._setup_subprocess(
+            anvil_command=self._anvil_command,
+            ipc_path=self.ipc_path,
+        )
+        assert self.w3.is_connected()
 
     def return_to_snapshot(self, snapshot_id: int) -> bool:
         if snapshot_id < 0:
