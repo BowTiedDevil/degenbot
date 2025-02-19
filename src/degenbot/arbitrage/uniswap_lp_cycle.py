@@ -1,4 +1,5 @@
 import asyncio
+import math
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
@@ -121,6 +122,11 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                         raise DegenbotValueError(message="Input token could not be identified!")
         self._swap_vectors = tuple(_swap_vectors)
 
+        self._pool_viability = {
+            pool.address: self._pool_is_viable(pool=pool, state=pool.state, vector=swap_vector)
+            for pool, swap_vector in zip(swap_pools, self._swap_vectors, strict=True)
+        }
+
         self._subscribers: WeakSet[Subscriber] = WeakSet()
         for pool in swap_pools:
             pool.subscribe(self)
@@ -229,43 +235,61 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         return swap_amounts
 
-    @staticmethod
-    def _check_v2_pool_liquidity(
-        pool_state: AerodromeV2PoolState | UniswapV2PoolState,
+    def _pool_is_viable(
+        self,
+        pool: Pool,
+        state: PoolState,
         vector: UniswapPoolSwapVector,
-    ) -> None:
-        if pool_state.reserves_token0 > 1 and pool_state.reserves_token1 > 1:
-            return  # No liquidity issues
-        if pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:  # pragma: no cover
-            raise NoLiquidity(message="Pool has no liquidity")
-        if pool_state.reserves_token1 == 1 and vector.zero_for_one is True:  # pragma: no cover
-            raise NoLiquidity(message="Pool has no liquidity for a 0 -> 1 swap")
-        if pool_state.reserves_token0 == 1 and vector.zero_for_one is False:  # pragma: no cover
-            raise NoLiquidity(message="Pool has no liquidity for a 1 -> 0 swap")
+    ) -> bool:
+        """
+        Check if the pool can perform a swap along the given vector.
+        """
 
-    @staticmethod
-    def _check_v3_pool_liquidity(
-        pool_state: UniswapV3PoolState,
-        vector: UniswapPoolSwapVector,
-    ) -> None:
-        if (
-            pool_state.sqrt_price_x96 == 0
-            or pool_state.tick_bitmap == {}
-            or pool_state.tick_data == {}
-        ):  # pragma: no cover
-            raise NoLiquidity(message=f"Pool {pool_state.pool} is not initialized.")
+        match pool, state:
+            case AerodromeV2Pool() | UniswapV2Pool(), AerodromeV2PoolState() | UniswapV2PoolState():
+                if state.reserves_token0 == 0 or state.reserves_token1 == 0:
+                    return False
 
-        if pool_state.liquidity == 0:
-            if (
-                pool_state.sqrt_price_x96 == MIN_SQRT_RATIO + 1 and vector.zero_for_one is True
-            ):  # pragma: no cover
-                # Swap is 0 -> 1 and cannot swap any more token0 for token1
-                raise NoLiquidity(message="Pool has no liquidity for a 0 -> 1 swap")
-            if (
-                pool_state.sqrt_price_x96 == MAX_SQRT_RATIO - 1 and vector.zero_for_one is False
-            ):  # pragma: no cover
-                # Swap is 1 -> 0  and cannot swap any more token1 for token0
-                raise NoLiquidity(message="Pool has no liquidity for a 1 -> 0 swap")
+                return (
+                    state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
+                )
+
+            case UniswapV3Pool(), UniswapV3PoolState():
+                if pool.sparse_liquidity_map:
+                    # Liquidity cannot be checked with a sparse mapping, so default to True
+                    return True
+
+                if state.tick_data == {}:
+                    # The pool has no liquidity
+                    return False
+
+                if state.sqrt_price_x96 == 0:
+                    # The pool is not initialized
+                    if state.tick_data:
+                        err_msg = (
+                            f"Found pool @ {pool.address} with liquidity positions, but price=0!"
+                        )
+                        raise ValueError(err_msg)
+
+                    return False
+
+                # ----------------------------------------------------------------------------------
+                # After this point, at least one liquidity position is assumed
+                # ----------------------------------------------------------------------------------
+
+                if vector.zero_for_one:
+                    # A 0->1 swap will lower the price & tick, so pool viability can be
+                    # determined by checking for a liquidity position starting below
+                    # the current price
+                    return get_sqrt_ratio_at_tick(min(state.tick_data)) < state.sqrt_price_x96
+                # A 1->0 swap will raise the price & tick. Check for a liquidity position
+                # above the current price, similar to the above comment.
+                return get_sqrt_ratio_at_tick(max(state.tick_data)) > state.sqrt_price_x96
+
+            case _:  # pragma: no cover
+                raise DegenbotValueError(
+                    message=f"Could not identify pool {pool} and state {state}."
+                )
 
     def _pre_calculation_check(
         self,
@@ -273,47 +297,86 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         state_overrides: Mapping[ChecksumAddress, PoolState] | None = None,
     ) -> None:
         """
-        Perform liquidity and minimum rate of exchange checks and raise an exception if further
-        optimization should be avoided.
+        Perform pool viability and minimum rate of exchange checks. Raises an exception if a
+        non-viable pool is found, or if the instantaneous rate of exchange is below the specified
+        minimum.
         """
 
-        if min_rate_of_exchange is None:  # pragma: no branch
-            min_rate_of_exchange = Fraction(1, 1)
+        if state_overrides is None:
+            state_overrides = {}
 
-        # A scalar value representing the net amount of 1 input token across the complete path
-        # including fees. A net rate > 1.0 indicates a profitable swap.
-        net_rate_of_exchange = Fraction(1, 1)
+        # Check the pools for viability
+        for pool in self.swap_pools:
+            if (
+                # Check the pool viability if the state was overridden
+                pool.address in state_overrides
+                and not self._pool_is_viable(
+                    pool=pool,
+                    state=state_overrides[pool.address],
+                    vector=self._swap_vectors[self.swap_pools.index(pool)],
+                )
+            ) or (
+                # Otherwise, check the viability at the current state, which is kept updated by the
+                # notification mechanism
+                self._pool_viability[pool.address] is False
+            ):
+                raise ArbitrageError(message=f"Pool {pool.address} is not viable")
+
+        exchange_rate_numerators = []
+        exchange_rate_denominators = []
 
         # Check the pool state liquidity in the direction of the trade
         for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=True):
-            pool_state = states[pool.address]
+            pool_state = state_overrides.get(pool.address, pool.state)
 
             match pool, pool_state:
-                case AerodromeV2Pool() as _pool, AerodromeV2PoolState() as _state:
-                    self._check_v2_pool_liquidity(_state, vector)
-                    exchange_rate = Fraction(_state.reserves_token1, _state.reserves_token0)
-                    fee = _pool.fee_token0 if vector.zero_for_one else _pool.fee_token1
-                case UniswapV2Pool() as _pool, UniswapV2PoolState() as _state:
-                    self._check_v2_pool_liquidity(_state, vector)
-                    exchange_rate = Fraction(_state.reserves_token1, _state.reserves_token0)
-                    fee = _pool.fee_token0 if vector.zero_for_one else _pool.fee_token1
-                case UniswapV3Pool(), UniswapV3PoolState():
-                    self._check_v3_pool_liquidity(pool_state, vector)
-                    exchange_rate = Fraction(
-                        pool_state.sqrt_price_x96 * pool_state.sqrt_price_x96,
-                        6277101735386680763835789423207666416102355444464034512896,  # 2**192
-                    )
-                    fee = Fraction(
-                        pool.fee, 1000000
-                    )  # V3 fees are in hundredths of a bip (0.0001), e.g. 3000 == 0.3%
-                case _:  # pragma: no cover
-                    raise DegenbotValueError(
-                        message=f"Could not identify pool {pool} and state {pool_state}."
-                    )
+                case (
+                    AerodromeV2Pool() | UniswapV2Pool(),
+                    AerodromeV2PoolState() | UniswapV2PoolState(),
+                ):
+                    if vector.zero_for_one:
+                        exchange_rate_numerators.append(
+                            pool_state.reserves_token1
+                            * (pool.fee_token0.denominator - pool.fee_token0.numerator)
+                        )
+                        exchange_rate_denominators.append(
+                            pool_state.reserves_token0 * pool.fee_token0.denominator
+                        )
+                    else:
+                        exchange_rate_numerators.append(
+                            pool_state.reserves_token0
+                            * (pool.fee_token1.denominator - pool.fee_token1.numerator)
+                        )
+                        exchange_rate_denominators.append(
+                            pool_state.reserves_token1 * pool.fee_token1.denominator
+                        )
 
-            net_rate_of_exchange *= (
-                exchange_rate if vector.zero_for_one is True else 1 / exchange_rate
-            ) * Fraction(fee.denominator - fee.numerator, fee.denominator)
+                case UniswapV3Pool(), UniswapV3PoolState():
+                    if vector.zero_for_one:
+                        exchange_rate_numerators.append(
+                            pool_state.sqrt_price_x96
+                            * pool_state.sqrt_price_x96
+                            * (1000000 - pool.fee)
+                        )
+                        exchange_rate_denominators.append(
+                            6277101735386680763835789423207666416102355444464034512896 * 1000000
+                        )
+                    else:
+                        exchange_rate_numerators.append(
+                            6277101735386680763835789423207666416102355444464034512896
+                            * (1000000 - pool.fee)
+                        )
+                        exchange_rate_denominators.append(
+                            pool_state.sqrt_price_x96 * pool_state.sqrt_price_x96 * 1000000
+                        )
+
+                case _:  # pragma: no cover
+                    raise DegenbotValueError(message=f"Could not identify pool {pool}.")
+
+        net_rate_of_exchange = Fraction(
+            math.prod(exchange_rate_numerators),
+            math.prod(exchange_rate_denominators),
+        )
 
         if net_rate_of_exchange < min_rate_of_exchange:
             raise RateOfExchangeBelowMinimum(net_rate_of_exchange)
