@@ -1,3 +1,5 @@
+import random
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -49,16 +51,16 @@ def test_is_initialized():
     tick_bitmap = empty_full_bitmap()
     assert is_initialized(tick_bitmap, 1) is False
 
-    flip_tick(tick_bitmap, 1, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=1, tick_spacing=1)
     assert is_initialized(tick_bitmap, 1) is True
 
-    flip_tick(tick_bitmap, tick=1, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=1, tick_spacing=1)
     assert is_initialized(tick_bitmap, 1) is False
 
-    flip_tick(tick_bitmap, tick=2, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=2, tick_spacing=1)
     assert is_initialized(tick_bitmap, 1) is False
 
-    flip_tick(tick_bitmap, tick=1 + 256, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=1 + 256, tick_spacing=1)
     assert is_initialized(tick_bitmap, 257) is True
     assert is_initialized(tick_bitmap, 1) is False
 
@@ -66,43 +68,43 @@ def test_is_initialized():
 def test_flip_tick() -> None:
     tick_bitmap = empty_full_bitmap()
 
-    flip_tick(tick_bitmap, tick=-230, tick_spacing=1)
-    assert is_initialized(tick_bitmap, -230) is True
-    assert is_initialized(tick_bitmap, -231) is False
-    assert is_initialized(tick_bitmap, -229) is False
-    assert is_initialized(tick_bitmap, -230 + 256) is False
-    assert is_initialized(tick_bitmap, -230 - 256) is False
+    flip_tick(tick_bitmap, sparse=False, tick=-230, tick_spacing=1)
+    assert is_initialized(tick_bitmap=tick_bitmap, tick=-230) is True
+    assert is_initialized(tick_bitmap=tick_bitmap, tick=-231) is False
+    assert is_initialized(tick_bitmap=tick_bitmap, tick=-229) is False
+    assert is_initialized(tick_bitmap=tick_bitmap, tick=-230 + 256) is False
+    assert is_initialized(tick_bitmap=tick_bitmap, tick=-230 - 256) is False
 
-    flip_tick(tick_bitmap, tick=-230, tick_spacing=1)
-    assert is_initialized(tick_bitmap, -230) is False
-    assert is_initialized(tick_bitmap, -231) is False
-    assert is_initialized(tick_bitmap, -229) is False
-    assert is_initialized(tick_bitmap, -230 + 256) is False
-    assert is_initialized(tick_bitmap, -230 - 256) is False
+    flip_tick(tick_bitmap, sparse=False, tick=-230, tick_spacing=1)
+    assert is_initialized(tick_bitmap=tick_bitmap, tick=-230) is False
+    assert is_initialized(tick_bitmap=tick_bitmap, tick=-231) is False
+    assert is_initialized(tick_bitmap=tick_bitmap, tick=-229) is False
+    assert is_initialized(tick_bitmap=tick_bitmap, tick=-230 + 256) is False
+    assert is_initialized(tick_bitmap=tick_bitmap, tick=-230 - 256) is False
 
-    flip_tick(tick_bitmap, tick=-230, tick_spacing=1)
-    flip_tick(tick_bitmap, tick=-259, tick_spacing=1)
-    flip_tick(tick_bitmap, tick=-229, tick_spacing=1)
-    flip_tick(tick_bitmap, tick=500, tick_spacing=1)
-    flip_tick(tick_bitmap, tick=-259, tick_spacing=1)
-    flip_tick(tick_bitmap, tick=-229, tick_spacing=1)
-    flip_tick(tick_bitmap, tick=-259, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=-230, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=-259, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=-229, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=500, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=-259, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=-229, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=-259, tick_spacing=1)
 
-    assert is_initialized(tick_bitmap, -259) is True
-    assert is_initialized(tick_bitmap, -229) is False
+    assert is_initialized(tick_bitmap=tick_bitmap, tick=-259) is True
+    assert is_initialized(tick_bitmap=tick_bitmap, tick=-229) is False
 
 
 def test_flip_tick_sparse() -> None:
     tick_bitmap = empty_sparse_bitmap()
     with pytest.raises(LiquidityMapWordMissing):
-        flip_tick(tick_bitmap, tick=-230, tick_spacing=1)
+        flip_tick(tick_bitmap=tick_bitmap, sparse=True, tick=-230, tick_spacing=1)
 
 
 def test_incorrect_tick_spacing_flip() -> None:
     tick_spacing = 3
     tick_bitmap = empty_full_bitmap(tick_spacing)
     with pytest.raises(DegenbotValueError, match="Tick not correctly spaced"):
-        flip_tick(tick_bitmap, tick=2, tick_spacing=tick_spacing)
+        flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=2, tick_spacing=tick_spacing)
 
 
 def test_next_initialized_tick_within_one_word() -> None:
@@ -128,7 +130,7 @@ def test_next_initialized_tick_within_one_word() -> None:
         if not tick_bitmap.get(word_pos):
             tick_bitmap[word_pos] = UniswapV3BitmapAtWord(bitmap=0)
     for tick in initialized_ticks:
-        flip_tick(tick_bitmap=tick_bitmap, tick=tick, tick_spacing=1)
+        flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=tick, tick_spacing=1)
 
     # lte = false tests
 
@@ -381,7 +383,7 @@ def test_next_initialized_tick_within_one_word() -> None:
         less_than_or_equal=True,
     ) == (768, False)
 
-    flip_tick(tick_bitmap=tick_bitmap, tick=329, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=329, tick_spacing=1)
     tick_data[329] = UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0)
 
     assert next_initialized_tick_within_one_word_legacy(
