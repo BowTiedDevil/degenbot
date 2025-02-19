@@ -106,7 +106,10 @@ class AnvilFork:
 
         self.port = self._get_free_port_number()
         self.ipc_path = ipc_path
-        self.ipc_provider_kwargs = ipc_provider_kwargs if ipc_provider_kwargs is not None else {}
+        if ipc_provider_kwargs is not None:
+            self.ipc_provider_kwargs = ipc_provider_kwargs
+        else:
+            self.ipc_provider_kwargs = {"cache_allowed_requests": True}
 
         self._anvil_command = build_anvil_command(path_to_anvil=path_to_anvil)
         self._process = self._setup_subprocess(
@@ -188,8 +191,8 @@ class AnvilFork:
         observer = watchdog.observers.Observer()
         observer.schedule(
             event_handler=WaitForIPCReady(
-                queue,
-                str(self.ipc_filename),
+                queue=queue,
+                ipc_filename=str(self.ipc_filename),
             ),
             path=str(ipc_path),
         )
