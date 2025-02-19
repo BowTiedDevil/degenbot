@@ -209,8 +209,8 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
             if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
                 state_updated = True
-                self._state = self.PoolState(
-                    pool=self.address,
+                self._state = dataclasses.replace(
+                    self.state,
                     reserves_token0=reserves0,
                     reserves_token1=reserves1,
                     block=block_number,
@@ -348,31 +348,16 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
             )
 
         with self._state_lock:
-            updated_state = False
-
-            if update.reserves_token0 != self.reserves_token0:
-                updated_state = True
-                self._state = self.PoolState(
-                    pool=self.address,
-                    reserves_token0=update.reserves_token0,
-                    reserves_token1=self.state.reserves_token1,
-                    block=update.block_number,
-                )
-
-            if update.reserves_token1 != self.reserves_token1:
-                updated_state = True
-                self._state = self.PoolState(
-                    pool=self.address,
-                    reserves_token0=self.state.reserves_token0,
-                    reserves_token1=update.reserves_token1,
-                    block=update.block_number,
-                )
-
-            if updated_state:
-                self._state_cache[update.block_number] = self.state
-                self._notify_subscribers(
-                    message=AerodromeV2PoolStateUpdated(self.state),
-                )
+            self._state = dataclasses.replace(
+                self.state,
+                reserves_token0=update.reserves_token0,
+                reserves_token1=update.reserves_token1,
+                block=update.block_number,
+            )
+            self._state_cache[update.block_number] = self.state
+            self._notify_subscribers(
+                message=AerodromeV2PoolStateUpdated(self.state),
+            )
 
             return updated_state
 

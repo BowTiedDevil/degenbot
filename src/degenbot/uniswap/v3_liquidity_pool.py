@@ -815,13 +815,11 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             _liquidity: int
             (_liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, liquidity))
 
-            state = self.PoolState(
-                pool=self.address,
+            state = dataclasses.replace(
+                self.state,
                 liquidity=_liquidity,
                 sqrt_price_x96=_sqrt_price_x96,
                 tick=_tick,
-                tick_bitmap=self.tick_bitmap,
-                tick_data=self.tick_data,
                 block=block_number,
             )
 
@@ -969,13 +967,11 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         with self._state_lock:
             state_block = cast(BlockNumber, update.block_number)
 
-            state = self.PoolState(
-                pool=self.address,
+            state = dataclasses.replace(
+                self.state,
                 liquidity=update.liquidity,
                 sqrt_price_x96=update.sqrt_price_x96,
                 tick=update.tick,
-                tick_data=self.tick_data,
-                tick_bitmap=self.tick_bitmap,
                 block=state_block,
             )
 
@@ -1082,11 +1078,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                     block=state_block,
                 )
 
-            state = self.PoolState(
-                pool=self.address,
+            state = dataclasses.replace(
+                self.state,
                 liquidity=_liquidity,
-                sqrt_price_x96=self.sqrt_price_x96,
-                tick=self.tick,
                 tick_data=_tick_data,
                 tick_bitmap=_tick_bitmap,
                 block=state_block,
@@ -1264,13 +1258,11 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
                 initial_state=override_state if override_state is not None else self.state,
-                final_state=self.PoolState(
-                    pool=self.address,
+                final_state=dataclasses.replace(
+                    self.state,
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrt_price_x96,
                     tick=end_tick,
-                    tick_bitmap=self.state.tick_bitmap,
-                    tick_data=self.state.tick_data,
                     block=self.update_block if override_state is None else None,
                 ),
             )
@@ -1310,13 +1302,11 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
                 initial_state=override_state if override_state is not None else self.state,
-                final_state=self.PoolState(
-                    pool=self.address,
+                final_state=dataclasses.replace(
+                    self.state,
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrtprice,
                     tick=end_tick,
-                    tick_bitmap=self.state.tick_bitmap,
-                    tick_data=self.state.tick_data,
                     block=self.update_block if override_state is None else None,
                 ),
             )
