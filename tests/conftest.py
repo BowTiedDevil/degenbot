@@ -25,14 +25,14 @@ ARBITRUM_ARCHIVE_NODE_HTTP_URI = f"https://rpc.ankr.com/arbitrum/{env_values['AN
 ETHEREUM_ARCHIVE_NODE_HTTP_URI = "http://localhost:8545"
 ETHEREUM_ARCHIVE_NODE_WS_URI = "ws://localhost:8546"
 
-BASE_FULL_NODE_HTTP_URI = "http://localhost:8544"
-BASE_FULL_NODE_WS_URI = "ws://localhost:8548"
+BASE_ARCHIVE_NODE_HTTP_URI = "http://localhost:8544"
+BASE_ARCHIVE_NODE_WS_URI = "ws://localhost:8548"
 
 
 # Set up a web3 connection to a Base full node
 @pytest.fixture(scope="session")
 def base_full_node_web3() -> web3.Web3:
-    return web3.Web3(web3.LegacyWebSocketProvider(BASE_FULL_NODE_WS_URI))
+    return web3.Web3(web3.LegacyWebSocketProvider(BASE_ARCHIVE_NODE_WS_URI))
 
 
 # Set up a web3 connection to an Arbitrum archive node
@@ -76,7 +76,7 @@ def _set_degenbot_logging():
 
 @pytest.fixture
 def fork_base() -> AnvilFork:
-    return AnvilFork(fork_url=BASE_FULL_NODE_WS_URI, storage_caching=False)
+    return AnvilFork(fork_url=BASE_ARCHIVE_NODE_WS_URI, storage_caching=False)
 
 
 @pytest.fixture

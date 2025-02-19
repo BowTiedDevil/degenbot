@@ -10,7 +10,7 @@ from degenbot.config import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import DegenbotValueError, EVMRevertError, InvalidUint256
 
-from .conftest import BASE_FULL_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from .conftest import BASE_ARCHIVE_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 if TYPE_CHECKING:
     from web3.providers.ipc import IPCProvider
@@ -127,8 +127,8 @@ def test_reset_and_set_next_block_base_fee(fork_mainnet: AnvilFork):
 
 
 def test_reset_to_new_endpoint(fork_mainnet: AnvilFork):
-    fork_mainnet.reset(fork_url=BASE_FULL_NODE_HTTP_URI)
-    assert fork_mainnet.fork_url == BASE_FULL_NODE_HTTP_URI
+    fork_mainnet.reset(fork_url=BASE_ARCHIVE_NODE_HTTP_URI)
+    assert fork_mainnet.fork_url == BASE_ARCHIVE_NODE_HTTP_URI
 
 
 def test_reset_to_new_transaction_hash(fork_mainnet: AnvilFork):
