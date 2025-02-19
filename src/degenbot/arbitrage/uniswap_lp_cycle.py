@@ -269,8 +269,8 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
     def _pre_calculation_check(
         self,
-        states: Mapping[ChecksumAddress, PoolState],
-        min_rate_of_exchange: Fraction | None = None,
+        min_rate_of_exchange: Fraction = Fraction(1, 1),
+        state_overrides: Mapping[ChecksumAddress, PoolState] | None = None,
     ) -> None:
         """
         Perform liquidity and minimum rate of exchange checks and raise an exception if further
@@ -320,11 +320,15 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
     def _calculate(
         self,
-        pool_states: Mapping[ChecksumAddress, PoolState],
+        state_overrides: Mapping[ChecksumAddress, PoolState] | None = None,
     ) -> ArbitrageCalculationResult:
         """
         Calculate the optimal arbitrage profit using the maximum input as an upper bound.
         """
+
+        pool_states = {pool.address: pool.state for pool in self.swap_pools}
+        if state_overrides is not None:
+            pool_states.update(state_overrides)
 
         # The bounded Brent optimizer requires bounds for the input amount, and a bracketed guess
         # to initiate the search
@@ -425,29 +429,25 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
     def calculate(
         self,
         state_overrides: Mapping[ChecksumAddress, PoolState] | None = None,
-        min_rate_of_exchange: Fraction | None = None,
+        min_rate_of_exchange: Fraction = Fraction(1, 1),
     ) -> ArbitrageCalculationResult:
         """
         Calculate the results of the arbitrage at the current pool states, or at one or more
         overridden pool states if provided.
         """
 
-        states = {pool.address: pool.state for pool in self.swap_pools}
-        if state_overrides is not None:
-            states.update(state_overrides)
-
         self._pre_calculation_check(
-            states=states,
             min_rate_of_exchange=min_rate_of_exchange,
+            state_overrides=state_overrides,
         )
 
-        return self._calculate(pool_states=states)
+        return self._calculate(state_overrides=state_overrides)
 
     async def calculate_with_pool(
         self,
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
         state_overrides: Mapping[ChecksumAddress, PoolState] | None = None,
-        min_rate_of_exchange: Fraction | None = None,
+        min_rate_of_exchange: Fraction = Fraction(1, 1),
     ) -> asyncio.Future[ArbitrageCalculationResult]:
         """
         Wrap the arbitrage calculation into an asyncio future using the specified executor.
@@ -462,13 +462,12 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
             A dict (or equivalent mapping) of pool states, keyed by the checksummed address of that
             pool.
         min_rate_of_exchange : Fraction, optional
-            The minimum net rate of exchange for the arbitrage path. Rates
-            below this minimum will trigger an exception.
+            The minimum net rate of exchange for the arbitrage path. Rates below this minimum will
+            raise an exception.
 
         Returns
         -------
-        A future which returns a `ArbitrageCalculationResult` (or exception)
-        when awaited.
+        A future which returns a `ArbitrageCalculationResult` (or exception) when awaited.
 
         Notes
         -----
@@ -482,19 +481,15 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                 message="Cannot perform calculation with process pool executor. One or more V3 pools has a sparse bitmap."  # noqa:E501
             )
 
-        states = {pool.address: pool.state for pool in self.swap_pools}
-        if state_overrides is not None:
-            states.update(state_overrides)
-
         self._pre_calculation_check(
-            states=states,
             min_rate_of_exchange=min_rate_of_exchange,
+            state_overrides=state_overrides,
         )
 
         return asyncio.get_running_loop().run_in_executor(
             executor,
             self._calculate,
-            states,
+            state_overrides,
         )
 
     def generate_payloads(
