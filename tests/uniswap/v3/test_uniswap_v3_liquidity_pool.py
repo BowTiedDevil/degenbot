@@ -98,7 +98,10 @@ def weth(ethereum_archive_node_web3: Web3) -> Erc20Token:
 def wbtc_weth_v3_lp_at_block_17_600_000(fork_mainnet: AnvilFork) -> UniswapV3Pool:
     fork_mainnet.reset(block_number=17_600_000)
     set_web3(fork_mainnet.w3)
-    return UniswapV3Pool(WBTC_WETH_V3_POOL_ADDRESS)
+    return UniswapV3Pool(
+        WBTC_WETH_V3_POOL_ADDRESS,
+        state_cache_depth=512,  # set high to ensure cache can hold all items for reorg tests
+    )
 
 
 @pytest.fixture
