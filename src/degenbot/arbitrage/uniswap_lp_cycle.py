@@ -66,8 +66,6 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     message=f"Incompatible pool type ({type(swap_pool)}) provided."
                 )
 
-        self.swap_pools = tuple(swap_pools)
-        self.name = " → ".join([pool.name for pool in self.swap_pools])
         self.id = id
         self.input_token = input_token
 
@@ -79,7 +77,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         self.max_input = max_input
 
         _swap_vectors: list[UniswapPoolSwapVector] = []
-        for i, pool in enumerate(self.swap_pools):
+        for i, pool in enumerate(swap_pools):
             if i == 0:
                 match self.input_token:
                     case pool.token0:
@@ -121,6 +119,8 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     case _:  # pragma: no cover
                         raise DegenbotValueError(message="Input token could not be identified!")
         self._swap_vectors = tuple(_swap_vectors)
+        self.swap_pools = tuple(swap_pools)
+        self.name = " → ".join([pool.name for pool in swap_pools])
 
         self._pool_viability = {
             pool.address: self._pool_is_viable(pool=pool, state=pool.state, vector=swap_vector)
