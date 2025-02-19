@@ -54,6 +54,7 @@ class AnvilFork:
         nonce_overrides: Iterable[tuple[HexAddress, int]] | None = None,
         ipc_provider_kwargs: dict[str, Any] | None = None,
         prune_history: bool = False,
+        anvil_opts: list[str] | None = None,  # Additional options passed to the Anvil command
     ):
         def build_anvil_command(path_to_anvil: pathlib.Path) -> list[str]:  # pragma: no cover
             command = [
@@ -79,6 +80,8 @@ class AnvilFork:
                 command.append("--no-storage-caching")
             if prune_history:
                 command.append("--prune-history")
+            if anvil_opts:
+                command.extend(anvil_opts)
             match mining_mode:
                 case "auto":
                     pass
