@@ -528,10 +528,13 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         if self.address in BROKEN_CURVE_V1_POOLS:
             raise BrokenPool
 
-        self._state_lock = Lock()
+        _block = w3.eth.get_block(state_block)
 
-        self._create_timestamp = w3.eth.get_block(state_block)["timestamp"]
+        self._create_timestamp = _block["timestamp"]
 
+        self._block_timestamps: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth
+        )
         self._cached_admin_balances: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
             max_items=state_cache_depth
         )
@@ -656,6 +659,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
         self._state_cache = BoundedCache(max_items=state_cache_depth)
         self._state_cache[state_block] = self._state
+        self._state_lock = Lock()
+        self._block_timestamps[state_block] = _block["timestamp"]
 
         get_a_scaling_values()
         get_coefficient_and_fees()
@@ -785,7 +790,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
 
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
-        amp = self._a()
+        amp = self._a(timestamp=self._block_timestamps[block_number])
         d_0 = self._get_d(_xp=xp, _amp=amp)
 
         for i in range(n_coins):
@@ -815,8 +820,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
 
         n_coins = len(self.tokens)
-
-        amp = self._a()
+        amp = self._a(timestamp=self._block_timestamps[block_number])
         total_supply = self.lp_token.get_total_supply(block_identifier=block_number)
         precisions = self.precision_multipliers
         xp = self._xp(rates=self.rate_multipliers, balances=self.balances)
@@ -1151,7 +1155,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             for k in range(n_coins - 1):
                 _xp[k + 1] = _xp[k + 1] * price_scale[k] * precisions[k + 1] // self.PRECISION
 
-            amp = self._a()
+            amp = self._a(timestamp=self._block_timestamps[block_number])
             gamma = _gamma(block_number=block_number)
             d = _d(block_number=block_number)
             y = _newton_y(amp, gamma, _xp, d, j)
@@ -1686,14 +1690,14 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         base_cache_expires = 10 * 60  # 10 minutes
 
         w3 = connection_manager.get_web3(self.chain_id)
-        timestamp = w3.eth.get_block(block_identifier=block_number)["timestamp"]
-        if TYPE_CHECKING:
-            assert timestamp is not None
+        self._block_timestamps[block_number] = w3.eth.get_block(block_identifier=block_number)[
+            "timestamp"
+        ]
 
         base_virtual_price: int
         if (
             self.base_cache_updated is None
-            or timestamp > self.base_cache_updated + base_cache_expires
+            or self._block_timestamps[block_number] > self.base_cache_updated + base_cache_expires
         ):
             (base_virtual_price,) = eth_abi.abi.decode(
                 types=["uint256"],
@@ -1862,7 +1866,11 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         assert i >= 0
         assert i < n_coins
 
-        amp = self._a() // self.A_PRECISION if self.address in self.Y_VARIANT_GROUP_0 else self._a()
+        amp = (
+            self._a(timestamp=self._block_timestamps[self.update_block]) // self.A_PRECISION
+            if self.address in self.Y_VARIANT_GROUP_0
+            else self._a(timestamp=self._block_timestamps[self.update_block])
+        )
         c = y = d = self._get_d(xp, amp)
 
         s = 0
@@ -2182,8 +2190,9 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         with self._state_lock:
             w3 = connection_manager.get_web3(self.chain_id)
-            if block_number is None:
-                block_number = w3.eth.get_block_number()
+
+            state_block = w3.eth.get_block("latest" if block_number is None else block_number)
+            block_number = state_block["number"]
 
             token_balances = []
             token_balance: int
@@ -2226,6 +2235,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             )
             self._state_cache[block_number] = state
             self._state = state
+            self._block_timestamps[block_number] = state_block["timestamp"]
 
             if found_updates:
                 self._notify_subscribers(
