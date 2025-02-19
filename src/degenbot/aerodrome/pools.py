@@ -1,3 +1,4 @@
+import dataclasses
 from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
