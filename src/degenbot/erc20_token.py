@@ -307,7 +307,7 @@ class Erc20Token(AbstractErc20Token):
         )
 
         if address not in self._cached_balance:
-            self._cached_balance[address] = BoundedCache(max_items=self.MAX_CACHE_ITEMS)
+            self._cached_balance[address] = BoundedCache(max_items=self._state_cache_depth)
 
         self._cached_balance[address][block_number] = balance
         return balance
@@ -349,7 +349,7 @@ class Erc20Token(AbstractErc20Token):
         )
 
         if address not in self._cached_balance:
-            self._cached_balance[address] = BoundedCache(max_items=self.MAX_CACHE_ITEMS)
+            self._cached_balance[address] = BoundedCache(max_items=self._state_cache_depth)
 
         self._cached_balance[address][block_number] = balance
         return balance
