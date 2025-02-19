@@ -206,9 +206,8 @@ class AnvilFork:
 
     def __del__(self) -> None:
         self._process.terminate()
-        self._process.wait()
-        with contextlib.suppress(FileNotFoundError):
-            pathlib.Path.unlink(self.ipc_filename)
+        self._process.wait(timeout=10)
+        self.ipc_filename.unlink()
 
     def mine(self) -> None:
         self.w3.provider.make_request(
