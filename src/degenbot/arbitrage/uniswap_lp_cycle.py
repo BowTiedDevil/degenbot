@@ -26,13 +26,13 @@ from degenbot.exceptions import (
     DegenbotValueError,
     EVMRevertError,
     LiquidityPoolError,
-    NoLiquidity,
     RateOfExchangeBelowMinimum,
 )
 from degenbot.logging import logger
 from degenbot.types import (
     AbstractArbitrage,
     Message,
+    PoolStateMessage,
     Publisher,
     PublisherMixin,
     Subscriber,
@@ -40,7 +40,11 @@ from degenbot.types import (
 )
 from degenbot.uniswap.types import UniswapV2PoolState, UniswapV3PoolState
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
+from degenbot.uniswap.v3_libraries.tick_math import (
+    MAX_SQRT_RATIO,
+    MIN_SQRT_RATIO,
+    get_sqrt_ratio_at_tick,
+)
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 Pool: TypeAlias = AerodromeV2Pool | AerodromeV3Pool | UniswapV2Pool | UniswapV3Pool
