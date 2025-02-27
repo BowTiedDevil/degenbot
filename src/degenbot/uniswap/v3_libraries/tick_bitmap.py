@@ -114,18 +114,31 @@ def gen_ticks(
     compressed = starting_tick // tick_spacing
     word_pos, _ = position(compressed)
 
-    boundary_ticks_iter = (
-        count(tick_spacing * (256 * word_pos), -256 * tick_spacing)
-        if less_than_or_equal
-        else count(tick_spacing * (256 * word_pos + 255), 256 * tick_spacing)
+    # The boundary ticks for each word are at the 0th and 255th bits.
+    # On the way down (less_than_or_equal=True), start at the 0th bit.
+    # On the way up (less_than_or_equal=False), start at the 255th bit.
+    if less_than_or_equal:
+        step_distance = -256 * tick_spacing
+        first_boundary_tick = tick_spacing * 256 * word_pos
+    else:
+        step_distance = 256 * tick_spacing
+        first_boundary_tick = tick_spacing * (256 * word_pos + 255)
+        if starting_tick >= first_boundary_tick:
+            # Special case: starting tick on the first word boundary, begin at the next word
+            first_boundary_tick += 256 * tick_spacing
+    boundary_ticks_iter = count(
+        start=first_boundary_tick,
+        step=step_distance,
     )
-    initialized_tick_iter = iter(
+
+    # All initialized ticks are known from the tick_data mapping.
+    initialized_ticks_iter = iter(
         sorted((tick for tick in tick_data if tick <= starting_tick), reverse=True)
         if less_than_or_equal
         else sorted(tick for tick in tick_data if tick > starting_tick)
     )
 
-    next_initialized_tick = next(initialized_tick_iter, None)
+    next_initialized_tick = next(initialized_ticks_iter, None)
     next_boundary_tick = next(boundary_ticks_iter)
 
     if less_than_or_equal:
@@ -134,14 +147,14 @@ def gen_ticks(
         while next_initialized_tick is not None:
             if next_initialized_tick > next_boundary_tick:
                 yield (next_initialized_tick, True)
-                next_initialized_tick = next(initialized_tick_iter, None)
+                next_initialized_tick = next(initialized_ticks_iter, None)
             elif next_boundary_tick > next_initialized_tick:
                 yield (next_boundary_tick, False)
                 next_boundary_tick = next(boundary_ticks_iter)
             else:
                 # The next initialized tick lies on a boundary, so advance both iterators
                 yield (next_boundary_tick, True)
-                next_initialized_tick = next(initialized_tick_iter, None)
+                next_initialized_tick = next(initialized_ticks_iter, None)
                 next_boundary_tick = next(boundary_ticks_iter)
     else:
         # Yield the lesser of the nearest initialized and boundary tick until the initialized ticks
@@ -149,17 +162,17 @@ def gen_ticks(
         while next_initialized_tick is not None:
             if next_initialized_tick < next_boundary_tick:
                 yield (next_initialized_tick, True)
-                next_initialized_tick = next(initialized_tick_iter, None)
+                next_initialized_tick = next(initialized_ticks_iter, None)
             elif next_boundary_tick < next_initialized_tick:
                 yield (next_boundary_tick, False)
                 next_boundary_tick = next(boundary_ticks_iter)
             else:
                 # The next initialized tick lies on a boundary, so advance both iterators
                 yield (next_boundary_tick, True)
-                next_initialized_tick = next(initialized_tick_iter, None)
+                next_initialized_tick = next(initialized_ticks_iter, None)
                 next_boundary_tick = next(boundary_ticks_iter)
 
-    # Then yield boundary ticks forever
+    # Then yield uninitialized boundary ticks forever
     while True:
         yield (next_boundary_tick, False)
         next_boundary_tick = next(boundary_ticks_iter)
