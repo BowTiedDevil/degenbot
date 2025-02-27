@@ -52,9 +52,9 @@ def next_initialized_tick_within_one_word_legacy(
     tick_spacing: int,
     less_than_or_equal: bool,
 ) -> tuple[int, bool]:
-    compressed = -(-tick // tick_spacing) if tick < 0 else tick // tick_spacing
-    if tick < 0 and tick % tick_spacing != 0:
-        compressed -= 1  # round towards negative infinity
+    # Python rounds down to negative infinity, so use it directly instead of the abs and modulo
+    # implementation of the Solidity contract
+    compressed = tick // tick_spacing
 
     if less_than_or_equal:
         word_pos, bit_pos = position(compressed)
@@ -108,12 +108,10 @@ def gen_ticks(
     initialized ticks found in the liquidity mapping. The ticks are yielded in descending order when
     `less_than_or_equal` is True, else ascending.
     """
-    compressed = (
-        -(-starting_tick // tick_spacing) if starting_tick < 0 else starting_tick // tick_spacing
-    )
-    if starting_tick < 0 and starting_tick % tick_spacing != 0:
-        compressed -= 1  # round towards negative infinity
 
+    # Python rounds down to negative infinity, so use it directly instead of the abs and modulo
+    # implementation of the Solidity contract
+    compressed = starting_tick // tick_spacing
     word_pos, _ = position(compressed)
 
     boundary_ticks_iter = (
