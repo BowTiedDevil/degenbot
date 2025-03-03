@@ -4,6 +4,7 @@ from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
 
 from degenbot.config import async_connection_manager, set_web3
+from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token, EtherPlaceholder
 from degenbot.exceptions import DegenbotValueError, NoPriceOracle
 from degenbot.types import BoundedCache
@@ -143,7 +144,7 @@ async def test_async_erc20_functions(ethereum_archive_node_async_web3: AsyncWeb3
 
 def test_ether_placeholder(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
-    ether = EtherPlaceholder()
+    ether = EtherPlaceholder(ZERO_ADDRESS)
 
     fake_balance = 69_420_000
     current_block = ethereum_archive_node_web3.eth.block_number
