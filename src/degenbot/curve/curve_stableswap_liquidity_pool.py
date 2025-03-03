@@ -69,7 +69,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
     MAX_COINS: int = 8
 
     D_VARIANT_GROUP_0 = frozenset(
-        (
+        to_checksum_address(pool_address)
+        for pool_address in (
             "0x06364f10B501e868329afBc005b3492902d6C763",
             "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
             "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
@@ -79,7 +80,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
     )
     D_VARIANT_GROUP_1 = frozenset(
-        (
+        to_checksum_address(pool_address)
+        for pool_address in (
             "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
             "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
             "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
@@ -87,7 +89,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
     )
     D_VARIANT_GROUP_2 = frozenset(
-        (
+        to_checksum_address(pool_address)
+        for pool_address in (
             "0x0AD66FeC8dB84F8A3365ADA04aB23ce607ac6E24",
             "0x1c899dED01954d0959E034b62a728e7fEbE593b0",
             "0x3F1B0278A9ee595635B61817630cC19DE792f506",
@@ -104,14 +107,16 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
     )
     D_VARIANT_GROUP_3 = frozenset(
-        (
+        to_checksum_address(pool_address)
+        for pool_address in (
             "0xDC24316b9AE028F1497c275EB9192a3Ea0f67022",
             "0xDeBF20617708857ebe4F679508E7b7863a8A8EeE",
             "0xEB16Ae0052ed37f479f7fe63849198Df1765a733",
         )
     )
     D_VARIANT_GROUP_4 = frozenset(
-        (
+        to_checksum_address(pool_address)
+        for pool_address in (
             "0x1062FD8eD633c1f080754c19317cb3912810B5e5",
             "0x1C5F80b6B68A9E1Ef25926EeE00b5255791b996B",
             "0x26f3f26F46cBeE59d1F8860865e13Aa39e36A8c0",
@@ -126,7 +131,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
     )
 
     Y_VARIANT_GROUP_0 = frozenset(
-        (
+        to_checksum_address(pool_address)
+        for pool_address in (
             "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
             "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
             "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
@@ -135,7 +141,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
     )
     Y_VARIANT_GROUP_1 = frozenset(
-        (
+        to_checksum_address(pool_address)
+        for pool_address in (
             "0x06364f10B501e868329afBc005b3492902d6C763",
             "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
             "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
@@ -150,7 +157,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
     )
 
     Y_D_VARIANT_GROUP_0 = frozenset(
-        (
+        to_checksum_address(pool_address)
+        for pool_address in (
             "0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2",
             "0xf253f83AcA21aAbD2A20553AE0BF7F65C755A07F",
         )
