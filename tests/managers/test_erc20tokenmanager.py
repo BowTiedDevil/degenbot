@@ -47,8 +47,9 @@ def test_get_erc20tokens(ethereum_archive_node_web3: web3.Web3):
 def test_get_bad_token(ethereum_archive_node_web3: web3.Web3):
     set_web3(ethereum_archive_node_web3)
     token_manager = Erc20TokenManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
+    bad_token_address = "0x0000000000000000000000000000000000000001"
     with pytest.raises(DegenbotValueError):
-        token_manager.get_erc20token(address=ZERO_ADDRESS)
+        token_manager.get_erc20token(address=bad_token_address)
 
 
 def test_get_ether_placeholder(ethereum_archive_node_web3: web3.Web3):
