@@ -12,6 +12,7 @@ from web3.types import BlockIdentifier
 
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.config import async_connection_manager, connection_manager
+from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import DegenbotValueError, NoPriceOracle
 from degenbot.functions import (
     encode_function_calldata,
@@ -437,22 +438,28 @@ class Erc20Token(AbstractErc20Token):
 
 class EtherPlaceholder(Erc20Token):
     """
-    An adapter for pools using the 'all Es' placeholder address to represent native Ether.
+    An Erc20Token-like adapter for pools using the 'all Es' or zero address placeholder to represent
+    native Ether.
     """
 
-    address = to_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
+    addresses = (
+        ZERO_ADDRESS,
+        to_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"),
+    )
     symbol = "ETH"
     name = "Ether Placeholder"
     decimals = 18
 
     def __init__(
         self,
+        address: str,
         *,
         chain_id: int | None = None,
         state_cache_depth: int = 8,
     ) -> None:
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
+        self.address = to_checksum_address(address)
         token_registry.add(token_address=self.address, chain_id=self._chain_id, token=self)
         self._state_cache_depth = state_cache_depth
 
