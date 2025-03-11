@@ -37,7 +37,7 @@ def test_deleting_pool(fork_mainnet: AnvilFork):
     set_web3(fork_mainnet.w3)
     lp = UniswapV2Pool(UNISWAP_V2_WBTC_WETH_POOL)
     assert pool_registry.get(pool_address=lp.address, chain_id=fork_mainnet.w3.eth.chain_id) is lp
-    pool_registry.remove(pool_address=lp.address, chain_id=fork_mainnet.w3.eth.chain_id)
+    pool_registry.remove(pool_address_or_id=lp.address, chain_id=fork_mainnet.w3.eth.chain_id)
     assert pool_registry.get(pool_address=lp.address, chain_id=fork_mainnet.w3.eth.chain_id) is None
 
 
