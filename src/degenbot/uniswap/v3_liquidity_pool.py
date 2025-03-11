@@ -236,9 +236,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         if verify_address and self.address != self._verified_address():  # pragma: no branch
             raise AddressMismatch
 
-        self.name = (
-            f"{self.token0}-{self.token1} ({self.__class__.__name__}, {self.fee / 10000:.2f}%)"
-        )
+        self.name = f"{self.token0}-{self.token1} ({type(self).__name__}, {self.fee / 10000:.2f}%)"
 
         if (tick_bitmap is not None) != (tick_data is not None):
             raise DegenbotValueError(message="Provide both tick_bitmap and tick_data.")
@@ -768,7 +766,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         Retrieves and records the current slot0 and liquidity state from the pool at the provided
         block number, or the latest block if not provided.
 
-        @ dev this method uses a lock to guard state-modifying methods that might cause race
+        @dev this method uses a lock to guard state-modifying methods that might cause race
         conditions when used with threads.
         """
 
