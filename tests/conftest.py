@@ -76,17 +76,17 @@ def _set_degenbot_logging():
 
 @pytest.fixture
 def fork_base() -> AnvilFork:
-    return AnvilFork(fork_url=BASE_ARCHIVE_NODE_WS_URI, storage_caching=False)
+    return AnvilFork(fork_url=BASE_ARCHIVE_NODE_WS_URI)
 
 
 @pytest.fixture
 def fork_mainnet() -> AnvilFork:
-    return AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_WS_URI, storage_caching=False)
+    return AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_WS_URI)
 
 
 @pytest.fixture
 def fork_arbitrum() -> AnvilFork:
-    return AnvilFork(fork_url=ARBITRUM_ARCHIVE_NODE_HTTP_URI, storage_caching=False)
+    return AnvilFork(fork_url=ARBITRUM_ARCHIVE_NODE_HTTP_URI)
 
 
 class FakeSubscriber:
