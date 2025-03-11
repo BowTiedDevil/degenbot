@@ -21,7 +21,7 @@ from .arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from .builder_endpoint import BuilderEndpoint
 from .camelot.pools import CamelotLiquidityPool
 from .chainlink import ChainlinkPriceContract
-from .config import get_web3, set_web3
+from .config import get_async_web3, get_web3, set_async_web3, set_web3
 from .curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from .erc20_token import Erc20Token
 from .logging import logger
@@ -98,10 +98,12 @@ __all__ = (
     "curve",
     "exceptions",
     "functions",
+    "get_async_web3",
     "get_web3",
     "logger",
     "pancakeswap",
     "pool_registry",
+    "set_async_web3",
     "set_web3",
     "solidly",
     "sushiswap",

@@ -1,9 +1,3 @@
-__all__ = (
-    "connection_manager",
-    "get_web3",
-    "set_web3",
-)
-
 import web3
 
 from degenbot.exceptions import DegenbotValueError
@@ -82,6 +76,21 @@ def set_web3(w3: web3.Web3, optimize_middleware: bool = True) -> None:
         raise DegenbotValueError(message="Web3 instance is not connected.")
     connection_manager.register_web3(w3, optimize_middleware=optimize_middleware)
     connection_manager.set_default_chain(w3.eth.chain_id)
+
+
+def get_async_web3() -> web3.AsyncWeb3:
+    if async_connection_manager._default_chain_id is None:
+        raise DegenbotValueError(
+            message="A default Web3 instance has not been registered."
+        ) from None
+    return async_connection_manager.get_web3(chain_id=async_connection_manager.default_chain_id)
+
+
+async def set_async_web3(w3: web3.AsyncWeb3, optimize_middleware: bool = True) -> None:
+    if await w3.is_connected() is False:
+        raise DegenbotValueError(message="Web3 instance is not connected.")
+    await async_connection_manager.register_web3(w3, optimize_middleware=optimize_middleware)
+    async_connection_manager.set_default_chain(w3.eth.chain_id)
 
 
 connection_manager = ConnectionManager()
