@@ -1,7 +1,9 @@
+import bisect
 from collections.abc import Generator
 from itertools import count
 
-from degenbot.uniswap.types import UniswapV4LiquidityAtTick
+from degenbot.exceptions import LiquidityMapWordMissing
+from degenbot.uniswap.types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
 
 
 # @dev round towards negative infinity
@@ -100,3 +102,52 @@ def gen_ticks(
     while True:
         yield (next_boundary_tick, False)
         next_boundary_tick = next(boundary_ticks_iter)
+
+
+def next_initialized_tick_within_one_word(
+    tick_bitmap: dict[int, UniswapV4BitmapAtWord],
+    tick_data: dict[int, UniswapV4LiquidityAtTick],
+    tick: int,
+    tick_spacing: int,
+    less_than_or_equal: bool,
+) -> tuple[int, bool]:
+    compressed = -(-tick // tick_spacing) if tick < 0 else tick // tick_spacing
+    if tick < 0 and tick % tick_spacing != 0:
+        compressed -= 1  # round towards negative infinity
+
+    if less_than_or_equal:
+        if tick in tick_data:
+            return tick, True
+
+        word_pos, _ = position(compressed)
+
+        if word_pos not in tick_bitmap:
+            raise LiquidityMapWordMissing(word_pos)
+
+        lowest_tick_in_word = tick_spacing * (256 * word_pos)
+        known_ticks = sorted(tick_data)
+        tick_index = bisect.bisect_left(known_ticks, tick)
+
+        next_tick = (
+            lowest_tick_in_word
+            if tick_index == 0
+            else max(lowest_tick_in_word, known_ticks[tick_index - 1])
+        )
+    else:
+        # start from the word of the next tick, since the current tick state doesn't matter
+        word_pos, _ = position(compressed + 1)
+
+        if word_pos not in tick_bitmap:
+            raise LiquidityMapWordMissing(word_pos)
+
+        highest_tick_in_word = tick_spacing * (256 * word_pos) + tick_spacing * 255
+        known_ticks = sorted(tick_data)
+        tick_index = bisect.bisect_right(known_ticks, tick)
+
+        next_tick = (
+            highest_tick_in_word
+            if tick_index == len(known_ticks)
+            else min(highest_tick_in_word, known_ticks[tick_index])
+        )
+
+    return next_tick, next_tick in tick_data
