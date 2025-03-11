@@ -56,6 +56,9 @@ MAX_INT256 = _max_int(256)
 MIN_UINT8 = _min_uint(8)
 MAX_UINT8 = _max_uint(8)
 
+MIN_UINT24 = _min_uint(24)
+MAX_UINT24 = _max_uint(24)
+
 MIN_UINT128 = _min_uint(128)
 MAX_UINT128 = _max_uint(128)
 
