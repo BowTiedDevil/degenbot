@@ -1,6 +1,10 @@
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
 from eth_typing import ChecksumAddress
+
+if TYPE_CHECKING:
+    from degenbot.uniswap.v4_liquidity_pool import Hooks
 
 
 class DegenbotError(Exception):
@@ -212,6 +216,20 @@ class InvalidSwapInputAmount(LiquidityPoolError):
         """
 
         super().__init__(message="The swap input is invalid.")
+
+
+class PossibleInaccurateResult(LiquidityPoolError):
+    def __init__(self, amount_in: int, amount_out: int, hooks: "Hooks") -> None:
+        """
+        Raised if a pool has an active hook that might invalidate the calculated result.
+        """
+
+        self.amount_in = amount_in
+        self.amount_out = amount_out
+        self.hooks = hooks
+        super().__init__(
+            message="The pool has one or more hooks that might invalidate the calculated result."
+        )
 
 
 # 2nd level exceptions for Transaction classes
