@@ -113,7 +113,8 @@ def test_create_pool(ethereum_archive_node_web3: web3.Web3):
         init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
     )
     pool_registry.remove(
-        pool_address=UNISWAP_V2_WBTC_WETH_POOL, chain_id=ethereum_archive_node_web3.eth.chain_id
+        pool_address_or_id=UNISWAP_V2_WBTC_WETH_POOL,
+        chain_id=ethereum_archive_node_web3.eth.chain_id,
     )
 
     # Omitting init hash
@@ -334,7 +335,7 @@ def test_create_nonstandard_pools(
     assert _lp.fee_token0 == Fraction(2, 1000)
     assert _lp.fee_token1 == Fraction(2, 1000)
     pool_registry.remove(
-        pool_address=_lp.address,
+        pool_address_or_id=_lp.address,
         chain_id=ethereum_archive_node_web3.eth.chain_id,
     )
 
@@ -346,7 +347,7 @@ def test_create_nonstandard_pools(
     assert _lp.fee_token0 == Fraction(3, 1000)
     assert _lp.fee_token1 == Fraction(5, 1000)
     pool_registry.remove(
-        pool_address=_lp.address,
+        pool_address_or_id=_lp.address,
         chain_id=ethereum_archive_node_web3.eth.chain_id,
     )
 
@@ -601,7 +602,7 @@ def test_comparisons(
     )
 
     pool_registry.remove(
-        pool_address=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
+        pool_address_or_id=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
         chain_id=1,
     )
 
