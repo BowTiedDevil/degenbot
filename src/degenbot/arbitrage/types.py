@@ -54,6 +54,15 @@ class UniswapV3PoolSwapAmounts:
     recipient: ChecksumAddress | None = None
 
 
+@dataclasses.dataclass(slots=True)
+class UniswapV4PoolSwapAmounts:
+    pool: ChecksumAddress
+    amount_specified: int
+    zero_for_one: bool
+    sqrt_price_limit_x96: int
+    recipient: ChecksumAddress | None = None
+
+
 @dataclasses.dataclass(slots=True, frozen=True)
 class CurveStableSwapPoolVector:
     token_in: Erc20Token

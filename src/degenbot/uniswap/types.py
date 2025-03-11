@@ -4,7 +4,8 @@ import dataclasses
 from typing import Any
 
 import pydantic
-from eth_typing import BlockNumber
+from eth_typing import BlockNumber, ChecksumAddress
+from hexbytes import HexBytes
 
 from degenbot.types import AbstractPoolState, AbstractSimulationResult, PoolStateMessage
 
@@ -109,3 +110,44 @@ class UniswapV3PoolSimulationResult(UniswapSimulationResult):
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV3PoolStateUpdated(PoolStateMessage):
     state: UniswapV3PoolState
+
+
+class UniswapV4BitmapAtWord(UniswapV3BitmapAtWord): ...
+
+
+class UniswapV4LiquidityAtTick(UniswapV3LiquidityAtTick): ...
+
+
+@dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
+class UniswapV4PoolState:
+    liquidity: int
+    sqrt_price_x96: int
+    tick: int
+    tick_bitmap: dict[int, UniswapV4BitmapAtWord]
+    tick_data: dict[int, UniswapV4LiquidityAtTick]
+    id: HexBytes
+    manager: ChecksumAddress
+    block: BlockNumber | None
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class UniswapV4PoolKey:
+    currency0: ChecksumAddress
+    currency1: ChecksumAddress
+    fee: int
+    tick_spacing: int
+    hooks: ChecksumAddress
+
+
+class UniswapV4LiquidityEvent(UniswapV3LiquidityEvent): ...
+
+
+class UniswapV4PoolExternalUpdate(UniswapV3PoolExternalUpdate): ...
+
+
+class UniswapV4PoolLiquidityMappingUpdate(UniswapV3PoolLiquidityMappingUpdate): ...
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class UniswapV4PoolStateUpdated(PoolStateMessage):
+    state: UniswapV4PoolState

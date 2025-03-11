@@ -1,0 +1,1802 @@
+[
+  {
+    "pool_id": "0x21c67e77068de97969ba93d4aab21826d33ca12bb9f565d8496e8fda8a82ca27",
+    "fee": 500,
+    "tick_spacing": 10,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xccc8eec61db9eac7106cc110b6834c2f9539ea7dd8df139e57587bcb1a701611",
+    "fee": 1,
+    "tick_spacing": 1,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x4f88f7c99022eace4740c6898f59ce6a2e798a1e64ce54589720b7153eb224a7",
+    "fee": 500,
+    "tick_spacing": 10,
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xdce6394339af00981949f5f3baf27e3610c76326a700af57e4b3e3ae4977f78d",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x2e6a9e8cfb42ea2f14ff8833d71a521995378190cd1ce30e2ff1a8b8a3da750b",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xE0f63A424a4439cBE457D80E4f4b51aD25b2c56C",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x4d2985ed0e6f89fdfea66264f88241db024c75ec656d9b7314ccb759e27d11ca",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x00b9edc1583bf6ef09ff3a09f6c23ecb57fd7d0bb75625717ec81eed181e22d7",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x54c72c46df32f2cc455e84e41e191b26ed73a29452cdd3d82f511097af9f427e",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x0df29494f2ef2d3249f8b99e2a12d35970076a50d0c5b15a481d38fac1c3d940",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+    "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xadfb38fb5b2f3c99a945213d4e465f083013835acff1ec61bfc6c9e0536515ea",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xf819d9Cb1c2A819Fd991781A822dE3ca8607c3C9",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x3ad280c97568a027da5e10bf3e757886fc4e2fa301959d7bb6c296d3e39f30b5",
+    "fee": 500,
+    "tick_spacing": 10,
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x89afd3b55b0083a46d91b5041ba91075916c4357339cd68800d4d3929371dfa9",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0xaaeE1A9723aaDB7afA2810263653A34bA2C21C7a",
+    "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xc960e793be79e33514e9b71c6945b8062a2a5fb3f79a7a4a2703d72df0efb80b",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0xaaeE1A9723aaDB7afA2810263653A34bA2C21C7a",
+    "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xdf6c45ce7ee049d6ad2fb392188c53205f2ddd79cbe9ad6487d38c6530ccff5a",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0xa6c8d7514785c4314ee05ed566cb41151d43c0c0",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x77b6a53b1693c129dde9736b4c1156b2de2501bdbb17a3d9063b31229ab76495",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "hooks": "0xf8c3f4243c4d8c02831a718a7978fd869f094300",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xfedcf77025296938cbd7eb893b03430887e7509acfe13e1405875ec19edbc87d",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0xaaeE1A9723aaDB7afA2810263653A34bA2C21C7a",
+    "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "hooks": "0xa6c8d7514785c4314ee05ed566cb41151d43c0c0",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xb66c8a4a60a9287df83c186f3c37204cbb4e3553e28b453f8f3e26f19c1bd835",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x72331fcb696b0151904c03584b66dc8365bc63f8a144d89a773384e3a579ca73",
+    "fee": 500,
+    "tick_spacing": 10,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xe018f09af38956affdfeab72c2cefbcd4e6fee44d09df7525ec9dba3e51356a5",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xd967702f17f83d907b36e66c9a62eb50ac327432c581d5b273a76519692434be",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+    "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x053f6a47ccba79e7d5d623173ed6dd5a31cf19c28bae0fb8276f4506295f90da",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x9a5c1d2f4a7a7962a63259de6fcc1afb1d0aa1abdf5d19c23d22fd78953c5167",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+    "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x50b00c1a5a8e582ec808e97e71598cd135206a9f9c548eab2ed73659e7ee5fa8",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x6f2c0f44eaf487ae23ad43d0886fee2dd959fabf113f13226cbf033b04f8eda8",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x27cC685f30ac6c4ED13f7Fe827b20ec722FDdcac",
+    "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x5a3959cba1a671a0896182774d9e09f3ab69d22e0deed524ea9a7a2c811e4e91",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xB64ef51C888972c908CFacf59B47C1AfBC0Ab8aC",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x3dedf9153bf7ea7a8d784a41562e7ee061f8330b695f70ff534f9f9d3be2363a",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xfAbA6f8e4a5E8Ab82F62fe7C39859FA577269BE3",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x8622c3e1e8fe5152206588057928c6b4ec15da02a44c7c84f06de3e0f8f44c05",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x295B32e064D1C463A2a1eb279AAA1Fd6ABFE771B",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x70ec616f32d82097a9f886ba7d8ed6cb877ed09c09f7340208d7547af18018fb",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x9eeb66921663E0F54A794c2A9f95e06905095c0d",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x5428ad03631e264874f5341858cb94e8412a73fb4a92430887628aad1e8a5601",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xB4A3B0Faf0Ab53df58001804DdA5Bfc6a3D59008",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xa6d987fe2e9e671f1b5786508e29b4e5261ade0d7e1ad5ea3139d85c3afc651b",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xe28b3B32B6c345A34Ff64674606124Dd5Aceca30",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x3a79b62f2c821bdcdd6ed0c5054fc61dc28ed78e78a53c9b258b81a013c84844",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x1Ce9A83c03c4B7bBb8A24eEfeFe080d44D2b643b",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x7ae18d03801b88afe43a4064eb58910b24b2cc18de3d60720579f2551ce4583b",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x2267aeEE575709D91803Ee1a36E09aA1825B7e28",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x5f619ddd47912e7b3652b1b22146abca26ae4fcaa7839d62d357a9903ebcf385",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x9C03a714cfe19775e9a36601B005bFfADE706cD9",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x402ae3ed0d98846a423afb8da763fc195ddabd5cd510ede97f28a542d271fa84",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x6988A804C74Fd04F37DA1EA4781CEa68c9C00F86",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x85b34aff7cf092acb063ad190fb1308f12188b491b7d7140601813d4d5b308a9",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xa8dD5f7752b72CD9831009374C6F41A4c16E8592",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xe392e50d11ff1aca9ecb9931f6330337534891fe368464d18c7ff0880fac27f8",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xAF4ffA7335B67a7D9F1F7Da8F9DCD71B192d76D0",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x39c2910dc086dbae7dd8716a9a4528fcdfd44f3be68dbe32e114486dab7e2098",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xbDbfDaD500bCF0079C2DD8a63b0f7f2Af1de3C3a",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x63d4571666c193903dafb20773c2f22a8e65af6b31833e9ad6366306ec26dfda",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xE0f63A424a4439cBE457D80E4f4b51aD25b2c56C",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xfbb174469db075b09b547e34e1734e984346026d8da7f6822953cad22ab3bf13",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x44440070eFbde3b5C78673E2f365826D0DbcFC81",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xefb7d7ce98ca4f9bbc3a3346d247ed7e4efadf1094fb3559db5e7de46c349abe",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x26E550AC11B26f78A04489d5F20f24E3559f7Dd9",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x09e15ba295cd1c0dcae90a32a75606bc9b184987c96b4dd813515adb2ae49e19",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xC2d0e173116d5c269184A738F58dF02a0BCea48a",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x242bc76f22b2af074e9ce8bada34e0986079de9cb62d2072b9e09a1ceee741cc",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x112b08621E27e10773ec95d250604a041f36C582",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x753fa59c08ce8b3cb786929dee32951ad6163bdba1f7f7c5a01bdd33f26359c4",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xdE0E244Ac2d8DbE3F7de5e1EFB4cf9882d2207DF",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x82d03d11ef461e04ffa7700969df74b0b37fb7871e7bcbfc990d2cf0b0278665",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x5f98805A4E8be255a32880FDeC7F6728C6568bA0",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xe0721749df37203eed8c5f3d950dfa13b89cc46c4bb115896ef4fdf730abb95c",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x90A8b1c4FF04900658f32659B170C350d0fa774a",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xc0b89ab58bbb2884bdacf1353fa5abce070a149b245523e64836c73baf0d5e83",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xd5EB7E91Ae88Ea2550F9bFD04208399c95dF4dC7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x21a171bb51152f7d1ef4049bab651716339a70f0214744707d3e5481b8a99e13",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x652c0E3d583A43C6230eb2a8e9C9634e0deD7765",
+    "token1": "0x706987611C5d2052541D64ef8f036916807c916A",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x330137c77e613e3a59f3ca45f3bf4cba3476fd63df657bb68029fcbc96372f20",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x1106bB36fa455bd9b2b8832788197A593582dadA",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xcde9918571640fa27e70c0a3687a381b96ae2f33de240540e999e51deb69d0a8",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xbbfc275d22c9ca59819644b6f3f1e5f2320025f1a51844cf7439a83ed11f3205",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x72e4f9F808C49A2a61dE9C5896298920Dc4EEEa9",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x68e481eaf747c9be7fcb9802b8ad8d217d36830ae50322cccb21fb1b77ab28f6",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x6B4c7A5e3f0B99FCD83e9c089BDDD6c7FCe5c611",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xfd7a3c240fae81a370ef695d9d5846b0d752da785505e71d3507119c13bd0421",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x4230879940E96eacDFc3131D0567ae97EA0C9F6f",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x0601c1d0ba0bf206e62599ec58d12b6425a54233c540d1d345f5e87777315ca3",
+    "fee": 66600,
+    "tick_spacing": 1332,
+    "token0": "0x922D8563631B03C2c4cf817f4d18f6883AbA0109",
+    "token1": "0xA35b1B31Ce002FBF2058D22F30f95D405200A15b",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xd3cddc4419d01aaf5763a252027c3178df51827b7449eab7850bde4d652c0a3e",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xB8e3e431ffB17DAc4BedEC04b901A3c03179fD1B",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x4d9c290dd520182ea4e1434176f1ef544d70df08fc451eeec07aba2329914fcb",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xF411903cbC70a74d22900a5DE66A2dda66507255",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x53bbf1663385d90c50f44d9fcc7112a1b74f9f42ec6ffc25fbb57ceaa6c1ccfd",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x8828Fc93afd5c2fd17627d66ac67F43D1c31Bb13",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x404f96bc81f0201d041f5f8b1311cc107c49c50836ab2733fd2dce25edb87dec",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xAF4ffA7335B67a7D9F1F7Da8F9DCD71B192d76D0",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x0676a1720db92ba01382f41a656cee454c0d820b4e7277e07a3000db3aa47dfc",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x72D54792E269bEF35F0083659e7A03d7D85cacf3",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x4030e17128c2fd608fbcfcb94e8759de3abec2646e99831a468d7deb8e7165fd",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x8828Fc93afd5c2fd17627d66ac67F43D1c31Bb13",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xfd6b7692a2cd265c168e19d10f103f8dc2fd56449ef012b2ecefb4e30283836c",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x046EeE2cc3188071C02BfC1745A6b17c656e3f3d",
+    "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x3485addbf1b5d51e276327fcbded21462f727e094b82e661838d2d2103d59906",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x55296f69f40Ea6d20E478533C15A6B08B654E758",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xb98437c7ba28c6590dd4e1cc46aa89eed181f97108e5b6221730d41347bc817f",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+    "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x33ee4a68ffede5357692726962665c99565859346070bb686c85c3e673868494",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xeF2d629fcc6889Fa58860d18B808852E59AD989B",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x3fec4f64494c9f1e6a6a35ebdc57b8c1939fc30924a4d808b6762057bb371fde",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x88b5298993ae98301b9a702c0ba3b435843476f0da04c282a489db7117bb81c7",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x51cB253744189f11241becb29BeDd3F1b5384fdB",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xbe84ed482ec90f564806581afde3e94033818f9d89726bee622ff32f6704cf36",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0xD533a949740bb3306d119CC777fa900bA034cd52",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xc8eded2400136ee3368a5212d567c7e46d23d8f0c3be17f350fa6f2a08a64176",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "token1": "0xF965960E8D4Bb6086218535533F2B725650B3dE3",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xb99c80ad3c4775b65a3cf1f50535d92cbe12540afda6f71e609165ec4b7f98ba",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xb0AC2b5a73da0e67A8e5489Ba922B3f8d582e058",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x4696fb351467d834fc942aac6bd417b4318bf219aad66bb0edb598aea1551990",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x2D659B3118dA802ED9e66c7022186De9c4Aca848",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xca2861054a5dce3bb0444c2f1cdf77919314d354757702c2c0c733f98889f536",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x4D2A25333eAF2B7B30466A9FF44DCFB63e78eB73",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x4d252481ac018b3b3ce9724fc3aef77f848d200475f0e95b942bbde7e0051754",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x9BE89D2a4cd102D8Fecc6BF9dA793be995C22541",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xf032ec1304e40e7b9e4cf0ca89dc025b6658270d507f696b8f4de1710a6286a8",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x4D2A25333eAF2B7B30466A9FF44DCFB63e78eB73",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xaf0f1fecb7b70f3cbfcea8be7d63c7dece0c662961d7f2f9de94c3ea4584ab0a",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D",
+    "token1": "0xb01dd87B29d187F3E3a4Bf6cdAebfb97F3D9aB98",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x1c60dc7ce348dc9f1e8992c027350acfda4ba66e2365aa87cbdd98c490185088",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xa92ea14651f892a9ce11c4f89a86b340d5341e31359331d559e88bebd70538e6",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x94a8b4EE5CD64C79D0Ee816f467EA73009f51aA0",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x8c354bac73c3ce7009bebd39ee96880259c25539824d653ee88981177b4c8b5f",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x00a8250f1aA2dEEa3Ea12b06A135219e3396A207",
+    "token1": "0x0Bfda9a1914dD56313DA138143e871c2b7A01e39",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x6807cb8efb4080b8f94ffcf5dd78650d52123d8179d03868f6a270c77c5d9716",
+    "fee": 50000,
+    "tick_spacing": 1000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x675B68AA4d9c2d3BB3F0397048e62E6B7192079c",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xc6f95cdd9bdb0a77500637e3857d21f2e928cc922ac1a910d663722234ccab3a",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xc56C7A0eAA804f854B536A5F3D5f49D2EC4B12b8",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x2d91a5cdaec6de6906a166ca7c75760eff1bf82d7188fbbc6f7f994977ffccfa",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xCEb67a66c2c8a90980dA3A50A3F96c07525a26Cb",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x50f54c6cabb654ec2577f2426f835df73de241cf8c6eb931a93f2e82a392c257",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xfAbA6f8e4a5E8Ab82F62fe7C39859FA577269BE3",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x8062018dced0cf06c156a16b55f0c9d13736bb11b76efb54080eb9f3f3f4a9fd",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x3DeB91850410d16821e4a9A7f854CD7942357715",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xcc9fc051ced5a1705a9cf3aa7027cff19b3468136a539a779fd45a0f4357e583",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x5AfA113E89eee7692d753B007E334383B74C63C0",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x6b5530bf3bf90cdb76e08a401d5c5f09e6a86ba34be7be9f07c0329e54c7a127",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x244B9B58f64978F5ce8507FC029EA1F88618624f",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xa78dd61dea413f0215d2e993f2f233f3788e871c2fd92877d5a610d33cb84121",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xB18BADEbC833cB892B272967e8520777dFEBfB90",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x5b29d38ddffd8514f9716cb9fb25f0ad89775c190505b4058953539007a03409",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x57e114B691Db790C35207b2e685D4A43181e6061",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xa295e14eb7914d003c1dd2c4ba29d52bb7e085185586f6771219e0568aeeb3c3",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x93698d84898b4704A3086edF5604E478B7382eaE",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x078dadb42edfb9140f3891c571a0cec0dbec2f9880159a84375d8c500ba521c8",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x93698d84898b4704A3086edF5604E478B7382eaE",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xf8e38b9a2025fa01261f2ac579ceac712a6e9b32515e4347bdf599c9bad4a361",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x6c4F179AcD9cb397e4e7CF136fb15A15F2B5184D",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x08b46763553d75d08e4b559825a0fe1fd4691e2cb79ca2ad87c4ede6c70af562",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x76A0e27618462bDAC7a29104bdcfFf4E6BFCea2D",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x838b031d118594600cde88c18aae4a4d11c110be4433dddda8dda8695d9a38f8",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x34bdbA9b3D8E3073Eb4470cd4C031C2e39C32DA8",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x9aac1ad6dc2cb714a9b2000d2657ecad0210ee9e173b355c810dd092ee4a256e",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xadd39272E83895E7d3f244f696B7a25635F34234",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x6992eba00d729d2638a80502951605467d3ec41f911bbe91bfea6823bce6e237",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x0001A500A6B18995B03f44bb040A5fFc28E45CB0",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xeb8613132e2d73b3d9ed00558067baee773e3a2c26b1d0a766e597c15a63207b",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xa84f95eb3DaBdc1bbD613709ef5F2fD42CE5bE8d",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xbe98d50d365404ee7ae374f2060b026d51a28dbac9db20b2709905c95ee29e50",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xF411903cbC70a74d22900a5DE66A2dda66507255",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xb2b5618903d74bbac9e9049a035c3827afc4487cde3b994a1568b050f4c8e2e4",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x6ba63194be49885f1d5ca04c3c80c001864d31628133bd9b731d5147de6f622b",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x1Bbe973BeF3a977Fc51CbED703E8ffDEfE001Fed",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xfddd1411b9836ae751a1d9626d1b937626944f88e663fe569ecee40af552dfad",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x018DD3A0Dd7F213cc822076b3800816d3CE1ED86",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x8cdde43aabec35ad606969fb626129eb1ab11eb2eab8ab2ddf21a9141b7c7ac4",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x0dF40F13DE4fbe298E32E94AbC5bdcb8B5eE7f3C",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x78fe84223fe44afa9477a97ff6cd4b28d465c545a0b4eed056c6632c036ed086",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x3cF21CCa7325F4d29605EeFecFB3c32179332aa6",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x3bb0fb6b37d190102cf625d8ba4478b261c465d8fd911e027fb2708f566cb871",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x2fb652314C3d850E9049057bBE9813F1eEe882d3",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x0aa2d3d425936359255b013cf284661d74138f10a2c18af2f8e9cdc13a27f413",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x44ff8620b8cA30902395A7bD3F2407e1A091BF73",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x8cdc8df58fd4ac370ae0e8459b5d7b54e541d9be61c08b425f888dca83fb70e4",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x8e42FE26FC1697f57076C9f2A8d1FF69Cf7F6Fda",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x9dda426c64c2051071b3b798e4f561b6148056b58d76719bc18929c7b27c65e0",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xFF0A8De74000C1152E86f84189c3039999A13F42",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xc4b610e960ff6c13b05df26af6ba8ceb0ee16a053b4a262421d4d0caf6c4ec99",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x084De42A1316d6Fcb18382F5DE13E49eB2581fda",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xb7d00daa0f176718b994d82e947761bb43eb2c87303ec014c51c71593dfb0d17",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32",
+    "token1": "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x3cea96e790e07e7bff9ac110d1e203db6692d8ae217375c0253a76d8890a242b",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x812Ba41e071C7b7fA4EBcFB62dF5F45f6fA853Ee",
+    "token1": "0xCEb67a66c2c8a90980dA3A50A3F96c07525a26Cb",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x77f25979dc1a6b1f22dcc0464397475738e44104732515d2594dd9b3611107d5",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0xA35923162C49cF95e6BF26623385eb431ad920D3",
+    "token1": "0xCEb67a66c2c8a90980dA3A50A3F96c07525a26Cb",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xa3dac60e8e427c4e794dc98ba66d5b8e19e69a54792c5265bfa98499dab4b582",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x6B4c7A5e3f0B99FCD83e9c089BDDD6c7FCe5c611",
+    "token1": "0xC0d785a6298444897521DBB0279A76753f311ED7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x13e295ec790632d0ec15f1a566809b04539de1e760d60138b5077d88d84e5811",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xE0f63A424a4439cBE457D80E4f4b51aD25b2c56C",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x474812fafd6e50d42391f725a083ff5fb48d2b8b394d62cc7b1f2b88b2201e63",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x6B0FaCA7bA905a86F221CEb5CA404f605e5b3131",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x155d41fc4dfda0d93d9469ce48374f427bef119d5ed04a79c6c00edbd2cb7e33",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xb131f4A55907B10d1F0A50d8ab8FA09EC342cd74",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xeecca67b8b94df42bd4046c63b3c89ca1c74c4c1b14c60479f5d3f1d14211f03",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x5728e59002939074a10D0819732DcFc0bf6b5610",
+    "token1": "0x5D22c8b4E3c90ca633e1377e6ca280a395fc61C0",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x2187d779d9b173dd7202b38b54dca6eb04d1b32ca261980869195b5b9fa97ef8",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+    "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x88c4dd7c3c7b495a399092d6d10924782e5bf7c0a9ed4ae3dd1e199158cfaf3f",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xf301115465e11c23A91436805c7fF9DE9Da6466F",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xc290562741b53631c77cecfaac5d0b6d8cbc26d3e49320dad66e78b6fd0567f9",
+    "fee": 500,
+    "tick_spacing": 10,
+    "token0": "0x6cB52086c435405379D028991B2f885BBDe05d44",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xe331341fc90223cfd082f79fbdf63b2fbef5464bac7707490ee176d7e0b26086",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xD31a59c85aE9D8edEFeC411D448f90841571b89c",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xc0c7b58e4abe7d03fa7f2b4090501720d1ba55a0e1c89c65f7afd92439a2bbf0",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x525A8F6F3Ba4752868cde25164382BfbaE3990e1",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xea0767a9cffbc7b57c13ffc7e77aab0337a085ea9058ad3e7ff6342fc3ddd504",
+    "fee": 800,
+    "tick_spacing": 16,
+    "token0": "0x18084fbA666a33d37592fA2633fD49a74DD93a88",
+    "token1": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x1d5b2949ece8754c2d736991c62c5162bd144f497b2212182401b9bae77e2d76",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xc49d9d101fa3ee8b3f1f74aee44144c8cac9e0c522d25aff2c13d510f626e9bb",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xAcd2c239012D17BEB128B0944D49015104113650",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xedeb52341ea57d38f85ecf1c1c05d5bb3d42271831d9b124a18820ab28e73559",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x56CfC19D8cBF7D417d370844249Be9Cb2d2E19a1",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xa8a58cc2dbe460b80a8aa28ccb23a9aa4028c7cf0736e22d1259115a2592b021",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xD41f3D112cb8695c7a8992E4055BD273f3ce8729",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xa9eeccbfde38d8f6a5bea63564f33a984cd7561930ee86666f4a54d52b3a6e12",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x4274cD7277C7bb0806Bd5FE84b9aDAE466a8DA0a",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x8c52de694f5a4ce27ea85fe4bc47e08d22c5dfb5f9b38b2a63765ed52cd3b147",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x57e114B691Db790C35207b2e685D4A43181e6061",
+    "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x64ddd8543cc861a29f8c20b1a37cf46f16ec75964512050ada9f593f52c28ab5",
+    "fee": 500,
+    "tick_spacing": 10,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x984239261b4aFf295d004d7cA2Af039ad898D1D9",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x1236f02e961b4f153d3e0a384a7d884f9e4d0d2ebbfa0291f493a887daa50bd4",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x6De037ef9aD2725EB40118Bb1702EBb27e4Aeb24",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x18a3446a23dcc62744a4a97ca6b34734ac4155d9863c55976bc0d5799c436628",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x11c1b94294A7967092F747434dEE4876EcA5fD53",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xe63ec1e1f8771d467e978f768dddd9a423f11aafb77e1616bc74cfad94f967a8",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x93b4D7cDbAbb1C68696c7c2e7Ba5Cf6a5c90baAF",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x02ba13f04d30876b5c56a8e3e59ac75304893da90c6faaa4c40a65786e943847",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xec8E5aA17c3fA6c4D93f2cC6bB5B2CEA7Ce729c5",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xecd73ecbf77219f21f129c8836d5d686bbc27d264742ddad620500e3e548e2c9",
+    "fee": 25000,
+    "tick_spacing": 500,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x251fca588bfaccd61fd27c99a9217afae5eb12abf92752b586dddcc05e8b6e66",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x392B2a94c60c290482AB6c9b8B8211de8376d349",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xf48dea40c2f10d4804b48f8c665b3f83d3e3c68c75ea662cc31a6a342901f326",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x955d5c14C8D4944dA1Ea7836bd44D54a8eC35Ba1",
+    "token1": "0xE73d53e3a982ab2750A0b76F9012e18B256Cc243",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xdff04f7917c2a2a53bc7223f4ca672cff3f24f0a7843c5e35af72eb1f2c7a8a6",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xA808dB0C155A4c28b163C12fC425ff3d0d1C6A62",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x9b7e1c090d289022db1ddd189736c3b2aead38ff7be015dc8eb6e0676524cd21",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x02CaAA0C14DBD18E3f038e48844242F9F1e7970a",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x52c5c0459adccc0d9f78b6d38defa365d61643d5e063e4d111ced4645dd499da",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x3d18b5a1738dF4ca820e868aDB3bbFd92ab37f21",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x57cac2d08e1b4979ac4fe13b58d5349d17c0ade714ad93cf2481d20bd85c6bcc",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x65B664FFbA3f2bbfdb82c85413c7053bf942C08d",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xbdae4dbce5aecd4abf38b5a2cb3d300b5b2fc483c23eebfb6f94f4dd460afdeb",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xD31a59c85aE9D8edEFeC411D448f90841571b89c",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x29a66f69361d250f3ea0b0a4689b5767d219f4084d8e4baf88eba7e25f4a4647",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x421b05cf5ce28Cb7347E73e2278E84472F0E4a88",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x042a5b2c816d473338d6d1fff7d4e2f74a4bf6d9517e74538f3778d0693aef69",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xba237801c29850b7ec134aa77d19855d48f9e01dee08f21945502c2a8b377e16",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x745f836a293544db638a897e14b455f64c4147129a27b1959d910c49a326f94a",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xbEEf3bB9dA340EbdF0f5bae2E85368140d7D85D0",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x2287a9620adcbf6250dc71be9ee9b2d3a1ec85a464fc6f5c06669e8d07b61bba",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x6e16168c30fd5551e7403d897c0e41361b15978cbb7cebbdec9a63628d27d48c",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x1dc310400bba5c6538f5c5705fa3d1aa1720ba1831d5170bcda0520a2dc782eb",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x26E550AC11B26f78A04489d5F20f24E3559f7Dd9",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xb73914ad80f82564872cd0c02ac3499e9792a2f3b12b8e1ebb7a60deec059a2b",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x7cd167B101D2808Cfd2C45d17b2E7EA9F46b74B6",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x65bf785d56bba79f53fd38607b147fdb21f5f417d536427fe9aa6e8726cd1948",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0xdA816459F1AB5631232FE5e97a05BBBb94970c95",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xe5c66e2782107c0762dd3e038107e52a1c41463d6a73b132e108cbfdf52150ea",
+    "fee": 8000,
+    "tick_spacing": 160,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x58D97B57BB95320F9a05dC918Aef65434969c2B2",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xd098b6047f2536ee4adf568a57ba2d840d102d6cf11bac97cadfbc8633eeef2f",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x0262E9374E95B9667B78136C3897Cb4e4Ef7f0c2",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x1ec0a8f51a001dc4fa9b463206810b3ca0d360c173939a8b421f9bb80cfc9efa",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xeA05a1A54b0FE29afE59483A7E2CAD374FfEF0B6",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x36df41c09b0d43753f74ca488d238647bd509bc119c10b25611e827942e10ec2",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x85F17Cf997934a597031b2E18a9aB6ebD4B9f6a4",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x4aa12b79a658d9bccbe587cb1ae65b26614d8aa8b109b17a651776afbcf3f59b",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x7D4A23832FaD83258B32ce4Fd3109Ceef4332aF4",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x9bc29cc64642370763edadd49e20b0bca413bda4f028db8484ec1ec746803828",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x363B39940Adc4e972a9859ef51f0A178CC53EF72",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x9231b83c5cebe9a59081d060234f3ad80bf3e9566d66f13290d28f9cfe85ce56",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x4FbB350052Bca5417566f188eB2EBCE5b19BC964",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x3b5331bff0a956c8d99141d633a2fad1b915a13db53a00e8edfdb404aace6990",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x80f0C1c49891dcFDD40b6e0F960F84E6042bcB6F",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xeee387293576d3845b97e17d55366666f932e0b64a1f649061793b4b220a5e70",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x133CBcE3f969B412d648D6C01d578DB37BAC3F37",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x30c9823b04e310cb4acd5916c2f6a1e0793e6125c782d819346fc124d663e1fb",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x86B5780b606940Eb59A062aA85a07959518c0161",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x08a4647f38f9e37d0726a4c62b16d89ceb1498dda88e948d6ad04feca1eb4600",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xE77076518A813616315EaAba6cA8e595E845EeE9",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x44fb9670833f4df3220f4023c78efa091c95225d096750d448b31af99ffd4e78",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x9Fb7b4477576Fe5B32be4C1843aFB1e55F251B33",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xd035507e6814bf965092958687bb6c5249c7652b451453b59e262f4b0b455237",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x5C20B550819128074FD538Edf79791733ccEdd18",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x7199161e163fcba762b063842a8510d6554dae6a3592ace819ea6ebfd71a30fa",
+    "fee": 100,
+    "tick_spacing": 1,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x16fad19227ab3c8a86c17d0d03d1b5033dbac4e3a4b90ef8974b6f63a55655d4",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x90551c1795392094FE6D29B758EcCD233cFAa260",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x2cffc33ce9825ab93f793030e1d8bd62373eacdb96f0288bcb5ec7663f740c82",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x2411802D8BEA09be0aF8fD8D08314a63e706b29C",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xca84394dc6dd34cc967fd1a857b538c9945a43d639af9ccf651e6ff4420d9124",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x6A29A46E21C730DcA1d8b23d637c101cec605C5B",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x6f0497bcc1a384869277591760c43d007a84804a52cf9daa422ec85a1e875afe",
+    "fee": 0,
+    "tick_spacing": 100,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x000000C396558ffbAB5Ea628f39658Bdf61345b3",
+    "hooks": "0x00001f3b9712708127b1fcad61cb892535951888",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x9b776acb9b1d6ce772aefe7bf68ff4cc541e56779eecd2d2942eac65b3482756",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x8eB67A509616cd6A7c1B3c8C21D48FF57df3d458",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xe9971f005874d94ea282245432e99b40ba1256ed70048615d00902c15ac45d83",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+    "token1": "0xE2976A66E8CEF3932CDAEb935E114dCd5ce20F20",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x19ed01eedac98c87263f351d18431112afaaab090339060d903038142cf414f4",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x08c6F91e2B681FaF5e17227F2a44C307b3C1364C",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x630e580c97b0f69be5077d0a020309d5010e5ffceacc3293c07fbd977b3fbcdb",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x91E703Fc2ccF5a89f828d550B57e9fb2dc851c08",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x9f1a9f014469281566ef7c6a0a8e44ca9a701f7cb467100dd1d2185488cf35ae",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xa258C4606Ca8206D8aA700cE2143D7db854D168c",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x4fc4cf00b04ded18d08a9b27fffe851f9d64d55e9754475d2f669fe7b9223bb4",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x1202F5C7b4B9E47a1A484E8B270be34dbbC75055",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xf261c3972db73e3e5af1eeedf49668910d97fca2221cf564dfbe720e1abe340e",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xE2976A66E8CEF3932CDAEb935E114dCd5ce20F20",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x47bef7ececeb427506ba8bd37d28d76d181426ce1b6907941bb24d078fb8b6a3",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x6c8984bc7DBBeDAf4F6b2FD766f16eBB7d10AAb4",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x3111eab395da769f000bf2a997c2e0a90c1deb89adc00f48fe29d1e36f2dff8d",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x74a51119272D89C7eE5F86B1Cb912049E6BDBbf1",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x4bbd9d72a64efaf7079c5b9f5c5963b3772274f7a172dda71590f20ae5519da1",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xF2Beb56A1D259ab8D6A06622A44357AD45257Ef0",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xf29ae917c165e63b3e8399996e8e43830ca20a8bbb7668c1c1a8fabdc4cfac28",
+    "fee": 20000,
+    "tick_spacing": 400,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xF1A7000000950C7ad8Aff13118Bb7aB561A448ee",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x5169b89c60e7fb5cbd55f17d3fcbb7558ffc0e9c2366717fd1531a9bb6803a52",
+    "fee": 900000,
+    "tick_spacing": 18000,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xcb7f44b03e727b2d470f326934dd8afbce9c906e0ccf779358357479c4dbfbc7",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x3aFB97B679FaA91236642c520256C6642e7a15dF",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x0c252fe7a34ee8b3839af02a91317a2d8ec665edf3fd4e2c2ac5d0d7feda7811",
+    "fee": 1,
+    "tick_spacing": 100,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x000000C396558ffbAB5Ea628f39658Bdf61345b3",
+    "hooks": "0x00001f3b9712708127b1fcad61cb892535951888",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x80e92c52617b4bca3ef70f0691510b95f2639aff7456a0b63adaa81388ad7e24",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x26E550AC11B26f78A04489d5F20f24E3559f7Dd9",
+    "token1": "0xfEF4C6B56e011a684dC2054aFd576d83817C2620",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x3f7533726a06626c2eaf46a734aa9c31fc24854fd8a9b2cea6d29afa0edd5aa0",
+    "fee": 0,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x000000C396558ffbAB5Ea628f39658Bdf61345b3",
+    "hooks": "0x00001f3b9712708127b1fcad61cb892535951888",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xd3b940e7b15e229f6d376e1c1a70a515eae5da12ef6df4040a4e7bf2c236bfae",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x1121AcC14c63f3C872BFcA497d10926A6098AAc5",
+    "token1": "0xfEF4C6B56e011a684dC2054aFd576d83817C2620",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x132a888a9db38d960f1a361294d9926a0137c70d398722f91afc2067ed0bd2aa",
+    "fee": 0,
+    "tick_spacing": 10,
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x00001f3b9712708127b1fcad61cb892535951888",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xf72049d9fc00f026c066abaf4e9fcaa2f72e70e42739a1df98787f9aafd4d4d1",
+    "fee": 0,
+    "tick_spacing": 10,
+    "token0": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+    "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "hooks": "0x00001f3b9712708127b1fcad61cb892535951888",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x4267b212255c322728f2aace54de0ed7228b6c236a8ea2b1f3cdcab06a4374ee",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x68749665FF8D2d112Fa859AA293F07A622782F38",
+    "token1": "0xC13c9862de7A4D2883707126A992b04511b0a06C",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x9df97376c7d41523886d53fa87aaffa68e883702ef0b3420b3572f6961d96b33",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x9A594F5ed8D119B73525dfE23aDBCeCa77fD828D",
+    "token1": "0xf598925C24cE38572200D84255AFCbCc94E278B4",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x77576dcf9b9ddb316c67d0da5f338bbac5546b0abe1280e1bb52bdd6c510f2af",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+    "token1": "0xbe1936A67f503e0eaF2434b0cf9f4e3d7100008A",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x0396714bc3eec732e9223cc82579efa92e13d8bf2d7629a9d7585cd5713286ae",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+    "token1": "0xbe1936A67f503e0eaF2434b0cf9f4e3d7100008A",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xe8a7563c0802408c61d01f332c37f3a60dd63ba645834ea11da5e6fb7308fdba",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x9A594F5ed8D119B73525dfE23aDBCeCa77fD828D",
+    "token1": "0xdF88040d606B096f52eFD4A30A3858C964E04049",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xe8ea96efbe7b8e393159d5baa2b7c8e9a4d2304d6bb3e9f08f8f25a5499dad38",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x423f4e6138E475D85CF7Ea071AC92097Ed631eea",
+    "token1": "0xb9f599ce614Feb2e1BBe58F180F370D05b39344E",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x2254ee8cef12785fb2a008106b6142e6803e52330a16ee7030744e12787acc90",
+    "fee": 20000,
+    "tick_spacing": 400,
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xF1A7000000950C7ad8Aff13118Bb7aB561A448ee",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xe5385d08687056d0b88f7a76d9560af1e111c11b9626ad2eda3be227ced7ec2d",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x335F4e66B9B61CEE5CeaDE4e727FCEC20156B2F0",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xdde5078d387eaa1a47ab0dae8890169517d990598161f00f4bb152eb75a3c19f",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x1b3be8fCD2e7C5cE9C5c242E0066FdD9740220d0",
+    "token1": "0xfEF4C6B56e011a684dC2054aFd576d83817C2620",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x5bf23f4dd757e2982318f664427a1d2aae843b9d92e4f6dab64fbbeb85e621a4",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xF19756E11FE6b1906cA4fF3a1bdba4d3B8e04af0",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xc3011ab27d607decdc04ab317585dececaa91de749be8b46accb36e066d8f420",
+    "fee": 0,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x000000C396558ffbAB5Ea628f39658Bdf61345b3",
+    "hooks": "0x0010d0d5db05933fa0d9f7038d365e1541a41888",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x9148f00424c4b40a9ec4b03912f091138e9e91a60980550ed97ed7f9dc998cb5",
+    "fee": 1,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x000000C396558ffbAB5Ea628f39658Bdf61345b3",
+    "hooks": "0x0010d0d5db05933fa0d9f7038d365e1541a41888",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x17bd04f94d8ea3991d952806bcfd2172ea81210ca5507916209ca06cb8b58dc4",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0xDDA31D354a519ecfB0bC2a536b5E7be147C0F7F4",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x6fbd7ab3e52fea2a986a24990db57b8a5a90c8769bfd9cbc0c276541fcb73e53",
+    "fee": 0,
+    "tick_spacing": 100,
+    "token0": "0x0000000000000000000000000000000000000000",
+    "token1": "0x000000C396558ffbAB5Ea628f39658Bdf61345b3",
+    "hooks": "0x0010d0d5db05933fa0d9f7038d365e1541a41888",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0xa406e0b0691168c876e89d48b92f4a94218fe646ec13bc3ac2fd532a60437249",
+    "fee": 10000,
+    "tick_spacing": 200,
+    "token0": "0x4B1E80cAC91e2216EEb63e29B957eB91Ae9C2Be8",
+    "token1": "0xfEF4C6B56e011a684dC2054aFd576d83817C2620",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x3c5bcf7cbe8603c1e621c96d071426269e76e5c02503e00b2c6e65b40dd3a73a",
+    "fee": 0,
+    "tick_spacing": 10,
+    "token0": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+    "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "hooks": "0x0010d0d5db05933fa0d9f7038d365e1541a41888",
+    "type": "UniswapV4"
+  },
+  {
+    "pool_id": "0x5b843de180cb6a05ca05bea520cba235bc6a773c93af59f856d77790d46ee8a1",
+    "fee": 0,
+    "tick_spacing": 10,
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "hooks": "0x0010d0d5db05933fa0d9f7038d365e1541a41888",
+    "type": "UniswapV4"
+  }
+]
