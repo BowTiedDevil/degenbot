@@ -63,9 +63,17 @@ class Erc20TokenManager(AbstractManager):
             return token_helper
 
         if address in EtherPlaceholder.addresses:
-            token_helper = EtherPlaceholder(address)
+            token_helper = EtherPlaceholder(
+                address,
+                chain_id=self._chain_id,
+            )
         else:
-            token_helper = Erc20Token(address=address, silent=silent, **kwargs)
+            token_helper = Erc20Token(
+                address,
+                chain_id=self._chain_id,
+                silent=silent,
+                **kwargs,
+            )
 
         with self._lock:
             self._erc20tokens[address] = token_helper
