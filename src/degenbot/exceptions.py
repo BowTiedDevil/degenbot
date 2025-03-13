@@ -1,5 +1,5 @@
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from eth_typing import ChecksumAddress
 
@@ -181,6 +181,10 @@ class InsufficientAmountOutError(LiquidityPoolError):
         self.amount_out = amount_out
         super().__init__(message="Insufficient liquidity to swap for the requested amount.")
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Pickling will raise an exception if a reduction method is not defined
+        return self.__class__, (self.amount_in, self.amount_out)
+
 
 class IncompleteSwap(LiquidityPoolError):
     """
@@ -191,6 +195,10 @@ class IncompleteSwap(LiquidityPoolError):
         self.amount_in = amount_in
         self.amount_out = amount_out
         super().__init__(message="Insufficient liquidity to swap for the requested amount.")
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Pickling will raise an exception if a reduction method is not defined
+        return self.__class__, (self.amount_in, self.amount_out)
 
 
 class LateUpdateError(LiquidityPoolError):
@@ -230,6 +238,10 @@ class PossibleInaccurateResult(LiquidityPoolError):
         super().__init__(
             message="The pool has one or more hooks that might invalidate the calculated result."
         )
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Pickling will raise an exception if a reduction method is not defined
+        return self.__class__, (self.amount_in, self.amount_out, self.hooks)
 
 
 # 2nd level exceptions for Transaction classes
