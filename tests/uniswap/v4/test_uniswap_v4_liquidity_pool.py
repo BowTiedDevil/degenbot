@@ -32,14 +32,24 @@ UNISWAP_V4_QUOTER_ABI = """
 @pytest.fixture
 def eth_usdc_v4(fork_mainnet: AnvilFork) -> UniswapV4Pool:
     set_web3(fork_mainnet.w3)
-    return UniswapV4Pool(
-        pool_id=ETH_USDC_V4_POOL_ID,
-        pool_manager_address=V4_POOL_MANAGER_ADDRESS,
-        state_view_address=STATE_VIEW_ADDRESS,
-        tokens=[USDC_CONTRACT_ADDRESS, NATIVE_CURRENCY_ADDRESS],
-        fee=ETH_USDC_V4_POOL_FEE,
-        tick_spacing=ETH_USDC_V4_POOL_TICK_SPACING,
-    )
+
+    if (
+        pool := pool_registry.get(
+            chain_id=fork_mainnet.w3.eth.chain_id,
+            pool_address=V4_POOL_MANAGER_ADDRESS,
+            pool_id=ETH_USDC_V4_POOL_ID,
+        )
+    ) is None:
+        return UniswapV4Pool(
+            pool_id=ETH_USDC_V4_POOL_ID,
+            pool_manager_address=V4_POOL_MANAGER_ADDRESS,
+            state_view_address=STATE_VIEW_ADDRESS,
+            tokens=[USDC_CONTRACT_ADDRESS, NATIVE_CURRENCY_ADDRESS],
+            fee=ETH_USDC_V4_POOL_FEE,
+            tick_spacing=ETH_USDC_V4_POOL_TICK_SPACING,
+        )
+
+    return pool
 
 
 @pytest.fixture
