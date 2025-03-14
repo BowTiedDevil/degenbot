@@ -980,8 +980,8 @@ def test_auto_update(
     block_number = 18_000_000
     fork_mainnet.reset(block_number=block_number)
     set_web3(fork_mainnet.w3)
-    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update() is True
-    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update() is False
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update()
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update()
 
     # Attempt an update in the past
     with pytest.raises(LateUpdateError):

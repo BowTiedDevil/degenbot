@@ -399,8 +399,6 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                     message=UniswapV2PoolStateUpdated(self.state),
                 )
 
-            return state_updated
-
     def calculate_tokens_in_from_ratio_out(
         self,
         token_in: Erc20Token,
