@@ -119,14 +119,13 @@ class UniswapV4LiquidityAtTick(UniswapV3LiquidityAtTick): ...
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
-class UniswapV4PoolState:
+class UniswapV4PoolState(AbstractPoolState):
     liquidity: int
     sqrt_price_x96: int
     tick: int
     tick_bitmap: dict[int, UniswapV4BitmapAtWord]
     tick_data: dict[int, UniswapV4LiquidityAtTick]
     id: HexBytes
-    manager: ChecksumAddress
     block: BlockNumber | None
 
 
