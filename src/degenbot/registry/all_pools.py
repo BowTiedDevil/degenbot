@@ -1,6 +1,5 @@
 import sys
 
-from eth_typing import AnyAddress, HexStr
 from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 
@@ -15,8 +14,8 @@ from eth_typing import ChecksumAddress
 from degenbot.exceptions import DegenbotValueError, RegistryAlreadyInitialized
 from degenbot.types import AbstractLiquidityPool, AbstractRegistry
 
-ContractAddress = AnyAddress
-PoolId = bytes | HexStr
+PoolId = bytes | str
+Address = bytes | str
 
 
 class _UniswapV4PoolManagerRegistry(AbstractRegistry):
@@ -32,8 +31,8 @@ class _UniswapV4PoolManagerRegistry(AbstractRegistry):
         self._all_v4_pools: dict[
             tuple[
                 int,  # Chain ID
-                ContractAddress,  # PoolManager contract address
-                str,  # Pool id
+                ChecksumAddress,  # PoolManager contract address
+                HexBytes,  # Pool id
             ],
             AbstractLiquidityPool,
         ] = {}
@@ -41,14 +40,14 @@ class _UniswapV4PoolManagerRegistry(AbstractRegistry):
     def get(
         self,
         chain_id: int,
-        pool_manager_address: ContractAddress,
+        pool_manager_address: Address,
         pool_id: PoolId,
     ) -> AbstractLiquidityPool | None:
         return self._all_v4_pools.get(
             (
                 chain_id,
                 to_checksum_address(pool_manager_address),
-                HexBytes(pool_id).to_0x_hex(),
+                HexBytes(pool_id),
             )
         )
 
@@ -56,26 +55,30 @@ class _UniswapV4PoolManagerRegistry(AbstractRegistry):
         self,
         pool: AbstractLiquidityPool,
         chain_id: int,
-        pool_manager_address: ContractAddress,
+        pool_manager_address: Address,
         pool_id: PoolId,
     ) -> None:
+        _pool_manager_address = to_checksum_address(pool_manager_address)
+        _pool_id = HexBytes(pool_id)
+
         if self.get(
             chain_id=chain_id,
-            pool_manager_address=to_checksum_address(pool_manager_address),
-            pool_id=HexBytes(pool_id).to_0x_hex(),
+            pool_manager_address=_pool_manager_address,
+            pool_id=_pool_id,
         ):
             raise DegenbotValueError(message="Pool is already registered")
+
         self._all_v4_pools[
             (
                 chain_id,
-                to_checksum_address(pool_manager_address),
-                HexBytes(pool_id).to_0x_hex(),
+                _pool_manager_address,
+                _pool_id,
             )
         ] = pool
 
     def remove(
         self,
-        pool_manager_address: ContractAddress,
+        pool_manager_address: Address,
         chain_id: int,
         pool_id: PoolId,
     ) -> None:
@@ -83,7 +86,7 @@ class _UniswapV4PoolManagerRegistry(AbstractRegistry):
             (
                 chain_id,
                 to_checksum_address(pool_manager_address),
-                HexBytes(pool_id).to_0x_hex(),
+                HexBytes(pool_id),
             ),
             None,
         )
@@ -115,7 +118,7 @@ class PoolRegistry(AbstractRegistry):
     def get(
         self,
         chain_id: int,
-        pool_address: ContractAddress,
+        pool_address: Address,
         pool_id: PoolId | None = None,
     ) -> AbstractLiquidityPool | None:
         if pool_id is not None:
@@ -136,7 +139,7 @@ class PoolRegistry(AbstractRegistry):
         self,
         pool: AbstractLiquidityPool,
         chain_id: int,
-        pool_address: ContractAddress,
+        pool_address: Address,
         pool_id: PoolId | None = None,
     ) -> None:
         if pool_id is not None:
@@ -146,23 +149,18 @@ class PoolRegistry(AbstractRegistry):
                 pool_manager_address=to_checksum_address(pool_address),
                 pool_id=pool_id,
             )
-        else:
-            if self.get(
-                chain_id=chain_id,
-                pool_address=to_checksum_address(pool_address),
-            ):
-                raise DegenbotValueError(message="Pool is already registered")
-            self._all_pools[
-                (
-                    chain_id,
-                    pool_address,
-                )
-            ] = pool
+        elif self.get(
+            chain_id=chain_id,
+            pool_address=to_checksum_address(pool_address),
+        ):
+            raise DegenbotValueError(message="Pool is already registered")
+
+        self._all_pools[(chain_id, to_checksum_address(pool_address))] = pool
 
     def remove(
         self,
         chain_id: int,
-        pool_address: ContractAddress,
+        pool_address: Address,
         pool_id: PoolId | None = None,
     ) -> None:
         if pool_id is not None:

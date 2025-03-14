@@ -261,7 +261,7 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
     # Remove from the pool manager and the registry
     uniswap_v2_pool_manager.remove(pool_address=new_v2_weth_wbtc_lp.address)
     pool_registry.remove(
-        pool_address_or_id=new_v2_weth_wbtc_lp.address,
+        pool_address=new_v2_weth_wbtc_lp.address,
         chain_id=1,
     )
 
@@ -284,7 +284,7 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
     )
 
     pool_registry.remove(
-        pool_address_or_id=v2_weth_wbtc_lp.address,
+        pool_address=v2_weth_wbtc_lp.address,
         chain_id=1,
     )
 
@@ -302,9 +302,7 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
     v3_pool = uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
     assert uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS) is v3_pool
 
-    pool_registry.remove(
-        pool_address_or_id=v3_pool.address, chain_id=uniswap_v3_pool_manager.chain_id
-    )
+    pool_registry.remove(pool_address=v3_pool.address, chain_id=uniswap_v3_pool_manager.chain_id)
     uniswap_v3_pool_manager.remove(v3_pool.address)
 
     assert uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS) is not v3_pool
@@ -379,7 +377,7 @@ def test_same_block(fork_mainnet: AnvilFork):
 
     uniswap_v2_pool_manager.remove(pool_address=v2_heyjoe_weth_lp.address)
     pool_registry.remove(
-        pool_address_or_id=v2_heyjoe_weth_lp.address,
+        pool_address=v2_heyjoe_weth_lp.address,
         chain_id=1,
     )
 

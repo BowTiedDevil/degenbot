@@ -300,7 +300,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         pool_registry.add(
             pool=self,
             chain_id=self.chain_id,
-            pool_address=self.pool_manager,
+            pool_address=self.address,
             pool_id=self.pool_id,
         )
 
