@@ -90,7 +90,7 @@ async def set_async_web3(w3: web3.AsyncWeb3, optimize_middleware: bool = True) -
     if await w3.is_connected() is False:
         raise DegenbotValueError(message="Web3 instance is not connected.")
     await async_connection_manager.register_web3(w3, optimize_middleware=optimize_middleware)
-    async_connection_manager.set_default_chain(w3.eth.chain_id)
+    async_connection_manager.set_default_chain(await w3.eth.chain_id)
 
 
 connection_manager = ConnectionManager()
