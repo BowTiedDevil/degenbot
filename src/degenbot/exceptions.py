@@ -227,7 +227,7 @@ class InvalidSwapInputAmount(LiquidityPoolError):
 
 
 class PossibleInaccurateResult(LiquidityPoolError):
-    def __init__(self, amount_in: int, amount_out: int, hooks: "Hooks") -> None:
+    def __init__(self, amount_in: int, amount_out: int, hooks: set["Hooks"]) -> None:
         """
         Raised if a pool has an active hook that might invalidate the calculated result.
         """
