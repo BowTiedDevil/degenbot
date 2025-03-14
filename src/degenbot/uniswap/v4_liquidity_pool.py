@@ -285,7 +285,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
         self._state = UniswapV4PoolState(
             id=self.pool_id,
-            manager=self.pool_manager,
+            address=self._pool_manager_address,
             liquidity=_liquidity,
             sqrt_price_x96=_sqrt_price_x96,
             tick=_tick,

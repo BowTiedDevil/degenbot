@@ -289,7 +289,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             )
 
         self._state = type(self).PoolState(
-            pool=self.address,
+            address=self.address,
             liquidity=_liquidity,
             sqrt_price_x96=_sqrt_price_x96,
             tick=_tick,

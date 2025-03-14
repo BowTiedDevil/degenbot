@@ -81,7 +81,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         self._state_lock = Lock()
         self._state = type(self).PoolState(
-            pool=self.address,
+            address=self.address,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
             block=state_block,

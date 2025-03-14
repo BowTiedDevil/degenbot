@@ -25,7 +25,6 @@ class AerodromeV2PoolExternalUpdate(UniswapV2PoolExternalUpdate): ...
 
 @dataclass(slots=True, frozen=True)
 class AerodromeV2PoolState(AbstractPoolState):
-    pool: ChecksumAddress
     reserves_token0: int
     reserves_token1: int
 

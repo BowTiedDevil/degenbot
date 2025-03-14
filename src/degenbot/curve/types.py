@@ -2,14 +2,13 @@
 
 import dataclasses
 
-from eth_typing import ChecksumAddress, HexAddress
+from eth_typing import HexAddress
 
 from degenbot.types import AbstractPoolState, PoolStateMessage
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class CurveStableswapPoolState(AbstractPoolState):
-    pool: ChecksumAddress
     balances: tuple[int, ...]
     base: "CurveStableswapPoolState | None" = None
 

@@ -1545,7 +1545,7 @@ class UniswapTransaction(AbstractTransaction):
                             added_reserves_token0=token0_amount,
                             added_reserves_token1=token1_amount,
                             override_state=UniswapV2PoolState(
-                                pool=_pool.address,
+                                address=_pool.address,
                                 reserves_token0=0,
                                 reserves_token1=0,
                                 block=None,

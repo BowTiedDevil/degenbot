@@ -662,7 +662,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
 
         self._state = CurveStableswapPoolState(
-            pool=self.address,
+            address=self.address,
             balances=tuple(_balances),
             block=state_block,
         )
@@ -2230,14 +2230,14 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
             state = (
                 CurveStableswapPoolState(
-                    pool=self.address,
+                    address=self.address,
                     balances=tuple(token_balances),
                     base=self.base_pool.state,
                     block=block_number,
                 )
                 if self.base_pool is not None
                 else CurveStableswapPoolState(
-                    pool=self.address,
+                    address=self.address,
                     balances=tuple(token_balances),
                     block=block_number,
                 )
