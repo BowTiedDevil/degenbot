@@ -74,7 +74,7 @@ def test_num_of_pools_in_sample(testing_pools):
 
 def test_pool_creation(eth_usdc_v4: UniswapV4Pool):
     assert eth_usdc_v4.pool_id == HexBytes(ETH_USDC_V4_POOL_ID)
-    assert eth_usdc_v4.pool_manager == V4_POOL_MANAGER_ADDRESS
+    assert eth_usdc_v4.address == V4_POOL_MANAGER_ADDRESS
     assert eth_usdc_v4.tokens[0].address == NATIVE_CURRENCY_ADDRESS
     assert eth_usdc_v4.tokens[1].address == USDC_CONTRACT_ADDRESS
 
@@ -180,8 +180,10 @@ def _test_pool_exact_input(
             print(f"Caught exception {exc} building pool id {pool['pool_id']}")
             raise
 
-    max_reserves_token0 = lp.token0.get_balance(lp.pool_manager)
-    max_reserves_token1 = lp.token1.get_balance(lp.pool_manager)
+    assert isinstance(lp, UniswapV4Pool)
+
+    max_reserves_token0 = lp.token0.get_balance(lp.address)
+    max_reserves_token1 = lp.token1.get_balance(lp.address)
 
     if max_reserves_token0 == 0 or max_reserves_token1 == 0:
         return
@@ -315,8 +317,10 @@ def _test_pool_exact_output(
             print(f"Caught exception {exc} building pool id {pool['pool_id']}")
             raise
 
-    max_reserves_token0 = lp.token0.get_balance(lp.pool_manager)
-    max_reserves_token1 = lp.token1.get_balance(lp.pool_manager)
+    assert isinstance(lp, UniswapV4Pool)
+
+    max_reserves_token0 = lp.token0.get_balance(lp.address)
+    max_reserves_token1 = lp.token1.get_balance(lp.address)
 
     if max_reserves_token0 == 0 or max_reserves_token1 == 0:
         return

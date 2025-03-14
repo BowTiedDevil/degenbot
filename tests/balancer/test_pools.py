@@ -65,7 +65,7 @@ def test_create_pool(
     assert len(lp.tokens) == 2
     assert lp.tokens[0] == "0xba100000625a3754423978a60c9317c58a424e3D"
     assert lp.tokens[1] == "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-    assert lp.state.pool == BALANCER_V2_WETH_BAL_POOL_ADDRESS
+    assert lp.state.address == BALANCER_V2_WETH_BAL_POOL_ADDRESS
     assert len(lp.state.balances) == len(lp.tokens)
     assert lp.weights == (80 * 10**16, 20 * 10**16)
 

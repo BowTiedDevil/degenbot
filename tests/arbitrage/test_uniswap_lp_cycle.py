@@ -2109,7 +2109,7 @@ def wbtc_weth_arb(
 class MockLiquidityPool(UniswapV2Pool):
     def __init__(self) -> None:
         self._state = UniswapV2PoolState(
-            pool=ZERO_ADDRESS,
+            address=ZERO_ADDRESS,
             reserves_token0=0,
             reserves_token1=0,
             block=None,
@@ -2152,14 +2152,14 @@ def test_arbitrage_with_overrides(
     wbtc_token: Erc20Token,
 ):
     v2_pool_state_override = UniswapV2PoolState(
-        pool=wbtc_weth_v2_lp.address,
+        address=wbtc_weth_v2_lp.address,
         reserves_token0=16027096956,
         reserves_token1=2602647332090181827846,
         block=None,
     )
 
     v3_pool_state_override = UniswapV3PoolState(
-        pool=wbtc_weth_v3_lp.address,
+        address=wbtc_weth_v3_lp.address,
         block=None,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
@@ -2168,12 +2168,12 @@ def test_arbitrage_with_overrides(
         tick_data=wbtc_weth_v3_lp.tick_data,
     )
 
-    overrides: Mapping[ChecksumAddress, UniswapV2PoolState | UniswapV3PoolState]
+    overrides: dict[Pool, PoolState]
 
     # Override both pools
     overrides = {
-        wbtc_weth_v2_lp.address: v2_pool_state_override,
-        wbtc_weth_v3_lp.address: v3_pool_state_override,
+        wbtc_weth_v2_lp: v2_pool_state_override,
+        wbtc_weth_v3_lp: v3_pool_state_override,
     }
 
     with pytest.raises(ArbitrageError):
@@ -2181,7 +2181,7 @@ def test_arbitrage_with_overrides(
 
     # Override V2 pool only
     overrides = {
-        wbtc_weth_v2_lp.address: v2_pool_state_override,
+        wbtc_weth_v2_lp: v2_pool_state_override,
     }
 
     with pytest.raises(ArbitrageError):
@@ -2189,7 +2189,7 @@ def test_arbitrage_with_overrides(
 
     # Override V3 pool only
     overrides = {
-        wbtc_weth_v3_lp.address: v3_pool_state_override,
+        wbtc_weth_v3_lp: v3_pool_state_override,
     }
 
     result = wbtc_weth_arb.calculate(state_overrides=overrides)
@@ -2204,7 +2204,7 @@ def test_arbitrage_with_overrides(
     irrelevant_v2_pool.fee_token0 = Fraction(3, 1000)
     irrelevant_v2_pool.fee_token1 = Fraction(3, 1000)
     irrelevant_v2_pool._state = UniswapV2PoolState(
-        pool=irrelevant_v2_pool.address,
+        address=irrelevant_v2_pool.address,
         reserves_token0=16231137593,
         reserves_token1=2571336301536722443178,
         block=None,
@@ -2215,7 +2215,7 @@ def test_arbitrage_with_overrides(
     irrelevant_v3_pool = MockV3LiquidityPool()
     irrelevant_v3_pool.address = to_checksum_address("0x0000000000000000000000000000000000000420")
     irrelevant_v3_pool._state = UniswapV3PoolState(
-        pool=irrelevant_v3_pool.address,
+        address=irrelevant_v3_pool.address,
         block=None,
         liquidity=1612978974357835825,
         sqrt_price_x96=31549217861118002279483878013792428,
@@ -2232,8 +2232,8 @@ def test_arbitrage_with_overrides(
     irrelevant_v3_pool.tick_spacing = 60
 
     overrides = {
-        irrelevant_v2_pool.address: v2_pool_state_override,  # <--- entry should be ignored
-        wbtc_weth_v3_lp.address: v3_pool_state_override,
+        irrelevant_v2_pool: v2_pool_state_override,  # <--- entry should be ignored
+        wbtc_weth_v3_lp: v3_pool_state_override,
     }
 
     # This should equal the result from the test with the V3 override only
@@ -2291,7 +2291,7 @@ async def test_process_pool_calculation(
     start = time.perf_counter()
 
     v3_pool_state_override = UniswapV3PoolState(
-        pool=wbtc_weth_v3_lp.address,
+        address=wbtc_weth_v3_lp.address,
         block=None,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
@@ -2300,8 +2300,8 @@ async def test_process_pool_calculation(
         tick_data=wbtc_weth_v3_lp.tick_data,
     )
 
-    overrides: Mapping[ChecksumAddress, UniswapV3PoolState] = {
-        wbtc_weth_v3_lp.address: v3_pool_state_override,
+    overrides: dict[Pool, PoolState] = {
+        wbtc_weth_v3_lp: v3_pool_state_override,
     }
 
     with concurrent.futures.ProcessPoolExecutor(
@@ -2373,7 +2373,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
     lp_1.fee_token0 = Fraction(3, 1000)
     lp_1.fee_token1 = Fraction(3, 1000)
     lp_1._state = UniswapV2PoolState(
-        pool=lp_1.address,
+        address=lp_1.address,
         reserves_token0=16000000000,
         reserves_token1=2500000000000000000000,
         block=None,
@@ -2388,7 +2388,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
     lp_2.fee_token0 = Fraction(3, 1000)
     lp_2.fee_token1 = Fraction(3, 1000)
     lp_2._state = UniswapV2PoolState(
-        pool=lp_2.address,
+        address=lp_2.address,
         reserves_token0=15000000000,
         reserves_token1=2500000000000000000000,
         block=None,

@@ -88,7 +88,7 @@ def test_auto_update(
 
     # Hand-modify the state to force a positive update
     lp._state = AerodromeV2PoolState(
-        pool=lp.address,
+        address=lp.address,
         reserves_token0=lp.state.reserves_token0 - 1,
         reserves_token1=lp.state.reserves_token1 + 1,
         block=None,

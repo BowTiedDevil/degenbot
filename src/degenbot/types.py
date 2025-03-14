@@ -130,7 +130,7 @@ class AbstractPoolUpdate: ...
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class AbstractPoolState:
-    pool: ChecksumAddress
+    address: ChecksumAddress
     block: BlockNumber | None
 
 

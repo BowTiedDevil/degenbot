@@ -618,7 +618,7 @@ def test_calculate_tokens_out_from_tokens_in_with_override(
     # Tick: 258116
 
     pool_state_override = UniswapV3PoolState(
-        pool=lp.address,
+        address=lp.address,
         block=None,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
@@ -668,7 +668,7 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
     # Tick: 258116
 
     pool_state_override = UniswapV3PoolState(
-        pool=lp.address,
+        address=lp.address,
         block=None,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
@@ -697,7 +697,7 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None
         amount1_delta=1000000000000000000,
         initial_state=lp.state,
         final_state=UniswapV3PoolState(
-            pool=lp.address,
+            address=lp.address,
             liquidity=1612978974357835825,
             sqrt_price_x96=31549266832914462409708360853542079,
             tick=257907,
@@ -731,7 +731,7 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None
         amount1_delta=-15808930695950518795,
         initial_state=lp.state,
         final_state=UniswapV3PoolState(
-            pool=lp.address,
+            address=lp.address,
             liquidity=1612978974357835825,
             sqrt_price_x96=31548441339817807300885591332345643,
             tick=257906,
@@ -785,7 +785,7 @@ def test_simulations_with_override(
     # Tick: 258116
 
     pool_state_override = UniswapV3PoolState(
-        pool=lp.address,
+        address=lp.address,
         block=None,
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
@@ -803,7 +803,7 @@ def test_simulations_with_override(
         amount1_delta=1 * 10**18,
         initial_state=pool_state_override,
         final_state=UniswapV3PoolState(
-            pool=lp.address,
+            address=lp.address,
             block=None,
             sqrt_price_x96=31881342483860761583159860586051776,
             liquidity=1533143241938066251,
@@ -822,7 +822,7 @@ def test_simulations_with_override(
         amount1_delta=999999892383362636,
         initial_state=pool_state_override,
         final_state=UniswapV3PoolState(
-            pool=lp.address,
+            address=lp.address,
             block=None,
             sqrt_price_x96=31881342483855216967760245337454994,
             liquidity=1533143241938066251,
