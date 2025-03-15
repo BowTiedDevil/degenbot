@@ -1,7 +1,7 @@
 import pytest
 import web3
 from eth_typing import BlockNumber, Hash32, HexStr
-from eth_utils.address import to_checksum_address
+from degenbot.cache import get_checksum_address
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
@@ -58,7 +58,7 @@ def test_encode_function_calldata():
 def test_low_level_call_for_factory_address(ethereum_archive_node_web3: web3.Web3):
     degenbot.config.set_web3(ethereum_archive_node_web3)
 
-    pool_address = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
+    pool_address = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
     function_prototype = "factory()"
 
@@ -72,7 +72,7 @@ def test_low_level_call_for_factory_address(ethereum_archive_node_web3: web3.Web
         ),
         return_types=["address"],
     )
-    assert to_checksum_address(result) == to_checksum_address(
+    assert get_checksum_address(result) == get_checksum_address(
         "0x1F98431c8aD98523631AE4a59f267346ea31F984"
     )
 

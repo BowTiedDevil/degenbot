@@ -1,5 +1,5 @@
 import pytest
-from eth_utils.address import to_checksum_address
+from degenbot.cache import get_checksum_address
 from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
 
@@ -9,10 +9,10 @@ from degenbot.erc20_token import Erc20Token, EtherPlaceholder
 from degenbot.exceptions import DegenbotValueError, NoPriceOracle
 from degenbot.types import BoundedCache
 
-VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
-WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-WBTC_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
-CHAINLINK_WETH_PRICE_FEED = to_checksum_address("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419")
+VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+WBTC_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
+CHAINLINK_WETH_PRICE_FEED = get_checksum_address("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419")
 
 
 @pytest.fixture
@@ -69,21 +69,21 @@ def test_erc20token_comparisons(wbtc: Erc20Token, weth: Erc20Token):
     assert weth == WETH_ADDRESS
     assert weth == WETH_ADDRESS.lower()
     assert weth == WETH_ADDRESS.upper()
-    assert weth == to_checksum_address(WETH_ADDRESS)
+    assert weth == get_checksum_address(WETH_ADDRESS)
     assert weth == HexBytes(WETH_ADDRESS)
     assert weth == bytes.fromhex(WETH_ADDRESS[2:])
 
     assert wbtc == WBTC_ADDRESS
     assert wbtc == WBTC_ADDRESS.lower()
     assert wbtc == WBTC_ADDRESS.upper()
-    assert wbtc == to_checksum_address(WBTC_ADDRESS)
+    assert wbtc == get_checksum_address(WBTC_ADDRESS)
     assert wbtc == HexBytes(WBTC_ADDRESS)
 
     assert weth > wbtc
     assert weth > WBTC_ADDRESS
     assert weth > WBTC_ADDRESS.lower()
     assert weth > WBTC_ADDRESS.upper()
-    assert weth > to_checksum_address(WBTC_ADDRESS)
+    assert weth > get_checksum_address(WBTC_ADDRESS)
     assert weth > HexBytes(WBTC_ADDRESS)
     assert weth > bytes.fromhex(WBTC_ADDRESS[2:])
 
@@ -91,7 +91,7 @@ def test_erc20token_comparisons(wbtc: Erc20Token, weth: Erc20Token):
     assert wbtc < WETH_ADDRESS
     assert wbtc < WETH_ADDRESS.lower()
     assert wbtc < WETH_ADDRESS.upper()
-    assert wbtc < to_checksum_address(WETH_ADDRESS)
+    assert wbtc < get_checksum_address(WETH_ADDRESS)
     assert wbtc < HexBytes(WETH_ADDRESS)
     assert wbtc < bytes.fromhex(WETH_ADDRESS[2:])
 

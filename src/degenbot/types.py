@@ -13,8 +13,9 @@ else:
 
 
 from eth_typing import BlockNumber, ChecksumAddress
-from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
+
+from degenbot.cache import get_checksum_address
 
 
 class Message:
@@ -122,7 +123,7 @@ class AbstractPoolManager:
 
     @classmethod
     def get_instance(cls, factory_address: str, chain_id: int) -> Self | None:
-        return cls.instances.get((chain_id, to_checksum_address(factory_address)))
+        return cls.instances.get((chain_id, get_checksum_address(factory_address)))
 
 
 class AbstractPoolUpdate: ...

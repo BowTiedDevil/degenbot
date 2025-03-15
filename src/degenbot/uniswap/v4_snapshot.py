@@ -6,13 +6,13 @@ from typing import Any, cast
 import pydantic_core
 from eth_typing import ABIEvent, ChecksumAddress
 from eth_utils.abi import event_abi_to_log_topic
-from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.contract.base_contract import BaseContractEvent
 from web3.types import EventData, FilterParams, LogReceipt
 from web3.utils import get_abi_element
 
+from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
 from degenbot.logging import logger
 from degenbot.uniswap.abi import UNISWAP_V4_POOL_MANAGER_ABI
@@ -101,7 +101,7 @@ class UniswapV4LiquiditySnapshot:
             event: BaseContractEvent, log: LogReceipt
         ) -> tuple[ChecksumAddress, str, UniswapV4LiquidityEvent]:
             decoded_event: EventData = event.process_log(log)
-            pool_manager_address = to_checksum_address(decoded_event["address"])
+            pool_manager_address = get_checksum_address(decoded_event["address"])
             pool_id = HexBytes(decoded_event["args"]["id"]).to_0x_hex()
             tx_index = decoded_event["transactionIndex"]
             liquidity_block = decoded_event["blockNumber"]
@@ -164,20 +164,7 @@ class UniswapV4LiquiditySnapshot:
         self.newest_block = to_block
 
     def get_new_liquidity_updates(
-        self, pool_manager_address: str, pool_id: str
-    ) -> list[UniswapV4PoolLiquidityMappingUpdate]:
-        pool_manager_address = to_checksum_address(pool_manager_address)
-        pool_updates = self._liquidity_events.get(pool_id, [])
-        self._liquidity_events[pool_id] = []
-
-        # Liquidity events from a block prior to the current update block will be rejected, so they
-        # must be applied in chronological order
-        sorted_events = sorted(
-            pool_updates,
-            key=lambda event: (event.block_number, event.tx_index),
-        )
-
-        return [
+        pool_manager_address = get_checksum_address(pool_manager_address)
             UniswapV4PoolLiquidityMappingUpdate(
                 block_number=event.block_number,
                 liquidity=event.liquidity,

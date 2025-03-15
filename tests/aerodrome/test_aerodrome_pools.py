@@ -15,23 +15,24 @@ from degenbot.aerodrome.types import (
     AerodromeV2PoolState,
     AerodromeV3PoolState,
 )
+from degenbot.cache import get_checksum_address
 from degenbot.exceptions import ExternalUpdateError, LateUpdateError
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 
-WETH_CONTRACT_ADDRESS = to_checksum_address("0x4200000000000000000000000000000000000006")
-CBETH_CONTRACT_ADDRESS = to_checksum_address("0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22")
+WETH_CONTRACT_ADDRESS = get_checksum_address("0x4200000000000000000000000000000000000006")
+CBETH_CONTRACT_ADDRESS = get_checksum_address("0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22")
 
-AERODROME_V2_FACTORY_ADDRESS = to_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da")
-AERODROME_V2_POOL_IMPLEMENTATION_ADDRESS = to_checksum_address(
+AERODROME_V2_FACTORY_ADDRESS = get_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da")
+AERODROME_V2_POOL_IMPLEMENTATION_ADDRESS = get_checksum_address(
     "0xA4e46b4f701c62e14DF11B48dCe76A7d793CD6d7"
 )
 
-AERODROME_V3_FACTORY_ADDRESS = to_checksum_address("0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A")
-AERODROME_V3_QUOTER_ADDRESS = to_checksum_address("0x254cF9E1E6e233aa1AC962CB9B05b2cfeAaE15b0")
-AERODROME_V3_TBTC_USDBC_POOL_ADDRESS = to_checksum_address(
+AERODROME_V3_FACTORY_ADDRESS = get_checksum_address("0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A")
+AERODROME_V3_QUOTER_ADDRESS = get_checksum_address("0x254cF9E1E6e233aa1AC962CB9B05b2cfeAaE15b0")
+AERODROME_V3_TBTC_USDBC_POOL_ADDRESS = get_checksum_address(
     "0x723AEf6543aecE026a15662Be4D3fb3424D502A9"
 )
-AERODROME_V3_CBETH_WETH_POOL_ADDRESS = to_checksum_address(
+AERODROME_V3_CBETH_WETH_POOL_ADDRESS = get_checksum_address(
     "0x47cA96Ea59C13F72745928887f84C9F52C3D7348"
 )
 AERODROME_V3_QUOTER_ABI = pydantic_core.from_json(

@@ -5,10 +5,10 @@ from typing import Final
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
-from eth_utils.address import to_checksum_address
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
+from degenbot.cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.functions import create2_address
 from degenbot.uniswap.v3_libraries import tick_bitmap
@@ -23,7 +23,7 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
     fee_bytes: Final = 3
 
     def _extract_address(chunk: bytes) -> ChecksumAddress:
-        return to_checksum_address(chunk)
+        return get_checksum_address(chunk)
 
     def _extract_fee(chunk: bytes) -> int:
         return int.from_bytes(chunk, byteorder="big")

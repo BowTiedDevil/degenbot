@@ -6,7 +6,6 @@ from weakref import WeakSet
 
 import eth_abi.abi
 from eth_typing import BlockNumber, ChecksumAddress
-from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.types import BlockIdentifier
@@ -22,6 +21,7 @@ from degenbot.aerodrome.types import (
     AerodromeV2PoolStateUpdated,
     AerodromeV3PoolState,
 )
+from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
@@ -66,7 +66,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         silent: bool = False,
         state_cache_depth: int = 8,
     ) -> None:
-        self.address = to_checksum_address(address)
+        self.address = get_checksum_address(address)
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
@@ -76,7 +76,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
             self.get_factory_tokens_stable_reserves_batched(w3=w3, state_block=state_block)
         )
         self.deployer_address = (
-            to_checksum_address(deployer_address) if deployer_address is not None else self.factory
+            get_checksum_address(deployer_address) if deployer_address is not None else self.factory
         )
 
         self._state_lock = Lock()
@@ -143,14 +143,14 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
     def _verified_address(self) -> ChecksumAddress:
         # The implementation address is hard-coded into the contract
-        implementation_address = to_checksum_address(
+        implementation_address = get_checksum_address(
             connection_manager.get_web3(self.chain_id).eth.get_code(self.address)[10:30]
         )
 
         return generate_aerodrome_v2_pool_address(
             deployer_address=self.deployer_address,
             token_addresses=(self.token0.address, self.token1.address),
-            implementation_address=to_checksum_address(implementation_address),
+            implementation_address=get_checksum_address(implementation_address),
             stable=self.stable,
         )
 
@@ -460,7 +460,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
             types=["uint256"],
             data=w3.eth.call(
                 transaction={
-                    "to": to_checksum_address(cast(str, factory)),
+                    "to": get_checksum_address(cast(str, factory)),
                     "data": encode_function_calldata(
                         function_prototype="getFee(address,bool)",
                         function_arguments=[self.address, stable],
@@ -470,8 +470,8 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
         return (
-            to_checksum_address(cast(str, factory)),
-            (to_checksum_address(cast(str, token0)), to_checksum_address(cast(str, token1))),
+            get_checksum_address(cast(str, factory)),
+            (get_checksum_address(cast(str, token0)), get_checksum_address(cast(str, token1))),
             cast(bool, stable),
             cast(int, fee),
             (cast(int, reserves0), cast(int, reserves1)),
@@ -521,13 +521,13 @@ class AerodromeV3Pool(UniswapV3Pool):
 
     def _verified_address(self) -> ChecksumAddress:
         # The implementation address is hard-coded into the contract
-        implementation_address = to_checksum_address(
+        implementation_address = get_checksum_address(
             connection_manager.get_web3(self.chain_id).eth.get_code(self.address)[10:30]
         )
 
         return generate_aerodrome_v3_pool_address(
             deployer_address=self.deployer_address,
             token_addresses=(self.token0.address, self.token1.address),
-            implementation_address=to_checksum_address(implementation_address),
+            implementation_address=get_checksum_address(implementation_address),
             tick_spacing=self.tick_spacing,
         )

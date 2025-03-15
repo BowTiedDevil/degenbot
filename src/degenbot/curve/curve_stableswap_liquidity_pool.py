@@ -17,12 +17,12 @@ import eth_abi.abi
 import web3.exceptions
 from eth_abi.exceptions import DecodingError, InsufficientDataBytes
 from eth_typing import AnyAddress, BlockNumber, ChecksumAddress
-from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
+from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.curve.deployments import (
@@ -69,7 +69,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
     MAX_COINS: int = 8
 
     D_VARIANT_GROUP_0 = frozenset(
-        to_checksum_address(pool_address)
+        get_checksum_address(pool_address)
         for pool_address in (
             "0x06364f10B501e868329afBc005b3492902d6C763",
             "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
@@ -80,7 +80,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
     )
     D_VARIANT_GROUP_1 = frozenset(
-        to_checksum_address(pool_address)
+        get_checksum_address(pool_address)
         for pool_address in (
             "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
             "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
@@ -89,7 +89,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
     )
     D_VARIANT_GROUP_2 = frozenset(
-        to_checksum_address(pool_address)
+        get_checksum_address(pool_address)
         for pool_address in (
             "0x0AD66FeC8dB84F8A3365ADA04aB23ce607ac6E24",
             "0x1c899dED01954d0959E034b62a728e7fEbE593b0",
@@ -107,7 +107,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
     )
     D_VARIANT_GROUP_3 = frozenset(
-        to_checksum_address(pool_address)
+        get_checksum_address(pool_address)
         for pool_address in (
             "0xDC24316b9AE028F1497c275EB9192a3Ea0f67022",
             "0xDeBF20617708857ebe4F679508E7b7863a8A8EeE",
@@ -115,7 +115,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
     )
     D_VARIANT_GROUP_4 = frozenset(
-        to_checksum_address(pool_address)
+        get_checksum_address(pool_address)
         for pool_address in (
             "0x1062FD8eD633c1f080754c19317cb3912810B5e5",
             "0x1C5F80b6B68A9E1Ef25926EeE00b5255791b996B",
@@ -131,7 +131,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
     )
 
     Y_VARIANT_GROUP_0 = frozenset(
-        to_checksum_address(pool_address)
+        get_checksum_address(pool_address)
         for pool_address in (
             "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
             "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
@@ -141,7 +141,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
     )
     Y_VARIANT_GROUP_1 = frozenset(
-        to_checksum_address(pool_address)
+        get_checksum_address(pool_address)
         for pool_address in (
             "0x06364f10B501e868329afBc005b3492902d6C763",
             "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
@@ -157,7 +157,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
     )
 
     Y_D_VARIANT_GROUP_0 = frozenset(
-        to_checksum_address(pool_address)
+        get_checksum_address(pool_address)
         for pool_address in (
             "0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2",
             "0xf253f83AcA21aAbD2A20553AE0BF7F65C755A07F",
@@ -394,7 +394,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                         return_types=["address"],
                         block_identifier=state_block,
                     )
-                    token_addresses.append(to_checksum_address(token_address))
+                    token_addresses.append(get_checksum_address(token_address))
                 except web3.exceptions.ContractLogicError:  # noqa:PERF203
                     break
 
@@ -419,7 +419,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                     )
                     if lp_token_address == ZERO_ADDRESS:
                         continue
-                    return to_checksum_address(lp_token_address)
+                    return get_checksum_address(lp_token_address)
 
             raise DegenbotValueError(
                 message=f"Could not identify LP token for pool {self.address}"
@@ -437,12 +437,12 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                         address=contract_address,
                         calldata=encode_function_calldata(
                             function_prototype="get_pool_from_lp_token(address)",
-                            function_arguments=[to_checksum_address(token)],
+                            function_arguments=[get_checksum_address(token)],
                         ),
                         return_types=["address"],
                         block_identifier=state_block,
                     )
-                    return to_checksum_address(pool_address)
+                    return get_checksum_address(pool_address)
 
             raise DegenbotValueError(
                 message=f"Could not identify base pool from LP token for {self.address}"
@@ -533,7 +533,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                         ),
                     )
 
-        self.address = to_checksum_address(address)
+        self.address = get_checksum_address(address)
         if self.address in BROKEN_CURVE_V1_POOLS:
             raise BrokenPool
 
@@ -874,7 +874,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             types=["uint256"],
             data=w3.eth.call(
                 transaction={
-                    "to": to_checksum_address(snap_contract_address),
+                    "to": get_checksum_address(snap_contract_address),
                     "data": Web3.keccak(text="snappedRedemptionPrice()")[:4],
                 },
                 block_identifier=block_number,
@@ -2173,7 +2173,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 types=["uint256"],
                 data=connection_manager.get_web3(self.chain_id).eth.call(
                     transaction={
-                        "to": to_checksum_address(HexBytes(self.oracle_method % 2**160)),
+                        "to": get_checksum_address(HexBytes(self.oracle_method % 2**160)),
                         "data": HexBytes(self.oracle_method & oracle_bit_mask),
                     },
                     block_identifier=block_number,

@@ -6,13 +6,13 @@ from typing import Any, cast
 import pydantic_core
 from eth_typing import ABIEvent, ChecksumAddress
 from eth_utils.abi import event_abi_to_log_topic
-from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.contract.base_contract import BaseContractEvent
 from web3.types import EventData, FilterParams, LogReceipt
 from web3.utils import get_abi_element
 
+from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
 from degenbot.logging import logger
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
@@ -42,7 +42,7 @@ class UniswapV3LiquiditySnapshot:
         self.newest_block = json_liquidity_snapshot.pop("snapshot_block")
 
         self._liquidity_snapshot: dict[ChecksumAddress, dict[str, Any]] = {
-            to_checksum_address(pool_address): {
+            get_checksum_address(pool_address): {
                 "tick_bitmap": {
                     int(k): UniswapV3BitmapAtWord(**v)
                     for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
@@ -85,7 +85,7 @@ class UniswapV3LiquiditySnapshot:
             event: BaseContractEvent, log: LogReceipt
         ) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
             decoded_event: EventData = event.process_log(log)
-            address = to_checksum_address(decoded_event["address"])
+            address = get_checksum_address(decoded_event["address"])
             tx_index = decoded_event["transactionIndex"]
             liquidity_block = decoded_event["blockNumber"]
             liquidity = decoded_event["args"]["amount"] * (
@@ -144,7 +144,7 @@ class UniswapV3LiquiditySnapshot:
     def get_new_liquidity_updates(
         self, pool_address: str
     ) -> list[UniswapV3PoolLiquidityMappingUpdate]:
-        pool_address = to_checksum_address(pool_address)
+        pool_address = get_checksum_address(pool_address)
         pool_updates = self._liquidity_events.get(pool_address, [])
         self._liquidity_events[pool_address] = []
 
@@ -166,7 +166,7 @@ class UniswapV3LiquiditySnapshot:
         ]
 
     def get_tick_bitmap(self, pool: ChecksumAddress | str) -> dict[int, UniswapV3BitmapAtWord]:
-        pool_address = to_checksum_address(pool)
+        pool_address = get_checksum_address(pool)
 
         try:
             tick_bitmap: dict[int, UniswapV3BitmapAtWord] = self._liquidity_snapshot[pool_address][
@@ -178,7 +178,7 @@ class UniswapV3LiquiditySnapshot:
             return tick_bitmap
 
     def get_tick_data(self, pool: ChecksumAddress | str) -> dict[int, UniswapV3LiquidityAtTick]:
-        pool_address = to_checksum_address(pool)
+        pool_address = get_checksum_address(pool)
 
         try:
             tick_data: dict[int, UniswapV3LiquidityAtTick] = self._liquidity_snapshot[pool_address][
@@ -195,7 +195,7 @@ class UniswapV3LiquiditySnapshot:
         tick_data: dict[int, UniswapV3LiquidityAtTick],
         tick_bitmap: dict[int, UniswapV3BitmapAtWord],
     ) -> None:
-        pool_address = to_checksum_address(pool)
+        pool_address = get_checksum_address(pool)
 
         self._add_pool_if_missing(pool_address)
         self._liquidity_snapshot[pool_address].update(

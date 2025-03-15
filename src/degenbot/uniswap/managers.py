@@ -4,7 +4,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from eth_typing import ChecksumAddress
-from eth_utils.address import to_checksum_address
+from degenbot.cache import get_checksum_address
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -59,7 +59,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         deployer_address: ChecksumAddress | str | None = None,
         pool_init_hash: str | None = None,
     ):
-        factory_address = to_checksum_address(factory_address)
+        factory_address = get_checksum_address(factory_address)
 
         if chain_id is None:
             chain_id = connection_manager.default_chain_id
@@ -83,7 +83,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
                 logger.info("Pool init hash is unknown. Using Uniswap V3 mainnet default.")
                 pool_init_hash = UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH
             deployer_address = (
-                to_checksum_address(deployer_address)
+                get_checksum_address(deployer_address)
                 if deployer_address is not None
                 else factory_address
             )
@@ -136,7 +136,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         Get a pool from its address
         """
 
-        pool_address = to_checksum_address(pool_address)
+        pool_address = get_checksum_address(pool_address)
 
         with contextlib.suppress(KeyError):
             result = self._tracked_pools[pool_address]
@@ -202,7 +202,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         )
 
     def remove(self, pool_address: ChecksumAddress | str) -> None:
-        pool_address = to_checksum_address(pool_address)
+        pool_address = get_checksum_address(pool_address)
         self._tracked_pools.pop(pool_address, None)
         self._untracked_pools.discard(pool_address)
 
@@ -238,7 +238,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
         if chain_id is None:
             chain_id = connection_manager.default_chain_id
 
-        factory_address = to_checksum_address(factory_address)
+        factory_address = get_checksum_address(factory_address)
 
         if (chain_id, factory_address) in self.instances:
             raise ManagerAlreadyInitialized(
@@ -259,7 +259,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
                 logger.info("Pool init hash is unknown. Using Uniswap V3 mainnet default.")
                 pool_init_hash = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH
             deployer_address = (
-                to_checksum_address(deployer_address)
+                get_checksum_address(deployer_address)
                 if deployer_address is not None
                 else factory_address
             )
@@ -341,7 +341,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
         Get a pool from its address
         """
 
-        pool_address = to_checksum_address(pool_address)
+        pool_address = get_checksum_address(pool_address)
 
         with contextlib.suppress(KeyError):
             result = self._tracked_pools[pool_address]
@@ -413,6 +413,6 @@ class UniswapV3PoolManager(AbstractPoolManager):
         )
 
     def remove(self, pool_address: ChecksumAddress | str) -> None:
-        pool_address = to_checksum_address(pool_address)
+        pool_address = get_checksum_address(pool_address)
         self._tracked_pools.pop(pool_address, None)
         self._untracked_pools.discard(pool_address)

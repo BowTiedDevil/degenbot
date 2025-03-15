@@ -22,7 +22,8 @@ __all__ = (
 import typing
 
 from eth_typing import ChainId, ChecksumAddress
-from eth_utils.address import to_checksum_address
+
+from degenbot.cache import get_checksum_address
 
 
 def _min_uint(_: int) -> int:
@@ -68,14 +69,14 @@ MAX_UINT160 = _max_uint(160)
 MIN_UINT256 = _min_uint(256)
 MAX_UINT256 = _max_uint(256)
 
-ZERO_ADDRESS: ChecksumAddress = to_checksum_address("0x0000000000000000000000000000000000000000")
+ZERO_ADDRESS: ChecksumAddress = get_checksum_address("0x0000000000000000000000000000000000000000")
 
 
 # Contract addresses for the wrapped native token, keyed by chain ID
 WRAPPED_NATIVE_TOKENS: dict[int, ChecksumAddress] = {
-    ChainId.ETH: to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-    ChainId.BASE: to_checksum_address("0x4200000000000000000000000000000000000006"),
-    ChainId.FTM: to_checksum_address("0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83"),
-    ChainId.ARB1: to_checksum_address("0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"),
-    ChainId.AVAX: to_checksum_address("0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7"),
+    ChainId.ETH: get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+    ChainId.BASE: get_checksum_address("0x4200000000000000000000000000000000000006"),
+    ChainId.FTM: get_checksum_address("0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83"),
+    ChainId.ARB1: get_checksum_address("0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"),
+    ChainId.AVAX: get_checksum_address("0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7"),
 }

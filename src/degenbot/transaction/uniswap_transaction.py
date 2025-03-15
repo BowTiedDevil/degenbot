@@ -10,9 +10,10 @@ from typing import TYPE_CHECKING, Any, cast
 import eth_abi.abi
 import pydantic_core
 from eth_typing import BlockNumber, ChecksumAddress
-from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
+
+from degenbot.cache import get_checksum_address
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -65,9 +66,9 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 class UniversalRouterSpecialAddress:
     # ref: https://github.com/Uniswap/universal-router/blob/deployed-commit/contracts/libraries/Constants.sol
-    ETH = to_checksum_address("0x0000000000000000000000000000000000000000")
-    MSG_SENDER = to_checksum_address("0x0000000000000000000000000000000000000001")
-    ROUTER = to_checksum_address("0x0000000000000000000000000000000000000002")
+    ETH = get_checksum_address("0x0000000000000000000000000000000000000000")
+    MSG_SENDER = get_checksum_address("0x0000000000000000000000000000000000000001")
+    ROUTER = get_checksum_address("0x0000000000000000000000000000000000000002")
 
 
 class UniversalRouterSpecialValues:
@@ -79,11 +80,11 @@ class UniversalRouterSpecialValues:
 class V3RouterSpecialAddress:
     # SwapRouter.sol checks for address(0)
     # ref: https://github.com/Uniswap/v3-periphery/blob/main/contracts/SwapRouter.sol
-    ROUTER_1 = to_checksum_address("0x0000000000000000000000000000000000000000")
+    ROUTER_1 = get_checksum_address("0x0000000000000000000000000000000000000000")
 
     # ref: https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/libraries/Constants.sol
-    MSG_SENDER = to_checksum_address("0x0000000000000000000000000000000000000001")
-    ROUTER_2 = to_checksum_address("0x0000000000000000000000000000000000000002")
+    MSG_SENDER = get_checksum_address("0x0000000000000000000000000000000000000001")
+    ROUTER_2 = get_checksum_address("0x0000000000000000000000000000000000000002")
 
 
 class V3RouterSpecialValues:
@@ -143,7 +144,7 @@ class UniswapTransaction(AbstractTransaction):
         self.v3_pool_manager: UniswapV3PoolManager | None = None
 
         self.chain_id = int(chain_id, 16) if isinstance(chain_id, str) else chain_id
-        self.router_address = to_checksum_address(router_address)
+        self.router_address = get_checksum_address(router_address)
         if self.router_address not in ROUTER_DEPLOYMENTS[self.chain_id]:
             raise UnknownRouterAddress
 
@@ -167,7 +168,7 @@ class UniswapTransaction(AbstractTransaction):
                 case _:
                     raise DegenbotValueError(message=f"Could not identify DEX type for {exchange}")
 
-        self.sender = to_checksum_address(tx_sender)
+        self.sender = get_checksum_address(tx_sender)
         self.recipients: set[ChecksumAddress] = set()
 
         self.hash = HexBytes(tx_hash)
@@ -301,7 +302,7 @@ class UniswapTransaction(AbstractTransaction):
         )
 
         if last_swap:
-            self.recipients.add(to_checksum_address(recipient))
+            self.recipients.add(get_checksum_address(recipient))
 
         if last_swap and amount_out_min is not None and _amount_out < amount_out_min:
             raise InsufficientOutput(
@@ -391,7 +392,7 @@ class UniswapTransaction(AbstractTransaction):
     ) -> tuple[UniswapV3Pool, UniswapV3PoolSimulationResult]:
         assert isinstance(pool, UniswapV3Pool), f"Called _simulate_v3_swap_exact_in on pool {pool}"
 
-        self.recipients.add(to_checksum_address(recipient))
+        self.recipients.add(get_checksum_address(recipient))
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
@@ -470,7 +471,7 @@ class UniswapTransaction(AbstractTransaction):
     ) -> tuple[UniswapV3Pool, UniswapV3PoolSimulationResult]:
         assert isinstance(pool, UniswapV3Pool), f"Called _simulate_v3_swap_exact_out on pool {pool}"
 
-        self.recipients.add(to_checksum_address(recipient))
+        self.recipients.add(get_checksum_address(recipient))
 
         token_out = pool.token1 if token_in == pool.token0 else pool.token0
 
@@ -536,7 +537,7 @@ class UniswapTransaction(AbstractTransaction):
                 ):
                     _recipient = self.router_address
                 case _:
-                    _recipient = to_checksum_address(recipient)
+                    _recipient = get_checksum_address(recipient)
                     self.recipients.add(_recipient)
 
             self.ledger.transfer(
@@ -772,7 +773,7 @@ class UniswapTransaction(AbstractTransaction):
                         data=inputs,
                     )
 
-                    sweep_recipient = to_checksum_address(sweep_recipient)
+                    sweep_recipient = get_checksum_address(sweep_recipient)
                     match sweep_recipient:  # pragma: no cover
                         case UniversalRouterSpecialAddress.MSG_SENDER:
                             sweep_recipient = self.sender
@@ -822,7 +823,7 @@ class UniswapTransaction(AbstractTransaction):
                             self.router_address,
                             _pay_portion_recipient,
                         )
-                        self.recipients.add(to_checksum_address(_pay_portion_recipient))
+                        self.recipients.add(get_checksum_address(_pay_portion_recipient))
 
                 case "TRANSFER":
                     """
@@ -832,7 +833,7 @@ class UniswapTransaction(AbstractTransaction):
                     transfer_token, transfer_recipient, transfer_value = eth_abi.abi.decode(
                         types=("address", "address", "uint256"), data=inputs
                     )
-                    transfer_recipient = to_checksum_address(transfer_recipient)
+                    transfer_recipient = get_checksum_address(transfer_recipient)
                     self.ledger.adjust(
                         address=self.router_address, token=transfer_token, amount=-transfer_value
                     )
@@ -859,7 +860,7 @@ class UniswapTransaction(AbstractTransaction):
                         data=inputs,
                     )
 
-                    _recipient = to_checksum_address(_tx_recipient)
+                    _recipient = get_checksum_address(_tx_recipient)
                     match _tx_recipient:  # pragma: no cover
                         case UniversalRouterSpecialAddress.MSG_SENDER:
                             _recipient = self.sender
@@ -1476,8 +1477,8 @@ class UniswapTransaction(AbstractTransaction):
                         logger.debug(f"{func_name}: {self.hash.to_0x_hex()=}")
 
                         if func_name == "addLiquidity":
-                            tx_token_a = to_checksum_address(func_params["tokenA"])
-                            tx_token_b = to_checksum_address(func_params["tokenB"])
+                            tx_token_a = get_checksum_address(func_params["tokenA"])
+                            tx_token_b = get_checksum_address(func_params["tokenB"])
                             tx_token_amount_a = func_params["amountADesired"]
                             tx_token_amount_b = func_params["amountBDesired"]
                             token0_address, token1_address = (
@@ -1491,7 +1492,7 @@ class UniswapTransaction(AbstractTransaction):
                                 else (tx_token_amount_b, tx_token_amount_a)
                             )
                         else:
-                            tx_token = to_checksum_address(func_params["token"])
+                            tx_token = get_checksum_address(func_params["token"])
                             tx_token_amount = func_params["amountTokenDesired"]
                             tx_eth_min = func_params["amountETHMin"]
                             _wrapped_token_address = WRAPPED_NATIVE_TOKENS[self.chain_id]
@@ -2160,7 +2161,7 @@ class UniswapTransaction(AbstractTransaction):
                         positions_contract = connection_manager.get_web3(
                             self.chain_id
                         ).eth.contract(
-                            address=to_checksum_address(
+                            address=get_checksum_address(
                                 "0xC36442b4a4522E871399CD717aBDD847Ab11FE88"
                             ),
                             abi=pydantic_core.from_json(

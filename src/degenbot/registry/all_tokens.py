@@ -2,7 +2,7 @@ import contextlib
 import sys
 from typing import TYPE_CHECKING
 
-from eth_utils.address import to_checksum_address
+from degenbot.cache import get_checksum_address
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -41,17 +41,17 @@ class TokenRegistry:
 
     def get(self, token_address: str, chain_id: int) -> "Erc20Token | None":
         return self._all_tokens.get(
-            (chain_id, to_checksum_address(token_address)),
+            (chain_id, get_checksum_address(token_address)),
         )
 
     def add(self, token_address: str, chain_id: int, token: "Erc20Token") -> None:
-        token_address = to_checksum_address(token_address)
+        token_address = get_checksum_address(token_address)
         if self.get(token_address=token_address, chain_id=chain_id):
             raise DegenbotValueError(message="Token is already registered")
         self._all_tokens[(chain_id, token_address)] = token
 
     def remove(self, token_address: str, chain_id: int) -> None:
-        token_address = to_checksum_address(token_address)
+        token_address = get_checksum_address(token_address)
 
         with contextlib.suppress(KeyError):
             del self._all_tokens[(chain_id, token_address)]

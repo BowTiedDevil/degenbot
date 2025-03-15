@@ -1,6 +1,5 @@
-
 import pytest
-from eth_utils.address import to_checksum_address
+from degenbot.cache import get_checksum_address
 from web3 import Web3
 
 from degenbot.anvil_fork import AnvilFork
@@ -146,7 +145,7 @@ def test_get_new_liquidity_updates(
         "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf",
     ]:
         first_250_blocks_snapshot.get_new_liquidity_updates(pool_address)
-        assert first_250_blocks_snapshot._liquidity_events[to_checksum_address(pool_address)] == []
+        assert first_250_blocks_snapshot._liquidity_events[get_checksum_address(pool_address)] == []
 
 
 def test_apply_update_to_snapshot(

@@ -1,6 +1,6 @@
 from eth_typing import ChecksumAddress
-from eth_utils.address import to_checksum_address
 
+from degenbot.cache import get_checksum_address
 from degenbot.erc20_token import Erc20Token
 from degenbot.logging import logger
 
@@ -59,9 +59,9 @@ class SimulationLedger:
         if isinstance(token, Erc20Token):
             _token_address = token.address
         else:
-            _token_address = to_checksum_address(token)
+            _token_address = get_checksum_address(token)
 
-        _address = to_checksum_address(address)
+        _address = get_checksum_address(address)
 
         address_balance: dict[ChecksumAddress, int]
         try:
@@ -111,12 +111,12 @@ class SimulationLedger:
             If inputs did not match the expected types.
         """
 
-        _address = to_checksum_address(address)
+        _address = get_checksum_address(address)
 
         if isinstance(token, Erc20Token):
             _token_address = token.address
         else:
-            _token_address = to_checksum_address(token)
+            _token_address = get_checksum_address(token)
 
         address_balances: dict[ChecksumAddress, int]
         try:
@@ -162,7 +162,7 @@ class SimulationLedger:
         if isinstance(token, Erc20Token):
             _token_address = token.address
         else:
-            _token_address = to_checksum_address(token)
+            _token_address = get_checksum_address(token)
 
         self.adjust(
             address=from_addr,

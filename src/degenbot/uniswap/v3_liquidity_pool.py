@@ -10,8 +10,9 @@ from weakref import WeakSet
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from eth_typing import BlockNumber, ChecksumAddress
-from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
+
+from degenbot.cache import get_checksum_address
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -175,7 +176,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         silent: bool = False,
         state_cache_depth: int = 8,
     ):
-        self.address = to_checksum_address(address)
+        self.address = get_checksum_address(address)
         self.factory: ChecksumAddress
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
@@ -199,9 +200,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             # here and raise as a pool-specific exception
             raise LiquidityPoolError(message="Could not decode contract data") from exc
 
-        self.factory = to_checksum_address(factory)
+        self.factory = get_checksum_address(factory)
         self.deployer_address = (
-            to_checksum_address(deployer_address) if deployer_address is not None else self.factory
+            get_checksum_address(deployer_address) if deployer_address is not None else self.factory
         )
 
         try:
@@ -707,10 +708,10 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, liquidity))
 
         return (
-            to_checksum_address(cast(str, factory)),
+            get_checksum_address(cast(str, factory)),
             (
-                to_checksum_address(cast(str, token0)),
-                to_checksum_address(cast(str, token1)),
+                get_checksum_address(cast(str, token0)),
+                get_checksum_address(cast(str, token1)),
             ),
             cast(int, fee),
             cast(int, tick_spacing),

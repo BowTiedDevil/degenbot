@@ -1,6 +1,6 @@
 import pytest
 from eth_typing import ChainId
-from eth_utils.address import to_checksum_address
+from degenbot.cache import get_checksum_address
 from web3 import Web3
 
 from degenbot import AnvilFork
@@ -24,49 +24,49 @@ from degenbot.uniswap.deployments import (
 from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
 
-MAINNET_UNISWAP_V2_FACTORY_ADDRESS = to_checksum_address(
+MAINNET_UNISWAP_V2_FACTORY_ADDRESS = get_checksum_address(
     "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
 )
-MAINNET_UNISWAP_V3_FACTORY_ADDRESS = to_checksum_address(
+MAINNET_UNISWAP_V3_FACTORY_ADDRESS = get_checksum_address(
     "0x1F98431c8aD98523631AE4a59f267346ea31F984"
 )
-MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS = to_checksum_address(
+MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS = get_checksum_address(
     "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"
 )
-MAINNET_SUSHISWAP_V3_FACTORY_ADDRESS = to_checksum_address(
+MAINNET_SUSHISWAP_V3_FACTORY_ADDRESS = get_checksum_address(
     "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F"
 )
 
-MAINNET_WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-MAINNET_WBTC_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
-MAINNET_SUSHISWAPV2_WETH_WBTC_ADDRESS = to_checksum_address(
+MAINNET_WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+MAINNET_WBTC_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
+MAINNET_SUSHISWAPV2_WETH_WBTC_ADDRESS = get_checksum_address(
     "0xceff51756c56ceffca006cd410b03ffc46dd3a58"
 )
-MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS = to_checksum_address(
+MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS = get_checksum_address(
     "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
 )
-MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS = to_checksum_address(
+MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS = get_checksum_address(
     "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 )
 
-BASE_UNISWAP_V2_FACTORY_ADDRESS = to_checksum_address("0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6")
-BASE_UNISWAP_V3_FACTORY_ADDRESS = to_checksum_address("0x33128a8fC17869897dcE68Ed026d694621f6FDfD")
-BASE_WETH_ADDRESS = to_checksum_address("0x4200000000000000000000000000000000000006")
-BASE_DEGEN_ADDRESS = to_checksum_address("0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed")
-BASE_UNISWAP_V2_WETH_DEGEN_ADDRESS = to_checksum_address(
+BASE_UNISWAP_V2_FACTORY_ADDRESS = get_checksum_address("0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6")
+BASE_UNISWAP_V3_FACTORY_ADDRESS = get_checksum_address("0x33128a8fC17869897dcE68Ed026d694621f6FDfD")
+BASE_WETH_ADDRESS = get_checksum_address("0x4200000000000000000000000000000000000006")
+BASE_DEGEN_ADDRESS = get_checksum_address("0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed")
+BASE_UNISWAP_V2_WETH_DEGEN_ADDRESS = get_checksum_address(
     "0x7C327d692B72f60b28AecEDbcC1BA784712fE7b2"
 )
-BASE_UNISWAP_V3_WETH_DEGEN_ADDRESS = to_checksum_address(
+BASE_UNISWAP_V3_WETH_DEGEN_ADDRESS = get_checksum_address(
     "0xc9034c3E7F58003E6ae0C8438e7c8f4598d5ACAA"
 )
-BASE_PANCAKESWAP_V3_FACTORY_ADDRESS = to_checksum_address(
+BASE_PANCAKESWAP_V3_FACTORY_ADDRESS = get_checksum_address(
     "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"
 )
-BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS = to_checksum_address(
+BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS = get_checksum_address(
     "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9"
 )
-BASE_CBETH_WETH_V3_POOL_ADDRESS = to_checksum_address("0x257fcbae4ac6b26a02e4fc5e1a11e4174b5ce395")
-BASE_CBETH_ADDRESS = to_checksum_address("0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22")
+BASE_CBETH_WETH_V3_POOL_ADDRESS = get_checksum_address("0x257fcbae4ac6b26a02e4fc5e1a11e4174b5ce395")
+BASE_CBETH_ADDRESS = get_checksum_address("0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22")
 
 BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
     name="PancakeSwap V3",

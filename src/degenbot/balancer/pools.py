@@ -4,7 +4,7 @@ from typing import TypeAlias, cast
 
 import eth_abi.abi
 from eth_typing import BlockNumber, ChecksumAddress
-from eth_utils.address import to_checksum_address
+from degenbot.cache import get_checksum_address
 
 from degenbot.balancer.libraries.fixed_point import mulUp
 from degenbot.balancer.libraries.scaling_helpers import (
@@ -35,7 +35,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         verify_address: bool = True,
         silent: bool = False,
     ):
-        self.address = to_checksum_address(address)
+        self.address = get_checksum_address(address)
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
@@ -74,7 +74,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
                 block_identifier=state_block,
             ),
         )
-        self.vault = to_checksum_address(vault_address)
+        self.vault = get_checksum_address(vault_address)
 
         tokens: list[str]
         balances: list[int]
@@ -96,7 +96,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         self.tokens = tuple(
             [
                 token_manager.get_erc20token(
-                    address=to_checksum_address(token),
+                    address=get_checksum_address(token),
                     silent=silent,
                 )
                 for token in tokens
@@ -106,7 +106,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         self._state_lock = Lock()
         self._state = BalancerV2PoolState(
-            pool=self.address,
+            address=self.address,
             block=state_block,
             balances=balances,
         )

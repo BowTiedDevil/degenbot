@@ -9,12 +9,12 @@ from weakref import WeakSet
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from eth_typing import BlockNumber, ChecksumAddress
-from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import BlockIdentifier
 
+from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
 from degenbot.constants import MAX_INT256, MIN_INT256, ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
@@ -170,7 +170,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         state_block = (
             cast(BlockNumber, state_block) if state_block is not None else w3.eth.block_number
         )
-        self._state_view_address = to_checksum_address(state_view_address)
+        self._state_view_address = get_checksum_address(state_view_address)
 
         assert len(tokens) == 2  # noqa: PLR2004
         tokens = [token.lower() for token in tokens]
@@ -187,7 +187,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         self.name = f"{self.token0}-{self.token1} ({type(self).__name__})"
 
         self.hook_address = (
-            to_checksum_address(hook_address) if hook_address is not None else ZERO_ADDRESS
+            get_checksum_address(hook_address) if hook_address is not None else ZERO_ADDRESS
         )
 
         self.active_hooks: set[Hooks] = {
@@ -205,7 +205,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             hooks=self.hook_address,
         )
 
-        self._pool_manager: Final[ChecksumAddress] = to_checksum_address(pool_manager_address)
+        self._pool_manager_address = get_checksum_address(pool_manager_address)
         self._pool_id: Final[HexBytes] = HexBytes(pool_id)
 
         try:

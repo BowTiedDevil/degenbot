@@ -7,7 +7,6 @@ from weakref import WeakSet
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
-from eth_utils.address import to_checksum_address
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
@@ -19,6 +18,7 @@ from degenbot.arbitrage.types import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
+from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
 from degenbot.constants import MAX_UINT256
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
@@ -616,7 +616,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
             ).
         """
 
-        from_address = to_checksum_address(from_address)
+        from_address = get_checksum_address(from_address)
 
         msg_value = 0  # This arbitrage does not require a `msg.value` payment
         payloads = []

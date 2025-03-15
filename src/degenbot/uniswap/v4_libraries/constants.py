@@ -1,4 +1,4 @@
-from eth_utils.address import to_checksum_address
+from degenbot.cache import get_checksum_address
 
 # @dev All sqrtPrice calculations are calculated as
 # sqrtPriceX96 = floor(sqrt(A / B) * 2 ** 96) where A and B are the currency reserves
@@ -16,7 +16,7 @@ SQRT_PRICE_1010_100 = 251791039410471229173201122529
 SQRT_PRICE_10000_100 = 792281625142643375935439503360
 
 # 0011 1111 1111 1111
-ALL_HOOKS = to_checksum_address("0x0000000000000000000000000000000000003fFF")
+ALL_HOOKS = get_checksum_address("0x0000000000000000000000000000000000003fFF")
 
 TICKS_OFFSET = 4
 

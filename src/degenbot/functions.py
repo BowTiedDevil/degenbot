@@ -3,13 +3,13 @@ from typing import TYPE_CHECKING, Any, cast
 import eth_abi.abi
 import eth_account.messages
 from eth_typing import BlockNumber, ChecksumAddress
-from eth_utils.address import to_checksum_address
 from eth_utils.conversions import to_hex
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
 from web3.types import BlockIdentifier
 
+from degenbot.cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import DegenbotValueError, InvalidUint256
 
@@ -30,7 +30,7 @@ def create2_address(
         - https://eips.ethereum.org/EIPS/eip-1014
         - https://docs.openzeppelin.com/cli/2.8/deploying-with-create2
     """
-    return to_checksum_address(
+    return get_checksum_address(
         keccak(HexBytes(0xFF) + HexBytes(deployer) + HexBytes(salt) + HexBytes(init_code_hash))[
             -20:
         ],  # Contract address is the least significant 20 bytes from the 32 byte hash

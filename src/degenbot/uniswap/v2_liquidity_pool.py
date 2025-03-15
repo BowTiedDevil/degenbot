@@ -10,8 +10,9 @@ from weakref import WeakSet
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from eth_typing import BlockIdentifier, BlockNumber, ChecksumAddress
-from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
+
+from degenbot.cache import get_checksum_address
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -138,7 +139,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             How many unique block-state pairs to hold in the state cache.
         """
 
-        self.address = to_checksum_address(address)
+        self.address = get_checksum_address(address)
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
@@ -322,8 +323,8 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
         return (
-            to_checksum_address(cast(str, factory)),
-            (to_checksum_address(cast(str, token0)), to_checksum_address(cast(str, token1))),
+            get_checksum_address(cast(str, factory)),
+            (get_checksum_address(cast(str, token0)), get_checksum_address(cast(str, token1))),
             (cast(int, reserves0), cast(int, reserves1)),
         )
 
@@ -837,7 +838,7 @@ class UnregisteredLiquidityPool(UniswapV2Pool):
         tokens: list[Erc20Token],
         fee: Fraction | Iterable[Fraction] = Fraction(3, 1000),
     ) -> None:
-        self.address = to_checksum_address(address)
+        self.address = get_checksum_address(address)
         self._state_lock = Lock()
         self._state = UniswapV2PoolState(
             address=self.address,

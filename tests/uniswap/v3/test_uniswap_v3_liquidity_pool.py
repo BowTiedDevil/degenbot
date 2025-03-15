@@ -4,13 +4,13 @@ from typing import Any
 
 import pydantic_core
 import pytest
-from eth_typing import ChainId
-from eth_utils.address import to_checksum_address
+from eth_typing import BlockNumber, ChainId
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
 from degenbot.anvil_fork import AnvilFork
+from degenbot.cache import get_checksum_address
 from degenbot.config import set_web3
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
@@ -46,17 +46,17 @@ from degenbot.uniswap.v3_libraries.tick_math import (
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
-WBTC_WETH_V3_POOL_ADDRESS = to_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
-WETH_CONTRACT_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-WBTC_CONTRACT_ADDRESS = to_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
-DAI_CONTRACT_ADDRESS = to_checksum_address("0x6B175474E89094C44Da98b954EedeAC495271d0F")
-UNISWAP_V3_FACTORY_ADDRESS = to_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
-UNISWAP_V3_QUOTER_ADDRESS = to_checksum_address("0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6")
-BASE_CBETH_WETH_V3_POOL_ADDRESS = to_checksum_address("0x257fcbae4ac6b26a02e4fc5e1a11e4174b5ce395")
-BASE_PANCAKESWAP_V3_FACTORY_ADDRESS = to_checksum_address(
+WBTC_WETH_V3_POOL_ADDRESS = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
+WETH_CONTRACT_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+WBTC_CONTRACT_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
+DAI_CONTRACT_ADDRESS = get_checksum_address("0x6B175474E89094C44Da98b954EedeAC495271d0F")
+UNISWAP_V3_FACTORY_ADDRESS = get_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
+UNISWAP_V3_QUOTER_ADDRESS = get_checksum_address("0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6")
+BASE_CBETH_WETH_V3_POOL_ADDRESS = get_checksum_address("0x257fcbae4ac6b26a02e4fc5e1a11e4174b5ce395")
+BASE_PANCAKESWAP_V3_FACTORY_ADDRESS = get_checksum_address(
     "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"
 )
-BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS = to_checksum_address(
+BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS = get_checksum_address(
     "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9"
 )
 BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(

@@ -15,8 +15,8 @@ from cvxpy.atoms.affine.binary_operators import multiply as cvxpy_multiply
 from cvxpy.atoms.affine.bmat import bmat as cvxpy_bmat
 from cvxpy.atoms.affine.sum import sum as cvxpy_sum
 from cvxpy.atoms.geo_mean import geo_mean
-from eth_utils.address import to_checksum_address
 
+from degenbot.cache import get_checksum_address
 from degenbot.config import set_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
@@ -76,8 +76,8 @@ def xxx_token(base_full_node_web3) -> Erc20Token:
 def wbtc_pool_a(wbtc_token, weth_token) -> MockLiquidityPool:
     lp = MockLiquidityPool()
     lp.name = "WBTC-WETH (V2, 0.30%)"
-    lp.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
-    lp.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    lp.address = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
+    lp.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp.fee_token0 = Fraction(3, 1000)
     lp.fee_token1 = Fraction(3, 1000)
     lp._state = UniswapV2PoolState(
@@ -95,8 +95,8 @@ def wbtc_pool_a(wbtc_token, weth_token) -> MockLiquidityPool:
 def wbtc_pool_b(wbtc_token, weth_token) -> MockLiquidityPool:
     lp = MockLiquidityPool()
     lp.name = "WBTC-WETH (V2, 0.30%)"
-    lp.address = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D941")
-    lp.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    lp.address = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D941")
+    lp.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp.fee_token0 = Fraction(3, 1000)
     lp.fee_token1 = Fraction(3, 1000)
     lp._state = UniswapV2PoolState(
@@ -114,8 +114,8 @@ def wbtc_pool_b(wbtc_token, weth_token) -> MockLiquidityPool:
 def test_pool_a(xxx_token, weth_base_token) -> MockLiquidityPool:
     lp = MockLiquidityPool()
     lp.name = ""
-    lp.address = to_checksum_address("0x214356Cc4aAb907244A791CA9735292860490D5A")
-    lp.factory = to_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da")
+    lp.address = get_checksum_address("0x214356Cc4aAb907244A791CA9735292860490D5A")
+    lp.factory = get_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da")
     lp.fee_token0 = Fraction(3, 1000)
     lp.fee_token1 = Fraction(3, 1000)
     lp._state = UniswapV2PoolState(
@@ -133,8 +133,8 @@ def test_pool_a(xxx_token, weth_base_token) -> MockLiquidityPool:
 def test_pool_b(xxx_token, weth_base_token) -> MockLiquidityPool:
     lp = MockLiquidityPool()
     lp.name = ""
-    lp.address = to_checksum_address("0x404E927b203375779a6aBD52A2049cE0ADf6609B")
-    lp.factory = to_checksum_address("0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6")
+    lp.address = get_checksum_address("0x404E927b203375779a6aBD52A2049cE0ADf6609B")
+    lp.factory = get_checksum_address("0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6")
     lp.fee_token0 = Fraction(3, 1000)
     lp.fee_token1 = Fraction(3, 1000)
     lp._state = UniswapV2PoolState(
@@ -848,8 +848,8 @@ def test_base_3pool(
 
     lp_1 = MockLiquidityPool()
     lp_1.name = "Fake V2 Pool: LINK-WETH (0.3%)"
-    lp_1.address = to_checksum_address("0x0000000000000000000000000000000000000001")
-    lp_1.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    lp_1.address = get_checksum_address("0x0000000000000000000000000000000000000001")
+    lp_1.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp_1.fee_token0 = Fraction(3, 1000)
     lp_1.fee_token1 = Fraction(3, 1000)
     lp_1.token0 = link_token
@@ -864,8 +864,8 @@ def test_base_3pool(
 
     lp_2 = MockLiquidityPool()
     lp_2.name = "Fake V2 Pool: LINK-WBTC (0.3%)"
-    lp_2.address = to_checksum_address("0x0000000000000000000000000000000000000002")
-    lp_2.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    lp_2.address = get_checksum_address("0x0000000000000000000000000000000000000002")
+    lp_2.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp_2.fee_token0 = Fraction(3, 1000)
     lp_2.fee_token1 = Fraction(3, 1000)
     lp_2.token0 = wbtc_token
@@ -883,8 +883,8 @@ def test_base_3pool(
 
     lp_3 = MockLiquidityPool()
     lp_3.name = "Fake V2 Pool: WBTC-WETH (0.3%)"
-    lp_3.address = to_checksum_address("0x0000000000000000000000000000000000000003")
-    lp_3.factory = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    lp_3.address = get_checksum_address("0x0000000000000000000000000000000000000003")
+    lp_3.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp_3.fee_token0 = Fraction(3, 1000)
     lp_3.fee_token1 = Fraction(3, 1000)
     lp_3.token0 = wbtc_token

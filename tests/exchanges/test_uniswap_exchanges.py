@@ -2,7 +2,7 @@ import random
 
 import pytest
 from eth_typing import ChecksumAddress
-from eth_utils.address import to_checksum_address
+from degenbot.cache import get_checksum_address
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.uniswap.deployments import (
@@ -18,12 +18,12 @@ from degenbot.uniswap.deployments import (
 
 
 def _generate_random_address() -> ChecksumAddress:
-    return to_checksum_address(random.randbytes(20))
+    return get_checksum_address(random.randbytes(20))
 
 
 def test_register_v2_exchange() -> None:
     deployment_chain = 69
-    factory_deployment_address = to_checksum_address(_generate_random_address())
+    factory_deployment_address = get_checksum_address(_generate_random_address())
 
     exchange = UniswapV2ExchangeDeployment(
         name="V2 DEX",
@@ -45,7 +45,7 @@ def test_register_v2_exchange() -> None:
 
 def test_register_v3_exchange() -> None:
     deployment_chain = 69
-    factory_deployment_address = to_checksum_address(_generate_random_address())
+    factory_deployment_address = get_checksum_address(_generate_random_address())
 
     exchange = UniswapV3ExchangeDeployment(
         name="V3 DEX",
@@ -65,7 +65,7 @@ def test_register_v3_exchange() -> None:
 
 def test_register_router() -> None:
     deployment_chain = 69
-    factory_deployment_address = to_checksum_address(_generate_random_address())
+    factory_deployment_address = get_checksum_address(_generate_random_address())
 
     exchange = UniswapV3ExchangeDeployment(
         name="V3 DEX",
@@ -77,7 +77,7 @@ def test_register_router() -> None:
         ),
     )
 
-    router_deployment_address = to_checksum_address(_generate_random_address())
+    router_deployment_address = get_checksum_address(_generate_random_address())
 
     router = UniswapRouterDeployment(
         address=router_deployment_address,

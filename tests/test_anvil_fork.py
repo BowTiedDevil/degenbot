@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 import web3.middleware
-from eth_utils.address import to_checksum_address
+from degenbot.cache import get_checksum_address
 from hexbytes import HexBytes
 
 from degenbot import AnvilFork
@@ -16,8 +16,8 @@ if TYPE_CHECKING:
     from web3.providers.ipc import IPCProvider
 
 
-VITALIK_ADDRESS = to_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
-WETH_ADDRESS = to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 
 def test_anvil_forks():
@@ -79,7 +79,7 @@ def test_rpc_methods(fork_mainnet: AnvilFork):
     with pytest.raises(EVMRevertError):
         fork_mainnet.set_balance(VITALIK_ADDRESS, MAX_UINT256 + 1)
 
-    fake_coinbase = to_checksum_address("0x0420042004200420042004200420042004200420")
+    fake_coinbase = get_checksum_address("0x0420042004200420042004200420042004200420")
     fork_mainnet.set_coinbase(fake_coinbase)
     # @dev the eth_coinbase method fails when called on Anvil,
     # so check by mining a block and comparing the miner address
@@ -171,7 +171,7 @@ def test_nonce_overrides_in_constructor():
 
 
 def test_bytecode_overrides_in_constructor():
-    fake_address = to_checksum_address("0x6969696969696969696969696969696969696969")
+    fake_address = get_checksum_address("0x6969696969696969696969696969696969696969")
     fake_bytecode = HexBytes("0x0420")
 
     fork = AnvilFork(
@@ -181,7 +181,7 @@ def test_bytecode_overrides_in_constructor():
 
 
 def test_coinbase_override_in_constructor():
-    fake_coinbase = to_checksum_address("0x6969696969696969696969696969696969696969")
+    fake_coinbase = get_checksum_address("0x6969696969696969696969696969696969696969")
 
     fork = AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,

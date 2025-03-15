@@ -1,6 +1,6 @@
 from fractions import Fraction
 
-from eth_utils.address import to_checksum_address
+from degenbot.cache import get_checksum_address
 
 from degenbot.camelot.functions import get_y_camelot, k_camelot
 from degenbot.config import connection_manager
@@ -24,7 +24,7 @@ class CamelotLiquidityPool(UniswapV2Pool):
         chain_id: int | None = None,
         silent: bool = False,
     ) -> None:
-        address = to_checksum_address(address)
+        address = get_checksum_address(address)
 
         if chain_id is None:  # pragma: no branch
             chain_id = connection_manager.default_chain_id

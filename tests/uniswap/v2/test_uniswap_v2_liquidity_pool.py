@@ -9,6 +9,7 @@ from hexbytes import HexBytes
 
 import degenbot.uniswap.deployments
 from degenbot import AnvilFork, CamelotLiquidityPool, Erc20Token, UniswapV2Pool, set_web3
+from degenbot.cache import get_checksum_address
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import (
@@ -35,9 +36,9 @@ from degenbot.uniswap.v2_liquidity_pool import UnregisteredLiquidityPool
 if TYPE_CHECKING:
     from web3.contract.contract import Contract
 
-UNISWAP_V2_ROUTER02 = to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
-UNISWAP_V2_WBTC_WETH_POOL = to_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
-UNISWAP_V2_FACTORY_ADDRESS = to_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+UNISWAP_V2_ROUTER02 = get_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
+UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
+UNISWAP_V2_FACTORY_ADDRESS = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
 UNISWAP_V2_FACTORY_POOL_INIT_HASH = (
     "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
 )
@@ -46,8 +47,8 @@ DAI_CONTRACT_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
 WBTC_CONTRACT_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_CONTRACT_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
-CAMELOT_WETH_USDC_LP_ADDRESS = to_checksum_address("0x84652bb2539513BAf36e225c930Fdd8eaa63CE27")
-CAMELOT_MIM_USDC_LP_ADDRESS = to_checksum_address("0x68A0859de50B4Dfc6EFEbE981cA906D38Cdb0D1F")
+CAMELOT_WETH_USDC_LP_ADDRESS = get_checksum_address("0x84652bb2539513BAf36e225c930Fdd8eaa63CE27")
+CAMELOT_MIM_USDC_LP_ADDRESS = get_checksum_address("0x68A0859de50B4Dfc6EFEbE981cA906D38Cdb0D1F")
 
 
 @pytest.fixture
@@ -428,7 +429,7 @@ def test_calculate_tokens_out_from_ratio_out(fork_mainnet: AnvilFork):
     set_web3(fork_mainnet.w3)
 
     router_contract = fork_mainnet.w3.eth.contract(
-        address=to_checksum_address(UNISWAP_V2_ROUTER02),
+        address=get_checksum_address(UNISWAP_V2_ROUTER02),
         abi=UNISWAP_V2_ROUTER_ABI,
     )
 

@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
-from eth_utils.address import to_checksum_address
+from degenbot.cache import get_checksum_address
 
 from degenbot.config import connection_manager
 from degenbot.erc20_token import Erc20Token, EtherPlaceholder
@@ -54,7 +54,7 @@ class Erc20TokenManager(AbstractManager):
         Get the token object from its address
         """
 
-        address = to_checksum_address(address)
+        address = get_checksum_address(address)
 
         if token_helper := self._erc20tokens.get(address):
             return token_helper

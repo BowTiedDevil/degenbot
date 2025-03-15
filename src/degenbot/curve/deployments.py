@@ -1,12 +1,12 @@
 # ruff:noqa:C408
-from eth_utils.address import to_checksum_address
+from degenbot.cache import get_checksum_address
 
-CURVE_V1_REGISTRY_ADDRESS = to_checksum_address("0x90E00ACe148ca3b23Ac1bC8C240C2a7Dd9c2d7f5")
-CURVE_V1_FACTORY_ADDRESS = to_checksum_address("0x127db66E7F0b16470Bec194d0f496F9Fa065d0A9")
-CURVE_V1_METAREGISTRY_ADDRESS = to_checksum_address("0xF98B45FA17DE75FB1aD0e7aFD971b0ca00e379fC")
+CURVE_V1_REGISTRY_ADDRESS = get_checksum_address("0x90E00ACe148ca3b23Ac1bC8C240C2a7Dd9c2d7f5")
+CURVE_V1_FACTORY_ADDRESS = get_checksum_address("0x127db66E7F0b16470Bec194d0f496F9Fa065d0A9")
+CURVE_V1_METAREGISTRY_ADDRESS = get_checksum_address("0xF98B45FA17DE75FB1aD0e7aFD971b0ca00e379fC")
 
 BROKEN_CURVE_V1_POOLS = tuple(
-    to_checksum_address(pool_address)
+    get_checksum_address(pool_address)
     for pool_address in (
         "0x1F71f05CF491595652378Fe94B7820344A551B8E",
         "0x28B0Cf1baFB707F2c6826d10caf6DD901a6540C5",

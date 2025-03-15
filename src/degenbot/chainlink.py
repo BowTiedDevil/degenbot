@@ -1,8 +1,8 @@
 import pydantic_core
-from eth_utils.address import to_checksum_address
 from web3.contract.contract import Contract
 
 from degenbot import config
+from degenbot.cache import get_checksum_address
 
 CHAINLINK_PRICE_FEED_ABI = pydantic_core.from_json(
     """
@@ -24,7 +24,7 @@ class ChainlinkPriceContract:
         *,
         chain_id: int | None = None,
     ):
-        self.address = to_checksum_address(address)
+        self.address = get_checksum_address(address)
         self._chain_id = (
             chain_id if chain_id is not None else config.connection_manager.default_chain_id
         )

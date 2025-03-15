@@ -4,12 +4,12 @@ from typing import cast
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from eth_typing import BlockNumber, ChecksumAddress
-from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
+from degenbot.cache import get_checksum_address
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.config import async_connection_manager, connection_manager
 from degenbot.constants import ZERO_ADDRESS
@@ -43,7 +43,7 @@ class Erc20Token(AbstractErc20Token):
         silent: bool = False,
         state_cache_depth: int = 8,
     ) -> None:
-        self.address = to_checksum_address(address)
+        self.address = get_checksum_address(address)
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = self.w3
@@ -201,8 +201,8 @@ class Erc20Token(AbstractErc20Token):
         Retrieve the amount that can be spent by `spender` on behalf of `owner`.
         """
 
-        owner = to_checksum_address(owner)
-        spender = to_checksum_address(spender)
+        owner = get_checksum_address(owner)
+        spender = get_checksum_address(spender)
 
         block_number = (
             cast(BlockNumber, block_identifier)
@@ -241,8 +241,8 @@ class Erc20Token(AbstractErc20Token):
         Retrieve the amount that can be spent by `spender` on behalf of `owner`.
         """
 
-        owner = to_checksum_address(owner)
-        spender = to_checksum_address(spender)
+        owner = get_checksum_address(owner)
+        spender = get_checksum_address(spender)
 
         block_number = (
             cast(BlockNumber, block_identifier)
@@ -280,7 +280,7 @@ class Erc20Token(AbstractErc20Token):
         Retrieve the ERC-20 balance for the given address.
         """
 
-        address = to_checksum_address(address)
+        address = get_checksum_address(address)
 
         block_number = (
             cast(BlockNumber, block_identifier)
@@ -322,7 +322,7 @@ class Erc20Token(AbstractErc20Token):
         Retrieve the ERC-20 balance for the given address.
         """
 
-        address = to_checksum_address(address)
+        address = get_checksum_address(address)
 
         block_number = (
             cast(BlockNumber, block_identifier)
@@ -444,7 +444,7 @@ class EtherPlaceholder(Erc20Token):
 
     addresses = (
         ZERO_ADDRESS,
-        to_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"),
+        get_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"),
     )
     symbol = "ETH"
     name = "Ether Placeholder"
@@ -459,7 +459,7 @@ class EtherPlaceholder(Erc20Token):
     ) -> None:
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
-        self.address = to_checksum_address(address)
+        self.address = get_checksum_address(address)
         token_registry.add(token_address=self.address, chain_id=self._chain_id, token=self)
         self._state_cache_depth = state_cache_depth
 
@@ -468,7 +468,7 @@ class EtherPlaceholder(Erc20Token):
         address: str,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
-        address = to_checksum_address(address)
+        address = get_checksum_address(address)
 
         block_number = (
             cast(BlockNumber, block_identifier)
