@@ -66,6 +66,7 @@ def _initialize_and_reset_after_each_test():
     degenbot.managers.erc20_token_manager.Erc20TokenManager._state.clear()
     degenbot.types.AbstractPoolManager.instances.clear()
     pool_registry._all_pools.clear()
+    pool_registry._v4_pool_registry._all_v4_pools.clear()
     token_registry._all_tokens.clear()
 
 
