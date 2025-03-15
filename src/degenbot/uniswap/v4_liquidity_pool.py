@@ -168,7 +168,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         )
         w3 = connection_manager.get_web3(self.chain_id)
         state_block = (
-            cast(BlockNumber, state_block) if state_block is not None else w3.eth.block_number
+            cast("BlockNumber", state_block) if state_block is not None else w3.eth.block_number
         )
         self._state_view_address = get_checksum_address(state_view_address)
 
@@ -393,9 +393,9 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
         protocol_fee: int
         price, tick, protocol_fee, lp_fee = eth_abi.abi.decode(
-            types=self.SLOT0_STRUCT_TYPES, data=cast(HexBytes, slot0)
+            types=self.SLOT0_STRUCT_TYPES, data=cast("HexBytes", slot0)
         )
-        (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, liquidity))
+        (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", liquidity))
 
         # Extract the two fees from the packed protocol fee
         # ref: https://github.com/Uniswap/v4-core/blob/main/src/types/Slot0.sol
@@ -405,15 +405,15 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
         return (
             Slot0(
-                sqrt_price_x96=cast(int, price),
-                tick=cast(int, tick),
+                sqrt_price_x96=cast("int", price),
+                tick=cast("int", tick),
                 protocol_fee=ProtocolFee(
                     one_for_zero=protocol_fee_one_to_zero,
                     zero_for_one=protocol_fee_zero_to_one,
                 ),
-                lp_fee=cast(int, lp_fee),
+                lp_fee=cast("int", lp_fee),
             ),
-            Liquidity(cast(int, liquidity)),
+            Liquidity(cast("int", liquidity)),
         )
 
     def _calculate_swap_fee(
@@ -492,8 +492,8 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         if amount_specified == 0:
             return (
                 SwapDelta(currency0=0, currency1=0),
-                0,
-                swap_fee,
+                cast("FeeToProtocol", 0),
+                cast("SwapFee", swap_fee),
                 result,
             )
 
@@ -633,8 +633,8 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
         return (
             swap_delta,
-            protocol_fee,
-            swap_fee,
+            cast("FeeToProtocol", protocol_fee),
+            cast("SwapFee", swap_fee),
             result,
         )
 
@@ -751,7 +751,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             return_types=["uint256"],
             block_identifier=block_identifier,
         )
-        return cast(int, bitmap_at_word)
+        return cast("int", bitmap_at_word)
 
     def get_populated_ticks_in_word(
         self,
@@ -789,7 +789,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         for tick, result in zip(active_ticks, results, strict=True):
             liquidity_gross, liquidity_net = eth_abi.abi.decode(
                 types=self.TICK_LIQUIDITY_STRUCT_TYPES,
-                data=cast(HexBytes, result),
+                data=cast("HexBytes", result),
             )
             populated_ticks.append((tick, liquidity_gross, liquidity_net))
 
@@ -874,7 +874,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
             w3 = connection_manager.get_web3(self.chain_id)
             block_number = (
-                cast(BlockNumber, block_number)
+                cast("BlockNumber", block_number)
                 if block_number is not None
                 else w3.eth.get_block_number()
             )
@@ -933,7 +933,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             )
 
         with self._state_lock:
-            state_block = cast(BlockNumber, update.block_number)
+            state_block = cast("BlockNumber", update.block_number)
 
             state = dataclasses.replace(
                 self.state,
@@ -970,6 +970,10 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             return
 
         with self._state_lock:
+            state_block = cast("BlockNumber", update.block_number)
+
+            # The tick bitmap and tick data dictionaries are copies, so they can be freely modified
+            # without corrupting states for previous blocks
             _tick_bitmap = self.tick_bitmap
             _tick_data = self.tick_data
             _liquidity = self.liquidity + (

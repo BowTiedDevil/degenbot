@@ -131,7 +131,7 @@ class UniswapV4LiquiditySnapshot:
             event_instance = event()
             logger.info(f"Processing {event.event_name} events")
             event_abi = cast(
-                ABIEvent,
+                "ABIEvent",
                 get_abi_element(abi=v4_pool_manager.abi, abi_element_identifier=event.event_name),
             )
             start_block = self.newest_block + 1

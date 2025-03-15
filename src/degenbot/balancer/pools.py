@@ -40,7 +40,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
         state_block = (
-            cast(BlockNumber, state_block) if state_block is not None else w3.eth.block_number
+            cast("BlockNumber", state_block) if state_block is not None else w3.eth.block_number
         )
 
         pool_id: bytes

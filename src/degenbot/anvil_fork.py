@@ -169,7 +169,7 @@ class AnvilFork:
         with socket.socket() as sock:
             sock.bind(("", 0))
             _, _port = sock.getsockname()
-            return cast(int, _port)
+            return cast("int", _port)
 
     def _setup_subprocess(
         self, anvil_command: list[str], ipc_path: pathlib.Path

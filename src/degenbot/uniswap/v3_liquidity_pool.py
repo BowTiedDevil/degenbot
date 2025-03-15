@@ -182,7 +182,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
         state_block = (
-            cast(BlockNumber, state_block) if state_block is not None else w3.eth.block_number
+            cast("BlockNumber", state_block) if state_block is not None else w3.eth.block_number
         )
 
         try:
@@ -516,7 +516,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             return_types=["uint256"],
             block_identifier=block_identifier,
         )
-        return cast(int, bitmap_at_word)
+        return cast("int", bitmap_at_word)
 
     def get_populated_ticks_in_word(
         self,
@@ -554,7 +554,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         for tick, result in zip(active_ticks, results, strict=True):
             liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
                 types=self.TICK_STRUCT_TYPES,
-                data=cast(HexBytes, result),
+                data=cast("HexBytes", result),
             )
             populated_ticks.append((tick, liquidity_gross, liquidity_net))
 
@@ -696,28 +696,28 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
             factory, token0, token1, fee, tick_spacing, slot0, liquidity = batch.execute()
 
-        (factory,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, factory))
-        (token0,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token0))
-        (token1,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token1))
-        (fee,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, fee))
-        (tick_spacing,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, tick_spacing))
+        (factory,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", factory))
+        (token0,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token0))
+        (token1,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token1))
+        (fee,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", fee))
+        (tick_spacing,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", tick_spacing))
 
         price, tick, *_ = eth_abi.abi.decode(
-            types=self.SLOT0_STRUCT_TYPES, data=cast(HexBytes, slot0)
+            types=self.SLOT0_STRUCT_TYPES, data=cast("HexBytes", slot0)
         )
-        (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, liquidity))
+        (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", liquidity))
 
         return (
-            get_checksum_address(cast(str, factory)),
+            get_checksum_address(cast("str", factory)),
             (
-                get_checksum_address(cast(str, token0)),
-                get_checksum_address(cast(str, token1)),
+                get_checksum_address(cast("str", token0)),
+                get_checksum_address(cast("str", token1)),
             ),
-            cast(int, fee),
-            cast(int, tick_spacing),
-            cast(int, price),
-            cast(int, tick),
-            cast(int, liquidity),
+            cast("int", fee),
+            cast("int", tick_spacing),
+            cast("int", price),
+            cast("int", tick),
+            cast("int", liquidity),
         )
 
     @property
@@ -779,7 +779,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
             w3 = connection_manager.get_web3(self.chain_id)
             block_number = (
-                cast(BlockNumber, block_number)
+                cast("BlockNumber", block_number)
                 if block_number is not None
                 else w3.eth.get_block_number()
             )
@@ -817,11 +817,11 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             _sqrt_price_x96: int
             _tick: int
             _sqrt_price_x96, _tick, *_ = eth_abi.abi.decode(
-                types=self.SLOT0_STRUCT_TYPES, data=cast(HexBytes, slot0)
+                types=self.SLOT0_STRUCT_TYPES, data=cast("HexBytes", slot0)
             )
 
             _liquidity: int
-            (_liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, liquidity))
+            (_liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", liquidity))
 
             state = dataclasses.replace(
                 self.state,
@@ -971,7 +971,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             )
 
         with self._state_lock:
-            state_block = cast(BlockNumber, update.block_number)
+            state_block = cast("BlockNumber", update.block_number)
 
             state = dataclasses.replace(
                 self.state,
@@ -1008,6 +1008,10 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             return
 
         with self._state_lock:
+            state_block = cast("BlockNumber", update.block_number)
+
+            # The tick bitmap and tick data dictionaries are copies, so they can be freely modified
+            # without corrupting states for previous blocks
             _tick_bitmap = self.tick_bitmap
             _tick_data = self.tick_data
             _liquidity = self.liquidity + (

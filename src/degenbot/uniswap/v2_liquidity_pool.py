@@ -144,7 +144,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
         state_block = (
-            cast(BlockNumber, state_block) if state_block is not None else w3.eth.block_number
+            cast("BlockNumber", state_block) if state_block is not None else w3.eth.block_number
         )
 
         try:
@@ -315,17 +315,17 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
             factory, token0, token1, reserves = batch.execute()
 
-        (factory,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, factory))
-        (token0,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token0))
-        (token1,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token1))
+        (factory,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", factory))
+        (token0,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token0))
+        (token1,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token1))
         reserves0, reserves1, *_ = eth_abi.abi.decode(
-            types=self.RESERVES_STRUCT_TYPES, data=cast(HexBytes, reserves)
+            types=self.RESERVES_STRUCT_TYPES, data=cast("HexBytes", reserves)
         )
 
         return (
-            get_checksum_address(cast(str, factory)),
-            (get_checksum_address(cast(str, token0)), get_checksum_address(cast(str, token1))),
-            (cast(int, reserves0), cast(int, reserves1)),
+            get_checksum_address(cast("str", factory)),
+            (get_checksum_address(cast("str", token0)), get_checksum_address(cast("str", token1))),
+            (cast("int", reserves0), cast("int", reserves1)),
         )
 
     @property
@@ -376,7 +376,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             block_number = (
                 w3.eth.get_block_number()
                 if block_number is None
-                else cast(BlockNumber, block_number)
+                else cast("BlockNumber", block_number)
             )
             reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
 

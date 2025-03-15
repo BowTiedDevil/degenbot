@@ -2306,7 +2306,7 @@ class UniswapTransaction(AbstractTransaction):
             block_number=(
                 connection_manager.get_web3(self.chain_id).eth.get_block_number()
                 if state_block is None
-                else cast(BlockNumber, state_block)
+                else cast("BlockNumber", state_block)
             ),
         )
 

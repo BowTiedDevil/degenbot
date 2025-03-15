@@ -167,7 +167,7 @@ def test_a_ramping(fork_mainnet: AnvilFork):
     set_web3(fork_mainnet.w3)
 
     tripool = CurveStableswapPool(address=TRIPOOL_ADDRESS)
-    tripool._create_timestamp = cast(Timestamp, 0)  # defeat the timestamp optimization
+    tripool._create_timestamp = cast("Timestamp", 0)  # defeat the timestamp optimization
 
     assert tripool._a(timestamp=initial_a_time) == initial_a
     assert tripool._a(timestamp=final_a_time) == final_a
@@ -309,7 +309,7 @@ def test_factory_stableswap_pools(fork_mainnet: AnvilFork):
         print(f"Testing factory pool {i}/{pool_count} @ {pool_address}")
 
         try:
-            lp = CurveStableswapPool(address=cast(str, pool_address), silent=True)
+            lp = CurveStableswapPool(address=cast("str", pool_address), silent=True)
             _test_calculations(lp)
         except (BrokenPool, NoLiquidity):
             continue
@@ -340,7 +340,7 @@ def test_base_registry_pools(fork_mainnet: AnvilFork):
 
     for i, pool_address in enumerate(pool_addresses):
         print(f"Testing registry pool {i}/{pool_count} @ {pool_address}")
-        lp = CurveStableswapPool(address=cast(str, pool_address), silent=True)
+        lp = CurveStableswapPool(address=cast("str", pool_address), silent=True)
         _test_calculations(lp)
 
 

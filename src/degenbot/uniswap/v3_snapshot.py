@@ -110,7 +110,7 @@ class UniswapV3LiquiditySnapshot:
             event_instance = event()
             logger.info(f"Processing {event.event_name} events")
             event_abi = cast(
-                ABIEvent, get_abi_element(abi=v3pool.abi, abi_element_identifier=event.event_name)
+                "ABIEvent", get_abi_element(abi=v3pool.abi, abi_element_identifier=event.event_name)
             )
             start_block = self.newest_block + 1
 

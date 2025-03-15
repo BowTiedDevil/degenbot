@@ -117,7 +117,7 @@ def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3
         case None:
             return w3.eth.get_block_number()
         case int() as block_number_as_int:
-            return cast(BlockNumber, block_number_as_int)
+            return cast("BlockNumber", block_number_as_int)
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
             block = w3.eth.get_block(block_tag)
             block_number = block.get("number")
@@ -126,13 +126,13 @@ def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3
             return block_number
         case str() as block_number_as_str:
             try:
-                return cast(BlockNumber, int(block_number_as_str, 16))
+                return cast("BlockNumber", int(block_number_as_str, 16))
             except ValueError:
                 raise DegenbotValueError(
                     message=f"Invalid block identifier {identifier!r}"
                 ) from None
         case bytes() as block_number_as_bytes:
-            return cast(BlockNumber, int.from_bytes(block_number_as_bytes, byteorder="big"))
+            return cast("BlockNumber", int.from_bytes(block_number_as_bytes, byteorder="big"))
         case _:
             raise DegenbotValueError(message=f"Invalid block identifier {identifier!r}")
 
@@ -144,7 +144,7 @@ async def get_number_for_block_identifier_async(
         case None:
             return await w3.eth.get_block_number()
         case int() as block_number_as_int:
-            return cast(BlockNumber, block_number_as_int)
+            return cast("BlockNumber", block_number_as_int)
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
             block = await w3.eth.get_block(block_tag)
             block_number = block.get("number")
@@ -153,13 +153,13 @@ async def get_number_for_block_identifier_async(
             return block_number
         case str() as block_number_as_str:
             try:
-                return cast(BlockNumber, int(block_number_as_str, 16))
+                return cast("BlockNumber", int(block_number_as_str, 16))
             except ValueError:
                 raise DegenbotValueError(
                     message=f"Invalid block identifier {identifier!r}"
                 ) from None
         case bytes() as block_number_as_bytes:
-            return cast(BlockNumber, int.from_bytes(block_number_as_bytes, byteorder="big"))
+            return cast("BlockNumber", int.from_bytes(block_number_as_bytes, byteorder="big"))
         case _:
             raise DegenbotValueError(message=f"Invalid block identifier {identifier!r}")
 

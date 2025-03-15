@@ -299,7 +299,7 @@ def test_2pool_uniswap_v2_decimal_corrected(
 
     uncompressed_forward_token_amount = min(
         int(
-            cast(float, forward_token_amount.value)
+            cast("float", forward_token_amount.value)
             * compression_factor
             * 10**forward_token.decimals
         ),
@@ -525,7 +525,7 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
 
     uncompressed_forward_token_amount = min(
         int(
-            cast(float, forward_token_amount.value)
+            cast("float", forward_token_amount.value)
             * compression_factor_forward_token
             * 10**forward_token.decimals
         ),
@@ -765,7 +765,7 @@ def test_base_2pool(
 
     uncompressed_forward_token_amount = min(
         int(
-            cast(float, forward_token_amount.value)
+            cast("float", forward_token_amount.value)
             * compression_factor_forward_token
             * 10**forward_token.decimals
         ),

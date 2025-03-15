@@ -270,19 +270,19 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
                 initial_a, initial_a_time, future_a, future_a_time = batch.execute()
 
-                (initial_a,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, initial_a))
+                (initial_a,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", initial_a))
                 (initial_a_time,) = eth_abi.abi.decode(
-                    types=["uint256"], data=cast(HexBytes, initial_a_time)
+                    types=["uint256"], data=cast("HexBytes", initial_a_time)
                 )
-                (future_a,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, future_a))
+                (future_a,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", future_a))
                 (future_a_time,) = eth_abi.abi.decode(
-                    types=["uint256"], data=cast(HexBytes, future_a_time)
+                    types=["uint256"], data=cast("HexBytes", future_a_time)
                 )
 
-                self.initial_a_coefficient = cast(int, initial_a)
-                self.initial_a_coefficient_time = cast(int, initial_a_time)
-                self.future_a_coefficient = cast(int, future_a)
-                self.future_a_coefficient_time = cast(int, future_a_time)
+                self.initial_a_coefficient = cast("int", initial_a)
+                self.initial_a_coefficient_time = cast("int", initial_a_time)
+                self.future_a_coefficient = cast("int", future_a)
+                self.future_a_coefficient_time = cast("int", future_a_time)
 
         self.a_coefficient: int
         self.fee: int
@@ -330,14 +330,14 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 a_coefficient, pool_fee, admin_fee = batch.execute()
 
                 (a_coefficient,) = eth_abi.abi.decode(
-                    types=["uint256"], data=cast(HexBytes, a_coefficient)
+                    types=["uint256"], data=cast("HexBytes", a_coefficient)
                 )
-                (pool_fee,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, pool_fee))
-                (admin_fee,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, admin_fee))
+                (pool_fee,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", pool_fee))
+                (admin_fee,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", admin_fee))
 
-                self.a_coefficient = cast(int, a_coefficient)
-                self.fee = cast(int, pool_fee)
-                self.admin_fee = cast(int, admin_fee)
+                self.a_coefficient = cast("int", a_coefficient)
+                self.fee = cast("int", pool_fee)
+                self.admin_fee = cast("int", admin_fee)
 
         def get_coin_index_type() -> str:
             # Identify the coins input format (int128 or uint256)
@@ -474,7 +474,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                         return_types=["bool"],
                         block_identifier=state_block,
                     )
-                    is_meta_results.append(cast(bool, result))
+                    is_meta_results.append(cast("bool", result))
 
             return any(is_meta_results)
 
@@ -658,7 +658,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             10 ** (2 * self.PRECISION_DECIMALS - token.decimals) for token in self.tokens
         )
         self.precision_multipliers = tuple(
-            cast(int, 10 ** (self.PRECISION_DECIMALS - token.decimals)) for token in self.tokens
+            cast("int", 10 ** (self.PRECISION_DECIMALS - token.decimals)) for token in self.tokens
         )
 
         self._state = CurveStableswapPoolState(
@@ -790,7 +790,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
 
         block_number = (
-            cast(BlockNumber, block_identifier)
+            cast("BlockNumber", block_identifier)
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
@@ -820,7 +820,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, ...]:
         block_number = (
-            cast(BlockNumber, block_identifier)
+            cast("BlockNumber", block_identifier)
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
@@ -915,7 +915,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         rates = self.rate_multipliers
 
         block_number = (
-            cast(BlockNumber, block_identifier)
+            cast("BlockNumber", block_identifier)
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
@@ -1414,7 +1414,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         pool_balances = override_state.balances if override_state is not None else self.balances
 
         block_number = (
-            cast(BlockNumber, block_identifier)
+            cast("BlockNumber", block_identifier)
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 identifier=block_identifier,
@@ -1816,7 +1816,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             d_p: int,  # noqa:ARG001
             xp: Sequence[int],
         ) -> int:
-            return d * d // xp[0] * d // xp[1] // cast(int, n_coins**n_coins)
+            return d * d // xp[0] * d // xp[1] // cast("int", n_coins**n_coins)
 
         d_func = calc_d
         dp_func = calc_dp
@@ -2266,7 +2266,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         """
 
         block_number = (
-            cast(BlockNumber, block_identifier)
+            cast("BlockNumber", block_identifier)
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,

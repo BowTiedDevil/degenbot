@@ -137,11 +137,11 @@ class Erc20Token(AbstractErc20Token):
 
             name, symbol, decimals = batch.execute()
 
-            (name,) = eth_abi.abi.decode(types=["string"], data=cast(HexBytes, name))
-            (symbol,) = eth_abi.abi.decode(types=["string"], data=cast(HexBytes, symbol))
-            (decimals,) = eth_abi.abi.decode(types=["uint256"], data=cast(HexBytes, decimals))
+            (name,) = eth_abi.abi.decode(types=["string"], data=cast("HexBytes", name))
+            (symbol,) = eth_abi.abi.decode(types=["string"], data=cast("HexBytes", symbol))
+            (decimals,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", decimals))
 
-            return cast(str, name), cast(str, symbol), cast(int, decimals)
+            return cast("str", name), cast("str", symbol), cast("int", decimals)
 
     def get_name(self, w3: Web3, func_prototype: str) -> str:
         result = w3.eth.call(
@@ -156,10 +156,10 @@ class Erc20Token(AbstractErc20Token):
 
         try:
             (name,) = eth_abi.abi.decode(types=["string"], data=result)
-            return cast(str, name)
+            return cast("str", name)
         except DecodingError:
             (name,) = eth_abi.abi.decode(types=["bytes32"], data=result)
-            return cast(HexBytes, name).decode("utf-8", errors="ignore").strip("\x00")
+            return cast("HexBytes", name).decode("utf-8", errors="ignore").strip("\x00")
 
     def get_symbol(self, w3: Web3, func_prototype: str) -> str:
         result = w3.eth.call(
@@ -174,10 +174,10 @@ class Erc20Token(AbstractErc20Token):
 
         try:
             (symbol,) = eth_abi.abi.decode(types=["string"], data=result)
-            return cast(str, symbol)
+            return cast("str", symbol)
         except DecodingError:
             (symbol,) = eth_abi.abi.decode(types=["bytes32"], data=result)
-            return cast(HexBytes, symbol).decode("utf-8", errors="ignore").strip("\x00")
+            return cast("HexBytes", symbol).decode("utf-8", errors="ignore").strip("\x00")
 
     def get_decimals(self, w3: Web3, func_prototype: str) -> int:
         (result,) = raw_call(
@@ -189,7 +189,7 @@ class Erc20Token(AbstractErc20Token):
             ),
             return_types=["uint256"],
         )
-        return cast(int, result)
+        return cast("int", result)
 
     def get_approval(
         self,
@@ -205,7 +205,7 @@ class Erc20Token(AbstractErc20Token):
         spender = get_checksum_address(spender)
 
         block_number = (
-            cast(BlockNumber, block_identifier)
+            cast("BlockNumber", block_identifier)
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
@@ -245,7 +245,7 @@ class Erc20Token(AbstractErc20Token):
         spender = get_checksum_address(spender)
 
         block_number = (
-            cast(BlockNumber, block_identifier)
+            cast("BlockNumber", block_identifier)
             if isinstance(block_identifier, int)
             else await get_number_for_block_identifier_async(
                 block_identifier,
@@ -283,7 +283,7 @@ class Erc20Token(AbstractErc20Token):
         address = get_checksum_address(address)
 
         block_number = (
-            cast(BlockNumber, block_identifier)
+            cast("BlockNumber", block_identifier)
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
@@ -325,7 +325,7 @@ class Erc20Token(AbstractErc20Token):
         address = get_checksum_address(address)
 
         block_number = (
-            cast(BlockNumber, block_identifier)
+            cast("BlockNumber", block_identifier)
             if isinstance(block_identifier, int)
             else await get_number_for_block_identifier_async(
                 block_identifier,
@@ -361,7 +361,7 @@ class Erc20Token(AbstractErc20Token):
         """
 
         block_number = (
-            cast(BlockNumber, block_identifier)
+            cast("BlockNumber", block_identifier)
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
@@ -392,7 +392,7 @@ class Erc20Token(AbstractErc20Token):
         """
 
         block_number = (
-            cast(BlockNumber, block_identifier)
+            cast("BlockNumber", block_identifier)
             if isinstance(block_identifier, int)
             else await get_number_for_block_identifier_async(
                 block_identifier,
@@ -471,7 +471,7 @@ class EtherPlaceholder(Erc20Token):
         address = get_checksum_address(address)
 
         block_number = (
-            cast(BlockNumber, block_identifier)
+            cast("BlockNumber", block_identifier)
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,

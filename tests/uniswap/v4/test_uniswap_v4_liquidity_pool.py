@@ -1,6 +1,6 @@
 import dataclasses
 import pathlib
-from typing import Any
+from typing import Any, cast
 
 import pydantic_core
 import pytest
@@ -21,7 +21,7 @@ from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 USDC_CONTRACT_ADDRESS = get_checksum_address("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
 NATIVE_CURRENCY_ADDRESS = ZERO_ADDRESS
 ETH_USDC_V4_POOL_ID = cast(
-    HexStr, "0x21c67e77068de97969ba93d4aab21826d33ca12bb9f565d8496e8fda8a82ca27"
+    "HexStr", "0x21c67e77068de97969ba93d4aab21826d33ca12bb9f565d8496e8fda8a82ca27"
 )
 ETH_USDC_V4_POOL_FEE = 500
 ETH_USDC_V4_POOL_TICK_SPACING = 10

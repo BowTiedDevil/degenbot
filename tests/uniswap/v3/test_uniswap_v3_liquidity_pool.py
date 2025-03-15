@@ -1,6 +1,6 @@
 import pathlib
 import pickle
-from typing import Any
+from typing import Any, cast
 
 import pydantic_core
 import pytest
@@ -703,7 +703,7 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None
             tick=257907,
             tick_bitmap=lp.tick_bitmap,
             tick_data=lp.tick_data,
-            block=17_600_000,
+            block=cast("BlockNumber", 17_600_000),
         ),
     )
 
@@ -737,7 +737,7 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None
             tick=257906,
             tick_bitmap=lp.tick_bitmap,
             tick_data=lp.tick_data,
-            block=17_600_000,
+            block=cast("BlockNumber", 17_600_000),
         ),
     )
 

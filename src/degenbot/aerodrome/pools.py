@@ -448,19 +448,19 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
             factory, token0, token1, stable, reserves = batch.execute()
 
-        (factory,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, factory))
-        (token0,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token0))
-        (token1,) = eth_abi.abi.decode(types=["address"], data=cast(HexBytes, token1))
-        (stable,) = eth_abi.abi.decode(types=["bool"], data=cast(HexBytes, stable))
+        (factory,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", factory))
+        (token0,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token0))
+        (token1,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token1))
+        (stable,) = eth_abi.abi.decode(types=["bool"], data=cast("HexBytes", stable))
         reserves0, reserves1, _ = eth_abi.abi.decode(
-            types=["uint256", "uint256", "uint256"], data=cast(HexBytes, reserves)
+            types=["uint256", "uint256", "uint256"], data=cast("HexBytes", reserves)
         )
 
         (fee,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
                 transaction={
-                    "to": get_checksum_address(cast(str, factory)),
+                    "to": get_checksum_address(cast("str", factory)),
                     "data": encode_function_calldata(
                         function_prototype="getFee(address,bool)",
                         function_arguments=[self.address, stable],
@@ -470,11 +470,11 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
         return (
-            get_checksum_address(cast(str, factory)),
-            (get_checksum_address(cast(str, token0)), get_checksum_address(cast(str, token1))),
-            cast(bool, stable),
-            cast(int, fee),
-            (cast(int, reserves0), cast(int, reserves1)),
+            get_checksum_address(cast("str", factory)),
+            (get_checksum_address(cast("str", token0)), get_checksum_address(cast("str", token1))),
+            cast("bool", stable),
+            cast("int", fee),
+            (cast("int", reserves0), cast("int", reserves1)),
         )
 
     def get_reserves(
@@ -491,7 +491,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
             return_types=["uint256", "uint256"],
         )
 
-        return cast(int, reserves_token0), cast(int, reserves_token1)
+        return cast("int", reserves_token0), cast("int", reserves_token1)
 
 
 class AerodromeV3Pool(UniswapV3Pool):
