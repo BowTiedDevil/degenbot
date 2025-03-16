@@ -48,7 +48,7 @@ def get_next_sqrt_price_from_amount0_rounding_up(
         # product overflowed - failsafe path
         result = div_rounding_up(
             x=numerator1,
-            y=(numerator1 / sqrt_price_x96) + amount,
+            y=(numerator1 // sqrt_price_x96) + amount,
         )
         assert MIN_UINT160 <= result <= MAX_UINT160
         return result
