@@ -3,9 +3,9 @@ from typing import Any
 
 import pydantic_core
 import pytest
-from degenbot.cache import get_checksum_address
 
 from degenbot import AnvilFork, PancakeV2Pool, set_web3
+from degenbot.cache import get_checksum_address
 
 PANCAKE_V2_ROUTER = get_checksum_address("0x8cFe327CEc66d1C090Dd72bd0FF11d690C33a2Eb")
 PANCAKE_V2_ROUTER_ABI = pydantic_core.from_json(

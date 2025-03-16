@@ -4,12 +4,13 @@ from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
 import pytest
-from degenbot.cache import get_checksum_address
 from web3 import Web3
+
+from degenbot.cache import get_checksum_address
 
 if TYPE_CHECKING:
     from web3.contract.contract import Contract
-from web3.types import Timestamp
+    from web3.types import Timestamp
 
 from degenbot import AnvilFork
 from degenbot.config import connection_manager, set_web3

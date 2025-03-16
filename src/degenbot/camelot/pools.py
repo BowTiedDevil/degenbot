@@ -1,7 +1,6 @@
 from fractions import Fraction
 
 from degenbot.cache import get_checksum_address
-
 from degenbot.camelot.functions import get_y_camelot, k_camelot
 from degenbot.config import connection_manager
 from degenbot.erc20_token import Erc20Token

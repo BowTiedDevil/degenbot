@@ -4,6 +4,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from eth_typing import ChecksumAddress
+
 from degenbot.cache import get_checksum_address
 
 if sys.version_info >= (3, 11):

@@ -1,10 +1,8 @@
 import contextlib
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
-from eth_typing import BlockNumber, ChecksumAddress
-from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
@@ -23,6 +21,10 @@ from degenbot.functions import (
 from degenbot.logging import logger
 from degenbot.registry.all_tokens import token_registry
 from degenbot.types import AbstractErc20Token, BoundedCache
+
+if TYPE_CHECKING:
+    from eth_typing import BlockNumber, ChecksumAddress
+    from hexbytes import HexBytes
 
 
 class Erc20Token(AbstractErc20Token):

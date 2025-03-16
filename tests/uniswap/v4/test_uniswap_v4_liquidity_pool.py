@@ -1,12 +1,9 @@
 import dataclasses
 import pathlib
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pydantic_core
 import pytest
-
-#
-from eth_typing import HexStr
 from hexbytes import HexBytes
 from web3.exceptions import ContractLogicError
 
@@ -17,6 +14,9 @@ from degenbot.config import set_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import IncompleteSwap, LiquidityPoolError, PossibleInaccurateResult
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+
+if TYPE_CHECKING:
+    from eth_typing import HexStr
 
 USDC_CONTRACT_ADDRESS = get_checksum_address("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
 NATIVE_CURRENCY_ADDRESS = ZERO_ADDRESS
@@ -54,6 +54,7 @@ def eth_usdc_v4(fork_mainnet: AnvilFork) -> UniswapV4Pool:
             tick_spacing=ETH_USDC_V4_POOL_TICK_SPACING,
         )
 
+    assert isinstance(pool, UniswapV4Pool)
     return pool
 
 
@@ -154,7 +155,7 @@ def _test_pool_exact_input(
         0.75,
     ]
 
-    pool_id: str = pool["pool_id"]
+    pool_id: HexStr = pool["pool_id"]
 
     lp = pool_registry.get(
         chain_id=fork.w3.eth.chain_id,
@@ -219,7 +220,9 @@ def _test_pool_exact_input(
             # The result might not match because a swap hook is not modeled
             continue
         except LiquidityPoolError as exc:
-            if "PriceLimitAlreadyExceeded" in exc.message or "PriceLimitOutOfBounds" in exc.message:
+            if exc.message is not None and (
+                "PriceLimitAlreadyExceeded" in exc.message or "PriceLimitOutOfBounds" in exc.message
+            ):
                 continue
             raise
 
@@ -253,7 +256,9 @@ def _test_pool_exact_input(
             # The result might not match because a swap hook is not modeled
             continue
         except LiquidityPoolError as exc:
-            if "PriceLimitAlreadyExceeded" in exc.message or "PriceLimitOutOfBounds" in exc.message:
+            if exc.message is not None and (
+                "PriceLimitAlreadyExceeded" in exc.message or "PriceLimitOutOfBounds" in exc.message
+            ):
                 continue
             raise
 
@@ -291,7 +296,7 @@ def _test_pool_exact_output(
         0.75,
     ]
 
-    pool_id: str = pool["pool_id"]
+    pool_id: HexStr = pool["pool_id"]
 
     lp = pool_registry.get(
         chain_id=fork.w3.eth.chain_id,
@@ -347,7 +352,9 @@ def _test_pool_exact_output(
             # The result might not match because a swap hook is not modeled
             continue
         except LiquidityPoolError as exc:
-            if "PriceLimitAlreadyExceeded" in exc.message or "PriceLimitOutOfBounds" in exc.message:
+            if exc.message is not None and (
+                "PriceLimitAlreadyExceeded" in exc.message or "PriceLimitOutOfBounds" in exc.message
+            ):
                 continue
             raise
 
@@ -384,7 +391,9 @@ def _test_pool_exact_output(
             # The result might not match because a swap hook is not modeled
             continue
         except LiquidityPoolError as exc:
-            if "PriceLimitAlreadyExceeded" in exc.message or "PriceLimitOutOfBounds" in exc.message:
+            if exc.message is not None and (
+                "PriceLimitAlreadyExceeded" in exc.message or "PriceLimitOutOfBounds" in exc.message
+            ):
                 continue
             raise
 

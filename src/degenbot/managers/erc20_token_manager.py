@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 from degenbot.cache import get_checksum_address
-
 from degenbot.config import connection_manager
 from degenbot.erc20_token import Erc20Token, EtherPlaceholder
 from degenbot.registry.all_tokens import token_registry

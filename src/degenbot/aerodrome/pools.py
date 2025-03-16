@@ -6,7 +6,6 @@ from weakref import WeakSet
 
 import eth_abi.abi
 from eth_typing import BlockNumber, ChecksumAddress
-from hexbytes import HexBytes
 from web3 import Web3
 from web3.types import BlockIdentifier
 
@@ -47,6 +46,9 @@ from degenbot.types import (
 )
 from degenbot.uniswap.v2_functions import constant_product_calc_exact_out
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+
+if TYPE_CHECKING:
+    from hexbytes import HexBytes
 
 
 class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):

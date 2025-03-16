@@ -1,8 +1,8 @@
 import pytest
-from degenbot.cache import get_checksum_address
 from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
 
+from degenbot.cache import get_checksum_address
 from degenbot.config import async_connection_manager, set_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token, EtherPlaceholder

@@ -1,12 +1,12 @@
 import pytest
 import web3
 from eth_typing import BlockNumber, Hash32, HexStr
-from degenbot.cache import get_checksum_address
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
 import degenbot.config
 from degenbot import AnvilFork
+from degenbot.cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.functions import (
     create2_address,

@@ -1,9 +1,9 @@
 import pytest
 from eth_typing import ChainId
-from degenbot.cache import get_checksum_address
 from web3 import Web3
 
 from degenbot import AnvilFork
+from degenbot.cache import get_checksum_address
 from degenbot.config import set_web3
 from degenbot.exceptions import (
     ManagerAlreadyInitialized,

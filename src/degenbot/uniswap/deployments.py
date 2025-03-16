@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
 from eth_typing import ChainId, ChecksumAddress
-from degenbot.cache import get_checksum_address
 
+from degenbot.cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types import AbstractExchangeDeployment
 

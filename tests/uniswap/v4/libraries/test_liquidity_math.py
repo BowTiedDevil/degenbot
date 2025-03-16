@@ -36,13 +36,12 @@ def test_add_delta_sub_int128min_fuzz(x: int):
 def test_add_delta_fuzz(x: int, y: int):
     hypothesis.assume(y != MIN_INT128)
 
+    caught_exc: EVMRevertError | None = None
     # This test does not use `pytest.raises()` since some inputs are valid
     try:
         add_delta(x, y)
     except EVMRevertError as exc:
         caught_exc = exc
-    else:
-        caught_exc = None
 
     if caught_exc is not None:
         assert caught_exc.error == "SafeCastOverflow"

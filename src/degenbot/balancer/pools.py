@@ -4,7 +4,6 @@ from typing import TypeAlias, cast
 
 import eth_abi.abi
 from eth_typing import BlockNumber, ChecksumAddress
-from degenbot.cache import get_checksum_address
 
 from degenbot.balancer.libraries.fixed_point import mulUp
 from degenbot.balancer.libraries.scaling_helpers import (
@@ -15,6 +14,7 @@ from degenbot.balancer.libraries.scaling_helpers import (
 )
 from degenbot.balancer.libraries.weighted_math import _calcOutGivenIn, _subtractSwapFeeAmount
 from degenbot.balancer.types import BalancerV2PoolState
+from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
 from degenbot.erc20_token import Erc20Token
 from degenbot.functions import encode_function_calldata
@@ -139,7 +139,6 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
                 block_identifier=state_block,
             ),
         )
-        # self.weights = tuple([Fraction(weight, self.WEIGHT_DENOMINATOR) for weight in weights])
         self.weights = tuple(weights)
 
     @property

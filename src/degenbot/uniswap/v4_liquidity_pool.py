@@ -221,7 +221,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
         assert self.pool_id == (
             calculated_id := Web3.keccak(
-                eth_abi.encode(
+                eth_abi.abi.encode(
                     types=["address", "address", "uint24", "int24", "address"],
                     args=[
                         self.pool_key.currency0,
@@ -720,9 +720,9 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             Hooks.BEFORE_SWAP_RETURNS_DELTA,
         }:
             raise PossibleInaccurateResult(
-                hooks=conflicting_hooks,
                 amount_in=swap_delta.currency0 if zero_for_one else swap_delta.currency1,
                 amount_out=swap_delta.currency1 if zero_for_one else swap_delta.currency0,
+                hooks=conflicting_hooks,
             )
 
         if zero_for_one is True and -swap_delta.currency0 < token_in_quantity:
@@ -1020,7 +1020,6 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 current_liquidity_gross = _tick_data[tick].liquidity_gross
 
                 new_liquidity_gross = current_liquidity_gross + update.liquidity
-
                 assert new_liquidity_gross >= 0, (
                     f"Negative gross liquidity ({new_liquidity_gross})!"
                 )

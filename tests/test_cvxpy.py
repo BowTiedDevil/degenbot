@@ -3,6 +3,7 @@
 from fractions import Fraction
 from threading import Lock
 from typing import cast
+from weakref import WeakSet
 
 import cvxpy
 import cvxpy.atoms.geo_mean
@@ -39,7 +40,7 @@ class MockLiquidityPool(UniswapV2Pool):
             block=None,
         )
         self._state_lock = Lock()
-        self._subscribers = set()
+        self._subscribers = WeakSet()
 
 
 @pytest.fixture
@@ -316,7 +317,7 @@ def test_2pool_uniswap_v2_decimal_corrected(
     print()
     print("Solved")
     print(
-        f"fee_multiplier                        = {[(float(fee[0]),float(fee[1])) for fee in fee_multiplier.value]}"
+        f"fee_multiplier                        = {[(float(fee[0]), float(fee[1])) for fee in fee_multiplier.value]}"
     )
     print(f"forward_token_amount                  = {uncompressed_forward_token_amount}")
     print(
@@ -548,7 +549,7 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
     print()
     print("Solved")
     print(
-        f"fee_multiplier                        = {[(float(fee[0]),float(fee[1])) for fee in fee_multiplier.value]}"
+        f"fee_multiplier                        = {[(float(fee[0]), float(fee[1])) for fee in fee_multiplier.value]}"
     )
     print(f"forward_token_amount                  = {uncompressed_forward_token_amount}")
     print(
@@ -785,7 +786,7 @@ def test_base_2pool(
     print()
     print("Solved")
     print(
-        f"fee_multiplier                        = {[(float(fee[0]),float(fee[1])) for fee in fee_multiplier.value]}"
+        f"fee_multiplier                        = {[(float(fee[0]), float(fee[1])) for fee in fee_multiplier.value]}"
     )
     print(f"forward_token_amount                  = {uncompressed_forward_token_amount}")
     print(

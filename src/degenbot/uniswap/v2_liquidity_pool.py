@@ -10,7 +10,6 @@ from weakref import WeakSet
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from eth_typing import BlockIdentifier, BlockNumber, ChecksumAddress
-from hexbytes import HexBytes
 
 from degenbot.cache import get_checksum_address
 
@@ -57,6 +56,9 @@ from degenbot.uniswap.v2_functions import (
     constant_product_calc_exact_out,
     generate_v2_pool_address,
 )
+
+if TYPE_CHECKING:
+    from hexbytes import HexBytes
 
 
 class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):

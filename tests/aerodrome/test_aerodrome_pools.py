@@ -5,7 +5,7 @@ from typing import Any
 import pydantic_core
 import pytest
 import web3
-from eth_utils.address import to_checksum_address
+from eth_typing import BlockNumber
 
 from degenbot import AerodromeV2Pool, AerodromeV3Pool, AnvilFork, set_web3
 from degenbot.aerodrome.abi import AERODROME_V2_POOL_ABI
@@ -97,7 +97,7 @@ def test_auto_update(
     lp.auto_update()
 
     with pytest.raises(LateUpdateError):
-        lp.auto_update(lp.update_block - 10)
+        lp.auto_update(BlockNumber(lp.update_block - 10))
 
 
 def test_external_update(
@@ -112,7 +112,7 @@ def test_external_update(
 
     lp.external_update(
         update=AerodromeV2PoolExternalUpdate(
-            block_number=lp.update_block + 1,
+            block_number=BlockNumber(lp.update_block + 1),
             reserves_token0=int(1.1 * lp.reserves_token0),
             reserves_token1=int(0.9 * lp.reserves_token1),
         )
@@ -123,7 +123,7 @@ def test_external_update(
 
     lp.external_update(
         update=AerodromeV2PoolExternalUpdate(
-            block_number=lp.update_block + 1,
+            block_number=BlockNumber(lp.update_block + 1),
             reserves_token0=lp.reserves_token0,
             reserves_token1=lp.reserves_token1,
         )
@@ -132,7 +132,7 @@ def test_external_update(
     with pytest.raises(ExternalUpdateError):
         lp.external_update(
             update=AerodromeV2PoolExternalUpdate(
-                block_number=lp.update_block - 10,
+                block_number=BlockNumber(lp.update_block - 10),
                 reserves_token0=lp.reserves_token0,
                 reserves_token1=lp.reserves_token1,
             )

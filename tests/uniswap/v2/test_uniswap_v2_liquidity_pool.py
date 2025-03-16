@@ -720,7 +720,7 @@ def test_discard_before_finalized(
 
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.external_update(
             update=UniswapV2PoolExternalUpdate(
-                block_number=cast("BlockNumber", block_number),
+                block_number=block_number,
                 reserves_token0=starting_token0_reserves
                 + 10_000 * (1 + block_number - first_update_block),
                 reserves_token1=starting_token1_reserves

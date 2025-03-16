@@ -7,6 +7,7 @@ import time
 from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING
+from weakref import WeakSet
 
 import pytest
 
@@ -40,9 +41,7 @@ from degenbot.uniswap.types import (
 from tests.conftest import FakeSubscriber
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
-    from eth_typing import ChecksumAddress
+    from degenbot.arbitrage.uniswap_lp_cycle import Pool, PoolState
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -71,7 +70,7 @@ def wbtc_weth_v2_lp(
     set_web3(fork_mainnet.w3)
     pool = UniswapV2Pool(WBTC_WETH_V2_POOL_ADDRESS)
     pool._state = UniswapV2PoolState(
-        pool=pool.address,
+        address=pool.address,
         reserves_token0=16231137593,
         reserves_token1=2571336301536722443178,
         block=pool.update_block,
@@ -2080,7 +2079,7 @@ def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> UniswapV3Pool:
     )
 
     pool._state = UniswapV3PoolState(
-        pool=pool.address,
+        address=pool.address,
         liquidity=1612978974357835825,
         sqrt_price_x96=31549217861118002279483878013792428,
         tick=257907,
@@ -2115,13 +2114,13 @@ class MockLiquidityPool(UniswapV2Pool):
             block=None,
         )
         self._state_lock = Lock()
-        self._subscribers = set()
+        self._subscribers = WeakSet()
 
 
 class MockV3LiquidityPool(UniswapV3Pool):
     def __init__(self) -> None:
         self._state_lock = Lock()
-        self._subscribers = set()
+        self._subscribers = WeakSet()
 
 
 def test_create_with_either_token_input(
