@@ -148,6 +148,7 @@ testpaths = "tests"
 
 [tool.uv]
 dev-dependencies = [
+    "hypothesis",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
