@@ -1,5 +1,3 @@
-# noqa: A005
-
 import dataclasses
 
 from degenbot.types import AbstractPoolState
