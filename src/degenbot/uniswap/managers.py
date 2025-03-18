@@ -1,17 +1,11 @@
 import contextlib
 import sys
 from threading import Lock
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Self
 
 from eth_typing import ChecksumAddress
 
 from degenbot.cache import get_checksum_address
-
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
-
 from degenbot.config import connection_manager
 from degenbot.exceptions import (
     LiquidityPoolError,
@@ -39,7 +33,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
     A class that generates and tracks Uniswap V2 liquidity pool helpers.
     """
 
-    Pool: TypeAlias = UniswapV2Pool
+    type Pool = UniswapV2Pool
 
     @classmethod
     def from_exchange(
@@ -213,7 +207,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
     A class that generates and tracks Uniswap V3 liquidity pool helpers.
     """
 
-    Pool: TypeAlias = UniswapV3Pool
+    type Pool = UniswapV3Pool
 
     @classmethod
     def from_exchange(

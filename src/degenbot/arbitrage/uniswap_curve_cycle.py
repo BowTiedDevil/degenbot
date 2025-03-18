@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Awaitable, Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any
 from weakref import WeakSet
 
 import eth_abi.abi
@@ -47,11 +47,9 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
-CurveOrUniswapPoolState: TypeAlias = (
-    UniswapV2PoolState | UniswapV3PoolState | CurveStableswapPoolState
-)
-CurveOrUniswapPool: TypeAlias = UniswapV2Pool | UniswapV3Pool | CurveStableswapPool
-CurveOrUniswapSwapAmount: TypeAlias = (
+type CurveOrUniswapPoolState = UniswapV2PoolState | UniswapV3PoolState | CurveStableswapPoolState
+type CurveOrUniswapPool = UniswapV2Pool | UniswapV3Pool | CurveStableswapPool
+type CurveOrUniswapSwapAmount = (
     CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
 )
 

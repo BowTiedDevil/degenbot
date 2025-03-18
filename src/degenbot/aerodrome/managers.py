@@ -1,4 +1,4 @@
-from typing import Any, TypeAlias
+from typing import Any
 
 from degenbot.aerodrome.functions import (
     generate_aerodrome_v2_pool_address,
@@ -10,7 +10,7 @@ from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 
 
 class AerodromeV2PoolManager(UniswapV2PoolManager):
-    Pool: TypeAlias = AerodromeV2Pool
+    type Pool = AerodromeV2Pool
     POOL_IMPLEMENTATION_ADDRESS = get_checksum_address("0xA4e46b4f701c62e14DF11B48dCe76A7d793CD6d7")
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -47,7 +47,7 @@ class AerodromeV2PoolManager(UniswapV2PoolManager):
 
 
 class AerodromeV3PoolManager(UniswapV3PoolManager):
-    Pool: TypeAlias = AerodromeV3Pool
+    type Pool = AerodromeV3Pool
     POOL_IMPLEMENTATION_ADDRESS = get_checksum_address("0xeC8E5342B19977B4eF8892e02D8DAEcfa1315831")
 
     def __repr__(self) -> str:  # pragma: no cover

@@ -3,7 +3,7 @@ import math
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import Any, TypeAlias
+from typing import Any
 from weakref import WeakSet
 
 import eth_abi.abi
@@ -47,9 +47,10 @@ from degenbot.uniswap.v3_libraries.tick_math import (
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
-Pool: TypeAlias = AerodromeV2Pool | AerodromeV3Pool | UniswapV2Pool | UniswapV3Pool
-PoolState: TypeAlias = AerodromeV2PoolState | UniswapV2PoolState | UniswapV3PoolState
-SwapAmount: TypeAlias = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
+type Pool = AerodromeV2Pool | AerodromeV3Pool | UniswapV2Pool | UniswapV3Pool | UniswapV4Pool
+type PoolState = AerodromeV2PoolState | UniswapV2PoolState | UniswapV3PoolState | UniswapV4PoolState
+type SwapAmount = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
+PoolId = bytes | HexStr
 
 
 class UniswapLpCycle(PublisherMixin, AbstractArbitrage):

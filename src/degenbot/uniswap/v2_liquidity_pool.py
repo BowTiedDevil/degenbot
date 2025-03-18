@@ -66,7 +66,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
 
-    PoolState: TypeAlias = UniswapV2PoolState
+    type PoolState = UniswapV2PoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
     FEE = Fraction(3, 1000)

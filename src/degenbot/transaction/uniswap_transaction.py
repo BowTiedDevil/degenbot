@@ -4,8 +4,7 @@
 # TODO: instead of appending pool states to list, replace with dict and only return final state
 
 import contextlib
-import sys
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import eth_abi.abi
 import pydantic_core
@@ -14,12 +13,6 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from degenbot.cache import get_checksum_address
-
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
-
 from degenbot.config import connection_manager
 from degenbot.constants import WRAPPED_NATIVE_TOKENS
 from degenbot.erc20_token import Erc20Token

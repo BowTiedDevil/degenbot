@@ -10,7 +10,7 @@
 import contextlib
 from collections.abc import Iterable, Sequence
 from threading import Lock
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakSet
 
 import eth_abi.abi

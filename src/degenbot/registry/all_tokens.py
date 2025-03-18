@@ -1,14 +1,7 @@
 import contextlib
-import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from degenbot.cache import get_checksum_address
-
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
-
 from degenbot.exceptions import DegenbotValueError, RegistryAlreadyInitialized
 
 if TYPE_CHECKING:

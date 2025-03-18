@@ -1,6 +1,6 @@
 from fractions import Fraction
 from threading import Lock
-from typing import TypeAlias, cast
+from typing import cast
 
 import eth_abi.abi
 from eth_typing import BlockNumber, ChecksumAddress
@@ -23,7 +23,7 @@ from degenbot.types import AbstractLiquidityPool, PublisherMixin
 
 
 class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
-    PoolState: TypeAlias = BalancerV2PoolState
+    type PoolState = BalancerV2PoolState
     FEE_DENOMINATOR = 1 * 10**18
 
     def __init__(

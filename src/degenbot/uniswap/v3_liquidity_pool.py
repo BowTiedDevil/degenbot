@@ -83,7 +83,7 @@ if TYPE_CHECKING:
 
 
 class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
-    PoolState: TypeAlias = UniswapV3PoolState
+    type PoolState = UniswapV3PoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
     UNISWAP_V3_MAINNET_POOL_INIT_HASH = (

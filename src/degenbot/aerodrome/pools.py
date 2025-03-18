@@ -1,7 +1,7 @@
 import dataclasses
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakSet
 
 import eth_abi.abi
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
 
 class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
-    PoolState: TypeAlias = AerodromeV2PoolState
+    type PoolState = AerodromeV2PoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
     FEE_DENOMINATOR = 10_000
@@ -497,7 +497,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
 
 class AerodromeV3Pool(UniswapV3Pool):
-    PoolState: TypeAlias = AerodromeV3PoolState
+    type PoolState = AerodromeV3PoolState
 
     TICK_STRUCT_TYPES = (
         "uint128",

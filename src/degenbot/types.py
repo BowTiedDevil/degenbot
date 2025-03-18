@@ -1,16 +1,9 @@
 # ruff: noqa: A005
 
-import sys
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, ClassVar, Protocol, TypeAlias, TypeVar
+from typing import Any, ClassVar, Protocol, Self, TypeVar
 from weakref import WeakSet
-
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
-
 
 from eth_typing import BlockNumber, ChecksumAddress
 from hexbytes import HexBytes
@@ -112,7 +105,7 @@ class AbstractPoolManager:
     # All pool managers are associated with certain types of pools. Specifying them as a class-level
     # alias allows the type hints to be generalized. Each concrete pool manager should set this
     # class attribute
-    Pool: TypeAlias = "AbstractLiquidityPool"
+    type Pool = "AbstractLiquidityPool"
 
     instances: ClassVar[
         dict[
