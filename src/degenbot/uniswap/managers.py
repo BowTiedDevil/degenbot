@@ -14,7 +14,7 @@ from degenbot.exceptions import (
 )
 from degenbot.logging import logger
 from degenbot.registry.all_pools import pool_registry
-from degenbot.types import AbstractLiquidityPool, AbstractPoolManager
+from degenbot.types import AbstractPoolManager
 from degenbot.uniswap.deployments import (
     FACTORY_DEPLOYMENTS,
     UniswapV2ExchangeDeployment,
@@ -33,6 +33,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
     """
 
     type Pool = UniswapV2Pool
+    _tracked_pools: dict[ChecksumAddress, Pool]
 
     @classmethod
     def from_exchange(
@@ -87,7 +88,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         self._factory_address = factory_address
         self._deployer_address = deployer_address
         self._pool_init_hash = pool_init_hash
-        self._tracked_pools: dict[ChecksumAddress, AbstractLiquidityPool] = {}
+        self._tracked_pools = {}
         self._untracked_pools: set[ChecksumAddress] = set()
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -111,12 +112,13 @@ class UniswapV2PoolManager(AbstractPoolManager):
         if pool_class_kwargs is None:
             pool_class_kwargs = {}
 
-        return self.Pool(
+        pool: UniswapV2Pool = self.Pool.__value__(
             address=pool_address,
             silent=silent,
             state_block=state_block,
             **pool_class_kwargs,
         )
+        return pool
 
     def get_pool(
         self,
@@ -133,9 +135,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         pool_address = get_checksum_address(pool_address)
 
         with contextlib.suppress(KeyError):
-            result = self._tracked_pools[pool_address]
-            assert isinstance(result, self.Pool)
-            return result
+            return self._tracked_pools[pool_address]
 
         if pool_address in self._untracked_pools:
             raise PoolNotAssociated(pool_address)
@@ -148,7 +148,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
             )
         ) is not None:
             if TYPE_CHECKING:
-                assert isinstance(pool_from_registry, self.Pool)
+                assert isinstance(pool_from_registry, UniswapV2Pool)
             if pool_from_registry.factory == self._factory_address:
                 self._add_tracked_pool(pool_from_registry)
                 return pool_from_registry
@@ -207,6 +207,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
     """
 
     type Pool = UniswapV3Pool
+    _tracked_pools: dict[ChecksumAddress, Pool]
 
     @classmethod
     def from_exchange(
@@ -264,7 +265,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
         self._deployer_address = deployer_address
         self._pool_init_hash = pool_init_hash
         self._snapshot = snapshot
-        self._tracked_pools: dict[ChecksumAddress, AbstractLiquidityPool] = {}
+        self._tracked_pools = {}
         self._untracked_pools: set[ChecksumAddress] = set()
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -315,12 +316,13 @@ class UniswapV3PoolManager(AbstractPoolManager):
         else:
             logger.debug("Initializing pool without liquidity snapshot")
 
-        return self.Pool(
+        pool: UniswapV3Pool = self.Pool.__value__(
             address=pool_address,
             silent=silent,
             state_block=state_block,
             **pool_class_kwargs,
         )
+        return pool
 
     def get_pool(
         self,
@@ -332,15 +334,14 @@ class UniswapV3PoolManager(AbstractPoolManager):
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
         """
-        Get a pool from its address
+        Get a pool from its address. If the pool is in the global registry, that instance will
+        be returned. If not, a new one will be built.
         """
 
         pool_address = get_checksum_address(pool_address)
 
         with contextlib.suppress(KeyError):
-            result = self._tracked_pools[pool_address]
-            assert isinstance(result, self.Pool)
-            return result
+            return self._tracked_pools[pool_address]
 
         if pool_address in self._untracked_pools:
             raise PoolNotAssociated(pool_address)
@@ -352,7 +353,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
         )
         if pool_from_registry is not None:
             if TYPE_CHECKING:
-                assert isinstance(pool_from_registry, self.Pool)
+                assert isinstance(pool_from_registry, UniswapV3Pool)
             if pool_from_registry.factory == self._factory_address:
                 self._add_tracked_pool(pool_from_registry)
                 return pool_from_registry

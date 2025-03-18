@@ -60,6 +60,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
     """
 
     type PoolState = UniswapV2PoolState
+    _state: PoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
     FEE = Fraction(3, 1000)
@@ -168,7 +169,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             raise LiquidityPoolError(message="Could not build one or more tokens.") from e
 
         self._state_lock = Lock()
-        self._state = type(self).PoolState(
+        self._state = self.PoolState.__value__(
             address=self.address,
             reserves_token0=reserves0,
             reserves_token1=reserves1,

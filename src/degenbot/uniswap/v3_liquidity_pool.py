@@ -77,6 +77,7 @@ if TYPE_CHECKING:
 
 class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
     type PoolState = UniswapV3PoolState
+    _state: PoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
     UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
@@ -284,7 +285,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 block_number=state_block,
             )
 
-        self._state = type(self).PoolState(
+        self._state = self.PoolState.__value__(
             address=self.address,
             liquidity=_liquidity,
             sqrt_price_x96=_sqrt_price_x96,

@@ -56,7 +56,7 @@ from degenbot.types import (
 
 
 class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
-    PoolState: TypeAlias = CurveStableswapPoolState
+    type PoolState = CurveStableswapPoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
     # Constants from contract

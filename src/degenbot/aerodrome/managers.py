@@ -47,8 +47,8 @@ class AerodromeV2PoolManager(UniswapV2PoolManager):
 
 
 class AerodromeV3PoolManager(UniswapV3PoolManager):
-    type Pool = AerodromeV3Pool
     POOL_IMPLEMENTATION_ADDRESS = get_checksum_address("0xeC8E5342B19977B4eF8892e02D8DAEcfa1315831")
+    type Pool = AerodromeV3Pool
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"AerodromeV3PoolManager(factory={self._factory_address})"
@@ -75,6 +75,5 @@ class AerodromeV3PoolManager(UniswapV3PoolManager):
             state_block=state_block,
             pool_class_kwargs=pool_class_kwargs,
         )
-
-        assert isinstance(pool, self.Pool)
+        assert isinstance(pool, AerodromeV3Pool)
         return pool

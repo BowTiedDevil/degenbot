@@ -72,7 +72,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
         max_input: int | None = None,
     ):
         for swap_pool in swap_pools:
-            if not isinstance(swap_pool, CurveOrUniswapPool):
+            if not isinstance(swap_pool, CurveOrUniswapPool.__value__):
                 raise DegenbotValueError(
                     message=f"Incompatible pool type ({type(swap_pool)}) provided."
                 )

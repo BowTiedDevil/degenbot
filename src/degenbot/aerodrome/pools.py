@@ -54,6 +54,7 @@ if TYPE_CHECKING:
 class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
     type PoolState = AerodromeV2PoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
+    _state: PoolState
 
     FEE_DENOMINATOR = 10_000
 
@@ -82,7 +83,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
         self._state_lock = Lock()
-        self._state = type(self).PoolState(
+        self._state = self.PoolState.__value__(
             address=self.address,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
