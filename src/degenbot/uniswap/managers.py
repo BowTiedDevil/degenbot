@@ -1,5 +1,4 @@
 import contextlib
-import sys
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Self
 

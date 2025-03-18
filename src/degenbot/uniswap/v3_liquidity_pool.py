@@ -1,26 +1,19 @@
 # TODO: add event prototype exporter method and handler for callbacks
 import dataclasses
-import sys
 from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 from weakref import WeakSet
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from eth_typing import BlockNumber, ChecksumAddress
-
-from degenbot.cache import get_checksum_address
-
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import BlockIdentifier
 
+from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
