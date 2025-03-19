@@ -297,12 +297,16 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
                 if state.sqrt_price_x96 == 0:
                     # The pool is not initialized
-                    if state.tick_data:
-                        err_msg = (
-                            f"Found pool @ {pool.address} with liquidity positions, but price=0!"
-                        )
-                        raise ValueError(err_msg)
+                    assert state.tick_data == {}, (
+                        f"Found pool @ {pool.address} with liquidity positions, but price=0!"
+                    )
+                    return False
 
+                if (vector.zero_for_one is True and state.sqrt_price_x96 <= MIN_SQRT_RATIO + 1) or (
+                    vector.zero_for_one is False and state.sqrt_price_x96 >= MAX_SQRT_RATIO - 1
+                ):
+                    # The price has reached the min/max price, and the swap would drive it beyond
+                    # that limit
                     return False
 
                 # ----------------------------------------------------------------------------------
