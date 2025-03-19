@@ -20,7 +20,7 @@ from degenbot.arbitrage.types import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
-from degenbot.erc20_token import Erc20Token
+from degenbot.cache import get_checksum_address
 from degenbot.exceptions import (
     ArbitrageError,
     DegenbotValueError,
@@ -597,7 +597,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
             address: ChecksumAddress, calldata: bytes, value: int).
         """
 
-        from_address = to_checksum_address(from_address)
+        from_address = get_checksum_address(from_address)
 
         msg_value = 0  # This arbitrage does not require a `msg.value` payment
         payloads = []
