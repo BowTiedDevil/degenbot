@@ -24,7 +24,11 @@ from degenbot.uniswap.v4_libraries.sqrt_price_math import (
     get_next_sqrt_price_from_input,
     get_next_sqrt_price_from_output,
 )
-from degenbot.uniswap.v4_libraries.swap_math import compute_swap_step, get_sqrt_price_target
+from degenbot.uniswap.v4_libraries.swap_math import (
+    MAX_SWAP_FEE,
+    compute_swap_step,
+    get_sqrt_price_target,
+)
 
 # Tests adapted from Foundry tests in the Uniswap V4 Github repo
 # ref: https://github.com/Uniswap/v4-core/blob/main/test/libraries/SwapMath.t.sol
@@ -218,7 +222,7 @@ def test_compute_swap_step_one_for_zero_handles_intermediate_insufficient_liquid
     ),
     liquidity=hypothesis.strategies.integers(min_value=MIN_UINT128, max_value=MAX_UINT128),
     amount_remaining=hypothesis.strategies.integers(min_value=MIN_INT256, max_value=MAX_INT256),
-    fee_pips=hypothesis.strategies.integers(min_value=MIN_UINT24, max_value=1 * 10**6),
+    fee_pips=hypothesis.strategies.integers(min_value=MIN_UINT24, max_value=MAX_SWAP_FEE),
 )
 def test_fuzz_compute_swap_step(
     sqrt_price_raw: int,
@@ -231,7 +235,7 @@ def test_fuzz_compute_swap_step(
     hypothesis.assume(sqrt_price_target_raw > 0)
 
     if amount_remaining >= 0:
-        hypothesis.assume(fee_pips < 1 * 10**6)
+        hypothesis.assume(fee_pips < MAX_SWAP_FEE)
 
     sqrt_q, amount_in, amount_out, fee_amount = compute_swap_step(
         sqrt_ratio_x96_current=sqrt_price_raw,
