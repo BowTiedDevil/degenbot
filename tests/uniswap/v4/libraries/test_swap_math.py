@@ -31,18 +31,26 @@ from degenbot.uniswap.v4_libraries.swap_math import compute_swap_step, get_sqrt_
 # ref: https://github.com/Uniswap/v4-core/blob/main/test/libraries/SwapMath.t.sol
 
 
-def _test_fuzz_get_sqrt_price_target(
+@hypothesis.given(
+    zero_for_one=hypothesis.strategies.booleans(),
+    sqrt_price_next_x96=hypothesis.strategies.integers(
+        min_value=MIN_UINT160, max_value=MAX_UINT160
+    ),
+    sqrt_price_limit_x96=hypothesis.strategies.integers(
+        min_value=MIN_UINT160, max_value=MAX_UINT160
+    ),
+)
+def test_fuzz_get_sqrt_price_target(
     zero_for_one: bool,
     sqrt_price_next_x96: int,
     sqrt_price_limit_x96: int,
 ):
-    assert (
-        get_sqrt_price_target(
-            zero_for_one=zero_for_one,
-            sqrt_price_next_x96=sqrt_price_next_x96,
-            sqrt_price_limit_x96=sqrt_price_limit_x96,
-        )
-        == sqrt_price_limit_x96
+    assert get_sqrt_price_target(
+        zero_for_one=zero_for_one,
+        sqrt_price_next_x96=sqrt_price_next_x96,
+        sqrt_price_limit_x96=sqrt_price_limit_x96,
+    ) == (
+        sqrt_price_limit_x96
         if (
             sqrt_price_next_x96 < sqrt_price_limit_x96
             if zero_for_one
