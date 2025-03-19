@@ -5,7 +5,6 @@ import hypothesis.strategies
 
 from degenbot.constants import (
     MAX_INT256,
-    MAX_UINT24,
     MAX_UINT128,
     MAX_UINT160,
     MAX_UINT256,
@@ -219,9 +218,8 @@ def test_compute_swap_step_one_for_zero_handles_intermediate_insufficient_liquid
     ),
     liquidity=hypothesis.strategies.integers(min_value=MIN_UINT128, max_value=MAX_UINT128),
     amount_remaining=hypothesis.strategies.integers(min_value=MIN_INT256, max_value=MAX_INT256),
-    fee_pips=hypothesis.strategies.integers(min_value=MIN_UINT24, max_value=MAX_UINT24),
+    fee_pips=hypothesis.strategies.integers(min_value=MIN_UINT24, max_value=1 * 10**6),
 )
-@hypothesis.settings(suppress_health_check=[hypothesis.HealthCheck.filter_too_much])
 def test_fuzz_compute_swap_step(
     sqrt_price_raw: int,
     sqrt_price_target_raw: int,
@@ -231,15 +229,16 @@ def test_fuzz_compute_swap_step(
 ):
     hypothesis.assume(sqrt_price_raw > 0)
     hypothesis.assume(sqrt_price_target_raw > 0)
-    hypothesis.assume(fee_pips >= 0)
 
     if amount_remaining >= 0:
         hypothesis.assume(fee_pips < 1 * 10**6)
-    else:
-        hypothesis.assume(fee_pips <= 1 * 10**6)
 
     sqrt_q, amount_in, amount_out, fee_amount = compute_swap_step(
-        sqrt_price_raw, sqrt_price_target_raw, liquidity, amount_remaining, fee_pips
+        sqrt_ratio_x96_current=sqrt_price_raw,
+        sqrt_ratio_x96_target=sqrt_price_target_raw,
+        liquidity=liquidity,
+        amount_remaining=amount_remaining,
+        fee_pips=fee_pips,
     )
     assert amount_in <= MAX_UINT256 - fee_amount
     if amount_remaining >= 0:
