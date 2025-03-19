@@ -11,33 +11,20 @@ MAX_SWAP_FEE = 1 * 10**6
 # @return sqrtPriceTargetX96 The price target for the next swap step
 def get_sqrt_price_target(
     zero_for_one: bool,
-    sqrt_price_next_x96: int,
-    sqrt_price_limit_x96: int,
-) -> int:
-    # a flag to toggle between sqrtPriceNextX96 and sqrtPriceLimitX96
-    # when zeroForOne == true, nextOrLimit reduces to sqrtPriceNextX96 >= sqrtPriceLimitX96
-    # sqrtPriceTargetX96 = max(sqrtPriceNextX96, sqrtPriceLimitX96)
-    # when zeroForOne == False, nextOrLimit reduces to sqrtPriceNextX96 < sqrtPriceLimitX96
-    # sqrtPriceTargetX96 = min(sqrtPriceNextX96, sqrtPriceLimitX96)
-    sqrt_price_next_x96 = sqrt_price_next_x96 & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
-    sqrt_price_limit_x96 = sqrt_price_limit_x96 & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
-    next_or_limit = (sqrt_price_next_x96 < sqrt_price_limit_x96) ^ (zero_for_one & 0x1)
-    sym_diff = sqrt_price_next_x96 ^ sqrt_price_limit_x96
-    return sqrt_price_limit_x96 ^ (sym_diff * next_or_limit)
+    """
+    Computes the price target for the next swap step.
 
+    @dev This simplified implementation replicates the gas optimized Yul used by the Solidity
+    contract.
 
-# @notice Computes the result of swapping some amount in, or amount out, given the parameters of the swap
-# @dev If the swap's amountSpecified is negative, the combined fee and input amount will never exceed the absolute value of the remaining amount.
-# @param sqrtPriceCurrentX96 The current sqrt price of the pool
-# @param sqrtPriceTargetX96 The price that cannot be exceeded, from which the direction of the swap is inferred
-# @param liquidity The usable liquidity
-# @param amountRemaining How much input or output amount is remaining to be swapped in/out
-# @param feePips The fee taken from the input amount, expressed in hundredths of a bip
-# @return sqrtPriceNextX96 The price after swapping the amount in/out, not to exceed the price target
-# @return amountIn The amount to be swapped in, of either currency0 or currency1, based on the direction of the swap
-# @return amountOut The amount to be received, of either currency0 or currency1, based on the direction of the swap
-# @return feeAmount The amount of input that will be taken as a fee
-# @dev feePips must be no larger than MAX_SWAP_FEE for this function. We ensure that before setting a fee using LPFeeLibrary.isValid.
+    ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/SwapMath.sol
+    """
+
+    return (
+        max(sqrt_price_next_x96, sqrt_price_limit_x96)
+        if zero_for_one
+        else min(sqrt_price_next_x96, sqrt_price_limit_x96)
+    )
 def compute_swap_step(
     sqrt_ratio_x96_current: int,
     sqrt_ratio_x96_target: int,

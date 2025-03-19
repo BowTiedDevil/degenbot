@@ -179,22 +179,12 @@ def abs_diff(a: int, b: int) -> int:
     """
     Calculate the absolute difference between two values.
 
-    This implementation replaces the Solidity version which uses inline Yul in place of abs()
+    This implementation replaces the Solidity version which uses inline Yul.
 
     ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/SqrtPriceMath.sol
     """
 
-    return abs(a - b)
-
-
-# @notice Gets the amount0 delta between two prices
-# @dev Calculates liquidity / sqrt(lower) - liquidity / sqrt(upper),
-# i.e. liquidity * (sqrt(upper) - sqrt(lower)) / (sqrt(upper) * sqrt(lower))
-# @param sqrtPriceAX96 A sqrt price
-# @param sqrtPriceBX96 Another sqrt price
-# @param liquidity The amount of usable liquidity
-# @param roundUp Whether to round the amount up or down
-# @return uint256 Amount of currency0 required to cover a position of size liquidity between the two passed prices
+    return a - b if a >= b else b - a
 def get_amount0_delta(
     sqrt_price_a_x96: int,
     sqrt_price_b_x96: int,
@@ -257,11 +247,10 @@ def get_amount1_delta(
     denominator = Q96
     _liquidity = liquidity
     # Equivalent to:
-    #   amount1 = roundUp
+    # ... amount1 = roundUp
     #       ? FullMath.mulDivRoundingUp(liquidity, sqrtPriceBX96 - sqrtPriceAX96, FixedPoint96.Q96)
     #       : FullMath.mulDiv(liquidity, sqrtPriceBX96 - sqrtPriceAX96, FixedPoint96.Q96);
     # Cannot overflow because `type(uint128).max * type(uint160).max >> 96 < (1 << 192)`.
-    #
-    amount1 = muldiv(_liquidity, numerator, denominator)
-    amount1 = amount1 + ((mulmod(_liquidity, numerator, denominator) > 0) & round_up)
-    return amount1
+    return muldiv(_liquidity, numerator, denominator) + (
+        int(mulmod(_liquidity, numerator, denominator) > 0) & round_up
+    )

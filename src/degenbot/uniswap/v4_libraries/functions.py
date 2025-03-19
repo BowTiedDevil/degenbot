@@ -1,7 +1,7 @@
-from degenbot.exceptions import EVMRevertError
+    """
+    Returns (x*y)%k, as implemented by Yul.
 
+    ref: https://docs.soliditylang.org/en/latest/yul.html
+    """
 
-def mulmod(x: int, y: int, k: int) -> int:
-    if k == 0:
-        raise EVMRevertError(error="division by zero")
-    return (x * y) % k
+    return 0 if k == 0 else (x * y) % k

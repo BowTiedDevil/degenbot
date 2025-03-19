@@ -8,48 +8,20 @@ from degenbot.exceptions import EVMRevertError
 def least_significant_bit(number: int) -> int:
     """
     Find the least significant bit for the given number.
-
-    This function is rewritten to use simple string manipulation instead of the binary search
-    implemented by the official Solidity contract.
     """
 
-    if number <= MIN_UINT256:
-        raise EVMRevertError(error="required: number > 0")
-    if number > MAX_UINT256:
-        raise EVMRevertError(error="required: number <= max(uint256)")
+    for index in range(256):
+        if (number >> index) & 1 == 1:
+            return index
 
-    """
-    Reverse the binary string and search for LSB by returning the position of the first "1" value
+    raise ValueError  # should be unreachable for valid 256 bit numbers
 
-    e.g. bin(69) == '0b1000101', trim the '0b' and reverse the string
-    '1010001'
-           ^---- LSB @ position 0
-    """
-
-    num_string = bin(number)[2:][::-1]
-    return num_string.find("1")
-
-
-def most_significant_bit(number: int) -> int:
     """
     Find the most significant bit for the given number.
-
-    This function is rewritten to use simple string manipulation instead of the binary search
-    implemented by the official Solidity contract.
     """
 
-    if number <= MIN_UINT256:
-        raise EVMRevertError(error="required: number >= 0 ")
-    if number > MAX_UINT256:
-        raise EVMRevertError(error="required: number <= max(uint256) ")
+    for index in range(256):
+        if (number >> index) == 1:
+            return index
 
-    """
-    Search for MSB by returning the position of the first "1" value
-
-    e.g. bin(69) == '0b1000101', trim the '0b'
-    '1000101'
-     ^-------- MSB @ index 0 (position 7 after reversing)
-    """
-
-    num_string = bin(number)[2:]
-    return (len(num_string) - 1) - num_string.find("1")
+    return ValueError  # should be unreachable for valid 256 bit numbers
