@@ -127,8 +127,8 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         self.swap_pools = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in swap_pools])
 
-        self._pool_viability = {
-            pool.address: self._pool_is_viable(pool=pool, state=pool.state, vector=swap_vector)
+        self._pool_viability: dict[Pool, bool] = {
+            pool: self._pool_is_viable(pool=pool, state=pool.state, vector=swap_vector)
             for pool, swap_vector in zip(swap_pools, self._swap_vectors, strict=True)
         }
 
@@ -152,7 +152,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
     def _build_swap_amounts(
         self,
         token_in_quantity: int,
-        pool_state_overrides: Mapping[ChecksumAddress, PoolState],
+        pool_states: Mapping[Pool, PoolState],
     ) -> list[SwapAmount]:
         """
         Generate inputs for all swaps along the arbitrage path, starting with the specified amount
@@ -164,16 +164,16 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         for i, (pool, swap_vector) in enumerate(
             zip(self.swap_pools, self._swap_vectors, strict=True)
         ):
-            pool_state_override = pool_state_overrides.get(pool.address)
+            pool_state = pool_states.get(pool)
             _token_in_quantity = token_in_quantity if i == 0 else _token_out_quantity
 
             try:
-                match pool, pool_state_override:
+                match pool, pool_state:
                     case AerodromeV2Pool(), AerodromeV2PoolState() | None:
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=swap_vector.token_in,
                             token_in_quantity=_token_in_quantity,
-                            override_state=pool_state_override,
+                            override_state=pool_state,
                         )
                         if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
@@ -194,7 +194,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=swap_vector.token_in,
                             token_in_quantity=_token_in_quantity,
-                            override_state=pool_state_override,
+                            override_state=pool_state,
                         )
                         if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
@@ -215,7 +215,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=swap_vector.token_in,
                             token_in_quantity=_token_in_quantity,
-                            override_state=pool_state_override,
+                            override_state=pool_state,
                         )
                         if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
@@ -299,7 +299,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
     def _pre_calculation_check(
         self,
         min_rate_of_exchange: Fraction = Fraction(1, 1),
-        state_overrides: Mapping[ChecksumAddress, PoolState] | None = None,
+        state_overrides: Mapping[Pool, PoolState] | None = None,
     ) -> None:
         """
         Perform pool viability and minimum rate of exchange checks. Raises an exception if a
@@ -312,27 +312,32 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         # Check the pools for viability
         for pool in self.swap_pools:
+            assert pool in self._pool_viability
+
             if (
                 # Check the pool viability if the state was overridden
-                pool.address in state_overrides
+                pool in state_overrides
                 and not self._pool_is_viable(
                     pool=pool,
-                    state=state_overrides[pool.address],
+                    state=state_overrides[pool],
                     vector=self._swap_vectors[self.swap_pools.index(pool)],
                 )
             ) or (
                 # Otherwise, check the viability at the current state, which is kept updated by the
                 # notification mechanism
-                self._pool_viability[pool.address] is False
+                self._pool_viability[pool] is False
             ):
-                raise ArbitrageError(message=f"Pool {pool.address} is not viable")
+                raise ArbitrageError(message=f"Pool {pool!r} is not viable")
 
         exchange_rate_numerators = []
         exchange_rate_denominators = []
 
         # Check the pool state liquidity in the direction of the trade
         for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=True):
-            pool_state = state_overrides.get(pool.address, pool.state)
+            pool_state = state_overrides.get(
+                pool,
+                pool.state,  # use the current pool state if no override was provided
+            )
 
             match pool, pool_state:
                 case (
@@ -388,13 +393,13 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
     def _calculate(
         self,
-        state_overrides: Mapping[ChecksumAddress, PoolState] | None = None,
+        state_overrides: Mapping[Pool, PoolState] | None = None,
     ) -> ArbitrageCalculationResult:
         """
         Calculate the optimal arbitrage profit using the maximum input as an upper bound.
         """
 
-        pool_states = {pool.address: pool.state for pool in self.swap_pools}
+        pool_states = {pool: pool.state for pool in self.swap_pools}
         if state_overrides is not None:
             pool_states.update(state_overrides)
 
@@ -414,7 +419,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                 for i, (pool, swap_vector) in enumerate(
                     zip(self.swap_pools, self._swap_vectors, strict=True)
                 ):
-                    state = pool_states[pool.address]
+                    state = pool_states[pool]
 
                     match pool, state:
                         case AerodromeV2Pool(), AerodromeV2PoolState():
@@ -470,7 +475,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         best_amounts = self._build_swap_amounts(
             token_in_quantity=swap_amount,
-            pool_state_overrides=pool_states,
+            pool_states=pool_states,
         )
 
         newest_state_block: BlockNumber | None = None
@@ -496,7 +501,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
     def calculate(
         self,
-        state_overrides: Mapping[ChecksumAddress, PoolState] | None = None,
+        state_overrides: Mapping[Pool, PoolState] | None = None,
         min_rate_of_exchange: Fraction = Fraction(1, 1),
     ) -> ArbitrageCalculationResult:
         """
@@ -514,7 +519,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
     async def calculate_with_pool(
         self,
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
-        state_overrides: Mapping[ChecksumAddress, PoolState] | None = None,
+        state_overrides: Mapping[Pool, PoolState] | None = None,
         min_rate_of_exchange: Fraction = Fraction(1, 1),
     ) -> asyncio.Future[ArbitrageCalculationResult]:
         """
@@ -704,7 +709,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                 (AerodromeV2PoolState | UniswapV2PoolState | UniswapV3PoolState),
             ):
                 # Check the pool's viability at the new state
-                self._pool_viability[pool.address] = self._pool_is_viable(
+                self._pool_viability[pool] = self._pool_is_viable(
                     pool=pool,
                     state=state_message.state,
                     vector=self._swap_vectors[self.swap_pools.index(pool)],
