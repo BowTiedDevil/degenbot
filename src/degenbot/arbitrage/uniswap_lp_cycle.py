@@ -19,8 +19,11 @@ from degenbot.arbitrage.types import (
     UniswapPoolSwapVector,
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
+    UniswapV4PoolSwapAmounts,
 )
 from degenbot.cache import get_checksum_address
+from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
+from degenbot.erc20_token import Erc20Token, EtherPlaceholder
 from degenbot.exceptions import (
     ArbitrageError,
     DegenbotValueError,
@@ -38,7 +41,7 @@ from degenbot.types import (
     Subscriber,
     TextMessage,
 )
-from degenbot.uniswap.types import UniswapV2PoolState, UniswapV3PoolState
+from degenbot.uniswap.types import UniswapV2PoolState, UniswapV3PoolState, UniswapV4PoolState
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_libraries.tick_math import (
     MAX_SQRT_RATIO,
@@ -46,6 +49,7 @@ from degenbot.uniswap.v3_libraries.tick_math import (
     get_sqrt_ratio_at_tick,
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 type Pool = AerodromeV2Pool | AerodromeV3Pool | UniswapV2Pool | UniswapV3Pool | UniswapV4Pool
 type PoolState = AerodromeV2PoolState | UniswapV2PoolState | UniswapV3PoolState | UniswapV4PoolState
@@ -83,46 +87,64 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         _swap_vectors: list[UniswapPoolSwapVector] = []
         for i, pool in enumerate(swap_pools):
-            if i == 0:
-                match self.input_token:
-                    case pool.token0:
-                        _swap_vectors.append(
-                            UniswapPoolSwapVector(
-                                token_in=pool.token0,
-                                token_out=pool.token1,
-                                zero_for_one=True,
-                            )
+            input_token = self.input_token if i == 0 else _swap_vectors[-1].token_out
+
+            match input_token:
+                case pool.token0:
+                    _swap_vectors.append(
+                        UniswapPoolSwapVector(
+                            token_in=pool.token0,
+                            token_out=pool.token1,
+                            zero_for_one=True,
                         )
-                    case pool.token1:
-                        _swap_vectors.append(
-                            UniswapPoolSwapVector(
-                                token_in=pool.token1,
-                                token_out=pool.token0,
-                                zero_for_one=False,
-                            )
+                    )
+                case pool.token1:
+                    _swap_vectors.append(
+                        UniswapPoolSwapVector(
+                            token_in=pool.token1,
+                            token_out=pool.token0,
+                            zero_for_one=False,
                         )
-                    case _:  # pragma: no cover
-                        raise DegenbotValueError(message="Input token could not be identified!")
-            else:
-                match _swap_vectors[-1].token_out:
-                    case pool.token0:
-                        _swap_vectors.append(
-                            UniswapPoolSwapVector(
-                                token_in=pool.token0,
-                                token_out=pool.token1,
-                                zero_for_one=True,
-                            )
+                    )
+
+                case EtherPlaceholder():
+                    wrapped_native_token = WRAPPED_NATIVE_TOKENS[pool.chain_id]
+                    if wrapped_native_token not in pool.tokens:
+                        raise DegenbotValueError(
+                            message="Input token is native, but pool does not hold it or the wrapped token"  # noqa:E501
                         )
-                    case pool.token1:
-                        _swap_vectors.append(
-                            UniswapPoolSwapVector(
-                                token_in=pool.token1,
-                                token_out=pool.token0,
-                                zero_for_one=False,
-                            )
+
+                    _swap_vectors.append(
+                        UniswapPoolSwapVector(
+                            token_in=pool.token0
+                            if pool.token0 == wrapped_native_token
+                            else pool.token1,
+                            token_out=pool.token1
+                            if pool.token1 == wrapped_native_token
+                            else pool.token0,
+                            zero_for_one=False,
                         )
-                    case _:  # pragma: no cover
-                        raise DegenbotValueError(message="Input token could not be identified!")
+                    )
+
+                case wrapped_token if wrapped_token.address == WRAPPED_NATIVE_TOKENS[pool.chain_id]:
+                    if ZERO_ADDRESS not in pool.tokens:
+                        raise DegenbotValueError(
+                            message="Input token is wrapped native, but pool does not hold it or the native token"  # noqa:E501
+                        )
+
+                    _swap_vectors.append(
+                        UniswapPoolSwapVector(
+                            token_in=pool.token0 if pool.token0 == ZERO_ADDRESS else pool.token1,
+                            token_out=pool.token1 if pool.token1 == ZERO_ADDRESS else pool.token0,
+                            zero_for_one=False,
+                        )
+                    )
+
+                case _:  # pragma: no cover
+                    raise DegenbotValueError(
+                        message=f"Token {self.input_token} could not be identified. Pool holds {pool.token0}, {pool.token1}"  # noqa:E501
+                    )
+
         self._swap_vectors = tuple(_swap_vectors)
         self.swap_pools = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in swap_pools])
@@ -259,7 +281,10 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
                 )
 
-            case UniswapV3Pool(), UniswapV3PoolState():
+            case (
+                UniswapV3Pool() | UniswapV4Pool(),
+                UniswapV3PoolState() | UniswapV4PoolState(),
+            ):
                 if pool.sparse_liquidity_map:
                     # Liquidity cannot be checked with a sparse mapping, so default to True
                     return True
@@ -361,7 +386,10 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                             pool_state.reserves_token1 * pool.fee_token1.denominator
                         )
 
-                case UniswapV3Pool(), UniswapV3PoolState():
+                case (
+                    UniswapV3Pool() | UniswapV4Pool(),
+                    UniswapV3PoolState() | UniswapV4PoolState(),
+                ):
                     if vector.zero_for_one:
                         exchange_rate_numerators.append(
                             pool_state.sqrt_price_x96
@@ -439,6 +467,14 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                                 override_state=state,
                             )
                         case UniswapV3Pool(), UniswapV3PoolState():
+                            token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
+                                token_in=swap_vector.token_in,
+                                token_in_quantity=token_in_quantity
+                                if i == 0
+                                else token_out_quantity,
+                                override_state=state,
+                            )
+                        case UniswapV4Pool(), UniswapV4PoolState():
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
@@ -587,7 +623,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
             The initial amount of `token_in` to swap through the first pool.
 
         pool_swap_amounts: Iterable[UniswapV2PoolSwapAmounts |
-        UniswapV3PoolSwapAmounts]
+        UniswapV3PoolSwapAmounts] | UniswapV4PoolSwapAmounts]
             An iterable of swap amounts to be encoded.
 
         Returns
@@ -702,11 +738,22 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
     def notify(self, publisher: Publisher, message: Message) -> None:
         match publisher, message:
             case (
-                (AerodromeV2Pool() | AerodromeV3Pool() | UniswapV2Pool() | UniswapV3Pool()) as pool,
+                (
+                    AerodromeV2Pool()
+                    | AerodromeV3Pool()
+                    | UniswapV2Pool()
+                    | UniswapV3Pool()
+                    | UniswapV4Pool()
+                ) as pool,
                 PoolStateMessage() as state_message,
             ) if pool in self.swap_pools and isinstance(
                 state_message.state,
-                (AerodromeV2PoolState | UniswapV2PoolState | UniswapV3PoolState),
+                (
+                    AerodromeV2PoolState
+                    | UniswapV2PoolState
+                    | UniswapV3PoolState
+                    | UniswapV4PoolState
+                ),
             ):
                 # Check the pool's viability at the new state
                 self._pool_viability[pool] = self._pool_is_viable(
