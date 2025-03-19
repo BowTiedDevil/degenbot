@@ -7,8 +7,7 @@ from typing import Any
 from weakref import WeakSet
 
 import eth_abi.abi
-from eth_typing import BlockNumber, ChecksumAddress
-from eth_utils.address import to_checksum_address
+from eth_typing import BlockNumber, ChecksumAddress, HexStr
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
@@ -273,7 +272,10 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         """
 
         match pool, state:
-            case AerodromeV2Pool() | UniswapV2Pool(), AerodromeV2PoolState() | UniswapV2PoolState():
+            case (
+                AerodromeV2Pool() | UniswapV2Pool(),
+                AerodromeV2PoolState() | UniswapV2PoolState(),
+            ):
                 if state.reserves_token0 == 0 or state.reserves_token1 == 0:
                     return False
 
@@ -770,4 +772,6 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     self._notify_subscribers(TextMessage("Profitable state discovered."))
 
             case _:  # pragma: no cover
-                logger.info(f"Unhandled message {message} from publisher {publisher}")
+                logger.error(
+                    f"Message {message} from publisher {publisher} was not handled by {self}"
+                )
