@@ -50,7 +50,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 type Pool = AerodromeV2Pool | AerodromeV3Pool | UniswapV2Pool | UniswapV3Pool | UniswapV4Pool
 type PoolState = AerodromeV2PoolState | UniswapV2PoolState | UniswapV3PoolState | UniswapV4PoolState
 type SwapAmount = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
-PoolId = bytes | HexStr
+type PoolId = bytes | HexStr
 
 
 class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
@@ -66,7 +66,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         max_input: int | None = None,
     ):
         for swap_pool in swap_pools:
-            if not isinstance(swap_pool, Pool):
+            if not isinstance(swap_pool, Pool.__value__):
                 raise DegenbotValueError(
                     message=f"Incompatible pool type ({type(swap_pool)}) provided."
                 )

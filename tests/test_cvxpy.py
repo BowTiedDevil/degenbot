@@ -34,7 +34,7 @@ WBTC_WETH_V3_POOL_ADDRESS = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 class MockLiquidityPool(UniswapV2Pool):
     def __init__(self) -> None:
         self._state = UniswapV2PoolState(
-            pool=ZERO_ADDRESS,
+            address=ZERO_ADDRESS,
             reserves_token0=0,
             reserves_token1=0,
             block=None,
@@ -82,7 +82,7 @@ def wbtc_pool_a(wbtc_token, weth_token) -> MockLiquidityPool:
     lp.fee_token0 = Fraction(3, 1000)
     lp.fee_token1 = Fraction(3, 1000)
     lp._state = UniswapV2PoolState(
-        pool=lp.address,
+        address=lp.address,
         block=None,
         reserves_token0=9000000000,
         reserves_token1=2100000000000000000000,
@@ -101,7 +101,7 @@ def wbtc_pool_b(wbtc_token, weth_token) -> MockLiquidityPool:
     lp.fee_token0 = Fraction(3, 1000)
     lp.fee_token1 = Fraction(3, 1000)
     lp._state = UniswapV2PoolState(
-        pool=lp.address,
+        address=lp.address,
         block=None,
         reserves_token0=9250000000,
         reserves_token1=2100000000000000000000,
@@ -120,7 +120,7 @@ def test_pool_a(xxx_token, weth_base_token) -> MockLiquidityPool:
     lp.fee_token0 = Fraction(3, 1000)
     lp.fee_token1 = Fraction(3, 1000)
     lp._state = UniswapV2PoolState(
-        pool=lp.address,
+        address=lp.address,
         block=None,
         reserves_token0=19643270033194347,
         reserves_token1=406789256841523130269,
@@ -139,7 +139,7 @@ def test_pool_b(xxx_token, weth_base_token) -> MockLiquidityPool:
     lp.fee_token0 = Fraction(3, 1000)
     lp.fee_token1 = Fraction(3, 1000)
     lp._state = UniswapV2PoolState(
-        pool=lp.address,
+        address=lp.address,
         block=None,
         reserves_token0=880450452482804609420,
         reserves_token1=18733831498401825763565574,
@@ -856,7 +856,7 @@ def test_base_3pool(
     lp_1.token0 = link_token
     lp_1.token1 = weth_token
     lp_1._state = UniswapV2PoolState(
-        pool=lp_1.address,
+        address=lp_1.address,
         block=None,
         reserves_token0=20_000 * 10**link_token.decimals,
         reserves_token1=100 * 10**weth_token.decimals,
@@ -872,7 +872,7 @@ def test_base_3pool(
     lp_2.token0 = wbtc_token
     lp_2.token1 = link_token
     lp_2._state = UniswapV2PoolState(
-        pool=lp_2.address,
+        address=lp_2.address,
         block=None,
         # reserves_token0=5 * 10**wbtc_token.decimals, # original balance
         reserves_token0=(
@@ -891,7 +891,7 @@ def test_base_3pool(
     lp_3.token0 = wbtc_token
     lp_3.token1 = weth_token
     lp_3._state = UniswapV2PoolState(
-        pool=lp_3.address,
+        address=lp_3.address,
         block=None,
         reserves_token0=5 * 10**wbtc_token.decimals,
         reserves_token1=100 * 10**weth_token.decimals,

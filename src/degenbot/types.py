@@ -1,8 +1,6 @@
-# ruff: noqa: A005
-
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, ClassVar, Protocol, Self, TypeVar
+from typing import Any, ClassVar, Protocol, Self
 from weakref import WeakSet
 
 from eth_typing import BlockNumber, ChecksumAddress
@@ -239,11 +237,7 @@ class AbstractRegistry: ...
 class AbstractTransaction: ...
 
 
-KT = TypeVar("KT")
-VT = TypeVar("VT")
-
-
-class BoundedCache(OrderedDict[KT, VT]):
+class BoundedCache[K, V](OrderedDict[K, V]):
     """
     A cache holding key-value pairs, tracked by entry order. The cache automatically removes old
     items if the number of items would exceed the maximum number of entries set by `max_items`.
@@ -265,7 +259,7 @@ class BoundedCache(OrderedDict[KT, VT]):
             state[4],
         )
 
-    def __setitem__(self, key: KT, value: VT) -> None:
+    def __setitem__(self, key: K, value: V) -> None:
         super().__setitem__(key, value)
         if len(self) > self.max_items:
             self.popitem(last=False)

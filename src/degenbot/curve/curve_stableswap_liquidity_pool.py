@@ -270,7 +270,9 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
                 initial_a, initial_a_time, future_a, future_a_time = batch.execute()
 
-                (initial_a,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", initial_a))
+                (initial_a,) = eth_abi.abi.decode(
+                    types=["uint256"], data=cast("HexBytes", initial_a)
+                )
                 (initial_a_time,) = eth_abi.abi.decode(
                     types=["uint256"], data=cast("HexBytes", initial_a_time)
                 )
@@ -333,7 +335,9 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                     types=["uint256"], data=cast("HexBytes", a_coefficient)
                 )
                 (pool_fee,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", pool_fee))
-                (admin_fee,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", admin_fee))
+                (admin_fee,) = eth_abi.abi.decode(
+                    types=["uint256"], data=cast("HexBytes", admin_fee)
+                )
 
                 self.a_coefficient = cast("int", a_coefficient)
                 self.fee = cast("int", pool_fee)
@@ -395,7 +399,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                         block_identifier=state_block,
                     )
                     token_addresses.append(get_checksum_address(token_address))
-                except web3.exceptions.ContractLogicError:  # noqa:PERF203
+                except web3.exceptions.ContractLogicError:
                     break
 
             return tuple(token_addresses)
