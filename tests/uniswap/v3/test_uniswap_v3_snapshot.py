@@ -144,7 +144,7 @@ def test_get_new_liquidity_updates(
         "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8",
         "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf",
     ]:
-        first_250_blocks_snapshot.get_new_liquidity_updates(pool_address)
+        first_250_blocks_snapshot.get_new_liquidity_updates(get_checksum_address(pool_address))
         assert first_250_blocks_snapshot._liquidity_events[get_checksum_address(pool_address)] == []
 
 
@@ -152,7 +152,7 @@ def test_apply_update_to_snapshot(
     empty_snapshot: UniswapV3LiquiditySnapshot,
     fork_mainnet: AnvilFork,
 ):
-    pool_address = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
+    pool_address = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
     set_web3(fork_mainnet.w3)
 
