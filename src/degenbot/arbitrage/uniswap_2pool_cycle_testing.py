@@ -281,11 +281,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     override_state=v3_pool_state_override,
                 )
             except IncompleteSwap as exc:
-                logger.info("Caught IncompleteSwap")
                 weth_in = exc.amount_in
-                logger.info(
-                    f"Incomplete swap\nWanted {forward_token_quantity}\nGot    {exc.amount_out}"
-                )
             finally:
                 calc_in_time = time.perf_counter() - calc_start
 
@@ -351,9 +347,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
             except IncompleteSwap as exc:
                 weth_in = exc.amount_in
-                logger.info(
-                    f"Incomplete swap\nProvided {forward_token_quantity}\nUsed     {weth_in}"
-                )
             except PossibleInaccurateResult as exc:
                 weth_in = exc.amount_in
             finally:
@@ -404,11 +397,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
             except IncompleteSwap as exc:
                 weth_out = exc.amount_out
-                logger.info(
-                    f"Incomplete exact input swap\n"
-                    f"Provided {forward_token_quantity}\n"
-                    f"Used     {exc.amount_in}"
-                )
             finally:
                 calc_out_time = time.perf_counter() - calc_start
 
@@ -474,11 +462,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
             except IncompleteSwap as exc:
                 weth_out = exc.amount_out
-                logger.info(
-                    f"Incomplete exact input swap\n"
-                    f"Provided {forward_token_quantity}\n"
-                    f"Used     {exc.amount_in}"
-                )
             except PossibleInaccurateResult as exc:
                 weth_out = exc.amount_out
             finally:
@@ -548,11 +531,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
             except IncompleteSwap as exc:
                 weth_out = exc.amount_out
-                logger.info(
-                    f"Incomplete exact input swap\n"
-                    f"Provided {forward_token_quantity}\n"
-                    f"Used     {weth_out}"
-                )
             finally:
                 calc_out_time = time.perf_counter() - calc_start
 
@@ -565,11 +543,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
             except IncompleteSwap as exc:
                 weth_in = exc.amount_in
-                logger.info(
-                    f"Incomplete exact output swap\n"
-                    f"Provided {forward_token_quantity}\n"
-                    f"Used     {weth_in}"
-                )
             finally:
                 calc_in_time = time.perf_counter() - calc_start
 
