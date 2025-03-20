@@ -155,7 +155,7 @@ class UniswapV3LiquiditySnapshot:
     def get_new_liquidity_updates(
         self,
         pool_address: HexStr,
-    ) -> tuple[UniswapV3PoolLiquidityMappingUpdate]:
+    ) -> tuple[UniswapV3PoolLiquidityMappingUpdate, ...]:
         """
         Consume and return all pending liquidity events for this pool.
         """
