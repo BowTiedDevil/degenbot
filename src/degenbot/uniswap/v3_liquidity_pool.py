@@ -361,63 +361,61 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         if amount_specified == 0:  # pragma: no branch
             raise EVMRevertError(error="AS")
 
-        _liquidity = override_state.liquidity if override_state is not None else self.liquidity
+        exact_input = amount_specified > 0
 
-        assert _liquidity >= 0
+        if override_state:
+            liquidity_start = override_state.liquidity
+            sqrt_price_x96_start = override_state.sqrt_price_x96
+            tick_start = override_state.tick
+            tick_bitmap_temp = override_state.tick_bitmap
+            tick_data_temp = override_state.tick_data
+        else:
+            liquidity_start = self.liquidity
+            sqrt_price_x96_start = self.sqrt_price_x96
+            tick_start = self.tick
+            tick_bitmap_temp = self.tick_bitmap
+            tick_data_temp = self.tick_data
 
-        _sqrt_price_x96 = (
-            override_state.sqrt_price_x96 if override_state is not None else self.sqrt_price_x96
-        )
-        _tick = override_state.tick if override_state is not None else self.tick
-        _tick_bitmap = (
-            override_state.tick_bitmap
-            if override_state is not None and override_state.tick_bitmap is not None
-            else self.tick_bitmap
-        )
-        _tick_data = (
-            override_state.tick_data
-            if override_state is not None and override_state.tick_data is not None
-            else self.tick_data
-        )
+        assert liquidity_start >= 0
 
-        if zero_for_one is True and not (
-            MIN_SQRT_RATIO < sqrt_price_limit_x96 < _sqrt_price_x96
+        if zero_for_one and not (
+            MIN_SQRT_RATIO < sqrt_price_limit_x96 < sqrt_price_x96_start
         ):  # pragma: no cover
             raise EVMRevertError(error="SPL")
 
-        if zero_for_one is False and not (
-            _sqrt_price_x96 < sqrt_price_limit_x96 < MAX_SQRT_RATIO
+        if not zero_for_one and not (
+            sqrt_price_x96_start < sqrt_price_limit_x96 < MAX_SQRT_RATIO
         ):  # pragma: no cover
             raise EVMRevertError(error="SPL")
-
-        if not self.sparse_liquidity_map:
-            # The liquidity mapping is complete. Optimize loop by building a generator that yields
-            # ticks and initialization status along the swap path
-            ticks_along_swap_path = gen_ticks(_tick_data, _tick, self.tick_spacing, zero_for_one)
 
         swap_state = self.SwapState(
             amount_specified_remaining=amount_specified,
             amount_calculated=0,
-            sqrt_price_x96=_sqrt_price_x96,
-            tick=_tick,
-            liquidity=_liquidity,
+            sqrt_price_x96=sqrt_price_x96_start,
+            tick=tick_start,
+            liquidity=liquidity_start,
         )
+
+        if not self.sparse_liquidity_map:
+            # The liquidity mapping is complete. Optimize loop by building a generator that yields
+            # ticks and initialization status along the swap path
+            ticks_along_swap_path = gen_ticks(
+                tick_data_temp, tick_start, self.tick_spacing, zero_for_one
+            )
+
         step = self.StepComputations()
-        exact_input = amount_specified > 0
 
         while (
             swap_state.amount_specified_remaining != 0
             and swap_state.sqrt_price_x96 != sqrt_price_limit_x96
         ):
-            step.sqrt_price_start_x96 = swap_state.sqrt_price_x96
-
             if not self.sparse_liquidity_map:
                 step.tick_next, step.initialized = next(ticks_along_swap_path)
             else:
                 try:
                     step.tick_next, step.initialized = next_initialized_tick_within_one_word(
-                        _tick_bitmap,
-                        _tick_data,
+                        tick_bitmap_temp,
+                        tick_data_temp,
                         swap_state.tick,
                         self.tick_spacing,
                         zero_for_one,
@@ -426,8 +424,8 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                     missing_word = exc.word
                     self._fetch_and_populate_initialized_ticks(
                         word_position=missing_word,
-                        tick_bitmap=_tick_bitmap,
-                        tick_data=_tick_data,
+                        tick_bitmap=tick_bitmap_temp,
+                        tick_data=tick_data_temp,
                         block_number=self.update_block,
                     )
                     continue
@@ -439,25 +437,31 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             elif step.tick_next > MAX_TICK:
                 step.tick_next = MAX_TICK
 
+            step.sqrt_price_start_x96 = swap_state.sqrt_price_x96
             step.sqrt_price_next_x96 = get_sqrt_ratio_at_tick(step.tick_next)
 
             # compute values to swap to the target tick, price limit, or point where input/output
             # amount is exhausted
             swap_state.sqrt_price_x96, step.amount_in, step.amount_out, step.fee_amount = (
                 compute_swap_step(
-                    swap_state.sqrt_price_x96,
-                    sqrt_price_limit_x96
-                    if (
-                        (zero_for_one is True and step.sqrt_price_next_x96 < sqrt_price_limit_x96)
-                        or (
-                            zero_for_one is False
-                            and step.sqrt_price_next_x96 > sqrt_price_limit_x96
+                    sqrt_ratio_x96_current=swap_state.sqrt_price_x96,
+                    sqrt_ratio_x96_target=(
+                        sqrt_price_limit_x96
+                        if (
+                            (
+                                zero_for_one is True
+                                and step.sqrt_price_next_x96 < sqrt_price_limit_x96
+                            )
+                            or (
+                                zero_for_one is False
+                                and step.sqrt_price_next_x96 > sqrt_price_limit_x96
+                            )
                         )
-                    )
-                    else step.sqrt_price_next_x96,
-                    swap_state.liquidity,
-                    swap_state.amount_specified_remaining,
-                    self.fee,
+                        else step.sqrt_price_next_x96
+                    ),
+                    liquidity=swap_state.liquidity,
+                    amount_remaining=swap_state.amount_specified_remaining,
+                    fee_pips=self.fee,
                 )
             )
 
@@ -474,7 +478,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             if swap_state.sqrt_price_x96 == step.sqrt_price_next_x96:  # pragma: no branch
                 # If the tick is initialized, adjust the liquidity range
                 if step.initialized:
-                    liquidity_net_at_next_tick = _tick_data[step.tick_next].liquidity_net
+                    liquidity_net_at_next_tick = tick_data_temp[step.tick_next].liquidity_net
                     swap_state.liquidity += (
                         -liquidity_net_at_next_tick if zero_for_one else liquidity_net_at_next_tick
                     )
