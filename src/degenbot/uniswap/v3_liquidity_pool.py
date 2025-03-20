@@ -193,7 +193,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             # here and raise as a pool-specific exception
             raise LiquidityPoolError(message="Could not decode contract data") from exc
 
-        self.factory = get_checksum_address(factory)
+        self.factory = factory
         self.deployer_address = (
             get_checksum_address(deployer_address) if deployer_address is not None else self.factory
         )
