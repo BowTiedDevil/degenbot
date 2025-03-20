@@ -503,7 +503,10 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         return amount0, amount1, swap_state.sqrt_price_x96, swap_state.liquidity, swap_state.tick
 
     def get_tick_bitmap_at_word(
-        self, w3: Web3, word_position: int, block_identifier: BlockIdentifier
+        self,
+        w3: Web3,
+        word_position: int,
+        block_identifier: BlockIdentifier,
     ) -> int:
         (bitmap_at_word,) = raw_call(
             w3=w3,
@@ -524,7 +527,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         block_identifier: BlockIdentifier,
     ) -> list[tuple[int, int, int]]:
         bitmap_at_word = self.get_tick_bitmap_at_word(
-            w3=w3, word_position=word_position, block_identifier=block_identifier
+            w3=w3,
+            word_position=word_position,
+            block_identifier=block_identifier,
         )
 
         active_ticks = [
