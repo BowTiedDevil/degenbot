@@ -1555,7 +1555,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
             except (IncompleteSwap, PossibleInaccurateResult) as exc:
                 v4_pool_max_input = exc.amount_in
-                assert v4_pool_max_input >= 0
             except Exception:
                 logger.exception("v4_hi_v2_lo_calc")
                 raise
