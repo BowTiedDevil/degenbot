@@ -95,16 +95,16 @@ class UniswapV3LiquiditySnapshot:
             """
 
             decoded_event: EventData = event.process_log(log)
-            address = get_checksum_address(decoded_event["address"])
+            pool_address = get_checksum_address(decoded_event["address"])
             tx_index = decoded_event["transactionIndex"]
             liquidity_block = decoded_event["blockNumber"]
-            liquidity = decoded_event["args"]["amount"] * (
-                -1 if decoded_event["event"] == "Burn" else 1
-            )
+            liquidity = decoded_event["args"]["amount"]
+            if decoded_event["event"] == "Burn":
+                liquidity = -liquidity  # liquidity removal
             tick_lower = decoded_event["args"]["tickLower"]
             tick_upper = decoded_event["args"]["tickUpper"]
 
-            return address, UniswapV3LiquidityEvent(
+            return pool_address, UniswapV3LiquidityEvent(
                 block_number=liquidity_block,
                 liquidity=liquidity,
                 tick_lower=tick_lower,
