@@ -76,8 +76,6 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
         self.vault = get_checksum_address(vault_address)
 
-        tokens: list[str]
-        balances: list[int]
         tokens, balances, _ = eth_abi.abi.decode(
             types=["address[]", "uint256[]", "uint256"],
             data=w3.eth.call(
@@ -94,13 +92,11 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
         self.tokens = tuple(
-            [
-                token_manager.get_erc20token(
-                    address=get_checksum_address(token),
-                    silent=silent,
-                )
-                for token in tokens
-            ]
+            token_manager.get_erc20token(
+                address=get_checksum_address(token),
+                silent=silent,
+            )
+            for token in tokens
         )
         self.scaling_factors = tuple([_computeScalingFactor(token) for token in self.tokens])
 
@@ -108,7 +104,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         self._state = BalancerV2PoolState(
             address=self.address,
             block=state_block,
-            balances=balances,
+            balances=tuple(balances),
         )
 
         (fee,) = eth_abi.abi.decode(
@@ -142,7 +138,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         self.weights = tuple(weights)
 
     @property
-    def balances(self) -> list[int]:
+    def balances(self) -> tuple[int, int]:
         return self.state.balances
 
     @property
@@ -172,7 +168,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         assert token_in_quantity - fee_amount == amount_new
 
-        balances = self.balances.copy()
+        balances = list(self.balances)  # make a copy because _upscale_array will mutate it
         _upscaleArray(balances, scalingFactors=self.scaling_factors)
         amount_new = _upscale(amount_new, scalingFactor=self.scaling_factors[token_in_index])
 

@@ -115,8 +115,7 @@ def test_calculations(
         # 0.75,
     ]
 
-    max_reserves_token0 = lp.balances[0]
-    max_reserves_token1 = lp.balances[1]
+    max_reserves_token0, max_reserves_token1 = lp.balances
 
     for token_mult in token_amount_multipliers:
         token_in_amount = int(token_mult * max_reserves_token0)
