@@ -1,16 +1,23 @@
+from pydantic import validate_call
+
 from degenbot.uniswap.v4_libraries import full_math, sqrt_price_math
+from degenbot.validation.evm_values import (
+    ValidatedInt256,
+    ValidatedUint24,
+    ValidatedUint128,
+    ValidatedUint160,
+    ValidatedUint256,
+)
 
 MAX_SWAP_FEE = 1 * 10**6
 
 
-# @notice Computes the sqrt price target for the next swap step
-# @param zeroForOne The direction of the swap, true for currency0 to currency1, False for currency1 to currency0
-# @param sqrtPriceNextX96 The Q64.96 sqrt price for the next initialized tick
-# @param sqrtPriceLimitX96 The Q64.96 sqrt price limit. If zero for one, the price cannot be less than this value
-# after the swap. If one for zero, the price cannot be greater than this value after the swap
-# @return sqrtPriceTargetX96 The price target for the next swap step
+@validate_call(validate_return=True)
 def get_sqrt_price_target(
     zero_for_one: bool,
+    sqrt_price_next_x96: ValidatedUint160,
+    sqrt_price_limit_x96: ValidatedUint160,
+) -> ValidatedUint160:
     """
     Computes the price target for the next swap step.
 
@@ -25,15 +32,24 @@ def get_sqrt_price_target(
         if zero_for_one
         else min(sqrt_price_next_x96, sqrt_price_limit_x96)
     )
+
+
+@validate_call(validate_return=True)
 def compute_swap_step(
-    sqrt_ratio_x96_current: int,
-    sqrt_ratio_x96_target: int,
-    liquidity: int,
-    amount_remaining: int,
-    fee_pips: int,
-) -> tuple[int, int, int, int]:
+    sqrt_ratio_x96_current: ValidatedUint160,
+    sqrt_ratio_x96_target: ValidatedUint160,
+    liquidity: ValidatedUint128,
+    amount_remaining: ValidatedInt256,
+    fee_pips: ValidatedUint24,
+) -> tuple[ValidatedUint160, ValidatedUint256, ValidatedUint256, ValidatedUint256]:
+    """
+    Computes the result of swapping some amount in, or amount out, given the parameters of the swap.
+    """
+
     zero_for_one = sqrt_ratio_x96_current >= sqrt_ratio_x96_target
     exact_in = amount_remaining < 0
+
+    assert liquidity >= 0
 
     if exact_in:
         amount_remaining_less_fee = full_math.muldiv(
@@ -52,7 +68,7 @@ def compute_swap_step(
             # `amountIn` is capped by the target price
             sqrt_price_next_x96 = sqrt_ratio_x96_target
             fee_amount = (
-                amount_in  # amountIn is always 0 here, as amountRemainingLessFee == 0 and amountRemainingLessFee >= amountIn
+                amount_in  # amountIn is always 0 here, as amountRemainingLessFee == 0 and amountRemainingLessFee >= amountIn # noqa
                 if fee_pips == MAX_SWAP_FEE
                 else full_math.muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)
             )

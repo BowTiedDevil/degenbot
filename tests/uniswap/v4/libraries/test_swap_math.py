@@ -30,7 +30,7 @@ from degenbot.uniswap.v4_libraries.swap_math import (
     get_sqrt_price_target,
 )
 
-# Tests adapted from Foundry tests in the Uniswap V4 Github repo
+# All tests ported from Foundry tests on Uniswap V4 Github repo
 # ref: https://github.com/Uniswap/v4-core/blob/main/test/libraries/SwapMath.t.sol
 
 

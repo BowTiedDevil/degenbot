@@ -1,12 +1,12 @@
 import hypothesis
 import hypothesis.strategies
 import pytest
+from pydantic import ValidationError
 
 from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v4_libraries import bit_math
 
-# Tests adapted from Typescript tests on Uniswap V4 Github repo
+# All tests ported from Foundry tests on Uniswap V4 Github repo
 # ref: https://github.com/Uniswap/v4-core/blob/main/test/libraries/BitMath.t.sol
 
 
@@ -27,7 +27,7 @@ def _least_significant_bit_reference(x: int):
 
 
 def test_most_significant_bit_reverts_when_zero():
-    with pytest.raises(EVMRevertError):
+    with pytest.raises(ValidationError):
         bit_math.most_significant_bit(0)
 
 
@@ -73,7 +73,7 @@ def test_fuzz_most_significant_bit(x: int):
 
 
 def test_least_significant_bit_reverts_when_zero():
-    with pytest.raises(EVMRevertError):
+    with pytest.raises(ValidationError):
         bit_math.least_significant_bit(0)
 
 

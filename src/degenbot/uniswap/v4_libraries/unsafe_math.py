@@ -1,17 +1,32 @@
-# @notice Returns ceil(x / y)
-# @dev division by 0 will return 0, and should be checked externally
-# @param x The dividend
-# @param y The divisor
-# @return z The quotient, ceil(x / y)
-def div_rounding_up(x: int, y: int) -> int:
-    return (0 if y == 0 else x // y) + ((0 if y == 0 else x % y) > 0)
+from pydantic import validate_call
+
+from degenbot.validation.evm_values import ValidatedUint256
 
 
-# @notice Calculates floor(a×b÷denominator)
-# @dev division by 0 will return 0, and should be checked externally
-# @param a The multiplicand
-# @param b The multiplier
-# @param denominator The divisor
-# @return result The 256-bit result, floor(a×b÷denominator)
-def simple_mul_div(a: int, b: int, denominator: int) -> int:
-    return 0 if denominator == 0 else ((a * b) // denominator)
+@validate_call(validate_return=True)
+def div_rounding_up(
+    x: ValidatedUint256,
+    y: ValidatedUint256,
+) -> ValidatedUint256:
+    """
+    Calculates ceil(x/y)
+
+    @dev division by 0 will return 0, and should be checked externally.
+    """
+
+    return 0 if y == 0 else x // y + int(x % y > 0)
+
+
+@validate_call(validate_return=True)
+def simple_mul_div(
+    a: ValidatedUint256,
+    b: ValidatedUint256,
+    denominator: ValidatedUint256,
+) -> ValidatedUint256:
+    """
+    Calculates floor((a*b)/denominator))
+
+    @dev division by 0 will return 0, and should be checked externally
+    """
+
+    return 0 if denominator == 0 else (a * b) // denominator

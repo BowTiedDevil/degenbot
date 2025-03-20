@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from degenbot.constants import MAX_UINT128, MAX_UINT160, MAX_UINT256
 from degenbot.exceptions import EVMRevertError
@@ -14,17 +15,17 @@ from degenbot.uniswap.v4_libraries.sqrt_price_math import (
     get_next_sqrt_price_from_output,
 )
 
-# Adapted from Typescript tests on Uniswap V4 Github repo
-# ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/sqrt_priceMath.sol
+# All tests ported from Foundry tests on Uniswap V4 Github repo
+# ref: https://github.com/Uniswap/v4-core/blob/main/test/libraries/SqrtPriceMath.t.sol
 
 
 def test_get_next_sqrt_price_from_input_reverts_if_price_is_zero():
-    with pytest.raises(EVMRevertError, match="InvalidPriceOrLiquidity"):
+    with pytest.raises(ValidationError):
         get_next_sqrt_price_from_input(0, 1, int(0.1 * 10**18), False)
 
 
 def test_get_next_sqrt_price_from_input_reverts_if_liquidity_is_zero():
-    with pytest.raises(EVMRevertError, match="InvalidPriceOrLiquidity"):
+    with pytest.raises(ValidationError):
         get_next_sqrt_price_from_input(1, 0, int(0.1 * 10**18), True)
 
 
@@ -32,7 +33,7 @@ def test_get_next_sqrt_price_from_input_reverts_if_input_amount_overflows_the_pr
     price = MAX_UINT160 - 1
     liquidity = 1024
     amount_in = 1024
-    with pytest.raises(EVMRevertError):
+    with pytest.raises(ValidationError):
         get_next_sqrt_price_from_input(price, liquidity, amount_in, False)
 
 
@@ -44,13 +45,13 @@ def test_get_next_sqrt_price_from_input_any_input_amount_cannot_underflow_the_pr
     assert sqrt_q == 1
 
 
-def test_get_next_sqrt_price_from_input_returns_input_price_if_amount_in_is_zero_and_zero_for_one_equals_True():
+def test_get_next_sqrt_price_from_input_returns_input_price_if_amount_in_is_zero_and_zero_for_one_equals_true():  # noqa: E501
     price = SQRT_PRICE_1_1
     liquidity = 1
     assert get_next_sqrt_price_from_input(price, liquidity, 0, True) == price
 
 
-def test_get_next_sqrt_price_from_input_returns_input_price_if_amount_in_is_zero_and_zero_for_one_equals_False():
+def test_get_next_sqrt_price_from_input_returns_input_price_if_amount_in_is_zero_and_zero_for_one_equals_false():  # noqa: E501
     price = SQRT_PRICE_1_1
     liquidity = 1
     assert get_next_sqrt_price_from_input(price, liquidity, 0, False) == price
@@ -75,7 +76,7 @@ def test_get_next_sqrt_price_from_input_input_amount_of0_1_currency0():
     assert sqrt_q == 72025602285694852357767227579
 
 
-def test_get_next_sqrt_price_from_input_amount_in_greater_than_type_uint96_max_and_zero_for_one_equals_True():
+def test_get_next_sqrt_price_from_input_amount_in_greater_than_type_uint96_max_and_zero_for_one_equals_true():  # noqa: E501
     sqrt_p = SQRT_PRICE_1_1
     sqrt_q = get_next_sqrt_price_from_input(sqrt_p, (10 * 10**18), 2**100, True)
 
@@ -84,7 +85,7 @@ def test_get_next_sqrt_price_from_input_amount_in_greater_than_type_uint96_max_a
     assert sqrt_q == 624999999995069620
 
 
-def test_get_next_sqrt_price_from_input_can_return1_with_enough_amount_in_and_zero_for_one_equals_True():
+def test_get_next_sqrt_price_from_input_can_return1_with_enough_amount_in_and_zero_for_one_equals_true():  # noqa: E501
     sqrt_p = SQRT_PRICE_1_1
     sqrt_q = get_next_sqrt_price_from_input(sqrt_p, 1, MAX_UINT256 // 2, True)
     assert sqrt_q == 1
@@ -94,48 +95,48 @@ def test_get_next_sqrt_price_from_input_can_return1_with_enough_amount_in_and_ze
 
 
 def test_get_next_sqrt_price_from_output_reverts_if_price_is_zero():
-    with pytest.raises(EVMRevertError, match="InvalidPriceOrLiquidity"):
+    with pytest.raises(ValidationError):
         get_next_sqrt_price_from_output(0, 1, int(0.1 * 10**18), False)
 
 
 def test_get_next_sqrt_price_from_output_reverts_if_liquidity_is_zero():
-    with pytest.raises(EVMRevertError, match="InvalidPriceOrLiquidity"):
+    with pytest.raises(ValidationError):
         get_next_sqrt_price_from_output(1, 0, int(0.1 * 10**18), True)
 
 
-def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_exactly_the_virtual_reserves_of_currency0():
+def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_exactly_the_virtual_reserves_of_currency0():  # noqa: E501
     price = 20282409603651670423947251286016
     liquidity = 1024
     amount_out = 4
-    with pytest.raises(EVMRevertError, match="PriceOverflow"):
+    with pytest.raises(ValidationError):
         get_next_sqrt_price_from_output(price, liquidity, amount_out, False)
 
 
-def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_greater_than_the_virtual_reserves_of_currency0():
+def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_greater_than_the_virtual_reserves_of_currency0():  # noqa: E501
     price = 20282409603651670423947251286016
     liquidity = 1024
     amount_out = 5
-    with pytest.raises(EVMRevertError, match="PriceOverflow"):
+    with pytest.raises(ValidationError):
         get_next_sqrt_price_from_output(price, liquidity, amount_out, False)
 
 
-def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_greater_than_the_virtual_reserves_of_currency1():
+def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_greater_than_the_virtual_reserves_of_currency1():  # noqa: E501
     price = 20282409603651670423947251286016
     liquidity = 1024
     amount_out = 262145
-    with pytest.raises(EVMRevertError, match="NotEnoughLiquidity"):
+    with pytest.raises(EVMRevertError):
         get_next_sqrt_price_from_output(price, liquidity, amount_out, True)
 
 
-def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_exactly_the_virtual_reserves_of_currency1():
+def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_exactly_the_virtual_reserves_of_currency1():  # noqa: E501
     price = 20282409603651670423947251286016
     liquidity = 1024
     amount_out = 262144
-    with pytest.raises(EVMRevertError, match="NotEnoughLiquidity"):
+    with pytest.raises(EVMRevertError):
         get_next_sqrt_price_from_output(price, liquidity, amount_out, True)
 
 
-def test_get_next_sqrt_price_from_output_succeeds_if_output_amount_is_just_less_than_the_virtual_reserves_of_currency1():
+def test_get_next_sqrt_price_from_output_succeeds_if_output_amount_is_just_less_than_the_virtual_reserves_of_currency1():  # noqa: E501
     price = 20282409603651670423947251286016
     liquidity = 1024
     amount_out = 262143
@@ -147,17 +148,17 @@ def test_get_next_sqrt_price_from_output_puzzling_echidna_test():
     price = 20282409603651670423947251286016
     liquidity = 1024
     amount_out = 4
-    with pytest.raises(EVMRevertError, match="PriceOverflow"):
+    with pytest.raises(ValidationError):
         get_next_sqrt_price_from_output(price, liquidity, amount_out, False)
 
 
-def test_get_next_sqrt_price_from_output_returns_input_price_if_amount_in_is_zero_and_zero_for_one_equals_true():
+def test_get_next_sqrt_price_from_output_returns_input_price_if_amount_in_is_zero_and_zero_for_one_equals_true():  # noqa: E501
     sqrt_p = SQRT_PRICE_1_1
     sqrt_q = get_next_sqrt_price_from_output(sqrt_p, int(0.1 * 10**18), 0, True)
     assert sqrt_p == sqrt_q
 
 
-def test_get_next_sqrt_price_from_output_returns_input_price_if_amount_in_is_zero_and_zero_for_one_equals_false():
+def test_get_next_sqrt_price_from_output_returns_input_price_if_amount_in_is_zero_and_zero_for_one_equals_false():  # noqa: E501
     sqrt_p = SQRT_PRICE_1_1
     sqrt_q = get_next_sqrt_price_from_output(sqrt_p, int(0.1 * 10**18), 0, False)
     assert sqrt_p == sqrt_q
@@ -175,17 +176,17 @@ def test_get_nextsqrt_price_from_output_output_amount_of0_1_currency0():
     assert sqrt_q == 71305346262837903834189555302
 
 
-def test_get_nextsqrt_price_from_output_reverts_ifamount_out_is_impossible_in_zero_for_one_direction():
+def test_get_nextsqrt_price_from_output_reverts_if_amount_out_is_impossible_in_zero_for_one_direction():  # noqa: E501
     sqrt_p = SQRT_PRICE_1_1
 
-    with pytest.raises(EVMRevertError):
+    with pytest.raises(ValidationError):
         get_next_sqrt_price_from_output(sqrt_p, 1, MAX_UINT256, True)
 
 
-def test_getNextsqrt_priceFromOutput_revertsIfamount_outIsImpossibleInOneForZeroDirection():
+def test_get_nextsqrt_price_from_output_reverts_if_amount_out_is_impossible_in_one_for_zero_direction():  # noqa: E501
     sqrt_p = SQRT_PRICE_1_1
 
-    with pytest.raises(EVMRevertError, match="PriceOverflow"):
+    with pytest.raises(ValidationError):
         get_next_sqrt_price_from_output(sqrt_p, 1, MAX_UINT256, False)
 
 
@@ -203,7 +204,7 @@ def test_get_amount0_delta_returns0_if_prices_are_equal():
 
 
 def test_get_amount0_delta_reverts_if_price_is_zero():
-    with pytest.raises(EVMRevertError, match="InvalidPrice"):
+    with pytest.raises(ValidationError):
         get_amount0_delta(0, 1, 1, True)
 
 

@@ -1,17 +1,18 @@
-from degenbot.constants import MAX_UINT128, MIN_UINT128
-from degenbot.exceptions import EVMRevertError
+from pydantic import validate_call
+
+from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128
 
 
-def add_delta(x: int, y: int) -> int:
+@validate_call(validate_return=True)
+def add_delta(
+    x: ValidatedUint128,
+    y: ValidatedInt128,
+) -> ValidatedUint128:
     """
-    This function has been modified to directly check that the result fits in a uint128, instead
-    of inline Yul as implemented at
-    https://github.com/Uniswap/v4-core/blob/main/src/libraries/LiquidityMath.sol
+    This function has been modified to check that the result fits in a uint128, instead
+    of inline Yul as implemented by the Solidity contract.
+
+    ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/LiquidityMath.sol
     """
 
-    z = x + y
-
-    if not (MIN_UINT128 <= z <= MAX_UINT128):
-        raise EVMRevertError(error="SafeCastOverflow")
-
-    return z
+    return x + y

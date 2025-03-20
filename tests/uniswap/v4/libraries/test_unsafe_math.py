@@ -4,7 +4,7 @@ import hypothesis.strategies
 from degenbot.constants import MAX_INT128, MAX_UINT128, MAX_UINT256, MIN_UINT256
 from degenbot.uniswap.v4_libraries.unsafe_math import div_rounding_up, simple_mul_div
 
-# Tests adapted from Foundry tests in the Uniswap V4 Github repo
+# All tests ported from Foundry tests on Uniswap V4 Github repo
 # ref: https://github.com/Uniswap/v4-core/blob/main/test/libraries/UnsafeMath.t.sol
 
 
@@ -77,8 +77,9 @@ def test_simple_mul_div_no_overflow():
 )
 def test_fuzz_simple_mul_div_succeeds(a: int, b: int, denominator: int):
     hypothesis.assume(denominator != 0)
+    hypothesis.assume(a * b <= MAX_UINT256)
 
-    assert simple_mul_div(a, b, denominator) == a * b // denominator
+    assert simple_mul_div(a, b, denominator) == (a * b) // denominator
 
 
 @hypothesis.given(

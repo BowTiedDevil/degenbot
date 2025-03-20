@@ -1,10 +1,13 @@
 import hypothesis
 import hypothesis.strategies
 import pytest
+from pydantic import ValidationError
 
 from degenbot.constants import MAX_INT24, MAX_UINT160, MIN_INT24, MIN_UINT160
-from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v4_libraries import tick_math
+
+# All tests ported from Foundry tests on Uniswap V4 Github repo
+# ref: https://github.com/Uniswap/v4-core/blob/main/test/libraries/TickMath.t.sol
 
 
 def test_min_tick_equals_negative_max_tick():
@@ -17,19 +20,19 @@ def test_max_tick_equals_negative_min_tick():
 
 def test_get_sqrt_price_at_tick_throws_for_int24_min():
     tick = MIN_INT24
-    with pytest.raises(EVMRevertError, match="InvalidTick"):
+    with pytest.raises(ValidationError):
         tick_math.get_sqrt_price_at_tick(tick)
 
 
 def test_get_sqrt_price_at_tick_throws_for_too_low():
     tick = tick_math.MIN_TICK - 1
-    with pytest.raises(EVMRevertError, match="InvalidTick"):
+    with pytest.raises(ValidationError):
         tick_math.get_sqrt_price_at_tick(tick)
 
 
 def test_get_sqrt_price_at_tick_throws_for_too_high():
     tick = tick_math.MAX_TICK + 1
-    with pytest.raises(EVMRevertError, match="InvalidTick"):
+    with pytest.raises(ValidationError):
         tick_math.get_sqrt_price_at_tick(tick)
 
 
@@ -45,7 +48,7 @@ def test_fuzz_get_sqrt_price_at_tick_throws_for_too_large(tick: int):
     else:
         hypothesis.assume(tick <= tick_math.MIN_TICK - 1)
 
-    with pytest.raises(EVMRevertError, match="InvalidTick"):
+    with pytest.raises(ValidationError):
         tick_math.get_sqrt_price_at_tick(tick)
 
 
@@ -88,30 +91,34 @@ def test_get_sqrt_price_at_tick_is_greater_than_js_impl_max_tick():
 
 
 def test_get_tick_at_sqrt_price_throws_for_too_low():
-    with pytest.raises(EVMRevertError, match="InvalidSqrtPrice"):
+    with pytest.raises(ValidationError):
         tick_math.get_tick_at_sqrt_price(tick_math.MIN_SQRT_PRICE - 1)
 
 
 def test_get_tick_at_sqrt_price_throws_for_too_high():
-    with pytest.raises(EVMRevertError, match="InvalidSqrtPrice"):
+    with pytest.raises(ValidationError):
         tick_math.get_tick_at_sqrt_price(tick_math.MAX_SQRT_PRICE + 1)
 
 
 @hypothesis.given(
     sqrt_price_x96=hypothesis.strategies.integers(
         min_value=MIN_UINT160,
-        max_value=MAX_UINT160,
-    ),
-    gte=hypothesis.strategies.booleans(),
+        max_value=tick_math.MIN_SQRT_PRICE - 1,
+    )
 )
-@hypothesis.settings(suppress_health_check=[hypothesis.HealthCheck.filter_too_much])
-def test_fuzz_get_tick_at_sqrt_price_throws_for_invalid(sqrt_price_x96: int, gte: bool):
-    if gte:
-        hypothesis.assume(sqrt_price_x96 >= tick_math.MAX_SQRT_PRICE)
-    else:
-        hypothesis.assume(sqrt_price_x96 <= 0)
+def test_fuzz_get_tick_at_sqrt_price_throws_for_price_too_low(sqrt_price_x96: int):
+    with pytest.raises(ValidationError):
+        tick_math.get_tick_at_sqrt_price(sqrt_price_x96)
 
-    with pytest.raises(EVMRevertError, match="InvalidSqrtPrice"):
+
+@hypothesis.given(
+    sqrt_price_x96=hypothesis.strategies.integers(
+        min_value=tick_math.MAX_SQRT_PRICE + 1,
+        max_value=MAX_UINT160,
+    )
+)
+def test_fuzz_get_tick_at_sqrt_price_throws_for_price_too_high(sqrt_price_x96: int):
+    with pytest.raises(ValidationError):
         tick_math.get_tick_at_sqrt_price(sqrt_price_x96)
 
 

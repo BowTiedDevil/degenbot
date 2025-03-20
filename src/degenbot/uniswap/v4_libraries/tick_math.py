@@ -1,8 +1,12 @@
-# ruff: noqa: ERA001, PLR2004
+# ruff: noqa: PLR2004
+
+from typing import Annotated
+
+from pydantic import Field, validate_call
 
 from degenbot.constants import MAX_INT16, MAX_UINT256
-from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v4_libraries import bit_math
+from degenbot.validation.evm_values import ValidatedInt24, ValidatedUint160
 
 MIN_TICK = -887272
 MAX_TICK = 887272
@@ -14,18 +18,30 @@ MAX_SQRT_PRICE_MINUS_MIN_SQRT_PRICE_MINUS_ONE = (
     1461446703485210103287273052203988822378723970342 - 4295128739 - 1
 )
 
+type ValidatedTick = Annotated[int, Field(strict=True, ge=MIN_TICK, le=MAX_TICK)]
+type ValidatedSqrtPrice = Annotated[int, Field(strict=True, ge=MIN_SQRT_PRICE, le=MAX_SQRT_PRICE)]
 
-# @notice Given a tickSpacing, compute the maximum usable tick
-def max_usable_tick(tick_spacing: int) -> int:
+
+@validate_call(validate_return=True)
+def max_usable_tick(tick_spacing: ValidatedInt24) -> ValidatedInt24:
+    """
+    Given a tickSpacing, compute the maximum usable tick
+    """
+
     return (MAX_TICK // tick_spacing) * tick_spacing
 
 
-# @notice Given a tickSpacing, compute the minimum usable tick
-def min_usable_tick(tick_spacing: int) -> int:
+@validate_call(validate_return=True)
+def min_usable_tick(tick_spacing: ValidatedInt24) -> ValidatedInt24:
+    """
+    Given a tickSpacing, compute the minimum usable tick
+    """
+
     return (MIN_TICK // tick_spacing) * tick_spacing
 
 
-def get_sqrt_price_at_tick(tick: int) -> int:
+@validate_call(validate_return=True)
+def get_sqrt_price_at_tick(tick: ValidatedTick) -> ValidatedUint160:
     """
     Calculates sqrt(1.0001^tick) * 2^96, a fixed point Q64.96 number representing the sqrt of the
     price of the two assets (currency1/currency0) at the given tick.
@@ -35,8 +51,6 @@ def get_sqrt_price_at_tick(tick: int) -> int:
 
     # Use abs instead of reimplementing the Solidity contract's inline Yul
     abs_tick = abs(tick)
-    if abs_tick > MAX_TICK:
-        raise EVMRevertError(error="InvalidTick")
 
     # The tick is decomposed into bits, and for each bit with index i that is set, the product of
     # 1/sqrt(1.0001^(2^i)) is calculated (using Q128.128). The constants used for this calculation
@@ -100,17 +114,13 @@ def get_sqrt_price_at_tick(tick: int) -> int:
     return (price + ((1 << 32) - 1)) >> 32
 
 
-def get_tick_at_sqrt_price(sqrt_price_x96: int) -> int:
+@validate_call(validate_return=True)
+def get_tick_at_sqrt_price(sqrt_price_x96: ValidatedSqrtPrice) -> ValidatedTick:
     """
     Calculates the greatest tick value such that getSqrtPriceAtTick(tick) <= sqrtPriceX96
 
-    Raises exception if sqrt_price_x96 is below MIN_SQRT_PRICE or above MAX_SQRT_PRICE.
+    @dev raises exception if sqrt_price_x96 is below MIN_SQRT_PRICE or above MAX_SQRT_PRICE.
     """
-
-    # The Solidity contract uses underflow to do both checks, but we can just check it directly
-    # with an equivalent conditional.
-    if sqrt_price_x96 < MIN_SQRT_PRICE or sqrt_price_x96 > MAX_SQRT_PRICE:
-        raise EVMRevertError(error="InvalidSqrtPrice")
 
     price = sqrt_price_x96 << 32
     r = price
@@ -189,8 +199,8 @@ def get_tick_at_sqrt_price(sqrt_price_x96: int) -> int:
 
     log_sqrt10001 = log_2 * 255738958999603826347141  # Q22.128 number
 
-    # Magic number represents the ceiling of the maximum value of the error when approximating
-    # log_sqrt10001(x)
+    # Magic number represents the ceiling of the maximum value of the error when
+    # approximating log_sqrt10001(x)
     tick_low = (log_sqrt10001 - 3402992956809132418596140100660247210) >> 128
     # Magic number represents the minimum value of the error when approximating log_sqrt10001(x),
     # when sqrtPrice is from the range (2^-64, 2^64). This is safe as MIN_SQRT_PRICE is more than

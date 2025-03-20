@@ -2,33 +2,66 @@ import bisect
 from collections.abc import Generator
 from itertools import count
 
+from pydantic import validate_call
+
 from degenbot.exceptions import LiquidityMapWordMissing
 from degenbot.uniswap.types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
+from degenbot.validation.evm_values import ValidatedInt16, ValidatedInt24
 
 
-# @dev round towards negative infinity
-def compress(tick: int, tick_spacing: int) -> int:
+@validate_call(validate_return=True)
+def compress(tick: ValidatedInt24, tick_spacing: ValidatedInt24) -> ValidatedInt24:
     """
     Compress the given tick by the spacing, rounding down towards negative infinity
     """
+
     # Use Python floor division directly, which matches rounding specified by the function
     return tick // tick_spacing
 
 
-# @notice Computes the position in the mapping where the initialized bit for a tick lives
-# @param tick The tick for which to compute the position
-# @return wordPos The key in the mapping containing the word in which the bit is stored
-# @return bitPos The bit position in the word where the flag is stored
-def position(tick: int) -> tuple[int, int]:
+@validate_call(validate_return=True)
+def position(tick: ValidatedInt24) -> tuple[ValidatedInt16, ValidatedInt16]:
+    """
+    Computes the position in the mapping where the initialized bit for a tick lives
+    """
+
     return tick >> 8, tick % 256
 
 
+@validate_call
+def flip_tick(
+    tick_bitmap: dict[int, UniswapV4BitmapAtWord],
+    sparse: bool,
+    tick: ValidatedInt24,
+    tick_spacing: ValidatedInt24,
+    update_block: int | None = None,
+) -> None:
+    """
+    Flips the initialized state for a given tick from false to true, or vice versa
+    """
+
+    assert tick % tick_spacing == 0, "Invalid tick or spacing"
+
+    word_pos, bit_pos = position(-(-tick // tick_spacing) if tick < 0 else tick // tick_spacing)
+
+    if word_pos not in tick_bitmap:
+        if sparse:
+            raise LiquidityMapWordMissing(word_pos)
+        tick_bitmap[word_pos] = UniswapV4BitmapAtWord(bitmap=0)
+
+    tick_bitmap[word_pos] = UniswapV4BitmapAtWord(
+        bitmap=tick_bitmap[word_pos].bitmap ^ (1 << bit_pos),
+        block=update_block,
+    )
+
+
+@validate_call
 def gen_ticks(
     tick_data: dict[int, UniswapV4LiquidityAtTick],
-    starting_tick: int,
-    tick_spacing: int,
+    starting_tick: ValidatedInt24,
+    tick_spacing: ValidatedInt24,
     less_than_or_equal: bool,
-) -> Generator[tuple[int, bool], None, None]:
+) -> Generator[tuple[ValidatedInt24, bool], None, None]:
     """
     Yields ticks from the set of all possible ticks at 32 byte (256 bit) word boundaries and
     initialized ticks found in the liquidity mapping. The ticks are yielded in descending order when
@@ -104,13 +137,19 @@ def gen_ticks(
         next_boundary_tick = next(boundary_ticks_iter)
 
 
+@validate_call(validate_return=True)
 def next_initialized_tick_within_one_word(
     tick_bitmap: dict[int, UniswapV4BitmapAtWord],
     tick_data: dict[int, UniswapV4LiquidityAtTick],
-    tick: int,
-    tick_spacing: int,
+    tick: ValidatedInt24,
+    tick_spacing: ValidatedInt24,
     less_than_or_equal: bool,
-) -> tuple[int, bool]:
+) -> tuple[ValidatedInt24, bool]:
+    """
+    Returns the next initialized tick contained in the same word (or adjacent word) as the tick that
+    is either to the left (less than or equal to) or right (greater than) of the given tick.
+    """
+
     compressed = -(-tick // tick_spacing) if tick < 0 else tick // tick_spacing
     if tick < 0 and tick % tick_spacing != 0:
         compressed -= 1  # round towards negative infinity

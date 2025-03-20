@@ -4,7 +4,7 @@ import hypothesis.strategies
 from degenbot.constants import MAX_INT24, MIN_INT24
 from degenbot.uniswap.v4_libraries.tick_bitmap import compress, position
 
-# Tests adapted from Foundry tests in the Uniswap V4 Github repo
+# All tests ported from Foundry tests on Uniswap V4 Github repo
 # ref: https://github.com/Uniswap/v4-core/blob/main/test/libraries/TickBitmap.t.sol
 
 

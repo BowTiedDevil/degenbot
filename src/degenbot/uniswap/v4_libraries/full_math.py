@@ -1,13 +1,15 @@
-from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.exceptions import EVMRevertError
+from pydantic import validate_call
+
 from degenbot.uniswap.v4_libraries.functions import mulmod
+from degenbot.validation.evm_values import ValidatedUint256, ValidatedUint256NonZero
 
 
+@validate_call(validate_return=True)
 def muldiv(
-    a: int,
-    b: int,
-    denominator: int,
-) -> int:
+    a: ValidatedUint256,
+    b: ValidatedUint256,
+    denominator: ValidatedUint256NonZero,
+) -> ValidatedUint256:
     """
     Calculates floor(a*b/denominator) with full precision. Throws if result overflows a uint256 or
     denominator == 0.
@@ -20,6 +22,13 @@ def muldiv(
 
     return (a * b) // denominator
 
+
+@validate_call(validate_return=True)
+def muldiv_rounding_up(
+    a: ValidatedUint256,
+    b: ValidatedUint256,
+    denominator: ValidatedUint256NonZero,
+) -> ValidatedUint256:
     """
     Calculates ceil(a*b//denominator) with full precision. Throws if result overflows a uint256 or
     denominator == 0.
