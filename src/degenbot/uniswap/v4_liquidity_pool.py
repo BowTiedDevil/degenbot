@@ -33,6 +33,7 @@ from degenbot.logging import logger
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.registry.all_pools import pool_registry
 from degenbot.types import (
+    AbstractArbitrage,
     AbstractLiquidityPool,
     BoundedCache,
     Message,
@@ -1064,7 +1065,12 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
             self._notify_subscribers(
                 message=UniswapV4PoolStateUpdated(state),
-            )
+    def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
+        return tuple(
+            subscriber
+            for subscriber in self._subscribers
+            if isinstance(subscriber, AbstractArbitrage)
+        )
 
     def get_absolute_price(
         self,
