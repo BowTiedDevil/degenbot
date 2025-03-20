@@ -331,6 +331,27 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
             logger.info(f"• Tick: {self.tick}")
 
+    def __getstate__(self) -> dict[str, Any]:
+        # Remove objects that cannot be pickled and are unnecessary to perform
+        # the calculation
+        copied_attributes = ()
+
+        dropped_attributes = (
+            "_contract",
+            "_state_cache",
+            "_state_lock",
+            "_subscribers",
+            "deployer_address",
+            "factory",
+            "init_hash",
+        )
+
+        with self._state_lock:
+            return {
+                k: (v.copy() if k in copied_attributes else v)
+                for k, v in self.__dict__.items()
+                if k not in dropped_attributes
+            }
     def _fetch_and_populate_initialized_ticks(
         self,
         word_position: int,
