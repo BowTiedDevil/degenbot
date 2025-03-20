@@ -308,22 +308,24 @@ class UniswapV3PoolManager(AbstractPoolManager):
         if pool_class_kwargs is None:
             pool_class_kwargs = {}
 
+        pool: UniswapV3Pool
         if self._snapshot is not None:
-            pool_class_kwargs.update(
-                {
-                    "tick_bitmap": self._snapshot.get_tick_bitmap(pool_address),
-                    "tick_data": self._snapshot.get_tick_data(pool_address),
-                }
+            pool = self.Pool.__value__(
+                address=pool_address,
+                state_block=self._snapshot.newest_block,
+                tick_bitmap=self._snapshot.get_tick_bitmap(pool_address),
+                tick_data=self._snapshot.get_tick_data(pool_address),
+                silent=silent,
+                **pool_class_kwargs,
             )
         else:
             logger.debug("Initializing pool without liquidity snapshot")
+            pool = self.Pool.__value__(
+                address=pool_address,
+                silent=silent,
+                **pool_class_kwargs,
+            )
 
-        pool: UniswapV3Pool = self.Pool.__value__(
-            address=pool_address,
-            silent=silent,
-            state_block=state_block,
-            **pool_class_kwargs,
-        )
         return pool
 
     def get_pool(
