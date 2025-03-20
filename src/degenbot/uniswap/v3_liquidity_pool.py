@@ -22,7 +22,6 @@ from degenbot.exceptions import (
     EVMRevertError,
     ExternalUpdateError,
     IncompleteSwap,
-    InsufficientAmountOutError,
     LateUpdateError,
     LiquidityMapWordMissing,
     LiquidityPoolError,
@@ -935,9 +934,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
         else:
             if _is_zero_for_one is True and -amount1_delta < token_out_quantity:
-                raise InsufficientAmountOutError(amount_in=amount0_delta, amount_out=-amount1_delta)
+                raise IncompleteSwap(amount_in=amount0_delta, amount_out=-amount1_delta)
             if _is_zero_for_one is False and -amount0_delta < token_out_quantity:
-                raise InsufficientAmountOutError(amount_in=amount1_delta, amount_out=-amount0_delta)
+                raise IncompleteSwap(amount_in=amount1_delta, amount_out=-amount0_delta)
 
             return amount0_delta if _is_zero_for_one else amount1_delta
 

@@ -171,21 +171,6 @@ class ExternalUpdateError(LiquidityPoolError):
     """
 
 
-class InsufficientAmountOutError(LiquidityPoolError):
-    """
-    Raised if an exact output swap results in fewer tokens than requested.
-    """
-
-    def __init__(self, amount_in: int, amount_out: int) -> None:
-        self.amount_in = amount_in
-        self.amount_out = amount_out
-        super().__init__(message="Insufficient liquidity to swap for the requested amount.")
-
-    def __reduce__(self) -> tuple[Any, ...]:
-        # Pickling will raise an exception if a reduction method is not defined
-        return self.__class__, (self.amount_in, self.amount_out)
-
-
 class IncompleteSwap(LiquidityPoolError):
     """
     Raised if a swap calculation would not consume the input or deliver the requested output.

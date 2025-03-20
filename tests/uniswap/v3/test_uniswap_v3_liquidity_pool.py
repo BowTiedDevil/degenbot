@@ -17,7 +17,7 @@ from degenbot.exceptions import (
     AddressMismatch,
     DegenbotValueError,
     ExternalUpdateError,
-    InsufficientAmountOutError,
+    IncompleteSwap,
     LateUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
@@ -854,14 +854,14 @@ def test_zero_swaps(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
 
 
 def test_swap_for_all(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None:
-    with pytest.raises(InsufficientAmountOutError):
+    with pytest.raises(IncompleteSwap):
         # pool has ~94,000 WETH, calculation should throw
         wbtc_weth_v3_lp_at_block_17_600_000.calculate_tokens_in_from_tokens_out(
             token_out=wbtc_weth_v3_lp_at_block_17_600_000.token0,
             token_out_quantity=2500 * 10**8,
         )
 
-    with pytest.raises(InsufficientAmountOutError):
+    with pytest.raises(IncompleteSwap):
         # pool has ~94,000 WETH, calculation should throw
         wbtc_weth_v3_lp_at_block_17_600_000.calculate_tokens_in_from_tokens_out(
             token_out=wbtc_weth_v3_lp_at_block_17_600_000.token1,
