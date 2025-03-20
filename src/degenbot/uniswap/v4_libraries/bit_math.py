@@ -29,4 +29,4 @@ def most_significant_bit(number: ValidatedUint256NonZero) -> ValidatedUint8:
         if (number >> index) == 1:
             return index
 
-    return ValueError  # should be unreachable for valid 256 bit numbers
+    raise ValueError  # should be unreachable for valid 256 bit numbers
