@@ -69,6 +69,7 @@ def pow(x: int, y: int) -> int:  # noqa: A001
 
     # The ln function takes a signed value, so we need to make sure x fits in the signed 256 bit
     # range.
+    if x >= 2**255:
         raise EVMRevertError(error="X_OUT_OF_BOUNDS")
     x_int256 = x
 
@@ -82,7 +83,6 @@ def pow(x: int, y: int) -> int:  # noqa: A001
         raise EVMRevertError(error="Y_OUT_OF_BOUNDS")
     y_int256 = y
 
-    logx_times_y: int
     if LN_36_LOWER_BOUND < x_int256 < LN_36_UPPER_BOUND:
         ln_36_x = _ln_36(x_int256)
 
@@ -98,13 +98,13 @@ def pow(x: int, y: int) -> int:  # noqa: A001
 
     # Finally, we compute exp(y * ln(x)) to arrive at x^y
     if not (MIN_NATURAL_EXPONENT <= logx_times_y <= MAX_NATURAL_EXPONENT):
-        raise EVMRevertError(error=f"Product out of bounds, {y=}")
+        raise EVMRevertError(error="PRODUCT_OUT_OF_BOUNDS")
 
     return exp(logx_times_y)
 
 
 def exp(x: int) -> int:
-    if not (x >= MIN_NATURAL_EXPONENT and x <= MAX_NATURAL_EXPONENT):
+    if not (MIN_NATURAL_EXPONENT <= x <= MAX_NATURAL_EXPONENT):
         raise EVMRevertError(error="Invalid exponent")
 
     if x < 0:
@@ -131,15 +131,15 @@ def exp(x: int) -> int:
     # For each x_n, we test if that term is present in the decomposition (if x is larger than it),
     # and if so deduct it and compute the accumulated product.
 
-    firstAN: int
+    first_an: int
     if x >= x0:
         x -= x0
-        firstAN = a0
+        first_an = a0
     elif x >= x1:
         x -= x1
-        firstAN = a1
+        first_an = a1
     else:
-        firstAN = 1  # One with no decimal places
+        first_an = 1  # One with no decimal places
 
     # We now transform x into a 20 decimal fixed point number, to have enhanced precision when
     # computing the smaller terms.
@@ -152,31 +152,24 @@ def exp(x: int) -> int:
     if x >= x2:
         x -= x2
         product = (product * a2) // ONE_20
-
     if x >= x3:
         x -= x3
         product = (product * a3) // ONE_20
-
     if x >= x4:
         x -= x4
         product = (product * a4) // ONE_20
-
     if x >= x5:
         x -= x5
         product = (product * a5) // ONE_20
-
     if x >= x6:
         x -= x6
         product = (product * a6) // ONE_20
-
     if x >= x7:
         x -= x7
         product = (product * a7) // ONE_20
-
     if x >= x8:
         x -= x8
         product = (product * a8) // ONE_20
-
     if x >= x9:
         x -= x9
         product = (product * a9) // ONE_20
@@ -238,7 +231,7 @@ def exp(x: int) -> int:
     # ONE_20, and one integer multiplication), and then drop two digits to return an 18 decimal
     # value.
 
-    return (((product * series_sum) // ONE_20) * firstAN) // 100
+    return (((product * series_sum) // ONE_20) * first_an) // 100
 
 
 # @dev Logarithm (log(arg, base), with signed 18 decimal fixed point base and argument.
@@ -253,6 +246,17 @@ def log(arg: int, base: int) -> int:
 
     # When dividing, we multiply by ONE_18 to arrive at a result with 18 decimal places
     return (log_arg * ONE_18) // log_base
+
+
+def ln(a: int) -> int:
+    # The real natural logarithm is not defined for negative numbers or zero.
+    if a <= 0:
+        raise EVMRevertError(error="OUT_OF_BOUNDS")
+
+    if LN_36_LOWER_BOUND < a < LN_36_UPPER_BOUND:
+        return _ln_36(a) // ONE_18
+
+    return _ln(a)
 
 
 def _ln(a: int) -> int:
@@ -298,39 +302,30 @@ def _ln(a: int) -> int:
     if a >= a2:
         a = (a * ONE_20) // a2
         _sum += x2
-
     if a >= a3:
         a = (a * ONE_20) // a3
         _sum += x3
-
     if a >= a4:
         a = (a * ONE_20) // a4
         _sum += x4
-
     if a >= a5:
         a = (a * ONE_20) // a5
         _sum += x5
-
     if a >= a6:
         a = (a * ONE_20) // a6
         _sum += x6
-
     if a >= a7:
         a = (a * ONE_20) // a7
         _sum += x7
-
     if a >= a8:
         a = (a * ONE_20) // a8
         _sum += x8
-
     if a >= a9:
         a = (a * ONE_20) // a9
         _sum += x9
-
     if a >= a10:
         a = (a * ONE_20) // a10
         _sum += x10
-
     if a >= a11:
         a = (a * ONE_20) // a11
         _sum += x11
@@ -350,34 +345,34 @@ def _ln(a: int) -> int:
     num = z
 
     # seriesSum holds the accumulated sum of each term in the series, starting with the initial z
-    seriesSum = num
+    series_sum = num
 
     # In each step, the numerator is multiplied by z^2
     num = (num * z_squared) // ONE_20
-    seriesSum += num // 3
+    series_sum += num // 3
 
     num = (num * z_squared) // ONE_20
-    seriesSum += num // 5
+    series_sum += num // 5
 
     num = (num * z_squared) // ONE_20
-    seriesSum += num // 7
+    series_sum += num // 7
 
     num = (num * z_squared) // ONE_20
-    seriesSum += num // 9
+    series_sum += num // 9
 
     num = (num * z_squared) // ONE_20
-    seriesSum += num // 11
+    series_sum += num // 11
 
     # 6 Taylor terms are sufficient for 36 decimal precision.
 
     # Finally, we multiply by 2 (non fixed point) to compute ln(remainder)
-    seriesSum *= 2
+    series_sum *= 2
 
     # We now have the sum of all x_n present, and the Taylor approximation of the logarithm of the
     # remainder (both with 20 decimals). All that remains is to sum these two, and then drop two
     # digits to return a 18 decimal value.
 
-    return (_sum + seriesSum) // 100
+    return (_sum + series_sum) // 100
 
 
 def _ln_36(x: int) -> int:
@@ -400,31 +395,31 @@ def _ln_36(x: int) -> int:
     num = z
 
     # seriesSum holds the accumulated sum of each term in the series, starting with the initial z
-    seriesSum = num
+    series_sum = num
 
     # In each step, the numerator is multiplied by z^2
     num = (num * z_squared) // ONE_36
-    seriesSum += num // 3
+    series_sum += num // 3
 
     num = (num * z_squared) // ONE_36
-    seriesSum += num // 5
+    series_sum += num // 5
 
     num = (num * z_squared) // ONE_36
-    seriesSum += num // 7
+    series_sum += num // 7
 
     num = (num * z_squared) // ONE_36
-    seriesSum += num // 9
+    series_sum += num // 9
 
     num = (num * z_squared) // ONE_36
-    seriesSum += num // 11
+    series_sum += num // 11
 
     num = (num * z_squared) // ONE_36
-    seriesSum += num // 13
+    series_sum += num // 13
 
     num = (num * z_squared) // ONE_36
-    seriesSum += num // 15
+    series_sum += num // 15
 
     # 8 Taylor terms are sufficient for 36 decimal precision.
 
     # All that remains is multiplying by 2 (non fixed point).
-    return seriesSum * 2
+    return series_sum * 2

@@ -5,7 +5,7 @@ import pytest
 from degenbot.balancer.libraries import fixed_point
 from degenbot.balancer.libraries.helpers import fp
 
-EXPECTED_RELATIVE_ERROR = 1 * 10**-14
+EXPECTED_RELATIVE_ERROR = Decimal("1e-14")
 
 
 VALUES_POW_4 = [
@@ -48,20 +48,21 @@ VALUES_POW_1 = [
 
 def check_pow(x: Decimal, power: int):
     result = fp(x**power)
+    print(f"{result=}")
 
-    assert fixed_point.powDown(fp(x), fp(power)) == pytest.approx(
+    assert fixed_point.pow_down(fp(x), fp(power)) == pytest.approx(
         result,
         rel=EXPECTED_RELATIVE_ERROR,
     )
-    assert fixed_point.powUp(fp(x), fp(power)) == pytest.approx(
+    assert fixed_point.pow_up(fp(x), fp(power)) == pytest.approx(
         result,
         rel=EXPECTED_RELATIVE_ERROR,
     )
 
 
-def check_pows(power: int, values: list[Decimal | int]):
+def check_pows(power: int, values: list[Decimal]):
     for value in values:
-        check_pow(value, power)
+        check_pow(x=value, power=power)
 
 
 def test_non_fractional_pow_1():

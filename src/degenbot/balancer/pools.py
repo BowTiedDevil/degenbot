@@ -5,14 +5,14 @@ from typing import cast
 import eth_abi.abi
 from eth_typing import BlockNumber, ChecksumAddress
 
-from degenbot.balancer.libraries.fixed_point import mulUp
+from degenbot.balancer.libraries.fixed_point import mul_up
 from degenbot.balancer.libraries.scaling_helpers import (
-    _computeScalingFactor,
-    _downscaleDown,
+    _compute_scaling_factor,
+    _downscale_down,
     _upscale,
-    _upscaleArray,
+    _upscale_array,
 )
-from degenbot.balancer.libraries.weighted_math import _calcOutGivenIn, _subtractSwapFeeAmount
+from degenbot.balancer.libraries.weighted_math import _calc_out_given_in, _subtract_swap_fee_amount
 from degenbot.balancer.types import BalancerV2PoolState
 from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
@@ -98,7 +98,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
             )
             for token in tokens
         )
-        self.scaling_factors = tuple([_computeScalingFactor(token) for token in self.tokens])
+        self.scaling_factors = tuple([_compute_scaling_factor(token) for token in self.tokens])
 
         self._state_lock = Lock()
         self._state = BalancerV2PoolState(
@@ -159,9 +159,9 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         token_in_index = self.tokens.index(token_in)
         token_out_index = self.tokens.index(token_out)
 
-        fee_amount = mulUp(token_in_quantity, self.fee * self.FEE_DENOMINATOR)
+        fee_amount = mul_up(token_in_quantity, self.fee * self.FEE_DENOMINATOR)
 
-        amount_new = _subtractSwapFeeAmount(
+        amount_new = _subtract_swap_fee_amount(
             amount=token_in_quantity,
             fee_percentage=self.fee * self.FEE_DENOMINATOR,
         )
@@ -169,10 +169,10 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         assert token_in_quantity - fee_amount == amount_new
 
         balances = list(self.balances)  # make a copy because _upscale_array will mutate it
-        _upscaleArray(balances, scalingFactors=self.scaling_factors)
-        amount_new = _upscale(amount_new, scalingFactor=self.scaling_factors[token_in_index])
+        _upscale_array(balances, scalingFactors=self.scaling_factors)
+        amount_new = _upscale(amount_new, scaling_factor=self.scaling_factors[token_in_index])
 
-        amountOut = _calcOutGivenIn(
+        amount_out = _calc_out_given_in(
             balanceIn=int(balances[token_in_index]),
             weightIn=self.weights[token_in_index],
             balanceOut=int(balances[token_out_index]),
@@ -181,5 +181,5 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
         return int(
-            _downscaleDown(amount=amountOut, scalingFactor=self.scaling_factors[token_out_index])
+            _downscale_down(amount=amount_out, scaling_factor=self.scaling_factors[token_out_index])
         )
