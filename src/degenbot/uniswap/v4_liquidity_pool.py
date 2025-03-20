@@ -1029,17 +1029,20 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
             _liquidity = self.liquidity
 
+            assert _liquidity >= 0, (
+                f"Starting liquidity violates invariant: pool {self.address} {self.tick=} {self.liquidity=}"  # noqa: E501
+            )
+
             # Adjust in-range liquidity if current tick is in the modified range and the liquidity
             # update is not for a past block
             if (
-                state_block >= self.update_block
-                and update.tick_lower <= self.tick < update.tick_upper
+                update.tick_lower <= self.tick < update.tick_upper
+                and state_block >= self.update_block
             ):
                 _liquidity += update.liquidity
-
-            assert _liquidity >= 0, (
-                f"Violated liquidity invariant: pool {self.pool_id.to_0x_hex()} {self.liquidity=} {update.liquidity=}"  # noqa: E501
-            )
+                assert _liquidity >= 0, (
+                    f"In-range liquidity adjustment violated invariant: pool {self.address} {self.tick=} {self.liquidity=} {self.update_block=} {update=}"  # noqa: E501
+                )
 
             for tick in (update.tick_lower, update.tick_upper):
                 tick_word, _ = get_tick_word_and_bit_position(tick, self.tick_spacing)
