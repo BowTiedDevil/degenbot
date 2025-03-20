@@ -289,12 +289,14 @@ class UniswapV3PoolManager(AbstractPoolManager):
 
         starting_state_block = pool.update_block
 
-        # Apply liquidity modifications
-        for liquidity_update in self._snapshot.get_new_liquidity_updates(pool.address):
-            pool.update_liquidity_map(liquidity_update)
+        updates_to_apply = self._snapshot.get_new_liquidity_updates(pool.address)
+        if updates_to_apply:
+            # Apply liquidity modifications
+            for liquidity_update in updates_to_apply:
+                pool.update_liquidity_map(liquidity_update)
 
-        # Restore the slot0 values state at the original creation block
-        pool.auto_update(block_number=starting_state_block)
+            # Restore the slot0 values state at the original creation block
+            pool.auto_update(block_number=starting_state_block)
 
     def _build_pool(
         self,
