@@ -979,12 +979,20 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             # without corrupting states for previous blocks
             _tick_bitmap = self.tick_bitmap
             _tick_data = self.tick_data
-            _liquidity = self.liquidity + (
-                # Adjust in-range liquidity if current tick is in the modified range
-                update.liquidity if update.tick_lower <= self.tick < update.tick_upper else 0
-            )
 
-            state_block = cast(BlockNumber, update.block_number)
+            _liquidity = self.liquidity
+
+            # Adjust in-range liquidity if current tick is in the modified range and the liquidity
+            # update is not for a past block
+            if (
+                state_block >= self.update_block
+                and update.tick_lower <= self.tick < update.tick_upper
+            ):
+                _liquidity += update.liquidity
+
+            assert _liquidity >= 0, (
+                f"Violated liquidity invariant: pool {self.pool_id.to_0x_hex()} {self.liquidity=} {update.liquidity=}"  # noqa: E501
+            )
 
             for tick in (update.tick_lower, update.tick_upper):
                 tick_word, _ = get_tick_word_and_bit_position(tick, self.tick_spacing)
@@ -1057,14 +1065,14 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 liquidity=_liquidity,
                 tick_data=_tick_data,
                 tick_bitmap=_tick_bitmap,
-                block=state_block,
+                block=max(self.update_block, state_block),
             )
-
             self._state = state
             self._state_cache[state_block] = state
-
             self._notify_subscribers(
                 message=UniswapV4PoolStateUpdated(state),
+            )
+
     def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
         return tuple(
             subscriber
