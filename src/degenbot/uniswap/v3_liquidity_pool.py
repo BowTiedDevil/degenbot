@@ -354,6 +354,8 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
         A negative amount indicates the token quantity sent to the swapper, and a positive amount
         indicates the token quantity deposited.
+
+        This method will fetch missing liquidity data as needed, but this data is discarded.
         """
 
         if amount_specified == 0:  # pragma: no branch
