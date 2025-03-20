@@ -104,6 +104,7 @@ Liquidity = NewType("Liquidity", int)
 
 
 PIPS_DENOMINATOR = 1_000_000
+NATIVE_CURRENCY_ADDRESS = ZERO_ADDRESS
 
 
 class Hooks(Enum):
