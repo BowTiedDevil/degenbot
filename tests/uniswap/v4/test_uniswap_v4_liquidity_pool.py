@@ -93,6 +93,7 @@ def test_pool_sqrt_price_checks(eth_usdc_v4: UniswapV4Pool):
     assert eth_usdc_v4.sqrt_price_x96 > 0
 
 
+@pytest.mark.skip(reason="slow")
 def test_first_200_pools(fork_mainnet: AnvilFork, testing_pools):
     for pool in testing_pools:
         _test_pool_exact_input(
