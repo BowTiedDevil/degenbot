@@ -513,6 +513,8 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             self.protocol_fee.zero_for_one if zero_for_one else self.protocol_fee.one_for_zero
         )
 
+        assert _liquidity >= 0
+
         amount_specified_remaining = amount_specified
         amount_calculated = 0
         amount_to_protocol = 0
@@ -662,6 +664,10 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 # Recompute unless we're on a lower tick boundary (i.e. already transitioned ticks),
                 # and haven't moved
                 result.tick = tick_math.get_tick_at_sqrt_price(result.sqrt_price_x96)
+
+            assert result.liquidity >= 0, (
+                f"Caught negative liquidity, {result.liquidity=}, {liquidity_net_at_next_tick=}, {zero_for_one=}"  # noqa
+            )
 
         if zero_for_one != (amount_specified < 0):
             # currency1 is swapped in
