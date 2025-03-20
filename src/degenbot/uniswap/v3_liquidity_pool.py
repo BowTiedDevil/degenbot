@@ -172,8 +172,6 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         state_cache_depth: int = 8,
     ):
         self.address = get_checksum_address(address)
-        self.factory: ChecksumAddress
-
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
         state_block = (
