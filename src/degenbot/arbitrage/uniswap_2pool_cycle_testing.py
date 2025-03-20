@@ -350,14 +350,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     override_state=v4_pool_state_override,
                 )
             except IncompleteSwap as exc:
-                weth_out = exc.amount_out
+                weth_in = exc.amount_in
                 logger.info(
-                    f"Incomplete exact output swap\n"
-                    f"Provided {forward_token_quantity}\n"
-                    f"Used     {exc.amount_out}"
+                    f"Incomplete swap\nProvided {forward_token_quantity}\nUsed     {weth_in}"
                 )
             except PossibleInaccurateResult as exc:
-                weth_out = exc.amount_out
+                weth_in = exc.amount_in
             finally:
                 calc_in_time = time.perf_counter() - calc_start
 
@@ -1489,7 +1487,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
                 pool_lo_zero_for_one = v4_pool.token1 == self.input_token
 
-                if pool_lo.tokens == pool_hi.tokens:
+                if v4_pool.tokens == v2_pool.tokens:
                     # Token position should be identical for both pools
                     assert pool_hi_zero_for_one != pool_lo_zero_for_one
 
@@ -1659,7 +1657,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
                 pool_lo_zero_for_one = v4_pool.token1 == forward_token
 
-                if pool_lo.tokens == pool_hi.tokens:
+                if v4_pool.tokens == v2_pool.tokens:
                     # Token position should be identical for both pools
                     assert pool_hi_zero_for_one != pool_lo_zero_for_one
 
