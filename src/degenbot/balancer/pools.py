@@ -138,7 +138,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         self.weights = tuple(weights)
 
     @property
-    def balances(self) -> tuple[int, int]:
+    def balances(self) -> tuple[int, ...]:
         return self.state.balances
 
     @property
