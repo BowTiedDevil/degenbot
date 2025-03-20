@@ -17,6 +17,7 @@ from cvxpy.atoms.affine.bmat import bmat as cvxpy_bmat
 from cvxpy.atoms.affine.sum import sum as cvxpy_sum
 from cvxpy.atoms.geo_mean import geo_mean
 
+from degenbot.arbitrage.uniswap_multipool_cycle_testing import _UniswapMultiPoolCycleTesting
 from degenbot.cache import get_checksum_address
 from degenbot.config import set_web3
 from degenbot.constants import ZERO_ADDRESS
@@ -898,9 +899,7 @@ def test_base_3pool(
         # total liquidity 10_000 WETH
     )
 
-    from .uniswap_multipool_cycle_testing import UniswapMultiPoolCycleTesting
-
-    arb = UniswapMultiPoolCycleTesting(
+    arb = _UniswapMultiPoolCycleTesting(
         input_token=weth_token,
         # swap_pools=[wbtc_pool_b, wbtc_pool_a],
         swap_pools=[lp_1, lp_2, lp_3],  # profitable
