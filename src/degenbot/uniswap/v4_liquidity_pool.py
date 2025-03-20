@@ -799,16 +799,16 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         return populated_ticks
 
     @property
+    def address(self) -> ChecksumAddress:  # type: ignore[override]
+        return self._pool_manager_address
+
+    @property
     def chain_id(self) -> int:
         return self._chain_id
 
     @property
     def liquidity(self) -> int:
         return self.state.liquidity
-
-    @property
-    def pool_manager(self) -> ChecksumAddress:
-        return self._pool_manager
 
     @property
     def pool_id(self) -> HexBytes:
