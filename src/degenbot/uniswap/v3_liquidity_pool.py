@@ -301,6 +301,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
         if not silent:  # pragma: no branch
             logger.info(self.name)
+            logger.info(f"• Address: {self.address}")
             logger.info(f"• Token 0: {self.token0}")
             logger.info(f"• Token 1: {self.token1}")
             logger.info(f"• Fee: {self.fee}")
