@@ -1036,8 +1036,8 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             # Adjust in-range liquidity if current tick is in the modified range and the liquidity
             # update is not for a past block
             if (
-                update.tick_lower <= self.tick < update.tick_upper
-                and state_block >= self.update_block
+                state_block >= self.update_block
+                and update.tick_lower <= self.tick < update.tick_upper
             ):
                 _liquidity += update.liquidity
                 assert _liquidity >= 0, (
