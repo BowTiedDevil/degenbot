@@ -249,7 +249,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 )
             )
         ), (
-            f"Supplied pool ID {self.pool_id.hex()} does not match calculated ID {calculated_id.hex()}, {self.pool_key=}"
+            f"Supplied pool ID {self.pool_id.to_0x_hex()} does not match calculated ID {calculated_id.to_0x_hex()}, {self.pool_key=}"  # noqa
         )
 
         # If liquidity info was not provided, treat the mapping as sparse
