@@ -73,6 +73,16 @@ class SwapDelta:
     currency0: int
     currency1: int
 
+    @property
+    def amount_in(self) -> int:
+        "The deposited token amount."
+        return -min(self.currency0, self.currency1)
+
+    @property
+    def amount_out(self) -> int:
+        "The withdrawn token amount."
+        return max(self.currency0, self.currency1)
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class ProtocolFee:
@@ -671,30 +681,30 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
 
-        if conflicting_hooks := self.active_hooks & {
-            Hooks.AFTER_SWAP,
-            Hooks.AFTER_SWAP_RETURNS_DELTA,
-            Hooks.BEFORE_SWAP,
-            Hooks.BEFORE_SWAP_RETURNS_DELTA,
-        }:
+        assert swap_delta.amount_out <= token_out_quantity
+
+        if conflicting_hooks := (
+            self.active_hooks
+            & {
+                Hooks.AFTER_SWAP,
+                Hooks.AFTER_SWAP_RETURNS_DELTA,
+                Hooks.BEFORE_SWAP,
+                Hooks.BEFORE_SWAP_RETURNS_DELTA,
+            }
+        ):
             raise PossibleInaccurateResult(
+                amount_in=swap_delta.amount_in,
+                amount_out=swap_delta.amount_out,
                 hooks=conflicting_hooks,
-                amount_in=swap_delta.currency0 if zero_for_one else swap_delta.currency1,
-                amount_out=swap_delta.currency1 if zero_for_one else swap_delta.currency0,
             )
 
-        if zero_for_one is True and swap_delta.currency1 < token_out_quantity:
+        if swap_delta.amount_out < token_out_quantity:
             raise IncompleteSwap(
-                amount_in=-swap_delta.currency0,
-                amount_out=swap_delta.currency1,
-            )
-        if zero_for_one is False and swap_delta.currency0 < token_out_quantity:
-            raise IncompleteSwap(
-                amount_in=-swap_delta.currency1,
-                amount_out=swap_delta.currency0,
+                amount_in=swap_delta.amount_in,
+                amount_out=swap_delta.amount_out,
             )
 
-        return -swap_delta.currency0 if zero_for_one else -swap_delta.currency1
+        return swap_delta.amount_in
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -719,30 +729,30 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
 
-        if conflicting_hooks := self.active_hooks & {
-            Hooks.AFTER_SWAP,
-            Hooks.AFTER_SWAP_RETURNS_DELTA,
-            Hooks.BEFORE_SWAP,
-            Hooks.BEFORE_SWAP_RETURNS_DELTA,
-        }:
+        assert swap_delta.amount_in <= token_in_quantity
+
+        if conflicting_hooks := (
+            self.active_hooks
+            & {
+                Hooks.AFTER_SWAP,
+                Hooks.AFTER_SWAP_RETURNS_DELTA,
+                Hooks.BEFORE_SWAP,
+                Hooks.BEFORE_SWAP_RETURNS_DELTA,
+            }
+        ):
             raise PossibleInaccurateResult(
-                amount_in=swap_delta.currency0 if zero_for_one else swap_delta.currency1,
-                amount_out=swap_delta.currency1 if zero_for_one else swap_delta.currency0,
+                amount_in=swap_delta.amount_in,
+                amount_out=swap_delta.amount_out,
                 hooks=conflicting_hooks,
             )
 
-        if zero_for_one is True and -swap_delta.currency0 < token_in_quantity:
+        if swap_delta.amount_in < token_in_quantity:
             raise IncompleteSwap(
-                amount_in=-swap_delta.currency0,
-                amount_out=swap_delta.currency1,
-            )
-        if zero_for_one is False and -swap_delta.currency1 < token_in_quantity:
-            raise IncompleteSwap(
-                amount_in=-swap_delta.currency1,
-                amount_out=swap_delta.currency0,
+                amount_in=swap_delta.amount_in,
+                amount_out=swap_delta.amount_out,
             )
 
-        return swap_delta.currency1 if zero_for_one else swap_delta.currency0
+        return swap_delta.amount_out
 
     def get_tick_bitmap_at_word(
         self, w3: Web3, word_position: int, block_identifier: BlockIdentifier
