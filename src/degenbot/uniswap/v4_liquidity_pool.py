@@ -55,7 +55,10 @@ from degenbot.uniswap.v3_functions import (
     get_tick_word_and_bit_position,
 )
 from degenbot.uniswap.v4_libraries import swap_math, tick_bitmap, tick_math
-from degenbot.uniswap.v4_libraries.tick_bitmap import next_initialized_tick_within_one_word
+from degenbot.uniswap.v4_libraries.tick_bitmap import (
+    flip_tick,
+    next_initialized_tick_within_one_word,
+)
 
 
 @dataclasses.dataclass(slots=True)
