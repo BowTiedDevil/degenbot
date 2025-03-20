@@ -237,7 +237,7 @@ class AbstractRegistry: ...
 class AbstractTransaction: ...
 
 
-class BoundedCache[K, V](OrderedDict[K, V]):
+class BoundedCache[KT, VT](OrderedDict[KT, VT]):
     """
     A cache holding key-value pairs, tracked by entry order. The cache automatically removes old
     items if the number of items would exceed the maximum number of entries set by `max_items`.
@@ -259,7 +259,7 @@ class BoundedCache[K, V](OrderedDict[K, V]):
             state[4],
         )
 
-    def __setitem__(self, key: K, value: V) -> None:
+    def __setitem__(self, key: KT, value: VT) -> None:
         super().__setitem__(key, value)
         if len(self) > self.max_items:
             self.popitem(last=False)
