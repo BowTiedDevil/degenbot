@@ -352,6 +352,13 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 for k, v in self.__dict__.items()
                 if k not in dropped_attributes
             }
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"{type(self).__name__}(pool_id={self.pool_id.to_0x_hex()},  token0={self.token0}, token1={self.token1}, fee={self.fee}, tick spacing={self.tick_spacing})"  # noqa:E501
+
+    def __str__(self) -> str:
+        return self.name
+
     def _fetch_and_populate_initialized_ticks(
         self,
         word_position: int,
