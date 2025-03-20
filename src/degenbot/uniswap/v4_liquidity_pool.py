@@ -1,6 +1,7 @@
 import dataclasses
 from collections.abc import Sequence
 from enum import Enum
+from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Final, NewType, cast
 from weakref import WeakSet
@@ -48,8 +49,10 @@ from degenbot.uniswap.types import (
     UniswapV4PoolState,
     UniswapV4PoolStateUpdated,
 )
-from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
-from degenbot.uniswap.v3_libraries.tick_bitmap import flip_tick
+from degenbot.uniswap.v3_functions import (
+    exchange_rate_from_sqrt_price_x96,
+    get_tick_word_and_bit_position,
+)
 from degenbot.uniswap.v4_libraries import swap_math, tick_bitmap, tick_math
 from degenbot.uniswap.v4_libraries.tick_bitmap import next_initialized_tick_within_one_word
 
@@ -1062,3 +1065,81 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             self._notify_subscribers(
                 message=UniswapV4PoolStateUpdated(state),
             )
+
+    def get_absolute_price(
+        self,
+        token: Erc20Token,
+        override_state: UniswapV4PoolState | None = None,
+    ) -> Fraction:
+        """
+        Get the absolute price for the given token, expressed in units of the other.
+        """
+
+        return 1 / self.get_absolute_rate(token, override_state=override_state)
+
+    def get_absolute_rate(
+        self,
+        token: Erc20Token,
+        override_state: UniswapV4PoolState | None = None,
+    ) -> Fraction:
+        """
+        Get the absolute rate of exchange for the given token, expressed in units of the other.
+        """
+
+        # HACK: Translate between native currency and wrapped equivalent
+        if token == WRAPPED_NATIVE_TOKENS[self.chain_id] and NATIVE_CURRENCY_ADDRESS in self.tokens:
+            logger.info("(get_absolute_rate) converting from WETH -> Ether")
+            token = Erc20TokenManager(chain_id=self.chain_id).get_erc20token(
+                NATIVE_CURRENCY_ADDRESS
+            )
+        elif (
+            token == NATIVE_CURRENCY_ADDRESS and WRAPPED_NATIVE_TOKENS[self.chain_id] in self.tokens
+        ):
+            logger.info("(get_absolute_rate) converting from Ether -> WETH")
+            token = Erc20TokenManager(chain_id=self.chain_id).get_erc20token(
+                WRAPPED_NATIVE_TOKENS[self.chain_id]
+            )
+
+        state = self.state if override_state is None else override_state
+
+        if token == self.token0:
+            return 1 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
+        if token == self.token1:
+            return exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
+
+        raise DegenbotValueError(message=f"Unknown token {token}")  # pragma: no cover
+
+    def get_nominal_price(
+        self,
+        token: Erc20Token,
+        override_state: UniswapV4PoolState | None = None,
+    ) -> Fraction:
+        """
+        Get the nominal price for the given token, expressed in units of the other, corrected for
+        decimal place values.
+        """
+        return 1 / self.get_nominal_rate(token, override_state=override_state)
+
+    def get_nominal_rate(
+        self,
+        token: Erc20Token,
+        override_state: UniswapV4PoolState | None = None,
+    ) -> Fraction:
+        """
+        Get the nominal rate for the given token, expressed in units of the other, corrected for
+        decimal place values.
+        """
+
+        state = self.state if override_state is None else override_state
+
+        if token == self.token0:
+            return (
+                1
+                / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
+                * Fraction(10**self.token1.decimals, 10**self.token0.decimals)
+            )
+        if token == self.token1:
+            return exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96) * Fraction(
+                10**self.token0.decimals, 10**self.token1.decimals
+            )
+        raise DegenbotValueError(message=f"Unknown token {token}")  # pragma: no cover
