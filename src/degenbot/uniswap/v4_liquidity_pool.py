@@ -210,8 +210,6 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         self.active_hooks: set[Hooks] = {
             hook for hook in Hooks if int(self.hook_address, 16) & hook.value != 0
         }
-        if self.active_hooks:
-            print(f"Active hooks: {', '.join([hook.name for hook in self.active_hooks])}")
 
         # Construct the PoolKey
         self._pool_key: Final[UniswapV4PoolKey] = UniswapV4PoolKey(
