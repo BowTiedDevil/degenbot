@@ -102,12 +102,12 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         "bool",
     )
 
-    @dataclasses.dataclass(slots=True, repr=False, eq=False)
+    @dataclasses.dataclass(slots=True, eq=False)
     class SwapCache:
         liquidity_start: int
         tick_cumulative: int
 
-    @dataclasses.dataclass(slots=True, repr=False, eq=False)
+    @dataclasses.dataclass(slots=True, eq=False)
     class SwapState:
         amount_specified_remaining: int
         amount_calculated: int
@@ -115,7 +115,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         tick: int
         liquidity: int
 
-    @dataclasses.dataclass(slots=True, repr=False, eq=False)
+    @dataclasses.dataclass(slots=True, eq=False)
     class StepComputations:
         sqrt_price_start_x96: int = 0
         tick_next: int = 0
