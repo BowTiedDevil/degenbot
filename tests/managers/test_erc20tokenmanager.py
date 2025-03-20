@@ -3,7 +3,6 @@ import web3
 
 from degenbot.cache import get_checksum_address
 from degenbot.config import set_web3
-from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import DegenbotValueError
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.registry.all_tokens import token_registry
