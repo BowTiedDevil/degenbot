@@ -4,7 +4,7 @@ import pathlib
 from typing import Any, cast
 
 import pydantic_core
-from eth_typing import ABIEvent, ChecksumAddress
+from eth_typing import ABIEvent, ChecksumAddress, HexStr
 from eth_utils.abi import event_abi_to_log_topic
 from hexbytes import HexBytes
 from web3 import Web3
@@ -66,24 +66,34 @@ class UniswapV3LiquiditySnapshot:
         return self._chain_id
 
     def _add_pool_if_missing(self, pool_address: ChecksumAddress) -> None:
-        try:
-            self._liquidity_events[pool_address]
-        except KeyError:
+        """
+        Create entries for the pool if missing.
+        """
+
+        if pool_address not in self._liquidity_events:
             self._liquidity_events[pool_address] = []
 
-        try:
-            self._liquidity_snapshot[pool_address]
-        except KeyError:
+        if pool_address not in self._liquidity_snapshot:
             self._liquidity_snapshot[pool_address] = {}
 
     def fetch_new_liquidity_events(
         self,
         to_block: int,
-        span: int = 100,
+        span: int = 1000,
     ) -> None:
+        """
+        Fetch liquidity events from the newest known liquidity events to the target block using
+        `eth_getLogs`. Blocks per request will be capped at `blocks_per_request`.
+        """
+
         def process_liquidity_event_log(
             event: BaseContractEvent, log: LogReceipt
         ) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
+            """
+            Decode an event log and convert to an address and a `UniswapV3LiquidityEvent` for
+            processing with `UniswapV3Pool.update_liquidity_map`.
+            """
+
             decoded_event: EventData = event.process_log(log)
             address = get_checksum_address(decoded_event["address"])
             tx_index = decoded_event["transactionIndex"]
@@ -102,7 +112,7 @@ class UniswapV3LiquiditySnapshot:
                 tx_index=tx_index,
             )
 
-        logger.info(f"Updating snapshot from block {self.newest_block} to {to_block}")
+        logger.info(f"Updating Uniswap V3 snapshot from block {self.newest_block} to {to_block}")
         w3 = connection_manager.get_web3(self.chain_id)
 
         v3pool = Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI)
@@ -116,6 +126,7 @@ class UniswapV3LiquiditySnapshot:
 
             while True:
                 end_block = min(to_block, start_block + span - 1)
+                logger.info(f"Fetching events for blocks {start_block}-{end_block}")
 
                 event_filter_params = FilterParams(
                     fromBlock=start_block,
@@ -142,20 +153,34 @@ class UniswapV3LiquiditySnapshot:
         self.newest_block = to_block
 
     def get_new_liquidity_updates(
-        self, pool_address: str
-    ) -> list[UniswapV3PoolLiquidityMappingUpdate]:
-        pool_address = get_checksum_address(pool_address)
-        pool_updates = self._liquidity_events.get(pool_address, [])
-        self._liquidity_events[pool_address] = []
+        self,
+        pool_address: HexStr,
+    ) -> tuple[UniswapV3PoolLiquidityMappingUpdate]:
+        """
+        Consume and return all pending liquidity events for this pool.
+        """
 
-        # Liquidity events from a block prior to the current update block will be rejected, so they
-        # must be applied in chronological order
-        sorted_events = sorted(
-            pool_updates,
-            key=lambda event: (event.block_number, event.tx_index),
+        pool_address = get_checksum_address(pool_address)
+
+        # Fetch any pending updates
+        pending_events = self._liquidity_events.get(pool_address)
+
+        if pending_events is None:
+            return []
+
+        # Mint/Burn events must be applied in chronological order to ensure effective
+        # invariant checks
+        sorted_events = tuple(
+            sorted(
+                pending_events,
+                key=lambda event: (event.block_number, event.tx_index),
+            )
         )
 
-        return [
+        # Clear pending events for this pool
+        self._liquidity_events[pool_address] = []
+
+        return tuple(
             UniswapV3PoolLiquidityMappingUpdate(
                 block_number=event.block_number,
                 liquidity=event.liquidity,
@@ -163,27 +188,23 @@ class UniswapV3LiquiditySnapshot:
                 tick_upper=event.tick_upper,
             )
             for event in sorted_events
-        ]
+        )
 
-    def get_tick_bitmap(self, pool: ChecksumAddress | str) -> dict[int, UniswapV3BitmapAtWord]:
-        pool_address = get_checksum_address(pool)
-
+    def get_tick_bitmap(self, pool: ChecksumAddress | HexStr) -> dict[int, UniswapV3BitmapAtWord]:
         try:
-            tick_bitmap: dict[int, UniswapV3BitmapAtWord] = self._liquidity_snapshot[pool_address][
-                "tick_bitmap"
-            ]
+            tick_bitmap: dict[int, UniswapV3BitmapAtWord] = self._liquidity_snapshot[
+                get_checksum_address(pool)
+            ]["tick_bitmap"]
         except KeyError:
             return {}
         else:
             return tick_bitmap
 
-    def get_tick_data(self, pool: ChecksumAddress | str) -> dict[int, UniswapV3LiquidityAtTick]:
-        pool_address = get_checksum_address(pool)
-
+    def get_tick_data(self, pool: ChecksumAddress | HexStr) -> dict[int, UniswapV3LiquidityAtTick]:
         try:
-            tick_data: dict[int, UniswapV3LiquidityAtTick] = self._liquidity_snapshot[pool_address][
-                "tick_data"
-            ]
+            tick_data: dict[int, UniswapV3LiquidityAtTick] = self._liquidity_snapshot[
+                get_checksum_address(pool)
+            ]["tick_data"]
         except KeyError:
             return {}
         else:
@@ -191,7 +212,7 @@ class UniswapV3LiquiditySnapshot:
 
     def update_snapshot(
         self,
-        pool: ChecksumAddress | str,
+        pool: ChecksumAddress | HexStr,
         tick_data: dict[int, UniswapV3LiquidityAtTick],
         tick_bitmap: dict[int, UniswapV3BitmapAtWord],
     ) -> None:
