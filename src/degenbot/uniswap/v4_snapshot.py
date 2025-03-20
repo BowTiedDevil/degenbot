@@ -189,14 +189,18 @@ class UniswapV4LiquiditySnapshot:
         pool_manager_address: HexStr,
         pool_id: bytes | HexStr,
     ) -> tuple[UniswapV4PoolLiquidityMappingUpdate, ...]:
+        """
+        Consume and return all pending liquidity events for this pool.
+        """
+
         pool_manager_address = get_checksum_address(pool_manager_address)
         pool_id = HexBytes(pool_id)
 
         # Fetch any pending updates
-        pending_events = self._liquidity_events.get(
-            (pool_manager_address, pool_id),
-            [],
-        )
+        pending_events = self._liquidity_events.get((pool_manager_address, pool_id))
+
+        if pending_events is None:
+            return ()
 
         # Clear pending events for this pool
         self._liquidity_events[(pool_manager_address, pool_id)] = []
@@ -227,8 +231,8 @@ class UniswapV4LiquiditySnapshot:
 
     def get_tick_data(
         self,
-        pool_manager_address: ChecksumAddress | str,
-        pool_id: bytes | str,
+        pool_manager_address: ChecksumAddress | HexStr,
+        pool_id: bytes | HexStr,
     ) -> dict[int, UniswapV4LiquidityAtTick]:
         try:
             tick_data: dict[int, UniswapV4LiquidityAtTick] = self._liquidity_snapshot[
