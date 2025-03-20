@@ -106,7 +106,6 @@ class UniswapV2PoolManager(AbstractPoolManager):
         self,
         pool_address: ChecksumAddress,
         silent: bool,
-        state_block: int | None,
         pool_class_kwargs: dict[str, Any] | None,
     ) -> Pool:
         if pool_class_kwargs is None:
@@ -115,7 +114,6 @@ class UniswapV2PoolManager(AbstractPoolManager):
         pool: UniswapV2Pool = self.Pool.__value__(
             address=pool_address,
             silent=silent,
-            state_block=state_block,
             **pool_class_kwargs,
         )
         return pool
@@ -125,7 +123,6 @@ class UniswapV2PoolManager(AbstractPoolManager):
         pool_address: ChecksumAddress | str,
         *,
         silent: bool = False,
-        state_block: int | None = None,
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
         """
@@ -159,7 +156,6 @@ class UniswapV2PoolManager(AbstractPoolManager):
             new_pool = self._build_pool(
                 pool_address=pool_address,
                 silent=silent,
-                state_block=state_block,
                 pool_class_kwargs=pool_class_kwargs,
             )
         except LiquidityPoolError as exc:
@@ -175,7 +171,6 @@ class UniswapV2PoolManager(AbstractPoolManager):
         token_addresses: tuple[str, str],
         *,
         silent: bool = False,
-        state_block: int | None = None,
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
         """
@@ -191,7 +186,6 @@ class UniswapV2PoolManager(AbstractPoolManager):
         return self.get_pool(
             pool_address=pool_address,
             silent=silent,
-            state_block=state_block,
             pool_class_kwargs=pool_class_kwargs,
         )
 
@@ -302,7 +296,6 @@ class UniswapV3PoolManager(AbstractPoolManager):
         self,
         pool_address: ChecksumAddress,
         silent: bool,
-        state_block: int | None,
         pool_class_kwargs: dict[str, Any] | None,
     ) -> Pool:
         if pool_class_kwargs is None:
@@ -333,7 +326,6 @@ class UniswapV3PoolManager(AbstractPoolManager):
         pool_address: ChecksumAddress | str,
         *,
         silent: bool = False,
-        state_block: int | None = None,
         # keyword arguments passed to the pool class constructor
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
@@ -368,7 +360,6 @@ class UniswapV3PoolManager(AbstractPoolManager):
             new_pool = self._build_pool(
                 pool_address=pool_address,
                 silent=silent,
-                state_block=state_block,
                 pool_class_kwargs=pool_class_kwargs,
             )
         except LiquidityPoolError as exc:  # pragma: no cover
@@ -389,7 +380,6 @@ class UniswapV3PoolManager(AbstractPoolManager):
         pool_fee: int,
         *,
         silent: bool = False,
-        state_block: int | None = None,
         # keyword arguments passed to the pool class constructor
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
@@ -407,7 +397,6 @@ class UniswapV3PoolManager(AbstractPoolManager):
         return self.get_pool(
             pool_address=pool_address,
             silent=silent,
-            state_block=state_block,
             pool_class_kwargs=pool_class_kwargs,
         )
 
