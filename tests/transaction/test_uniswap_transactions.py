@@ -1006,7 +1006,7 @@ def test_v3_router_transactions(
                 chain_id=1,
                 tx_hash="0xec724de527b6e1a6dbfda8c2a38917a7f6a0c306c10d582fffb95fc413a27425",
                 tx_nonce=150,
-                tx_value=int(0 * 10**18),
+                tx_value=0,
                 tx_sender="0x65406FcC327d8e1fa816236593A5172CDb78B5E6",
                 func_name="execute",
                 func_params={
@@ -1040,7 +1040,7 @@ def test_v3_router_transactions(
                 chain_id=1,
                 tx_hash="0xbd5ab657ff34ca551216defcc328914eaf6db64bffc30c10e4850b5e8c401df2",
                 tx_nonce=424,
-                tx_value=int(0 * 10**18),
+                tx_value=0,
                 tx_sender="0x6A7cB7d004CB545f3742782f0C4eCa9fC7b2f6E9",
                 func_name="execute",
                 func_params={
