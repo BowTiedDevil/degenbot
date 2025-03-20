@@ -166,7 +166,7 @@ class UniswapV3LiquiditySnapshot:
         pending_events = self._liquidity_events.get(pool_address)
 
         if pending_events is None:
-            return []
+            return ()
 
         # Mint/Burn events must be applied in chronological order to ensure effective
         # invariant checks
