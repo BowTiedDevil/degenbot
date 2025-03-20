@@ -90,11 +90,11 @@ def test_swap():
     )
 
     out_amount_pool = weighted_math._calc_out_given_in(
-        balanceIn=token_balance_in,
-        weightIn=token_weight_in,
-        balanceOut=token_balance_out,
-        weightOut=token_weight_out,
-        amountIn=token_amount_in,
+        balance_in=token_balance_in,
+        weight_in=token_weight_in,
+        balance_out=token_balance_out,
+        weight_out=token_weight_out,
+        amount_in=token_amount_in,
     )
 
     assert out_amount_pool == pytest.approx(expected=out_amount_math, rel=MAX_RELATIVE_ERROR)

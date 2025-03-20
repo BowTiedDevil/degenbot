@@ -169,15 +169,15 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         assert token_in_quantity - fee_amount == amount_new
 
         balances = list(self.balances)  # make a copy because _upscale_array will mutate it
-        _upscale_array(balances, scalingFactors=self.scaling_factors)
+        _upscale_array(amounts=balances, scaling_factors=self.scaling_factors)
         amount_new = _upscale(amount_new, scaling_factor=self.scaling_factors[token_in_index])
 
         amount_out = _calc_out_given_in(
-            balanceIn=int(balances[token_in_index]),
-            weightIn=self.weights[token_in_index],
-            balanceOut=int(balances[token_out_index]),
-            weightOut=self.weights[token_out_index],
-            amountIn=int(amount_new),
+            balance_in=int(balances[token_in_index]),
+            weight_in=self.weights[token_in_index],
+            balance_out=int(balances[token_out_index]),
+            weight_out=self.weights[token_out_index],
+            amount_in=int(amount_new),
         )
 
         return int(
