@@ -126,7 +126,8 @@ class UniswapV2PoolManager(AbstractPoolManager):
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
         """
-        Get a pool from its address
+        Get a pool from its address. If the pool is already tracked or found in the global registry,
+        that instance will be returned. Otherwise, a new one will be built.
         """
 
         pool_address = get_checksum_address(pool_address)
@@ -320,8 +321,8 @@ class UniswapV3PoolManager(AbstractPoolManager):
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
         """
-        Get a pool from its address. If the pool is in the global registry, that instance will
-        be returned. If not, a new one will be built.
+        Get a pool from its address. If the pool is already tracked or found in the global registry,
+        that instance will be returned. Otherwise, a new one will be built.
         """
 
         pool_address = get_checksum_address(pool_address)
