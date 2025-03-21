@@ -372,7 +372,6 @@ def test_same_block(fork_mainnet: AnvilFork):
 
     v2_heyjoe_weth_lp = uniswap_v2_pool_manager.get_pool(
         pool_address="0xC928CF054fE73CaB56d753BA4b508da0F82FABFD",
-        state_block=block,
     )
 
     uniswap_v2_pool_manager.remove(pool_address=v2_heyjoe_weth_lp.address)
@@ -383,7 +382,6 @@ def test_same_block(fork_mainnet: AnvilFork):
 
     new_v2_heyjoe_weth_lp = uniswap_v2_pool_manager.get_pool(
         pool_address="0xC928CF054fE73CaB56d753BA4b508da0F82FABFD",
-        state_block=block,
     )
 
     assert v2_heyjoe_weth_lp is not new_v2_heyjoe_weth_lp
