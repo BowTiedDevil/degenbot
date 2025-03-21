@@ -31,7 +31,7 @@ def first_250_blocks_snapshot(
 ) -> UniswapV3LiquiditySnapshot:
     set_web3(fork_mainnet.w3)
     snapshot = UniswapV3LiquiditySnapshot(file=EMPTY_SNAPSHOT_FILENAME)
-    snapshot.fetch_new_liquidity_events(to_block=EMPTY_SNAPSHOT_BLOCK + 250, span=50)
+    snapshot.fetch_new_events(to_block=EMPTY_SNAPSHOT_BLOCK + 250, blocks_per_request=50)
     return snapshot
 
 
@@ -144,7 +144,7 @@ def test_get_new_liquidity_updates(
         "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8",
         "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf",
     ]:
-        first_250_blocks_snapshot.get_new_liquidity_updates(get_checksum_address(pool_address))
+        first_250_blocks_snapshot.pending_updates(get_checksum_address(pool_address))
         assert first_250_blocks_snapshot._liquidity_events[get_checksum_address(pool_address)] == []
 
 
@@ -176,19 +176,19 @@ def test_apply_update_to_snapshot(
         ),
         17: UniswapV3BitmapAtWord(bitmap=288230376155906048, block=12369846),
     }
-    empty_snapshot.update_snapshot(
+    empty_snapshot.update(
         pool=pool_address,
         tick_data=tick_data,
         tick_bitmap=tick_bitmap,
     )
-    empty_snapshot.update_snapshot(
+    empty_snapshot.update(
         pool=pool_address,
         tick_data=tick_data,
         tick_bitmap=tick_bitmap,
     )
 
-    assert empty_snapshot.get_tick_data(pool_address) is tick_data
-    assert empty_snapshot.get_tick_bitmap(pool_address) is tick_bitmap
+    assert empty_snapshot.tick_data(pool_address) is tick_data
+    assert empty_snapshot.tick_bitmap(pool_address) is tick_bitmap
 
     pool_manager = UniswapV3PoolManager(
         factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",

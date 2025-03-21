@@ -280,7 +280,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
         """
 
         if self._snapshot:
-            for liquidity_update in self._snapshot.get_new_liquidity_updates(pool.address):
+            for liquidity_update in self._snapshot.pending_updates(pool.address):
                 pool.update_liquidity_map(liquidity_update)
 
     def _build_pool(
@@ -296,9 +296,8 @@ class UniswapV3PoolManager(AbstractPoolManager):
         if self._snapshot is not None:
             pool = self.Pool.__value__(
                 address=pool_address,
-                state_block=self._snapshot.newest_block,
-                tick_bitmap=self._snapshot.get_tick_bitmap(pool_address),
-                tick_data=self._snapshot.get_tick_data(pool_address),
+                tick_bitmap=self._snapshot.tick_bitmap(pool_address),
+                tick_data=self._snapshot.tick_data(pool_address),
                 silent=silent,
                 **pool_class_kwargs,
             )

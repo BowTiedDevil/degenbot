@@ -1,10 +1,9 @@
-# TODO: support unwinding updates for re-org
-
 import pathlib
-from typing import Any, cast
+from collections.abc import Generator
+from typing import Any, TypedDict, cast
 
 import pydantic_core
-from eth_typing import ABIEvent, ChecksumAddress, HexStr
+from eth_typing import ABIEvent, BlockNumber, ChecksumAddress, HexStr
 from eth_utils.abi import event_abi_to_log_topic
 from hexbytes import HexBytes
 from web3 import Web3
@@ -24,6 +23,11 @@ from degenbot.uniswap.types import (
 )
 
 
+class LiquidityMap(TypedDict):
+    tick_bitmap: dict[int, UniswapV3BitmapAtWord]
+    tick_data: dict[int, UniswapV3LiquidityAtTick]
+
+
 class UniswapV3LiquiditySnapshot:
     """
     Retrieve and maintain liquidity positions for Uniswap V3 pools.
@@ -41,7 +45,7 @@ class UniswapV3LiquiditySnapshot:
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         self.newest_block = json_liquidity_snapshot.pop("snapshot_block")
 
-        self._liquidity_snapshot: dict[ChecksumAddress, dict[str, Any]] = {
+        self._liquidity_snapshot: dict[ChecksumAddress, LiquidityMap] = {
             get_checksum_address(pool_address): {
                 "tick_bitmap": {
                     int(k): UniswapV3BitmapAtWord(**v)
@@ -62,28 +66,54 @@ class UniswapV3LiquiditySnapshot:
         self._liquidity_events: dict[ChecksumAddress, list[UniswapV3LiquidityEvent]] = {}
 
     @property
+    def pools(self) -> Generator[ChecksumAddress]:
+        yield from self._liquidity_snapshot.keys()
+
+    @property
     def chain_id(self) -> int:
         return self._chain_id
 
-    def _add_pool_if_missing(self, pool_address: ChecksumAddress) -> None:
+    def _add_pool_if_missing(
+        self,
+        pool_address: HexStr,
+    ) -> None:
         """
         Create entries for the pool if missing.
         """
+
+        pool_address = get_checksum_address(pool_address)
 
         if pool_address not in self._liquidity_events:
             self._liquidity_events[pool_address] = []
 
         if pool_address not in self._liquidity_snapshot:
-            self._liquidity_snapshot[pool_address] = {}
+            self._liquidity_snapshot[pool_address] = LiquidityMap(
+                tick_bitmap={},
+                tick_data={},
+            )
 
-    def fetch_new_liquidity_events(
+    def clear(
         self,
-        to_block: int,
-        span: int = 1000,
+        pool_address: HexStr,
     ) -> None:
         """
-        Fetch liquidity events from the newest known liquidity events to the target block using
-        `eth_getLogs`. Blocks per request will be capped at `blocks_per_request`.
+        Clear the liquidity mapping and pending events for the pool.
+        """
+
+        pool_address = get_checksum_address(pool_address)
+
+        self._liquidity_snapshot[pool_address]["tick_bitmap"].clear()
+        self._liquidity_snapshot[pool_address]["tick_data"].clear()
+        self._liquidity_events[pool_address].clear()
+
+    def fetch_new_events(
+        self,
+        to_block: BlockNumber,
+        blocks_per_request: int = 1000,
+    ) -> None:
+        """
+        Fetch liquidity events from the block following the last-known event to the target block
+        using `eth_getLogs`. Blocks per request will be capped at `blocks_per_request`.
         """
 
         def process_liquidity_event_log(
@@ -97,6 +127,7 @@ class UniswapV3LiquiditySnapshot:
             decoded_event: EventData = event.process_log(log)
             pool_address = get_checksum_address(decoded_event["address"])
             tx_index = decoded_event["transactionIndex"]
+            log_index = decoded_event["logIndex"]
             liquidity_block = decoded_event["blockNumber"]
             liquidity = decoded_event["args"]["amount"]
             if decoded_event["event"] == "Burn":
@@ -104,19 +135,30 @@ class UniswapV3LiquiditySnapshot:
             tick_lower = decoded_event["args"]["tickLower"]
             tick_upper = decoded_event["args"]["tickUpper"]
 
-            return pool_address, UniswapV3LiquidityEvent(
-                block_number=liquidity_block,
-                liquidity=liquidity,
-                tick_lower=tick_lower,
-                tick_upper=tick_upper,
-                tx_index=tx_index,
+            return (
+                pool_address,
+                UniswapV3LiquidityEvent(
+                    block_number=liquidity_block,
+                    tx_index=tx_index,
+                    log_index=log_index,
+                    liquidity=liquidity,
+                    tick_lower=tick_lower,
+                    tick_upper=tick_upper,
+                ),
             )
 
         logger.info(f"Updating Uniswap V3 snapshot from block {self.newest_block} to {to_block}")
         w3 = connection_manager.get_web3(self.chain_id)
 
         v3pool = Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI)
-        for event in [v3pool.events.Mint, v3pool.events.Burn]:
+        for event in [
+            (
+                # WIP: ordered Burn first as a debugging aid to see if Burn-then-Mint throws
+                # exception after sorting
+                v3pool.events.Burn
+            ),
+            v3pool.events.Mint,
+        ]:
             event_instance = event()
             logger.info(f"Processing {event.event_name} events")
             event_abi = cast(
@@ -125,7 +167,7 @@ class UniswapV3LiquiditySnapshot:
             start_block = self.newest_block + 1
 
             while True:
-                end_block = min(to_block, start_block + span - 1)
+                end_block = min(to_block, start_block + blocks_per_request - 1)
                 logger.info(f"Fetching events for blocks {start_block}-{end_block}")
 
                 event_filter_params = FilterParams(
@@ -149,36 +191,28 @@ class UniswapV3LiquiditySnapshot:
                     break
                 start_block = end_block + 1
 
-        logger.info(f"Updated snapshot to block {to_block}")
         self.newest_block = to_block
 
-    def get_new_liquidity_updates(
+    def pending_updates(
         self,
         pool_address: HexStr,
     ) -> tuple[UniswapV3PoolLiquidityMappingUpdate, ...]:
         """
-        Consume and return all pending liquidity events for this pool.
+        Consume pending liquidity updates for the pool.
         """
 
         pool_address = get_checksum_address(pool_address)
+        self._add_pool_if_missing(pool_address)
 
-        # Fetch any pending updates
-        pending_events = self._liquidity_events.get(pool_address)
-
-        if pending_events is None:
-            return ()
-
-        # Mint/Burn events must be applied in chronological order to ensure effective
-        # invariant checks
-        sorted_events = tuple(
-            sorted(
-                pending_events,
-                key=lambda event: (event.block_number, event.tx_index),
-            )
-        )
-
-        # Clear pending events for this pool
+        pending_events = self._liquidity_events[pool_address]
         self._liquidity_events[pool_address] = []
+
+        # Mint/Burn events must be applied in chronological order to ensure effective liquidity
+        # invariant checks. Sort events by block, then by log order within the block.
+        sorted_events = sorted(
+            pending_events,
+            key=lambda event: (event.block_number, event.tx_index, event.log_index),
+        )
 
         return tuple(
             UniswapV3PoolLiquidityMappingUpdate(
@@ -190,41 +224,46 @@ class UniswapV3LiquiditySnapshot:
             for event in sorted_events
         )
 
-    def get_tick_bitmap(self, pool: ChecksumAddress | HexStr) -> dict[int, UniswapV3BitmapAtWord]:
-        try:
-            tick_bitmap: dict[int, UniswapV3BitmapAtWord] = self._liquidity_snapshot[
-                get_checksum_address(pool)
-            ]["tick_bitmap"]
-        except KeyError:
-            return {}
-        else:
-            return tick_bitmap
+    def tick_bitmap(self, pool_address: HexStr) -> dict[int, UniswapV3BitmapAtWord]:
+        """
+        Consume the tick bitmaps for the pool.
+        """
 
-    def get_tick_data(self, pool: ChecksumAddress | HexStr) -> dict[int, UniswapV3LiquidityAtTick]:
-        try:
-            tick_data: dict[int, UniswapV3LiquidityAtTick] = self._liquidity_snapshot[
-                get_checksum_address(pool)
-            ]["tick_data"]
-        except KeyError:
-            return {}
-        else:
-            return tick_data
+        pool_address = get_checksum_address(pool_address)
+        self._add_pool_if_missing(pool_address)
+        tick_bitmap = self._liquidity_snapshot[pool_address]["tick_bitmap"].copy()
+        self._liquidity_snapshot[pool_address]["tick_bitmap"].clear()
+        return tick_bitmap
 
-    def update_snapshot(
+    def tick_data(self, pool_address: HexStr) -> dict[int, UniswapV3LiquidityAtTick]:
+        """
+        Consume the tick data for the pool.
+        """
+
+        pool_address = get_checksum_address(pool_address)
+        self._add_pool_if_missing(pool_address)
+        tick_data = self._liquidity_snapshot[pool_address]["tick_data"].copy()
+        self._liquidity_snapshot[pool_address]["tick_data"].clear()
+        return tick_data
+
+    def update(
         self,
-        pool: ChecksumAddress | HexStr,
+        pool: HexStr,
         tick_data: dict[int, UniswapV3LiquidityAtTick],
         tick_bitmap: dict[int, UniswapV3BitmapAtWord],
     ) -> None:
-        pool_address = get_checksum_address(pool)
+        """
+        Update the liquidity mapping for the pool.
+        """
 
-        self._add_pool_if_missing(pool_address)
-        self._liquidity_snapshot[pool_address].update(
+        pool = get_checksum_address(pool)
+        self._add_pool_if_missing(pool)
+        self._liquidity_snapshot[pool].update(
             {
                 "tick_bitmap": tick_bitmap,
             }
         )
-        self._liquidity_snapshot[pool_address].update(
+        self._liquidity_snapshot[pool].update(
             {
                 "tick_data": tick_data,
             }

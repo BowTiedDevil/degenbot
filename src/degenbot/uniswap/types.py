@@ -74,6 +74,7 @@ class UniswapV3LiquidityEvent:
     tick_lower: int
     tick_upper: int
     tx_index: int
+    log_index: int
 
 
 @dataclasses.dataclass(slots=True, frozen=True, eq=False)
