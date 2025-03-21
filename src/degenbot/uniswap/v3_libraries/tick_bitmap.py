@@ -1,6 +1,5 @@
 import bisect
 from collections.abc import Generator
-from functools import cache
 from itertools import count
 
 from degenbot.constants import MAX_UINT8
@@ -32,7 +31,6 @@ def flip_tick(
     )
 
 
-@cache
 def position(tick: int) -> tuple[int, int]:
     """
     Computes the position in the tick initialization bitmap for the given tick.

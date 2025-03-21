@@ -1,8 +1,8 @@
-from functools import lru_cache
+import functools
 
 from degenbot.constants import MAX_UINT160, MAX_UINT256
 from degenbot.exceptions import EVMRevertError
-from degenbot.uniswap.v3_libraries._config import LRU_CACHE_SIZE
+from degenbot.uniswap.v3_libraries._config import V3_LIB_CACHE_SIZE
 from degenbot.uniswap.v3_libraries.constants import Q96, Q96_RESOLUTION
 from degenbot.uniswap.v3_libraries.full_math import muldiv, muldiv_rounding_up
 from degenbot.uniswap.v3_libraries.functions import to_int256, to_uint160
@@ -13,7 +13,7 @@ ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/SqrtPriceM
 """
 
 
-@lru_cache(maxsize=LRU_CACHE_SIZE)
+@functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
 def get_amount0_delta(
     sqrt_ratio_a_x96: int,
     sqrt_ratio_b_x96: int,
@@ -49,7 +49,7 @@ def get_amount0_delta(
     )
 
 
-@lru_cache(maxsize=LRU_CACHE_SIZE)
+@functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
 def get_amount1_delta(
     sqrt_ratio_a_x96: int,
     sqrt_ratio_b_x96: int,
@@ -78,7 +78,7 @@ def get_amount1_delta(
     )
 
 
-@lru_cache(maxsize=LRU_CACHE_SIZE)
+@functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
 def get_next_sqrt_price_from_amount0_rounding_up(
     sqrt_price_x96: int,
     liquidity: int,
@@ -118,7 +118,7 @@ def get_next_sqrt_price_from_amount0_rounding_up(
     )
 
 
-@lru_cache(maxsize=LRU_CACHE_SIZE)
+@functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
 def get_next_sqrt_price_from_amount1_rounding_down(
     sqrt_price_x96: int,
     liquidity: int,
@@ -146,7 +146,7 @@ def get_next_sqrt_price_from_amount1_rounding_down(
     return sqrt_price_x96 - quotient
 
 
-@lru_cache(maxsize=LRU_CACHE_SIZE)
+@functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
 def get_next_sqrt_price_from_input(
     sqrt_price_x96: int,
     liquidity: int,
@@ -169,7 +169,7 @@ def get_next_sqrt_price_from_input(
     )
 
 
-@lru_cache(maxsize=LRU_CACHE_SIZE)
+@functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
 def get_next_sqrt_price_from_output(
     sqrt_price_x96: int,
     liquidity: int,
