@@ -302,7 +302,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
                 **pool_class_kwargs,
             )
         else:
-            logger.debug("Initializing pool without liquidity snapshot")
+            logger.info("Initializing pool without liquidity snapshot")
             pool = self.Pool.__value__(
                 address=pool_address,
                 silent=silent,
