@@ -177,6 +177,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         state_block = (
             cast("BlockNumber", state_block) if state_block is not None else w3.eth.block_number
         )
+        self._initial_state_block = state_block
 
         try:
             (
@@ -1025,11 +1026,15 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 f"Starting liquidity violates invariant: pool {self.address} {self.tick=} {self.liquidity=}"  # noqa: E501
             )
 
-            # Adjust in-range liquidity if the modified region includes the active tick, and the
-            # liquidity update is not for a past block
+            # Adjust in-range liquidity if the modified region includes the active tick.
+            # NOTE: This compares the update block to `initial_state_block` so that onchain
+            # liquidity updates from blocks prior to the creation of this pool helper can be applied
+            # without triggering an inconsistent invariant check. Particularly, the values for
+            # `self.tick` and `self.liquidity` may not align with the pool state when these
+            # liquidity events occured.
             if (
-                state_block >= self.update_block
-                and update.tick_lower <= self.tick < update.tick_upper
+                update.tick_lower <= self.tick < update.tick_upper
+                and state_block > self._initial_state_block
             ):
                 _liquidity += update.liquidity
                 assert _liquidity >= 0, (
