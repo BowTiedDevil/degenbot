@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING, cast
+
 import pytest
 from web3 import Web3
 
@@ -10,7 +12,10 @@ from degenbot.uniswap.types import (
     UniswapV3LiquidityAtTick,
     UniswapV3LiquidityEvent,
 )
-from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
+from degenbot.uniswap.v3_snapshot import LiquidityMap, UniswapV3LiquiditySnapshot
+
+if TYPE_CHECKING:
+    from eth_typing import BlockNumber
 
 EMPTY_SNAPSHOT_FILENAME = "tests/uniswap/v3/empty_v3_liquidity_snapshot.json"
 EMPTY_SNAPSHOT_BLOCK = (
@@ -31,7 +36,9 @@ def first_250_blocks_snapshot(
 ) -> UniswapV3LiquiditySnapshot:
     set_web3(fork_mainnet.w3)
     snapshot = UniswapV3LiquiditySnapshot(file=EMPTY_SNAPSHOT_FILENAME)
-    snapshot.fetch_new_events(to_block=EMPTY_SNAPSHOT_BLOCK + 250, blocks_per_request=50)
+    snapshot.fetch_new_events(
+        to_block=cast("BlockNumber", EMPTY_SNAPSHOT_BLOCK + 250), blocks_per_request=50
+    )
     return snapshot
 
 
@@ -46,15 +53,20 @@ def test_fetch_liquidity_events_first_250_blocks(
 ):
     set_web3(fork_mainnet.w3)
 
+    empty_snapshot: LiquidityMap = {
+        "tick_bitmap": {},
+        "tick_data": {},
+    }
+
     # Liquidity snapshots for each pool will be empty, since they only reflect the starting
     # liquidity at the initial snapshot block
     assert first_250_blocks_snapshot._liquidity_snapshot == {
-        "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801": {},
-        "0x6c6Bc977E13Df9b0de53b251522280BB72383700": {},
-        "0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387": {},
-        "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD": {},
-        "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8": {},
-        "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf": {},
+        "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801": empty_snapshot,
+        "0x6c6Bc977E13Df9b0de53b251522280BB72383700": empty_snapshot,
+        "0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387": empty_snapshot,
+        "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD": empty_snapshot,
+        "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8": empty_snapshot,
+        "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf": empty_snapshot,
     }
 
     # Unprocessed events should be found for these pools
@@ -66,6 +78,7 @@ def test_fetch_liquidity_events_first_250_blocks(
                 tick_lower=-50580,
                 tick_upper=-36720,
                 tx_index=33,
+                log_index=29,
             )
         ],
         "0x6c6Bc977E13Df9b0de53b251522280BB72383700": [
@@ -75,6 +88,7 @@ def test_fetch_liquidity_events_first_250_blocks(
                 tick_lower=-276330,
                 tick_upper=-276320,
                 tx_index=82,
+                log_index=84,
             ),
             UniswapV3LiquidityEvent(
                 block_number=12369823,
@@ -82,6 +96,7 @@ def test_fetch_liquidity_events_first_250_blocks(
                 tick_lower=-276400,
                 tick_upper=-276250,
                 tx_index=19,
+                log_index=27,
             ),
         ],
         "0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387": [
@@ -91,6 +106,7 @@ def test_fetch_liquidity_events_first_250_blocks(
                 tick_lower=192200,
                 tick_upper=198000,
                 tx_index=255,
+                log_index=152,
             )
         ],
         "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD": [
@@ -100,6 +116,7 @@ def test_fetch_liquidity_events_first_250_blocks(
                 tick_lower=253320,
                 tick_upper=264600,
                 tx_index=17,
+                log_index=48,
             ),
             UniswapV3LiquidityEvent(
                 block_number=12369846,
@@ -107,6 +124,7 @@ def test_fetch_liquidity_events_first_250_blocks(
                 tick_lower=255540,
                 tick_upper=262440,
                 tx_index=119,
+                log_index=236,
             ),
         ],
         "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8": [
@@ -116,6 +134,7 @@ def test_fetch_liquidity_events_first_250_blocks(
                 tick_lower=-84120,
                 tick_upper=-78240,
                 tx_index=85,
+                log_index=67,
             )
         ],
         "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf": [
@@ -125,6 +144,7 @@ def test_fetch_liquidity_events_first_250_blocks(
                 tick_lower=-10,
                 tick_upper=10,
                 tx_index=43,
+                log_index=11,
             )
         ],
     }
@@ -181,14 +201,6 @@ def test_apply_update_to_snapshot(
         tick_data=tick_data,
         tick_bitmap=tick_bitmap,
     )
-    empty_snapshot.update(
-        pool=pool_address,
-        tick_data=tick_data,
-        tick_bitmap=tick_bitmap,
-    )
-
-    assert empty_snapshot.tick_data(pool_address) is tick_data
-    assert empty_snapshot.tick_bitmap(pool_address) is tick_bitmap
 
     pool_manager = UniswapV3PoolManager(
         factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
@@ -196,9 +208,8 @@ def test_apply_update_to_snapshot(
         snapshot=empty_snapshot,
     )
     pool = pool_manager.get_pool(pool_address)
-    for word, bitmap in tick_bitmap.items():
-        assert pool.tick_bitmap[word] == bitmap
     assert pool.tick_data == tick_data
+    assert pool.tick_bitmap == tick_bitmap
 
 
 def test_pool_manager_applies_snapshots(
