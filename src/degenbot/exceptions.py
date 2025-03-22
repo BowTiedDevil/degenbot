@@ -298,11 +298,6 @@ class ManagerAlreadyInitialized(ManagerError):
 # 2nd level exceptions for bounded value integers
 
 
-class InvalidUint160(EVMRevertError):
-    def __init__(self) -> None:
-        super().__init__(error="Not a valid uint160")
-
-
 class InvalidUint256(EVMRevertError):
     def __init__(self) -> None:
         super().__init__(error="Not a valid uint256")
