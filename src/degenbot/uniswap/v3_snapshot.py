@@ -1,3 +1,4 @@
+import contextlib
 import pathlib
 from collections.abc import Generator
 from typing import Any, TypedDict, cast
@@ -102,9 +103,12 @@ class UniswapV3LiquiditySnapshot:
 
         pool_address = get_checksum_address(pool_address)
 
-        self._liquidity_snapshot[pool_address]["tick_bitmap"].clear()
-        self._liquidity_snapshot[pool_address]["tick_data"].clear()
-        self._liquidity_events[pool_address].clear()
+        with contextlib.suppress(KeyError):
+            self._liquidity_snapshot[pool_address]["tick_bitmap"].clear()
+        with contextlib.suppress(KeyError):
+            self._liquidity_snapshot[pool_address]["tick_data"].clear()
+        with contextlib.suppress(KeyError):
+            self._liquidity_events[pool_address].clear()
 
     def fetch_new_events(
         self,
@@ -258,13 +262,5 @@ class UniswapV3LiquiditySnapshot:
 
         pool = get_checksum_address(pool)
         self._add_pool_if_missing(pool)
-        self._liquidity_snapshot[pool].update(
-            {
-                "tick_bitmap": tick_bitmap,
-            }
-        )
-        self._liquidity_snapshot[pool].update(
-            {
-                "tick_data": tick_data,
-            }
-        )
+        self._liquidity_snapshot[pool]["tick_bitmap"].update(tick_bitmap)
+        self._liquidity_snapshot[pool]["tick_data"].update(tick_data)

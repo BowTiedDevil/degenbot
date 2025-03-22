@@ -2,9 +2,9 @@ from decimal import Decimal, getcontext
 from math import floor, log
 
 import pytest
+from pydantic import ValidationError
 
 from degenbot.constants import MAX_UINT160, MIN_UINT160
-from degenbot.exceptions import EVMRevertError
 from degenbot.uniswap.v3_libraries.tick_math import (
     MAX_SQRT_RATIO,
     MAX_TICK,
@@ -31,10 +31,10 @@ def encode_price_sqrt(reserve1: int, reserve0: int) -> int:
 
 
 def test_get_sqrt_ratio_at_tick() -> None:
-    with pytest.raises(EVMRevertError, match="T"):
+    with pytest.raises(ValidationError):
         get_sqrt_ratio_at_tick(MIN_TICK - 1)
 
-    with pytest.raises(EVMRevertError, match="T"):
+    with pytest.raises(ValidationError):
         get_sqrt_ratio_at_tick(MAX_TICK + 1)
 
     assert get_sqrt_ratio_at_tick(MIN_TICK) == 4295128739
@@ -59,16 +59,16 @@ def test_max_sqrt_ratio() -> None:
 
 
 def test_get_tick_at_sqrt_ratio() -> None:
-    with pytest.raises(EVMRevertError, match="Not a valid uint160"):
+    with pytest.raises(ValidationError):
         get_tick_at_sqrt_ratio(MIN_UINT160 - 1)
 
-    with pytest.raises(EVMRevertError, match="Not a valid uint160"):
+    with pytest.raises(ValidationError):
         get_tick_at_sqrt_ratio(MAX_UINT160 + 1)
 
-    with pytest.raises(EVMRevertError, match="R"):
+    with pytest.raises(ValidationError):
         get_tick_at_sqrt_ratio(MIN_SQRT_RATIO - 1)
 
-    with pytest.raises(EVMRevertError, match="R"):
+    with pytest.raises(ValidationError):
         get_tick_at_sqrt_ratio(MAX_SQRT_RATIO)
 
     assert (get_tick_at_sqrt_ratio(MIN_SQRT_RATIO)) == (MIN_TICK)

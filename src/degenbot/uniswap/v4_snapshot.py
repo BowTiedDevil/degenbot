@@ -1,3 +1,4 @@
+import contextlib
 import pathlib
 from collections.abc import Generator
 from typing import Any, TypedDict, cast
@@ -119,9 +120,12 @@ class UniswapV4LiquiditySnapshot:
         pool_manager_address = get_checksum_address(pool_manager_address)
         pool_id = HexBytes(pool_id)
 
-        self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_bitmap"].clear()
-        self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_data"].clear()
-        self._liquidity_events[(pool_manager_address, pool_id)].clear()
+        with contextlib.suppress(KeyError):
+            self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_bitmap"].clear()
+        with contextlib.suppress(KeyError):
+            self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_data"].clear()
+        with contextlib.suppress(KeyError):
+            self._liquidity_events[(pool_manager_address, pool_id)].clear()
 
     def fetch_new_events(
         self,
@@ -290,9 +294,5 @@ class UniswapV4LiquiditySnapshot:
         pool_manager_address = get_checksum_address(pool_manager_address)
         pool_id = HexBytes(pool_id)
         self._add_pool_if_missing(pool_manager_address=pool_manager_address, pool_id=pool_id)
-        self._liquidity_snapshot[(pool_manager_address, pool_id)].update(
-            {
-                "tick_bitmap": tick_bitmap,
-                "tick_data": tick_data,
-            }
-        )
+        self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_bitmap"].update(tick_bitmap)
+        self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_data"].update(tick_data)

@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from degenbot.exceptions import DegenbotValueError, LiquidityMapWordMissing
+from degenbot.exceptions import LiquidityMapWordMissing
 from degenbot.uniswap.types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
 from degenbot.uniswap.v3_libraries.tick_bitmap import (
     flip_tick,
@@ -21,7 +21,7 @@ def is_initialized(tick_bitmap: dict[int, UniswapV3BitmapAtWord], tick: int) -> 
     # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/test/TickBitmapTest.sol
 
     next_tick, is_initialized = next_initialized_tick_within_one_word_legacy(
-        tick_bitmap, tick, 1, True
+        tick_bitmap=tick_bitmap, tick=tick, tick_spacing=1, less_than_or_equal=True
     )
     return next_tick == tick if is_initialized else False
 
@@ -31,10 +31,13 @@ def empty_full_bitmap(spacing: int = 1) -> dict[int, UniswapV3BitmapAtWord]:
     Generate a empty tick bitmap, maximum size, with the given tick spacing
     """
 
-    tick_bitmap = {}
+    tick_bitmap: dict[int, UniswapV3BitmapAtWord] = {}
+
+    empty_bitmap_at_word = UniswapV3BitmapAtWord(bitmap=0)
     for tick in range(MIN_TICK, MAX_TICK, spacing):
         word_pos, _ = position(tick=tick)
-        tick_bitmap[word_pos] = UniswapV3BitmapAtWord(bitmap=0)
+        tick_bitmap[word_pos] = empty_bitmap_at_word
+
     return tick_bitmap
 
 
@@ -42,67 +45,78 @@ def empty_sparse_bitmap() -> dict[int, Any]:
     """
     Generate a sparse, empty tick bitmap
     """
-    return dict()
+    return {}
 
 
 def test_is_initialized():
     tick_bitmap = empty_full_bitmap()
     assert is_initialized(tick_bitmap, 1) is False
 
-    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=1, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=1, tick_spacing=1, update_block=0)
     assert is_initialized(tick_bitmap, 1) is True
 
-    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=1, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=1, tick_spacing=1, update_block=0)
     assert is_initialized(tick_bitmap, 1) is False
 
-    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=2, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=2, tick_spacing=1, update_block=0)
     assert is_initialized(tick_bitmap, 1) is False
 
-    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=1 + 256, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=1 + 256, tick_spacing=1, update_block=0)
     assert is_initialized(tick_bitmap, 257) is True
     assert is_initialized(tick_bitmap, 1) is False
 
 
 def test_flip_tick() -> None:
-    tick_bitmap = empty_full_bitmap()
+    tick_spacing = 1
+    tick_bitmap = empty_full_bitmap(spacing=tick_spacing)
 
-    flip_tick(tick_bitmap, sparse=False, tick=-230, tick_spacing=1)
+    flip_tick(tick_bitmap, sparse=False, tick=-230, tick_spacing=tick_spacing, update_block=0)
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-230) is True
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-231) is False
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-229) is False
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-230 + 256) is False
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-230 - 256) is False
 
-    flip_tick(tick_bitmap, sparse=False, tick=-230, tick_spacing=1)
+    flip_tick(tick_bitmap, sparse=False, tick=-230, tick_spacing=tick_spacing, update_block=0)
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-230) is False
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-231) is False
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-229) is False
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-230 + 256) is False
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-230 - 256) is False
 
-    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=-230, tick_spacing=1)
-    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=-259, tick_spacing=1)
-    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=-229, tick_spacing=1)
-    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=500, tick_spacing=1)
-    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=-259, tick_spacing=1)
-    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=-229, tick_spacing=1)
-    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=-259, tick_spacing=1)
+    for tick in [-230, -259, -229, 500, -259, -229, -259]:
+        flip_tick(
+            tick_bitmap=tick_bitmap,
+            sparse=False,
+            tick=tick,
+            tick_spacing=tick_spacing,
+            update_block=0,
+        )
 
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-259) is True
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-229) is False
 
 
 def test_flip_tick_sparse() -> None:
+    tick_spacing = 1
     tick_bitmap = empty_sparse_bitmap()
     with pytest.raises(LiquidityMapWordMissing):
-        flip_tick(tick_bitmap=tick_bitmap, sparse=True, tick=-230, tick_spacing=1)
+        flip_tick(
+            tick_bitmap=tick_bitmap,
+            sparse=True,
+            tick=-230,
+            tick_spacing=tick_spacing,
+            update_block=0,
+        )
 
 
 def test_incorrect_tick_spacing_flip() -> None:
     tick_spacing = 3
-    tick_bitmap = empty_full_bitmap(tick_spacing)
-    with pytest.raises(DegenbotValueError, match="Tick not correctly spaced"):
-        flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=2, tick_spacing=tick_spacing)
+    tick_bitmap = empty_full_bitmap(spacing=tick_spacing)
+    with pytest.raises(AssertionError, match="Invalid tick or spacing"):
+        flip_tick(
+            tick_bitmap=tick_bitmap, sparse=False, tick=2, tick_spacing=tick_spacing, update_block=0
+        )
 
 
 def test_next_initialized_tick_within_one_word() -> None:
@@ -110,25 +124,21 @@ def test_next_initialized_tick_within_one_word() -> None:
     initialized_ticks = [-200, -55, -4, 70, 78, 84, 139, 240, 535]
 
     tick_data = {
-        -200: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 0
-        -55: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 1
-        -4: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 2
-        70: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 3
-        78: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 4
-        84: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 5
-        139: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 6
-        240: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 7
-        535: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),  # 8
+        -200: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        -55: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        -4: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        70: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        78: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        84: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        139: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        240: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        535: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
     }
 
     # set up a full-sized empty tick bitmap, then initialize the ticks required for the tests
-    tick_bitmap: dict[int, UniswapV3BitmapAtWord] = {}
-    for tick in range(MIN_TICK, MAX_TICK, tick_spacing):
-        word_pos, _ = position(tick=tick)
-        if not tick_bitmap.get(word_pos):
-            tick_bitmap[word_pos] = UniswapV3BitmapAtWord(bitmap=0)
+    tick_bitmap = empty_full_bitmap(spacing=tick_spacing)
     for tick in initialized_ticks:
-        flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=tick, tick_spacing=1)
+        flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=tick, tick_spacing=1, update_block=0)
 
     # lte = false tests
 
@@ -381,7 +391,7 @@ def test_next_initialized_tick_within_one_word() -> None:
         less_than_or_equal=True,
     ) == (768, False)
 
-    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=329, tick_spacing=1)
+    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=329, tick_spacing=1, update_block=0)
     tick_data[329] = UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0)
 
     assert next_initialized_tick_within_one_word_legacy(

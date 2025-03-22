@@ -48,7 +48,7 @@ class UniswapV2PoolStateUpdated(PoolStateMessage):
 
 class UniswapV3BitmapAtWord(pydantic.BaseModel, frozen=True):
     bitmap: int
-    block: int | None = None
+    block: int = 0
 
     @pydantic.field_validator("bitmap")
     @classmethod
@@ -59,7 +59,7 @@ class UniswapV3BitmapAtWord(pydantic.BaseModel, frozen=True):
 class UniswapV3LiquidityAtTick(pydantic.BaseModel, frozen=True):
     liquidity_net: int
     liquidity_gross: int
-    block: int | None = None
+    block: int = 0
 
     @pydantic.field_validator("liquidity_gross", "liquidity_net")
     @classmethod

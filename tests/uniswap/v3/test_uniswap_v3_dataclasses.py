@@ -9,7 +9,7 @@ def test_tick_bitmap() -> None:
     assert UniswapV3BitmapAtWord(bitmap=0) is not UniswapV3BitmapAtWord(bitmap=0)
 
     # Test dict export method
-    assert UniswapV3BitmapAtWord(bitmap=0).model_dump() == {"bitmap": 0, "block": None}
+    assert UniswapV3BitmapAtWord(bitmap=0).model_dump() == {"bitmap": 0, "block": 0}
 
 
 def test_liquidity_data() -> None:
@@ -29,5 +29,5 @@ def test_liquidity_data() -> None:
     ).model_dump() == {
         "liquidity_net": 80064092962998,
         "liquidity_gross": 80064092962998,
-        "block": None,
+        "block": 0,
     }
