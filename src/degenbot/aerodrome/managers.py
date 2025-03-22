@@ -21,7 +21,6 @@ class AerodromeV2PoolManager(UniswapV2PoolManager):
         token_addresses: tuple[str, str],
         stable: bool,
         silent: bool = False,
-        state_block: int | None = None,
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
         """
@@ -39,7 +38,6 @@ class AerodromeV2PoolManager(UniswapV2PoolManager):
         pool = self.get_pool(
             pool_address=pool_address,
             silent=silent,
-            state_block=state_block,
             pool_class_kwargs=pool_class_kwargs,
         )
         assert isinstance(pool, AerodromeV2Pool)
@@ -58,7 +56,6 @@ class AerodromeV3PoolManager(UniswapV3PoolManager):
         token_addresses: tuple[str, str],
         tick_spacing: int,
         silent: bool = False,
-        state_block: int | None = None,
         # keyword arguments passed to the pool class constructor
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
@@ -72,7 +69,6 @@ class AerodromeV3PoolManager(UniswapV3PoolManager):
         pool = self.get_pool(
             pool_address=pool_address,
             silent=silent,
-            state_block=state_block,
             pool_class_kwargs=pool_class_kwargs,
         )
         assert isinstance(pool, AerodromeV3Pool)
