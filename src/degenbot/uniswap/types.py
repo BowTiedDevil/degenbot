@@ -1,7 +1,6 @@
 # ruff: noqa: A005
 
 import dataclasses
-from typing import Any
 
 import pydantic
 from eth_typing import BlockNumber, ChecksumAddress
@@ -50,21 +49,11 @@ class UniswapV3BitmapAtWord(pydantic.BaseModel, frozen=True):
     bitmap: int
     block: int = 0
 
-    @pydantic.field_validator("bitmap")
-    @classmethod
-    def validate_bitmap(cls, bitmap: Any) -> int:
-        return int(bitmap)
-
 
 class UniswapV3LiquidityAtTick(pydantic.BaseModel, frozen=True):
     liquidity_net: int
     liquidity_gross: int
     block: int = 0
-
-    @pydantic.field_validator("liquidity_gross", "liquidity_net")
-    @classmethod
-    def validate_value(cls, liquidity: Any) -> int:
-        return int(liquidity)
 
 
 @dataclasses.dataclass(slots=True)
