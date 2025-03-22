@@ -430,8 +430,8 @@ def test_external_update_with_sparse_liquidity_map(ethereum_archive_node_web3: W
         update=UniswapV3PoolLiquidityMappingUpdate(
             block_number=lp.update_block + 1,
             liquidity=1,
-            tick_lower=lp.tick_spacing * (MIN_TICK // lp.tick_spacing),
-            tick_upper=lp.tick_spacing * (MAX_TICK // lp.tick_spacing),
+            tick_lower=lp.tick_spacing * (MIN_TICK // lp.tick_spacing) + lp.tick_spacing,
+            tick_upper=lp.tick_spacing * (MAX_TICK // lp.tick_spacing) - lp.tick_spacing,
         ),
     )
 
