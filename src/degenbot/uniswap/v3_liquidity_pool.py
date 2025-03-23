@@ -363,7 +363,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
         exact_input = amount_specified > 0
 
-        if override_state:
+        if override_state is not None:
             liquidity_start = override_state.liquidity
             sqrt_price_x96_start = override_state.sqrt_price_x96
             tick_start = override_state.tick
@@ -409,6 +409,8 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             swap_state.amount_specified_remaining != 0
             and swap_state.sqrt_price_x96 != sqrt_price_limit_x96
         ):
+            step.sqrt_price_start_x96 = swap_state.sqrt_price_x96
+
             if not self.sparse_liquidity_map:
                 step.tick_next, step.initialized = next(ticks_along_swap_path)
             else:
@@ -432,12 +434,12 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
             # Ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of
             # these bounds
-            if step.tick_next < MIN_TICK:
-                step.tick_next = MIN_TICK
-            elif step.tick_next > MAX_TICK:
-                step.tick_next = MAX_TICK
+            step.tick_next = (
+                max(MIN_TICK, step.tick_next)  # descending ticks
+                if zero_for_one
+                else min(MAX_TICK, step.tick_next)  # ascending ticks
+            )
 
-            step.sqrt_price_start_x96 = swap_state.sqrt_price_x96
             step.sqrt_price_next_x96 = get_sqrt_ratio_at_tick(step.tick_next)
 
             # compute values to swap to the target tick, price limit, or point where input/output

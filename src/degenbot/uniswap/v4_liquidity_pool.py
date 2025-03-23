@@ -54,10 +54,23 @@ from degenbot.uniswap.v3_functions import (
     exchange_rate_from_sqrt_price_x96,
     get_tick_word_and_bit_position,
 )
-from degenbot.uniswap.v4_libraries import swap_math, tick_bitmap, tick_math
+from degenbot.uniswap.v4_libraries.swap_math import (
+    MAX_SWAP_FEE,
+    compute_swap_step,
+    get_sqrt_price_target,
+)
 from degenbot.uniswap.v4_libraries.tick_bitmap import (
     flip_tick,
+    gen_ticks,
     next_initialized_tick_within_one_word,
+)
+from degenbot.uniswap.v4_libraries.tick_math import (
+    MAX_SQRT_PRICE,
+    MAX_TICK,
+    MIN_SQRT_PRICE,
+    MIN_TICK,
+    get_sqrt_price_at_tick,
+    get_tick_at_sqrt_price,
 )
 
 
@@ -491,38 +504,36 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
         A positive amount indicates the quantity available for withdrawal by the swapper,
         and a negative amount indicates the deposit required.
+
+        This method will fetch missing liquidity data as needed, but this data is discarded.
         """
 
-        # Handle overrides if present
-        _liquidity = override_state.liquidity if override_state is not None else self.liquidity
-        _sqrt_price_x96 = (
-            override_state.sqrt_price_x96 if override_state is not None else self.sqrt_price_x96
-        )
-        _tick = override_state.tick if override_state is not None else self.tick
-        _tick_bitmap = (
-            override_state.tick_bitmap
-            if override_state is not None and override_state.tick_bitmap is not None
-            else self.tick_bitmap
-        )
-        _tick_data = (
-            override_state.tick_data
-            if override_state is not None and override_state.tick_data is not None
-            else self.tick_data
-        )
+        if override_state is not None:
+            liquidity_start = override_state.liquidity
+            sqrt_price_x96_start = override_state.sqrt_price_x96
+            tick_start = override_state.tick
+            tick_bitmap_temp = override_state.tick_bitmap
+            tick_data_temp = override_state.tick_data
+        else:
+            liquidity_start = self.liquidity
+            sqrt_price_x96_start = self.sqrt_price_x96
+            tick_start = self.tick
+            tick_bitmap_temp = self.tick_bitmap
+            tick_data_temp = self.tick_data
 
         protocol_fee = (
             self.protocol_fee.zero_for_one if zero_for_one else self.protocol_fee.one_for_zero
         )
 
-        assert _liquidity >= 0
+        assert liquidity_start >= 0
 
         amount_specified_remaining = amount_specified
         amount_calculated = 0
         amount_to_protocol = 0
         result: Final[SwapResult] = SwapResult(
-            sqrt_price_x96=_sqrt_price_x96,
-            tick=_tick,
-            liquidity=_liquidity,
+            sqrt_price_x96=sqrt_price_x96_start,
+            tick=tick_start,
+            liquidity=liquidity_start,
         )
 
         lp_fee = self.lp_fee
@@ -530,7 +541,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
         # a swap fee totaling MAX_SWAP_FEE (100%) makes exact output swaps impossible since the
         # input is entirely consumed by the fee
-        if swap_fee >= swap_math.MAX_SWAP_FEE and amount_specified > 0:  # exact output
+        if swap_fee >= MAX_SWAP_FEE and amount_specified > 0:  # exact output
             raise EVMRevertError(error="InvalidFeeForExactOut")
 
         # swapFee is the pool's fee in pips (LP fee + protocol fee)
@@ -545,17 +556,17 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             )
 
         if zero_for_one:
-            if sqrt_price_limit_x96 >= _sqrt_price_x96:
+            if sqrt_price_limit_x96 >= sqrt_price_x96_start:
                 raise EVMRevertError(error="PriceLimitAlreadyExceeded")
             # Swaps can never occur at MIN_TICK, only at MIN_TICK + 1, except at initialization of
             # a pool. Under certain circumstances outlined below, the tick will preemptively reach
             # MIN_TICK without swapping there
-            if sqrt_price_limit_x96 <= tick_math.MIN_SQRT_PRICE:
+            if sqrt_price_limit_x96 <= MIN_SQRT_PRICE:
                 raise EVMRevertError(error="PriceLimitOutOfBounds")
         else:
-            if sqrt_price_limit_x96 <= _sqrt_price_x96:
+            if sqrt_price_limit_x96 <= sqrt_price_x96_start:
                 raise EVMRevertError(error="PriceLimitAlreadyExceeded")
-            if sqrt_price_limit_x96 >= tick_math.MAX_SQRT_PRICE:
+            if sqrt_price_limit_x96 >= MAX_SQRT_PRICE:
                 raise EVMRevertError(error="PriceLimitOutOfBounds")
 
         step = self.StepComputations()
@@ -563,8 +574,8 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         if not self.sparse_liquidity_map:
             # The liquidity mapping is complete. Optimize loop by building a generator that yields
             # ticks and initialization status along the swap path
-            ticks_along_swap_path = tick_bitmap.gen_ticks(
-                _tick_data, _tick, self.tick_spacing, zero_for_one
+            ticks_along_swap_path = gen_ticks(
+                tick_data_temp, tick_start, self.tick_spacing, zero_for_one
             )
 
         while not (
@@ -577,8 +588,8 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             else:
                 try:
                     step.tick_next, step.initialized = next_initialized_tick_within_one_word(
-                        _tick_bitmap,
-                        _tick_data,
+                        tick_bitmap_temp,
+                        tick_data_temp,
                         result.tick,
                         self.tick_spacing,
                         zero_for_one,
@@ -587,25 +598,27 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                     missing_word = exc.word
                     self._fetch_and_populate_initialized_ticks(
                         word_position=missing_word,
-                        tick_bitmap=_tick_bitmap,
-                        tick_data=_tick_data,
+                        tick_bitmap=tick_bitmap_temp,
+                        tick_data=tick_data_temp,
                         block_number=self.update_block,
                     )
                     continue
 
             # Ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of
             # these bounds
-            step.tick_next = max(step.tick_next, tick_math.MIN_TICK)
-            step.tick_next = min(step.tick_next, tick_math.MAX_TICK)
-
-            step.sqrt_price_next_x96 = tick_math.get_sqrt_price_at_tick(step.tick_next)
+            step.tick_next = (
+                max(MIN_TICK, step.tick_next)  # descending ticks
+                if zero_for_one
+                else min(MAX_TICK, step.tick_next)  # ascending ticks
+            )
+            step.sqrt_price_next_x96 = get_sqrt_price_at_tick(step.tick_next)
 
             # compute values to swap to the target tick, price limit, or point where input/output
             # amount is exhausted
             result.sqrt_price_x96, step.amount_in, step.amount_out, step.fee_amount = (
-                swap_math.compute_swap_step(
+                compute_swap_step(
                     sqrt_ratio_x96_current=result.sqrt_price_x96,
-                    sqrt_ratio_x96_target=swap_math.get_sqrt_price_target(
+                    sqrt_ratio_x96_target=get_sqrt_price_target(
                         zero_for_one=zero_for_one,
                         sqrt_price_next_x96=step.sqrt_price_next_x96,
                         sqrt_price_limit_x96=sqrt_price_limit_x96,
@@ -656,7 +669,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             if result.sqrt_price_x96 == step.sqrt_price_next_x96:
                 # If the tick is initialized, adjust the liquidity range
                 if step.initialized:
-                    liquidity_net_at_next_tick = _tick_data[step.tick_next].liquidity_net
+                    liquidity_net_at_next_tick = tick_data_temp[step.tick_next].liquidity_net
                     result.liquidity += (
                         -liquidity_net_at_next_tick if zero_for_one else liquidity_net_at_next_tick
                     )
@@ -664,7 +677,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             elif result.sqrt_price_x96 != step.sqrt_price_start_x96:
                 # Recompute unless we're on a lower tick boundary (i.e. already transitioned ticks),
                 # and haven't moved
-                result.tick = tick_math.get_tick_at_sqrt_price(result.sqrt_price_x96)
+                result.tick = get_tick_at_sqrt_price(result.sqrt_price_x96)
 
             assert result.liquidity >= 0, (
                 f"Caught negative liquidity, {result.liquidity=}, {liquidity_net_at_next_tick=}, {zero_for_one=}"  # noqa
@@ -708,9 +721,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             swap_delta, *_ = self._calculate_swap(
                 zero_for_one=zero_for_one,
                 amount_specified=token_out_quantity,
-                sqrt_price_limit_x96=(
-                    tick_math.MIN_SQRT_PRICE + 1 if zero_for_one else tick_math.MAX_SQRT_PRICE - 1
-                ),
+                sqrt_price_limit_x96=MIN_SQRT_PRICE + 1 if zero_for_one else MAX_SQRT_PRICE - 1,
                 override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
@@ -756,9 +767,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             swap_delta, *_ = self._calculate_swap(
                 zero_for_one=zero_for_one,
                 amount_specified=-token_in_quantity,
-                sqrt_price_limit_x96=(
-                    tick_math.MIN_SQRT_PRICE + 1 if zero_for_one else tick_math.MAX_SQRT_PRICE - 1
-                ),
+                sqrt_price_limit_x96=MIN_SQRT_PRICE + 1 if zero_for_one else MAX_SQRT_PRICE - 1,
                 override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
