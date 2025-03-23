@@ -143,7 +143,7 @@ def next_initialized_tick_within_one_word(
     tick: ValidatedTick,
     tick_spacing: ValidatedInt24,
     less_than_or_equal: bool,
-) -> tuple[ValidatedTick, bool]:
+) -> tuple[ValidatedInt24, bool]:
     """
     Returns the next initialized tick contained in the same word (or adjacent word) as the tick that
     is either to the left (less than or equal to) or right (greater than) of the given tick.

@@ -11,15 +11,15 @@ from degenbot.uniswap.v3_libraries.bit_math import least_significant_bit, most_s
 from degenbot.uniswap.v3_libraries.tick_math import ValidatedTick
 from degenbot.validation.evm_values import ValidatedInt16, ValidatedInt24
 
+# NOTE: Pydantic validation is applied to certain functions to enforce the built-in integer range
+# guarantees from the Solidity contract. Pydantic's validation will copy mutable arguments when
+# validating, which defeats the in-place mutation performed by certain functions. The
+# `SkipValidation` type is applied so the original dict/list is referenced.
+
 
 @validate_call
 def flip_tick(
-    tick_bitmap: SkipValidation[
-        # Pydantic copies mutable arguments when validating, which defeats the in-place mutation
-        # done by this method. Validation must be skipped for this argument so the original dict is
-        # preserved when the function is called.
-        dict[int, UniswapV3BitmapAtWord]
-    ],
+    tick_bitmap: SkipValidation[dict[int, UniswapV3BitmapAtWord]],
     sparse: bool,
     tick: ValidatedTick,
     tick_spacing: ValidatedInt24,
@@ -56,7 +56,7 @@ def next_initialized_tick_within_one_word_legacy(
     tick: ValidatedTick,
     tick_spacing: ValidatedInt24,
     less_than_or_equal: bool,
-) -> tuple[ValidatedTick, bool]:
+) -> tuple[ValidatedInt24, bool]:
     """
     Returns the next initialized tick contained in the same word (or adjacent word) as the tick that
     is either to the left (less than or equal to) or right (greater than) of the given tick.
@@ -189,14 +189,14 @@ def gen_ticks(
         next_boundary_tick = next(boundary_ticks_iter)
 
 
-@validate_call
+@validate_call(validate_return=True)
 def next_initialized_tick_within_one_word(
     tick_bitmap: SkipValidation[dict[int, UniswapV3BitmapAtWord]],
     tick_data: SkipValidation[dict[int, UniswapV3LiquidityAtTick]],
     tick: ValidatedTick,
     tick_spacing: ValidatedInt24,
     less_than_or_equal: bool,
-) -> tuple[int, bool]:
+) -> tuple[ValidatedInt24, bool]:
     """
     Returns the next initialized tick contained in the same word (or adjacent word) as the tick that
     is either to the left (less than or equal to) or right (greater than) of the given tick.
