@@ -231,7 +231,7 @@ def _build_convex_problem(num_pools: int) -> Problem:
         objective=Maximize(final_pool_withdrawal - initial_pool_deposit),
         constraints=constraints,
     )
-    assert problem.is_dcp(dpp=True)
+    assert problem.is_dcp(dpp=True)  # type: ignore[call-arg]
     problem.solve(solver="CLARABEL")
     return problem
 

@@ -205,7 +205,7 @@ def _build_convex_problem(num_pools: int) -> Problem:
         ],
     )
     problem.solve(solver="CLARABEL")
-    assert problem.is_dcp(dpp=True)
+    assert problem.is_dcp(dpp=True)  # type: ignore[call-arg]
     return problem
 
 
@@ -747,7 +747,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 compressed_reserves_post_swap = (
                     compressed_reserves_pre_swap + deposits - withdrawals - swap_fees
                 )
-                logger.info()
                 logger.info("Solved")
                 logger.info(
                     f"fee_multiplier                        = {[(float(fee[0]), float(fee[1])) for fee in fee_multiplier.value]}"  # noqa: E501
