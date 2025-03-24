@@ -1,10 +1,10 @@
 [project]
 name = "degenbot"
-version = "0.3.0"
+version = "0.4.0"
 authors = [
     { name="BowTiedDevil", email="devil@bowtieddevil.com" },
 ]
-description = "Python classes to aid rapid development of Uniswap V2 & V3, Curve V1, and Solidly V2 arbitrage bots on EVM-compatible blockchains"
+description = "Python classes to aid rapid development of Uniswap (V2, V3, V4), Curve V1, and Solidly V2 arbitrage bots on EVM-compatible blockchains"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [    
