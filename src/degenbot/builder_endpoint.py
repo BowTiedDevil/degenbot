@@ -1,11 +1,13 @@
 import json
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import aiohttp
 import eth_account.datastructures
 import eth_account.messages
 import eth_account.signers.local
+import pydantic
+from eth_typing import HexStr
 
 from degenbot.exceptions import DegenbotValueError, ExternalServiceError
 from degenbot.functions import eip_191_hash
@@ -92,15 +94,45 @@ class BuilderEndpoint:  # pragma: no cover
         self,
         bundle: Iterable[HexBytes],
         block_number: int,
-        state_block: int | str,
+        state_block: int | Literal["latest"],
         signer_key: str,
         block_timestamp: int | None = None,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
         """
-        Send a formatted bundle to the eth_callBundle endpoint for simulation against some block
-        state
+        Send a formatted bundle to the eth_callBundle endpoint for simulation against state at a
+        given block number
         """
+
+        class EthCallBundleParams(pydantic.BaseModel):
+            txs: list[HexStr]
+            block: Annotated[
+                int | Literal["latest"],
+                pydantic.PlainSerializer(
+                    lambda block_number: hex(block_number)
+                    if isinstance(block_number, int)
+                    else block_number,
+                    return_type=HexStr,
+                    when_used="json",
+                ),
+            ] = pydantic.Field(serialization_alias="blockNumber")
+            state_block: Annotated[
+                int | Literal["latest"],
+                pydantic.PlainSerializer(
+                    lambda state_block_number: hex(state_block_number)
+                    if isinstance(state_block_number, int)
+                    else state_block_number,
+                    return_type=HexStr,
+                    when_used="json",
+                ),
+            ] = pydantic.Field(serialization_alias="stateBlockNumber")
+            timestamp: int | None = None
+
+        class EthCallBundlePayload(pydantic.BaseModel):
+            jsonrpc: str = "2.0"
+            id: int = 1
+            method: str = "eth_callBundle"
+            params: list[EthCallBundleParams]
 
         endpoint_method = "eth_callBundle"
 
@@ -109,41 +141,14 @@ class BuilderEndpoint:  # pragma: no cover
                 message=f"{endpoint_method} was not included in the list of supported endpoints."
             )
 
-        bundle_params: dict[str, Any] = {
-            "txs": (
-                # Array[String], A list of signed transactions to execute in an atomic bundle
-                [tx.to_0x_hex() for tx in bundle]
-            ),
-            "blockNumber": (
-                # String, a hex encoded block number for which this bundle is valid on
-                hex(block_number)
-            ),
-        }
-
-        if isinstance(state_block, str):
-            if state_block != "latest":
-                raise DegenbotValueError(
-                    message="state_block tag may only be an integer, or the string 'latest'"
-                )
-            bundle_params["stateBlockNumber"] = state_block
-        elif isinstance(state_block, int):
-            bundle_params[
-                # String, either a hex encoded number or a block tag for which state to base this
-                # simulation on. Can use "latest"
-                "stateBlockNumber"
-            ] = hex(state_block)
-
-        if block_timestamp is not None:
-            bundle_params["timestamp"] = block_timestamp
-
-        payload = json.dumps(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": endpoint_method,
-                "params": [bundle_params],
-            }
+        bundle_params = EthCallBundleParams(
+            txs=[tx.to_0x_hex() for tx in bundle],
+            block=block_number,
+            state_block=state_block,
+            timestamp=block_timestamp,
         )
+
+        payload = EthCallBundlePayload(params=[bundle_params]).model_dump_json(by_alias=True)
 
         bundle_headers = self._build_authentication_header(
             payload=payload,
