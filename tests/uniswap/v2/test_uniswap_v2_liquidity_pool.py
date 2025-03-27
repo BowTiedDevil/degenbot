@@ -170,14 +170,17 @@ def test_nominal_rate_scaled_by_decimals(
         ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
         ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1,
     ]:
-        nom_rate = int(ethereum_uniswap_v2_wbtc_weth_liquiditypool.get_nominal_rate(token))
-        abs_rate = int(ethereum_uniswap_v2_wbtc_weth_liquiditypool.get_absolute_rate(token))
-        assert nom_rate == abs_rate // (
-            10
-            ** (
-                ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1.decimals
-                - ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0.decimals
-            )
+        other_token = (
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0
+            if token == ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1
+            else ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1
+        )
+
+        abs_rate = ethereum_uniswap_v2_wbtc_weth_liquiditypool.get_absolute_rate(token)
+        nom_rate = ethereum_uniswap_v2_wbtc_weth_liquiditypool.get_nominal_rate(token)
+        assert nom_rate == abs_rate * Fraction(
+            10**other_token.decimals,
+            10**token.decimals,
         )
 
 
@@ -188,14 +191,17 @@ def test_nominal_price_scaled_by_decimals(
         ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
         ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1,
     ]:
-        nom_price = int(ethereum_uniswap_v2_wbtc_weth_liquiditypool.get_nominal_price(token))
-        abs_price = int(ethereum_uniswap_v2_wbtc_weth_liquiditypool.get_absolute_price(token))
-        assert nom_price == abs_price // (
-            10
-            ** (
-                ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1.decimals
-                - ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0.decimals
-            )
+        other_token = (
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0
+            if token == ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1
+            else ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1
+        )
+
+        nom_price = ethereum_uniswap_v2_wbtc_weth_liquiditypool.get_nominal_price(token)
+        abs_price = ethereum_uniswap_v2_wbtc_weth_liquiditypool.get_absolute_price(token)
+        assert nom_price == abs_price * Fraction(
+            10**token.decimals,
+            10**other_token.decimals,
         )
 
 
