@@ -1122,6 +1122,19 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 message=UniswapV3PoolStateUpdated(state),
             )
 
+    def get_arbitrage_helpers(
+        self,
+    ) -> tuple[AbstractArbitrage, ...]:
+        """
+        Get all arbitrage helpers subscribed to this pool.
+        """
+        return tuple(
+            subscriber
+            for subscriber in self._subscribers
+            if isinstance(subscriber, AbstractArbitrage)
+            if self in subscriber.swap_pools
+        )
+
     def get_absolute_price(
         self,
         token: Erc20Token,
@@ -1185,7 +1198,10 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             else Fraction(10**self.token0.decimals, 10**self.token1.decimals)
         )
 
-    def discard_states_before_block(self, block: int) -> None:
+    def discard_states_before_block(
+        self,
+        block: int,
+    ) -> None:
         """
         Discard states recorded prior to a target block.
         """
@@ -1255,8 +1271,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         """
         Simulate an exact input swap.
         """
+
         if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message="token_in is unknown.")
+            raise DegenbotValueError(message=f"Unknown token {token_in}")
 
         zero_for_one = token_in == self.token0
 
@@ -1299,8 +1316,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         """
         Simulate an exact output swap.
         """
+
         if token_out not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message="token_out is unknown.")
+            raise DegenbotValueError(message=f"Unknown token {token_out}")
 
         zero_for_one = token_out == self.token1
 
