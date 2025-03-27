@@ -186,7 +186,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         for i, (pool, swap_vector) in enumerate(
             zip(self.swap_pools, self._swap_vectors, strict=True)
         ):
-            pool_state = pool_states.get(pool)
+            pool_state = pool_states[pool]
             _token_in_quantity = token_in_quantity if i == 0 else _token_out_quantity
 
             try:
@@ -656,7 +656,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                 swap_destination_address = from_address
 
             match i, swap_pool, _swap_amounts:
-                case 0, AerodromeV2Pool() | UniswapV2Pool() as first_pool, _:
+                case 0, (AerodromeV2Pool() | UniswapV2Pool()) as first_pool, _:
                     # Special case: If first pool is type V2, input token must be transferred prior
                     # to the swap
                     payloads.append(

@@ -169,7 +169,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
         self._swap_vectors = tuple(_swap_vectors)
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()
-        for pool in swap_pools:
+        for pool in self.swap_pools:
             pool.subscribe(self)
 
     def __getstate__(self) -> dict[str, Any]:
