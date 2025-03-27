@@ -763,12 +763,12 @@ def test_simulation_input_validation(
     dai: Erc20Token,
 ) -> None:
     lp: UniswapV3Pool = wbtc_weth_v3_lp_at_block_17_600_000
-    with pytest.raises(DegenbotValueError, match="token_in is unknown."):
+    with pytest.raises(DegenbotValueError, match=f"Unknown token {dai}"):
         lp.simulate_exact_input_swap(
             token_in=dai,
             token_in_quantity=1,
         )
-    with pytest.raises(DegenbotValueError, match="token_out is unknown."):
+    with pytest.raises(DegenbotValueError, match=f"Unknown token {dai}"):
         lp.simulate_exact_output_swap(
             token_out=dai,
             token_out_quantity=69,
