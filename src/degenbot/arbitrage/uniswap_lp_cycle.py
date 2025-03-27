@@ -86,7 +86,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         self.max_input = max_input
 
         _swap_vectors: list[UniswapPoolSwapVector] = []
-        for i, pool in enumerate(swap_pools):
+        for i, pool in enumerate(self.swap_pools):
             input_token = self.input_token if i == 0 else _swap_vectors[-1].token_out
 
             match input_token:
@@ -95,7 +95,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                         UniswapPoolSwapVector(
                             token_in=pool.token0,
                             token_out=pool.token1,
-                            zero_for_one=True,
+                            zero_for_one=pool.token0 == input_token,
                         )
                     )
                 case pool.token1:
@@ -103,51 +103,44 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                         UniswapPoolSwapVector(
                             token_in=pool.token1,
                             token_out=pool.token0,
-                            zero_for_one=False,
+                            zero_for_one=pool.token0 == input_token,
                         )
                     )
-
-                case EtherPlaceholder():
-                    wrapped_native_token = WRAPPED_NATIVE_TOKENS[pool.chain_id]
-                    if wrapped_native_token not in pool.tokens:
-                        raise DegenbotValueError(
-                            message="Input token is native, but pool does not hold it or the wrapped token"  # noqa:E501
-                        )
-
+                case EtherPlaceholder() if (
+                    wrapped_native_token := WRAPPED_NATIVE_TOKENS[pool.chain_id]
+                ) in pool.tokens:
+                    # Handle case where input token is Ether and pool holds wrapped native
                     _swap_vectors.append(
                         UniswapPoolSwapVector(
                             token_in=pool.token0
                             if pool.token0 == wrapped_native_token
                             else pool.token1,
                             token_out=pool.token1
-                            if pool.token1 == wrapped_native_token
+                            if pool.token0 == wrapped_native_token
                             else pool.token0,
-                            zero_for_one=False,
+                            zero_for_one=pool.token0 == wrapped_native_token,
                         )
                     )
-
-                case wrapped_token if wrapped_token.address == WRAPPED_NATIVE_TOKENS[pool.chain_id]:
-                    if ZERO_ADDRESS not in pool.tokens:
-                        raise DegenbotValueError(
-                            message="Input token is wrapped native, but pool does not hold it or the native token"  # noqa:E501
-                        )
-
+                case Erc20Token() if (
+                    input_token == WRAPPED_NATIVE_TOKENS[pool.chain_id]
+                    and ZERO_ADDRESS in pool.tokens
+                ):
+                    # Handle case where input token is wrapped native and pool holds Ether
                     _swap_vectors.append(
                         UniswapPoolSwapVector(
                             token_in=pool.token0 if pool.token0 == ZERO_ADDRESS else pool.token1,
-                            token_out=pool.token1 if pool.token1 == ZERO_ADDRESS else pool.token0,
-                            zero_for_one=False,
+                            token_out=pool.token1 if pool.token0 == ZERO_ADDRESS else pool.token0,
+                            zero_for_one=pool.token1 == ZERO_ADDRESS,
                         )
                     )
-
-                case _:  # pragma: no cover
+                case _:
                     raise DegenbotValueError(
-                        message=f"Token {self.input_token} could not be identified. Pool holds {pool.token0}, {pool.token1}"  # noqa:E501
+                        message=f"Token {input_token} could not be matched. Pool holds {pool.token0} & {pool.token1}"  # noqa: E501
                     )
 
         self._swap_vectors = tuple(_swap_vectors)
-        self.swap_pools = tuple(swap_pools)
-        self.name = " → ".join([pool.name for pool in swap_pools])
+
+        self.name = " → ".join([pool.name for pool in self.swap_pools])
 
         self._pool_viability: dict[Pool, bool] = {
             pool: self._pool_is_viable(pool=pool, state=pool.state, vector=swap_vector)
@@ -155,7 +148,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         }
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()
-        for pool in swap_pools:
+        for pool in self.swap_pools:
             pool.subscribe(self)
 
     def __getstate__(self) -> dict[str, Any]:
@@ -274,8 +267,18 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         match pool, state:
             case (
-                AerodromeV2Pool() | UniswapV2Pool(),
-                AerodromeV2PoolState() | UniswapV2PoolState(),
+                AerodromeV2Pool(),
+                AerodromeV2PoolState(),
+            ):
+                if state.reserves_token0 == 0 or state.reserves_token1 == 0:
+                    return False
+
+                return (
+                    state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
+                )
+            case (
+                UniswapV2Pool(),
+                UniswapV2PoolState(),
             ):
                 if state.reserves_token0 == 0 or state.reserves_token1 == 0:
                     return False
@@ -343,65 +346,52 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
             state_overrides = {}
 
         # Check the pools for viability
-        for pool in self.swap_pools:
+        for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=True):
             assert pool in self._pool_viability
 
-            if (
-                # Check the pool viability if the state was overridden
-                pool in state_overrides
-                and not self._pool_is_viable(
-                    pool=pool,
-                    state=state_overrides[pool],
-                    vector=self._swap_vectors[self.swap_pools.index(pool)],
-                )
-            ) or (
-                # Otherwise, check the viability at the current state, which is kept updated by the
-                # notification mechanism
-                self._pool_viability[pool] is False
-            ):
+            if pool in state_overrides:
+                if not self._pool_is_viable(pool=pool, state=state_overrides[pool], vector=vector):
+                    raise ArbitrageError(message=f"Pool {pool!r} is not viable")
+            elif self._pool_viability[pool] is False:
                 raise ArbitrageError(message=f"Pool {pool!r} is not viable")
 
         exchange_rate_numerators = []
         exchange_rate_denominators = []
 
-        # Check the pool state liquidity in the direction of the trade
+        # Evaluate the instantaneous rate of exchange for the path
         for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=True):
-            pool_state = state_overrides.get(
+            match (
                 pool,
-                pool.state,  # use the current pool state if no override was provided
-            )
-
-            match pool, pool_state:
+                state_overrides.get(pool, pool.state),
+            ):
                 case (
                     AerodromeV2Pool() | UniswapV2Pool(),
-                    AerodromeV2PoolState() | UniswapV2PoolState(),
+                    (AerodromeV2PoolState() | UniswapV2PoolState()) as v2_state,
                 ):
                     if vector.zero_for_one:
                         exchange_rate_numerators.append(
-                            pool_state.reserves_token1
+                            v2_state.reserves_token1
                             * (pool.fee_token0.denominator - pool.fee_token0.numerator)
                         )
                         exchange_rate_denominators.append(
-                            pool_state.reserves_token0 * pool.fee_token0.denominator
+                            v2_state.reserves_token0 * pool.fee_token0.denominator
                         )
                     else:
                         exchange_rate_numerators.append(
-                            pool_state.reserves_token0
+                            v2_state.reserves_token0
                             * (pool.fee_token1.denominator - pool.fee_token1.numerator)
                         )
                         exchange_rate_denominators.append(
-                            pool_state.reserves_token1 * pool.fee_token1.denominator
+                            v2_state.reserves_token1 * pool.fee_token1.denominator
                         )
 
                 case (
                     UniswapV3Pool() | UniswapV4Pool(),
-                    UniswapV3PoolState() | UniswapV4PoolState(),
+                    (UniswapV3PoolState() | UniswapV4PoolState()) as v4_state,
                 ):
                     if vector.zero_for_one:
                         exchange_rate_numerators.append(
-                            pool_state.sqrt_price_x96
-                            * pool_state.sqrt_price_x96
-                            * (1000000 - pool.fee)
+                            (v4_state.sqrt_price_x96**2) * (1000000 - pool.fee)
                         )
                         exchange_rate_denominators.append(
                             6277101735386680763835789423207666416102355444464034512896 * 1000000
@@ -411,9 +401,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                             6277101735386680763835789423207666416102355444464034512896
                             * (1000000 - pool.fee)
                         )
-                        exchange_rate_denominators.append(
-                            pool_state.sqrt_price_x96 * pool_state.sqrt_price_x96 * 1000000
-                        )
+                        exchange_rate_denominators.append((v4_state.sqrt_price_x96**2) * 1000000)
 
                 case _:  # pragma: no cover
                     raise DegenbotValueError(message=f"Could not identify pool {pool}.")
