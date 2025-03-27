@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol, Self
 from weakref import WeakSet
@@ -79,6 +80,7 @@ class Subscriber(Protocol):
 
 class AbstractArbitrage:
     id: str
+    swap_pools: Sequence["AbstractLiquidityPool"]
 
 
 @dataclass(slots=True, frozen=True)

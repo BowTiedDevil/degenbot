@@ -73,6 +73,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                 raise DegenbotValueError(
                     message=f"Incompatible pool type ({type(swap_pool)}) provided."
                 )
+        self.swap_pools: tuple[Pool, ...] = tuple(swap_pools)
 
         self.id = id
         self.input_token = input_token

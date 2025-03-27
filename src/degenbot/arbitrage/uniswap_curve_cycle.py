@@ -77,7 +77,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                     message=f"Incompatible pool type ({type(swap_pool)}) provided."
                 )
 
-        self.swap_pools = tuple(swap_pools)
+        self.swap_pools: tuple[CurveOrUniswapPool, ...] = tuple(swap_pools)
         self.name = " → ".join([pool.name for pool in self.swap_pools])
 
         self.id = id
