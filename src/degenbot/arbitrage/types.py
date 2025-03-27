@@ -29,12 +29,18 @@ class CurveStableSwapPoolSwapAmounts:
     min_amount_out: int
     underlying: bool
 
+    def __post_init__(self) -> None:
+        assert self.token_in != self.token_out
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapPoolSwapVector:
     token_in: Erc20Token
     token_out: Erc20Token
     zero_for_one: bool
+
+    def __post_init__(self) -> None:
+        assert self.token_in != self.token_out
 
 
 @dataclasses.dataclass(slots=True)
@@ -67,3 +73,6 @@ class UniswapV4PoolSwapAmounts:
 class CurveStableSwapPoolVector:
     token_in: Erc20Token
     token_out: Erc20Token
+
+    def __post_init__(self) -> None:
+        assert self.token_in != self.token_out
