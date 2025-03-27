@@ -1140,21 +1140,21 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
     ) -> Fraction:
         """
         Get the absolute rate of exchange for the given token, expressed in units of the other.
+        e.g. the rate of exchange for token x in a pool with reserves R_x=100, R_y=200 is 100/200.
+
+        The sqrt_price for a V3 pool expresses the ratio of token y / token x, so the value can be
+        directly obtained.
         """
+
+        if token not in self.tokens:
+            raise DegenbotValueError(message=f"Unknown token {token}")
 
         state = self.state if override_state is None else override_state
 
-        if token == self.token0:
-            return 1 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-        if token == self.token1:
-            return exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-        raise DegenbotValueError(message=f"Unknown token {token}")  # pragma: no cover
-
-    def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
-        return tuple(
-            subscriber
-            for subscriber in self._subscribers
-            if isinstance(subscriber, AbstractArbitrage)
+        return (
+            1 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
+            if token == self.token0
+            else exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
         )
 
     def get_nominal_price(
@@ -1166,6 +1166,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         Get the nominal price for the given token, expressed in units of the other, corrected for
         decimal place values.
         """
+
         return 1 / self.get_nominal_rate(token, override_state=override_state)
 
     def get_nominal_rate(
@@ -1178,19 +1179,11 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         decimal place values.
         """
 
-        state = self.state if override_state is None else override_state
-
-        if token == self.token0:
-            return (
-                1
-                / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-                * Fraction(10**self.token1.decimals, 10**self.token0.decimals)
-            )
-        if token == self.token1:
-            return exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96) * Fraction(
-                10**self.token0.decimals, 10**self.token1.decimals
-            )
-        raise DegenbotValueError(message=f"Unknown token {token}")  # pragma: no cover
+        return self.get_absolute_rate(token=token, override_state=override_state) * (
+            Fraction(10**self.token1.decimals, 10**self.token0.decimals)
+            if token == self.token0
+            else Fraction(10**self.token0.decimals, 10**self.token1.decimals)
+        )
 
     def discard_states_before_block(self, block: int) -> None:
         """

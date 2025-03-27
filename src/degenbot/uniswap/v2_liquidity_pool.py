@@ -580,16 +580,22 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         override_state: PoolState | None = None,
     ) -> Fraction:
         """
-        Get the absolute rate for the given token, expressed in units of the other.
+        Get the absolute rate of exchange for the given token, expressed in units of the other.
+        e.g. the rate of exchange for token x in a pool with reserves R_x=100, R_y=200 is 100/200.
+
+        The rate for a V2 pool is the ratio of the token reserves.
         """
+
+        if token not in self.tokens:
+            raise DegenbotValueError(message=f"Unknown token {token}")
 
         state = self.state if override_state is None else override_state
 
-        if token == self.token0:
-            return Fraction(state.reserves_token0) / Fraction(state.reserves_token1)
-        if token == self.token1:
-            return Fraction(state.reserves_token1) / Fraction(state.reserves_token0)
-        raise DegenbotValueError(message=f"Unknown token {token}")  # pragma: no cover
+        return (
+            Fraction(state.reserves_token0, state.reserves_token1)
+            if token == self.token0
+            else Fraction(state.reserves_token1, state.reserves_token0)
+        )
 
     def get_nominal_price(
         self,
@@ -613,17 +619,11 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         decimal place values.
         """
 
-        state = self.state if override_state is None else override_state
-
-        if token == self.token0:
-            return Fraction(state.reserves_token0, 10**self.token0.decimals) * Fraction(
-                10**self.token1.decimals, state.reserves_token1
-            )
-        if token == self.token1:
-            return Fraction(state.reserves_token1, 10**self.token1.decimals) * Fraction(
-                10**self.token0.decimals, state.reserves_token0
-            )
-        raise DegenbotValueError(message=f"Unknown token {token}")  # pragma: no cover
+        return self.get_absolute_rate(token=token, override_state=override_state) * (
+            Fraction(10**self.token1.decimals, 10**self.token0.decimals)
+            if token == self.token0
+            else Fraction(10**self.token0.decimals, 10**self.token1.decimals)
+        )
 
     def get_reserves(self, w3: Web3, block_identifier: BlockIdentifier) -> tuple[int, int]:
         reserves_token0, reserves_token1 = raw_call(
