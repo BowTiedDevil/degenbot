@@ -625,75 +625,75 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                         f"V4/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
                     )
 
-            try:
-                # STRATEGY:
-                # - swap WETH_in -> X at V2
-                # - transfer X from V2 -> V4
-                # - swap X -> WETH_out at V4
-                # - profit = WETH_out - WETH_in
+            # --------------------------------------------------------------------------------------
+            # Encode the swap amounts to capture the arbitrage
+            # --------------------------------------------------------------------------------------
 
-                pool_hi_zero_for_one = v4_pool.token1 == self.input_token
-                weth_out_v4 = v4_pool.calculate_tokens_out_from_tokens_in(
+            # Set the flag by checking the position of the token being sold
+            v4_pool_zero_for_one = v4_pool.token0 == forward_token
+
+            # Set the flag by checking the position of the token being purchased
+            v2_pool_zero_for_one = v2_pool.token1 == forward_token
+
+            try:
+                weth_out = v4_pool.calculate_tokens_out_from_tokens_in(
                     token_in=forward_token,
                     token_in_quantity=forward_token_amount,
                     override_state=v4_pool_state_override,
                 )
-                amounts.append(
-                    UniswapV4PoolSwapAmounts(
-                        pool=v4_pool.address,
-                        amount_specified=-forward_token_amount,  # exact input swap
-                        zero_for_one=pool_hi_zero_for_one,
-                        sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                        if pool_hi_zero_for_one
-                        else MAX_SQRT_RATIO - 1,
-                    )
+            except PossibleInaccurateResult as exc:
+                weth_out = exc.amount_out
+
+            amounts.append(
+                UniswapV4PoolSwapAmounts(
+                    pool=v4_pool.address,
+                    amount_specified=-forward_token_amount,  # exact input swap
+                    zero_for_one=v4_pool_zero_for_one,
+                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                    if v4_pool_zero_for_one
+                    else MAX_SQRT_RATIO - 1,
                 )
+            )
 
-                pool_lo_zero_for_one = v4_pool.token1 == forward_token
+            if v4_pool.tokens == v2_pool.tokens:
+                # Token position should be identical for both pools, 0->1 flags should be reversed
+                assert v4_pool_zero_for_one != v2_pool_zero_for_one
 
-                if v4_pool.tokens == v2_pool.tokens:
-                    # Token position should be identical for both pools
-                    assert pool_hi_zero_for_one != pool_lo_zero_for_one
-
-                match v2_pool, v2_pool_state_override:
-                    case UniswapV2Pool(), UniswapV2PoolState() | None:
-                        weth_in_v2 = v2_pool.calculate_tokens_in_from_tokens_out(
-                            token_out=forward_token,
-                            token_out_quantity=forward_token_amount,
-                            override_state=v2_pool_state_override,
-                        )
-                    case AerodromeV2Pool(), AerodromeV2PoolState() | None:
-                        weth_in_v2 = v2_pool.calculate_tokens_in_from_tokens_out(
-                            token_out=forward_token,
-                            token_out_quantity=forward_token_amount,
-                            override_state=v2_pool_state_override,
-                        )
-
-                amounts.append(
-                    UniswapV2PoolSwapAmounts(
-                        pool=v2_pool.address,
-                        amounts_out=(
-                            (0, forward_token_amount)
-                            if pool_lo_zero_for_one
-                            else (forward_token_amount, 0)
-                        ),
-                        amounts_in=((weth_in_v2, 0) if pool_lo_zero_for_one else (0, weth_in_v2)),
+            match v2_pool, v2_pool_state_override:
+                case AerodromeV2Pool(), AerodromeV2PoolState() | None:
+                    weth_in = v2_pool.calculate_tokens_in_from_tokens_out(
+                        token_out=forward_token,
+                        token_out_quantity=forward_token_amount,
+                        override_state=v2_pool_state_override,
                     )
+                case UniswapV2Pool(), UniswapV2PoolState() | None:
+                    weth_in = v2_pool.calculate_tokens_in_from_tokens_out(
+                        token_out=forward_token,
+                        token_out_quantity=forward_token_amount,
+                        override_state=v2_pool_state_override,
+                    )
+            amounts.append(
+                UniswapV2PoolSwapAmounts(
+                    pool=v2_pool.address,
+                    amounts_in=((weth_in, 0) if v2_pool_zero_for_one else (0, weth_in)),
+                    amounts_out=(
+                        (0, forward_token_amount)
+                        if v2_pool_zero_for_one
+                        else (forward_token_amount, 0)
+                    ),
                 )
-            except (EVMRevertError, LiquidityPoolError) as e:
-                raise ArbitrageError from e
+            )
 
-            best_profit = weth_out_v4 - weth_in_v2
+            best_profit = weth_out - weth_in
 
             if forward_token_amount <= 0 or best_profit <= 0:
                 raise ArbitrageError(message="No possible arbitrage")
 
-            logger.debug(f"{best_profit=}, {weth_out_v4=}, {weth_in_v2=}")
+            logger.debug(f"{best_profit=}, {weth_out=}, {weth_in=}")
             logger.debug(
                 f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit} {self.input_token} profit"  # noqa: E501
             )
             logger.debug(f"{amounts=}")
-            logger.debug(f"{self.swap_pools=}")
 
             newest_state_block: BlockNumber | None = None
             for state in pool_states.values():
@@ -1434,74 +1434,79 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             amounts = []
 
+            # --------------------------------------------------------------------------------------
+            # Encode the swap amounts to capture the arbitrage
+            # --------------------------------------------------------------------------------------
+
+            # Set the flag by checking the position of the token being sold
+            v2_pool_zero_for_one = v2_pool.token0 == forward_token
+
+            # Set the flag by checking the position of the token being purchased
+            v4_pool_zero_for_one = v4_pool.token1 == forward_token
+
             try:
-                # Transfer X token from V4 -> V2, profit is difference of WETH_out from V2 and
-                # WETH_in to V4
-                pool_hi_zero_for_one = v4_pool.token1 == forward_token
-                weth_in_v4 = v4_pool.calculate_tokens_in_from_tokens_out(
+                assert forward_token_amount >= 0
+                weth_in = v4_pool.calculate_tokens_in_from_tokens_out(
                     token_out=forward_token,
                     token_out_quantity=forward_token_amount,
                     override_state=v4_pool_override,
                 )
-                amounts.append(
-                    UniswapV4PoolSwapAmounts(
-                        pool=v4_pool.address,
-                        amount_specified=forward_token_amount,  # exact output swap
-                        zero_for_one=pool_hi_zero_for_one,
-                        sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                        if pool_hi_zero_for_one
-                        else MAX_SQRT_RATIO - 1,
-                    )
+            except PossibleInaccurateResult as exc:
+                weth_in = exc.amount_in
+
+            amounts.append(
+                UniswapV4PoolSwapAmounts(
+                    pool=v4_pool.address,
+                    amount_specified=forward_token_amount,  # exact output swap
+                    zero_for_one=v4_pool_zero_for_one,
+                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                    if v4_pool_zero_for_one
+                    else MAX_SQRT_RATIO - 1,
                 )
-                pool_lo_zero_for_one = v4_pool.token1 == self.input_token
+            )
 
-                if v4_pool.tokens == v2_pool.tokens:
-                    # Token position should be identical for both pools
-                    assert pool_hi_zero_for_one != pool_lo_zero_for_one
+            if v4_pool.tokens == v2_pool.tokens:
+                # Token position should be identical for both pools, 0->1 flags should be reversed
+                assert v4_pool_zero_for_one != v2_pool_zero_for_one
 
-                match v2_pool, v2_pool_override:
-                    case AerodromeV2Pool(), AerodromeV2PoolState() | None:
-                        weth_out_v2 = v2_pool.calculate_tokens_out_from_tokens_in(
-                            token_in=forward_token,
-                            token_in_quantity=forward_token_amount,
-                            override_state=v2_pool_override,
-                        )
-                    case UniswapV2Pool(), UniswapV2PoolState() | None:
-                        weth_out_v2 = v2_pool.calculate_tokens_out_from_tokens_in(
-                            token_in=forward_token,
-                            token_in_quantity=forward_token_amount,
-                            override_state=v2_pool_override,
-                        )
-                    case _:
-                        raise TypeError
-
-                amounts.append(
-                    UniswapV2PoolSwapAmounts(
-                        pool=v2_pool.address,
-                        amounts_out=(
-                            (0, weth_out_v2) if pool_lo_zero_for_one else (weth_out_v2, 0)
-                        ),
-                        amounts_in=(
-                            (forward_token_amount, 0)
-                            if pool_lo_zero_for_one
-                            else (0, forward_token_amount)
-                        ),
+            match v2_pool, v2_pool_override:
+                case AerodromeV2Pool(), AerodromeV2PoolState() | None:
+                    weth_out = v2_pool.calculate_tokens_out_from_tokens_in(
+                        token_in=forward_token,
+                        token_in_quantity=forward_token_amount,
+                        override_state=v2_pool_override,
                     )
-                )
-            except (EVMRevertError, LiquidityPoolError) as e:
-                raise ArbitrageError from e
+                case UniswapV2Pool(), UniswapV2PoolState() | None:
+                    weth_out = v2_pool.calculate_tokens_out_from_tokens_in(
+                        token_in=forward_token,
+                        token_in_quantity=forward_token_amount,
+                        override_state=v2_pool_override,
+                    )
+                case _:
+                    raise TypeError
 
-            best_profit = weth_out_v2 - weth_in_v4
+            amounts.append(
+                UniswapV2PoolSwapAmounts(
+                    pool=v2_pool.address,
+                    amounts_in=(
+                        (forward_token_amount, 0)
+                        if v2_pool_zero_for_one
+                        else (0, forward_token_amount)
+                    ),
+                    amounts_out=(0, weth_out) if v2_pool_zero_for_one else (weth_out, 0),
+                )
+            )
+
+            best_profit = weth_out - weth_in
 
             if forward_token_amount <= 0 or best_profit <= 0:
                 raise ArbitrageError(message="No possible arbitrage")
 
-            logger.debug(f"{best_profit=}, {weth_out_v2=}, {weth_in_v4=}")
+            logger.debug(f"{best_profit=}, {weth_out=}, {weth_in=}")
             logger.debug(
                 f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit:.4f} {self.input_token} profit"  # noqa: E501
             )
             logger.debug(f"{amounts=}")
-            logger.debug(f"{self.swap_pools=}")
 
             newest_state_block: BlockNumber | None = None
             for state in pool_states.values():
