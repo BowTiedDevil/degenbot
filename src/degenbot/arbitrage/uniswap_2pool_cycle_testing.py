@@ -1982,13 +1982,19 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 err_msg = f"Could not identify pool types {self.swap_pools}"
                 raise TypeError(err_msg)
 
-            # TODO: generalize the ordering of swap amounts
-            v4_swap_amounts, v2_swap_amounts = pool_swap_amounts
-            if TYPE_CHECKING:
-                assert isinstance(v2_pool, AerodromeV2Pool | UniswapV2Pool)
-                assert isinstance(v4_pool, UniswapV4Pool)
-                assert isinstance(v2_swap_amounts, UniswapV2PoolSwapAmounts)
-                assert isinstance(v4_swap_amounts, UniswapV4PoolSwapAmounts)
+            v2_swap_amounts = next(
+                amount
+                for amount in pool_swap_amounts
+                if isinstance(amount, UniswapV2PoolSwapAmounts)
+            )
+            v4_swap_amounts = next(
+                amount
+                for amount in pool_swap_amounts
+                if isinstance(amount, UniswapV4PoolSwapAmounts)
+            )
+
+            assert isinstance(v2_pool, AerodromeV2Pool | UniswapV2Pool)
+            assert isinstance(v4_pool, UniswapV4Pool)
 
             wrapped_token_address = WRAPPED_NATIVE_TOKENS[v2_pool.chain_id]
 
