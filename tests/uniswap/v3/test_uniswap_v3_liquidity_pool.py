@@ -564,15 +564,15 @@ def test_tick_data_equality() -> None:
 
 def test_price_is_inverse_of_exchange_rate(wbtc_weth_v3_lp: UniswapV3Pool):
     for token in [wbtc_weth_v3_lp.token0, wbtc_weth_v3_lp.token1]:
-        assert wbtc_weth_v3_lp.get_absolute_price(token) == 1 / wbtc_weth_v3_lp.get_absolute_rate(
+        assert wbtc_weth_v3_lp.get_absolute_price(
             token
-        )
+        ) == 1 / wbtc_weth_v3_lp.get_absolute_exchange_rate(token)
 
 
 def test_nominal_rate_scaled_by_decimals(wbtc_weth_v3_lp: UniswapV3Pool):
     for token in [wbtc_weth_v3_lp.token0, wbtc_weth_v3_lp.token1]:
         nom_rate = int(wbtc_weth_v3_lp.get_nominal_rate(token))
-        abs_rate = int(wbtc_weth_v3_lp.get_absolute_rate(token))
+        abs_rate = int(wbtc_weth_v3_lp.get_absolute_exchange_rate(token))
         assert nom_rate == abs_rate // (
             10 ** (wbtc_weth_v3_lp.token1.decimals - wbtc_weth_v3_lp.token0.decimals)
         )

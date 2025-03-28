@@ -156,8 +156,8 @@ def test_2pool_uniswap_v2_decimal_corrected(
     weth_token: Erc20Token,
 ):
     profit_token = weth_token
-    pool_a_roe = wbtc_pool_a.get_absolute_rate(token=profit_token)
-    pool_b_roe = wbtc_pool_b.get_absolute_rate(token=profit_token)
+    pool_a_roe = wbtc_pool_a.get_absolute_exchange_rate(token=profit_token)
+    pool_b_roe = wbtc_pool_b.get_absolute_exchange_rate(token=profit_token)
 
     if pool_a_roe > pool_b_roe:
         pool_hi = wbtc_pool_a
@@ -375,8 +375,8 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
     weth_token: Erc20Token,
 ):
     profit_token = weth_token
-    pool_a_roe = wbtc_pool_a.get_absolute_rate(token=profit_token)
-    pool_b_roe = wbtc_pool_b.get_absolute_rate(token=profit_token)
+    pool_a_roe = wbtc_pool_a.get_absolute_exchange_rate(token=profit_token)
+    pool_b_roe = wbtc_pool_b.get_absolute_exchange_rate(token=profit_token)
 
     if pool_a_roe > pool_b_roe:
         pool_hi = wbtc_pool_a
@@ -612,8 +612,8 @@ def test_base_2pool(
     profit_token = weth_base_token
 
     # profit_token = weth_base_token
-    pool_a_roe = test_pool_a.get_absolute_rate(token=profit_token)
-    pool_b_roe = test_pool_b.get_absolute_rate(token=profit_token)
+    pool_a_roe = test_pool_a.get_absolute_exchange_rate(token=profit_token)
+    pool_b_roe = test_pool_b.get_absolute_exchange_rate(token=profit_token)
 
     if pool_a_roe > pool_b_roe:
         pool_hi = test_pool_a
