@@ -627,12 +627,8 @@ def test_comparisons(
 
 
 def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool):
-    from pprint import pprint
-
     starting_state = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.state
     starting_block = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block
-
-    pprint(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000._state_cache)
 
     first_update_block = (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block + 1
@@ -686,7 +682,6 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: 
 
     # Unwind the updates and compare to the stored states at previous blocks
     for block_number in range(last_update_block, first_update_block - 1, -1):
-        print(f"Restoring block before {block_number}")
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.restore_state_before_block(
             block_number
         )
