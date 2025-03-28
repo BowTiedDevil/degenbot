@@ -79,7 +79,10 @@ def test_v3_decode_path() -> None:
 
 
 def test_v3_exchange_rates_from_sqrt_price_x96() -> None:
+    # ref: https://blog.uniswap.org/uniswap-v3-math-primer
+    weth_usdc_sqrt_price_x96 = 2018382873588440326581633304624437
+
     assert (
-        exchange_rate_from_sqrt_price_x96(2018382873588440326581633304624437)
+        exchange_rate_from_sqrt_price_x96(weth_usdc_sqrt_price_x96)
         == Fraction(2018382873588440326581633304624437, 2**96) ** 2
     )
