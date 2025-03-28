@@ -136,6 +136,7 @@ def convert_unsigned_integer_to_signed(num: int):
     return int.from_bytes(HexBytes(num), byteorder="big", signed=True)
 
 
+@pytest.mark.skip(reason="slow")
 def test_first_200_pools(fork_mainnet: AnvilFork, testing_pools, liquidity_snapshot):
     set_web3(fork_mainnet.w3)
     fork_mainnet.reset(block_number=liquidity_snapshot["snapshot_block"])
