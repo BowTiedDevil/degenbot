@@ -102,6 +102,8 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         "bool",
     )
 
+    FEE_DENOMINATOR = 1_000_000
+
     @dataclasses.dataclass(slots=True, eq=False)
     class SwapCache:
         liquidity_start: int
@@ -231,7 +233,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         if verify_address and self.address != self._verified_address():  # pragma: no branch
             raise AddressMismatch
 
-        self.name = f"{self.token0}-{self.token1} ({type(self).__name__}, {self.fee / 10000:.2f}%)"
+        self.name = f"{self.token0}-{self.token1} ({type(self).__name__}, {100 * self.fee / self.FEE_DENOMINATOR:.2f}%)"  # noqa: E501
 
         if (tick_bitmap is not None) != (tick_data is not None):
             raise DegenbotValueError(message="Provide both tick_bitmap and tick_data.")
@@ -333,7 +335,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             }
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1}, fee={self.fee}, tick spacing={self.tick_spacing})"  # noqa:E501
+        return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%, tick spacing={self.tick_spacing})"  # noqa:E501
 
     def __str__(self) -> str:
         return self.name
