@@ -152,6 +152,8 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         "int128",  # liquidityNet
     )
 
+    FEE_DENOMINATOR = 1_000_000
+
     @dataclasses.dataclass(slots=True)
     class SwapCache:
         liquidity_start: int
