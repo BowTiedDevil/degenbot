@@ -566,24 +566,31 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             )
 
     def get_absolute_price(
-        self, token: Erc20Token, override_state: PoolState | None = None
-    ) -> Fraction:
-        """
-        Get the absolute price for the given token, expressed in units of the other.
-        """
-
-        return 1 / self.get_absolute_rate(token, override_state=override_state)
-
-    def get_absolute_rate(
         self,
         token: Erc20Token,
         override_state: PoolState | None = None,
     ) -> Fraction:
         """
-        Get the absolute rate of exchange for the given token, expressed in units of the other.
-        e.g. the rate of exchange for token x in a pool with reserves R_x=100, R_y=200 is 100/200.
+        Get the absolute price for the given token, expressed in units of the other.
+        """
 
-        The rate for a V2 pool is the ratio of the token reserves.
+        return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
+
+    def get_absolute_exchange_rate(
+        self,
+        token: Erc20Token,
+        override_state: PoolState | None = None,
+    ) -> Fraction:
+        """
+        Get the absolute exchange rate for the given token, expressed in terms of a unit amount of
+        its paired token.
+
+        e.g. taking the USDC-WETH pool in https://blog.uniswap.org/uniswap-v3-math-primer — the
+        WETH/USDC exchange rate is 649004842.70137. Rounding down, this signifies that the smallest
+        swap (1 USDC) results in a 649004842 WETH output.
+
+        The exchange rate for a V2 pool is a simple ratio of the output token reserves to the input
+        token reserves.
         """
 
         if token not in self.tokens:
@@ -592,9 +599,9 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         state = self.state if override_state is None else override_state
 
         return (
-            Fraction(state.reserves_token0, state.reserves_token1)
-            if token == self.token0
-            else Fraction(state.reserves_token1, state.reserves_token0)
+            Fraction(state.reserves_token1, state.reserves_token0)
+            if token == self.token1
+            else Fraction(state.reserves_token0, state.reserves_token1)
         )
 
     def get_nominal_price(
@@ -603,13 +610,13 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         override_state: PoolState | None = None,
     ) -> Fraction:
         """
-        Get the nominal price for the given token, expressed in units of the other, corrected for
-        decimal place values.
+        Get the nominal price for the given token, expressed per nominal unit of its paired token.
+        The price is corrected for the decimal place values of both tokens.
         """
 
-        return 1 / self.get_nominal_rate(token, override_state=override_state)
+        return 1 / self.get_nominal_exchange_rate(token=token, override_state=override_state)
 
-    def get_nominal_rate(
+    def get_nominal_exchange_rate(
         self,
         token: Erc20Token,
         override_state: PoolState | None = None,
@@ -619,7 +626,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         decimal place values.
         """
 
-        return self.get_absolute_rate(token=token, override_state=override_state) * (
+        return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
             Fraction(10**self.token1.decimals, 10**self.token0.decimals)
             if token == self.token0
             else Fraction(10**self.token0.decimals, 10**self.token1.decimals)

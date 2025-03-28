@@ -1700,11 +1700,11 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     assert isinstance(v3_pool_a_state, UniswapV3PoolState)
                     assert isinstance(v3_pool_b_state, UniswapV3PoolState)
 
-                rate_of_exchange_a = v3_pool_a.get_absolute_rate(
+                rate_of_exchange_a = v3_pool_a.get_absolute_exchange_rate(
                     token=self.input_token,
                     override_state=v3_pool_a_state,
                 )
-                rate_of_exchange_b = v3_pool_b.get_absolute_rate(
+                rate_of_exchange_b = v3_pool_b.get_absolute_exchange_rate(
                     token=self.input_token,
                     override_state=v3_pool_b_state,
                 )
@@ -1784,19 +1784,19 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
                 match v2_pool, v2_pool_state:
                     case AerodromeV2Pool(), AerodromeV2PoolState() | None:
-                        rate_of_exchange_v2 = v2_pool.get_absolute_rate(
+                        rate_of_exchange_v2 = v2_pool.get_absolute_exchange_rate(
                             token=v2_input_token,
                             override_state=v2_pool_state,
                         )
                     case UniswapV2Pool(), UniswapV2PoolState() | None:
-                        rate_of_exchange_v2 = v2_pool.get_absolute_rate(
+                        rate_of_exchange_v2 = v2_pool.get_absolute_exchange_rate(
                             token=v2_input_token,
                             override_state=v2_pool_state,
                         )
                     case _:
                         raise TypeError
 
-                rate_of_exchange_v4 = v4_pool.get_absolute_rate(
+                rate_of_exchange_v4 = v4_pool.get_absolute_exchange_rate(
                     token=v4_input_token,
                     override_state=v4_pool_state,
                 )
@@ -1849,19 +1849,19 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
                 match v2_pool, v2_pool_state:
                     case UniswapV2Pool(), UniswapV2PoolState() | None:
-                        rate_of_exchange_v2 = v2_pool.get_absolute_rate(
+                        rate_of_exchange_v2 = v2_pool.get_absolute_exchange_rate(
                             token=self.input_token,
                             override_state=v2_pool_state,
                         )
                     case AerodromeV2Pool(), AerodromeV2PoolState() | None:
-                        rate_of_exchange_v2 = v2_pool.get_absolute_rate(
+                        rate_of_exchange_v2 = v2_pool.get_absolute_exchange_rate(
                             token=self.input_token,
                             override_state=v2_pool_state,
                         )
                     case _:
                         raise TypeError
 
-                rate_of_exchange_v3 = v3_pool.get_absolute_rate(
+                rate_of_exchange_v3 = v3_pool.get_absolute_exchange_rate(
                     token=self.input_token,
                     override_state=v3_pool_state,
                 )
@@ -1899,12 +1899,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
                 match v2_pool_a, v2_pool_a_state:
                     case UniswapV2Pool(), UniswapV2PoolState() | None:
-                        rate_of_exchange_a = v2_pool_a.get_absolute_rate(
+                        rate_of_exchange_a = v2_pool_a.get_absolute_exchange_rate(
                             token=self.input_token,
                             override_state=v2_pool_a_state,
                         )
                     case AerodromeV2Pool(), AerodromeV2PoolState() | None:
-                        rate_of_exchange_a = v2_pool_a.get_absolute_rate(
+                        rate_of_exchange_a = v2_pool_a.get_absolute_exchange_rate(
                             token=self.input_token,
                             override_state=v2_pool_a_state,
                         )
@@ -1913,12 +1913,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
                 match v2_pool_b, v2_pool_b_state:
                     case UniswapV2Pool(), UniswapV2PoolState() | None:
-                        rate_of_exchange_b = v2_pool_b.get_absolute_rate(
+                        rate_of_exchange_b = v2_pool_b.get_absolute_exchange_rate(
                             token=self.input_token,
                             override_state=v2_pool_b_state,
                         )
                     case AerodromeV2Pool(), AerodromeV2PoolState() | None:
-                        rate_of_exchange_b = v2_pool_b.get_absolute_rate(
+                        rate_of_exchange_b = v2_pool_b.get_absolute_exchange_rate(
                             token=self.input_token,
                             override_state=v2_pool_b_state,
                         )
@@ -1996,11 +1996,11 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             wrapped_token_address = WRAPPED_NATIVE_TOKENS[v2_pool.chain_id]
 
-            v2_pool_rate = v2_pool.get_absolute_rate(
+            v2_pool_rate = v2_pool.get_absolute_exchange_rate(
                 v2_pool.token0 if v2_pool.token0 == wrapped_token_address else v2_pool.token1
             )
 
-            v4_pool_rate = v4_pool.get_absolute_rate(
+            v4_pool_rate = v4_pool.get_absolute_exchange_rate(
                 v4_pool.token0
                 if v4_pool.token0 in (wrapped_token_address, NATIVE_CURRENCY_ADDRESS)
                 else v4_pool.token1
@@ -2124,8 +2124,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 assert isinstance(v2_swap_amounts, UniswapV2PoolSwapAmounts)
                 assert isinstance(v3_swap_amounts, UniswapV3PoolSwapAmounts)
 
-            v2_pool_rate = v2_pool.get_absolute_rate(self.input_token)
-            v3_pool_rate = v3_pool.get_absolute_rate(self.input_token)
+            v2_pool_rate = v2_pool.get_absolute_exchange_rate(self.input_token)
+            v3_pool_rate = v3_pool.get_absolute_exchange_rate(self.input_token)
 
             if v3_pool_rate > v2_pool_rate:
                 return [

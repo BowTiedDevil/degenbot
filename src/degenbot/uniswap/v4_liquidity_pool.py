@@ -1153,34 +1153,24 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         Get the absolute price for the given token, expressed in units of the other.
         """
 
-        return 1 / self.get_absolute_rate(token, override_state=override_state)
+        return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
 
-    def get_absolute_rate(
+    def get_absolute_exchange_rate(
         self,
         token: Erc20Token,
         override_state: UniswapV4PoolState | None = None,
     ) -> Fraction:
         """
-        Get the absolute rate of exchange for the given token, expressed in units of the other.
-        e.g. the rate of exchange for token x in a pool with reserves R_x=100, R_y=200 is 100/200.
+        Get the absolute exchange rate for the given token, expressed in terms of a unit amount of
+        its paired token.
 
-        The sqrt_price for a V4 pool expresses the ratio of token y / token x, so the value can be
-        directly obtained.
+        e.g. taking the USDC-WETH pool in https://blog.uniswap.org/uniswap-v3-math-primer — the
+        WETH/USDC exchange rate is 649004842.70137. Rounding down, this signifies that the smallest
+        swap (1 USDC) results in a 649004842 WETH output.
+
+        A V4 pool encodes the token1/token0 exchange rate in `sqrt_price_x96`, so it can be directly
+        obtained.
         """
-
-        # HACK: Translate between native currency and wrapped equivalent
-        if token == WRAPPED_NATIVE_TOKENS[self.chain_id] and NATIVE_CURRENCY_ADDRESS in self.tokens:
-            logger.info("(get_absolute_rate) converting from WETH -> Ether")
-            token = Erc20TokenManager(chain_id=self.chain_id).get_erc20token(
-                NATIVE_CURRENCY_ADDRESS
-            )
-        elif (
-            token == NATIVE_CURRENCY_ADDRESS and WRAPPED_NATIVE_TOKENS[self.chain_id] in self.tokens
-        ):
-            logger.info("(get_absolute_rate) converting from Ether -> WETH")
-            token = Erc20TokenManager(chain_id=self.chain_id).get_erc20token(
-                WRAPPED_NATIVE_TOKENS[self.chain_id]
-            )
 
         if token not in self.tokens:
             raise DegenbotValueError(message=f"Unknown token {token}")
@@ -1188,9 +1178,9 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         state = self.state if override_state is None else override_state
 
         return (
-            1 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-            if token == self.token0
-            else exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
+            exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
+            if token == self.token1
+            else 1 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
         )
 
     def get_nominal_price(
@@ -1203,9 +1193,9 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         decimal place values.
         """
 
-        return 1 / self.get_nominal_rate(token, override_state=override_state)
+        return 1 / self.get_nominal_exchange_rate(token, override_state=override_state)
 
-    def get_nominal_rate(
+    def get_nominal_exchange_rate(
         self,
         token: Erc20Token,
         override_state: UniswapV4PoolState | None = None,
@@ -1215,7 +1205,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         decimal place values.
         """
 
-        return self.get_absolute_rate(token=token, override_state=override_state) * (
+        return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
             Fraction(10**self.token1.decimals, 10**self.token0.decimals)
             if token == self.token0
             else Fraction(10**self.token0.decimals, 10**self.token1.decimals)
