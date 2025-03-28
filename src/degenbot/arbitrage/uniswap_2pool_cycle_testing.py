@@ -304,8 +304,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> float:
             """
-            Transfer X token from V4 -> V2, profit is difference of WETH_out from V2 and WETH_in to
-            V4
+            Calculate the expected profit for a V2 ROE > V4 ROE arbitrage that buys forward token X
+            from the V4 pool and sells it to the V2 pool.
             """
 
             forward_token_quantity = int(forward_token_amount)  # round the input down
@@ -437,8 +437,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> float:
             """
-            Transfer X token from V2 -> V4, profit is difference of WETH_out from V4 and WETH_in to
-            V2
+            Calculate the expected profit for a V4 ROE > V2 ROE arbitrage that buys forward token X
+            from the V2 pool and sells it to the V4 pool.
             """
 
             forward_token_quantity = int(forward_token_amount)  # round the input down
@@ -1800,7 +1800,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 assert forward_token not in (wrapped_currency_address, NATIVE_CURRENCY_ADDRESS)
 
                 # Arb helper vectors are built based on assumed swap direction, so verify that the
-                # pool state rate of exchanges are compatible
+                # pool states are profitable in this direction
                 if (
                     isinstance(self.swap_pools[-1], UniswapV4Pool)
                     and rate_of_exchange_v4 > rate_of_exchange_v2
@@ -2041,7 +2041,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 (
                     v2_pool.address,
                     (
-                        # if not withdrawing token0, swap is 0->1
+                        # if amounts_out for token0 is 0, swap is 0->1
                         v2_swap_amounts.amounts_out[0] == 0
                     ),
                     max(v2_swap_amounts.amounts_in),  # deposited amount
