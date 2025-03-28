@@ -1714,15 +1714,11 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     pool_hi_state = v3_pool_a_state
                     pool_lo = v3_pool_b
                     pool_lo_state = v3_pool_b_state
-                elif rate_of_exchange_b > rate_of_exchange_a:
+                else:
                     pool_hi = v3_pool_b
                     pool_hi_state = v3_pool_b_state
                     pool_lo = v3_pool_a
                     pool_lo_state = v3_pool_a_state
-                else:
-                    raise ArbitrageError(
-                        message="No arbitrage possible. Rates of exchange exactly equal."
-                    )
 
                 forward_token = (
                     v3_pool_a.token1 if self.input_token == v3_pool_a.token0 else v3_pool_a.token0
