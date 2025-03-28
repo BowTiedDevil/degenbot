@@ -205,8 +205,9 @@ class AnvilFork:
         return process
 
     def __del__(self) -> None:
-        self._process.terminate()
-        self._process.wait(timeout=10)
+        if hasattr(self, "_process"):
+            self._process.terminate()
+            self._process.wait(timeout=10)
         self.ipc_filename.unlink()
 
     def mine(self) -> None:
