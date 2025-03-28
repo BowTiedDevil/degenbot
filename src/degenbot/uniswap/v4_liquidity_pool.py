@@ -16,7 +16,7 @@ from web3.types import BlockIdentifier
 
 from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
-from degenbot.constants import MAX_INT256, MIN_INT256, WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
+from degenbot.constants import MAX_INT256, MIN_INT256, ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
     DegenbotValueError,
