@@ -380,7 +380,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     swap_multiplier = pool.get_absolute_exchange_rate(
                         token=vector.token_out,
                         override_state=v3_state,
-                    ) * Fraction(fee.denominator - fee.numerator, fee.denominator)
+                    )
 
                     # TODO: add support for mixed-fee pools if necessary
                     fee = Fraction(pool.fee, pool.FEE_DENOMINATOR)
@@ -396,10 +396,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     )
 
                     # TODO: add support for mixed-fee pools if necessary
-                    fee = Fraction(
-                        pool.fee,
-                        pool.FEE_DENOMINATOR,
-                    )
+                    fee = Fraction(pool.fee, pool.FEE_DENOMINATOR)
                     fee_multiplier = Fraction(fee.denominator - fee.numerator, fee.denominator)
 
                     multipliers.append(swap_multiplier)
