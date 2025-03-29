@@ -406,8 +406,8 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     raise DegenbotValueError(message=f"Could not identify pool {pool}.")
 
         net_rate_of_exchange = Fraction(
-            math.prod(f.numerator for f in multipliers),
-            math.prod(f.denominator for f in multipliers),
+            math.prod(multiplier.numerator for multiplier in multipliers),
+            math.prod(multiplier.denominator for multiplier in multipliers),
         )
 
         if net_rate_of_exchange < min_rate_of_exchange:
