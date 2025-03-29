@@ -110,7 +110,7 @@ def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> UniswapV3Pool:
 
 
 @pytest.fixture
-def wbtc_ether_v4_lp(fork_mainnet: AnvilFork) -> UniswapV3Pool:
+def wbtc_ether_v4_lp(fork_mainnet: AnvilFork) -> UniswapV4Pool:
     set_web3(fork_mainnet.w3)
 
     pool = pool_registry.get(
@@ -260,7 +260,9 @@ def test_v2_v4_calculation_rejects_unprofitable_opportunity(
     arb_v2_v4: _UniswapTwoPoolCycleTesting,
 ):
     arb = arb_v2_v4
-    v2_pool, v4_pool = arb.swap_pools
+
+    v2_pool, _ = arb.swap_pools
+    assert isinstance(v2_pool, UniswapV2Pool)
 
     starting_state = v2_pool.state
 
@@ -320,7 +322,10 @@ def test_v4_v2_calculation(
 
 def test_v4_v2_calculation_rejects_unprofitable_opportunity(arb_v4_v2: _UniswapTwoPoolCycleTesting):
     arb = arb_v4_v2
-    v4_pool, v2_pool = arb.swap_pools
+
+    _, v2_pool = arb.swap_pools
+
+    assert isinstance(v2_pool, UniswapV2Pool)
 
     starting_state = v2_pool.state
 
@@ -378,6 +383,7 @@ def test_v4_v2_dai_arb_base(fork_base: AnvilFork):
     base_native = token_registry.get(
         token_address=NATIVE_ADDRESS, chain_id=fork_base.w3.eth.chain_id
     )
+    assert isinstance(base_native, Erc20Token)
 
     v4_v2_arb = _UniswapTwoPoolCycleTesting(
         input_token=base_native,
@@ -410,7 +416,9 @@ def test_v4_v2_dai_arb_base(fork_base: AnvilFork):
 
     from tests.conftest import env_values
 
-    v4_v2_executor_contract_address = env_values["V4_V2_EXECUTOR_CONTRACT_ADDRESS"]
+    v4_v2_executor_contract_address = get_checksum_address(
+        env_values["V4_V2_EXECUTOR_CONTRACT_ADDRESS"]
+    )
     v4_v2_executor_contract_abi = env_values["V4_V2_EXECUTOR_CONTRACT_ABI"]
     operator_address = get_checksum_address(env_values["OPERATOR_ADDRESS"])
 
@@ -470,6 +478,7 @@ def test_v2_v4_usdc_arb_base(fork_base: AnvilFork):
     base_weth = token_registry.get(
         token_address=base_weth_address, chain_id=fork_base.w3.eth.chain_id
     )
+    assert isinstance(base_weth, Erc20Token)
 
     v2_v4_arb = _UniswapTwoPoolCycleTesting(
         input_token=base_weth,
@@ -506,9 +515,13 @@ def test_v2_v4_usdc_arb_base(fork_base: AnvilFork):
     # Send the transaction on the fork
     from tests.conftest import env_values
 
-    v4_v2_executor_contract_address = env_values["V4_V2_EXECUTOR_CONTRACT_ADDRESS"]
+    v4_v2_executor_contract_address = get_checksum_address(
+        env_values["V4_V2_EXECUTOR_CONTRACT_ADDRESS"]
+    )
     v4_v2_executor_contract_abi = env_values["V4_V2_EXECUTOR_CONTRACT_ABI"]
     operator_address = get_checksum_address(env_values["OPERATOR_ADDRESS"])
+
+    assert isinstance(v4_v2_executor_contract_abi, str)
 
     executor_contract = fork_base.w3.eth.contract(
         address=v4_v2_executor_contract_address,
