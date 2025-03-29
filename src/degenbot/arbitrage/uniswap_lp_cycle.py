@@ -360,15 +360,12 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         multipliers: list[Fraction] = []
         for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=True):
             match pool, state_overrides.get(pool, pool.state):
-                case (
-                    AerodromeV2Pool() | UniswapV2Pool(),
-                    (AerodromeV2PoolState() | UniswapV2PoolState()) as v2_state,
-                ):
+                case AerodromeV2Pool(), AerodromeV2PoolState() as aerodrome_v2_pool_state:
                     # The multiplier for the pool is the rate of exchange for the output token,
                     # reduced by the fee taken on the input amount
                     swap_multiplier = pool.get_absolute_exchange_rate(
                         token=vector.token_out,
-                        override_state=v2_state,
+                        override_state=aerodrome_v2_pool_state,
                     )
                     fee = pool.fee_token0 if vector.zero_for_one else pool.fee_token1
                     fee_multiplier = Fraction(fee.denominator - fee.numerator, fee.denominator)
@@ -376,10 +373,23 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     multipliers.append(swap_multiplier)
                     multipliers.append(fee_multiplier)
 
-                case UniswapV3Pool(), UniswapV3PoolState() as v3_state:
+                case UniswapV2Pool(), UniswapV2PoolState() as uniswap_v2_pool_state:
+                    # The multiplier for the pool is the rate of exchange for the output token,
+                    # reduced by the fee taken on the input amount
                     swap_multiplier = pool.get_absolute_exchange_rate(
                         token=vector.token_out,
-                        override_state=v3_state,
+                        override_state=uniswap_v2_pool_state,
+                    )
+                    fee = pool.fee_token0 if vector.zero_for_one else pool.fee_token1
+                    fee_multiplier = Fraction(fee.denominator - fee.numerator, fee.denominator)
+
+                    multipliers.append(swap_multiplier)
+                    multipliers.append(fee_multiplier)
+
+                case UniswapV3Pool(), UniswapV3PoolState() as uniswap_v3_pool_state:
+                    swap_multiplier = pool.get_absolute_exchange_rate(
+                        token=vector.token_out,
+                        override_state=uniswap_v3_pool_state,
                     )
 
                     # TODO: add support for mixed-fee pools if necessary
@@ -389,10 +399,10 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     multipliers.append(swap_multiplier)
                     multipliers.append(fee_multiplier)
 
-                case UniswapV4Pool(), UniswapV4PoolState() as v4_state:
+                case UniswapV4Pool(), UniswapV4PoolState() as uniswap_v4_pool_state:
                     swap_multiplier = pool.get_absolute_exchange_rate(
                         token=vector.token_out,
-                        override_state=v4_state,
+                        override_state=uniswap_v4_pool_state,
                     )
 
                     # TODO: add support for mixed-fee pools if necessary
