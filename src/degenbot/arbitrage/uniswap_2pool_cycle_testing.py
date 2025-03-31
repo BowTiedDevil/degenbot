@@ -557,17 +557,17 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> ArbitrageCalculationResult:
             # STRATEGY:
-            # - swap WETH_in -> X at V2
+            # - swap WETH_in -> X at V2 (exact output)
             # - transfer X from V2 -> V4
-            # - swap X -> WETH_out at V4
+            # - swap X -> WETH_out at V4 (exact input)
             # - profit = WETH_out - WETH_in
 
-            assert forward_token != NATIVE_CURRENCY_ADDRESS
-            assert forward_token != WRAPPED_NATIVE_TOKENS[v4_pool.chain_id]
+            assert forward_token not in (
+                NATIVE_CURRENCY_ADDRESS,
+                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
+            )
 
             start = time.perf_counter()
-
-            amounts: list[UniswapV2PoolSwapAmounts | UniswapV4PoolSwapAmounts] = []
 
             try:
                 v4_pool.calculate_tokens_out_from_tokens_in(
@@ -585,9 +585,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 else v2_pool.reserves_token1 - 1
             )
 
-            assert v2_pool_max_output > 0, (
-                f"{self._pool_viability}, {forward_token=}, {self._swap_vectors=}, {self.id=}"
-            )
+            assert v2_pool_max_output > 0
             assert v4_pool_max_input > 0
 
             # Bound the input to the Brent optimizer
@@ -619,15 +617,21 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     },
                 )
                 forward_token_amount = int(opt.x)
+                if forward_token_amount == 0:
+                    raise ArbitrageError(message="Zero amount optimum")
 
                 if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
                     logger.debug(
                         f"V4/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
                     )
 
+            assert forward_token_amount >= 1
+
             # --------------------------------------------------------------------------------------
             # Encode the swap amounts to capture the arbitrage
             # --------------------------------------------------------------------------------------
+
+            amounts: list[UniswapV2PoolSwapAmounts | UniswapV4PoolSwapAmounts] = []
 
             # Set the flag by checking the position of the token being sold
             v4_pool_zero_for_one = v4_pool.token0 == forward_token
@@ -1374,17 +1378,17 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             v4_pool_override: UniswapV4PoolState | None = None,
         ) -> ArbitrageCalculationResult:
             # STRATEGY:
-            # - swap WETH_in -> X at V4
+            # - swap WETH_in -> X at V4 (exact output)
             # - transfer X from V4 -> V2
-            # - swap X -> WETH_out at V2
+            # - swap X -> WETH_out at V2 (exact input)
             # - profit = WETH_out - WETH_in
 
-            assert forward_token != NATIVE_CURRENCY_ADDRESS
-            assert forward_token != WRAPPED_NATIVE_TOKENS[v4_pool.chain_id]
+            assert forward_token not in (
+                NATIVE_CURRENCY_ADDRESS,
+                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
+            )
 
             start = time.perf_counter()
-
-            amounts: list[UniswapV2PoolSwapAmounts | UniswapV4PoolSwapAmounts] = []
 
             try:
                 v4_pool.calculate_tokens_in_from_tokens_out(
@@ -1409,48 +1413,50 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 float(v4_pool_max_output),
             )
 
-            assert forward_token_bounds[0] <= forward_token_bounds[1], (
-                f"{forward_token_bounds[0]=}, {forward_token_bounds[1]=}"
-            )
+            assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            opt: OptimizeResult = minimize_scalar(
-                fun=lambda x: _arb_profit_low_roe_v4_high_roe_v2(
-                    v4_pool=v4_pool,
-                    v2_pool=v2_pool,
-                    forward_token_amount=x,
-                    v4_pool_state_override=v4_pool_override,
-                    v2_pool_state_override=v2_pool_override,
-                    forward_token=forward_token,
-                ),
-                method="bounded",
-                bounds=forward_token_bounds,
-                options={
-                    "xatol": XATOL,
-                },
-            )
-
-            if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
-                logger.debug(
-                    f"V4/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+            if forward_token_bounds[1] == 1.0:
+                forward_token_amount = 1
+            else:
+                opt: OptimizeResult = minimize_scalar(
+                    fun=lambda x: _arb_profit_low_roe_v4_high_roe_v2(
+                        v4_pool=v4_pool,
+                        v2_pool=v2_pool,
+                        forward_token_amount=x,
+                        v4_pool_state_override=v4_pool_override,
+                        v2_pool_state_override=v2_pool_override,
+                        forward_token=forward_token,
+                    ),
+                    method="bounded",
+                    bounds=forward_token_bounds,
+                    options={
+                        "xatol": XATOL,
+                    },
                 )
+                forward_token_amount = int(opt.x)
+                if forward_token_amount == 0:
+                    raise ArbitrageError(message="Zero amount optimum")
 
-            forward_token_amount = int(opt.x)
-            logger.debug(f"{forward_token_amount=}")
+                if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
+                    logger.debug(
+                        f"V4/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                    )
 
-            amounts = []
+            assert forward_token_amount >= 1
 
             # --------------------------------------------------------------------------------------
             # Encode the swap amounts to capture the arbitrage
             # --------------------------------------------------------------------------------------
 
-            # Set the flag by checking the position of the token being sold
+            amounts: list[UniswapV2PoolSwapAmounts | UniswapV4PoolSwapAmounts] = []
+
+            # Set the flag by checking the position of the deposited asset (token_in)
             v2_pool_zero_for_one = v2_pool.token0 == forward_token
 
-            # Set the flag by checking the position of the token being purchased
+            # Set the flag by checking the position of the purchased asset (token_out)
             v4_pool_zero_for_one = v4_pool.token1 == forward_token
 
             try:
-                assert forward_token_amount >= 0
                 weth_in = v4_pool.calculate_tokens_in_from_tokens_out(
                     token_out=forward_token,
                     token_out_quantity=forward_token_amount,
@@ -1503,8 +1509,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
 
             best_profit = weth_out - weth_in
-
-            if forward_token_amount <= 0 or best_profit <= 0:
+            if best_profit <= 0:
                 raise ArbitrageError(message="No possible arbitrage")
 
             logger.debug(f"{best_profit=}, {weth_out=}, {weth_in=}")
@@ -2308,11 +2313,11 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             case UniswapV3Pool(), UniswapV3Pool():
                 return _generate_v3_v3_payloads()
             case (
-                UniswapV2Pool() | AerodromeV2Pool(),
+                AerodromeV2Pool() | UniswapV2Pool(),
                 UniswapV3Pool(),
             ) | (
                 UniswapV3Pool(),
-                UniswapV2Pool() | AerodromeV2Pool(),
+                AerodromeV2Pool() | UniswapV2Pool(),
             ):
                 return _generate_v3_v2_payloads()
             case (
@@ -2321,11 +2326,11 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             ):
                 return _generate_v2_v2_payloads()
             case (
-                UniswapV2Pool() | AerodromeV2Pool(),
+                AerodromeV2Pool() | UniswapV2Pool(),
                 UniswapV4Pool(),
             ) | (
                 UniswapV4Pool(),
-                UniswapV2Pool() | AerodromeV2Pool(),
+                AerodromeV2Pool() | UniswapV2Pool(),
             ):
                 return _generate_v4_v2_payloads()
             case _:
