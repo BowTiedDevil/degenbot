@@ -267,10 +267,15 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
         if state_overrides is not None:
             pool_states.update(state_overrides)
 
-        def v2_v2_calc_convex(
+        def v2_only_calc(
             pools: Sequence[Pool],
             pool_states: Mapping[Pool, PoolState],
         ) -> ArbitrageCalculationResult:
+            """
+            Calculate the optimal arbitrage for a sequence of Uniswap V2 (or compatible) pools of
+            arbitrary length.
+            """
+
             def get_token_balance_at_pool(
                 token: Erc20Token,
                 pool: Pool,
@@ -438,18 +443,6 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
                             )
                         except (EVMRevertError, LiquidityPoolError) as e:
                             raise ArbitrageError from e
-                        else:
-                            amounts.append(
-                                UniswapV2PoolSwapAmounts(
-                                    pool=pool.address,
-                                    amounts_in=(amount_in, 0) if zero_for_one else (0, amount_in),
-                                    amounts_out=(0, amount_out)
-                                    if zero_for_one
-                                    else (amount_out, 0),
-                                )
-                            )
-                            amount_in = amount_out
-                            token_in = token_out
 
                     case UniswapV2Pool(), UniswapV2PoolState():
                         try:
@@ -460,19 +453,20 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
                             )
                         except (EVMRevertError, LiquidityPoolError) as e:
                             raise ArbitrageError from e
-                        else:
-                            amounts.append(
-                                UniswapV2PoolSwapAmounts(
-                                    pool=pool.address,
-                                    amounts_in=(amount_in, 0) if zero_for_one else (0, amount_in),
-                                    amounts_out=(0, amount_out)
-                                    if zero_for_one
-                                    else (amount_out, 0),
-                                )
-                            )
 
-                            amount_in = amount_out
-                            token_in = token_out
+                if amount_out == 0:
+                    raise ArbitrageError(message="Zero amount swap")
+
+                amounts.append(
+                    UniswapV2PoolSwapAmounts(
+                        pool=pool.address,
+                        amounts_in=(amount_in, 0) if zero_for_one else (0, amount_in),
+                        amounts_out=(0, amount_out) if zero_for_one else (amount_out, 0),
+                    )
+                )
+
+                amount_in = amount_out
+                token_in = token_out
 
             if (best_profit := amount_out - initial_amount_in) <= 0:
                 raise Unprofitable
@@ -501,37 +495,16 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
                 state_block=newest_state_block,
             )
 
-        match self.swap_pools:
-            case (
-                UniswapV2Pool() | AerodromeV2Pool(),
-                UniswapV2Pool() | AerodromeV2Pool(),
-            ):
-                return v2_v2_calc_convex(
-                    pools=self.swap_pools,
-                    pool_states=pool_states,
-                )
-            case (
-                UniswapV2Pool() | AerodromeV2Pool(),
-                UniswapV2Pool() | AerodromeV2Pool(),
-                UniswapV2Pool() | AerodromeV2Pool(),
-            ):
-                return v2_v2_calc_convex(
-                    pools=self.swap_pools,
-                    pool_states=pool_states,
-                )
-            case (
-                UniswapV2Pool() | AerodromeV2Pool(),
-                UniswapV2Pool() | AerodromeV2Pool(),
-                UniswapV2Pool() | AerodromeV2Pool(),
-                UniswapV2Pool() | AerodromeV2Pool(),
-            ):
-                return v2_v2_calc_convex(
-                    pools=self.swap_pools,
-                    pool_states=pool_states,
-                )
-            case _:
-                err = f"Cannot identify pools {self.swap_pools}"
-                raise ValueError(err)
+        if all(
+            pool for pool in self.swap_pools if isinstance(pool, AerodromeV2Pool | UniswapV2Pool)
+        ):
+            return v2_only_calc(
+                pools=self.swap_pools,
+                pool_states=pool_states,
+            )
+
+        err = "One or more pools is not supported by this arbitrage strategy."
+        raise ValueError(err)
 
     def generate_payloads(  # type: ignore[override]
         self,
