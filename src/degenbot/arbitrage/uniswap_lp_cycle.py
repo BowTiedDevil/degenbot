@@ -56,6 +56,22 @@ type SwapAmount = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV
 type PoolId = bytes | HexStr
 
 
+UNISWAP_V2_SWAP_FUNCTION_PROTOTYPE = "swap(uint256,uint256,address,bytes)"
+UNISWAP_V2_SWAP_FUNCTION_SELECTOR = Web3.keccak(
+    text=UNISWAP_V2_SWAP_FUNCTION_PROTOTYPE,
+)[:4]
+
+UNISWAP_V3_SWAP_FUNCTION_PROTOTYPE = "swap(address,bool,int256,uint160,bytes)"
+UNISWAP_V3_SWAP_FUNCTION_SELECTOR = Web3.keccak(
+    text=UNISWAP_V3_SWAP_FUNCTION_PROTOTYPE,
+)[:4]
+
+ERC20_TOKEN_TRANSFER_FUNCTION_PROTOTYPE = "transfer(address,uint256)"
+ERC20_TOKEN_TRANSFER_FUNCTION_SELECTOR = Web3.keccak(
+    text=ERC20_TOKEN_TRANSFER_FUNCTION_PROTOTYPE,
+)[:4]
+
+
 class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
     def _notify_subscribers(self: Publisher, message: Message) -> None:
         for subscriber in self._subscribers:
@@ -652,30 +668,31 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
             else:
                 swap_destination_address = from_address
 
-            match i, swap_pool, _swap_amounts:
-                case 0, (AerodromeV2Pool() | UniswapV2Pool()) as first_pool, _:
+            match swap_pool, _swap_amounts:
+                case AerodromeV2Pool() | UniswapV2Pool(), UniswapV2PoolSwapAmounts():
                     # Special case: If first pool is type V2, input token must be transferred prior
                     # to the swap
-                    payloads.append(
-                        (
-                            # address
-                            self.input_token.address,
-                            # bytes calldata
-                            Web3.keccak(text="transfer(address,uint256)")[:4]
-                            + eth_abi.abi.encode(
-                                types=(
-                                    "address",
-                                    "uint256",
+                    if i == 0:
+                        payloads.append(
+                            (
+                                # address
+                                self.input_token.address,
+                                # bytes calldata
+                                ERC20_TOKEN_TRANSFER_FUNCTION_SELECTOR
+                                + eth_abi.abi.encode(
+                                    types=(
+                                        "address",
+                                        "uint256",
+                                    ),
+                                    args=(
+                                        swap_pool.address,
+                                        swap_amount,
+                                    ),
                                 ),
-                                args=(
-                                    first_pool.address,
-                                    swap_amount,
-                                ),
-                            ),
-                            msg_value,
+                                msg_value,
+                            )
                         )
-                    )
-                case _, AerodromeV2Pool() | UniswapV2Pool(), UniswapV2PoolSwapAmounts():
+
                     logger.debug(f"PAYLOAD: building V2 swap at pool {i}")
                     logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
                     logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
@@ -686,7 +703,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                             # address
                             swap_pool.address,
                             # bytes calldata
-                            Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
+                            UNISWAP_V2_SWAP_FUNCTION_SELECTOR
                             + eth_abi.abi.encode(
                                 types=(
                                     "uint256",
@@ -703,7 +720,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                             msg_value,
                         )
                     )
-                case _, UniswapV3Pool(), UniswapV3PoolSwapAmounts():
+                case UniswapV3Pool(), UniswapV3PoolSwapAmounts():
                     logger.debug(f"PAYLOAD: building V3 swap at pool {i}")
                     logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
                     logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
@@ -714,7 +731,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                             # address
                             swap_pool.address,
                             # bytes calldata
-                            Web3.keccak(text="swap(address,bool,int256,uint160,bytes)")[:4]
+                            UNISWAP_V3_SWAP_FUNCTION_SELECTOR
                             + eth_abi.abi.encode(
                                 types=(
                                     "address",
