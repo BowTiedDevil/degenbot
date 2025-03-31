@@ -2003,21 +2003,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 if isinstance(amount, UniswapV4PoolSwapAmounts)
             )
 
-            assert isinstance(v2_pool, AerodromeV2Pool | UniswapV2Pool)
-            assert isinstance(v4_pool, UniswapV4Pool)
-
-            wrapped_token_address = WRAPPED_NATIVE_TOKENS[v2_pool.chain_id]
-
-            v2_pool_rate = v2_pool.get_absolute_exchange_rate(
-                v2_pool.token0 if v2_pool.token0 == wrapped_token_address else v2_pool.token1
-            )
-
-            v4_pool_rate = v4_pool.get_absolute_exchange_rate(
-                v4_pool.token0
-                if v4_pool.token0 in (wrapped_token_address, NATIVE_CURRENCY_ADDRESS)
-                else v4_pool.token1
-            )
-
             """
             PAYLOAD DEFINITION FROM CONTRACT
 
@@ -2036,11 +2021,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 amount_in: uint256
                 amount_out: uint256
             """
-
-            if v4_pool_rate > v2_pool_rate:
-                assert v4_swap_amounts.amount_specified < 0  # exact input swap at V4
-            else:
-                assert v4_swap_amounts.amount_specified > 0  # exact output swap at V4
 
             return [
                 # V4 payload
