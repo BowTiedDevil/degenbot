@@ -198,6 +198,9 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
             pool_state = pool_states[pool]
             _token_in_quantity = token_in_quantity if i == 0 else _token_out_quantity
 
+            if _token_in_quantity == 0:
+                raise ArbitrageError(message="Zero amount swap")
+
             try:
                 match pool, pool_state:
                     case AerodromeV2Pool(), AerodromeV2PoolState() | None:

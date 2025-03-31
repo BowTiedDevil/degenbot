@@ -428,6 +428,9 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
                     amount_in = initial_amount_in
                     token_in = self.input_token
 
+                if amount_in == 0:
+                    raise ArbitrageError(message="Zero amount swap")
+
                 zero_for_one = token_in == pool.token0
                 token_out = pool.token1 if zero_for_one else pool.token0
 
