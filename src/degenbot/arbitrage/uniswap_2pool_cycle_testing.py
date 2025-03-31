@@ -239,7 +239,7 @@ type PoolId = bytes | HexStr
 class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
     convex_problem: ClassVar[Problem] = _build_convex_problem(num_pools=2)
 
-    def _calculate(
+    def _calculate(  # type: ignore[override]
         self,
         # TODO: add support for PoolId in overrides
         state_overrides: Mapping[ChecksumAddress | PoolId, PoolState] | None = None,
@@ -2080,7 +2080,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 amount_out=max(v2_swap_amounts.amounts_out),
             )
 
-        def _generate_v3_v3_payloads() -> Sequence[tuple[ChecksumAddress, bytes, bool]]:
+        def _generate_v3_v3_payloads() -> list[tuple[ChecksumAddress, bytes, bool]]:
             pool_hi_swap_amount, pool_lo_swap_amount = pool_swap_amounts
 
             if TYPE_CHECKING:
@@ -2135,7 +2135,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 ),
             ]
 
-        def _generate_v3_v2_payloads() -> Sequence[tuple[ChecksumAddress, bytes, bool]]:
+        def _generate_v3_v2_payloads() -> list[tuple[ChecksumAddress, bytes, bool]]:
             v2_pool = next(
                 pool
                 for pool in self.swap_pools
@@ -2271,7 +2271,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 ),
             ]
 
-        def _generate_v2_v2_payloads() -> Sequence[tuple[ChecksumAddress, bytes, bool]]:
+        def _generate_v2_v2_payloads() -> list[tuple[ChecksumAddress, bytes, bool]]:
             pool_hi_swap_amount, pool_lo_swap_amount = pool_swap_amounts
             if TYPE_CHECKING:
                 assert isinstance(pool_hi_swap_amount, UniswapV2PoolSwapAmounts)

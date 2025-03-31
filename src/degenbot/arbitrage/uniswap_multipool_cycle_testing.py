@@ -253,7 +253,7 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
         4: _build_convex_problem(num_pools=4),
     }
 
-    def _calculate(
+    def _calculate(  # type: ignore[override]
         self,
         state_overrides: Mapping[Pool, PoolState] | None = None,
     ) -> ArbitrageCalculationResult:
