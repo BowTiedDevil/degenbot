@@ -1,6 +1,7 @@
 import time
 import warnings
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from fractions import Fraction
 from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -65,6 +66,25 @@ XATOL = 1.0
 
 DEBUG_VERIFY_CACHED_PROBLEM = False
 DEBUG_SLOW_CALCS = False
+
+
+@dataclass(slots=True, frozen=True)
+class V4Payload:
+    currency0: ChecksumAddress
+    currency1: ChecksumAddress
+    fee: int
+    tick_spacing: int
+    hooks: ChecksumAddress
+    amount_specified: int
+    zero_for_one: bool
+
+
+@dataclass(slots=True, frozen=True)
+class V2Payload:
+    pool_address: ChecksumAddress
+    zero_for_one: bool
+    amount_in: int
+    amount_out: int
 
 
 class InvalidForwardAmount(ArbitrageError): ...
@@ -1985,17 +2005,18 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             will_callback: bool
         """
 
-        def _generate_v4_v2_payloads() -> Sequence[tuple[Any, ...]]:
+        def _generate_v4_v2_payloads() -> tuple[V4Payload, V2Payload]:
             # TODO: rewrite for delivery by tstore executor
 
-            # Identify the V4 pool, which always initializes the swap
-            if isinstance(self.swap_pools[0], UniswapV4Pool):
-                v4_pool, v2_pool = self.swap_pools
-            elif isinstance(self.swap_pools[0], UniswapV2Pool | AerodromeV2Pool):
-                v2_pool, v4_pool = self.swap_pools
-            else:
-                err_msg = f"Could not identify pool types {self.swap_pools}"
-                raise TypeError(err_msg)
+            v2_pool = next(
+                pool
+                for pool in self.swap_pools
+                if isinstance(pool, AerodromeV2Pool | UniswapV2Pool)
+            )
+            v4_pool = next(pool for pool in self.swap_pools if isinstance(pool, UniswapV4Pool))
+
+            assert isinstance(v2_pool, AerodromeV2Pool | UniswapV2Pool)
+            assert isinstance(v4_pool, UniswapV4Pool)
 
             v2_swap_amounts = next(
                 amount
@@ -2027,28 +2048,20 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 amount_out: uint256
             """
 
-            return [
-                # V4 payload
-                (
-                    v4_pool.token0.address,
-                    v4_pool.token1.address,
-                    v4_pool.fee,
-                    v4_pool.tick_spacing,
-                    v4_pool.hook_address,
-                    v4_swap_amounts.amount_specified,
-                    v4_swap_amounts.zero_for_one,
-                ),
-                # V2 payload
-                (
-                    v2_pool.address,
-                    (
-                        # if amounts_out for token0 is 0, swap is 0->1
-                        v2_swap_amounts.amounts_out[0] == 0
-                    ),
-                    max(v2_swap_amounts.amounts_in),  # deposited amount
-                    max(v2_swap_amounts.amounts_out),  # withdrawn amount
-                ),
-            ]
+            return V4Payload(
+                currency0=v4_pool.token0.address,
+                currency1=v4_pool.token1.address,
+                fee=v4_pool.fee,
+                tick_spacing=v4_pool.tick_spacing,
+                hooks=v4_pool.hook_address,
+                amount_specified=v4_swap_amounts.amount_specified,
+                zero_for_one=v4_swap_amounts.zero_for_one,
+            ), V2Payload(
+                pool_address=v2_pool.address,
+                zero_for_one=v2_swap_amounts.amounts_out[0] == 0,
+                amount_in=max(v2_swap_amounts.amounts_in),
+                amount_out=max(v2_swap_amounts.amounts_out),
+            )
 
         def _generate_v3_v3_payloads() -> Sequence[tuple[ChecksumAddress, bytes, bool]]:
             pool_hi_swap_amount, pool_lo_swap_amount = pool_swap_amounts
@@ -2106,20 +2119,29 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             ]
 
         def _generate_v3_v2_payloads() -> Sequence[tuple[ChecksumAddress, bytes, bool]]:
-            # Identify the V3 pool, which always initializes the swap
-            if isinstance(self.swap_pools[0], UniswapV3Pool):
-                v3_pool, v2_pool = self.swap_pools
-            elif isinstance(self.swap_pools[0], UniswapV2Pool | AerodromeV2Pool):
-                v2_pool, v3_pool = self.swap_pools
-            else:
-                err_msg = f"Could not identify pool types {self.swap_pools}"
-                raise TypeError(err_msg)
+            v2_pool = next(
+                pool
+                for pool in self.swap_pools
+                if isinstance(pool, AerodromeV2Pool | UniswapV2Pool)
+            )
+            v3_pool = next(pool for pool in self.swap_pools if isinstance(pool, UniswapV3Pool))
 
-            # TODO: generalize the ordering of swap amounts
-            v3_swap_amounts, v2_swap_amounts = pool_swap_amounts
-            if TYPE_CHECKING:
-                assert isinstance(v2_swap_amounts, UniswapV2PoolSwapAmounts)
-                assert isinstance(v3_swap_amounts, UniswapV3PoolSwapAmounts)
+            assert isinstance(v2_pool, AerodromeV2Pool | UniswapV2Pool)
+            assert isinstance(v3_pool, UniswapV3Pool)
+
+            v2_swap_amounts = next(
+                amount
+                for amount in pool_swap_amounts
+                if isinstance(amount, UniswapV2PoolSwapAmounts)
+            )
+            v3_swap_amounts = next(
+                amount
+                for amount in pool_swap_amounts
+                if isinstance(amount, UniswapV3PoolSwapAmounts)
+            )
+
+            assert isinstance(v2_swap_amounts, UniswapV2PoolSwapAmounts)
+            assert isinstance(v3_swap_amounts, UniswapV3PoolSwapAmounts)
 
             v2_pool_rate = v2_pool.get_absolute_exchange_rate(self.input_token)
             v3_pool_rate = v3_pool.get_absolute_exchange_rate(self.input_token)
