@@ -428,8 +428,8 @@ def test_v4_v2_dai_arb_base(fork_base: AnvilFork):
     )
     v4_payload, v2_payload = arbitrage_payloads
     arbitrage_transaction_params = executor_contract.functions.execute(
-        v2_payload=v2_payload,
-        v4_payload=v4_payload,
+        v2_payload=dataclasses.astuple(v2_payload),
+        v4_payload=dataclasses.astuple(v4_payload),
     ).build_transaction(
         transaction={
             "from": operator_address,
@@ -532,8 +532,8 @@ def test_v2_v4_usdc_arb_base(fork_base: AnvilFork):
     # The transaction should fail because the hook is not modeled
     with pytest.raises(web3.exceptions.Web3Exception):
         executor_contract.functions.execute(
-            v2_payload=v2_payload,
-            v4_payload=v4_payload,
+            v2_payload=dataclasses.astuple(v2_payload),
+            v4_payload=dataclasses.astuple(v4_payload),
         ).build_transaction(
             transaction={
                 "from": operator_address,
