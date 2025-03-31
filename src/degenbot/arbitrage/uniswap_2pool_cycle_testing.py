@@ -807,6 +807,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
 
             forward_token_amount = int(opt.x)
+            if forward_token_amount == 0:
+                raise ArbitrageError(message="Zero amount optimum")
 
             amounts: list[UniswapV3PoolSwapAmounts] = []
 
@@ -1282,6 +1284,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     },
                 )
                 forward_token_amount = int(opt.x)
+                if forward_token_amount == 0:
+                    raise ArbitrageError(message="Zero amount optimum")
 
                 if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
                     logger.debug(
@@ -1612,6 +1616,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
 
             forward_token_amount = int(opt.x)
+            if forward_token_amount == 0:
+                raise ArbitrageError(message="Zero amount optimum")
 
             amounts = []
 
