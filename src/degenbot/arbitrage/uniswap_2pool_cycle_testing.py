@@ -613,10 +613,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 1.0,
                 float(min(v4_pool_max_input, v2_pool_max_output)),
             )
-
-            assert forward_token_bounds[0] <= forward_token_bounds[1], (
-                f"{forward_token_bounds[0]=}, {forward_token_bounds[1]=}"
-            )
+            assert forward_token_bounds[0] <= forward_token_bounds[1]
 
             if forward_token_bounds[1] == 1.0:
                 forward_token_amount = 1
@@ -786,10 +783,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 1.0,
                 float(min(v3_pool_hi_max_input, v3_pool_lo_max_output)),
             )
-
-            assert forward_token_bounds[0] <= forward_token_bounds[1], (
-                f"{forward_token_bounds[0]=}, {forward_token_bounds[1]=}"
-            )
+            assert forward_token_bounds[0] <= forward_token_bounds[1]
 
             opt: OptimizeResult = minimize_scalar(
                 fun=partial(
@@ -813,7 +807,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
 
             forward_token_amount = int(opt.x)
-            logger.debug(f"{forward_token_amount=}")
+
             amounts: list[UniswapV3PoolSwapAmounts] = []
 
             try:
@@ -1267,10 +1261,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     )
                 ),
             )
-
-            assert forward_token_bounds[0] <= forward_token_bounds[1], (
-                f"{forward_token_bounds[0]=}, {forward_token_bounds[1]=}"
-            )
+            assert forward_token_bounds[0] <= forward_token_bounds[1]
 
             if forward_token_bounds[1] == 1.0:
                 forward_token_amount = 1
@@ -1597,9 +1588,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 float(v3_pool_max_output),
             )
 
-            assert forward_token_bounds[0] <= forward_token_bounds[1], (
-                f"{forward_token_bounds[0]=}, {forward_token_bounds[1]=}"
-            )
+            assert forward_token_bounds[0] <= forward_token_bounds[1]
 
             opt: OptimizeResult = minimize_scalar(
                 fun=lambda x: _arb_profit_low_roe_v3_high_roe_v2(
@@ -1623,7 +1612,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
 
             forward_token_amount = int(opt.x)
-            logger.debug(f"{forward_token_amount=}")
 
             amounts = []
 
