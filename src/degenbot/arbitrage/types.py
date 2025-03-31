@@ -18,6 +18,9 @@ class ArbitrageCalculationResult:
     swap_amounts: list[Any]
     state_block: BlockNumber | None
 
+    def __post_init__(self) -> None:
+        assert self.input_amount != 0
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class CurveStableSwapPoolSwapAmounts:
@@ -50,6 +53,12 @@ class UniswapV2PoolSwapAmounts:
     amounts_out: tuple[int, int]
     recipient: ChecksumAddress | None = None
 
+    def __post_init__(self) -> None:
+        assert self.amounts_in != (0, 0)
+        assert self.amounts_out != (0, 0)
+        assert 0 in self.amounts_in
+        assert 0 in self.amounts_out
+
 
 @dataclasses.dataclass(slots=True)
 class UniswapV3PoolSwapAmounts:
@@ -59,6 +68,9 @@ class UniswapV3PoolSwapAmounts:
     sqrt_price_limit_x96: int
     recipient: ChecksumAddress | None = None
 
+    def __post_init__(self) -> None:
+        assert self.amount_specified != 0
+
 
 @dataclasses.dataclass(slots=True)
 class UniswapV4PoolSwapAmounts:
@@ -67,6 +79,9 @@ class UniswapV4PoolSwapAmounts:
     zero_for_one: bool
     sqrt_price_limit_x96: int
     recipient: ChecksumAddress | None = None
+
+    def __post_init__(self) -> None:
+        assert self.amount_specified != 0
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
