@@ -11,18 +11,22 @@ class DegenbotError(Exception):
     """
     Base exception used as the parent class for all exceptions raised by this package.
 
-    This allows client code to catch `DegenbotError` and specific derived classes separately, e.g.:
+    Calling code should catch `DegenbotError` and derived classes separately before general
+    exceptions, e.g.:
 
     ```
     try:
         degenbot.some_function()
+    except SpecificDegenbotError:
+        ... # handle a specific exception
     except DegenbotError:
-        # deal with degenbot exception
+        ... # handle non-specific degenbot exception
     except Exception:
-        # deal with other exceptions
+        ... # handle exceptions raised by 3rd party dependencies or Python built-ins
     ```
 
-    An optional string-formatted message may be attached to the exception.
+    An optional string-formatted message may be attached to the exception and retrieved by accessing
+    the `.message` attribute.
     """
 
     message: str | None = None
