@@ -709,7 +709,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
 
             best_profit = weth_out - weth_in
-
             if forward_token_amount <= 0 or best_profit <= 0:
                 raise ArbitrageError(message="No possible arbitrage")
 
@@ -868,7 +867,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 raise ArbitrageError from e
 
             best_profit = weth_out - weth_in
-
             if forward_token_amount <= 0 or best_profit <= 0:
                 raise ArbitrageError(message="No possible arbitrage")
 
@@ -1358,7 +1356,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 raise ArbitrageError from e
 
             best_profit = weth_out_v3 - weth_in_v2
-
             if forward_token_amount <= 0 or best_profit <= 0:
                 raise ArbitrageError(message="No possible arbitrage")
 
@@ -1686,7 +1683,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 raise ArbitrageError from e
 
             best_profit = weth_out_v2 - weth_in_v3
-
             if forward_token_amount <= 0 or best_profit <= 0:
                 raise ArbitrageError(message="No possible arbitrage")
 
@@ -2208,6 +2204,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                         False,
                     ),
                 ]
+
             return [
                 (
                     # PAYLOAD 0: V3 swap, forward token out, V2 recipient
