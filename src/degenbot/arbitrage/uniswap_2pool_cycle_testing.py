@@ -362,9 +362,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     token_out_quantity=forward_token_quantity,
                     override_state=v4_pool_state_override,
                 )
-            except IncompleteSwap as exc:
-                weth_in = exc.amount_in
-            except PossibleInaccurateResult as exc:
+            except (IncompleteSwap, PossibleInaccurateResult) as exc:
                 weth_in = exc.amount_in
             finally:
                 calc_in_time = time.perf_counter() - calc_start
@@ -477,9 +475,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     token_in_quantity=forward_token_quantity,
                     override_state=v4_pool_state_override,
                 )
-            except IncompleteSwap as exc:
-                weth_out = exc.amount_out
-            except PossibleInaccurateResult as exc:
+            except (IncompleteSwap, PossibleInaccurateResult) as exc:
                 weth_out = exc.amount_out
             finally:
                 calc_out_time = time.perf_counter() - calc_start
