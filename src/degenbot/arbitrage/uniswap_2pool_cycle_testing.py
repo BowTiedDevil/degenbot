@@ -80,6 +80,13 @@ class V4Payload:
 
 
 @dataclass(slots=True, frozen=True)
+class V3Payload:
+    pool_address: ChecksumAddress
+    zero_for_one: bool
+    amount_specified: int
+
+
+@dataclass(slots=True, frozen=True)
 class V2Payload:
     pool_address: ChecksumAddress
     zero_for_one: bool
