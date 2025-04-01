@@ -318,7 +318,6 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         copied_attributes = ()
 
         dropped_attributes = (
-            "_chain_id",
             "_state_cache",
             "_state_lock",
             "_subscribers",
