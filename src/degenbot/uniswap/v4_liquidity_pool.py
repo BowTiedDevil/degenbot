@@ -493,7 +493,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         self,
         zero_for_one: bool,
         amount_specified: int,
-        sqrt_price_limit_x96: int,
+        sqrt_price_x96_limit: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> tuple[SwapDelta, FeeToProtocol, SwapFee, SwapResult]:
         """
@@ -559,17 +559,17 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             )
 
         if zero_for_one:
-            if sqrt_price_limit_x96 >= sqrt_price_x96_start:
+            if sqrt_price_x96_limit >= sqrt_price_x96_start:
                 raise EVMRevertError(error="PriceLimitAlreadyExceeded")
             # Swaps can never occur at MIN_TICK, only at MIN_TICK + 1, except at initialization of
             # a pool. Under certain circumstances outlined below, the tick will preemptively reach
             # MIN_TICK without swapping there
-            if sqrt_price_limit_x96 <= MIN_SQRT_PRICE:
+            if sqrt_price_x96_limit <= MIN_SQRT_PRICE:
                 raise EVMRevertError(error="PriceLimitOutOfBounds")
         else:
-            if sqrt_price_limit_x96 <= sqrt_price_x96_start:
+            if sqrt_price_x96_limit <= sqrt_price_x96_start:
                 raise EVMRevertError(error="PriceLimitAlreadyExceeded")
-            if sqrt_price_limit_x96 >= MAX_SQRT_PRICE:
+            if sqrt_price_x96_limit >= MAX_SQRT_PRICE:
                 raise EVMRevertError(error="PriceLimitOutOfBounds")
 
         step = self.StepComputations()
@@ -582,7 +582,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             )
 
         while not (
-            amount_specified_remaining == 0 or result.sqrt_price_x96 == sqrt_price_limit_x96
+            amount_specified_remaining == 0 or result.sqrt_price_x96 == sqrt_price_x96_limit
         ):
             step.sqrt_price_start_x96 = result.sqrt_price_x96
 
@@ -624,7 +624,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                     sqrt_ratio_x96_target=get_sqrt_price_target(
                         zero_for_one=zero_for_one,
                         sqrt_price_next_x96=step.sqrt_price_next_x96,
-                        sqrt_price_limit_x96=sqrt_price_limit_x96,
+                        sqrt_price_limit_x96=sqrt_price_x96_limit,
                     ),
                     liquidity=result.liquidity,
                     amount_remaining=amount_specified_remaining,
@@ -724,7 +724,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             swap_delta, *_ = self._calculate_swap(
                 zero_for_one=zero_for_one,
                 amount_specified=token_out_quantity,
-                sqrt_price_limit_x96=MIN_SQRT_PRICE + 1 if zero_for_one else MAX_SQRT_PRICE - 1,
+                sqrt_price_x96_limit=MIN_SQRT_PRICE + 1 if zero_for_one else MAX_SQRT_PRICE - 1,
                 override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
@@ -770,7 +770,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             swap_delta, *_ = self._calculate_swap(
                 zero_for_one=zero_for_one,
                 amount_specified=-token_in_quantity,
-                sqrt_price_limit_x96=MIN_SQRT_PRICE + 1 if zero_for_one else MAX_SQRT_PRICE - 1,
+                sqrt_price_x96_limit=MIN_SQRT_PRICE + 1 if zero_for_one else MAX_SQRT_PRICE - 1,
                 override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
