@@ -6,16 +6,9 @@ from fractions import Fraction
 from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import cvxpy.settings
 import eth_abi.abi
-import eth_abi.packed
 import numpy
 import web3
-import web3.contract
-import web3.exceptions
-import web3.main
-import web3.middleware
-import web3.types
 from cvxpy import Maximize, Parameter, Problem, Variable
 from cvxpy.atoms.affine.binary_operators import multiply
 from cvxpy.atoms.affine.bmat import bmat
@@ -152,7 +145,7 @@ def _build_convex_problem(num_pools: int) -> Problem:
     )
 
     # Set up parameters
-    fee_multiplier = cvxpy.Parameter(
+    fee_multiplier = Parameter(
         shape=(num_pools, num_tokens),
         name="fee_multiplier",
         value=numpy.array(
@@ -163,7 +156,7 @@ def _build_convex_problem(num_pools: int) -> Problem:
             dtype=numpy.float64,
         ),
     )
-    compressed_reserves_pre_swap = cvxpy.Parameter(
+    compressed_reserves_pre_swap = Parameter(
         name="compressed_reserves_pre_swap",
         shape=(num_pools, num_tokens),
         value=numpy.array(
