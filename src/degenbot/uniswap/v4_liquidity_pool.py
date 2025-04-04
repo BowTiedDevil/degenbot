@@ -690,9 +690,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 # and haven't moved
                 result.tick = get_tick_at_sqrt_price(result.sqrt_price_x96)
 
-            assert result.liquidity >= 0, (
-                f"Caught negative liquidity, {result.liquidity=}, {liquidity_net_at_next_tick=}, {zero_for_one=}"  # noqa
-            )
+            assert result.liquidity >= 0
 
         if zero_for_one != (amount_specified < 0):
             # currency1 is swapped in
