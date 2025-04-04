@@ -541,7 +541,6 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
         amount_specified_remaining = amount_specified
         amount_calculated = 0
-        amount_to_protocol = 0
         result: Final[SwapResult] = SwapResult(
             sqrt_price_x96=sqrt_price_x96_start,
             tick=tick_start,
@@ -671,7 +670,6 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 )
                 # subtract it from the total fee and add it to the protocol fee
                 step.fee_amount -= delta
-                amount_to_protocol += delta
 
             # Shift tick if we reached the next price, and preemptively decrement for zeroForOne
             # swaps to tickNext - 1. If the swap doesn't continue (if amountRemaining == 0 or
