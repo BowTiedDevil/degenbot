@@ -90,6 +90,8 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     message=f"Incompatible pool type ({type(swap_pool)}) provided."
                 )
         self.swap_pools: tuple[Pool, ...] = tuple(swap_pools)
+        if len(set(self.swap_pools)) != len(self.swap_pools):
+            raise DegenbotValueError(message="Swap pools must not contain duplicates.")
 
         self.id = id
         self.input_token = input_token
@@ -160,8 +162,9 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         self._pool_viability: dict[Pool, bool] = {
             pool: self._pool_is_viable(pool=pool, state=pool.state, vector=swap_vector)
-            for pool, swap_vector in zip(swap_pools, self._swap_vectors, strict=True)
+            for pool, swap_vector in zip(self.swap_pools, self._swap_vectors, strict=True)
         }
+        assert len(self._pool_viability) == len(self.swap_pools), f"{self.id=} {self.swap_pools=}"
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()
         for pool in self.swap_pools:
