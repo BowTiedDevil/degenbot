@@ -516,7 +516,8 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         A positive amount indicates the quantity available for withdrawal by the swapper,
         and a negative amount indicates the deposit required.
 
-        This method will fetch missing liquidity data as needed, but this data is discarded.
+        This method will fetch missing liquidity data as needed, but it will be discarded to avoid
+        race conditions.
         """
 
         if override_state is not None:
