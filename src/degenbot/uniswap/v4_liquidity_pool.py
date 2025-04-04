@@ -347,6 +347,14 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
             logger.info(f"• Tick: {self.tick}")
 
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, type(self)):
+            return self.address == other.address and self.pool_id == other.pool_id
+        return super().__eq__(other)
+
+    def __hash__(self) -> int:
+        return hash(HexBytes(self.address) + self.pool_id)
+
     def __getstate__(self) -> dict[str, Any]:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
