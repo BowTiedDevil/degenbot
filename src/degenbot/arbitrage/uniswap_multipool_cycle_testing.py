@@ -5,14 +5,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import cvxpy.settings
 import eth_abi.abi
-import eth_abi.packed
 import numpy
 import web3
-import web3.contract
-import web3.exceptions
-import web3.main
-import web3.middleware
-import web3.types
 from cvxpy import Maximize, Parameter, Problem, Variable
 from cvxpy.atoms.affine.binary_operators import multiply
 from cvxpy.atoms.affine.bmat import bmat
