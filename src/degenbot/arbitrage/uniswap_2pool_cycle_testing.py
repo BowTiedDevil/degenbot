@@ -827,7 +827,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             amounts.append(
                 UniswapV4PoolSwapAmounts(
-                    pool=v4_pool_lo.address,
+                    address=v4_pool_lo.address,
+                    id=v4_pool_lo.pool_id,
                     # withdraw forward token (V4 withdrawals are positive)
                     amount_specified=forward_token_amount,
                     zero_for_one=pool_lo_zero_for_one,
@@ -977,7 +978,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             amounts.append(
                 UniswapV4PoolSwapAmounts(
-                    pool=v4_pool.address,
+                    address=v4_pool.address,
+                    id=v4_pool.pool_id,
                     amount_specified=-forward_token_amount,  # exact input swap
                     zero_for_one=v4_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -1140,7 +1142,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             amounts.append(
                 UniswapV4PoolSwapAmounts(
-                    pool=v4_pool.address,
+                    address=v4_pool.address,
+                    id=v4_pool.pool_id,
                     amount_specified=-forward_token_amount,  # exact input swap
                     zero_for_one=v4_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -1324,7 +1327,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             amounts.append(
                 UniswapV4PoolSwapAmounts(
-                    pool=v4_pool.address,
+                    address=v4_pool.address,
+                    id=v4_pool.pool_id,
                     amount_specified=forward_token_amount,  # exact output swap
                     zero_for_one=v4_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -1815,7 +1819,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             amounts.append(
                 UniswapV4PoolSwapAmounts(
-                    pool=v4_pool.address,
+                    address=v4_pool.address,
+                    id=v4_pool.pool_id,
                     amount_specified=forward_token_amount,  # exact output swap
                     zero_for_one=v4_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1

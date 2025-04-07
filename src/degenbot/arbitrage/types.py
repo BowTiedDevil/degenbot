@@ -4,6 +4,7 @@ import dataclasses
 from typing import Any
 
 from eth_typing import BlockNumber, ChecksumAddress
+from hexbytes import HexBytes
 
 from degenbot.erc20_token import Erc20Token
 
@@ -74,7 +75,8 @@ class UniswapV3PoolSwapAmounts:
 
 @dataclasses.dataclass(slots=True)
 class UniswapV4PoolSwapAmounts:
-    pool: ChecksumAddress
+    address: ChecksumAddress
+    id: HexBytes
     amount_specified: int
     zero_for_one: bool
     sqrt_price_limit_x96: int
