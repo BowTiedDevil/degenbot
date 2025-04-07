@@ -2,6 +2,7 @@ import asyncio
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any
 from weakref import WeakSet
@@ -54,6 +55,15 @@ type Pool = AerodromeV2Pool | AerodromeV3Pool | UniswapV2Pool | UniswapV3Pool | 
 type PoolState = AerodromeV2PoolState | UniswapV2PoolState | UniswapV3PoolState | UniswapV4PoolState
 type SwapAmount = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
 type PoolId = bytes | HexStr
+
+
+@dataclass(slots=True, frozen=True)
+class V4PoolKey:
+    currency0: ChecksumAddress
+    currency1: ChecksumAddress
+    fee: int
+    tick_spacing: int
+    hooks: ChecksumAddress
 
 
 UNISWAP_V2_SWAP_FUNCTION_PROTOTYPE = "swap(uint256,uint256,address,bytes)"
@@ -261,6 +271,27 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                         swap_amounts.append(
                             UniswapV3PoolSwapAmounts(
                                 pool=pool.address,
+                                amount_specified=_token_in_quantity,
+                                zero_for_one=swap_vector.zero_for_one,
+                                sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                                if swap_vector.zero_for_one
+                                else MAX_SQRT_RATIO - 1,
+                            )
+                        )
+                    case UniswapV4Pool(), UniswapV4PoolState() | None:
+                        _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
+                            token_in=swap_vector.token_in,
+                            token_in_quantity=_token_in_quantity,
+                            override_state=pool_state,
+                        )
+                        if _token_out_quantity == 0:  # pragma: no cover
+                            raise ArbitrageError(
+                                message=f"Zero-output swap through pool {pool} @ {pool.address}"
+                            )
+                        swap_amounts.append(
+                            UniswapV4PoolSwapAmounts(
+                                address=pool.address,
+                                id=pool.pool_id,
                                 amount_specified=_token_in_quantity,
                                 zero_for_one=swap_vector.zero_for_one,
                                 sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -757,6 +788,22 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                             msg_value,
                         )
                     )
+                case UniswapV4Pool(), UniswapV4PoolSwapAmounts():
+                    logger.debug(f"PAYLOAD: building V4 swap at pool {i}")
+                    logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
+                    logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
+                    logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
+
+                    payloads.append(
+                        V4PoolKey(
+                            currency0=swap_pool.token0.address,
+                            currency1=swap_pool.token1.address,
+                            fee=swap_pool.fee,
+                            tick_spacing=swap_pool.tick_spacing,
+                            hooks=swap_pool.hook_address,
+                        )
+                    )
+
                 case _:  # pragma: no cover
                     raise DegenbotValueError(message="Could not identify pool and swap amounts.")
 
