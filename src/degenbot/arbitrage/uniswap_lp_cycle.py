@@ -552,10 +552,10 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
             # minimize_scalar requires the function to have a minimum value
             # for the solver to settle on an optimum input, so return the
             # negated profit
-            return -float(token_out_quantity - token_in_quantity)
+            return float(token_out_quantity - token_in_quantity)
 
         opt: OptimizeResult = minimize_scalar(
-            fun=arb_profit,
+            fun=lambda x: -arb_profit(x),
             method="bounded",
             bounds=bounds,
             bracket=bracket,
