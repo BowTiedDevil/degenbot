@@ -804,18 +804,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             except (IncompleteSwap, PossibleInaccurateResult) as exc:
                 weth_out = exc.amount_out
 
-            amounts.append(
-                UniswapV4PoolSwapAmounts(
-                    pool=v4_pool_hi.address,
-                    # deposit forward token (V4 deposits are negative)
-                    amount_specified=-forward_token_amount,
-                    zero_for_one=pool_hi_zero_for_one,
-                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                    if pool_hi_zero_for_one
-                    else MAX_SQRT_RATIO - 1,
-                )
-            )
-
             try:
                 weth_in = v4_pool_lo.calculate_tokens_in_from_tokens_out(
                     token_out=forward_token,
@@ -834,6 +822,19 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     zero_for_one=pool_lo_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
                     if pool_lo_zero_for_one
+                    else MAX_SQRT_RATIO - 1,
+                )
+            )
+
+            amounts.append(
+                UniswapV4PoolSwapAmounts(
+                    address=v4_pool_hi.address,
+                    id=v4_pool_hi.pool_id,
+                    # deposit forward token (V4 deposits are negative)
+                    amount_specified=-forward_token_amount,
+                    zero_for_one=pool_hi_zero_for_one,
+                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                    if pool_hi_zero_for_one
                     else MAX_SQRT_RATIO - 1,
                 )
             )
@@ -976,18 +977,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             if weth_out == 0:
                 raise ArbitrageError(message="Zero amount swap")
 
-            amounts.append(
-                UniswapV4PoolSwapAmounts(
-                    address=v4_pool.address,
-                    id=v4_pool.pool_id,
-                    amount_specified=-forward_token_amount,  # exact input swap
-                    zero_for_one=v4_pool_zero_for_one,
-                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                    if v4_pool_zero_for_one
-                    else MAX_SQRT_RATIO - 1,
-                )
-            )
-
             if v4_pool.tokens == v3_pool.tokens:
                 # Token position should be identical for both pools, 0->1 flags should be reversed
                 assert v4_pool_zero_for_one != v3_pool_zero_for_one
@@ -1000,6 +989,18 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             if weth_in == 0:
                 raise ArbitrageError(message="Zero amount swap")
+
+            amounts.append(
+                UniswapV4PoolSwapAmounts(
+                    address=v4_pool.address,
+                    id=v4_pool.pool_id,
+                    amount_specified=-forward_token_amount,  # exact input swap
+                    zero_for_one=v4_pool_zero_for_one,
+                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                    if v4_pool_zero_for_one
+                    else MAX_SQRT_RATIO - 1,
+                )
+            )
 
             amounts.append(
                 UniswapV3PoolSwapAmounts(
@@ -1140,18 +1141,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             if weth_out == 0:
                 raise ArbitrageError(message="Zero amount swap")
 
-            amounts.append(
-                UniswapV4PoolSwapAmounts(
-                    address=v4_pool.address,
-                    id=v4_pool.pool_id,
-                    amount_specified=-forward_token_amount,  # exact input swap
-                    zero_for_one=v4_pool_zero_for_one,
-                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                    if v4_pool_zero_for_one
-                    else MAX_SQRT_RATIO - 1,
-                )
-            )
-
             if v4_pool.tokens == v2_pool.tokens:
                 # Token position should be identical for both pools, 0->1 flags should be reversed
                 assert v4_pool_zero_for_one != v2_pool_zero_for_one
@@ -1172,6 +1161,18 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             if weth_in == 0:
                 raise ArbitrageError(message="Zero amount swap")
+
+            amounts.append(
+                UniswapV4PoolSwapAmounts(
+                    address=v4_pool.address,
+                    id=v4_pool.pool_id,
+                    amount_specified=-forward_token_amount,  # exact input swap
+                    zero_for_one=v4_pool_zero_for_one,
+                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                    if v4_pool_zero_for_one
+                    else MAX_SQRT_RATIO - 1,
+                )
+            )
 
             amounts.append(
                 UniswapV2PoolSwapAmounts(
@@ -1325,18 +1326,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             if weth_in == 0:
                 raise ArbitrageError(message="Zero amount swap")
 
-            amounts.append(
-                UniswapV4PoolSwapAmounts(
-                    address=v4_pool.address,
-                    id=v4_pool.pool_id,
-                    amount_specified=forward_token_amount,  # exact output swap
-                    zero_for_one=v4_pool_zero_for_one,
-                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                    if v4_pool_zero_for_one
-                    else MAX_SQRT_RATIO - 1,
-                )
-            )
-
             if v4_pool.tokens == v3_pool.tokens:
                 # Token position should be identical for both pools, 0->1 flags should be reversed
                 assert v4_pool_zero_for_one != v3_pool_zero_for_one
@@ -1357,6 +1346,18 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     zero_for_one=v3_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
                     if v3_pool_zero_for_one
+                    else MAX_SQRT_RATIO - 1,
+                )
+            )
+
+            amounts.append(
+                UniswapV4PoolSwapAmounts(
+                    address=v4_pool.address,
+                    id=v4_pool.pool_id,
+                    amount_specified=forward_token_amount,  # exact output swap
+                    zero_for_one=v4_pool_zero_for_one,
+                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                    if v4_pool_zero_for_one
                     else MAX_SQRT_RATIO - 1,
                 )
             )
@@ -1483,16 +1484,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     token_in_quantity=forward_token_amount,
                     override_state=v3_pool_hi_state_override,
                 )
-                amounts.append(
-                    UniswapV3PoolSwapAmounts(
-                        pool=v3_pool_hi.address,
-                        amount_specified=forward_token_amount,  # input forward token
-                        zero_for_one=pool_hi_zero_for_one,
-                        sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                        if pool_hi_zero_for_one
-                        else MAX_SQRT_RATIO - 1,
-                    )
-                )
+
                 pool_lo_zero_for_one = v3_pool_lo.token1 == forward_token
 
                 logger.debug(f"{pool_hi_zero_for_one=}")
@@ -1505,20 +1497,31 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     token_out_quantity=forward_token_amount,
                     override_state=v3_pool_lo_state_override,
                 )
-                amounts.append(
-                    UniswapV3PoolSwapAmounts(
-                        pool=v3_pool_lo.address,
-                        amount_specified=-forward_token_amount,
-                        zero_for_one=pool_lo_zero_for_one,
-                        sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                        if pool_lo_zero_for_one
-                        else MAX_SQRT_RATIO - 1,
-                    )
-                )
 
             except (EVMRevertError, LiquidityPoolError) as e:
                 logger.error(f"V3/V3 calc error: {e}")
                 raise ArbitrageError from e
+
+            amounts.append(
+                UniswapV3PoolSwapAmounts(
+                    pool=v3_pool_lo.address,
+                    amount_specified=-forward_token_amount,
+                    zero_for_one=pool_lo_zero_for_one,
+                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                    if pool_lo_zero_for_one
+                    else MAX_SQRT_RATIO - 1,
+                )
+            )
+            amounts.append(
+                UniswapV3PoolSwapAmounts(
+                    pool=v3_pool_hi.address,
+                    amount_specified=forward_token_amount,  # input forward token
+                    zero_for_one=pool_hi_zero_for_one,
+                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                    if pool_hi_zero_for_one
+                    else MAX_SQRT_RATIO - 1,
+                )
+            )
 
             best_profit = weth_out - weth_in
             if forward_token_amount <= 0 or best_profit <= 0:
@@ -1641,17 +1644,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 if weth_out == 0:
                     raise ArbitrageError(message="Zero amount swap")
 
-                amounts.append(
-                    UniswapV3PoolSwapAmounts(
-                        pool=v3_pool.address,
-                        amount_specified=forward_token_amount,
-                        zero_for_one=pool_hi_zero_for_one,
-                        sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                        if pool_hi_zero_for_one
-                        else MAX_SQRT_RATIO - 1,
-                    )
-                )
-
                 pool_lo_zero_for_one = v3_pool.token1 == forward_token
 
                 assert pool_hi_zero_for_one != pool_lo_zero_for_one
@@ -1675,6 +1667,16 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 if weth_in == 0:
                     raise ArbitrageError(message="Zero amount swap")
 
+                amounts.append(
+                    UniswapV3PoolSwapAmounts(
+                        pool=v3_pool.address,
+                        amount_specified=forward_token_amount,
+                        zero_for_one=pool_hi_zero_for_one,
+                        sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                        if pool_hi_zero_for_one
+                        else MAX_SQRT_RATIO - 1,
+                    )
+                )
                 amounts.append(
                     UniswapV2PoolSwapAmounts(
                         pool=v2_pool.address,
@@ -1817,18 +1819,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             if weth_in == 0:
                 raise ArbitrageError(message="Zero amount swap")
 
-            amounts.append(
-                UniswapV4PoolSwapAmounts(
-                    address=v4_pool.address,
-                    id=v4_pool.pool_id,
-                    amount_specified=forward_token_amount,  # exact output swap
-                    zero_for_one=v4_pool_zero_for_one,
-                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                    if v4_pool_zero_for_one
-                    else MAX_SQRT_RATIO - 1,
-                )
-            )
-
             if v4_pool.tokens == v2_pool.tokens:
                 # Token position should be identical for both pools, 0->1 flags should be reversed
                 assert v4_pool_zero_for_one != v2_pool_zero_for_one
@@ -1861,6 +1851,17 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                         else (0, forward_token_amount)
                     ),
                     amounts_out=(0, weth_out) if v2_pool_zero_for_one else (weth_out, 0),
+                )
+            )
+            amounts.append(
+                UniswapV4PoolSwapAmounts(
+                    address=v4_pool.address,
+                    id=v4_pool.pool_id,
+                    amount_specified=forward_token_amount,  # exact output swap
+                    zero_for_one=v4_pool_zero_for_one,
+                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                    if v4_pool_zero_for_one
+                    else MAX_SQRT_RATIO - 1,
                 )
             )
 
@@ -1972,16 +1973,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     token_out_quantity=forward_token_amount,
                     override_state=v3_pool_override,
                 )
-                amounts.append(
-                    UniswapV3PoolSwapAmounts(
-                        pool=v3_pool.address,
-                        amount_specified=-forward_token_amount,
-                        zero_for_one=pool_hi_zero_for_one,
-                        sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                        if pool_hi_zero_for_one
-                        else MAX_SQRT_RATIO - 1,
-                    )
-                )
+
                 pool_lo_zero_for_one = v3_pool.token1 == self.input_token
 
                 assert pool_hi_zero_for_one != pool_lo_zero_for_one
@@ -2005,6 +1997,16 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 if weth_out == 0:
                     raise ArbitrageError(message="Zero amount swap")
 
+                amounts.append(
+                    UniswapV3PoolSwapAmounts(
+                        pool=v3_pool.address,
+                        amount_specified=-forward_token_amount,
+                        zero_for_one=pool_hi_zero_for_one,
+                        sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                        if pool_hi_zero_for_one
+                        else MAX_SQRT_RATIO - 1,
+                    )
+                )
                 amounts.append(
                     UniswapV2PoolSwapAmounts(
                         pool=v2_pool.address,
@@ -2307,16 +2309,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 if weth_out == 0:
                     raise ArbitrageError(message="Zero amount swap")
 
-                amounts.append(
-                    UniswapV2PoolSwapAmounts(
-                        pool=v2_pool_hi.address,
-                        amounts_in=(uncompressed_forward_token_amount, 0)
-                        if pool_hi_zero_for_one
-                        else (0, uncompressed_forward_token_amount),
-                        amounts_out=(0, weth_out) if pool_hi_zero_for_one else (weth_out, 0),
-                    )
-                )
-
                 pool_lo_zero_for_one = v2_pool_lo.token1 == forward_token
                 assert pool_hi_zero_for_one != pool_lo_zero_for_one
 
@@ -2339,6 +2331,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 if weth_in == 0:
                     raise ArbitrageError(message="Zero amount swap")
 
+                amounts.append(
+                    UniswapV2PoolSwapAmounts(
+                        pool=v2_pool_hi.address,
+                        amounts_in=(uncompressed_forward_token_amount, 0)
+                        if pool_hi_zero_for_one
+                        else (0, uncompressed_forward_token_amount),
+                        amounts_out=(0, weth_out) if pool_hi_zero_for_one else (weth_out, 0),
+                    )
+                )
                 amounts.append(
                     UniswapV2PoolSwapAmounts(
                         pool=v2_pool_lo.address,
@@ -2779,24 +2780,25 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
         def _generate_v4_v4_payloads() -> tuple[V4Payload, V4Payload]:
             # TODO: rewrite for generic delivery
-            # TODO: fix all this stuff
 
-            v4_pool_hi, v4_pool_lo = self.swap_pools
-            v4_swap_amounts_hi, v4_swap_amounts_lo = pool_swap_amounts
-
+            v4_pool_lo, v4_pool_hi = self.swap_pools
             assert isinstance(v4_pool_hi, UniswapV4Pool)
             assert isinstance(v4_pool_lo, UniswapV4Pool)
+
+            v4_swap_amounts_lo, v4_swap_amounts_hi = pool_swap_amounts
             assert isinstance(v4_swap_amounts_hi, UniswapV4PoolSwapAmounts)
             assert isinstance(v4_swap_amounts_lo, UniswapV4PoolSwapAmounts)
+            assert v4_swap_amounts_hi.id == v4_pool_hi.pool_id
+            assert v4_swap_amounts_lo.id == v4_pool_lo.pool_id
+
+            # hi pool amount should be exact input
+            assert v4_swap_amounts_hi.amount_specified < 0
+
+            # lo pool amount should be exact output
+            assert v4_swap_amounts_lo.amount_specified > 0
 
             """
             PAYLOAD DEFINITION FROM CONTRACT
-
-
-            struct V3Payload:
-                pool_address: address
-                zero_for_one: bool
-                amount_specified: int256
 
             struct V4Payload:
                 currency0: address
@@ -2808,15 +2810,26 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 zero_for_one: bool
             """
 
-            return V4Payload(
-                currency0=v4_pool_lo.token0.address,
-                currency1=v4_pool_lo.token1.address,
-                fee=v4_pool_lo.fee,
-                tick_spacing=v4_pool_lo.tick_spacing,
-                hooks=v4_pool_lo.hook_address,
-                amount_specified=v4_swap_amounts_lo.amount_specified,
-                zero_for_one=v4_swap_amounts_lo.zero_for_one,
-            ), V4Payload(...)
+            return (
+                V4Payload(
+                    currency0=v4_pool_lo.token0.address,
+                    currency1=v4_pool_lo.token1.address,
+                    fee=v4_pool_lo.fee,
+                    tick_spacing=v4_pool_lo.tick_spacing,
+                    hooks=v4_pool_lo.hook_address,
+                    amount_specified=v4_swap_amounts_lo.amount_specified,
+                    zero_for_one=v4_swap_amounts_lo.zero_for_one,
+                ),
+                V4Payload(
+                    currency0=v4_pool_hi.token0.address,
+                    currency1=v4_pool_hi.token1.address,
+                    fee=v4_pool_hi.fee,
+                    tick_spacing=v4_pool_hi.tick_spacing,
+                    hooks=v4_pool_hi.hook_address,
+                    amount_specified=v4_swap_amounts_hi.amount_specified,
+                    zero_for_one=v4_swap_amounts_hi.zero_for_one,
+                ),
+            )
 
         def _generate_v4_v2_payloads() -> tuple[V4Payload, V2Payload]:
             # TODO: rewrite for generic delivery
@@ -2930,7 +2943,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
 
         def _generate_v3_v3_payloads() -> list[tuple[ChecksumAddress, bytes, bool]]:
-            pool_hi_swap_amount, pool_lo_swap_amount = pool_swap_amounts
+            pool_lo_swap_amount, pool_hi_swap_amount = pool_swap_amounts
 
             if TYPE_CHECKING:
                 assert isinstance(pool_hi_swap_amount, UniswapV3PoolSwapAmounts)
@@ -3121,7 +3134,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             ]
 
         def _generate_v2_v2_payloads() -> list[tuple[ChecksumAddress, bytes, bool]]:
-            pool_hi_swap_amount, pool_lo_swap_amount = pool_swap_amounts
+            pool_lo_swap_amount, pool_hi_swap_amount = pool_swap_amounts
             if TYPE_CHECKING:
                 assert isinstance(pool_hi_swap_amount, UniswapV2PoolSwapAmounts)
                 assert isinstance(pool_lo_swap_amount, UniswapV2PoolSwapAmounts)
