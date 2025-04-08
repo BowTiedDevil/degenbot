@@ -196,31 +196,35 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
     def _build_swap_amounts(
         self,
         token_in_quantity: int,
-        pool_states: Mapping[Pool, PoolState],
+        state_overrides: Mapping[Pool, PoolState] | None = None,
     ) -> list[SwapAmount]:
         """
         Generate inputs for all swaps along the arbitrage path, starting with the specified amount
         of the input token defined in the constructor.
         """
 
+        if state_overrides is None:
+            state_overrides = {}
+
         _token_out_quantity = 0
         swap_amounts: list[SwapAmount] = []
         for i, (pool, swap_vector) in enumerate(
             zip(self.swap_pools, self._swap_vectors, strict=True)
         ):
-            pool_state = pool_states[pool]
             _token_in_quantity = token_in_quantity if i == 0 else _token_out_quantity
 
             if _token_in_quantity == 0:
                 raise ArbitrageError(message="Zero amount swap")
 
             try:
-                match pool, pool_state:
-                    case AerodromeV2Pool(), AerodromeV2PoolState() | None:
+                match pool, state_overrides.get(pool):
+                    case AerodromeV2Pool(), (
+                        AerodromeV2PoolState() | None
+                    ) as aerodrome_v2_pool_state:
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=swap_vector.token_in,
                             token_in_quantity=_token_in_quantity,
-                            override_state=pool_state,
+                            override_state=aerodrome_v2_pool_state,
                         )
                         if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
@@ -237,11 +241,11 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                                 else (_token_out_quantity, 0),
                             )
                         )
-                    case UniswapV2Pool(), UniswapV2PoolState() | None:
+                    case UniswapV2Pool(), (UniswapV2PoolState() | None) as uniswap_v2_pool_state:
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=swap_vector.token_in,
                             token_in_quantity=_token_in_quantity,
-                            override_state=pool_state,
+                            override_state=uniswap_v2_pool_state,
                         )
                         if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
@@ -258,11 +262,11 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                                 else (_token_out_quantity, 0),
                             )
                         )
-                    case UniswapV3Pool(), UniswapV3PoolState() | None:
+                    case UniswapV3Pool(), (UniswapV3PoolState() | None) as uniswap_v3_pool_state:
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=swap_vector.token_in,
                             token_in_quantity=_token_in_quantity,
-                            override_state=pool_state,
+                            override_state=uniswap_v3_pool_state,
                         )
                         if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
@@ -278,11 +282,11 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                                 else MAX_SQRT_RATIO - 1,
                             )
                         )
-                    case UniswapV4Pool(), UniswapV4PoolState() | None:
+                    case UniswapV4Pool(), (UniswapV4PoolState() | None) as uniswap_v4_pool_state:
                         _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=swap_vector.token_in,
                             token_in_quantity=_token_in_quantity,
-                            override_state=pool_state,
+                            override_state=uniswap_v4_pool_state,
                         )
                         if _token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
@@ -412,8 +416,8 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         # multipliers for each pool
         multipliers: list[Fraction] = []
         for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=True):
-            match pool, state_overrides.get(pool, pool.state):
-                case AerodromeV2Pool(), AerodromeV2PoolState() as aerodrome_v2_pool_state:
+            match pool, state_overrides.get(pool):
+                case AerodromeV2Pool(), (AerodromeV2PoolState() | None) as aerodrome_v2_pool_state:
                     # The multiplier for the pool is the rate of exchange for the output token,
                     # reduced by the fee taken on the input amount
                     swap_multiplier = pool.get_absolute_exchange_rate(
@@ -426,7 +430,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     multipliers.append(swap_multiplier)
                     multipliers.append(fee_multiplier)
 
-                case UniswapV2Pool(), UniswapV2PoolState() as uniswap_v2_pool_state:
+                case UniswapV2Pool(), (UniswapV2PoolState() | None) as uniswap_v2_pool_state:
                     # The multiplier for the pool is the rate of exchange for the output token,
                     # reduced by the fee taken on the input amount
                     swap_multiplier = pool.get_absolute_exchange_rate(
@@ -439,7 +443,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     multipliers.append(swap_multiplier)
                     multipliers.append(fee_multiplier)
 
-                case UniswapV3Pool(), UniswapV3PoolState() as uniswap_v3_pool_state:
+                case UniswapV3Pool(), (UniswapV3PoolState() | None) as uniswap_v3_pool_state:
                     swap_multiplier = pool.get_absolute_exchange_rate(
                         token=vector.token_out,
                         override_state=uniswap_v3_pool_state,
@@ -452,7 +456,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     multipliers.append(swap_multiplier)
                     multipliers.append(fee_multiplier)
 
-                case UniswapV4Pool(), UniswapV4PoolState() as uniswap_v4_pool_state:
+                case UniswapV4Pool(), (UniswapV4PoolState() | None) as uniswap_v4_pool_state:
                     swap_multiplier = pool.get_absolute_exchange_rate(
                         token=vector.token_out,
                         override_state=uniswap_v4_pool_state,
@@ -484,9 +488,8 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         Calculate the optimal arbitrage profit using the maximum input as an upper bound.
         """
 
-        pool_states = {pool: pool.state for pool in self.swap_pools}
-        if state_overrides is not None:
-            pool_states.update(state_overrides)
+        if state_overrides is None:
+            state_overrides = {}
 
         # The bounded Brent optimizer requires bounds for the input amount, and a bracketed guess
         # to initiate the search
@@ -504,40 +507,48 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                 for i, (pool, swap_vector) in enumerate(
                     zip(self.swap_pools, self._swap_vectors, strict=True)
                 ):
-                    state = pool_states[pool]
+                    state = state_overrides.get(pool)
 
                     match pool, state:
-                        case AerodromeV2Pool(), AerodromeV2PoolState():
+                        case AerodromeV2Pool(), (
+                            AerodromeV2PoolState() | None
+                        ) as aerodrome_v2_pool_state:
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
                                 if i == 0
                                 else token_out_quantity,
-                                override_state=state,
+                                override_state=aerodrome_v2_pool_state,
                             )
-                        case UniswapV2Pool(), UniswapV2PoolState():
+                        case UniswapV2Pool(), (
+                            UniswapV2PoolState() | None
+                        ) as uniswap_v2_pool_state:
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
                                 if i == 0
                                 else token_out_quantity,
-                                override_state=state,
+                                override_state=uniswap_v2_pool_state,
                             )
-                        case UniswapV3Pool(), UniswapV3PoolState():
+                        case UniswapV3Pool(), (
+                            UniswapV3PoolState() | None
+                        ) as uniswap_v3_pool_state:
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
                                 if i == 0
                                 else token_out_quantity,
-                                override_state=state,
+                                override_state=uniswap_v3_pool_state,
                             )
-                        case UniswapV4Pool(), UniswapV4PoolState():
+                        case UniswapV4Pool(), (
+                            UniswapV4PoolState() | None
+                        ) as uniswap_v4_pool_state:
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
                                 if i == 0
                                 else token_out_quantity,
-                                override_state=state,
+                                override_state=uniswap_v4_pool_state,
                             )
                         case _:  # pragma: no cover
                             raise DegenbotValueError(
@@ -568,19 +579,14 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         best_amounts = self._build_swap_amounts(
             token_in_quantity=swap_amount,
-            pool_states=pool_states,
+            state_overrides=state_overrides,
         )
 
-        newest_state_block: BlockNumber | None = None
-        for state in pool_states.values():
-            if state.block is None:
-                newest_state_block = None
-                break
-            newest_state_block = (
-                max(newest_state_block, state.block)
-                if newest_state_block is not None
-                else state.block
-            )
+        newest_state_block = (
+            None
+            if state_overrides
+            else max([block for pool in self.swap_pools if (block := pool.state.block) is not None])
+        )
 
         return ArbitrageCalculationResult(
             id=self.id,
