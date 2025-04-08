@@ -482,7 +482,7 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
                 profit_token=self.input_token,
                 input_amount=initial_amount_in,
                 profit_amount=best_profit,
-                swap_amounts=amounts,
+                swap_amounts=tuple(amounts),
                 state_block=newest_state_block,
             )
 

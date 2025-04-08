@@ -197,7 +197,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         self,
         token_in_quantity: int,
         state_overrides: Mapping[Pool, PoolState] | None = None,
-    ) -> list[SwapAmount]:
+    ) -> tuple[SwapAmount, ...]:
         """
         Generate inputs for all swaps along the arbitrage path, starting with the specified amount
         of the input token defined in the constructor.
@@ -310,7 +310,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
             except LiquidityPoolError as exc:  # pragma: no cover
                 raise ArbitrageError(message=str(exc)) from exc
 
-        return swap_amounts
+        return tuple(swap_amounts)
 
     def _pool_is_viable(
         self,

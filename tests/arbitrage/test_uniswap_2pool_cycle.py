@@ -13,14 +13,12 @@ from degenbot import (
     set_web3,
     token_registry,
 )
+from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts, UniswapV4PoolSwapAmounts
 from degenbot.arbitrage.uniswap_2pool_cycle_testing import _UniswapTwoPoolCycleTesting
 from degenbot.cache import get_checksum_address
 from degenbot.erc20_token import EtherPlaceholder
 from degenbot.exceptions import PossibleInaccurateResult, RateOfExchangeBelowMinimum
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-
-if TYPE_CHECKING:
-    from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts, UniswapV4PoolSwapAmounts
 
 # Token addresses
 NATIVE_ADDRESS = get_checksum_address("0x0000000000000000000000000000000000000000")
@@ -395,16 +393,16 @@ def test_v4_v2_dai_arb_base(fork_base: AnvilFork):
     )
 
     calc_result = v4_v2_arb.calculate()
+    v4_swap_amount, v2_swap_amount = calc_result.swap_amounts
+    assert isinstance(v4_swap_amount, UniswapV4PoolSwapAmounts)
+    assert isinstance(v2_swap_amount, UniswapV2PoolSwapAmounts)
+
     arbitrage_payloads = v4_v2_arb.generate_payloads(
         from_address=NATIVE_ADDRESS,
         forward_token_amount=calc_result.input_amount,
         pool_swap_amounts=calc_result.swap_amounts,
     )
 
-    v4_swap_amount: UniswapV4PoolSwapAmounts
-    v2_swap_amount: UniswapV2PoolSwapAmounts
-
-    v4_swap_amount, v2_swap_amount = calc_result.swap_amounts
     v4_amount_in = v4_pool.calculate_tokens_in_from_tokens_out(
         token_out=v4_pool.token1 if v4_swap_amount.zero_for_one else v4_pool.token0,
         token_out_quantity=v4_swap_amount.amount_specified,
@@ -496,10 +494,10 @@ def test_v2_v4_usdc_arb_base(fork_base: AnvilFork):
         pool_swap_amounts=calc_result.swap_amounts,
     )
 
-    v4_swap_amount: UniswapV4PoolSwapAmounts
-    v2_swap_amount: UniswapV2PoolSwapAmounts
+    v2_swap_amount, v4_swap_amount = calc_result.swap_amounts
+    assert isinstance(v2_swap_amount, UniswapV2PoolSwapAmounts)
+    assert isinstance(v4_swap_amount, UniswapV4PoolSwapAmounts)
 
-    v4_swap_amount, v2_swap_amount = calc_result.swap_amounts
     try:
         v4_amount_in = v4_pool.calculate_tokens_in_from_tokens_out(
             token_out=v4_pool.token1 if v4_swap_amount.zero_for_one else v4_pool.token0,

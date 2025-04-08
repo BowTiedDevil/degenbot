@@ -187,7 +187,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
         token_in_quantity: int,
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState],
         block_number: int | None = None,
-    ) -> list[CurveOrUniswapSwapAmount]:
+    ) -> tuple[CurveOrUniswapSwapAmount, ...]:
         """
         Generate inputs for all swaps along the arbitrage path, starting with the specified amount
         of the input token defined in the constructor.
@@ -290,7 +290,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
             except LiquidityPoolError as exc:  # pragma: no cover
                 raise ArbitrageError(message=str(exc)) from exc
 
-        return swap_amounts
+        return tuple(swap_amounts)
 
     def _pre_calculation_check(
         self,

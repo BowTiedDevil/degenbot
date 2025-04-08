@@ -1,12 +1,15 @@
 # ruff: noqa: A005
 
 import dataclasses
-from typing import Any
 
 from eth_typing import BlockNumber, ChecksumAddress
 from hexbytes import HexBytes
 
 from degenbot.erc20_token import Erc20Token
+
+
+class AbstractSwapAmounts:
+    pass
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -16,7 +19,7 @@ class ArbitrageCalculationResult:
     profit_token: Erc20Token
     input_amount: int
     profit_amount: int
-    swap_amounts: list[Any]
+    swap_amounts: tuple[AbstractSwapAmounts, ...]
     state_block: BlockNumber | None
 
     def __post_init__(self) -> None:
@@ -24,7 +27,7 @@ class ArbitrageCalculationResult:
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class CurveStableSwapPoolSwapAmounts:
+class CurveStableSwapPoolSwapAmounts(AbstractSwapAmounts):
     token_in: Erc20Token
     token_in_index: int
     token_out: Erc20Token
@@ -48,7 +51,7 @@ class UniswapPoolSwapVector:
 
 
 @dataclasses.dataclass(slots=True)
-class UniswapV2PoolSwapAmounts:
+class UniswapV2PoolSwapAmounts(AbstractSwapAmounts):
     pool: ChecksumAddress
     amounts_in: tuple[int, int]
     amounts_out: tuple[int, int]
@@ -62,7 +65,7 @@ class UniswapV2PoolSwapAmounts:
 
 
 @dataclasses.dataclass(slots=True)
-class UniswapV3PoolSwapAmounts:
+class UniswapV3PoolSwapAmounts(AbstractSwapAmounts):
     pool: ChecksumAddress
     amount_specified: int
     zero_for_one: bool
@@ -74,7 +77,7 @@ class UniswapV3PoolSwapAmounts:
 
 
 @dataclasses.dataclass(slots=True)
-class UniswapV4PoolSwapAmounts:
+class UniswapV4PoolSwapAmounts(AbstractSwapAmounts):
     address: ChecksumAddress
     id: HexBytes
     amount_specified: int

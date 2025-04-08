@@ -369,8 +369,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             v3_pool_state_override: UniswapV3PoolState | None = None,
         ) -> float:
             """
-            Transfer forward token from V4 -> V3, profit is difference of WETH_out from V3 and
-            WETH_in to V4
+            Calculate the expected profit for a V3 ROE > V4 ROE arbitrage that buys forward token X
+            from the V4 pool and sells it to the V3 pool.
             """
 
             forward_token_quantity = int(forward_token_amount)  # round the input down
@@ -417,8 +417,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> float:
             """
-            Transfer X token from V2 -> V3, profit is difference of WETH_out from V3 and WETH_in to
-            V2
+            Calculate the expected profit for a V3 ROE > V2 ROE arbitrage that buys forward token X
+            from the V2 pool and sells it to the V3 pool.
             """
 
             forward_token_quantity = int(forward_token_amount)  # round the input down
@@ -539,8 +539,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> float:
             """
-            Transfer X token from V3 -> V2, profit is difference of WETH_out from V2 and WETH_in to
-            V3
+            Calculate the expected profit for a V2 ROE > V3 ROE arbitrage that buys forward token X
+            from the V3 pool and sells it to the V2 pool.
             """
 
             forward_token_quantity = int(forward_token_amount)  # round the input down
@@ -600,8 +600,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             pool_lo_state_override: UniswapV4PoolState | None = None,
         ) -> float:
             """
-            Transfer X token from V4_low -> V4_high, profit is difference of WETH_out from V4_high
-            and WETH_in to V4_low
+            Calculate the expected profit for a V4/V4 arbitrage that buys forward token X from the
+            low ROE pool and sells it to the high ROE pool.
             """
 
             forward_token_quantity = int(forward_token_amount)  # round the input down
@@ -664,8 +664,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             pool_lo_state_override: UniswapV3PoolState | None = None,
         ) -> float:
             """
-            Transfer X token from V3_low -> V3_high, profit is difference of WETH_out from V3_high
-            and WETH_in to V3_low
+            Calculate the expected profit for a V3/V3 arbitrage that buys forward token X from the
+            low ROE pool and sells it to the high ROE pool.
             """
 
             forward_token_quantity = int(forward_token_amount)  # round the input down
@@ -706,13 +706,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
         def _calculate_v4_v4(
             v4_pool_hi: UniswapV4Pool,
             v4_pool_lo: UniswapV4Pool,
-            v4_pool_hi_state_override: UniswapV4PoolState | None,
-            v4_pool_lo_state_override: UniswapV4PoolState | None,
             forward_token: Erc20Token,
+            v4_pool_hi_state_override: UniswapV4PoolState | None = None,
+            v4_pool_lo_state_override: UniswapV4PoolState | None = None,
         ) -> ArbitrageCalculationResult:
+            # OPPORTUNITY:
+            # - V4_lo ROE < V4_hi ROE
             # STRATEGY:
             # - swap WETH_in -> X at V4_lo
-            # - 'transfer' X from V4_lo -> V4_hi
+            # - transfer X from V4_lo -> V4_hi
             # - swap X -> WETH_out at V4_hi
             # - profit = WETH_out - WETH_in
 
@@ -789,8 +791,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             if forward_token_amount == 0:
                 raise ArbitrageError(message="Zero amount optimum")
 
-            amounts: list[UniswapV4PoolSwapAmounts] = []
-
             pool_hi_zero_for_one = v4_pool_hi.token0 == forward_token
             pool_lo_zero_for_one = v4_pool_lo.token1 == forward_token
             assert pool_hi_zero_for_one != pool_lo_zero_for_one
@@ -813,30 +813,25 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             except (IncompleteSwap, PossibleInaccurateResult) as exc:
                 weth_in = exc.amount_in
 
-            amounts.append(
+            amounts = (
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool_lo.address,
                     id=v4_pool_lo.pool_id,
-                    # withdraw forward token (V4 withdrawals are positive)
                     amount_specified=forward_token_amount,
                     zero_for_one=pool_lo_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
                     if pool_lo_zero_for_one
                     else MAX_SQRT_RATIO - 1,
-                )
-            )
-
-            amounts.append(
+                ),
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool_hi.address,
                     id=v4_pool_hi.pool_id,
-                    # deposit forward token (V4 deposits are negative)
                     amount_specified=-forward_token_amount,
                     zero_for_one=pool_hi_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
                     if pool_hi_zero_for_one
                     else MAX_SQRT_RATIO - 1,
-                )
+                ),
             )
 
             best_profit = weth_out - weth_in
@@ -868,13 +863,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 state_block=newest_state_block,
             )
 
-        def _calculate_v4_v3(
+        def _calculate_v3_v4(
             v4_pool: UniswapV4Pool,
             v3_pool: UniswapV3Pool,
             forward_token: Erc20Token,
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v3_pool_state_override: UniswapV3PoolState | None = None,
         ) -> ArbitrageCalculationResult:
+            # OPPORTUNITY:
+            # - V3 ROE < V3 ROE
             # STRATEGY:
             # - swap WETH_in -> X at V3 (exact output)
             # - transfer X from V3 -> V4
@@ -890,25 +887,21 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             try:
                 v4_pool.calculate_tokens_out_from_tokens_in(
-                    token_in=forward_token, token_in_quantity=MAX_INT256
+                    token_in=forward_token,
+                    token_in_quantity=MAX_INT256,
+                    override_state=v4_pool_state_override,
                 )
             except (IncompleteSwap, PossibleInaccurateResult) as exc:
                 v4_pool_max_input = exc.amount_in
-            except Exception:
-                logger.exception("v4_hi_v3_lo_calc")
-                raise
 
-            # TODO: add override supports here (typ. across class)
             try:
                 v3_pool.calculate_tokens_in_from_tokens_out(
                     token_out=forward_token,
                     token_out_quantity=MAX_INT256,
+                    override_state=v3_pool_state_override,
                 )
             except IncompleteSwap as exc:
                 v3_pool_max_output = exc.amount_out
-            except Exception:
-                logger.exception("v4_hi_v3_lo_calc")
-                raise
 
             if v3_pool_max_output == 0 or v4_pool_max_input == 0:
                 raise ArbitrageError(message="Insufficient liquidity")
@@ -956,8 +949,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             # Encode the swap amounts to capture the arbitrage
             # --------------------------------------------------------------------------------------
 
-            amounts: list[UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts] = []
-
             # Set the flag by checking the position of the token being sold
             v4_pool_zero_for_one = v4_pool.token0 == forward_token
 
@@ -989,7 +980,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             if weth_in == 0:
                 raise ArbitrageError(message="Zero amount swap")
 
-            amounts.append(
+            amounts = (
+                UniswapV3PoolSwapAmounts(
+                    pool=v3_pool.address,
+                    amount_specified=-forward_token_amount,  # exact output
+                    zero_for_one=v3_pool_zero_for_one,
+                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                    if v3_pool_zero_for_one
+                    else MAX_SQRT_RATIO - 1,
+                ),
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool.address,
                     id=v4_pool.pool_id,
@@ -998,18 +997,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
                     if v4_pool_zero_for_one
                     else MAX_SQRT_RATIO - 1,
-                )
-            )
-
-            amounts.append(
-                UniswapV3PoolSwapAmounts(
-                    pool=v3_pool.address,
-                    amount_specified=-forward_token_amount,  # exact output
-                    zero_for_one=v3_pool_zero_for_one,
-                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                    if v3_pool_zero_for_one
-                    else MAX_SQRT_RATIO - 1,
-                )
+                ),
             )
 
             best_profit = weth_out - weth_in
@@ -1047,10 +1035,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> ArbitrageCalculationResult:
+            # OPPORTUNITY:
+            # - V4 ROE < V2 ROE
             # STRATEGY:
-            # - swap WETH_in -> X at V2 (exact output)
-            # - transfer X from V2 -> V4
-            # - swap X -> WETH_out at V4 (exact input)
+            # - swap WETH_in -> X at V4 (exact output)
+            # - transfer X from V4 -> V2
+            # - swap X -> WETH_out at V2 (exact input)
             # - profit = WETH_out - WETH_in
 
             assert forward_token not in (
@@ -1061,36 +1051,35 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             start = time.perf_counter()
 
             try:
-                v4_pool.calculate_tokens_out_from_tokens_in(
-                    token_in=forward_token, token_in_quantity=MAX_INT256
+                v4_pool.calculate_tokens_in_from_tokens_out(
+                    token_out=forward_token, token_out_quantity=MAX_INT256
                 )
             except (IncompleteSwap, PossibleInaccurateResult) as exc:
-                v4_pool_max_input = exc.amount_in
+                v4_pool_max_output = exc.amount_out
             except Exception:
-                logger.exception("v4_hi_v2_lo_calc")
+                logger.exception("v2_hi_v4_lo_calc")
                 raise
 
-            v2_pool_max_output = (
-                v2_pool.reserves_token0 - 1
-                if v2_pool.token0 == forward_token
-                else v2_pool.reserves_token1 - 1
-            )
-
-            assert v2_pool_max_output > 0
-            assert v4_pool_max_input > 0
+            # TODO: check more thoroughly for this condition - why did the pre-calc check not flag
+            # the pool?
+            if v4_pool_max_output == 0:
+                raise ArbitrageError(message="Insufficient liquidity")
 
             # Bound the input to the Brent optimizer
+            # NOTE: the V2 pool input does not need to be considered, an infinite amount can be
+            # swapped in
             forward_token_bounds = (
                 1.0,
-                float(min(v4_pool_max_input, v2_pool_max_output)),
+                float(v4_pool_max_output),
             )
+
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
             if forward_token_bounds[1] == 1.0:
                 forward_token_amount = 1
             else:
                 opt: OptimizeResult = minimize_scalar(
-                    fun=lambda x: -_arb_profit_high_roe_v4_low_roe_v2(
+                    fun=lambda x: -_arb_profit_high_roe_v2_low_roe_v4(
                         v4_pool=v4_pool,
                         v2_pool=v2_pool,
                         v4_pool_state_override=v4_pool_state_override,
@@ -1119,24 +1108,22 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             # Encode the swap amounts to capture the arbitrage
             # --------------------------------------------------------------------------------------
 
-            amounts: list[UniswapV2PoolSwapAmounts | UniswapV4PoolSwapAmounts] = []
+            # Set the flag by checking the position of the deposited asset (token_in)
+            v2_pool_zero_for_one = v2_pool.token0 == forward_token
 
-            # Set the flag by checking the position of the token being sold
-            v4_pool_zero_for_one = v4_pool.token0 == forward_token
-
-            # Set the flag by checking the position of the token being purchased
-            v2_pool_zero_for_one = v2_pool.token1 == forward_token
+            # Set the flag by checking the position of the purchased asset (token_out)
+            v4_pool_zero_for_one = v4_pool.token1 == forward_token
 
             try:
-                weth_out = v4_pool.calculate_tokens_out_from_tokens_in(
-                    token_in=forward_token,
-                    token_in_quantity=forward_token_amount,
+                weth_in = v4_pool.calculate_tokens_in_from_tokens_out(
+                    token_out=forward_token,
+                    token_out_quantity=forward_token_amount,
                     override_state=v4_pool_state_override,
                 )
             except PossibleInaccurateResult as exc:
-                weth_out = exc.amount_out
+                weth_in = exc.amount_in
 
-            if weth_out == 0:
+            if weth_in == 0:
                 raise ArbitrageError(message="Zero amount swap")
 
             if v4_pool.tokens == v2_pool.tokens:
@@ -1145,54 +1132,47 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             match v2_pool, v2_pool_state_override:
                 case AerodromeV2Pool(), AerodromeV2PoolState() | None:
-                    weth_in = v2_pool.calculate_tokens_in_from_tokens_out(
-                        token_out=forward_token,
-                        token_out_quantity=forward_token_amount,
+                    weth_out = v2_pool.calculate_tokens_out_from_tokens_in(
+                        token_in=forward_token,
+                        token_in_quantity=forward_token_amount,
                         override_state=v2_pool_state_override,
                     )
                 case UniswapV2Pool(), UniswapV2PoolState() | None:
-                    weth_in = v2_pool.calculate_tokens_in_from_tokens_out(
-                        token_out=forward_token,
-                        token_out_quantity=forward_token_amount,
+                    weth_out = v2_pool.calculate_tokens_out_from_tokens_in(
+                        token_in=forward_token,
+                        token_in_quantity=forward_token_amount,
                         override_state=v2_pool_state_override,
                     )
+                case _:
+                    raise TypeError
 
-            if weth_in == 0:
+            if weth_out == 0:
                 raise ArbitrageError(message="Zero amount swap")
 
-            amounts.append(
+            amounts = (
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool.address,
                     id=v4_pool.pool_id,
-                    amount_specified=-forward_token_amount,  # exact input swap
+                    amount_specified=forward_token_amount,  # exact output swap
                     zero_for_one=v4_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
                     if v4_pool_zero_for_one
                     else MAX_SQRT_RATIO - 1,
-                )
-            )
-
-            amounts.append(
+                ),
                 UniswapV2PoolSwapAmounts(
                     pool=v2_pool.address,
-                    amounts_in=((weth_in, 0) if v2_pool_zero_for_one else (0, weth_in)),
-                    amounts_out=(
-                        (0, forward_token_amount)
+                    amounts_in=(
+                        (forward_token_amount, 0)
                         if v2_pool_zero_for_one
-                        else (forward_token_amount, 0)
+                        else (0, forward_token_amount)
                     ),
-                )
+                    amounts_out=(0, weth_out) if v2_pool_zero_for_one else (weth_out, 0),
+                ),
             )
 
             best_profit = weth_out - weth_in
-            if forward_token_amount <= 0 or best_profit <= 0:
+            if best_profit <= 0:
                 raise ArbitrageError(message="No possible arbitrage")
-
-            logger.debug(f"{best_profit=}, {weth_out=}, {weth_in=}")
-            logger.debug(
-                f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit} {self.input_token} profit"  # noqa: E501
-            )
-            logger.debug(f"{amounts=}")
 
             newest_state_block = None
             if not state_overrides:
@@ -1212,13 +1192,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 state_block=newest_state_block,
             )
 
-        def _calculate_v3_v4(
+        def _calculate_v4_v3(
             v3_pool: UniswapV3Pool,
             v4_pool: UniswapV4Pool,
             forward_token: Erc20Token,
             v3_pool_state_override: UniswapV3PoolState | None = None,
             v4_pool_state_override: UniswapV4PoolState | None = None,
         ) -> ArbitrageCalculationResult:
+            # OPPORTUNITY:
+            # - V4 ROE < V3 ROE
             # STRATEGY:
             # - swap WETH_in -> X at V4 (exact output)
             # - transfer X from V4 -> V3
@@ -1238,9 +1220,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
             except (IncompleteSwap, PossibleInaccurateResult) as exc:
                 v4_pool_max_output = exc.amount_out
-            except Exception:
-                logger.exception("v3_hi_v4_lo_calc")
-                raise
 
             # TODO: check more thoroughly for this condition - why did the pre-calc check not flag
             # the pool?
@@ -1253,9 +1232,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
             except (IncompleteSwap, PossibleInaccurateResult) as exc:
                 v3_pool_max_input = exc.amount_in
-            except Exception:
-                logger.exception("v3_hi_v4_lo_calc")
-                raise
 
             # TODO: check more thoroughly for this condition - why did the pre-calc check not flag
             # the pool?
@@ -1303,8 +1279,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             # Encode the swap amounts to capture the arbitrage
             # --------------------------------------------------------------------------------------
 
-            amounts: list[UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts] = []
-
             # Set the flag by checking the position of the deposited asset (token_in)
             v3_pool_zero_for_one = v3_pool.token0 == forward_token
 
@@ -1336,18 +1310,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             if weth_out == 0:
                 raise ArbitrageError(message="Zero amount swap")
 
-            amounts.append(
-                UniswapV3PoolSwapAmounts(
-                    pool=v3_pool.address,
-                    amount_specified=forward_token_amount,  # exact input
-                    zero_for_one=v3_pool_zero_for_one,
-                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                    if v3_pool_zero_for_one
-                    else MAX_SQRT_RATIO - 1,
-                )
-            )
-
-            amounts.append(
+            amounts = (
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool.address,
                     id=v4_pool.pool_id,
@@ -1356,18 +1319,20 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
                     if v4_pool_zero_for_one
                     else MAX_SQRT_RATIO - 1,
-                )
+                ),
+                UniswapV3PoolSwapAmounts(
+                    pool=v3_pool.address,
+                    amount_specified=forward_token_amount,  # exact input
+                    zero_for_one=v3_pool_zero_for_one,
+                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                    if v3_pool_zero_for_one
+                    else MAX_SQRT_RATIO - 1,
+                ),
             )
 
             best_profit = weth_out - weth_in
             if best_profit <= 0:
                 raise ArbitrageError(message="No possible arbitrage")
-
-            logger.debug(f"{best_profit=}, {weth_out=}, {weth_in=}")
-            logger.debug(
-                f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit:.4f} {self.input_token} profit"  # noqa: E501
-            )
-            logger.debug(f"{amounts=}")
 
             newest_state_block = None
             if not state_overrides:
@@ -1390,10 +1355,18 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
         def _calculate_v3_v3(
             v3_pool_hi: UniswapV3Pool,
             v3_pool_lo: UniswapV3Pool,
-            v3_pool_hi_state_override: UniswapV3PoolState | None,
-            v3_pool_lo_state_override: UniswapV3PoolState | None,
             forward_token: Erc20Token,
+            v3_pool_hi_state_override: UniswapV3PoolState | None = None,
+            v3_pool_lo_state_override: UniswapV3PoolState | None = None,
         ) -> ArbitrageCalculationResult:
+            # OPPORTUNITY:
+            # - V3_lo ROE < V3_hi ROE
+            # STRATEGY:
+            # - swap WETH_in -> X at V3_lo (exact output)
+            # - transfer X from V3_lo -> V3_hi
+            # - swap X -> WETH_out at V3_hi (exact input)
+            # - profit = WETH_out - WETH_in
+
             start = time.perf_counter()
 
             # Determine the amount of the forward token that can be deposited into the
@@ -1406,10 +1379,9 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
             except IncompleteSwap as exc:
                 v3_pool_hi_max_input = exc.amount_in
-            except Exception:
-                logger.info(f"Failure for {v3_pool_hi!r}")
-                logger.exception("v3_v3_calc")
-                raise
+
+            if v3_pool_hi_max_input == 0:
+                raise ArbitrageError(message="Insufficient liquidity")
 
             # Determine the amount of the forward token that can be withdrawn from the
             # lo pool by calculating a maximum output swap
@@ -1421,14 +1393,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
             except IncompleteSwap as exc:
                 v3_pool_lo_max_output = exc.amount_out
-            except Exception:
-                logger.info(f"Failure for {v3_pool_lo!r}")
-                logger.exception("v3_v3_calc")
-                raise
 
             # TODO: check more thoroughly for this condition - why did the pre-calc check not flag
             # the pool?
-            if v3_pool_hi_max_input == 0 or v3_pool_lo_max_output == 0:
+            if v3_pool_lo_max_output == 0:
                 raise ArbitrageError(message="Insufficient liquidity")
 
             assert v3_pool_hi_max_input > 0
@@ -1465,40 +1433,22 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             if forward_token_amount == 0:
                 raise ArbitrageError(message="Zero amount optimum")
 
-            amounts: list[UniswapV3PoolSwapAmounts] = []
+            pool_hi_zero_for_one = v3_pool_hi.token0 == forward_token
+            pool_lo_zero_for_one = v3_pool_lo.token1 == forward_token
+            assert pool_hi_zero_for_one != pool_lo_zero_for_one
 
-            try:
-                # STRATEGY:
-                # - swap WETH_in -> X at V3_lo
-                # - transfer X from V3_lo -> V3_hi
-                # - swap X -> WETH_out at V3_hi
-                # - profit = WETH_out - WETH_in
+            weth_out = v3_pool_hi.calculate_tokens_out_from_tokens_in(
+                token_in=forward_token,
+                token_in_quantity=forward_token_amount,
+                override_state=v3_pool_hi_state_override,
+            )
+            weth_in = v3_pool_lo.calculate_tokens_in_from_tokens_out(
+                token_out=forward_token,
+                token_out_quantity=forward_token_amount,
+                override_state=v3_pool_lo_state_override,
+            )
 
-                pool_hi_zero_for_one = v3_pool_hi.token1 == self.input_token
-                weth_out = v3_pool_hi.calculate_tokens_out_from_tokens_in(
-                    token_in=forward_token,
-                    token_in_quantity=forward_token_amount,
-                    override_state=v3_pool_hi_state_override,
-                )
-
-                pool_lo_zero_for_one = v3_pool_lo.token1 == forward_token
-
-                logger.debug(f"{pool_hi_zero_for_one=}")
-                logger.debug(f"{pool_lo_zero_for_one=}")
-
-                assert pool_hi_zero_for_one != pool_lo_zero_for_one
-
-                weth_in = v3_pool_lo.calculate_tokens_in_from_tokens_out(
-                    token_out=forward_token,
-                    token_out_quantity=forward_token_amount,
-                    override_state=v3_pool_lo_state_override,
-                )
-
-            except (EVMRevertError, LiquidityPoolError) as e:
-                logger.error(f"V3/V3 calc error: {e}")
-                raise ArbitrageError from e
-
-            amounts.append(
+            amounts = (
                 UniswapV3PoolSwapAmounts(
                     pool=v3_pool_lo.address,
                     amount_specified=-forward_token_amount,
@@ -1506,9 +1456,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
                     if pool_lo_zero_for_one
                     else MAX_SQRT_RATIO - 1,
-                )
-            )
-            amounts.append(
+                ),
                 UniswapV3PoolSwapAmounts(
                     pool=v3_pool_hi.address,
                     amount_specified=forward_token_amount,  # input forward token
@@ -1516,7 +1464,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
                     if pool_hi_zero_for_one
                     else MAX_SQRT_RATIO - 1,
-                )
+                ),
             )
 
             best_profit = weth_out - weth_in
@@ -1548,48 +1496,46 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 state_block=newest_state_block,
             )
 
-        def _calculate_v3_v2(
-            v3_pool: UniswapV3Pool,
+        def _calculate_v2_v3(
             v2_pool: AerodromeV2Pool | UniswapV2Pool,
+            v3_pool: UniswapV3Pool,
             forward_token: Erc20Token,
-            v3_pool_override: UniswapV3PoolState | None = None,
-            v2_pool_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
+            v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
+            v3_pool_state_override: UniswapV3PoolState | None = None,
         ) -> ArbitrageCalculationResult:
+            # OPPORTUNITY:
+            # - V2 ROE < V3 ROE
             # STRATEGY:
-            # - swap X -> WETH_out at V3
-            # - transfer X from V2 -> V3
             # - swap WETH_in -> X at V2
+            # - transfer X from V2 -> V3
+            # - swap X -> WETH_out at V3
             # - profit = WETH_out - WETH_in
 
             start = time.perf_counter()
 
-            amounts: list[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts] = []
-
-            try:
-                # Establish the upper forward token swap limit
-                v3_pool.calculate_tokens_out_from_tokens_in(
-                    token_in=forward_token, token_in_quantity=MAX_INT256
-                )
-            except IncompleteSwap as exc:
-                v3_pool_max_forward_token_deposit = exc.amount_in
-            except Exception:
-                logger.info(f"Failure for {v3_pool!r}")
-                logger.exception("v3_hi_v2_lo_calc")
-                raise
-
-            v2_pool_max_forward_token_withdrawal = (
+            v2_pool_max_output = (
                 v2_pool.reserves_token0 - 1
                 if forward_token == v2_pool.token0
                 else v2_pool.reserves_token1 - 1
             )
+
+            try:
+                v3_pool.calculate_tokens_out_from_tokens_in(
+                    token_in=forward_token, token_in_quantity=MAX_INT256
+                )
+            except IncompleteSwap as exc:
+                v3_pool_max_input = exc.amount_in
+
+            assert v2_pool_max_output > 0
+            assert v3_pool_max_input > 0
 
             # Bound the input to the Brent optimizer
             forward_token_bounds = (
                 1.0,
                 float(
                     min(
-                        v2_pool_max_forward_token_withdrawal,
-                        v3_pool_max_forward_token_deposit,
+                        v2_pool_max_output,
+                        v3_pool_max_input,
                     )
                 ),
             )
@@ -1602,10 +1548,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     fun=lambda x: -_arb_profit_high_roe_v3_low_roe_v2(
                         v3_pool=v3_pool,
                         v2_pool=v2_pool,
-                        v3_pool_state_override=v3_pool_override,
-                        v2_pool_state_override=v2_pool_override,
                         forward_token=forward_token,
                         forward_token_amount=x,
+                        v3_pool_state_override=v3_pool_state_override,
+                        v2_pool_state_override=v2_pool_state_override,
                     ),
                     method="bounded",
                     bounds=forward_token_bounds,
@@ -1622,69 +1568,63 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                         f"V3/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
                     )
 
-            try:
-                # STRATEGY:
-                # - swap X -> WETH_out at V3
-                # - transfer X from V2 -> V3
-                # - swap WETH_in -> X at V2
-                # - profit = WETH_out - WETH_in
+            v2_pool_zero_for_one = v3_pool.token1 == forward_token
+            v3_pool_zero_for_one = v3_pool.token0 == forward_token
+            assert v3_pool_zero_for_one != v2_pool_zero_for_one
 
-                pool_hi_zero_for_one = v3_pool.token1 == self.input_token
+            try:
                 weth_out = v3_pool.calculate_tokens_out_from_tokens_in(
                     token_in=forward_token,
                     token_in_quantity=forward_token_amount,
-                    override_state=v3_pool_override,
+                    override_state=v3_pool_state_override,
                 )
+            except (EVMRevertError, LiquidityPoolError) as e:
+                raise ArbitrageError from e
 
-                if weth_out == 0:
-                    raise ArbitrageError(message="Zero amount swap")
+            if weth_out == 0:
+                raise ArbitrageError(message="Zero amount swap")
 
-                pool_lo_zero_for_one = v3_pool.token1 == forward_token
-
-                assert pool_hi_zero_for_one != pool_lo_zero_for_one
-
-                match v2_pool, v2_pool_override:
+            try:
+                match v2_pool, v2_pool_state_override:
                     case UniswapV2Pool(), UniswapV2PoolState() | None:
                         weth_in = v2_pool.calculate_tokens_in_from_tokens_out(
                             token_out=forward_token,
                             token_out_quantity=forward_token_amount,
-                            override_state=v2_pool_override,
+                            override_state=v2_pool_state_override,
                         )
                     case AerodromeV2Pool(), AerodromeV2PoolState() | None:
                         weth_in = v2_pool.calculate_tokens_in_from_tokens_out(
                             token_out=forward_token,
                             token_out_quantity=forward_token_amount,
-                            override_state=v2_pool_override,
+                            override_state=v2_pool_state_override,
                         )
                     case _:
-                        raise TypeError
-
-                if weth_in == 0:
-                    raise ArbitrageError(message="Zero amount swap")
-
-                amounts.append(
-                    UniswapV3PoolSwapAmounts(
-                        pool=v3_pool.address,
-                        amount_specified=forward_token_amount,
-                        zero_for_one=pool_hi_zero_for_one,
-                        sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
-                        if pool_hi_zero_for_one
-                        else MAX_SQRT_RATIO - 1,
-                    )
-                )
-                amounts.append(
-                    UniswapV2PoolSwapAmounts(
-                        pool=v2_pool.address,
-                        amounts_out=(
-                            (0, forward_token_amount)
-                            if pool_lo_zero_for_one
-                            else (forward_token_amount, 0)
-                        ),
-                        amounts_in=((weth_in, 0) if pool_lo_zero_for_one else (0, weth_in)),
-                    )
-                )
+                        raise DegenbotValueError(message="Cannot identify pool and state")
             except (EVMRevertError, LiquidityPoolError) as e:
                 raise ArbitrageError from e
+
+            if weth_in == 0:
+                raise ArbitrageError(message="Zero amount swap")
+
+            amounts = (
+                UniswapV2PoolSwapAmounts(
+                    pool=v2_pool.address,
+                    amounts_out=(
+                        (0, forward_token_amount)
+                        if v2_pool_zero_for_one
+                        else (forward_token_amount, 0)
+                    ),
+                    amounts_in=((weth_in, 0) if v2_pool_zero_for_one else (0, weth_in)),
+                ),
+                UniswapV3PoolSwapAmounts(
+                    pool=v3_pool.address,
+                    amount_specified=forward_token_amount,
+                    zero_for_one=v3_pool_zero_for_one,
+                    sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
+                    if v3_pool_zero_for_one
+                    else MAX_SQRT_RATIO - 1,
+                ),
+            )
 
             best_profit = weth_out - weth_in
             if forward_token_amount <= 0 or best_profit <= 0:
@@ -1719,13 +1659,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             v2_pool: AerodromeV2Pool | UniswapV2Pool,
             v4_pool: UniswapV4Pool,
             forward_token: Erc20Token,
-            v2_pool_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
-            v4_pool_override: UniswapV4PoolState | None = None,
+            v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
+            v4_pool_state_override: UniswapV4PoolState | None = None,
         ) -> ArbitrageCalculationResult:
+            # OPPORTUNITY:
+            # - V2 ROE < V4 ROE
             # STRATEGY:
-            # - swap WETH_in -> X at V4 (exact output)
-            # - transfer X from V4 -> V2
-            # - swap X -> WETH_out at V2 (exact input)
+            # - swap WETH_in -> X at V2 (exact output)
+            # - transfer X from V2 -> V4
+            # - swap X -> WETH_out at V4 (exact input)
             # - profit = WETH_out - WETH_in
 
             assert forward_token not in (
@@ -1735,42 +1677,40 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             start = time.perf_counter()
 
-            try:
-                v4_pool.calculate_tokens_in_from_tokens_out(
-                    token_out=forward_token, token_out_quantity=MAX_INT256
-                )
-            except (IncompleteSwap, PossibleInaccurateResult) as exc:
-                v4_pool_max_output = exc.amount_out
-            except Exception:
-                logger.exception("v2_hi_v4_lo_calc")
-                raise
-
-            # TODO: check more thoroughly for this condition - why did the pre-calc check not flag
-            # the pool?
-            if v4_pool_max_output == 0:
-                raise ArbitrageError(message="Insufficient liquidity")
-
-            # Bound the input to the Brent optimizer
-            # NOTE: the V2 pool input does not need to be considered, an infinite amount can be
-            # swapped in
-            forward_token_bounds = (
-                1.0,
-                float(v4_pool_max_output),
+            v2_pool_max_output = (
+                v2_pool.reserves_token0 - 1
+                if v2_pool.token0 == forward_token
+                else v2_pool.reserves_token1 - 1
             )
 
+            try:
+                v4_pool.calculate_tokens_out_from_tokens_in(
+                    token_in=forward_token, token_in_quantity=MAX_INT256
+                )
+            except (IncompleteSwap, PossibleInaccurateResult) as exc:
+                v4_pool_max_input = exc.amount_in
+
+            assert v2_pool_max_output > 0
+            assert v4_pool_max_input > 0
+
+            # Bound the input to the Brent optimizer
+            forward_token_bounds = (
+                1.0,
+                float(min(v4_pool_max_input, v2_pool_max_output)),
+            )
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
             if forward_token_bounds[1] == 1.0:
                 forward_token_amount = 1
             else:
                 opt: OptimizeResult = minimize_scalar(
-                    fun=lambda x: -_arb_profit_high_roe_v2_low_roe_v4(
+                    fun=lambda x: -_arb_profit_high_roe_v4_low_roe_v2(
                         v4_pool=v4_pool,
                         v2_pool=v2_pool,
-                        v4_pool_state_override=v4_pool_override,
-                        v2_pool_state_override=v2_pool_override,
                         forward_token=forward_token,
                         forward_token_amount=x,
+                        v4_pool_state_override=v4_pool_state_override,
+                        v2_pool_state_override=v2_pool_state_override,
                     ),
                     method="bounded",
                     bounds=forward_token_bounds,
@@ -1793,81 +1733,69 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             # Encode the swap amounts to capture the arbitrage
             # --------------------------------------------------------------------------------------
 
-            amounts: list[UniswapV2PoolSwapAmounts | UniswapV4PoolSwapAmounts] = []
+            # Set the flag by checking the position of the forward token (purchased)
+            v2_pool_zero_for_one = v2_pool.token1 == forward_token
 
-            # Set the flag by checking the position of the deposited asset (token_in)
-            v2_pool_zero_for_one = v2_pool.token0 == forward_token
-
-            # Set the flag by checking the position of the purchased asset (token_out)
-            v4_pool_zero_for_one = v4_pool.token1 == forward_token
+            # Set the flag by checking the position of the forward token (deposited)
+            v4_pool_zero_for_one = v4_pool.token0 == forward_token
 
             try:
-                weth_in = v4_pool.calculate_tokens_in_from_tokens_out(
-                    token_out=forward_token,
-                    token_out_quantity=forward_token_amount,
-                    override_state=v4_pool_override,
+                weth_out = v4_pool.calculate_tokens_out_from_tokens_in(
+                    token_in=forward_token,
+                    token_in_quantity=forward_token_amount,
+                    override_state=v4_pool_state_override,
                 )
             except PossibleInaccurateResult as exc:
-                weth_in = exc.amount_in
+                weth_out = exc.amount_out
 
-            if weth_in == 0:
+            if weth_out == 0:
                 raise ArbitrageError(message="Zero amount swap")
 
             if v4_pool.tokens == v2_pool.tokens:
                 # Token position should be identical for both pools, 0->1 flags should be reversed
                 assert v4_pool_zero_for_one != v2_pool_zero_for_one
 
-            match v2_pool, v2_pool_override:
+            match v2_pool, v2_pool_state_override:
                 case AerodromeV2Pool(), AerodromeV2PoolState() | None:
-                    weth_out = v2_pool.calculate_tokens_out_from_tokens_in(
-                        token_in=forward_token,
-                        token_in_quantity=forward_token_amount,
-                        override_state=v2_pool_override,
+                    weth_in = v2_pool.calculate_tokens_in_from_tokens_out(
+                        token_out=forward_token,
+                        token_out_quantity=forward_token_amount,
+                        override_state=v2_pool_state_override,
                     )
                 case UniswapV2Pool(), UniswapV2PoolState() | None:
-                    weth_out = v2_pool.calculate_tokens_out_from_tokens_in(
-                        token_in=forward_token,
-                        token_in_quantity=forward_token_amount,
-                        override_state=v2_pool_override,
+                    weth_in = v2_pool.calculate_tokens_in_from_tokens_out(
+                        token_out=forward_token,
+                        token_out_quantity=forward_token_amount,
+                        override_state=v2_pool_state_override,
                     )
-                case _:
-                    raise TypeError
 
-            if weth_out == 0:
+            if weth_in == 0:
                 raise ArbitrageError(message="Zero amount swap")
 
-            amounts.append(
+            amounts = (
                 UniswapV2PoolSwapAmounts(
                     pool=v2_pool.address,
-                    amounts_in=(
-                        (forward_token_amount, 0)
+                    amounts_in=((weth_in, 0) if v2_pool_zero_for_one else (0, weth_in)),
+                    amounts_out=(
+                        (0, forward_token_amount)
                         if v2_pool_zero_for_one
-                        else (0, forward_token_amount)
+                        else (forward_token_amount, 0)
                     ),
-                    amounts_out=(0, weth_out) if v2_pool_zero_for_one else (weth_out, 0),
-                )
-            )
-            amounts.append(
+                ),
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool.address,
                     id=v4_pool.pool_id,
-                    amount_specified=forward_token_amount,  # exact output swap
+                    amount_specified=-forward_token_amount,  # exact input swap
                     zero_for_one=v4_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
                     if v4_pool_zero_for_one
                     else MAX_SQRT_RATIO - 1,
-                )
+                ),
             )
 
             best_profit = weth_out - weth_in
-            if best_profit <= 0:
+            if forward_token_amount <= 0 or best_profit <= 0:
                 raise ArbitrageError(message="No possible arbitrage")
-
-            logger.debug(f"{best_profit=}, {weth_out=}, {weth_in=}")
-            logger.debug(
-                f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit:.4f} {self.input_token} profit"  # noqa: E501
-            )
-            logger.debug(f"{amounts=}")
 
             newest_state_block = None
             if not state_overrides:
@@ -1887,13 +1815,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 state_block=newest_state_block,
             )
 
-        def _calculate_v2_v3(
-            v2_pool: AerodromeV2Pool | UniswapV2Pool,
+        def _calculate_v3_v2(
             v3_pool: UniswapV3Pool,
+            v2_pool: AerodromeV2Pool | UniswapV2Pool,
             forward_token: Erc20Token,
-            v2_pool_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
-            v3_pool_override: UniswapV3PoolState | None = None,
+            v3_pool_state_override: UniswapV3PoolState | None = None,
+            v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> ArbitrageCalculationResult:
+            # OPPORTUNITY:
+            # - V3 ROE < V2 ROE
             # STRATEGY:
             # - swap WETH_in -> X at V3
             # - transfer X from V2 -> V3
@@ -1901,8 +1831,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             # - profit = WETH_out - WETH_in
 
             start = time.perf_counter()
-
-            amounts: list[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts] = []
 
             try:
                 v3_pool.calculate_tokens_in_from_tokens_out(
@@ -1934,8 +1862,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 fun=lambda x: -_arb_profit_high_roe_v2_low_roe_v3(
                     v3_pool=v3_pool,
                     v2_pool=v2_pool,
-                    v3_pool_state_override=v3_pool_override,
-                    v2_pool_state_override=v2_pool_override,
+                    v3_pool_state_override=v3_pool_state_override,
+                    v2_pool_state_override=v2_pool_state_override,
                     forward_token=forward_token,
                     forward_token_amount=x,
                 ),
@@ -1955,8 +1883,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             if forward_token_amount == 0:
                 raise ArbitrageError(message="Zero amount optimum")
 
-            amounts = []
-
             try:
                 # Transfer X token from V3 -> V2, profit is difference of WETH_out from V2 and
                 # WETH_in to V3
@@ -1964,25 +1890,25 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 weth_in = v3_pool.calculate_tokens_in_from_tokens_out(
                     token_out=forward_token,
                     token_out_quantity=forward_token_amount,
-                    override_state=v3_pool_override,
+                    override_state=v3_pool_state_override,
                 )
 
                 pool_lo_zero_for_one = v3_pool.token1 == self.input_token
 
                 assert pool_hi_zero_for_one != pool_lo_zero_for_one
 
-                match v2_pool, v2_pool_override:
+                match v2_pool, v2_pool_state_override:
                     case UniswapV2Pool(), UniswapV2PoolState() | None:
                         weth_out = v2_pool.calculate_tokens_out_from_tokens_in(
                             token_in=forward_token,
                             token_in_quantity=forward_token_amount,
-                            override_state=v2_pool_override,
+                            override_state=v2_pool_state_override,
                         )
                     case AerodromeV2Pool(), AerodromeV2PoolState() | None:
                         weth_out = v2_pool.calculate_tokens_out_from_tokens_in(
                             token_in=forward_token,
                             token_in_quantity=forward_token_amount,
-                            override_state=v2_pool_override,
+                            override_state=v2_pool_state_override,
                         )
                     case _:
                         raise TypeError
@@ -1990,7 +1916,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 if weth_out == 0:
                     raise ArbitrageError(message="Zero amount swap")
 
-                amounts.append(
+            except (EVMRevertError, LiquidityPoolError) as e:
+                raise ArbitrageError from e
+
+            best_profit = weth_out - weth_in
+            if forward_token_amount <= 0 or best_profit <= 0:
+                raise ArbitrageError(message="No possible arbitrage")
+
+            amounts = (
+                (
                     UniswapV3PoolSwapAmounts(
                         pool=v3_pool.address,
                         amount_specified=-forward_token_amount,
@@ -1999,24 +1933,17 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                         if pool_hi_zero_for_one
                         else MAX_SQRT_RATIO - 1,
                     )
-                )
-                amounts.append(
-                    UniswapV2PoolSwapAmounts(
-                        pool=v2_pool.address,
-                        amounts_out=((0, weth_out) if pool_lo_zero_for_one else (weth_out, 0)),
-                        amounts_in=(
-                            (forward_token_amount, 0)
-                            if pool_lo_zero_for_one
-                            else (0, forward_token_amount)
-                        ),
-                    )
-                )
-            except (EVMRevertError, LiquidityPoolError) as e:
-                raise ArbitrageError from e
-
-            best_profit = weth_out - weth_in
-            if forward_token_amount <= 0 or best_profit <= 0:
-                raise ArbitrageError(message="No possible arbitrage")
+                ),
+                UniswapV2PoolSwapAmounts(
+                    pool=v2_pool.address,
+                    amounts_out=((0, weth_out) if pool_lo_zero_for_one else (weth_out, 0)),
+                    amounts_in=(
+                        (forward_token_amount, 0)
+                        if pool_lo_zero_for_one
+                        else (0, forward_token_amount)
+                    ),
+                ),
+            )
 
             logger.debug(f"{best_profit=}, {weth_out=}, {weth_in=}")
             logger.debug(
@@ -2272,7 +2199,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             if uncompressed_forward_token_amount <= 0:
                 raise InvalidForwardAmount
 
-            amounts: list[UniswapV2PoolSwapAmounts] = []
             try:
                 # STRATEGY:
                 # - swap WETH_in -> X at pool_lo
@@ -2323,23 +2249,21 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 if weth_in == 0:
                     raise ArbitrageError(message="Zero amount swap")
 
-                amounts.append(
+                amounts = (
                     UniswapV2PoolSwapAmounts(
                         pool=v2_pool_hi.address,
                         amounts_in=(uncompressed_forward_token_amount, 0)
                         if pool_hi_zero_for_one
                         else (0, uncompressed_forward_token_amount),
                         amounts_out=(0, weth_out) if pool_hi_zero_for_one else (weth_out, 0),
-                    )
-                )
-                amounts.append(
+                    ),
                     UniswapV2PoolSwapAmounts(
                         pool=v2_pool_lo.address,
                         amounts_in=(weth_in, 0) if pool_lo_zero_for_one else (0, weth_in),
                         amounts_out=(0, uncompressed_forward_token_amount)
                         if pool_lo_zero_for_one
                         else (uncompressed_forward_token_amount, 0),
-                    )
+                    ),
                 )
             except (EVMRevertError, LiquidityPoolError) as e:
                 logger.error(f"v2/v2 calc error: {e}")
@@ -2434,15 +2358,14 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     token=self.input_token,
                     override_state=pool_b_state_override,
                 )
-
-                forward_token = (
-                    v3_pool_a.token1 if self.input_token == v3_pool_a.token0 else v3_pool_a.token0
-                )
-
                 # Swap vectors are built based on an assumed swap direction, so verify that the
                 # pool states are profitable in this direction
                 if rate_of_exchange_b < rate_of_exchange_a:
                     raise ArbitrageError(message="No arbitrage possible.")
+
+                forward_token = (
+                    v3_pool_a.token1 if self.input_token == v3_pool_a.token0 else v3_pool_a.token0
+                )
 
                 return _calculate_v3_v3(
                     v3_pool_hi=v3_pool_b,
@@ -2512,7 +2435,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     isinstance(self.swap_pools[-1], UniswapV4Pool)
                     and rate_of_exchange_v4 > rate_of_exchange_v3
                 ):
-                    return _calculate_v4_v3(
+                    return _calculate_v3_v4(
                         v4_pool=v4_pool,
                         v3_pool=v3_pool,
                         forward_token=forward_token,
@@ -2524,7 +2447,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     isinstance(self.swap_pools[-1], UniswapV3Pool)
                     and rate_of_exchange_v3 > rate_of_exchange_v4
                 ):
-                    return _calculate_v3_v4(
+                    return _calculate_v4_v3(
                         v3_pool=v3_pool,
                         v4_pool=v4_pool,
                         forward_token=forward_token,
@@ -2572,19 +2495,14 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     raise DegenbotValueError(message="Cannot identify input and forward tokens")
 
                 v2_pool_state = state_overrides.get(v2_pool)
-                v4_pool_state = state_overrides.get(v4_pool)
-                if TYPE_CHECKING:
-                    assert isinstance(v4_pool_state, UniswapV4PoolState | None)
 
-                match v2_pool:
-                    case AerodromeV2Pool():
-                        if TYPE_CHECKING:
-                            assert isinstance(v2_pool_state, AerodromeV2PoolState | None)
+                match v2_pool, v2_pool_state:
+                    case AerodromeV2Pool(), AerodromeV2PoolState() | None:
                         rate_of_exchange_v2 = v2_pool.get_absolute_exchange_rate(
                             token=v2_input_token,
                             override_state=v2_pool_state,
                         )
-                    case UniswapV2Pool():
+                    case UniswapV2Pool(), UniswapV2PoolState() | None:
                         if TYPE_CHECKING:
                             assert isinstance(v2_pool_state, UniswapV2PoolState | None)
                         rate_of_exchange_v2 = v2_pool.get_absolute_exchange_rate(
@@ -2593,6 +2511,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                         )
                     case _:
                         raise TypeError
+
+                v4_pool_state = state_overrides.get(v4_pool)
+                if TYPE_CHECKING:
+                    assert isinstance(v4_pool_state, UniswapV4PoolState | None)
 
                 rate_of_exchange_v4 = v4_pool.get_absolute_exchange_rate(
                     token=v4_input_token,
@@ -2607,24 +2529,24 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     isinstance(self.swap_pools[-1], UniswapV4Pool)
                     and rate_of_exchange_v4 > rate_of_exchange_v2
                 ):
-                    return _calculate_v4_v2(
-                        v4_pool=v4_pool,
+                    return _calculate_v2_v4(
                         v2_pool=v2_pool,
-                        v4_pool_state_override=v4_pool_state,
-                        v2_pool_state_override=v2_pool_state,
+                        v4_pool=v4_pool,
                         forward_token=forward_token,
+                        v2_pool_state_override=v2_pool_state,
+                        v4_pool_state_override=v4_pool_state,
                     )
 
                 if (
                     isinstance(self.swap_pools[-1], AerodromeV2Pool | UniswapV2Pool)
                     and rate_of_exchange_v2 > rate_of_exchange_v4
                 ):
-                    return _calculate_v2_v4(
-                        v2_pool=v2_pool,
+                    return _calculate_v4_v2(
                         v4_pool=v4_pool,
-                        v2_pool_override=v2_pool_state,
-                        v4_pool_override=v4_pool_state,
+                        v2_pool=v2_pool,
                         forward_token=forward_token,
+                        v4_pool_state_override=v4_pool_state,
+                        v2_pool_state_override=v2_pool_state,
                     )
 
                 raise ArbitrageError(message="No arbitrage possible.")
@@ -2639,25 +2561,24 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 v2_pool_state = state_overrides.get(v2_pool)
                 v3_pool_state = state_overrides.get(v3_pool)
                 if TYPE_CHECKING:
+                    assert isinstance(
+                        v2_pool_state, AerodromeV2PoolState | UniswapV2PoolState | None
+                    )
                     assert isinstance(v3_pool_state, UniswapV3PoolState | None)
 
-                match v2_pool:
-                    case UniswapV2Pool():
-                        if TYPE_CHECKING:
-                            assert isinstance(v2_pool_state, UniswapV2PoolState | None)
+                match v2_pool, v2_pool_state:
+                    case UniswapV2Pool(), (UniswapV2PoolState() | None):
                         rate_of_exchange_v2 = v2_pool.get_absolute_exchange_rate(
                             token=self.input_token,
                             override_state=v2_pool_state,
                         )
-                    case AerodromeV2Pool():
-                        if TYPE_CHECKING:
-                            assert isinstance(v2_pool_state, AerodromeV2PoolState | None)
+                    case AerodromeV2Pool(), (AerodromeV2PoolState() | None):
                         rate_of_exchange_v2 = v2_pool.get_absolute_exchange_rate(
                             token=self.input_token,
                             override_state=v2_pool_state,
                         )
                     case _:
-                        raise TypeError
+                        raise DegenbotValueError(message="Pool and state cannot be identified.")
 
                 rate_of_exchange_v3 = v3_pool.get_absolute_exchange_rate(
                     token=self.input_token,
@@ -2669,18 +2590,18 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
 
                 if rate_of_exchange_v3 > rate_of_exchange_v2:
-                    return _calculate_v3_v2(
+                    return _calculate_v2_v3(
                         v3_pool=v3_pool,
                         v2_pool=v2_pool,
-                        v3_pool_override=v3_pool_state,
-                        v2_pool_override=v2_pool_state,
+                        v3_pool_state_override=v3_pool_state,
+                        v2_pool_state_override=v2_pool_state,
                         forward_token=forward_token,
                     )
-                return _calculate_v2_v3(
+                return _calculate_v3_v2(
                     v2_pool=v2_pool,
                     v3_pool=v3_pool,
-                    v2_pool_override=v2_pool_state,
-                    v3_pool_override=v3_pool_state,
+                    v2_pool_state_override=v2_pool_state,
+                    v3_pool_state_override=v3_pool_state,
                     forward_token=forward_token,
                 )
 
