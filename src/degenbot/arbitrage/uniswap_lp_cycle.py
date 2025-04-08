@@ -414,7 +414,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         # Evaluate the instantaneous rate of exchange for the path by accumulating swap and fee
         # multipliers for each pool
-        multipliers: list[Fraction] = []
+        exchange_rate_multipliers: list[Fraction] = []
         for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=True):
             match pool, state_overrides.get(pool):
                 case AerodromeV2Pool(), (AerodromeV2PoolState() | None) as aerodrome_v2_pool_state:
@@ -427,8 +427,8 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     fee = pool.fee_token0 if vector.zero_for_one else pool.fee_token1
                     fee_multiplier = Fraction(fee.denominator - fee.numerator, fee.denominator)
 
-                    multipliers.append(swap_multiplier)
-                    multipliers.append(fee_multiplier)
+                    exchange_rate_multipliers.append(swap_multiplier)
+                    exchange_rate_multipliers.append(fee_multiplier)
 
                 case UniswapV2Pool(), (UniswapV2PoolState() | None) as uniswap_v2_pool_state:
                     # The multiplier for the pool is the rate of exchange for the output token,
@@ -440,8 +440,8 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     fee = pool.fee_token0 if vector.zero_for_one else pool.fee_token1
                     fee_multiplier = Fraction(fee.denominator - fee.numerator, fee.denominator)
 
-                    multipliers.append(swap_multiplier)
-                    multipliers.append(fee_multiplier)
+                    exchange_rate_multipliers.append(swap_multiplier)
+                    exchange_rate_multipliers.append(fee_multiplier)
 
                 case UniswapV3Pool(), (UniswapV3PoolState() | None) as uniswap_v3_pool_state:
                     swap_multiplier = pool.get_absolute_exchange_rate(
@@ -453,8 +453,8 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     fee = Fraction(pool.fee, pool.FEE_DENOMINATOR)
                     fee_multiplier = Fraction(fee.denominator - fee.numerator, fee.denominator)
 
-                    multipliers.append(swap_multiplier)
-                    multipliers.append(fee_multiplier)
+                    exchange_rate_multipliers.append(swap_multiplier)
+                    exchange_rate_multipliers.append(fee_multiplier)
 
                 case UniswapV4Pool(), (UniswapV4PoolState() | None) as uniswap_v4_pool_state:
                     swap_multiplier = pool.get_absolute_exchange_rate(
@@ -466,17 +466,16 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     fee = Fraction(pool.fee, pool.FEE_DENOMINATOR)
                     fee_multiplier = Fraction(fee.denominator - fee.numerator, fee.denominator)
 
-                    multipliers.append(swap_multiplier)
-                    multipliers.append(fee_multiplier)
+                    exchange_rate_multipliers.append(swap_multiplier)
+                    exchange_rate_multipliers.append(fee_multiplier)
 
                 case _:  # pragma: no cover
                     raise DegenbotValueError(message=f"Could not identify pool {pool}.")
 
         net_rate_of_exchange = Fraction(
-            math.prod(multiplier.numerator for multiplier in multipliers),
-            math.prod(multiplier.denominator for multiplier in multipliers),
+            math.prod(multiplier.numerator for multiplier in exchange_rate_multipliers),
+            math.prod(multiplier.denominator for multiplier in exchange_rate_multipliers),
         )
-
         if net_rate_of_exchange < min_rate_of_exchange:
             raise RateOfExchangeBelowMinimum(net_rate_of_exchange)
 
