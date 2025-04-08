@@ -8,7 +8,7 @@ from typing import Any
 from weakref import WeakSet
 
 import eth_abi.abi
-from eth_typing import BlockNumber, ChecksumAddress, HexStr
+from eth_typing import ChecksumAddress, HexStr
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
