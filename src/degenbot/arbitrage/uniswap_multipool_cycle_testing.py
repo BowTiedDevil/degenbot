@@ -468,19 +468,13 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
             if (best_profit := amount_out - initial_amount_in) <= 0:
                 raise Unprofitable
 
-            newest_state_block: BlockNumber | None = None
-            if pool_states:
-                for state in pool_states.values():
-                    if state.block is None:
-                        break
-
-                    if TYPE_CHECKING:
-                        assert state.block is not None
-                    newest_state_block = (
-                        state.block
-                        if newest_state_block is None
-                        else max(newest_state_block, state.block)
-                    )
+            newest_state_block = None
+            if not state_overrides:
+                pool_state_blocks = tuple(
+                    block for pool in self.swap_pools if (block := pool.state.block) is not None
+                )
+                if len(pool_state_blocks) == len(self.swap_pools):
+                    newest_state_block = max(pool_state_blocks)
 
             return ArbitrageCalculationResult(
                 id=self.id,

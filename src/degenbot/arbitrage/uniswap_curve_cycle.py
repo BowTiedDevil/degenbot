@@ -479,11 +479,13 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
             block_number=block_number,
         )
 
-        newest_state_block = (
-            None
-            if state_overrides
-            else max([block for pool in self.swap_pools if (block := pool.state.block) is not None])
-        )
+        newest_state_block = None
+        if not state_overrides:
+            pool_state_blocks = tuple(
+                block for pool in self.swap_pools if (block := pool.state.block) is not None
+            )
+            if len(pool_state_blocks) == len(self.swap_pools):
+                newest_state_block = max(pool_state_blocks)
 
         return ArbitrageCalculationResult(
             id=self.id,

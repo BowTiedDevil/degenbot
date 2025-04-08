@@ -850,14 +850,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             logger.debug(f"{amounts=}")
             logger.debug(f"{self.swap_pools=}")
 
-            newest_state_block = (
-                None
-                if state_overrides
-                else max(
-                    pool.state.block  # type: ignore[type-var]
-                    for pool in self.swap_pools
+            newest_state_block = None
+            if not state_overrides:
+                pool_state_blocks = tuple(
+                    block for pool in self.swap_pools if (block := pool.state.block) is not None
                 )
-            )
+                if len(pool_state_blocks) == len(self.swap_pools):
+                    newest_state_block = max(pool_state_blocks)
 
             return ArbitrageCalculationResult(
                 id=self.id,
@@ -1023,14 +1022,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
             logger.debug(f"{amounts=}")
 
-            newest_state_block = (
-                None
-                if state_overrides
-                else max(
-                    pool.state.block  # type: ignore[type-var]
-                    for pool in self.swap_pools
+            newest_state_block = None
+            if not state_overrides:
+                pool_state_blocks = tuple(
+                    block for pool in self.swap_pools if (block := pool.state.block) is not None
                 )
-            )
+                if len(pool_state_blocks) == len(self.swap_pools):
+                    newest_state_block = max(pool_state_blocks)
 
             return ArbitrageCalculationResult(
                 id=self.id,
@@ -1196,14 +1194,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
             logger.debug(f"{amounts=}")
 
-            newest_state_block = (
-                None
-                if state_overrides
-                else max(
-                    pool.state.block  # type: ignore[type-var]
-                    for pool in self.swap_pools
+            newest_state_block = None
+            if not state_overrides:
+                pool_state_blocks = tuple(
+                    block for pool in self.swap_pools if (block := pool.state.block) is not None
                 )
-            )
+                if len(pool_state_blocks) == len(self.swap_pools):
+                    newest_state_block = max(pool_state_blocks)
 
             return ArbitrageCalculationResult(
                 id=self.id,
@@ -1372,14 +1369,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
             logger.debug(f"{amounts=}")
 
-            newest_state_block = (
-                None
-                if state_overrides
-                else max(
-                    pool.state.block  # type: ignore[type-var]
-                    for pool in self.swap_pools
+            newest_state_block = None
+            if not state_overrides:
+                pool_state_blocks = tuple(
+                    block for pool in self.swap_pools if (block := pool.state.block) is not None
                 )
-            )
+                if len(pool_state_blocks) == len(self.swap_pools):
+                    newest_state_block = max(pool_state_blocks)
 
             return ArbitrageCalculationResult(
                 id=self.id,
@@ -1534,14 +1530,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             logger.debug(f"{amounts=}")
             logger.debug(f"{self.swap_pools=}")
 
-            newest_state_block = (
-                None
-                if state_overrides
-                else max(
-                    pool.state.block  # type: ignore[type-var]
-                    for pool in self.swap_pools
+            newest_state_block = None
+            if not state_overrides:
+                pool_state_blocks = tuple(
+                    block for pool in self.swap_pools if (block := pool.state.block) is not None
                 )
-            )
+                if len(pool_state_blocks) == len(self.swap_pools):
+                    newest_state_block = max(pool_state_blocks)
 
             return ArbitrageCalculationResult(
                 id=self.id,
@@ -1702,14 +1697,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             logger.debug(f"{amounts=}")
             logger.debug(f"{self.swap_pools=}")
 
-            newest_state_block = (
-                None
-                if state_overrides
-                else max(
-                    pool.state.block  # type: ignore[type-var]
-                    for pool in self.swap_pools
+            newest_state_block = None
+            if not state_overrides:
+                pool_state_blocks = tuple(
+                    block for pool in self.swap_pools if (block := pool.state.block) is not None
                 )
-            )
+                if len(pool_state_blocks) == len(self.swap_pools):
+                    newest_state_block = max(pool_state_blocks)
 
             return ArbitrageCalculationResult(
                 id=self.id,
@@ -1875,14 +1869,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
             logger.debug(f"{amounts=}")
 
-            newest_state_block = (
-                None
-                if state_overrides
-                else max(
-                    pool.state.block  # type: ignore[type-var]
-                    for pool in self.swap_pools
+            newest_state_block = None
+            if not state_overrides:
+                pool_state_blocks = tuple(
+                    block for pool in self.swap_pools if (block := pool.state.block) is not None
                 )
-            )
+                if len(pool_state_blocks) == len(self.swap_pools):
+                    newest_state_block = max(pool_state_blocks)
 
             return ArbitrageCalculationResult(
                 id=self.id,
@@ -2032,14 +2025,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             logger.debug(f"{amounts=}")
             logger.debug(f"{self.swap_pools=}")
 
-            newest_state_block = (
-                None
-                if state_overrides
-                else max(
-                    pool.state.block  # type: ignore[type-var]
-                    for pool in self.swap_pools
+            newest_state_block = None
+            if not state_overrides:
+                pool_state_blocks = tuple(
+                    block for pool in self.swap_pools if (block := pool.state.block) is not None
                 )
-            )
+                if len(pool_state_blocks) == len(self.swap_pools):
+                    newest_state_block = max(pool_state_blocks)
 
             return ArbitrageCalculationResult(
                 id=self.id,
@@ -2359,14 +2351,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             if (best_profit := weth_out - weth_in) <= 0:
                 raise Unprofitable
 
-            newest_state_block = (
-                None
-                if state_overrides
-                else max(
-                    pool.state.block  # type: ignore[type-var]
-                    for pool in self.swap_pools
+            newest_state_block = None
+            if not state_overrides:
+                pool_state_blocks = tuple(
+                    block for pool in self.swap_pools if (block := pool.state.block) is not None
                 )
-            )
+                if len(pool_state_blocks) == len(self.swap_pools):
+                    newest_state_block = max(pool_state_blocks)
 
             return ArbitrageCalculationResult(
                 id=self.id,
