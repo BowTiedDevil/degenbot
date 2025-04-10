@@ -3,7 +3,6 @@ import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
-from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import eth_abi.abi
@@ -1409,13 +1408,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
             opt: OptimizeResult = minimize_scalar(
-                fun=partial(
-                    _arb_profit_v3_v3,
+                fun=lambda x: _arb_profit_v3_v3(
                     pool_hi=v3_pool_hi,
                     pool_lo=v3_pool_lo,
+                    forward_token=forward_token,
+                    forward_token_amount=x,
                     pool_hi_state_override=v3_pool_hi_state_override,
                     pool_lo_state_override=v3_pool_lo_state_override,
-                    forward_token=forward_token,
                 ),
                 method="bounded",
                 bounds=forward_token_bounds,
