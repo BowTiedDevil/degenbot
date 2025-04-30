@@ -1022,9 +1022,6 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         conditions when used with threads.
         """
 
-        if update.liquidity == 0:
-            return
-
         with self._state_lock:
             state_block = cast("BlockNumber", update.block_number)
 
