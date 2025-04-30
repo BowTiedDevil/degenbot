@@ -2,7 +2,7 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol, Self
-from weakref import WeakSet
+from weakref import WeakSet, WeakValueDictionary
 
 from eth_typing import BlockNumber, ChecksumAddress
 from hexbytes import HexBytes
@@ -110,11 +110,11 @@ class AbstractPoolManager:
     type Pool = "AbstractLiquidityPool"
 
     instances: ClassVar[
-        dict[
+        WeakValueDictionary[
             tuple[ChainId, ChecksumAddress],
             Self,
         ]
-    ] = {}
+    ] = WeakValueDictionary()
 
     @classmethod
     def get_instance(cls, factory_address: str, chain_id: ChainId) -> Self | None:
