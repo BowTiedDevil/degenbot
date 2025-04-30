@@ -3,6 +3,7 @@ from web3.contract.contract import Contract
 
 from degenbot import config
 from degenbot.cache import get_checksum_address
+from degenbot.types import ChainId
 
 CHAINLINK_PRICE_FEED_ABI = pydantic_core.from_json(
     """
@@ -22,7 +23,7 @@ class ChainlinkPriceContract:
         self,
         address: str,
         *,
-        chain_id: int | None = None,
+        chain_id: ChainId | None = None,
     ):
         self.address = get_checksum_address(address)
         self._chain_id = (
@@ -31,7 +32,7 @@ class ChainlinkPriceContract:
         self.decimals: int = self.w3_contract.functions.decimals().call()
 
     @property
-    def chain_id(self) -> int:
+    def chain_id(self) -> ChainId:
         return self._chain_id
 
     @property

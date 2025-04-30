@@ -7,7 +7,7 @@ from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
 from degenbot.erc20_token import Erc20Token, EtherPlaceholder
 from degenbot.registry.all_tokens import token_registry
-from degenbot.types import AbstractManager
+from degenbot.types import AbstractManager, ChainId
 
 
 class Erc20TokenManager(AbstractManager):
@@ -23,7 +23,7 @@ class Erc20TokenManager(AbstractManager):
     def __init__(
         self,
         *,
-        chain_id: int | None = None,
+        chain_id: ChainId | None = None,
     ) -> None:
         chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
 

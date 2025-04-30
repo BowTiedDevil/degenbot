@@ -26,6 +26,8 @@ from degenbot.uniswap.v3_functions import generate_v3_pool_address
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 
+type ChainId = int
+
 
 class UniswapV2PoolManager(AbstractPoolManager):
     """
@@ -50,7 +52,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         self,
         factory_address: str,
         *,
-        chain_id: int | None = None,
+        chain_id: ChainId | None = None,
         deployer_address: ChecksumAddress | str | None = None,
         pool_init_hash: str | None = None,
     ):
@@ -95,7 +97,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         return f"UniswapV2PoolManager(factory={self._factory_address})"
 
     @property
-    def chain_id(self) -> int:
+    def chain_id(self) -> ChainId:
         return self._chain_id
 
     def _add_tracked_pool(self, pool_helper: Pool) -> None:
@@ -221,7 +223,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
         self,
         factory_address: ChecksumAddress | str,
         deployer_address: ChecksumAddress | str | None = None,
-        chain_id: int | None = None,
+        chain_id: ChainId | None = None,
         pool_init_hash: str | None = None,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
     ):
@@ -267,7 +269,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
         return f"UniswapV3PoolManager(factory={self._factory_address})"
 
     @property
-    def chain_id(self) -> int:
+    def chain_id(self) -> ChainId:
         return self._chain_id
 
     def _add_tracked_pool(self, pool_helper: Pool) -> None:

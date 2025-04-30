@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
 from degenbot.exceptions import DegenbotValueError, RegistryAlreadyInitialized
-from degenbot.types import AbstractLiquidityPool, AbstractRegistry
+from degenbot.types import AbstractLiquidityPool, AbstractRegistry, ChainId
 
 PoolId = bytes | str
 Address = bytes | str
@@ -35,7 +35,7 @@ class _UniswapV4PoolManagerRegistry(AbstractRegistry):
 
     def get(
         self,
-        chain_id: int,
+        chain_id: ChainId,
         pool_manager_address: Address,
         pool_id: PoolId,
     ) -> AbstractLiquidityPool | None:
@@ -50,7 +50,7 @@ class _UniswapV4PoolManagerRegistry(AbstractRegistry):
     def add(
         self,
         pool: AbstractLiquidityPool,
-        chain_id: int,
+        chain_id: ChainId,
         pool_manager_address: Address,
         pool_id: PoolId,
     ) -> None:
@@ -75,7 +75,7 @@ class _UniswapV4PoolManagerRegistry(AbstractRegistry):
     def remove(
         self,
         pool_manager_address: Address,
-        chain_id: int,
+        chain_id: ChainId,
         pool_id: PoolId,
     ) -> None:
         self._all_v4_pools.pop(
@@ -113,7 +113,7 @@ class PoolRegistry(AbstractRegistry):
 
     def get(
         self,
-        chain_id: int,
+        chain_id: ChainId,
         pool_address: Address,
         pool_id: PoolId | None = None,
     ) -> AbstractLiquidityPool | None:
@@ -134,7 +134,7 @@ class PoolRegistry(AbstractRegistry):
     def add(
         self,
         pool: AbstractLiquidityPool,
-        chain_id: int,
+        chain_id: ChainId,
         pool_address: Address,
         pool_id: PoolId | None = None,
     ) -> None:
@@ -155,7 +155,7 @@ class PoolRegistry(AbstractRegistry):
 
     def remove(
         self,
-        chain_id: int,
+        chain_id: ChainId,
         pool_address: Address,
         pool_id: PoolId | None = None,
     ) -> None:

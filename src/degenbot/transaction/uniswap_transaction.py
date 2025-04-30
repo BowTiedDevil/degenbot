@@ -33,7 +33,7 @@ from degenbot.exceptions import (
 from degenbot.logging import logger
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.transaction.simulation_ledger import SimulationLedger
-from degenbot.types import AbstractSimulationResult, AbstractTransaction
+from degenbot.types import AbstractSimulationResult, AbstractTransaction, ChainId
 from degenbot.uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from degenbot.uniswap.deployments import (
     ROUTER_DEPLOYMENTS,
@@ -96,7 +96,7 @@ class UniswapTransaction(AbstractTransaction):
 
     def __init__(
         self,
-        chain_id: int | str,
+        chain_id: ChainId | str,
         router_address: str,
         func_name: str,
         func_params: dict[str, Any],
@@ -131,7 +131,7 @@ class UniswapTransaction(AbstractTransaction):
         # end to confirm that all balances have been accounted for.
 
         self.ledger = SimulationLedger()
-        self.chain_id: int
+        self.chain_id: ChainId
 
         self.v2_pool_manager: UniswapV2PoolManager | None = None
         self.v3_pool_manager: UniswapV3PoolManager | None = None

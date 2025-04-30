@@ -9,6 +9,8 @@ from hexbytes import HexBytes
 
 from degenbot.cache import get_checksum_address
 
+type ChainId = int
+
 
 class Message:
     """
@@ -109,13 +111,13 @@ class AbstractPoolManager:
 
     instances: ClassVar[
         dict[
-            tuple[int, ChecksumAddress],
+            tuple[ChainId, ChecksumAddress],
             Self,
         ]
     ] = {}
 
     @classmethod
-    def get_instance(cls, factory_address: str, chain_id: int) -> Self | None:
+    def get_instance(cls, factory_address: str, chain_id: ChainId) -> Self | None:
         return cls.instances.get((chain_id, get_checksum_address(factory_address)))
 
 

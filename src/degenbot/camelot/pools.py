@@ -7,6 +7,7 @@ from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
+from degenbot.types import ChainId
 from degenbot.uniswap.types import UniswapV2PoolState
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
@@ -20,7 +21,7 @@ class CamelotLiquidityPool(UniswapV2Pool):
         self,
         address: str,
         *,
-        chain_id: int | None = None,
+        chain_id: ChainId | None = None,
         silent: bool = False,
     ) -> None:
         address = get_checksum_address(address)

@@ -17,6 +17,7 @@ from web3.types import RPCEndpoint
 from degenbot.constants import MAX_UINT256
 from degenbot.exceptions import DegenbotValueError, InvalidUint256
 from degenbot.logging import logger
+from degenbot.types import ChainId
 
 
 class AnvilNotFound(Exception):
@@ -37,7 +38,7 @@ class AnvilFork:
         fork_block: int | None = None,
         fork_transaction_hash: str | None = None,
         hardfork: str = "latest",
-        chain_id: int | None = None,
+        chain_id: ChainId | None = None,
         mining_mode: Literal["auto", "interval", "none"] = "auto",
         mining_interval: int | None = None,
         storage_caching: bool = True,

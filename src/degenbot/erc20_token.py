@@ -20,7 +20,7 @@ from degenbot.functions import (
 )
 from degenbot.logging import logger
 from degenbot.registry.all_tokens import token_registry
-from degenbot.types import AbstractErc20Token, BoundedCache
+from degenbot.types import AbstractErc20Token, BoundedCache, ChainId
 
 if TYPE_CHECKING:
     from eth_typing import BlockNumber, ChecksumAddress
@@ -40,7 +40,7 @@ class Erc20Token(AbstractErc20Token):
         self,
         address: str,
         *,
-        chain_id: int | None = None,
+        chain_id: ChainId | None = None,
         oracle_address: str | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
@@ -456,7 +456,7 @@ class EtherPlaceholder(Erc20Token):
         self,
         address: str,
         *,
-        chain_id: int | None = None,
+        chain_id: ChainId | None = None,
         state_cache_depth: int = 8,
     ) -> None:
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id

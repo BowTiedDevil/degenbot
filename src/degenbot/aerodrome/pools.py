@@ -39,6 +39,7 @@ from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
 from degenbot.types import (
     AbstractLiquidityPool,
     BoundedCache,
+    ChainId,
     Message,
     Publisher,
     PublisherMixin,
@@ -62,7 +63,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         self,
         address: ChecksumAddress | str,
         *,
-        chain_id: int | None = None,
+        chain_id: ChainId | None = None,
         deployer_address: str | None = None,
         state_block: int | None = None,
         verify_address: bool = True,

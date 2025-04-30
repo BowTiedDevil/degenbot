@@ -1,14 +1,15 @@
 import web3
 
 from degenbot.exceptions import DegenbotValueError
+from degenbot.types import ChainId
 
 
 class AsyncConnectionManager:
     def __init__(self) -> None:
-        self.connections: dict[int, web3.AsyncWeb3] = {}
-        self._default_chain_id: int | None = None
+        self.connections: dict[ChainId, web3.AsyncWeb3] = {}
+        self._default_chain_id: ChainId | None = None
 
-    def get_web3(self, chain_id: int) -> web3.AsyncWeb3:
+    def get_web3(self, chain_id: ChainId) -> web3.AsyncWeb3:
         try:
             return self.connections[chain_id]
         except KeyError:
@@ -23,11 +24,11 @@ class AsyncConnectionManager:
             w3.middleware_onion.clear()
         self.connections[await w3.eth.chain_id] = w3
 
-    def set_default_chain(self, chain_id: int) -> None:
+    def set_default_chain(self, chain_id: ChainId) -> None:
         self._default_chain_id = chain_id
 
     @property
-    def default_chain_id(self) -> int:
+    def default_chain_id(self) -> ChainId:
         if self._default_chain_id is None:
             raise DegenbotValueError(message="A default chain ID has not been provided.")
         return self._default_chain_id
@@ -35,10 +36,10 @@ class AsyncConnectionManager:
 
 class ConnectionManager:
     def __init__(self) -> None:
-        self.connections: dict[int, web3.Web3] = {}
-        self._default_chain_id: int | None = None
+        self.connections: dict[ChainId, web3.Web3] = {}
+        self._default_chain_id: ChainId | None = None
 
-    def get_web3(self, chain_id: int) -> web3.Web3:
+    def get_web3(self, chain_id: ChainId) -> web3.Web3:
         try:
             return self.connections[chain_id]
         except KeyError:
@@ -53,11 +54,11 @@ class ConnectionManager:
             w3.middleware_onion.clear()
         self.connections[w3.eth.chain_id] = w3
 
-    def set_default_chain(self, chain_id: int) -> None:
+    def set_default_chain(self, chain_id: ChainId) -> None:
         self._default_chain_id = chain_id
 
     @property
-    def default_chain_id(self) -> int:
+    def default_chain_id(self) -> ChainId:
         if self._default_chain_id is None:
             raise DegenbotValueError(message="A default chain ID has not been provided.")
         return self._default_chain_id

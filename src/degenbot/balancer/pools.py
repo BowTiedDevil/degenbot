@@ -19,7 +19,7 @@ from degenbot.config import connection_manager
 from degenbot.erc20_token import Erc20Token
 from degenbot.functions import encode_function_calldata
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
-from degenbot.types import AbstractLiquidityPool, PublisherMixin
+from degenbot.types import AbstractLiquidityPool, ChainId, PublisherMixin
 
 
 class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
@@ -30,7 +30,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         self,
         address: ChecksumAddress | str,
         *,
-        chain_id: int | None = None,
+        chain_id: ChainId | None = None,
         state_block: int | None = None,
         verify_address: bool = True,
         silent: bool = False,

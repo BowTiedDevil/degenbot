@@ -15,6 +15,7 @@ from web3.utils import get_abi_element
 from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
 from degenbot.logging import logger
+from degenbot.types import ChainId
 from degenbot.uniswap.abi import UNISWAP_V4_POOL_MANAGER_ABI
 from degenbot.uniswap.types import (
     UniswapV4BitmapAtWord,
@@ -40,7 +41,7 @@ class UniswapV4LiquiditySnapshot:
         self,
         file: pathlib.Path | str,
         pool_manager_address: HexStr,
-        chain_id: int | None = None,
+        chain_id: ChainId | None = None,
     ):
         if isinstance(file, str):
             file = pathlib.Path(file)
