@@ -27,7 +27,7 @@ EMPTY_SNAPSHOT_BLOCK = (
 @pytest.fixture
 def empty_snapshot(ethereum_archive_node_web3) -> UniswapV3LiquiditySnapshot:
     set_web3(ethereum_archive_node_web3)
-    return UniswapV3LiquiditySnapshot(file=EMPTY_SNAPSHOT_FILENAME)
+    return UniswapV3LiquiditySnapshot(EMPTY_SNAPSHOT_FILENAME)
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def first_250_blocks_snapshot(
     fork_mainnet: AnvilFork,
 ) -> UniswapV3LiquiditySnapshot:
     set_web3(fork_mainnet.w3)
-    snapshot = UniswapV3LiquiditySnapshot(file=EMPTY_SNAPSHOT_FILENAME)
+    snapshot = UniswapV3LiquiditySnapshot(EMPTY_SNAPSHOT_FILENAME)
     snapshot.fetch_new_events(
         to_block=cast("BlockNumber", EMPTY_SNAPSHOT_BLOCK + 250), blocks_per_request=50
     )
@@ -44,7 +44,7 @@ def first_250_blocks_snapshot(
 
 def test_create_snapshot_from_file_path(ethereum_archive_node_web3: Web3):
     set_web3(ethereum_archive_node_web3)
-    UniswapV3LiquiditySnapshot(file=EMPTY_SNAPSHOT_FILENAME)
+    UniswapV3LiquiditySnapshot(EMPTY_SNAPSHOT_FILENAME)
 
 
 def test_fetch_liquidity_events_first_250_blocks(
