@@ -315,6 +315,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             logger.info(f"• Liquidity: {self.liquidity}")
             logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
             logger.info(f"• Tick: {self.tick}")
+            logger.info(f"• State Block (Initial): {self._initial_state_block}")
 
     def __getstate__(self) -> dict[str, Any]:
         # Remove objects that cannot be pickled and are unnecessary to perform
