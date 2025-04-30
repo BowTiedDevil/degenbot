@@ -88,7 +88,7 @@ class AbstractArbitrage:
 @dataclass(slots=True, frozen=True)
 class AbstractExchangeDeployment:
     name: str
-    chain_id: int
+    chain_id: ChainId
 
 
 class AbstractManager:
