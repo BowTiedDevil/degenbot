@@ -215,9 +215,6 @@ class UniswapV3LiquiditySnapshot:
                         event_instance, event_log
                     )
 
-                    if liquidity_event.liquidity == 0:  # pragma: no cover
-                        continue
-
                     self._add_pool_if_missing(pool_address)
                     self._liquidity_events[pool_address].append(liquidity_event)
 
