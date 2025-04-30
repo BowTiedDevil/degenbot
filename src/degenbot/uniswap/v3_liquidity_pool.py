@@ -118,6 +118,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         tick: int
         liquidity: int
 
+        def __post_init__(self) -> None:
+            assert self.liquidity >= 0
+
     @dataclasses.dataclass(slots=True, eq=False)
     class StepComputations:
         sqrt_price_start_x96: int = 0
@@ -483,8 +486,14 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 # If the tick is initialized, adjust the liquidity range
                 if step.initialized:
                     liquidity_net_at_next_tick = tick_data_temp[step.tick_next].liquidity_net
-                    swap_state.liquidity += (
-                        -liquidity_net_at_next_tick if zero_for_one else liquidity_net_at_next_tick
+                    swap_state = dataclasses.replace(
+                        swap_state,
+                        liquidity=swap_state.liquidity
+                        + (
+                            -liquidity_net_at_next_tick
+                            if zero_for_one
+                            else liquidity_net_at_next_tick
+                        ),
                     )
                 swap_state.tick = step.tick_next - 1 if zero_for_one else step.tick_next
 
