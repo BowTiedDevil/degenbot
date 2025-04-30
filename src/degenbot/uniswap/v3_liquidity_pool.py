@@ -1089,7 +1089,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
                 new_liquidity_gross = current_liquidity_gross + update.liquidity
                 assert new_liquidity_gross >= 0, (
-                    f"Negative gross liquidity! {current_liquidity_gross=}, {new_liquidity_gross=}"
+                    f"Negative gross liquidity for pool {self.address}!"
                 )
 
                 if new_liquidity_gross == 0:
