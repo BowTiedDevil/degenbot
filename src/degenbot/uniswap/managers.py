@@ -396,3 +396,6 @@ class UniswapV3PoolManager(AbstractPoolManager):
         pool_address = get_checksum_address(pool_address)
         self._tracked_pools.pop(pool_address, None)
         self._untracked_pools.discard(pool_address)
+
+    def unload_snapshot(self) -> None:
+        self._snapshot = None
