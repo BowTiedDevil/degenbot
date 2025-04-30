@@ -249,13 +249,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
         # TODO: check strategy comments for all arbs
 
         def _arb_profit_high_roe_v4_low_roe_v3(
-            forward_token_amount: float,
-            *,
             v4_pool: UniswapV4Pool,
             v3_pool: UniswapV3Pool,
+            forward_token: Erc20Token,
+            forward_token_amount: float,
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v3_pool_state_override: UniswapV3PoolState | None = None,
-            forward_token: Erc20Token,
         ) -> float:
             """
             Transfer forward token from V3 -> V4, profit is difference of WETH_out from V4 and
