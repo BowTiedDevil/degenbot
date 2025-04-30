@@ -14,6 +14,7 @@ from web3.utils import get_abi_element
 
 from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
+from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.types import ChainId
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
@@ -37,32 +38,60 @@ class UniswapV3LiquiditySnapshot:
 
     def __init__(
         self,
-        file: pathlib.Path | str,
+        path: pathlib.Path | str,
         chain_id: ChainId | None = None,
     ):
-        if isinstance(file, str):
-            file = pathlib.Path(file)
-        json_liquidity_snapshot: dict[str, Any] = pydantic_core.from_json(file.read_bytes())
+        path = pathlib.Path(path).expanduser()
+        assert path.exists()
+
+        self._liquidity_snapshot: dict[ChecksumAddress, LiquidityMap]
+
+        if path.is_file():
+            liquidity_snapshot_as_file: dict[str, Any] = pydantic_core.from_json(path.read_bytes())
+            snapshot_block = liquidity_snapshot_as_file.pop("snapshot_block")
+            self._liquidity_snapshot = {
+                get_checksum_address(pool_address): LiquidityMap(
+                    tick_bitmap={
+                        int(k): UniswapV3BitmapAtWord(**v)
+                        for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
+                    },
+                    tick_data={
+                        int(k): UniswapV3LiquidityAtTick(**v)
+                        for k, v in pool_liquidity_snapshot["tick_data"].items()
+                    },
+                )
+                for pool_address, pool_liquidity_snapshot in liquidity_snapshot_as_file.items()
+            }
+        elif path.is_dir():
+            metadata_path = path / "_metadata.json"
+            assert metadata_path.exists()
+            snapshot_block = pydantic_core.from_json(metadata_path.read_bytes())["block"]
+
+            self._liquidity_snapshot = {}
+            for pool_liquidity_map_file in path.glob("0x*.json"):
+                pool_liquidity_snapshot = pydantic_core.from_json(
+                    pool_liquidity_map_file.read_bytes()
+                )
+                self._liquidity_snapshot[get_checksum_address(pool_liquidity_map_file.stem)] = (
+                    LiquidityMap(
+                        tick_bitmap={
+                            int(k): UniswapV3BitmapAtWord(**v)
+                            for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
+                        },
+                        tick_data={
+                            int(k): UniswapV3LiquidityAtTick(**v)
+                            for k, v in pool_liquidity_snapshot["tick_data"].items()
+                        },
+                    )
+                )
+        else:
+            raise DegenbotValueError(message="Cannot identify provided path.")
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        self.newest_block = json_liquidity_snapshot.pop("snapshot_block")
-
-        self._liquidity_snapshot: dict[ChecksumAddress, LiquidityMap] = {
-            get_checksum_address(pool_address): {
-                "tick_bitmap": {
-                    int(k): UniswapV3BitmapAtWord(**v)
-                    for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
-                },
-                "tick_data": {
-                    int(k): UniswapV3LiquidityAtTick(**v)
-                    for k, v in pool_liquidity_snapshot["tick_data"].items()
-                },
-            }
-            for pool_address, pool_liquidity_snapshot in json_liquidity_snapshot.items()
-        }
+        self.newest_block = snapshot_block
 
         logger.info(
-            f"Loaded LP snapshot: {len(json_liquidity_snapshot)} pools @ block {self.newest_block}"
+            f"Loaded Uniswap V3 LP snapshot: {len(self._liquidity_snapshot)} pools @ block {self.newest_block}"  # noqa:E501
         )
 
         self._liquidity_events: dict[ChecksumAddress, list[UniswapV3LiquidityEvent]] = {}
