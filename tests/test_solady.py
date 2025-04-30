@@ -1,3 +1,5 @@
+# ruff: noqa: E501
+
 import hypothesis
 import hypothesis.strategies
 from eth_typing import HexStr

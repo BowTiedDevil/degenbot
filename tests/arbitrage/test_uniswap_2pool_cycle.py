@@ -1,5 +1,4 @@
 import dataclasses
-from typing import TYPE_CHECKING
 
 import pytest
 import web3

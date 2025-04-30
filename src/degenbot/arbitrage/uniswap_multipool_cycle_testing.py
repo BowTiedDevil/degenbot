@@ -13,7 +13,7 @@ from cvxpy.atoms.affine.bmat import bmat
 from cvxpy.atoms.affine.hstack import hstack
 from cvxpy.atoms.geo_mean import geo_mean
 from cvxpy.error import SolverError
-from eth_typing import BlockNumber, ChecksumAddress
+from eth_typing import ChecksumAddress
 
 from degenbot import (
     AerodromeV2Pool,

@@ -126,7 +126,7 @@ def flz_compress(uncompressed_data: str | bytes) -> HexBytes:
             match_length -= MAX_MATCH_LENGTH
 
         # Encode the remaining chunk
-        if match_length < 7:
+        if match_length < 7:  # noqa: PLR2004
             # SHORT MATCH instruction - 2 byte opcode
             opcode_0 = (match_length << 5) + (distance_to_last_seen_chunk >> 8)
             opcode_1 = distance_to_last_seen_chunk & 0b11111111
@@ -201,6 +201,7 @@ def flz_decompress(compressed_data: bytes | bytearray | HexStr) -> HexBytes:
                     output_buffer.append(output_buffer[-1 - reference_offset])
 
             case _:
-                raise ValueError("Invalid instruction!")
+                error_message = "Invalid instruction!"
+                raise ValueError(error_message)
 
     return HexBytes(output_buffer)
