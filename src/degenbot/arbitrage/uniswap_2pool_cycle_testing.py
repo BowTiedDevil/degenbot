@@ -458,10 +458,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 f"V2: {weth_in} {self.input_token} in, {forward_token_quantity} {forward_token} out"
             )
 
-            if calc_out_time > SLOW_LOOP_TIME:
+            if DEBUG_SLOW_CALCS and calc_out_time > SLOW_LOOP_TIME:
                 logger.info(f"V3 calc_out time: {calc_out_time:.3f}s")
                 logger.info(f"{v3_pool!r}")
-            if calc_in_time > SLOW_LOOP_TIME:
+            if DEBUG_SLOW_CALCS and calc_in_time > SLOW_LOOP_TIME:
                 logger.info(f"V2 calc_in time : {calc_in_time:.3f}s")
                 logger.info(f"{v2_pool!r}")
 
