@@ -186,12 +186,8 @@ class UniswapV3LiquiditySnapshot:
 
         v3pool = Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI)
         for event in [
-            (
-                # WIP: ordered Burn first as a debugging aid to see if Burn-then-Mint throws
-                # exception after sorting
-                v3pool.events.Burn
-            ),
             v3pool.events.Mint,
+            v3pool.events.Burn,
         ]:
             event_instance = event()
             logger.info(f"Processing {event.event_name} events")
