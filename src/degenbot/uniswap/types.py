@@ -7,6 +7,7 @@ from eth_typing import BlockNumber, ChecksumAddress
 from hexbytes import HexBytes
 
 from degenbot.types import AbstractPoolState, AbstractSimulationResult, PoolStateMessage
+from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128, ValidatedUint256
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -46,13 +47,13 @@ class UniswapV2PoolStateUpdated(PoolStateMessage):
 
 
 class UniswapV3BitmapAtWord(pydantic.BaseModel, frozen=True):
-    bitmap: int
+    bitmap: ValidatedUint256
     block: int = 0
 
 
 class UniswapV3LiquidityAtTick(pydantic.BaseModel, frozen=True):
-    liquidity_net: int
-    liquidity_gross: int
+    liquidity_net: ValidatedInt128
+    liquidity_gross: ValidatedUint128
     block: int = 0
 
 
