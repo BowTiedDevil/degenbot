@@ -7,7 +7,6 @@ import contextlib
 from typing import TYPE_CHECKING, Any, Self, cast
 
 import eth_abi.abi
-import pydantic_core
 from eth_typing import BlockNumber, ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
@@ -51,9 +50,6 @@ from degenbot.uniswap.types import (
 from degenbot.uniswap.v2_functions import generate_v2_pool_address, get_v2_pools_from_token_path
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool, UnregisteredLiquidityPool
 from degenbot.uniswap.v3_functions import decode_v3_path
-from degenbot.uniswap.v3_libraries.constants import Q96
-from degenbot.uniswap.v3_libraries.full_math import muldiv
-from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
@@ -602,7 +598,6 @@ class UniswapTransaction(AbstractTransaction):
             "exactInput",
             "exactOutputSingle",
             "exactOutput",
-            "increaseLiquidity",
             "multicall",
             "sweepToken",
             "unwrapWETH9",
@@ -616,6 +611,7 @@ class UniswapTransaction(AbstractTransaction):
 
         unhandled_functions = {
             # TODO: handle these
+            "increaseLiquidity",
             "removeLiquidity",
             "removeLiquidityETH",
             "removeLiquidityETHWithPermit",
@@ -2063,158 +2059,6 @@ class UniswapTransaction(AbstractTransaction):
                             _wrapped_token_address,
                             _wrapped_token_amount,
                         )
-
-                    case "increaseLiquidity":
-
-                        def get_liquidity_for_amount_0(
-                            sqrt_ratio_a_x96: int, sqrt_ratio_b_x96: int, amount0: int
-                        ) -> int:
-                            if sqrt_ratio_a_x96 > sqrt_ratio_b_x96:
-                                (sqrt_ratio_a_x96, sqrt_ratio_b_x96) = (
-                                    sqrt_ratio_b_x96,
-                                    sqrt_ratio_a_x96,
-                                )
-                            intermediate = muldiv(sqrt_ratio_a_x96, sqrt_ratio_b_x96, Q96)
-                            return muldiv(
-                                amount0, intermediate, sqrt_ratio_b_x96 - sqrt_ratio_a_x96
-                            )
-
-                        def get_liquidity_for_amount_1(
-                            sqrt_ratio_a_x96: int, sqrt_ratio_b_x96: int, amount1: int
-                        ) -> int:
-                            if sqrt_ratio_a_x96 > sqrt_ratio_b_x96:
-                                (sqrt_ratio_a_x96, sqrt_ratio_b_x96) = (
-                                    sqrt_ratio_b_x96,
-                                    sqrt_ratio_a_x96,
-                                )
-                            return muldiv(amount1, Q96, sqrt_ratio_b_x96 - sqrt_ratio_a_x96)
-
-                        def get_liquidity_for_amounts(
-                            sqrt_ratio_x96: int,
-                            sqrt_ratio_a_x96: int,
-                            sqrt_ratio_b_x96: int,
-                            amount0: int,
-                            amount1: int,
-                        ) -> int:
-                            if sqrt_ratio_a_x96 > sqrt_ratio_b_x96:
-                                (sqrt_ratio_a_x96, sqrt_ratio_b_x96) = (
-                                    sqrt_ratio_b_x96,
-                                    sqrt_ratio_a_x96,
-                                )
-
-                            if sqrt_ratio_x96 <= sqrt_ratio_a_x96:
-                                liquidity = get_liquidity_for_amount_0(
-                                    sqrt_ratio_a_x96, sqrt_ratio_b_x96, amount0
-                                )
-                            elif sqrt_ratio_x96 < sqrt_ratio_b_x96:
-                                liquidity0 = get_liquidity_for_amount_0(
-                                    sqrt_ratio_x96, sqrt_ratio_b_x96, amount0
-                                )
-                                liquidity1 = get_liquidity_for_amount_1(
-                                    sqrt_ratio_a_x96, sqrt_ratio_x96, amount1
-                                )
-
-                                liquidity = min(liquidity1, liquidity0)
-                            else:
-                                liquidity = get_liquidity_for_amount_1(
-                                    sqrt_ratio_a_x96, sqrt_ratio_b_x96, amount1
-                                )
-
-                            return liquidity
-
-                        # Decode inputs
-                        """
-                        struct IncreaseLiquidityParams {
-                            address token0;
-                            address token1;
-                            uint256 tokenId;
-                            uint256 amount0Min;
-                            uint256 amount1Min;
-                        }
-                        """
-
-                        logger.info(f"{func_params=}")
-
-                        token0 = func_params["params"]["token0"]
-                        token1 = func_params["params"]["token1"]
-                        token_id = func_params["params"]["tokenId"]
-                        amount0_min = func_params["params"]["amount0Min"]
-                        amount0_desired = self.ledger.token_balance(self.router_address, token0)
-                        amount1_min = func_params["params"]["amount1Min"]
-                        amount1_desired = self.ledger.token_balance(self.router_address, token1)
-
-                        logger.info(f"{token0=}")
-                        logger.info(f"{token1=}")
-                        logger.info(f"{token_id=}")
-                        logger.info(f"{amount0_min=}")
-                        logger.info(f"{amount1_min=}")
-                        logger.info(f"{amount0_desired=}")
-                        logger.info(f"{amount1_desired=}")
-
-                        positions_contract = connection_manager.get_web3(
-                            self.chain_id
-                        ).eth.contract(
-                            address=get_checksum_address(
-                                "0xC36442b4a4522E871399CD717aBDD847Ab11FE88"
-                            ),
-                            abi=pydantic_core.from_json(
-                                """
-                                [{"inputs":[{"internalType":"address","name":"_factory","type":"address"},{"internalType":"address","name":"_WETH9","type":"address"},{"internalType":"address","name":"_tokenDescriptor_","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"owner","type":"address"},{"indexed":true,"internalType":"address","name":"approved","type":"address"},{"indexed":true,"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"Approval","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"owner","type":"address"},{"indexed":true,"internalType":"address","name":"operator","type":"address"},{"indexed":false,"internalType":"bool","name":"approved","type":"bool"}],"name":"ApprovalForAll","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"tokenId","type":"uint256"},{"indexed":false,"internalType":"address","name":"recipient","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount0","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"amount1","type":"uint256"}],"name":"Collect","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"tokenId","type":"uint256"},{"indexed":false,"internalType":"uint128","name":"liquidity","type":"uint128"},{"indexed":false,"internalType":"uint256","name":"amount0","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"amount1","type":"uint256"}],"name":"DecreaseLiquidity","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"tokenId","type":"uint256"},{"indexed":false,"internalType":"uint128","name":"liquidity","type":"uint128"},{"indexed":false,"internalType":"uint256","name":"amount0","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"amount1","type":"uint256"}],"name":"IncreaseLiquidity","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"from","type":"address"},{"indexed":true,"internalType":"address","name":"to","type":"address"},{"indexed":true,"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"Transfer","type":"event"},{"inputs":[],"name":"DOMAIN_SEPARATOR","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"PERMIT_TYPEHASH","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"WETH9","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"approve","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"baseURI","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"pure","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"burn","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"components":[{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"address","name":"recipient","type":"address"},{"internalType":"uint128","name":"amount0Max","type":"uint128"},{"internalType":"uint128","name":"amount1Max","type":"uint128"}],"internalType":"struct INonfungiblePositionManager.CollectParams","name":"params","type":"tuple"}],"name":"collect","outputs":[{"internalType":"uint256","name":"amount0","type":"uint256"},{"internalType":"uint256","name":"amount1","type":"uint256"}],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"token0","type":"address"},{"internalType":"address","name":"token1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint160","name":"sqrtPriceX96","type":"uint160"}],"name":"createAndInitializePoolIfNecessary","outputs":[{"internalType":"address","name":"pool","type":"address"}],"stateMutability":"payable","type":"function"},{"inputs":[{"components":[{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"uint128","name":"liquidity","type":"uint128"},{"internalType":"uint256","name":"amount0Min","type":"uint256"},{"internalType":"uint256","name":"amount1Min","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"internalType":"struct INonfungiblePositionManager.DecreaseLiquidityParams","name":"params","type":"tuple"}],"name":"decreaseLiquidity","outputs":[{"internalType":"uint256","name":"amount0","type":"uint256"},{"internalType":"uint256","name":"amount1","type":"uint256"}],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"factory","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"getApproved","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"components":[{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"uint256","name":"amount0Desired","type":"uint256"},{"internalType":"uint256","name":"amount1Desired","type":"uint256"},{"internalType":"uint256","name":"amount0Min","type":"uint256"},{"internalType":"uint256","name":"amount1Min","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"internalType":"struct INonfungiblePositionManager.IncreaseLiquidityParams","name":"params","type":"tuple"}],"name":"increaseLiquidity","outputs":[{"internalType":"uint128","name":"liquidity","type":"uint128"},{"internalType":"uint256","name":"amount0","type":"uint256"},{"internalType":"uint256","name":"amount1","type":"uint256"}],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"owner","type":"address"},{"internalType":"address","name":"operator","type":"address"}],"name":"isApprovedForAll","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"components":[{"internalType":"address","name":"token0","type":"address"},{"internalType":"address","name":"token1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickLower","type":"int24"},{"internalType":"int24","name":"tickUpper","type":"int24"},{"internalType":"uint256","name":"amount0Desired","type":"uint256"},{"internalType":"uint256","name":"amount1Desired","type":"uint256"},{"internalType":"uint256","name":"amount0Min","type":"uint256"},{"internalType":"uint256","name":"amount1Min","type":"uint256"},{"internalType":"address","name":"recipient","type":"address"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"internalType":"struct INonfungiblePositionManager.MintParams","name":"params","type":"tuple"}],"name":"mint","outputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"uint128","name":"liquidity","type":"uint128"},{"internalType":"uint256","name":"amount0","type":"uint256"},{"internalType":"uint256","name":"amount1","type":"uint256"}],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"bytes[]","name":"data","type":"bytes[]"}],"name":"multicall","outputs":[{"internalType":"bytes[]","name":"results","type":"bytes[]"}],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"name","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"ownerOf","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"permit","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"positions","outputs":[{"internalType":"uint96","name":"nonce","type":"uint96"},{"internalType":"address","name":"operator","type":"address"},{"internalType":"address","name":"token0","type":"address"},{"internalType":"address","name":"token1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickLower","type":"int24"},{"internalType":"int24","name":"tickUpper","type":"int24"},{"internalType":"uint128","name":"liquidity","type":"uint128"},{"internalType":"uint256","name":"feeGrowthInside0LastX128","type":"uint256"},{"internalType":"uint256","name":"feeGrowthInside1LastX128","type":"uint256"},{"internalType":"uint128","name":"tokensOwed0","type":"uint128"},{"internalType":"uint128","name":"tokensOwed1","type":"uint128"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"refundETH","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"from","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"safeTransferFrom","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"from","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"bytes","name":"_data","type":"bytes"}],"name":"safeTransferFrom","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"value","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"selfPermit","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"nonce","type":"uint256"},{"internalType":"uint256","name":"expiry","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"selfPermitAllowed","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"nonce","type":"uint256"},{"internalType":"uint256","name":"expiry","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"selfPermitAllowedIfNecessary","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"value","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"},{"internalType":"uint8","name":"v","type":"uint8"},{"internalType":"bytes32","name":"r","type":"bytes32"},{"internalType":"bytes32","name":"s","type":"bytes32"}],"name":"selfPermitIfNecessary","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"internalType":"address","name":"operator","type":"address"},{"internalType":"bool","name":"approved","type":"bool"}],"name":"setApprovalForAll","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes4","name":"interfaceId","type":"bytes4"}],"name":"supportsInterface","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"amountMinimum","type":"uint256"},{"internalType":"address","name":"recipient","type":"address"}],"name":"sweepToken","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"symbol","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"index","type":"uint256"}],"name":"tokenByIndex","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"owner","type":"address"},{"internalType":"uint256","name":"index","type":"uint256"}],"name":"tokenOfOwnerByIndex","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"tokenURI","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"totalSupply","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"from","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"transferFrom","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"amount0Owed","type":"uint256"},{"internalType":"uint256","name":"amount1Owed","type":"uint256"},{"internalType":"bytes","name":"data","type":"bytes"}],"name":"uniswapV3MintCallback","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"amountMinimum","type":"uint256"},{"internalType":"address","name":"recipient","type":"address"}],"name":"unwrapWETH9","outputs":[],"stateMutability":"payable","type":"function"},{"stateMutability":"payable","type":"receive"}]
-                                """  # noqa: E501
-                            ),
-                        )
-
-                        # Look up liquidity position (NFT positions recorded by
-                        # 0xC36442b4a4522E871399CD717aBDD847Ab11FE88)
-                        (
-                            _nonce,
-                            _operator,
-                            _token0,
-                            _token1,
-                            _fee,
-                            _tick_lower,
-                            _tick_upper,
-                            _liquidity,
-                            *_,
-                        ) = positions_contract.functions.positions(token_id).call()
-                        logger.info(f"{_tick_lower=}")
-                        logger.info(f"{_tick_upper=}")
-
-                        v3_pool = self.v3_pool_manager.get_pool_from_tokens_and_fee(
-                            token_addresses=(token0, token1),
-                            pool_fee=_fee,
-                            silent=self.silent,
-                        )
-
-                        sqrt_ratio_a_x96 = get_sqrt_ratio_at_tick(_tick_lower)
-                        sqrt_ratio_b_x96 = get_sqrt_ratio_at_tick(_tick_upper)
-
-                        current_sqrt_price_x96 = (
-                            # TODO: review this, check for earlier pool states that may differ
-                            v3_pool.sqrt_price_x96
-                        )
-
-                        # Get added liquidity (LiquidityManagement.sol)
-                        added_liquidity = get_liquidity_for_amounts(
-                            current_sqrt_price_x96,
-                            sqrt_ratio_a_x96,
-                            sqrt_ratio_b_x96,
-                            amount0_desired,
-                            amount1_desired,
-                        )
-                        logger.info(f"{added_liquidity=}")
-
-                        logger.info("Searching for pool in pool states...")
-                        for pool, state in self.simulated_pool_states:
-                            if pool == v3_pool:
-                                if TYPE_CHECKING:
-                                    assert isinstance(state, UniswapV3PoolState)
-                                    assert isinstance(pool, UniswapV3Pool)
-                                logger.info("Found V3 Pool!")
-                                pool.simulate_add_liquidity()
-
-                        # Simulate mint
-                        ...
 
             # Wrap exceptions from pool helper simulation attempts
             except LiquidityPoolError as exc:
