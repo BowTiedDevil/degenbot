@@ -1,7 +1,7 @@
 import functools
 
+from cchecksum import to_checksum_address
 from eth_typing import ChecksumAddress, HexStr
-from eth_utils.address import to_checksum_address
 
 
 @functools.lru_cache(maxsize=512)
