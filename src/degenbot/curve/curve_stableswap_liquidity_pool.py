@@ -104,6 +104,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8",
             "0xB657B895B265C38c53FFF00166cF7F6A3C70587d",
             "0xD6Ac1CB9019137a896343Da59dDE6d097F710538",
+            "0xE95E4c2dAC312F31Dc605533D5A4d0aF42579308",
             "0xf7b55C3732aD8b2c2dA7c24f30A69f55c54FB717",
         )
     )
