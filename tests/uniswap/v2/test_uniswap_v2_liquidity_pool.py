@@ -53,10 +53,10 @@ CAMELOT_MIM_USDC_LP_ADDRESS = get_checksum_address("0x68A0859de50B4Dfc6EFEbE981c
 
 @pytest.fixture
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000(
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
 ) -> UniswapV2Pool:
-    fork_mainnet.reset(block_number=17_600_000)
-    set_web3(fork_mainnet.w3)
+    fork_mainnet_full.reset(block_number=17_600_000)
+    set_web3(fork_mainnet_full.w3)
     return UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
@@ -66,12 +66,12 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000(
 
 @pytest.fixture
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool_reserves_at_block_17_650_000(
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
 ) -> tuple[int, int]:
-    fork_mainnet.reset(block_number=17_650_000)
-    set_web3(fork_mainnet.w3)
+    fork_mainnet_full.reset(block_number=17_650_000)
+    set_web3(fork_mainnet_full.w3)
     reserves_token0, reserves_token1, *_ = raw_call(
-        w3=fork_mainnet.w3,
+        w3=fork_mainnet_full.w3,
         address=UNISWAP_V2_WBTC_WETH_POOL,
         calldata=encode_function_calldata(
             function_prototype="getReserves()",
@@ -83,31 +83,31 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_reserves_at_block_17_650_000(
 
 
 @pytest.fixture
-def ethereum_uniswap_v2_wbtc_weth_liquiditypool(fork_mainnet: AnvilFork) -> UniswapV2Pool:
-    set_web3(fork_mainnet.w3)
+def ethereum_uniswap_v2_wbtc_weth_liquiditypool(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
+    set_web3(fork_mainnet_full.w3)
     return UniswapV2Pool(address=UNISWAP_V2_WBTC_WETH_POOL)
 
 
 @pytest.fixture
-def dai(ethereum_archive_node_web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def dai(ethereum_full_node_web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20Token(DAI_CONTRACT_ADDRESS)
 
 
 @pytest.fixture
-def wbtc(ethereum_archive_node_web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def wbtc(ethereum_full_node_web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20Token(WBTC_CONTRACT_ADDRESS)
 
 
 @pytest.fixture
-def weth(ethereum_archive_node_web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def weth(ethereum_full_node_web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20Token(WETH_CONTRACT_ADDRESS)
 
 
-def test_create_pool(ethereum_archive_node_web3: web3.Web3):
-    set_web3(ethereum_archive_node_web3)
+def test_create_pool(ethereum_full_node_web3: web3.Web3):
+    set_web3(ethereum_full_node_web3)
 
     UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
@@ -115,7 +115,7 @@ def test_create_pool(ethereum_archive_node_web3: web3.Web3):
     )
     pool_registry.remove(
         pool_address=UNISWAP_V2_WBTC_WETH_POOL,
-        chain_id=ethereum_archive_node_web3.eth.chain_id,
+        chain_id=ethereum_full_node_web3.eth.chain_id,
     )
 
     # Omitting init hash
@@ -130,15 +130,15 @@ def test_create_pancake_v2_pool(base_full_node_web3: web3.Web3):
     PancakeV2Pool("0x92363F9817f92a7ae0592A4cb29959A88d885cc8")
 
 
-def test_from_exchange_deployment(ethereum_archive_node_web3: web3.Web3):
-    set_web3(ethereum_archive_node_web3)
+def test_from_exchange_deployment(ethereum_full_node_web3: web3.Web3):
+    set_web3(ethereum_full_node_web3)
 
     # Delete the preset deployment for this factory so the test uses the provided override instead
     # of preferring the known valid deployment data
-    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][
+    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][
         UNISWAP_V2_FACTORY_ADDRESS
     ]
-    del FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
+    del FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
 
     UniswapV2Pool.from_exchange(
         address=UNISWAP_V2_WBTC_WETH_POOL,
@@ -146,7 +146,7 @@ def test_from_exchange_deployment(ethereum_archive_node_web3: web3.Web3):
     )
 
     # Restore the preset deployment
-    FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS] = (
+    FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS] = (
         factory_deployment
     )
 
@@ -205,11 +205,11 @@ def test_nominal_price_scaled_by_decimals(
         )
 
 
-def test_create_camelot_v2_stable_pool(fork_arbitrum: AnvilFork):
+def test_create_camelot_v2_stable_pool(fork_arbitrum_archive: AnvilFork):
     fork_block = 153_759_000
-    fork_arbitrum.reset(block_number=fork_block)
-    assert fork_arbitrum.w3.eth.get_block_number() == fork_block
-    set_web3(fork_arbitrum.w3)
+    fork_arbitrum_archive.reset(block_number=fork_block)
+    assert fork_arbitrum_archive.w3.eth.get_block_number() == fork_block
+    set_web3(fork_arbitrum_archive.w3)
 
     lp = CamelotLiquidityPool(address=CAMELOT_MIM_USDC_LP_ADDRESS)
     assert lp.stable_swap is True
@@ -218,7 +218,7 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum: AnvilFork):
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
 
     # Test that the swap output from the pool contract matches the off-chain calculation
-    w3_contract = fork_arbitrum.w3.eth.contract(
+    w3_contract = fork_arbitrum_archive.w3.eth.contract(
         address=CAMELOT_MIM_USDC_LP_ADDRESS, abi=CAMELOT_POOL_ABI
     )
 
@@ -266,8 +266,8 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum: AnvilFork):
     )
 
 
-def test_create_camelot_v2_pool(fork_arbitrum: AnvilFork):
-    set_web3(fork_arbitrum.w3)
+def test_create_camelot_v2_pool(fork_arbitrum_archive: AnvilFork):
+    set_web3(fork_arbitrum_archive.w3)
 
     lp = CamelotLiquidityPool(address=CAMELOT_WETH_USDC_LP_ADDRESS)
     assert lp.stable_swap is False
@@ -275,7 +275,7 @@ def test_create_camelot_v2_pool(fork_arbitrum: AnvilFork):
     token_in = lp.token1
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
 
-    w3_contract: Contract = fork_arbitrum.w3.eth.contract(
+    w3_contract: Contract = fork_arbitrum_archive.w3.eth.contract(
         address=CAMELOT_WETH_USDC_LP_ADDRESS, abi=CAMELOT_POOL_ABI
     )
     assert w3_contract.functions.getAmountOut(
@@ -286,16 +286,16 @@ def test_create_camelot_v2_pool(fork_arbitrum: AnvilFork):
     )
 
 
-def test_pickle_camelot_v2_pool(fork_arbitrum: AnvilFork):
-    set_web3(fork_arbitrum.w3)
+def test_pickle_camelot_v2_pool(fork_arbitrum_archive: AnvilFork):
+    set_web3(fork_arbitrum_archive.w3)
     lp = CamelotLiquidityPool(address=CAMELOT_WETH_USDC_LP_ADDRESS)
     pickle.dumps(lp)
 
 
 def test_create_nonstandard_pools(
-    ethereum_archive_node_web3: web3.Web3, weth: Erc20Token, wbtc: Erc20Token
+    ethereum_full_node_web3: web3.Web3, weth: Erc20Token, wbtc: Erc20Token
 ):
-    set_web3(ethereum_archive_node_web3)
+    set_web3(ethereum_full_node_web3)
 
     lp = UnregisteredLiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
@@ -315,10 +315,10 @@ def test_create_nonstandard_pools(
 
     # Delete the preset deployment for this factory so the test uses the provided override instead
     # of preferring the known valid deployment data
-    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][
+    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][
         UNISWAP_V2_FACTORY_ADDRESS
     ]
-    del FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
+    del FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
 
     # Create pool with a malformed init hash
     bad_init_hash = UNISWAP_V2_FACTORY_POOL_INIT_HASH.replace("a", "b")
@@ -329,7 +329,7 @@ def test_create_nonstandard_pools(
         )
 
     # Restore the preset deployment
-    FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS] = (
+    FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS] = (
         factory_deployment
     )
 
@@ -343,7 +343,7 @@ def test_create_nonstandard_pools(
     assert _lp.fee_token1 == Fraction(2, 1000)
     pool_registry.remove(
         pool_address=_lp.address,
-        chain_id=ethereum_archive_node_web3.eth.chain_id,
+        chain_id=ethereum_full_node_web3.eth.chain_id,
     )
 
     # Create split-fee pool of differing values
@@ -355,7 +355,7 @@ def test_create_nonstandard_pools(
     assert _lp.fee_token1 == Fraction(5, 1000)
     pool_registry.remove(
         pool_address=_lp.address,
-        chain_id=ethereum_archive_node_web3.eth.chain_id,
+        chain_id=ethereum_full_node_web3.eth.chain_id,
     )
 
     # Create split-fee pool of equal values
@@ -429,12 +429,12 @@ def test_pickle_pool(ethereum_uniswap_v2_wbtc_weth_liquiditypool: UniswapV2Pool)
     pickle.dumps(ethereum_uniswap_v2_wbtc_weth_liquiditypool)
 
 
-def test_calculate_tokens_out_from_ratio_out(fork_mainnet: AnvilFork):
+def test_calculate_tokens_out_from_ratio_out(fork_mainnet_full: AnvilFork):
     block_number = 17_600_000
-    fork_mainnet.reset(block_number=block_number)
-    set_web3(fork_mainnet.w3)
+    fork_mainnet_full.reset(block_number=block_number)
+    set_web3(fork_mainnet_full.w3)
 
-    router_contract = fork_mainnet.w3.eth.contract(
+    router_contract = fork_mainnet_full.w3.eth.contract(
         address=get_checksum_address(UNISWAP_V2_ROUTER02),
         abi=UNISWAP_V2_ROUTER_ABI,
     )
@@ -978,11 +978,11 @@ def test_zero_swaps(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_
 
 def test_auto_update(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: UniswapV2Pool,
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
 ):
     block_number = 18_000_000
-    fork_mainnet.reset(block_number=block_number)
-    set_web3(fork_mainnet.w3)
+    fork_mainnet_full.reset(block_number=block_number)
+    set_web3(fork_mainnet_full.w3)
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update()
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.auto_update()
 

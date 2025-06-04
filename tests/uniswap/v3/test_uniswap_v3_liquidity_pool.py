@@ -77,27 +77,27 @@ UNISWAP_V3_QUOTER_ABI = pydantic_core.from_json(
 
 
 @pytest.fixture(autouse=True)
-def dai(ethereum_archive_node_web3: Web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def dai(ethereum_full_node_web3: Web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(DAI_CONTRACT_ADDRESS)
 
 
 @pytest.fixture(autouse=True)
-def wbtc(ethereum_archive_node_web3: Web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def wbtc(ethereum_full_node_web3: Web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WBTC_CONTRACT_ADDRESS)
 
 
 @pytest.fixture(autouse=True)
-def weth(ethereum_archive_node_web3: Web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def weth(ethereum_full_node_web3: Web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WETH_CONTRACT_ADDRESS)
 
 
 @pytest.fixture
-def wbtc_weth_v3_lp_at_block_17_600_000(fork_mainnet: AnvilFork) -> UniswapV3Pool:
-    fork_mainnet.reset(block_number=17_600_000)
-    set_web3(fork_mainnet.w3)
+def wbtc_weth_v3_lp_at_block_17_600_000(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
+    fork_mainnet_full.reset(block_number=17_600_000)
+    set_web3(fork_mainnet_full.w3)
     return UniswapV3Pool(
         WBTC_WETH_V3_POOL_ADDRESS,
         state_cache_depth=512,  # set high to ensure cache can hold all items for reorg tests
@@ -105,8 +105,8 @@ def wbtc_weth_v3_lp_at_block_17_600_000(fork_mainnet: AnvilFork) -> UniswapV3Poo
 
 
 @pytest.fixture
-def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> UniswapV3Pool:
-    set_web3(fork_mainnet.w3)
+def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
+    set_web3(fork_mainnet_full.w3)
     return UniswapV3Pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
@@ -137,11 +137,11 @@ def convert_unsigned_integer_to_signed(num: int):
 
 
 @pytest.mark.skip(reason="slow")
-def test_first_200_pools(fork_mainnet: AnvilFork, testing_pools, liquidity_snapshot):
-    set_web3(fork_mainnet.w3)
-    fork_mainnet.reset(block_number=liquidity_snapshot["snapshot_block"])
+def test_first_200_pools(fork_mainnet_full: AnvilFork, testing_pools, liquidity_snapshot):
+    set_web3(fork_mainnet_full.w3)
+    fork_mainnet_full.reset(block_number=liquidity_snapshot["snapshot_block"])
 
-    quoter = fork_mainnet.w3.eth.contract(
+    quoter = fork_mainnet_full.w3.eth.contract(
         address=UNISWAP_V3_QUOTER_ADDRESS, abi=UNISWAP_V3_QUOTER_ABI
     )
 
@@ -221,14 +221,14 @@ def test_first_200_pools(fork_mainnet: AnvilFork, testing_pools, liquidity_snaps
 
 
 def test_first_200_pools_with_snapshot(
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
     testing_pools,
     liquidity_snapshot,
 ):
-    fork_mainnet.reset(block_number=liquidity_snapshot["snapshot_block"])
-    set_web3(fork_mainnet.w3)
+    fork_mainnet_full.reset(block_number=liquidity_snapshot["snapshot_block"])
+    set_web3(fork_mainnet_full.w3)
 
-    quoter = fork_mainnet.w3.eth.contract(
+    quoter = fork_mainnet_full.w3.eth.contract(
         address=UNISWAP_V3_QUOTER_ADDRESS, abi=UNISWAP_V3_QUOTER_ABI
     )
 
@@ -327,13 +327,13 @@ def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool):
     )
 
 
-def test_pool_creation(ethereum_archive_node_web3: Web3) -> None:
-    set_web3(ethereum_archive_node_web3)
+def test_pool_creation(ethereum_full_node_web3: Web3) -> None:
+    set_web3(ethereum_full_node_web3)
     UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
 
 
-def test_pool_creation_with_liquidity_map(ethereum_archive_node_web3: Web3) -> None:
-    set_web3(ethereum_archive_node_web3)
+def test_pool_creation_with_liquidity_map(ethereum_full_node_web3: Web3) -> None:
+    set_web3(ethereum_full_node_web3)
     assert (
         UniswapV3Pool(
             address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={}, tick_data={}
@@ -342,8 +342,8 @@ def test_pool_creation_with_liquidity_map(ethereum_archive_node_web3: Web3) -> N
     )
 
 
-def test_creation_with_bad_liquidity_overrides(ethereum_archive_node_web3: Web3) -> None:
-    set_web3(ethereum_archive_node_web3)
+def test_creation_with_bad_liquidity_overrides(ethereum_full_node_web3: Web3) -> None:
+    set_web3(ethereum_full_node_web3)
     with pytest.raises(DegenbotValueError, match="Provide both tick_bitmap and tick_data."):
         UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={0: {}})
 
@@ -351,15 +351,15 @@ def test_creation_with_bad_liquidity_overrides(ethereum_archive_node_web3: Web3)
         UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_data={0: {}})
 
 
-def test_creation_with_invalid_hash(ethereum_archive_node_web3: Web3) -> None:
-    set_web3(ethereum_archive_node_web3)
+def test_creation_with_invalid_hash(ethereum_full_node_web3: Web3) -> None:
+    set_web3(ethereum_full_node_web3)
 
     # Delete the preset deployment for this factory so the test uses the provided override instead
     # of preferring the known valid deployment data
-    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][
+    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][
         UNISWAP_V3_FACTORY_ADDRESS
     ]
-    del FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
+    del FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
 
     # Change last byte of true init hash
     bad_init_hash = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH[:-1] + "f"
@@ -371,7 +371,7 @@ def test_creation_with_invalid_hash(ethereum_archive_node_web3: Web3) -> None:
         )
 
     # Restore the preset deployments
-    FACTORY_DEPLOYMENTS[ethereum_archive_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
+    FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
         factory_deployment
     )
 
@@ -391,8 +391,8 @@ def test_pancake_v3_pool_creation(base_full_node_web3: Web3) -> None:
     PancakeV3Pool("0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E")
 
 
-def test_sparse_liquidity_map(ethereum_archive_node_web3: Web3) -> None:
-    set_web3(ethereum_archive_node_web3)
+def test_sparse_liquidity_map(ethereum_full_node_web3: Web3) -> None:
+    set_web3(ethereum_full_node_web3)
 
     lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
     current_word, _ = get_tick_word_and_bit_position(MIN_TICK, lp.tick_spacing)
@@ -415,8 +415,8 @@ def test_sparse_liquidity_map(ethereum_archive_node_web3: Web3) -> None:
     )
 
 
-def test_external_update_with_sparse_liquidity_map(ethereum_archive_node_web3: Web3) -> None:
-    set_web3(ethereum_archive_node_web3)
+def test_external_update_with_sparse_liquidity_map(ethereum_full_node_web3: Web3) -> None:
+    set_web3(ethereum_full_node_web3)
 
     lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
     print(f"{lp.tick_bitmap.keys()=}")
@@ -974,14 +974,14 @@ def test_external_update(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> 
     )
 
 
-def test_mint_and_burn_in_empty_word(fork_mainnet: AnvilFork) -> None:
+def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
     """
     Test that minting and burning an equal position inside an empty word results in no net
     liquidity in the mapping, and the removal of the position.
     """
     block_number = 20751740
-    fork_mainnet.reset(block_number=block_number)
-    set_web3(fork_mainnet.w3)
+    fork_mainnet_archive.reset(block_number=block_number)
+    set_web3(fork_mainnet_archive.w3)
 
     lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
     assert lp.sparse_liquidity_map is True
@@ -1020,12 +1020,12 @@ def test_mint_and_burn_in_empty_word(fork_mainnet: AnvilFork) -> None:
     assert upper_tick not in lp.tick_data
 
 
-def test_auto_update(fork_mainnet: AnvilFork) -> None:
-    current_block = fork_mainnet.w3.eth.block_number
-    fork_mainnet.reset(block_number=current_block - 500_000)
-    set_web3(fork_mainnet.w3)
+def test_auto_update(fork_mainnet_archive: AnvilFork) -> None:
+    current_block = fork_mainnet_archive.w3.eth.block_number
+    fork_mainnet_archive.reset(block_number=current_block - 500_000)
+    set_web3(fork_mainnet_archive.w3)
     lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
-    fork_mainnet.reset(block_number=current_block)
+    fork_mainnet_archive.reset(block_number=current_block)
     lp.auto_update()
     lp.auto_update()  # update twice to cover the "no update" cases
 
@@ -1034,7 +1034,7 @@ def test_auto_update(fork_mainnet: AnvilFork) -> None:
         lp.auto_update(block_number=current_block - 10)
 
 
-def test_complex_liquidity_transaction_1(fork_mainnet: AnvilFork):
+def test_complex_liquidity_transaction_1(fork_mainnet_full: AnvilFork):
     """
     Tests transaction 0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d, which
     executes a complex Burn/Swap/Mint
@@ -1045,8 +1045,8 @@ def test_complex_liquidity_transaction_1(fork_mainnet: AnvilFork):
     state_block = 19619258
     lp_address = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
 
-    fork_mainnet.reset(block_number=state_block)
-    set_web3(fork_mainnet.w3)
+    fork_mainnet_full.reset(block_number=state_block)
+    set_web3(fork_mainnet_full.w3)
     lp = UniswapV3Pool(lp_address)
 
     # Verify initial state
@@ -1104,7 +1104,7 @@ def test_complex_liquidity_transaction_1(fork_mainnet: AnvilFork):
     )
 
 
-def test_complex_liquidity_transaction_2(fork_mainnet: AnvilFork):
+def test_complex_liquidity_transaction_2(fork_mainnet_full: AnvilFork):
     """
     Tests transaction 0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b, which
     executes a complex Burn/Swap/Mint
@@ -1115,8 +1115,8 @@ def test_complex_liquidity_transaction_2(fork_mainnet: AnvilFork):
     state_block = 19624318
     lp_address = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
 
-    fork_mainnet.reset(block_number=state_block)
-    set_web3(fork_mainnet.w3)
+    fork_mainnet_full.reset(block_number=state_block)
+    set_web3(fork_mainnet_full.w3)
     lp = UniswapV3Pool(lp_address)
 
     # Verify initial state

@@ -25,16 +25,16 @@ EMPTY_SNAPSHOT_BLOCK = (
 
 
 @pytest.fixture
-def empty_snapshot(ethereum_archive_node_web3) -> UniswapV3LiquiditySnapshot:
-    set_web3(ethereum_archive_node_web3)
+def empty_snapshot(ethereum_full_node_web3) -> UniswapV3LiquiditySnapshot:
+    set_web3(ethereum_full_node_web3)
     return UniswapV3LiquiditySnapshot(EMPTY_SNAPSHOT_FILENAME)
 
 
 @pytest.fixture
 def first_250_blocks_snapshot(
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
 ) -> UniswapV3LiquiditySnapshot:
-    set_web3(fork_mainnet.w3)
+    set_web3(fork_mainnet_full.w3)
     snapshot = UniswapV3LiquiditySnapshot(EMPTY_SNAPSHOT_FILENAME)
     snapshot.fetch_new_events(
         to_block=cast("BlockNumber", EMPTY_SNAPSHOT_BLOCK + 250), blocks_per_request=50
@@ -42,16 +42,16 @@ def first_250_blocks_snapshot(
     return snapshot
 
 
-def test_create_snapshot_from_file_path(ethereum_archive_node_web3: Web3):
-    set_web3(ethereum_archive_node_web3)
+def test_create_snapshot_from_file_path(ethereum_full_node_web3: Web3):
+    set_web3(ethereum_full_node_web3)
     UniswapV3LiquiditySnapshot(EMPTY_SNAPSHOT_FILENAME)
 
 
 def test_fetch_liquidity_events_first_250_blocks(
     first_250_blocks_snapshot: UniswapV3LiquiditySnapshot,
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
 ):
-    set_web3(fork_mainnet.w3)
+    set_web3(fork_mainnet_full.w3)
 
     empty_snapshot: LiquidityMap = {
         "tick_bitmap": {},
@@ -152,9 +152,9 @@ def test_fetch_liquidity_events_first_250_blocks(
 
 def test_get_new_liquidity_updates(
     first_250_blocks_snapshot: UniswapV3LiquiditySnapshot,
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
 ):
-    set_web3(fork_mainnet.w3)
+    set_web3(fork_mainnet_full.w3)
 
     for pool_address in [
         "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
@@ -170,11 +170,11 @@ def test_get_new_liquidity_updates(
 
 def test_apply_update_to_snapshot(
     empty_snapshot: UniswapV3LiquiditySnapshot,
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
 ):
     pool_address = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
-    set_web3(fork_mainnet.w3)
+    set_web3(fork_mainnet_full.w3)
 
     tick_data = {
         253320: UniswapV3LiquidityAtTick(
@@ -214,9 +214,9 @@ def test_apply_update_to_snapshot(
 
 def test_pool_manager_applies_snapshots(
     first_250_blocks_snapshot: UniswapV3LiquiditySnapshot,
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
 ):
-    set_web3(fork_mainnet.w3)
+    set_web3(fork_mainnet_full.w3)
 
     # Build a pool manager to inject the liquidity events into the new pools as they are created
     pool_manager = UniswapV3PoolManager(

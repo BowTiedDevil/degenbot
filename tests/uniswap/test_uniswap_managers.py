@@ -129,8 +129,8 @@ def test_base_pancake_v3_pool_manager_from_exchange(base_full_node_web3: Web3):
     PancakeV3PoolManager.from_exchange(BASE_PANCAKESWAP_V3_EXCHANGE)
 
 
-def test_create_mainnet_managers_from_exchange(ethereum_archive_node_web3: Web3):
-    set_web3(ethereum_archive_node_web3)
+def test_create_mainnet_managers_from_exchange(ethereum_full_node_web3: Web3):
+    set_web3(ethereum_full_node_web3)
 
     UniswapV2PoolManager.from_exchange(EthereumMainnetUniswapV2)
     SushiswapV2PoolManager.from_exchange(EthereumMainnetSushiswapV2)
@@ -139,8 +139,8 @@ def test_create_mainnet_managers_from_exchange(ethereum_archive_node_web3: Web3)
     SushiswapV3PoolManager.from_exchange(EthereumMainnetSushiswapV3)
 
 
-def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
-    set_web3(ethereum_archive_node_web3)
+def test_create_mainnet_managers(ethereum_full_node_web3: Web3):
+    set_web3(ethereum_full_node_web3)
 
     uniswap_v2_pool_manager = UniswapV2PoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
@@ -209,8 +209,8 @@ def test_create_mainnet_managers(ethereum_archive_node_web3: Web3):
     assert uniswap_v2_lp.address not in uniswap_v2_pool_manager._untracked_pools
 
 
-def test_manager_behavior_for_unassociated_pools(ethereum_archive_node_web3: Web3):
-    set_web3(ethereum_archive_node_web3)
+def test_manager_behavior_for_unassociated_pools(ethereum_full_node_web3: Web3):
+    set_web3(ethereum_full_node_web3)
 
     uniswap_v3_pool_manager = UniswapV3PoolManager(
         factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS
@@ -234,8 +234,8 @@ def test_manager_behavior_for_unassociated_pools(ethereum_archive_node_web3: Web
         sushiswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
 
 
-def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
-    set_web3(ethereum_archive_node_web3)
+def test_pool_remove_and_recreate(ethereum_full_node_web3: Web3):
+    set_web3(ethereum_full_node_web3)
 
     uniswap_v2_pool_manager = UniswapV2PoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
@@ -308,8 +308,8 @@ def test_pool_remove_and_recreate(ethereum_archive_node_web3: Web3):
     assert uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS) is not v3_pool
 
 
-def test_get_already_registered_pool(ethereum_archive_node_web3: Web3):
-    set_web3(ethereum_archive_node_web3)
+def test_get_already_registered_pool(ethereum_full_node_web3: Web3):
+    set_web3(ethereum_full_node_web3)
 
     uniswap_v2_pool_manager = UniswapV2PoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
@@ -330,8 +330,8 @@ def test_get_already_registered_pool(ethereum_archive_node_web3: Web3):
     assert v3_pool is new_v3_pool
 
 
-def test_get_pool_with_kwargs(ethereum_archive_node_web3: Web3):
-    set_web3(ethereum_archive_node_web3)
+def test_get_pool_with_kwargs(ethereum_full_node_web3: Web3):
+    set_web3(ethereum_full_node_web3)
 
     uniswap_v2_pool_manager = UniswapV2PoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
@@ -344,8 +344,8 @@ def test_get_pool_with_kwargs(ethereum_archive_node_web3: Web3):
     uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS, pool_class_kwargs={})
 
 
-def test_pools_from_token_path(ethereum_archive_node_web3: Web3) -> None:
-    set_web3(ethereum_archive_node_web3)
+def test_pools_from_token_path(ethereum_full_node_web3: Web3) -> None:
+    set_web3(ethereum_full_node_web3)
 
     uniswap_v2_pool_manager = UniswapV2PoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
@@ -361,10 +361,10 @@ def test_pools_from_token_path(ethereum_archive_node_web3: Web3) -> None:
     ]
 
 
-def test_same_block(fork_mainnet: AnvilFork):
+def test_same_block(fork_mainnet_full: AnvilFork):
     block = 18493777
-    fork_mainnet.reset(block_number=block)
-    set_web3(fork_mainnet.w3)
+    fork_mainnet_full.reset(block_number=block)
+    set_web3(fork_mainnet_full.w3)
 
     uniswap_v2_pool_manager = UniswapV2PoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS

@@ -50,24 +50,24 @@ WBTC_WETH_V3_POOL_ADDRESS = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 
 
 @pytest.fixture
-def wbtc_token(ethereum_archive_node_web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def wbtc_token(ethereum_full_node_web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20Token(WBTC_ADDRESS)
 
 
 @pytest.fixture
-def weth_token(ethereum_archive_node_web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def weth_token(ethereum_full_node_web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20Token(WETH_ADDRESS)
 
 
 @pytest.fixture
 def wbtc_weth_v2_lp(
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
     wbtc_token,  # noqa:ARG001
     weth_token,  # noqa:ARG001
 ) -> UniswapV2Pool:
-    set_web3(fork_mainnet.w3)
+    set_web3(fork_mainnet_full.w3)
     pool = UniswapV2Pool(WBTC_WETH_V2_POOL_ADDRESS)
     pool._state = UniswapV2PoolState(
         address=pool.address,
@@ -80,8 +80,8 @@ def wbtc_weth_v2_lp(
 
 
 @pytest.fixture
-def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> UniswapV3Pool:
-    set_web3(fork_mainnet.w3)
+def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
+    set_web3(fork_mainnet_full.w3)
     pool = UniswapV3Pool(
         WBTC_WETH_V3_POOL_ADDRESS,
         tick_bitmap={
@@ -2242,14 +2242,14 @@ def test_arbitrage_with_overrides(
 
 
 @pytest.mark.skip("unreliable RPC")
-async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum: AnvilFork):
+async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum_archive: AnvilFork):
     # Arbitrum-specific token addresses
     weth_address = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
 
     camelot_weth_wbtc_pool_address = "0x96059759C6492fb4e8a9777b65f307F2C811a34F"
     sushi_v2_weth_wbtc_pool_address = "0x515e252b2b5c22b4b2b6Df66c2eBeeA871AA4d69"
 
-    set_web3(fork_arbitrum.w3)
+    set_web3(fork_arbitrum_archive.w3)
 
     _weth = Erc20Token(weth_address)
 

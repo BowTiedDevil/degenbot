@@ -152,8 +152,8 @@ def test_create_pool(
     assert lp.deployer_address == AERODROME_V2_FACTORY_ADDRESS
 
 
-def test_calculation_volatile(fork_base: AnvilFork, test_pools: list[Any]):
-    set_web3(fork_base.w3)
+def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
+    set_web3(fork_base_full.w3)
 
     token_amount_multipliers = [
         0.000000001,
@@ -177,7 +177,9 @@ def test_calculation_volatile(fork_base: AnvilFork, test_pools: list[Any]):
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
 
-        w3_contract = fork_base.w3.eth.contract(address=pool_address, abi=AERODROME_V2_POOL_ABI)
+        w3_contract = fork_base_full.w3.eth.contract(
+            address=pool_address, abi=AERODROME_V2_POOL_ABI
+        )
 
         if max_reserves_token1 >= 2:
             for token_mult in token_amount_multipliers:
@@ -223,8 +225,8 @@ def test_calculation_volatile(fork_base: AnvilFork, test_pools: list[Any]):
                     assert contract_amount_out == helper_amount_out, f"{pool_address=}"
 
 
-def test_calculation_stable(fork_base: AnvilFork, test_pools: list[Any]):
-    set_web3(fork_base.w3)
+def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
+    set_web3(fork_base_full.w3)
 
     token_amount_multipliers = [
         0.000000001,
@@ -248,7 +250,9 @@ def test_calculation_stable(fork_base: AnvilFork, test_pools: list[Any]):
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
 
-        w3_contract = fork_base.w3.eth.contract(address=pool_address, abi=AERODROME_V2_POOL_ABI)
+        w3_contract = fork_base_full.w3.eth.contract(
+            address=pool_address, abi=AERODROME_V2_POOL_ABI
+        )
 
         if max_reserves_token1 >= 2:
             for token_mult in token_amount_multipliers:
@@ -291,22 +295,22 @@ def test_calculation_stable(fork_base: AnvilFork, test_pools: list[Any]):
                     assert contract_amount_out == helper_amount_out, f"{pool_address=}"
 
 
-def test_aerodrome_v3_pool_creation(fork_base: AnvilFork) -> None:
-    set_web3(fork_base.w3)
+def test_aerodrome_v3_pool_creation(fork_base_full: AnvilFork) -> None:
+    set_web3(fork_base_full.w3)
     AerodromeV3Pool(address=AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
 
 
-def test_aerodrome_v3_state(fork_base: AnvilFork) -> None:
-    set_web3(fork_base.w3)
+def test_aerodrome_v3_state(fork_base_full: AnvilFork) -> None:
+    set_web3(fork_base_full.w3)
 
     lp = AerodromeV3Pool(address=AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
     assert isinstance(lp.state, AerodromeV3PoolState), f"{type(lp.state)=}"
 
 
-def test_aerodrome_v3_pool_calculation(fork_base: AnvilFork) -> None:
-    set_web3(fork_base.w3)
+def test_aerodrome_v3_pool_calculation(fork_base_full: AnvilFork) -> None:
+    set_web3(fork_base_full.w3)
 
-    quoter = fork_base.w3.eth.contract(
+    quoter = fork_base_full.w3.eth.contract(
         address=AERODROME_V3_QUOTER_ADDRESS, abi=AERODROME_V3_QUOTER_ABI
     )
     lp = AerodromeV3Pool(address="0x98c7A2338336d2d354663246F64676009c7bDa97")

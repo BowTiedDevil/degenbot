@@ -22,8 +22,8 @@ def test_pools() -> Any:
     )
 
 
-def test_pancakeswap_calculations(fork_base: AnvilFork, test_pools: list[Any]):
-    set_web3(fork_base.w3)
+def test_pancakeswap_calculations(fork_base_full: AnvilFork, test_pools: list[Any]):
+    set_web3(fork_base_full.w3)
 
     token_amount_multipliers = [
         0.000000001,
@@ -41,7 +41,7 @@ def test_pancakeswap_calculations(fork_base: AnvilFork, test_pools: list[Any]):
         0.75,
     ]
 
-    pancake_v2_router_contract = fork_base.w3.eth.contract(
+    pancake_v2_router_contract = fork_base_full.w3.eth.contract(
         address=PANCAKE_V2_ROUTER, abi=PANCAKE_V2_ROUTER_ABI
     )
     for pool in test_pools:

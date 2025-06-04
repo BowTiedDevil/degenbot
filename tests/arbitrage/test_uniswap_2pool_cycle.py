@@ -40,11 +40,11 @@ WBTC_ETH_V4_POOL_HOOKS = "0x0000000000000000000000000000000000000000"
 
 
 @pytest.fixture
-def wbtc(ethereum_archive_node_web3: web3.Web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def wbtc(ethereum_full_node_web3: web3.Web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
 
     token = token_registry.get(
-        chain_id=ethereum_archive_node_web3.eth.chain_id,
+        chain_id=ethereum_full_node_web3.eth.chain_id,
         token_address=WBTC_ADDRESS,
     )
     if token is None:
@@ -53,11 +53,11 @@ def wbtc(ethereum_archive_node_web3: web3.Web3) -> Erc20Token:
 
 
 @pytest.fixture
-def weth(ethereum_archive_node_web3: web3.Web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def weth(ethereum_full_node_web3: web3.Web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
 
     token = token_registry.get(
-        chain_id=ethereum_archive_node_web3.eth.chain_id,
+        chain_id=ethereum_full_node_web3.eth.chain_id,
         token_address=WETH_ADDRESS,
     )
     if token is None:
@@ -66,11 +66,11 @@ def weth(ethereum_archive_node_web3: web3.Web3) -> Erc20Token:
 
 
 @pytest.fixture
-def ether_placeholder(ethereum_archive_node_web3: web3.Web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def ether_placeholder(ethereum_full_node_web3: web3.Web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
 
     token = token_registry.get(
-        chain_id=ethereum_archive_node_web3.eth.chain_id,
+        chain_id=ethereum_full_node_web3.eth.chain_id,
         token_address=NATIVE_ADDRESS,
     )
     if token is None:
@@ -79,11 +79,11 @@ def ether_placeholder(ethereum_archive_node_web3: web3.Web3) -> Erc20Token:
 
 
 @pytest.fixture
-def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> UniswapV2Pool:
-    set_web3(fork_mainnet.w3)
+def wbtc_weth_v2_lp(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
+    set_web3(fork_mainnet_full.w3)
 
     pool = pool_registry.get(
-        chain_id=fork_mainnet.w3.eth.chain_id,
+        chain_id=fork_mainnet_full.w3.eth.chain_id,
         pool_address=WBTC_WETH_V2_POOL_ADDRESS,
     )
     if pool is None:
@@ -93,11 +93,11 @@ def wbtc_weth_v2_lp(fork_mainnet: AnvilFork) -> UniswapV2Pool:
 
 
 @pytest.fixture
-def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> UniswapV3Pool:
-    set_web3(fork_mainnet.w3)
+def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
+    set_web3(fork_mainnet_full.w3)
 
     pool = pool_registry.get(
-        chain_id=fork_mainnet.w3.eth.chain_id,
+        chain_id=fork_mainnet_full.w3.eth.chain_id,
         pool_address=WBTC_WETH_V3_POOL_ADDRESS,
     )
     if pool is None:
@@ -107,11 +107,11 @@ def wbtc_weth_v3_lp(fork_mainnet: AnvilFork) -> UniswapV3Pool:
 
 
 @pytest.fixture
-def wbtc_ether_v4_lp(fork_mainnet: AnvilFork) -> UniswapV4Pool:
-    set_web3(fork_mainnet.w3)
+def wbtc_ether_v4_lp(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
+    set_web3(fork_mainnet_full.w3)
 
     pool = pool_registry.get(
-        chain_id=fork_mainnet.w3.eth.chain_id,
+        chain_id=fork_mainnet_full.w3.eth.chain_id,
         pool_address=V4_POOL_MANAGER,
         pool_id=WBTC_ETH_V4_POOL_ID,
     )
@@ -342,7 +342,7 @@ def test_v4_v2_calculation_rejects_unprofitable_opportunity(arb_v4_v2: _UniswapT
     v2_pool._state = starting_state
 
 
-def test_v4_v2_dai_arb_base(fork_base: AnvilFork):
+def test_v4_v2_dai_arb_base(fork_base_full: AnvilFork):
     """
     From testing bot logs
     ---
@@ -353,8 +353,8 @@ def test_v4_v2_dai_arb_base(fork_base: AnvilFork):
 
     """  # noqa: E501
 
-    set_web3(fork_base.w3)
-    fork_base.reset(block_number=28197806)
+    set_web3(fork_base_full.w3)
+    fork_base_full.reset(block_number=28197806)
 
     v4_v2_arb_id = "0x69ca7e8fe6804a17e0f38eb1d5013ad10307f9f792f6435200c7a8e6fedefbb3"
     v4_dai_address = "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb"
@@ -378,7 +378,7 @@ def test_v4_v2_dai_arb_base(fork_base: AnvilFork):
     v2_pool = UniswapV2Pool(v2_pool_address)
 
     base_native = token_registry.get(
-        token_address=NATIVE_ADDRESS, chain_id=fork_base.w3.eth.chain_id
+        token_address=NATIVE_ADDRESS, chain_id=fork_base_full.w3.eth.chain_id
     )
     assert isinstance(base_native, Erc20Token)
 
@@ -419,7 +419,7 @@ def test_v4_v2_dai_arb_base(fork_base: AnvilFork):
     v4_v2_executor_contract_abi = env_values["V4_V2_EXECUTOR_CONTRACT_ABI"]
     operator_address = get_checksum_address(env_values["OPERATOR_ADDRESS"])
 
-    executor_contract = fork_base.w3.eth.contract(
+    executor_contract = fork_base_full.w3.eth.contract(
         address=v4_v2_executor_contract_address,
         abi=v4_v2_executor_contract_abi,
     )
@@ -430,7 +430,7 @@ def test_v4_v2_dai_arb_base(fork_base: AnvilFork):
     ).build_transaction(
         transaction={
             "from": operator_address,
-            "chainId": fork_base.w3.eth.chain_id,
+            "chainId": fork_base_full.w3.eth.chain_id,
             "type": 2,
         }
     )
@@ -439,14 +439,14 @@ def test_v4_v2_dai_arb_base(fork_base: AnvilFork):
         1.5 * arbitrage_transaction_params["gas"]
     )
 
-    tx = fork_base.w3.eth.send_transaction(arbitrage_transaction_params)
-    tx_receipt = fork_base.w3.eth.wait_for_transaction_receipt(tx)
+    tx = fork_base_full.w3.eth.send_transaction(arbitrage_transaction_params)
+    tx_receipt = fork_base_full.w3.eth.wait_for_transaction_receipt(tx)
     assert tx_receipt["status"] == 1
 
 
-def test_v2_v4_usdc_arb_base(fork_base: AnvilFork):
-    set_web3(fork_base.w3)
-    fork_base.reset(block_number=28203703)
+def test_v2_v4_usdc_arb_base(fork_base_full: AnvilFork):
+    set_web3(fork_base_full.w3)
+    fork_base_full.reset(block_number=28203703)
 
     base_weth_address = get_checksum_address("0x4200000000000000000000000000000000000006")
 
@@ -473,7 +473,7 @@ def test_v2_v4_usdc_arb_base(fork_base: AnvilFork):
     v2_pool = UniswapV2Pool(v2_weth_usdc_pool_address)
 
     base_weth = token_registry.get(
-        token_address=base_weth_address, chain_id=fork_base.w3.eth.chain_id
+        token_address=base_weth_address, chain_id=fork_base_full.w3.eth.chain_id
     )
     assert isinstance(base_weth, Erc20Token)
 
@@ -520,7 +520,7 @@ def test_v2_v4_usdc_arb_base(fork_base: AnvilFork):
 
     assert isinstance(v4_v2_executor_contract_abi, str)
 
-    executor_contract = fork_base.w3.eth.contract(
+    executor_contract = fork_base_full.w3.eth.contract(
         address=v4_v2_executor_contract_address,
         abi=v4_v2_executor_contract_abi,
     )
@@ -534,7 +534,7 @@ def test_v2_v4_usdc_arb_base(fork_base: AnvilFork):
         ).build_transaction(
             transaction={
                 "from": operator_address,
-                "chainId": fork_base.w3.eth.chain_id,
+                "chainId": fork_base_full.w3.eth.chain_id,
                 "type": 2,
             }
         )

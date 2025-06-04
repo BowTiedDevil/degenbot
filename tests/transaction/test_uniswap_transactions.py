@@ -145,14 +145,14 @@ from degenbot.transaction.uniswap_transaction import UniswapTransaction
     ],
 )
 def test_v2_router_transactions(
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
     block_number,
     tx_dict: dict[str, Any],
     exception_match: str | None,
 ) -> None:
-    set_web3(fork_mainnet.w3)
-    fork_mainnet.reset(block_number=block_number)
-    assert fork_mainnet.w3.eth.get_block_number() == block_number
+    set_web3(fork_mainnet_full.w3)
+    fork_mainnet_full.reset(block_number=block_number)
+    assert fork_mainnet_full.w3.eth.get_block_number() == block_number
 
     tx = UniswapTransaction(**tx_dict)
 
@@ -750,14 +750,14 @@ def test_v2_router_transactions(
     ],
 )
 def test_v3_router_transactions(
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
     block_number: int,
     tx_dict: dict[str, Any],
     exception_match: str | None,
 ):
-    set_web3(fork_mainnet.w3)
-    fork_mainnet.reset(block_number=block_number)
-    assert fork_mainnet.w3.eth.get_block_number() == block_number
+    set_web3(fork_mainnet_full.w3)
+    fork_mainnet_full.reset(block_number=block_number)
+    assert fork_mainnet_full.w3.eth.get_block_number() == block_number
 
     tx = UniswapTransaction(**tx_dict)
 
@@ -1097,12 +1097,12 @@ def test_v3_router_transactions(
     ],
 )
 def test_universal_router_transactions(
-    fork_mainnet: AnvilFork, block_number, tx_dict, exception_match
+    fork_mainnet_full: AnvilFork, block_number, tx_dict, exception_match
 ) -> None:
-    set_web3(fork_mainnet.w3)
-    fork_mainnet.reset(block_number=block_number)
-    assert fork_mainnet.w3.eth.get_block_number() == block_number
-    fork_mainnet.w3.provider.timeout = 600  # type: ignore[attr-defined]
+    set_web3(fork_mainnet_full.w3)
+    fork_mainnet_full.reset(block_number=block_number)
+    assert fork_mainnet_full.w3.eth.get_block_number() == block_number
+    fork_mainnet_full.w3.provider.timeout = 600  # type: ignore[attr-defined]
 
     tx = UniswapTransaction(**tx_dict)
 
@@ -1143,13 +1143,13 @@ def test_invalid_router():
         )
 
 
-def test_expired_transaction(fork_mainnet: AnvilFork):
-    set_web3(fork_mainnet.w3)
+def test_expired_transaction(fork_mainnet_full: AnvilFork):
+    set_web3(fork_mainnet_full.w3)
     block_number = 19195827 - 1
-    fork_mainnet.reset(block_number=block_number)
-    assert fork_mainnet.w3.eth.get_block_number() == block_number
+    fork_mainnet_full.reset(block_number=block_number)
+    assert fork_mainnet_full.w3.eth.get_block_number() == block_number
 
-    fork_mainnet.w3.provider.timeout = 600  # type: ignore[attr-defined]
+    fork_mainnet_full.w3.provider.timeout = 600  # type: ignore[attr-defined]
 
     tx = UniswapTransaction(
         chain_id=1,

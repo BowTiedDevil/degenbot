@@ -45,20 +45,20 @@ class MockLiquidityPool(UniswapV2Pool):
 
 
 @pytest.fixture
-def wbtc_token(ethereum_archive_node_web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def wbtc_token(ethereum_full_node_web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20Token(WBTC_ADDRESS)
 
 
 @pytest.fixture
-def weth_token(ethereum_archive_node_web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def weth_token(ethereum_full_node_web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20Token(WETH_ADDRESS)
 
 
 @pytest.fixture
-def link_token(ethereum_archive_node_web3) -> Erc20Token:
-    set_web3(ethereum_archive_node_web3)
+def link_token(ethereum_full_node_web3) -> Erc20Token:
+    set_web3(ethereum_full_node_web3)
     return Erc20Token(LINK_ADDRESS)
 
 

@@ -55,16 +55,16 @@ def test_encode_function_calldata():
     )
 
 
-def test_low_level_call_for_factory_address(ethereum_archive_node_web3: web3.Web3):
-    degenbot.config.set_web3(ethereum_archive_node_web3)
+def test_low_level_call_for_factory_address(ethereum_full_node_web3: web3.Web3):
+    degenbot.config.set_web3(ethereum_full_node_web3)
 
     pool_address = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
     function_prototype = "factory()"
 
     (result,) = raw_call(
-        w3=ethereum_archive_node_web3,
-        block_identifier=ethereum_archive_node_web3.eth.block_number,
+        w3=ethereum_full_node_web3,
+        block_identifier=ethereum_full_node_web3.eth.block_number,
         address=pool_address,
         calldata=encode_function_calldata(
             function_prototype=function_prototype,
@@ -134,12 +134,12 @@ def test_create2():
     )
 
 
-def test_converting_block_identifier_to_int(fork_mainnet: AnvilFork):
+def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
     """
     Check that all inputs for web3 type `BlockIdentifier` can be converted to an integer
     """
 
-    w3 = fork_mainnet.w3
+    w3 = fork_mainnet_full.w3
     degenbot.config.set_web3(w3)
 
     # Known string literals

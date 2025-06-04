@@ -12,9 +12,9 @@ WBTC_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 ETHER_PLACEHOLDER_ADDRESS = get_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
 
 
-def test_get_erc20tokens(ethereum_archive_node_web3: web3.Web3):
-    set_web3(ethereum_archive_node_web3)
-    token_manager = Erc20TokenManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
+def test_get_erc20tokens(ethereum_full_node_web3: web3.Web3):
+    set_web3(ethereum_full_node_web3)
+    token_manager = Erc20TokenManager(chain_id=ethereum_full_node_web3.eth.chain_id)
 
     weth = token_manager.get_erc20token(address=WETH_ADDRESS)
     assert weth.symbol == "WETH"
@@ -24,7 +24,7 @@ def test_get_erc20tokens(ethereum_archive_node_web3: web3.Web3):
     assert token_manager.get_erc20token(WETH_ADDRESS.upper()) is weth
     assert (
         token_registry.get(
-            token_address=WETH_ADDRESS, chain_id=ethereum_archive_node_web3.eth.chain_id
+            token_address=WETH_ADDRESS, chain_id=ethereum_full_node_web3.eth.chain_id
         )
         is weth
     )
@@ -37,23 +37,23 @@ def test_get_erc20tokens(ethereum_archive_node_web3: web3.Web3):
     assert token_manager.get_erc20token(WBTC_ADDRESS.upper()) is wbtc
     assert (
         token_registry.get(
-            token_address=WBTC_ADDRESS, chain_id=ethereum_archive_node_web3.eth.chain_id
+            token_address=WBTC_ADDRESS, chain_id=ethereum_full_node_web3.eth.chain_id
         )
         is wbtc
     )
 
 
-def test_get_bad_token(ethereum_archive_node_web3: web3.Web3):
-    set_web3(ethereum_archive_node_web3)
-    token_manager = Erc20TokenManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
+def test_get_bad_token(ethereum_full_node_web3: web3.Web3):
+    set_web3(ethereum_full_node_web3)
+    token_manager = Erc20TokenManager(chain_id=ethereum_full_node_web3.eth.chain_id)
     bad_token_address = "0x0000000000000000000000000000000000000001"
     with pytest.raises(DegenbotValueError):
         token_manager.get_erc20token(address=bad_token_address)
 
 
-def test_get_ether_placeholder(ethereum_archive_node_web3: web3.Web3):
-    set_web3(ethereum_archive_node_web3)
-    token_manager = Erc20TokenManager(chain_id=ethereum_archive_node_web3.eth.chain_id)
+def test_get_ether_placeholder(ethereum_full_node_web3: web3.Web3):
+    set_web3(ethereum_full_node_web3)
+    token_manager = Erc20TokenManager(chain_id=ethereum_full_node_web3.eth.chain_id)
 
     ether_placeholder = token_manager.get_erc20token(address=ETHER_PLACEHOLDER_ADDRESS)
     assert ether_placeholder.symbol == "ETH"
@@ -64,7 +64,7 @@ def test_get_ether_placeholder(ethereum_archive_node_web3: web3.Web3):
     assert (
         token_registry.get(
             token_address=ETHER_PLACEHOLDER_ADDRESS,
-            chain_id=ethereum_archive_node_web3.eth.chain_id,
+            chain_id=ethereum_full_node_web3.eth.chain_id,
         )
         is ether_placeholder
     )
@@ -72,14 +72,14 @@ def test_get_ether_placeholder(ethereum_archive_node_web3: web3.Web3):
     assert (
         token_registry.get(
             token_address=ETHER_PLACEHOLDER_ADDRESS.lower(),
-            chain_id=ethereum_archive_node_web3.eth.chain_id,
+            chain_id=ethereum_full_node_web3.eth.chain_id,
         )
         is ether_placeholder
     )
     assert (
         token_registry.get(
             token_address=ETHER_PLACEHOLDER_ADDRESS.upper(),
-            chain_id=ethereum_archive_node_web3.eth.chain_id,
+            chain_id=ethereum_full_node_web3.eth.chain_id,
         )
         is ether_placeholder
     )

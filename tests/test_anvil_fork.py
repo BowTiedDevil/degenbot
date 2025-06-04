@@ -51,52 +51,52 @@ def test_set_bytecode():
     assert fork.w3.eth.get_code(VITALIK_ADDRESS) == fake_bytecode
 
 
-def test_rpc_methods(fork_mainnet: AnvilFork):
+def test_rpc_methods(fork_mainnet_full: AnvilFork):
     with pytest.raises(InvalidUint256):
-        fork_mainnet.set_next_base_fee(-1)
+        fork_mainnet_full.set_next_base_fee(-1)
     with pytest.raises(InvalidUint256):
-        fork_mainnet.set_next_base_fee(MAX_UINT256 + 1)
-    fork_mainnet.set_next_base_fee(11 * 10**9)
+        fork_mainnet_full.set_next_base_fee(MAX_UINT256 + 1)
+    fork_mainnet_full.set_next_base_fee(11 * 10**9)
 
     # Set several snapshot IDs and return to them
-    snapshot_ids = [fork_mainnet.set_snapshot() for _ in range(10)]
+    snapshot_ids = [fork_mainnet_full.set_snapshot() for _ in range(10)]
     for snapshot_id in snapshot_ids:
-        assert fork_mainnet.return_to_snapshot(snapshot_id) is True
+        assert fork_mainnet_full.return_to_snapshot(snapshot_id) is True
     # No snapshot ID with this value
-    assert fork_mainnet.return_to_snapshot(100) is False
+    assert fork_mainnet_full.return_to_snapshot(100) is False
 
     # Negative IDs are not allowed
     with pytest.raises(DegenbotValueError, match="ID cannot be negative"):
-        fork_mainnet.return_to_snapshot(-1)
+        fork_mainnet_full.return_to_snapshot(-1)
 
     for balance in [MIN_UINT256, MAX_UINT256]:
-        fork_mainnet.set_balance(VITALIK_ADDRESS, balance)
-        assert fork_mainnet.w3.eth.get_balance(VITALIK_ADDRESS) == balance
+        fork_mainnet_full.set_balance(VITALIK_ADDRESS, balance)
+        assert fork_mainnet_full.w3.eth.get_balance(VITALIK_ADDRESS) == balance
 
     # Balances outside of uint256 should be rejected
     with pytest.raises(EVMRevertError):
-        fork_mainnet.set_balance(VITALIK_ADDRESS, MIN_UINT256 - 1)
+        fork_mainnet_full.set_balance(VITALIK_ADDRESS, MIN_UINT256 - 1)
     with pytest.raises(EVMRevertError):
-        fork_mainnet.set_balance(VITALIK_ADDRESS, MAX_UINT256 + 1)
+        fork_mainnet_full.set_balance(VITALIK_ADDRESS, MAX_UINT256 + 1)
 
     fake_coinbase = get_checksum_address("0x0420042004200420042004200420042004200420")
-    fork_mainnet.set_coinbase(fake_coinbase)
+    fork_mainnet_full.set_coinbase(fake_coinbase)
     # @dev the eth_coinbase method fails when called on Anvil,
     # so check by mining a block and comparing the miner address
 
-    fork_mainnet.mine()
-    block = fork_mainnet.w3.eth.get_block("latest")
+    fork_mainnet_full.mine()
+    block = fork_mainnet_full.w3.eth.get_block("latest")
     assert block.get("miner") == fake_coinbase
 
 
-def test_mine_and_reset(fork_mainnet: AnvilFork):
-    starting_block = fork_mainnet.w3.eth.get_block_number()
-    fork_mainnet.mine()
-    fork_mainnet.mine()
-    fork_mainnet.mine()
-    assert fork_mainnet.w3.eth.get_block_number() == starting_block + 3
-    fork_mainnet.reset(block_number=starting_block)
-    assert fork_mainnet.w3.eth.get_block_number() == starting_block
+def test_mine_and_reset(fork_mainnet_full: AnvilFork):
+    starting_block = fork_mainnet_full.w3.eth.get_block_number()
+    fork_mainnet_full.mine()
+    fork_mainnet_full.mine()
+    fork_mainnet_full.mine()
+    assert fork_mainnet_full.w3.eth.get_block_number() == starting_block + 3
+    fork_mainnet_full.reset(block_number=starting_block)
+    assert fork_mainnet_full.w3.eth.get_block_number() == starting_block
 
 
 def test_fork_from_transaction_hash():
@@ -107,35 +107,37 @@ def test_fork_from_transaction_hash():
     assert fork.w3.eth.block_number == 20987963
 
 
-def test_set_next_block_base_fee(fork_mainnet: AnvilFork):
+def test_set_next_block_base_fee(fork_mainnet_full: AnvilFork):
     base_fee_override = 69 * 10**9
 
-    fork_mainnet.set_next_base_fee(base_fee_override)
-    fork_mainnet.mine()
-    assert fork_mainnet.w3.eth.get_block("latest")["baseFeePerGas"] == base_fee_override
+    fork_mainnet_full.set_next_base_fee(base_fee_override)
+    fork_mainnet_full.mine()
+    assert fork_mainnet_full.w3.eth.get_block("latest")["baseFeePerGas"] == base_fee_override
 
 
-def test_reset_and_set_next_block_base_fee(fork_mainnet: AnvilFork):
+def test_reset_and_set_next_block_base_fee(fork_mainnet_full: AnvilFork):
     base_fee_override = 69 * 10**9
 
-    starting_block = fork_mainnet.w3.eth.get_block_number()
-    fork_mainnet.reset(block_number=starting_block - 10)
-    fork_mainnet.set_next_base_fee(base_fee_override)
-    fork_mainnet.mine()
-    assert fork_mainnet.w3.eth.get_block_number() == starting_block - 9
-    assert fork_mainnet.w3.eth.get_block(starting_block - 9)["baseFeePerGas"] == base_fee_override
+    starting_block = fork_mainnet_full.w3.eth.get_block_number()
+    fork_mainnet_full.reset(block_number=starting_block - 10)
+    fork_mainnet_full.set_next_base_fee(base_fee_override)
+    fork_mainnet_full.mine()
+    assert fork_mainnet_full.w3.eth.get_block_number() == starting_block - 9
+    assert (
+        fork_mainnet_full.w3.eth.get_block(starting_block - 9)["baseFeePerGas"] == base_fee_override
+    )
 
 
-def test_reset_to_new_endpoint(fork_mainnet: AnvilFork):
-    fork_mainnet.reset(fork_url=BASE_ARCHIVE_NODE_HTTP_URI)
-    assert fork_mainnet.fork_url == BASE_ARCHIVE_NODE_HTTP_URI
+def test_reset_to_new_endpoint(fork_mainnet_full: AnvilFork):
+    fork_mainnet_full.reset(fork_url=BASE_ARCHIVE_NODE_HTTP_URI)
+    assert fork_mainnet_full.fork_url == BASE_ARCHIVE_NODE_HTTP_URI
 
 
-def test_reset_to_new_transaction_hash(fork_mainnet: AnvilFork):
-    fork_mainnet.reset(
+def test_reset_to_new_transaction_hash(fork_mainnet_archive: AnvilFork):
+    fork_mainnet_archive.reset(
         transaction_hash="0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6"
     )
-    assert fork_mainnet.w3.eth.block_number == 20987963
+    assert fork_mainnet_archive.w3.eth.block_number == 20987963
 
 
 def test_ipc_kwargs():

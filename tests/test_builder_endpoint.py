@@ -100,11 +100,11 @@ async def test_bad_url():
 
 async def test_eth_call_bundle(
     flashbots: BuilderEndpoint,
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
 ):
-    current_block = fork_mainnet.w3.eth.block_number
-    current_base_fee = fork_mainnet.w3.eth.get_block("latest")["baseFeePerGas"]
-    current_block_timestamp = fork_mainnet.w3.eth.get_block("latest")["timestamp"]
+    current_block = fork_mainnet_full.w3.eth.block_number
+    current_base_fee = fork_mainnet_full.w3.eth.get_block("latest")["baseFeePerGas"]
+    current_block_timestamp = fork_mainnet_full.w3.eth.get_block("latest")["timestamp"]
 
     signer: LocalAccount = eth_account.Account.from_key(SIGNER_KEY)
     signer_address = signer.address
@@ -115,7 +115,7 @@ async def test_eth_call_bundle(
         "from": signer_address,
         "to": signer_address,
         "value": 1,
-        "nonce": fork_mainnet.w3.eth.get_transaction_count(signer_address),
+        "nonce": fork_mainnet_full.w3.eth.get_transaction_count(signer_address),
         "gas": 50_000,
         "maxFeePerGas": int(1.5 * current_base_fee),
         "maxPriorityFeePerGas": 0,
@@ -126,15 +126,15 @@ async def test_eth_call_bundle(
         "from": signer_address,
         "to": signer_address,
         "value": 1,
-        "nonce": fork_mainnet.w3.eth.get_transaction_count(signer_address) + 1,
+        "nonce": fork_mainnet_full.w3.eth.get_transaction_count(signer_address) + 1,
         "gas": 50_000,
         "maxFeePerGas": int(1.5 * current_base_fee),
         "maxPriorityFeePerGas": 0,
     }
-    signed_tx_1 = fork_mainnet.w3.eth.account.sign_transaction(
+    signed_tx_1 = fork_mainnet_full.w3.eth.account.sign_transaction(
         transaction_1, SIGNER_KEY
     ).raw_transaction
-    signed_tx_2 = fork_mainnet.w3.eth.account.sign_transaction(
+    signed_tx_2 = fork_mainnet_full.w3.eth.account.sign_transaction(
         transaction_2, SIGNER_KEY
     ).raw_transaction
 
@@ -168,10 +168,10 @@ async def test_eth_call_bundle(
 
 async def test_eth_send_bundle(
     flashbots: BuilderEndpoint,
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
 ):
-    current_block = fork_mainnet.w3.eth.block_number
-    current_base_fee = fork_mainnet.w3.eth.get_block("latest")["baseFeePerGas"]
+    current_block = fork_mainnet_full.w3.eth.block_number
+    current_base_fee = fork_mainnet_full.w3.eth.get_block("latest")["baseFeePerGas"]
 
     signer: LocalAccount = eth_account.Account.from_key(SIGNER_KEY)
     signer_address = signer.address
@@ -182,7 +182,7 @@ async def test_eth_send_bundle(
         "from": signer_address,
         "to": signer_address,
         "value": 1,
-        "nonce": fork_mainnet.w3.eth.get_transaction_count(signer_address),
+        "nonce": fork_mainnet_full.w3.eth.get_transaction_count(signer_address),
         "gas": 50_000,
         "maxFeePerGas": int(1.5 * current_base_fee),
         "maxPriorityFeePerGas": 0,
@@ -193,15 +193,15 @@ async def test_eth_send_bundle(
         "from": signer_address,
         "to": signer_address,
         "value": 1,
-        "nonce": fork_mainnet.w3.eth.get_transaction_count(signer_address) + 1,
+        "nonce": fork_mainnet_full.w3.eth.get_transaction_count(signer_address) + 1,
         "gas": 50_000,
         "maxFeePerGas": int(1.5 * current_base_fee),
         "maxPriorityFeePerGas": 0,
     }
-    signed_tx_1 = fork_mainnet.w3.eth.account.sign_transaction(
+    signed_tx_1 = fork_mainnet_full.w3.eth.account.sign_transaction(
         transaction_1, SIGNER_KEY
     ).raw_transaction
-    signed_tx_2 = fork_mainnet.w3.eth.account.sign_transaction(
+    signed_tx_2 = fork_mainnet_full.w3.eth.account.sign_transaction(
         transaction_2, SIGNER_KEY
     ).raw_transaction
 
@@ -221,9 +221,9 @@ async def test_eth_send_bundle(
 
 async def test_get_user_stats(
     flashbots: BuilderEndpoint,
-    fork_mainnet: AnvilFork,
+    fork_mainnet_full: AnvilFork,
 ):
-    current_block = fork_mainnet.w3.eth.block_number
+    current_block = fork_mainnet_full.w3.eth.block_number
     await flashbots.get_user_stats(
         signer_key=SIGNER_KEY,
         recent_block_number=current_block,
