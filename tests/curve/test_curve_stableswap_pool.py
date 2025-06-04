@@ -177,6 +177,7 @@ def test_a_ramping(fork_mainnet_full: AnvilFork):
 
 def test_single_pool(
     fork_mainnet_full: AnvilFork,
+    fork_mainnet_archive: AnvilFork,
 ):
     block_identifier = None
     pool_address = ""
@@ -184,9 +185,11 @@ def test_single_pool(
     if not pool_address:
         return
 
-    set_web3(fork_mainnet_full.w3)
-    if block_identifier:
-        fork_mainnet_full.reset(block_number=block_identifier)
+    if block_identifier is not None:
+        fork_mainnet_archive.reset(block_number=block_identifier)
+        set_web3(fork_mainnet_archive.w3)
+    else:
+        set_web3(fork_mainnet_full.w3)
 
     lp = CurveStableswapPool(address=pool_address)
     _test_calculations(lp)
