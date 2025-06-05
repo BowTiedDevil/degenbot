@@ -361,10 +361,10 @@ def test_pools_from_token_path(ethereum_full_node_web3: Web3) -> None:
     ]
 
 
-def test_same_block(fork_mainnet_full: AnvilFork):
+def test_same_block(fork_mainnet_archive: AnvilFork):
     block = 18493777
-    fork_mainnet_full.reset(block_number=block)
-    set_web3(fork_mainnet_full.w3)
+    fork_mainnet_archive.reset(block_number=block)
+    set_web3(fork_mainnet_archive.w3)
 
     uniswap_v2_pool_manager = UniswapV2PoolManager(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS

@@ -10,7 +10,11 @@ from degenbot.config import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import DegenbotValueError, EVMRevertError, InvalidUint256
 
-from .conftest import BASE_ARCHIVE_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from .conftest import (
+    BASE_FULL_NODE_HTTP_URI,
+    ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+    ETHEREUM_FULL_NODE_HTTP_URI,
+)
 
 if TYPE_CHECKING:
     from web3.providers.ipc import IPCProvider
@@ -22,16 +26,16 @@ WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 def test_anvil_forks():
     # Basic constructor
-    AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
 
     # Test optional arguments
-    AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI, fork_block=18_000_000)
-    AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI, chain_id=1)
-    AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI, base_fee=10 * 10**9)
+    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, fork_block=18_000_000)
+    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, chain_id=1)
+    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, base_fee=10 * 10**9)
 
 
-def test_http_and_endpoints():
-    fork = AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+def test_web3_endpoints():
+    fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
     assert fork.http_url == f"http://localhost:{fork.port}"
     assert fork.ws_url == f"ws://localhost:{fork.port}"
 
@@ -43,7 +47,7 @@ def test_http_and_endpoints():
 def test_set_bytecode():
     fake_bytecode = HexBytes("0x42069")
     fork = AnvilFork(
-        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
         bytecode_overrides=[
             (VITALIK_ADDRESS, fake_bytecode),
         ],
@@ -129,8 +133,8 @@ def test_reset_and_set_next_block_base_fee(fork_mainnet_full: AnvilFork):
 
 
 def test_reset_to_new_endpoint(fork_mainnet_full: AnvilFork):
-    fork_mainnet_full.reset(fork_url=BASE_ARCHIVE_NODE_HTTP_URI)
-    assert fork_mainnet_full.fork_url == BASE_ARCHIVE_NODE_HTTP_URI
+    fork_mainnet_full.reset(fork_url=BASE_FULL_NODE_HTTP_URI)
+    assert fork_mainnet_full.fork_url == BASE_FULL_NODE_HTTP_URI
 
 
 def test_reset_to_new_transaction_hash(fork_mainnet_archive: AnvilFork):
@@ -142,7 +146,7 @@ def test_reset_to_new_transaction_hash(fork_mainnet_archive: AnvilFork):
 
 def test_ipc_kwargs():
     fork = AnvilFork(
-        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
         ipc_provider_kwargs=dict(timeout=None),
     )
     if TYPE_CHECKING:
@@ -153,7 +157,7 @@ def test_ipc_kwargs():
 def test_balance_overrides_in_constructor():
     fake_balance = 100 * 10**18
     fork = AnvilFork(
-        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
         balance_overrides=[
             (VITALIK_ADDRESS, fake_balance),
         ],
@@ -164,7 +168,7 @@ def test_balance_overrides_in_constructor():
 def test_nonce_overrides_in_constructor():
     fake_nonce = 69
     fork = AnvilFork(
-        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
         nonce_overrides=[
             (VITALIK_ADDRESS, fake_nonce),
         ],
@@ -177,7 +181,7 @@ def test_bytecode_overrides_in_constructor():
     fake_bytecode = HexBytes("0x0420")
 
     fork = AnvilFork(
-        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI, bytecode_overrides=[(fake_address, fake_bytecode)]
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI, bytecode_overrides=[(fake_address, fake_bytecode)]
     )
     assert fork.w3.eth.get_code(fake_address) == fake_bytecode
 
@@ -186,7 +190,7 @@ def test_coinbase_override_in_constructor():
     fake_coinbase = get_checksum_address("0x6969696969696969696969696969696969696969")
 
     fork = AnvilFork(
-        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
         coinbase=fake_coinbase,
     )
     fork.mine()

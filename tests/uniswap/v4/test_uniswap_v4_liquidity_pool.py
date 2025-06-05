@@ -107,22 +107,22 @@ def test_first_200_pools(fork_mainnet_full: AnvilFork, testing_pools):
 
 
 def test_first_200_pools_with_snapshot(
-    fork_mainnet_full: AnvilFork,
+    fork_mainnet_archive: AnvilFork,
     testing_pools,
     liquidity_snapshot,
 ):
-    fork_mainnet_full.reset(block_number=liquidity_snapshot["snapshot_block"])
+    fork_mainnet_archive.reset(block_number=liquidity_snapshot["snapshot_block"])
     print(f"Forked at block {liquidity_snapshot['snapshot_block']}")
 
     for pool in testing_pools:
         _test_pool_exact_output(
             pool=pool,
-            fork=fork_mainnet_full,
+            fork=fork_mainnet_archive,
             snapshot=liquidity_snapshot,
         )
         _test_pool_exact_input(
             pool=pool,
-            fork=fork_mainnet_full,
+            fork=fork_mainnet_archive,
             snapshot=liquidity_snapshot,
         )
 
@@ -419,27 +419,27 @@ SINGLE_POOL_ID = "0x6f0497bcc1a384869277591760c43d007a84804a52cf9daa422ec85a1e87
 
 
 def test_single_pool(
-    fork_mainnet_full: AnvilFork,
+    fork_mainnet_archive: AnvilFork,
     testing_pools,
     liquidity_snapshot,
 ):
     [pool] = [pool for pool in testing_pools if pool["pool_id"] == SINGLE_POOL_ID]
     _test_pool_exact_input(
         pool=pool,
-        fork=fork_mainnet_full,
+        fork=fork_mainnet_archive,
         block_number=liquidity_snapshot["snapshot_block"],
     )
 
 
 def test_single_pool_with_snapshot(
-    fork_mainnet_full: AnvilFork,
+    fork_mainnet_archive: AnvilFork,
     testing_pools,
     liquidity_snapshot,
 ):
     [pool] = [pool for pool in testing_pools if pool["pool_id"] == SINGLE_POOL_ID]
     _test_pool_exact_input(
         pool=pool,
-        fork=fork_mainnet_full,
+        fork=fork_mainnet_archive,
         block_number=liquidity_snapshot["snapshot_block"],
         snapshot=liquidity_snapshot,
     )

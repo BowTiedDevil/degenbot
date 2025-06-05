@@ -342,7 +342,7 @@ def test_v4_v2_calculation_rejects_unprofitable_opportunity(arb_v4_v2: _UniswapT
     v2_pool._state = starting_state
 
 
-def test_v4_v2_dai_arb_base(fork_base_full: AnvilFork):
+def test_v4_v2_dai_arb_base(fork_base_archive: AnvilFork):
     """
     From testing bot logs
     ---
@@ -353,8 +353,8 @@ def test_v4_v2_dai_arb_base(fork_base_full: AnvilFork):
 
     """  # noqa: E501
 
-    set_web3(fork_base_full.w3)
-    fork_base_full.reset(block_number=28197806)
+    set_web3(fork_base_archive.w3)
+    fork_base_archive.reset(block_number=28197806)
 
     v4_v2_arb_id = "0x69ca7e8fe6804a17e0f38eb1d5013ad10307f9f792f6435200c7a8e6fedefbb3"
     v4_dai_address = "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb"
@@ -378,7 +378,7 @@ def test_v4_v2_dai_arb_base(fork_base_full: AnvilFork):
     v2_pool = UniswapV2Pool(v2_pool_address)
 
     base_native = token_registry.get(
-        token_address=NATIVE_ADDRESS, chain_id=fork_base_full.w3.eth.chain_id
+        token_address=NATIVE_ADDRESS, chain_id=fork_base_archive.w3.eth.chain_id
     )
     assert isinstance(base_native, Erc20Token)
 
@@ -419,7 +419,7 @@ def test_v4_v2_dai_arb_base(fork_base_full: AnvilFork):
     v4_v2_executor_contract_abi = env_values["V4_V2_EXECUTOR_CONTRACT_ABI"]
     operator_address = get_checksum_address(env_values["OPERATOR_ADDRESS"])
 
-    executor_contract = fork_base_full.w3.eth.contract(
+    executor_contract = fork_base_archive.w3.eth.contract(
         address=v4_v2_executor_contract_address,
         abi=v4_v2_executor_contract_abi,
     )
@@ -430,7 +430,7 @@ def test_v4_v2_dai_arb_base(fork_base_full: AnvilFork):
     ).build_transaction(
         transaction={
             "from": operator_address,
-            "chainId": fork_base_full.w3.eth.chain_id,
+            "chainId": fork_base_archive.w3.eth.chain_id,
             "type": 2,
         }
     )
@@ -439,14 +439,14 @@ def test_v4_v2_dai_arb_base(fork_base_full: AnvilFork):
         1.5 * arbitrage_transaction_params["gas"]
     )
 
-    tx = fork_base_full.w3.eth.send_transaction(arbitrage_transaction_params)
-    tx_receipt = fork_base_full.w3.eth.wait_for_transaction_receipt(tx)
+    tx = fork_base_archive.w3.eth.send_transaction(arbitrage_transaction_params)
+    tx_receipt = fork_base_archive.w3.eth.wait_for_transaction_receipt(tx)
     assert tx_receipt["status"] == 1
 
 
-def test_v2_v4_usdc_arb_base(fork_base_full: AnvilFork):
-    set_web3(fork_base_full.w3)
-    fork_base_full.reset(block_number=28203703)
+def test_v2_v4_usdc_arb_base(fork_base_archive: AnvilFork):
+    set_web3(fork_base_archive.w3)
+    fork_base_archive.reset(block_number=28203703)
 
     base_weth_address = get_checksum_address("0x4200000000000000000000000000000000000006")
 
@@ -473,7 +473,7 @@ def test_v2_v4_usdc_arb_base(fork_base_full: AnvilFork):
     v2_pool = UniswapV2Pool(v2_weth_usdc_pool_address)
 
     base_weth = token_registry.get(
-        token_address=base_weth_address, chain_id=fork_base_full.w3.eth.chain_id
+        token_address=base_weth_address, chain_id=fork_base_archive.w3.eth.chain_id
     )
     assert isinstance(base_weth, Erc20Token)
 
@@ -520,7 +520,7 @@ def test_v2_v4_usdc_arb_base(fork_base_full: AnvilFork):
 
     assert isinstance(v4_v2_executor_contract_abi, str)
 
-    executor_contract = fork_base_full.w3.eth.contract(
+    executor_contract = fork_base_archive.w3.eth.contract(
         address=v4_v2_executor_contract_address,
         abi=v4_v2_executor_contract_abi,
     )
@@ -534,7 +534,7 @@ def test_v2_v4_usdc_arb_base(fork_base_full: AnvilFork):
         ).build_transaction(
             transaction={
                 "from": operator_address,
-                "chainId": fork_base_full.w3.eth.chain_id,
+                "chainId": fork_base_archive.w3.eth.chain_id,
                 "type": 2,
             }
         )

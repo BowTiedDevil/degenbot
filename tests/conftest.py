@@ -21,13 +21,13 @@ env_values = dotenv.dotenv_values(env_file)
 ARBITRUM_FULL_NODE_HTTP_URI = "https://arbitrum-one-rpc.publicnode.com"
 ARBITRUM_FULL_NODE_WS_URI = "wss://arbitrum-one-rpc.publicnode.com"
 
-ETHEREUM_ARCHIVE_NODE_HTTP_URI = "https://ethereum-rpc.publicnode.com"
-ETHEREUM_ARCHIVE_NODE_WS_URI = "wss://ethereum-rpc.publicnode.com"
+ETHEREUM_ARCHIVE_NODE_HTTP_URI = "https://eth.llamarpc.com"
+ETHEREUM_ARCHIVE_NODE_WS_URI = "wss://eth.llamarpc.com"
 ETHEREUM_FULL_NODE_HTTP_URI = "http://localhost:8545"
 ETHEREUM_FULL_NODE_WS_URI = "ws://localhost:8546"
 
-BASE_ARCHIVE_NODE_HTTP_URI = "https://base-rpc.publicnode.com"
-BASE_ARCHIVE_NODE_WS_URI = "wss://base-rpc.publicnode.com"
+BASE_ARCHIVE_NODE_HTTP_URI = "https://base.llamarpc.com"
+BASE_ARCHIVE_NODE_WS_URI = "wss://base.llamarpc.com"
 BASE_FULL_NODE_HTTP_URI = "http://localhost:8544"
 BASE_FULL_NODE_WS_URI = "ws://localhost:8548"
 
@@ -94,16 +94,17 @@ def _set_degenbot_logging():
 
 @pytest.fixture
 def fork_arbitrum_full() -> AnvilFork:
-    return AnvilFork(fork_url=ARBITRUM_FULL_NODE_WS_URI)
+    return AnvilFork(
+        fork_url=ARBITRUM_FULL_NODE_WS_URI,
+        ipc_provider_kwargs={"timeout": 600},
+    )
 
 
 @pytest.fixture
 def fork_base_archive() -> AnvilFork:
     return AnvilFork(
         fork_url=BASE_ARCHIVE_NODE_WS_URI,
-        ipc_provider_kwargs={
-            "timeout": 300,
-        },
+        ipc_provider_kwargs={"timeout": 600},
     )
 
 
@@ -116,9 +117,7 @@ def fork_base_full() -> AnvilFork:
 def fork_mainnet_archive() -> AnvilFork:
     return AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_WS_URI,
-        ipc_provider_kwargs={
-            "timeout": 300,
-        },
+        ipc_provider_kwargs={"timeout": 600},
     )
 
 

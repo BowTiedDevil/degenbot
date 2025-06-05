@@ -95,9 +95,9 @@ def weth(ethereum_full_node_web3: Web3) -> Erc20Token:
 
 
 @pytest.fixture
-def wbtc_weth_v3_lp_at_block_17_600_000(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
-    fork_mainnet_full.reset(block_number=17_600_000)
-    set_web3(fork_mainnet_full.w3)
+def wbtc_weth_v3_lp_at_block_17_600_000(fork_mainnet_archive: AnvilFork) -> UniswapV3Pool:
+    fork_mainnet_archive.reset(block_number=17_600_000)
+    set_web3(fork_mainnet_archive.w3)
     return UniswapV3Pool(
         WBTC_WETH_V3_POOL_ADDRESS,
         state_cache_depth=512,  # set high to ensure cache can hold all items for reorg tests
@@ -105,8 +105,8 @@ def wbtc_weth_v3_lp_at_block_17_600_000(fork_mainnet_full: AnvilFork) -> Uniswap
 
 
 @pytest.fixture
-def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
-    set_web3(fork_mainnet_full.w3)
+def wbtc_weth_v3_lp(fork_mainnet_archive: AnvilFork) -> UniswapV3Pool:
+    set_web3(fork_mainnet_archive.w3)
     return UniswapV3Pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
@@ -137,11 +137,11 @@ def convert_unsigned_integer_to_signed(num: int):
 
 
 @pytest.mark.skip(reason="slow")
-def test_first_200_pools(fork_mainnet_full: AnvilFork, testing_pools, liquidity_snapshot):
-    set_web3(fork_mainnet_full.w3)
-    fork_mainnet_full.reset(block_number=liquidity_snapshot["snapshot_block"])
+def test_first_200_pools(fork_mainnet_archive: AnvilFork, testing_pools, liquidity_snapshot):
+    set_web3(fork_mainnet_archive.w3)
+    fork_mainnet_archive.reset(block_number=liquidity_snapshot["snapshot_block"])
 
-    quoter = fork_mainnet_full.w3.eth.contract(
+    quoter = fork_mainnet_archive.w3.eth.contract(
         address=UNISWAP_V3_QUOTER_ADDRESS, abi=UNISWAP_V3_QUOTER_ABI
     )
 
@@ -221,14 +221,14 @@ def test_first_200_pools(fork_mainnet_full: AnvilFork, testing_pools, liquidity_
 
 
 def test_first_200_pools_with_snapshot(
-    fork_mainnet_full: AnvilFork,
+    fork_mainnet_archive: AnvilFork,
     testing_pools,
     liquidity_snapshot,
 ):
-    fork_mainnet_full.reset(block_number=liquidity_snapshot["snapshot_block"])
-    set_web3(fork_mainnet_full.w3)
+    fork_mainnet_archive.reset(block_number=liquidity_snapshot["snapshot_block"])
+    set_web3(fork_mainnet_archive.w3)
 
-    quoter = fork_mainnet_full.w3.eth.contract(
+    quoter = fork_mainnet_archive.w3.eth.contract(
         address=UNISWAP_V3_QUOTER_ADDRESS, abi=UNISWAP_V3_QUOTER_ABI
     )
 
@@ -1034,7 +1034,7 @@ def test_auto_update(fork_mainnet_archive: AnvilFork) -> None:
         lp.auto_update(block_number=current_block - 10)
 
 
-def test_complex_liquidity_transaction_1(fork_mainnet_full: AnvilFork):
+def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
     """
     Tests transaction 0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d, which
     executes a complex Burn/Swap/Mint
@@ -1045,8 +1045,8 @@ def test_complex_liquidity_transaction_1(fork_mainnet_full: AnvilFork):
     state_block = 19619258
     lp_address = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
 
-    fork_mainnet_full.reset(block_number=state_block)
-    set_web3(fork_mainnet_full.w3)
+    fork_mainnet_archive.reset(block_number=state_block)
+    set_web3(fork_mainnet_archive.w3)
     lp = UniswapV3Pool(lp_address)
 
     # Verify initial state
@@ -1104,7 +1104,7 @@ def test_complex_liquidity_transaction_1(fork_mainnet_full: AnvilFork):
     )
 
 
-def test_complex_liquidity_transaction_2(fork_mainnet_full: AnvilFork):
+def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
     """
     Tests transaction 0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b, which
     executes a complex Burn/Swap/Mint
@@ -1115,8 +1115,8 @@ def test_complex_liquidity_transaction_2(fork_mainnet_full: AnvilFork):
     state_block = 19624318
     lp_address = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
 
-    fork_mainnet_full.reset(block_number=state_block)
-    set_web3(fork_mainnet_full.w3)
+    fork_mainnet_archive.reset(block_number=state_block)
+    set_web3(fork_mainnet_archive.w3)
     lp = UniswapV3Pool(lp_address)
 
     # Verify initial state

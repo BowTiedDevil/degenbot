@@ -134,28 +134,28 @@ def test_pickle_tripool(tripool: CurveStableswapPool):
     pickle.dumps(tripool)
 
 
-def test_auto_update(fork_mainnet_full: AnvilFork):
+def test_auto_update(fork_mainnet_archive: AnvilFork):
     # Build the pool at a known historical block
     block_number = 18849426
-    fork_mainnet_full.reset(block_number=block_number)
-    set_web3(fork_mainnet_full.w3)
+    fork_mainnet_archive.reset(block_number=block_number)
+    set_web3(fork_mainnet_archive.w3)
 
     _tripool = CurveStableswapPool(TRIPOOL_ADDRESS)
 
-    assert fork_mainnet_full.w3.eth.get_block_number() == block_number
+    assert fork_mainnet_archive.w3.eth.get_block_number() == block_number
     assert _tripool.update_block == block_number
 
     expected_balances = (75010632422398781503259123, 76382820384826, 34653521595900)
     assert _tripool.balances == expected_balances
 
-    fork_mainnet_full.reset(block_number=block_number + 1)
-    assert fork_mainnet_full.w3.eth.get_block_number() == block_number + 1
+    fork_mainnet_archive.reset(block_number=block_number + 1)
+    assert fork_mainnet_archive.w3.eth.get_block_number() == block_number + 1
     _tripool.auto_update()
     assert _tripool.update_block == block_number + 1
     assert _tripool.balances == (75010632422398781503259123, 76437030384826, 34599346168546)
 
 
-def test_a_ramping(fork_mainnet_full: AnvilFork):
+def test_a_ramping(fork_mainnet_archive: AnvilFork):
     # A range:      5000 -> 2000
     # A time :      1653559305 -> 1654158027
     initial_a = 5000
@@ -164,8 +164,8 @@ def test_a_ramping(fork_mainnet_full: AnvilFork):
     initial_a_time = 1653559305
     final_a_time = 1654158027
 
-    fork_mainnet_full.reset(block_number=14_900_000)
-    set_web3(fork_mainnet_full.w3)
+    fork_mainnet_archive.reset(block_number=14_900_000)
+    set_web3(fork_mainnet_archive.w3)
 
     tripool = CurveStableswapPool(address=TRIPOOL_ADDRESS)
     tripool._create_timestamp = cast("Timestamp", 0)  # defeat the timestamp optimization
@@ -205,7 +205,7 @@ def test_tricrypto_pool(fork_mainnet_full: AnvilFork):
     _test_calculations(lp)
 
 
-def test_metapool_over_multiple_blocks_to_verify_cache_behavior(fork_mainnet_full: AnvilFork):
+def test_metapool_over_multiple_blocks_to_verify_cache_behavior(fork_mainnet_archive: AnvilFork):
     pool_address = "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d"
     start_block = 18_850_000
     end_block = 18_850_500
@@ -214,15 +214,15 @@ def test_metapool_over_multiple_blocks_to_verify_cache_behavior(fork_mainnet_ful
     # to capture calcs at both cached and cache-expired states
     span = 30
 
-    fork_mainnet_full.reset(block_number=start_block)
-    fork_mainnet_full.w3.provider.timeout = 60  # type: ignore[attr-defined]
-    set_web3(fork_mainnet_full.w3)
+    fork_mainnet_archive.reset(block_number=start_block)
+    fork_mainnet_archive.w3.provider.timeout = 60  # type: ignore[attr-defined]
+    set_web3(fork_mainnet_archive.w3)
 
     lp = CurveStableswapPool(address=pool_address)
     assert lp.update_block == start_block
 
     for block in range(start_block + span, end_block, span):
-        fork_mainnet_full.reset(block_number=block)
+        fork_mainnet_archive.reset(block_number=block)
         lp.auto_update()
         assert lp.update_block == block
         _test_calculations(lp)
