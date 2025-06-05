@@ -201,7 +201,6 @@ def test_coinbase_override_in_constructor():
 def test_injecting_middleware():
     fork = AnvilFork(
         fork_url="https://polygon-bor-rpc.publicnode.com",
-        fork_block=53178474 - 1,
         middlewares=[
             (web3.middleware.ExtraDataToPOAMiddleware, 0),
         ],
