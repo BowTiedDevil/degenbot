@@ -4,7 +4,7 @@ import shutil
 import socket
 import subprocess
 from collections.abc import AsyncIterator, Iterable
-from queue import Queue
+from queue import Empty, Queue
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import watchdog.events
@@ -15,7 +15,7 @@ from web3.middleware import Middleware
 from web3.types import RPCEndpoint
 
 from degenbot.constants import MAX_UINT256
-from degenbot.exceptions import DegenbotValueError, InvalidUint256
+from degenbot.exceptions import DegenbotError, DegenbotValueError, InvalidUint256
 from degenbot.logging import logger
 from degenbot.types import ChainId
 
@@ -199,9 +199,16 @@ class AnvilFork:
         )
         observer.start()
         process = subprocess.Popen(anvil_command)
-        queue.get(timeout=10)
-        observer.stop()
-        observer.join()
+
+        try:
+            queue.get(timeout=30)
+        except Empty:
+            process.terminate()
+            process.wait(timeout=10)
+            raise DegenbotError(message="Timeout waiting for Anvil process to start.") from None
+        finally:
+            observer.stop()
+            observer.join()
 
         return process
 
@@ -209,7 +216,7 @@ class AnvilFork:
         if hasattr(self, "_process"):
             self._process.terminate()
             self._process.wait(timeout=10)
-        self.ipc_filename.unlink()
+        self.ipc_filename.unlink(missing_ok=True)
 
     def mine(self) -> None:
         self.w3.provider.make_request(
