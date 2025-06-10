@@ -1,12 +1,12 @@
 # Overview
-Degenbot is a set of Python classes that abstract many of the implementation details of Uniswap liquidity pools and their underlying ERC-20 tokens. It is an abstraction that uses web3.py for communication with an EVM blockchain.
+Degenbot is a set of Python classes that abstract many of the implementation details of Uniswap liquidity pools and their underlying ERC-20 tokens. It uses [web3.py](https://github.com/ethereum/web3.py/) for communication with an EVM blockchain through the standard JSON-RPC interface.
 
 These classes serve as a building blocks for the lessons published by [BowTiedDevil](https://twitter.com/BowTiedDevil) on [Degen Code](https://www.degencode.com/).
 
-The classes originally relied on [Brownie](https://github.com/eth-brownie/brownie), but have evolved to use [web3.py](https://github.com/ethereum/web3.py/) more generally following Brownie's transition to "maintenance mode". The degenbot classes still operate when loaded within a Brownie console or when connected to a Python script with a connected `chain` object.
+The classes originally relied on [Brownie](https://github.com/eth-brownie/brownie), but have evolved to use [web3.py](https://github.com/ethereum/web3.py/) more generally following Brownie's transition to "maintenance mode". The degenbot classes may be used within a Brownie or [Ape Framework](https://github.com/ApeWorX/ape/) console by passing a connected `Web3` object.
 
 ## Prerequisites
-Python version 3.10 or newer.
+Python version 3.12 or newer.
 
 ## Installation
 There are two ways to install degenbot, both require `pip` or similar package management tool.
@@ -137,8 +137,66 @@ lazy-load liquidity data for positions outside of the current range as needed.
 }
 ```
 
+### Local Forking With Anvil
+The `AnvilFork` class is used to launch a fork with `anvil` from the [Foundry](https://github.com/foundry-rs/foundry) toolkit. The object provides a `w3` attribute, connected to an IPC socket, which can be used to communicate with the fork like a typical RPC.
+
+```
+>>> fork = degenbot.AnvilFork(fork_url='http://localhost:8545')
+>>> fork.w3.eth.chain_id
+1
+>>> fork.w3.eth.block_number
+22675736
+
+# The `AnvilFork` instance also exposes HTTP and WS endpoints that can be used to make a separate connection from a remote machine.
+>>> import web3
+>>> _w3 = web3.Web3(web3.HTTPProvider(fork.http))
+>>> _w3.is_connected()
+True
+>>> _w3 = web3.Web3(web3.LegacyWebSocketProvider(fork.ws_url))
+>>> _w3.is_connected()
+True
+
+# The fork can be reset to a different endpoint, which defaults to the latest block.
+>>> fork.reset(fork_url='http://localhost:8544')
+>>> fork.w3.eth.chain_id
+8453
+
+# The fork can also be reset with a specified block number or a transaction hash.
+>>> fork.reset(fork_url='http://localhost:8545', block_number=22_675_800)
+>>> fork.w3.eth.chain_id
+1
+>>> fork.w3.eth.block_number
+22675800
+
+>>> fork.reset(fork_url='http://localhost:8545', block_number=22_675_800)
+>>> fork.w3.eth.chain_id
+1
+>>> fork.w3.eth.block_number
+22675800
+
+# The fork can also be reset to an imaginary block after a specific transaction hash. See the [Anvil reference](https://getfoundry.sh/anvil/reference/) for more on the associated `--fork-transaction-hash` option.
+>>> fork.reset(
+    fork_url='http://localhost:8545', transaction_hash='0xc16e63e693a2748559c0fd653ade195be426472dddc5bfa3fcc769c4c88c249c'
+)
+>>> fork.w3.eth.block_number
+22675814
+
+# Blocks can be manually mined
+>>> fork.mine()
+>>> fork.w3.eth.block_number
+22675815
+
+# Byte code can be set for an arbitrary address.
+>>> fork.set_code(
+    address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 
+    bytecode=bytes.fromhex('45')
+)
+>>> fork.w3.eth.get_code('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
+HexBytes('0x45')
+```
+
 ### Uniswap Arbitrage
 TBD
 
-### Local Forking With Anvil
-TBD
+### Donation
+If this code is useful to you, please donate to continue funding my work at this address on any EVM compatible chain: [`0xADAf500b965545C8A766CD9Cdeb3BF3FBef073e5`](https://etherscan.io/address/0xadaf500b965545c8a766cd9cdeb3bf3fbef073e5).
