@@ -25,7 +25,8 @@ The following snippets assume a connected `Web3` instance with a working provide
 
 ## Uniswap V2 Liquidity Pools
 ```
-# Create `UniswapV2Pool` object from on-chain data at the given address and current chain height
+# Create `UniswapV2Pool` object from on-chain data at the given address and 
+# current chain height
 >>> lp = degenbot.UniswapV2Pool('0xBb2b8038a1640196FbE3e38816F3e67Cba72D940')
 • WBTC (Wrapped BTC)
 • WETH (Wrapped Ether)
@@ -196,9 +197,9 @@ True
 >>> fork.w3.eth.block_number
 22675800
 
-# The fork can also be reset to an imaginary block after a specific transaction hash. 
-# See the [Anvil reference](https://getfoundry.sh/anvil/reference/) for the associated 
-# `--fork-transaction-hash` option.
+# The fork can also be reset to an imaginary block after a specific transaction 
+# hash. See the [Anvil reference](https://getfoundry.sh/anvil/reference/) for the 
+# associated `--fork-transaction-hash` option.
 >>> fork.reset(
     fork_url='http://localhost:8545', transaction_hash='0xc16e63e693a2748559c0fd653ade195be426472dddc5bfa3fcc769c4c88c249c'
 )
@@ -248,10 +249,10 @@ WBTC-WETH (UniswapV3Pool, 0.30%)
     swap_pools=[v2_lp, v3_lp]
 )
 
-# The minimum rate of exchange for a profitable arbitrage is 1.0. The pool states at a given 
-# block are likely to be less, so override the minimum just for illustration.
-# The `ArbitrageCalculationResult` must be encoded as a properly-formed transaction by the 
-# user and broadcast to the network to secure the opportunity.
+# The minimum rate of exchange for a profitable arbitrage is 1.0. The pool states at
+# a given block are likely to be less, so override the minimum for illustration.
+# The `ArbitrageCalculationResult` must be encoded as a properly-formed transaction 
+# by the user and broadcast to the network to secure the opportunity.
 >>> arb.calculate(min_rate_of_exchange=0.8)
 ArbitrageCalculationResult(
     id='test', 
