@@ -1,4 +1,5 @@
 import dataclasses
+from bisect import bisect_left
 from collections.abc import Sequence
 from enum import Enum
 from fractions import Fraction
@@ -26,6 +27,7 @@ from degenbot.exceptions import (
     LateUpdateError,
     LiquidityMapWordMissing,
     LiquidityPoolError,
+    NoPoolStateAvailable,
     PossibleInaccurateResult,
 )
 from degenbot.functions import encode_function_calldata, raw_call
@@ -1218,4 +1220,67 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             Fraction(10**self.token1.decimals, 10**self.token0.decimals)
             if token == self.token0
             else Fraction(10**self.token0.decimals, 10**self.token1.decimals)
+        )
+
+    def discard_states_before_block(
+        self,
+        block: int,
+    ) -> None:
+        """
+        Discard states recorded prior to a target block.
+        """
+
+        with self._state_lock:
+            known_blocks = sorted(self._state_cache.keys())
+
+            # Finds the index prior to the requested block number
+            block_index = bisect_left(known_blocks, block)
+
+            # The earliest known state already meets the criterion, so return early
+            if block_index == 0:
+                return
+
+            if block_index == len(known_blocks):
+                raise NoPoolStateAvailable(block)
+
+            for known_block in known_blocks[:block_index]:
+                del self._state_cache[known_block]
+
+    def restore_state_before_block(
+        self,
+        block: int,
+    ) -> None:
+        """
+        Restore the last pool state recorded prior to a target block.
+
+        Use this method to maintain consistent state data following a chain re-organization.
+        """
+
+        # Find the index for the most recent pool state PRIOR to the requested
+        # block number.
+        #
+        # e.g. Calling restore_state_before_block(block=104) for a pool with
+        # states at blocks 100, 101, 102, 103, 104. `bisect_left()` returns
+        # block_index=3, since block 104 is at index=4. The state held at
+        # index=3 is for block 103.
+
+        with self._state_lock:
+            known_blocks = sorted(self._state_cache.keys())
+            block_index = bisect_left(known_blocks, block)
+
+            if block_index == 0:
+                raise NoPoolStateAvailable(block)
+
+            # The last known state already meets the criterion, so return early
+            if block_index == len(known_blocks):
+                return
+
+            # Remove states at and after the specified block
+            for known_block in known_blocks[block_index:]:
+                del self._state_cache[known_block]
+
+            self._update_block, self._state = list(self._state_cache.items())[-1]
+
+        self._notify_subscribers(
+            message=UniswapV4PoolStateUpdated(self.state),
         )
