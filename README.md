@@ -201,7 +201,8 @@ True
 # hash. See the [Anvil reference](https://getfoundry.sh/anvil/reference/) for the 
 # associated `--fork-transaction-hash` option.
 >>> fork.reset(
-    fork_url='http://localhost:8545', transaction_hash='0xc16e63e693a2748559c0fd653ade195be426472dddc5bfa3fcc769c4c88c249c'
+    fork_url='http://localhost:8545',
+    transaction_hash='0xc16e63e693a2748559c0fd653ade195be426472dddc5bfa3fcc769c4c88c249c'
 )
 >>> fork.w3.eth.block_number
 22675814
