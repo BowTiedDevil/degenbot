@@ -285,6 +285,7 @@ class AnvilFork:
             anvil_command=self._anvil_command,
             ipc_path=self.ipc_path,
         )
+        self.w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
         assert self.w3.is_connected()
 
     def return_to_snapshot(self, snapshot_id: int) -> bool:
