@@ -29,16 +29,25 @@ The following snippets assume a connected `Web3` instance with a working provide
 >>> lp = degenbot.UniswapV2Pool('0xBb2b8038a1640196FbE3e38816F3e67Cba72D940')
 • WBTC (Wrapped BTC)
 • WETH (Wrapped Ether)
-WBTC-WETH (V2, 0.30%)
 • Token 0: WBTC - Reserves: 10732489743
 • Token 1: WETH - Reserves: 2056834999904002274711
 
 # Inspect the tokens held by the pool
 >>> lp.token0
-Erc20Token(address=0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599, symbol='WBTC', name='Wrapped BTC', decimals=8)
+Erc20Token(
+    address=0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599, 
+    symbol='WBTC', 
+    name='Wrapped BTC', 
+    decimals=8
+)
 
 >>> lp.token1
-Erc20Token(address=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2, symbol='WETH', name='Wrapped Ether', decimals=18)
+Erc20Token(
+    address=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2, 
+    symbol='WETH', 
+    name='Wrapped Ether', 
+    decimals=18
+)
 
 >>> lp.fee_token0
 Fraction(3, 1000)
