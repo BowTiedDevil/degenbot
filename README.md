@@ -59,14 +59,11 @@ Fraction(3, 1000)
 )
 999999992817074189
 
-# Update the current reserves from the live blockchain (`True` if updated reserves found, `False` otherwise)
->>> lp.update_reserves(silent=False)
+# Update the current reserves from the live blockchain
+>>> lp.auto_update(silent=False)
 [WBTC-WETH (V2, 0.30%)]
 WBTC: 10732455184
 WETH: 2056841643098872755548
-WBTC/WETH: 0.05217929741946638
-WETH/WBTC: 19.164688860431703
-True
        
 >>> lp.reserves_token0
 10732455184
