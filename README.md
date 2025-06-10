@@ -112,8 +112,8 @@ WBTC-WETH (V3, 0.30%)
         )
 }
 
-# NOTE: the V3 liquidity pool helper is optimized for fast instantiation, and will lazy-load liquidity data for positions outside of the current range as needed.
-
+# The V3 liquidity pool helper is optimized for fast instantiation, and will lazy-load 
+# liquidity data for positions outside of the current range as needed.
 >>> lp.tick_data
 {
     0: UniswapV3LiquidityAtTick(
@@ -162,7 +162,8 @@ The `AnvilFork` class is used to launch a fork with `anvil` from the [Foundry](h
 >>> fork.w3.eth.block_number
 22675736
 
-# The `AnvilFork` instance also exposes HTTP and WS endpoints that can be used to make a separate connection from a remote machine.
+# The `AnvilFork` instance also exposes HTTP and WS endpoints that can be used to make a 
+# separate connection from a remote machine.
 >>> import web3
 >>> _w3 = web3.Web3(web3.HTTPProvider(fork.http))
 >>> _w3.is_connected()
@@ -189,7 +190,9 @@ True
 >>> fork.w3.eth.block_number
 22675800
 
-# The fork can also be reset to an imaginary block after a specific transaction hash. See the [Anvil reference](https://getfoundry.sh/anvil/reference/) for more on the associated `--fork-transaction-hash` option.
+# The fork can also be reset to an imaginary block after a specific transaction hash. 
+# See the [Anvil reference](https://getfoundry.sh/anvil/reference/) for the associated 
+# `--fork-transaction-hash` option.
 >>> fork.reset(
     fork_url='http://localhost:8545', transaction_hash='0xc16e63e693a2748559c0fd653ade195be426472dddc5bfa3fcc769c4c88c249c'
 )
@@ -239,8 +242,10 @@ WBTC-WETH (UniswapV3Pool, 0.30%)
     swap_pools=[v2_lp, v3_lp]
 )
 
-# The minimum rate of exchange for a profitable arbitrage is 1.0. The pool states at a given block are likely to be less, so override the minimum just for illustration.
-# The `ArbitrageCalculationResult` must be encoded as a properly-formed transaction by the user and broadcast to the network to secure the opportunity.
+# The minimum rate of exchange for a profitable arbitrage is 1.0. The pool states at a given 
+# block are likely to be less, so override the minimum just for illustration.
+# The `ArbitrageCalculationResult` must be encoded as a properly-formed transaction by the 
+# user and broadcast to the network to secure the opportunity.
 >>> arb.calculate(min_rate_of_exchange=0.8)
 ArbitrageCalculationResult(
     id='test', 
