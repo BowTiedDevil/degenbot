@@ -5,22 +5,25 @@ These classes serve as a building blocks for the lessons published by [BowTiedDe
 
 The classes originally relied on [Brownie](https://github.com/eth-brownie/brownie), but have evolved to use [web3.py](https://github.com/ethereum/web3.py/) more generally following Brownie's transition to "maintenance mode". The degenbot classes may be used within a Brownie or [Ape Framework](https://github.com/ApeWorX/ape/) console by passing a connected `Web3` object.
 
-## Prerequisites
-Python version 3.12 or newer.
+# License
+This code is published under a permissive MIT license.
 
-## Installation
+# Donation
+If you find this code valuable, please fund continuing development by donating to [`0xADAf500b965545C8A766CD9Cdeb3BF3FBef073e5`](https://etherscan.io/address/0xadaf500b965545c8a766cd9cdeb3bf3fbef073e5) on any EVM compatible chain.
+
+# Installation
 There are two ways to install degenbot, both require `pip` or similar package management tool.
 
-### From PyPI
+## From PyPI
 `pip install degenbot` will fetch the latest version from [PyPI](https://pypi.org/project/degenbot/) with dependencies.
 
-### From Source
+## From Source
 Use `git clone` to create a local copy of this repo, then install with `pip install -e /path/to/repo`. This creates an editable installation that can be imported into a script or Python REPL using `import degenbot`.
 
-## Examples
+# Examples
 The following snippets assume a connected `Web3` instance with a working provider on Ethereum mainnet (chain ID #1), and the classes imported under the `degenbot` namespace.
 
-### Uniswap V2 Liquidity Pools
+## Uniswap V2 Liquidity Pools
 ```
 # Create `UniswapV2Pool` object from on-chain data at the given address and current chain height
 >>> lp = degenbot.UniswapV2Pool('0xBb2b8038a1640196FbE3e38816F3e67Cba72D940')
@@ -72,7 +75,7 @@ True
 2056841643098872755548
 ```
 
-### Uniswap V3 Liquidity Pools
+## Uniswap V3 Liquidity Pools
 ```
 >>> lp = degenbot.UniswapV3Pool('0xCBCdF9626bC03E24f779434178A73a0B4bad62eD')
 WBTC-WETH (V3, 0.30%)
@@ -104,40 +107,52 @@ WBTC-WETH (V3, 0.30%)
         block=18517665
         ),
     16: UniswapV3BitmapAtWord(
-        bitmap=115792089237316195423570985008687907853268655437644779123584680198630541352072,block=18517670
+        bitmap=115792089237316195423570985008687907853268655437644779123584680198630541352072,
+        block=18517670
         )
 }
 
-# NOTE: the V3 liquidity pool helper is optimized for fast instantiation, and will 
-lazy-load liquidity data for positions outside of the current range as needed.
+# NOTE: the V3 liquidity pool helper is optimized for fast instantiation, and will lazy-load liquidity data for positions outside of the current range as needed.
 
 >>> lp.tick_data
 {
     0: UniswapV3LiquidityAtTick(
-        liquidityNet=10943161472679, liquidityGross=10943161472679, block=18517665
+        liquidityNet=10943161472679, 
+        liquidityGross=10943161472679, 
+        block=18517665
     ),
     261060: UniswapV3LiquidityAtTick(
-        liquidityNet=-910396189679465, liquidityGross=910396189679465, block=18517670
+        liquidityNet=-910396189679465, 
+        liquidityGross=910396189679465, 
+        block=18517670
     ),
     261000: UniswapV3LiquidityAtTick(
-        liquidityNet=-3774266260841234, liquidityGross=3774266260841234, block=18517670
+        liquidityNet=-3774266260841234, 
+        liquidityGross=3774266260841234, 
+        block=18517670
     ),
    
     ...
 
     246360: UniswapV3LiquidityAtTick(
-        liquidityNet=1235001955603188, liquidityGross=1235001955603188, block=18517670
+        liquidityNet=1235001955603188, 
+        liquidityGross=1235001955603188, 
+        block=18517670
     ),
     246180: UniswapV3LiquidityAtTick(
-        liquidityNet=4890971540, liquidityGross=4890971540, block=18517670
+        liquidityNet=4890971540, 
+        liquidityGross=4890971540, 
+        block=18517670
     ),
     245940: UniswapV3LiquidityAtTick(
-        liquidityNet=76701235421656, liquidityGross=76701235421656, block=18517670
+        liquidityNet=76701235421656, 
+        liquidityGross=76701235421656, 
+        block=18517670
     ),
 }
 ```
 
-### Local Forking With Anvil
+## Forking With Anvil
 The `AnvilFork` class is used to launch a fork with `anvil` from the [Foundry](https://github.com/foundry-rs/foundry) toolkit. The object provides a `w3` attribute, connected to an IPC socket, which can be used to communicate with the fork like a typical RPC.
 
 ```
@@ -195,8 +210,69 @@ True
 HexBytes('0x45')
 ```
 
-### Uniswap Arbitrage
-TBD
+## Uniswap Arbitrage
+Several classes are provided to simplify the calculation of optimal arbitrage amounts for a given sequence of pools.
 
-### Donation
-If this code is useful to you, please donate to continue funding my work at this address on any EVM compatible chain: [`0xADAf500b965545C8A766CD9Cdeb3BF3FBef073e5`](https://etherscan.io/address/0xadaf500b965545c8a766cd9cdeb3bf3fbef073e5).
+```
+>>> v2_lp = degenbot.UniswapV2Pool('0xBb2b8038a1640196FbE3e38816F3e67Cba72D940')
+• WBTC (Wrapped BTC)
+• WETH (Wrapped Ether)
+• Token 0: WBTC - Reserves: 6390612659
+• Token 1: WETH - Reserves: 2534027291379197003140
+
+>>> v3_lp = degenbot.UniswapV3Pool('0xCBCdF9626bC03E24f779434178A73a0B4bad62eD')
+WBTC-WETH (UniswapV3Pool, 0.30%)
+• Address: 0xCBCdF9626bC03E24f779434178A73a0B4bad62eD           
+• Token 0: WBTC           
+• Token 1: WETH
+• Fee: 3000               
+• Liquidity: 261799575241796322         
+• SqrtPrice: 49883600179466982678044042954714957         
+• Tick: 267070              
+• State Block (Initial): 22676748
+                                                                       
+>>> weth = v2_lp.token1 
+
+>>> arb = degenbot.UniswapLpCycle(
+    id="test", 
+    input_token=weth, 
+    swap_pools=[v2_lp, v3_lp]
+)
+
+# The minimum rate of exchange for a profitable arbitrage is 1.0. The pool states at a given block are likely to be less, so override the minimum just for illustration.
+# The `ArbitrageCalculationResult` must be encoded as a properly-formed transaction by the user and broadcast to the network to secure the opportunity.
+>>> arb.calculate(min_rate_of_exchange=0.8)
+ArbitrageCalculationResult(
+    id='test', 
+    input_token=Erc20Token(
+        address=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2, 
+        symbol='WETH', 
+        name='Wrapped Ether', 
+        decimals=18
+    ), 
+    profit_token=Erc20Token(
+        address=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2, 
+        symbol='WETH', 
+        name='Wrapped Ether', 
+        decimals=18
+    ), 
+    input_amount=69600394635598,
+    profit_amount=-623178922742, 
+    swap_amounts=(
+        UniswapV2PoolSwapAmounts(
+            pool='0xBb2b8038a1640196FbE3e38816F3e67Cba72D940', 
+            amounts_in=(0, 69600394635598), 
+            amounts_out=(175, 0), 
+            recipient=None
+        ), 
+        UniswapV3PoolSwapAmounts(
+            pool='0xCBCdF9626bC03E24f779434178A73a0B4bad62eD',
+            amount_specified=175,
+            zero_for_one=True, 
+            sqrt_price_limit_x96=4295128740, 
+            recipient=None
+        )
+    ), 
+    state_block=22676748
+)
+```
