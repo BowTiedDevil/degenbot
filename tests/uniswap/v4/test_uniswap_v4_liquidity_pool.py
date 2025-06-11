@@ -91,15 +91,8 @@ def liquidity_snapshot() -> dict[str, Any]:
 def _test_pool_exact_input(
     pool: dict[str, Any],
     fork: AnvilFork,
-    block_number: int | None = None,
     snapshot: dict[str, Any] | None = None,
 ):
-    if block_number is not None:
-        fork.reset(block_number=block_number)
-        print(f"Forked at block {block_number}")
-
-    set_web3(fork.w3)
-
     quoter = fork.w3.eth.contract(address=UNISWAP_V4_QUOTER_ADDRESS, abi=UNISWAP_V4_QUOTER_ABI)
 
     pool_id: HexStr = pool["pool_id"]
@@ -217,15 +210,8 @@ def _test_pool_exact_input(
 def _test_pool_exact_output(
     pool: dict[str, Any],
     fork: AnvilFork,
-    block_number: int | None = None,
     snapshot: dict[str, Any] | None = None,
 ):
-    if block_number is not None:
-        fork.reset(block_number=block_number)
-        print(f"Forked at block {block_number}")
-
-    set_web3(fork.w3)
-
     quoter = fork.w3.eth.contract(address=UNISWAP_V4_QUOTER_ADDRESS, abi=UNISWAP_V4_QUOTER_ABI)
 
     pool_id: HexStr = pool["pool_id"]
@@ -366,6 +352,7 @@ def test_first_200_pools(
     testing_pools,
 ):
     set_web3(fork_mainnet_full.w3)
+
     for pool in testing_pools:
         _test_pool_exact_input(
             pool=pool,
@@ -383,6 +370,7 @@ def test_first_200_pools_with_snapshot(
     liquidity_snapshot,
 ):
     fork_mainnet_archive.reset(block_number=liquidity_snapshot["snapshot_block"])
+    set_web3(fork_mainnet_archive.w3)
 
     for pool in testing_pools:
         _test_pool_exact_input(
