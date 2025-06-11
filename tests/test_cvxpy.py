@@ -17,6 +17,7 @@ from cvxpy.atoms.affine.bmat import bmat as cvxpy_bmat
 from cvxpy.atoms.affine.sum import sum as cvxpy_sum
 from cvxpy.atoms.geo_mean import geo_mean
 
+from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage.uniswap_multipool_cycle_testing import _UniswapMultiPoolCycleTesting
 from degenbot.cache import get_checksum_address
 from degenbot.config import set_web3
@@ -45,32 +46,32 @@ class MockLiquidityPool(UniswapV2Pool):
 
 
 @pytest.fixture
-def wbtc_token(ethereum_full_node_web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def wbtc_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
     return Erc20Token(WBTC_ADDRESS)
 
 
 @pytest.fixture
-def weth_token(ethereum_full_node_web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def weth_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
     return Erc20Token(WETH_ADDRESS)
 
 
 @pytest.fixture
-def link_token(ethereum_full_node_web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def link_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
     return Erc20Token(LINK_ADDRESS)
 
 
 @pytest.fixture
-def weth_base_token(base_full_node_web3) -> Erc20Token:
-    set_web3(base_full_node_web3)
+def weth_base_token(fork_base_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_base_full.w3)
     return Erc20Token("0x4200000000000000000000000000000000000006")
 
 
 @pytest.fixture
-def xxx_token(base_full_node_web3) -> Erc20Token:
-    set_web3(base_full_node_web3)
+def xxx_token(fork_base_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_base_full.w3)
     return Erc20Token("0x09C07E80bFeEd81130498516F5C07aA0715794Bb")
 
 

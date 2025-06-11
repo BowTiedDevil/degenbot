@@ -6,7 +6,6 @@ import pydantic_core
 import pytest
 from eth_typing import BlockNumber, ChainId
 from hexbytes import HexBytes
-from web3 import Web3
 from web3.exceptions import ContractLogicError
 
 from degenbot.anvil_fork import AnvilFork
@@ -89,20 +88,20 @@ TOKEN_AMOUNT_MULTIPLIERS = [
 
 
 @pytest.fixture(autouse=True)
-def dai(ethereum_full_node_web3: Web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def dai(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
     return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(DAI_CONTRACT_ADDRESS)
 
 
 @pytest.fixture(autouse=True)
-def wbtc(ethereum_full_node_web3: Web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def wbtc(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
     return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WBTC_CONTRACT_ADDRESS)
 
 
 @pytest.fixture(autouse=True)
-def weth(ethereum_full_node_web3: Web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
     return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WETH_CONTRACT_ADDRESS)
 
 
@@ -310,13 +309,13 @@ def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool):
     )
 
 
-def test_pool_creation(ethereum_full_node_web3: Web3) -> None:
-    set_web3(ethereum_full_node_web3)
+def test_pool_creation(fork_mainnet_full: AnvilFork) -> None:
+    set_web3(fork_mainnet_full.w3)
     UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
 
 
-def test_pool_creation_with_liquidity_map(ethereum_full_node_web3: Web3) -> None:
-    set_web3(ethereum_full_node_web3)
+def test_pool_creation_with_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
+    set_web3(fork_mainnet_full.w3)
     assert (
         UniswapV3Pool(
             address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={}, tick_data={}
@@ -325,8 +324,8 @@ def test_pool_creation_with_liquidity_map(ethereum_full_node_web3: Web3) -> None
     )
 
 
-def test_creation_with_bad_liquidity_overrides(ethereum_full_node_web3: Web3) -> None:
-    set_web3(ethereum_full_node_web3)
+def test_creation_with_bad_liquidity_overrides(fork_mainnet_full: AnvilFork) -> None:
+    set_web3(fork_mainnet_full.w3)
     with pytest.raises(DegenbotValueError, match="Provide both tick_bitmap and tick_data."):
         UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={0: {}})
 
@@ -334,15 +333,15 @@ def test_creation_with_bad_liquidity_overrides(ethereum_full_node_web3: Web3) ->
         UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS, tick_data={0: {}})
 
 
-def test_creation_with_invalid_hash(ethereum_full_node_web3: Web3) -> None:
-    set_web3(ethereum_full_node_web3)
+def test_creation_with_invalid_hash(fork_mainnet_full: AnvilFork) -> None:
+    set_web3(fork_mainnet_full.w3)
 
     # Delete the preset deployment for this factory so the test uses the provided override instead
     # of preferring the known valid deployment data
-    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][
+    factory_deployment = FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][
         UNISWAP_V3_FACTORY_ADDRESS
     ]
-    del FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
+    del FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
 
     # Change last byte of true init hash
     bad_init_hash = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH[:-1] + "f"
@@ -354,13 +353,13 @@ def test_creation_with_invalid_hash(ethereum_full_node_web3: Web3) -> None:
         )
 
     # Restore the preset deployments
-    FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
+    FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
         factory_deployment
     )
 
 
-def test_creation_with_wrong_pool_type(base_full_node_web3: Web3) -> None:
-    set_web3(base_full_node_web3)
+def test_creation_with_wrong_pool_type(fork_base_full: AnvilFork) -> None:
+    set_web3(fork_base_full.w3)
 
     # Attempting to build a Pancake V3 pool with a Uniswap V3 (vanilla) helper should fail during
     # the contract value lookup
@@ -369,13 +368,13 @@ def test_creation_with_wrong_pool_type(base_full_node_web3: Web3) -> None:
         UniswapV3Pool(pancake_pool_address)
 
 
-def test_pancake_v3_pool_creation(base_full_node_web3: Web3) -> None:
-    set_web3(base_full_node_web3)
+def test_pancake_v3_pool_creation(fork_base_full: AnvilFork) -> None:
+    set_web3(fork_base_full.w3)
     PancakeV3Pool("0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E")
 
 
-def test_sparse_liquidity_map(ethereum_full_node_web3: Web3) -> None:
-    set_web3(ethereum_full_node_web3)
+def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
+    set_web3(fork_mainnet_full.w3)
 
     lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
     current_word, _ = get_tick_word_and_bit_position(MIN_TICK, lp.tick_spacing)
@@ -398,8 +397,8 @@ def test_sparse_liquidity_map(ethereum_full_node_web3: Web3) -> None:
     )
 
 
-def test_external_update_with_sparse_liquidity_map(ethereum_full_node_web3: Web3) -> None:
-    set_web3(ethereum_full_node_web3)
+def test_external_update_with_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
+    set_web3(fork_mainnet_full.w3)
 
     lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
     print(f"{lp.tick_bitmap.keys()=}")
@@ -1162,8 +1161,8 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
     )
 
 
-def test_base_pancakeswap_v3(base_full_node_web3: Web3):
-    set_web3(base_full_node_web3)
+def test_base_pancakeswap_v3(fork_base_full: AnvilFork):
+    set_web3(fork_base_full.w3)
 
     # Exchange provided explicitly
     PancakeV3Pool.from_exchange(
@@ -1172,8 +1171,8 @@ def test_base_pancakeswap_v3(base_full_node_web3: Web3):
     )
 
 
-def test_base_pancakeswap_v3_with_builtin_exchange(base_full_node_web3: Web3):
-    set_web3(base_full_node_web3)
+def test_base_pancakeswap_v3_with_builtin_exchange(fork_base_full: AnvilFork):
+    set_web3(fork_base_full.w3)
 
     # Exchange looked up implicitly from degenbot deployment module
     PancakeV3Pool(

@@ -1,10 +1,11 @@
+from degenbot.anvil_fork import AnvilFork
 from degenbot.cache import get_checksum_address
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.config import set_web3
 
 
-def test_chainlink_feed(ethereum_full_node_web3):
-    set_web3(ethereum_full_node_web3)
+def test_chainlink_feed(fork_mainnet_full: AnvilFork):
+    set_web3(fork_mainnet_full.w3)
 
     # Load WETH price feed
     # ref: https://data.chain.link/ethereum/mainnet/crypto-usd/eth-usd

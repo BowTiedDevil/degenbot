@@ -50,14 +50,14 @@ WBTC_WETH_V3_POOL_ADDRESS = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 
 
 @pytest.fixture
-def wbtc_token(ethereum_full_node_web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def wbtc_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
     return Erc20Token(WBTC_ADDRESS)
 
 
 @pytest.fixture
-def weth_token(ethereum_full_node_web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def weth_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
     return Erc20Token(WETH_ADDRESS)
 
 

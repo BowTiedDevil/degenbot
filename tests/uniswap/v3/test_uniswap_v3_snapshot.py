@@ -1,7 +1,6 @@
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from web3 import Web3
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.cache import get_checksum_address
@@ -25,8 +24,8 @@ EMPTY_SNAPSHOT_BLOCK = (
 
 
 @pytest.fixture
-def empty_snapshot(ethereum_full_node_web3) -> UniswapV3LiquiditySnapshot:
-    set_web3(ethereum_full_node_web3)
+def empty_snapshot(fork_mainnet_full: AnvilFork) -> UniswapV3LiquiditySnapshot:
+    set_web3(fork_mainnet_full.w3)
     return UniswapV3LiquiditySnapshot(EMPTY_SNAPSHOT_FILENAME)
 
 
@@ -42,8 +41,8 @@ def first_250_blocks_snapshot(
     return snapshot
 
 
-def test_create_snapshot_from_file_path(ethereum_full_node_web3: Web3):
-    set_web3(ethereum_full_node_web3)
+def test_create_snapshot_from_file_path(fork_mainnet_full: AnvilFork):
+    set_web3(fork_mainnet_full.w3)
     UniswapV3LiquiditySnapshot(EMPTY_SNAPSHOT_FILENAME)
 
 

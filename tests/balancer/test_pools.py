@@ -41,21 +41,15 @@ VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA960
 
 @pytest.fixture
 def ethereum_balancer_v2_weth_bal_pool(
-    fork_mainnet_archive: AnvilFork,
+    fork_mainnet_full: AnvilFork,
 ) -> BalancerV2Pool:
-    fork_mainnet_archive.reset(block_number=21468000)
-    set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_full.w3)
     return BalancerV2Pool(
         address=BALANCER_V2_WETH_BAL_POOL_ADDRESS,
     )
 
 
-def test_create_pool(
-    ethereum_balancer_v2_weth_bal_pool: BalancerV2Pool,
-    fork_mainnet_archive: AnvilFork,
-):
-    set_web3(fork_mainnet_archive.w3)
-
+def test_create_pool(ethereum_balancer_v2_weth_bal_pool: BalancerV2Pool):
     lp = ethereum_balancer_v2_weth_bal_pool
     assert lp.address == BALANCER_V2_WETH_BAL_POOL_ADDRESS
     assert lp.pool_id == BALANCER_V2_WETH_BAL_POOL_ID
@@ -71,27 +65,24 @@ def test_create_pool(
 
 
 def test_calculations(
+    fork_mainnet_full: AnvilFork,
     ethereum_balancer_v2_weth_bal_pool: BalancerV2Pool,
-    fork_mainnet_archive: AnvilFork,
 ):
-    fork_mainnet_archive.reset(block_number=21468000)
-    set_web3(fork_mainnet_archive.w3)
+    set_web3(fork_mainnet_full.w3)
 
     lp = ethereum_balancer_v2_weth_bal_pool
 
-    assert lp.state.block == fork_mainnet_archive.w3.eth.block_number
-
-    query_contract = fork_mainnet_archive.w3.eth.contract(
+    query_contract = fork_mainnet_full.w3.eth.contract(
         address=BALANCER_V2_QUERY_CONTRACT_ADDRESS,
         abi=BALANCER_V2_QUERY_CONTRACT_ABI,
     )
 
-    pool_contract = fork_mainnet_archive.w3.eth.contract(
+    pool_contract = fork_mainnet_full.w3.eth.contract(
         address=BALANCER_V2_WETH_BAL_POOL_ADDRESS,
         abi=BALANCER_V2_WETH_BAL_POOL_ABI,
     )
 
-    vault_contract = fork_mainnet_archive.w3.eth.contract(
+    vault_contract = fork_mainnet_full.w3.eth.contract(
         address=BALANCER_V2_VAULT_ADDRESS,
         abi=BALANCER_V2_VAULT_ABI,
     )

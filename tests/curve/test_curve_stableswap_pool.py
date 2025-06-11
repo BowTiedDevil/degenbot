@@ -25,8 +25,8 @@ TRIPOOL_ADDRESS = get_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1
 
 
 @pytest.fixture
-def tripool(ethereum_full_node_web3: Web3) -> CurveStableswapPool:
-    set_web3(ethereum_full_node_web3)
+def tripool(fork_mainnet_full: AnvilFork) -> CurveStableswapPool:
+    set_web3(fork_mainnet_full.w3)
     return CurveStableswapPool(TRIPOOL_ADDRESS)
 
 
@@ -121,8 +121,8 @@ def _test_calculations(lp: CurveStableswapPool):
                 )
 
 
-def test_create_pool(ethereum_full_node_web3: Web3):
-    set_web3(ethereum_full_node_web3)
+def test_create_pool(fork_mainnet_full: AnvilFork):
+    set_web3(fork_mainnet_full.w3)
     CurveStableswapPool(address=TRIPOOL_ADDRESS)
 
 

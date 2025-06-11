@@ -40,11 +40,11 @@ WBTC_ETH_V4_POOL_HOOKS = "0x0000000000000000000000000000000000000000"
 
 
 @pytest.fixture
-def wbtc(ethereum_full_node_web3: web3.Web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def wbtc(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
 
     token = token_registry.get(
-        chain_id=ethereum_full_node_web3.eth.chain_id,
+        chain_id=fork_mainnet_full.w3.eth.chain_id,
         token_address=WBTC_ADDRESS,
     )
     if token is None:
@@ -53,11 +53,11 @@ def wbtc(ethereum_full_node_web3: web3.Web3) -> Erc20Token:
 
 
 @pytest.fixture
-def weth(ethereum_full_node_web3: web3.Web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
 
     token = token_registry.get(
-        chain_id=ethereum_full_node_web3.eth.chain_id,
+        chain_id=fork_mainnet_full.w3.eth.chain_id,
         token_address=WETH_ADDRESS,
     )
     if token is None:
@@ -66,11 +66,11 @@ def weth(ethereum_full_node_web3: web3.Web3) -> Erc20Token:
 
 
 @pytest.fixture
-def ether_placeholder(ethereum_full_node_web3: web3.Web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def ether_placeholder(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
 
     token = token_registry.get(
-        chain_id=ethereum_full_node_web3.eth.chain_id,
+        chain_id=fork_mainnet_full.w3.eth.chain_id,
         token_address=NATIVE_ADDRESS,
     )
     if token is None:

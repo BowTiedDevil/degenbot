@@ -4,7 +4,6 @@ from typing import Any
 
 import pydantic_core
 import pytest
-import web3
 from eth_typing import BlockNumber
 
 from degenbot import AerodromeV2Pool, AerodromeV3Pool, AnvilFork, set_web3
@@ -68,9 +67,9 @@ def test_aerodrome_v2_address_generator():
 
 
 def test_pickle_pool(
-    base_full_node_web3: web3.Web3,
+    fork_base_full: AnvilFork,
 ):
-    set_web3(base_full_node_web3)
+    set_web3(fork_base_full.w3)
 
     lp = AerodromeV2Pool(
         address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
@@ -79,9 +78,9 @@ def test_pickle_pool(
 
 
 def test_auto_update(
-    base_full_node_web3: web3.Web3,
+    fork_base_full: AnvilFork,
 ):
-    set_web3(base_full_node_web3)
+    set_web3(fork_base_full.w3)
     lp = AerodromeV2Pool(
         address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
     )
@@ -101,9 +100,9 @@ def test_auto_update(
 
 
 def test_external_update(
-    base_full_node_web3: web3.Web3,
+    fork_base_full: AnvilFork,
 ):
-    set_web3(base_full_node_web3)
+    set_web3(fork_base_full.w3)
     lp = AerodromeV2Pool(
         address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
     )
@@ -139,10 +138,8 @@ def test_external_update(
         )
 
 
-def test_create_pool(
-    base_full_node_web3: web3.Web3,
-):
-    set_web3(base_full_node_web3)
+def test_create_pool(fork_base_full: AnvilFork):
+    set_web3(fork_base_full.w3)
 
     lp = AerodromeV2Pool(
         address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,

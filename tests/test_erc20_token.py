@@ -1,7 +1,8 @@
 import pytest
 from hexbytes import HexBytes
-from web3 import AsyncWeb3, Web3
+from web3 import AsyncWeb3
 
+from degenbot.anvil_fork import AnvilFork
 from degenbot.cache import get_checksum_address
 from degenbot.config import async_connection_manager, set_web3
 from degenbot.constants import ZERO_ADDRESS
@@ -16,26 +17,26 @@ CHAINLINK_WETH_PRICE_FEED = get_checksum_address("0x5f4ec3df9cbd43714fe2740f5e36
 
 
 @pytest.fixture
-def wbtc(ethereum_full_node_web3: Web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def wbtc(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
     return Erc20Token(WBTC_ADDRESS)
 
 
 @pytest.fixture
-def weth(ethereum_full_node_web3: Web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
     return Erc20Token(WETH_ADDRESS)
 
 
-def test_bad_address(ethereum_full_node_web3):
-    set_web3(ethereum_full_node_web3)
+def test_bad_address(fork_mainnet_full: AnvilFork):
+    set_web3(fork_mainnet_full.w3)
     with pytest.raises(DegenbotValueError, match="No contract deployed at this address"):
         Erc20Token(VITALIK_ADDRESS)
 
 
-def test_caches(ethereum_full_node_web3: Web3, wbtc: Erc20Token):
+def test_caches(fork_mainnet_full: AnvilFork, wbtc: Erc20Token):
     fake_balance = 69_420_000
-    current_block = ethereum_full_node_web3.eth.block_number
+    current_block = fork_mainnet_full.w3.eth.block_number
     balance_actual = wbtc.get_balance(VITALIK_ADDRESS)
     wbtc._cached_balance[VITALIK_ADDRESS] = BoundedCache(max_items=5)
     wbtc._cached_balance[VITALIK_ADDRESS][current_block] = fake_balance
@@ -96,8 +97,8 @@ def test_erc20token_comparisons(wbtc: Erc20Token, weth: Erc20Token):
     assert wbtc < bytes.fromhex(WETH_ADDRESS[2:])
 
 
-def test_non_compliant_tokens(ethereum_full_node_web3: Web3):
-    set_web3(ethereum_full_node_web3)
+def test_non_compliant_tokens(fork_mainnet_full: AnvilFork):
+    set_web3(fork_mainnet_full.w3)
     for token_address in [
         "0x0d88eD6E74bbFD96B831231638b66C05571e824F",
         "0x043942281890d4876D26BD98E2BB3F662635DFfb",
@@ -115,21 +116,24 @@ def test_non_compliant_tokens(ethereum_full_node_web3: Web3):
         Erc20Token(token_address)
 
 
-def test_erc20token_with_price_feed(ethereum_full_node_web3: Web3):
-    set_web3(ethereum_full_node_web3)
+def test_erc20token_with_price_feed(fork_mainnet_full: AnvilFork):
+    set_web3(fork_mainnet_full.w3)
     weth = Erc20Token(address=WETH_ADDRESS, oracle_address=CHAINLINK_WETH_PRICE_FEED)
     _ = weth.price
 
 
-def test_erc20token_without_price_feed(ethereum_full_node_web3: Web3, weth: Erc20Token):
-    set_web3(ethereum_full_node_web3)
+def test_erc20token_without_price_feed(
+    fork_mainnet_full: AnvilFork,
+    weth: Erc20Token,
+):
+    set_web3(fork_mainnet_full.w3)
 
     with pytest.raises(NoPriceOracle):
         _ = weth.price
 
 
-def test_erc20token_functions(ethereum_full_node_web3: Web3, weth: Erc20Token):
-    set_web3(ethereum_full_node_web3)
+def test_erc20token_functions(fork_mainnet_full: AnvilFork, weth: Erc20Token):
+    set_web3(fork_mainnet_full.w3)
     weth.get_total_supply()
     weth.get_approval(VITALIK_ADDRESS, weth.address)
     weth.get_balance(VITALIK_ADDRESS)
@@ -142,12 +146,12 @@ async def test_async_erc20_functions(ethereum_archive_node_async_web3: AsyncWeb3
     await weth.get_balance_async(VITALIK_ADDRESS)
 
 
-def test_ether_placeholder(ethereum_full_node_web3: Web3):
-    set_web3(ethereum_full_node_web3)
+def test_ether_placeholder(fork_mainnet_full: AnvilFork):
+    set_web3(fork_mainnet_full.w3)
     ether = EtherPlaceholder(ZERO_ADDRESS)
 
     fake_balance = 69_420_000
-    current_block = ethereum_full_node_web3.eth.block_number
+    current_block = fork_mainnet_full.w3.eth.block_number
     balance_actual = ether.get_balance(VITALIK_ADDRESS)
     ether._cached_balance[VITALIK_ADDRESS] = BoundedCache(max_items=5)
     ether._cached_balance[VITALIK_ADDRESS][current_block] = fake_balance

@@ -1,6 +1,6 @@
-from web3 import Web3
 
 from degenbot.aerodrome.managers import AerodromeV2PoolManager, AerodromeV3PoolManager
+from degenbot.anvil_fork import AnvilFork
 from degenbot.cache import get_checksum_address
 from degenbot.config import set_web3
 
@@ -13,8 +13,8 @@ BASE_AERO_WETH_V3_POOL = get_checksum_address("0x82321f3BEB69f503380D6B233857d5C
 BASE_AERO_WETH_V3_POOL_TICK_SPACING = 200
 
 
-def test_create_base_chain_aerodrome_managers(base_full_node_web3: Web3):
-    set_web3(base_full_node_web3)
+def test_create_base_chain_aerodrome_managers(fork_base_full: AnvilFork):
+    set_web3(fork_base_full.w3)
 
     aerodrome_v2_pool_manager = AerodromeV2PoolManager(factory_address=BASE_AERODROME_V2_FACTORY)
     assert aerodrome_v2_pool_manager._factory_address == BASE_AERODROME_V2_FACTORY

@@ -3,7 +3,6 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, cast
 
 import pytest
-import web3
 from eth_typing import BlockNumber
 from hexbytes import HexBytes
 
@@ -83,31 +82,31 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_reserves_at_block_17_650_000(
 
 
 @pytest.fixture
-def ethereum_uniswap_v2_wbtc_weth_liquiditypool(fork_mainnet_archive: AnvilFork) -> UniswapV2Pool:
-    set_web3(fork_mainnet_archive.w3)
+def ethereum_uniswap_v2_wbtc_weth_liquiditypool(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
+    set_web3(fork_mainnet_full.w3)
     return UniswapV2Pool(address=UNISWAP_V2_WBTC_WETH_POOL)
 
 
 @pytest.fixture
-def dai(ethereum_full_node_web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def dai(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
     return Erc20Token(DAI_CONTRACT_ADDRESS)
 
 
 @pytest.fixture
-def wbtc(ethereum_full_node_web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def wbtc(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
     return Erc20Token(WBTC_CONTRACT_ADDRESS)
 
 
 @pytest.fixture
-def weth(ethereum_full_node_web3) -> Erc20Token:
-    set_web3(ethereum_full_node_web3)
+def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
     return Erc20Token(WETH_CONTRACT_ADDRESS)
 
 
-def test_create_pool(ethereum_full_node_web3: web3.Web3):
-    set_web3(ethereum_full_node_web3)
+def test_create_pool(fork_mainnet_full: AnvilFork):
+    set_web3(fork_mainnet_full.w3)
 
     UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
@@ -115,7 +114,7 @@ def test_create_pool(ethereum_full_node_web3: web3.Web3):
     )
     pool_registry.remove(
         pool_address=UNISWAP_V2_WBTC_WETH_POOL,
-        chain_id=ethereum_full_node_web3.eth.chain_id,
+        chain_id=fork_mainnet_full.w3.eth.chain_id,
     )
 
     # Omitting init hash
@@ -125,20 +124,20 @@ def test_create_pool(ethereum_full_node_web3: web3.Web3):
     )
 
 
-def test_create_pancake_v2_pool(base_full_node_web3: web3.Web3):
-    set_web3(base_full_node_web3)
+def test_create_pancake_v2_pool(fork_base_full: AnvilFork):
+    set_web3(fork_base_full.w3)
     PancakeV2Pool("0x92363F9817f92a7ae0592A4cb29959A88d885cc8")
 
 
-def test_from_exchange_deployment(ethereum_full_node_web3: web3.Web3):
-    set_web3(ethereum_full_node_web3)
+def test_from_exchange_deployment(fork_mainnet_full: AnvilFork):
+    set_web3(fork_mainnet_full.w3)
 
     # Delete the preset deployment for this factory so the test uses the provided override instead
     # of preferring the known valid deployment data
-    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][
+    factory_deployment = FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][
         UNISWAP_V2_FACTORY_ADDRESS
     ]
-    del FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
+    del FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
 
     UniswapV2Pool.from_exchange(
         address=UNISWAP_V2_WBTC_WETH_POOL,
@@ -146,7 +145,7 @@ def test_from_exchange_deployment(ethereum_full_node_web3: web3.Web3):
     )
 
     # Restore the preset deployment
-    FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS] = (
+    FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS] = (
         factory_deployment
     )
 
@@ -255,9 +254,11 @@ def test_pickle_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
 
 
 def test_create_nonstandard_pools(
-    ethereum_full_node_web3: web3.Web3, weth: Erc20Token, wbtc: Erc20Token
+    fork_mainnet_full: AnvilFork,
+    weth: Erc20Token,
+    wbtc: Erc20Token,
 ):
-    set_web3(ethereum_full_node_web3)
+    set_web3(fork_mainnet_full.w3)
 
     lp = UnregisteredLiquidityPool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
@@ -277,10 +278,10 @@ def test_create_nonstandard_pools(
 
     # Delete the preset deployment for this factory so the test uses the provided override instead
     # of preferring the known valid deployment data
-    factory_deployment = FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][
+    factory_deployment = FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][
         UNISWAP_V2_FACTORY_ADDRESS
     ]
-    del FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
+    del FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
 
     # Create pool with a malformed init hash
     bad_init_hash = UNISWAP_V2_FACTORY_POOL_INIT_HASH.replace("a", "b")
@@ -291,7 +292,7 @@ def test_create_nonstandard_pools(
         )
 
     # Restore the preset deployment
-    FACTORY_DEPLOYMENTS[ethereum_full_node_web3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS] = (
+    FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS] = (
         factory_deployment
     )
 
@@ -305,7 +306,7 @@ def test_create_nonstandard_pools(
     assert _lp.fee_token1 == Fraction(2, 1000)
     pool_registry.remove(
         pool_address=_lp.address,
-        chain_id=ethereum_full_node_web3.eth.chain_id,
+        chain_id=fork_mainnet_full.w3.eth.chain_id,
     )
 
     # Create split-fee pool of differing values
@@ -317,7 +318,7 @@ def test_create_nonstandard_pools(
     assert _lp.fee_token1 == Fraction(5, 1000)
     pool_registry.remove(
         pool_address=_lp.address,
-        chain_id=ethereum_full_node_web3.eth.chain_id,
+        chain_id=fork_mainnet_full.w3.eth.chain_id,
     )
 
     # Create split-fee pool of equal values

@@ -32,36 +32,6 @@ BASE_FULL_NODE_HTTP_URI = "http://localhost:8544"
 BASE_FULL_NODE_WS_URI = "ws://localhost:8548"
 
 
-# Set up a web3 connection to an Arbitrum full node
-@pytest.fixture(scope="session")
-def arbitrum_full_node_web3() -> web3.Web3:
-    return web3.Web3(web3.LegacyWebSocketProvider(ARBITRUM_FULL_NODE_WS_URI))
-
-
-# Set up a web3 connection to a Base archive node
-@pytest.fixture(scope="session")
-def base_archive_node_web3() -> web3.Web3:
-    return web3.Web3(web3.LegacyWebSocketProvider(BASE_ARCHIVE_NODE_WS_URI))
-
-
-# Set up a web3 connection to a Base full node
-@pytest.fixture(scope="session")
-def base_full_node_web3() -> web3.Web3:
-    return web3.Web3(web3.LegacyWebSocketProvider(BASE_FULL_NODE_WS_URI))
-
-
-# Set up a web3 connection to an Ethereum archive node
-@pytest.fixture(scope="session")
-def ethereum_archive_node_web3() -> web3.Web3:
-    return web3.Web3(web3.LegacyWebSocketProvider(ETHEREUM_ARCHIVE_NODE_WS_URI))
-
-
-# Set up a web3 connection to an Ethereum full node
-@pytest.fixture(scope="session")
-def ethereum_full_node_web3() -> web3.Web3:
-    return web3.Web3(web3.LegacyWebSocketProvider(ETHEREUM_FULL_NODE_WS_URI))
-
-
 # Set up an async web3 connection to an Ethereum archive node
 @pytest.fixture
 async def ethereum_archive_node_async_web3() -> web3.AsyncWeb3:
