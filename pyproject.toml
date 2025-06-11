@@ -92,8 +92,6 @@ indent-width = 4
 
 [tool.ruff.lint]
 select = [    
-#    "SLF",      # flake8-self
-#    "PIE",      # flake8-pie
 #    "C90",      # mccabe
 #    "D",        # pydocstyle
     "PTH",      # builtin-open
@@ -104,10 +102,12 @@ select = [
     "EM",       # flake8-errmsg
     "FA",       # flake8-future-annotations
     "N",        # flake8-naming
+    "PIE",      # flake8-pie
     "T20",      # flake8-print
     "PYI",      # flake8-pyi
     "PT",       # flake8-pytest-style
     "RET",      # flake8-return
+    "SLF",      # flake8-self
     "SIM",      # flake8-simplify
     "TID",      # flake8-tidy-imports
     "TCH",      # flake8-type-checking
@@ -132,9 +132,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
-    "PLR2004", # Many swap amount tests compare "magic" values — transforming to named constants is not worthwhile
-    "ERA",
     "C4",
+    "ERA",
+    "PLR2004", # Many swap amount tests compare "magic" values — transforming to named constants is not worthwhile
+    "SLF",
     "T20",
 ]
 
