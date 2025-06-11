@@ -71,10 +71,12 @@ def eth_usdc_v4(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
 
 
 @pytest.fixture
-def testing_pools() -> Any:
-    return pydantic_core.from_json(
+def testing_pools() -> list[dict[str, Any]]:
+    pools = pydantic_core.from_json(
         pathlib.Path("tests/uniswap/v4/first_200_uniswap_v4_pools.json").read_bytes()
     )
+    assert len(pools) == 200
+    return pools
 
 
 @pytest.fixture
@@ -342,10 +344,6 @@ def _test_pool_exact_output(
         assert helper_amount_in == quoter_amount_in, (
             f"Failed calc with {token_mult}x mult, token1 out, {lp.pool_id=} {lp.pool_key.hooks=}"
         )
-
-
-def test_num_of_pools_in_sample(testing_pools):
-    assert len(testing_pools) == 200
 
 
 def test_pool_creation(eth_usdc_v4: UniswapV4Pool):

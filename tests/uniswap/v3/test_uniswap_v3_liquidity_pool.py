@@ -123,9 +123,11 @@ def wbtc_weth_v3_lp(fork_mainnet_archive: AnvilFork) -> UniswapV3Pool:
 
 @pytest.fixture
 def testing_pools() -> Any:
-    return pydantic_core.from_json(
+    pools = pydantic_core.from_json(
         pathlib.Path("tests/uniswap/v3/first_200_uniswap_v3_pools.json").read_bytes()
     )
+    assert len(pools) == 200
+    return pools
 
 
 @pytest.fixture
