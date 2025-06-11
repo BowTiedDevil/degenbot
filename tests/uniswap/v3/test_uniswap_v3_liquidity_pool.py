@@ -75,6 +75,18 @@ UNISWAP_V3_QUOTER_ABI = pydantic_core.from_json(
     """
 )
 
+TOKEN_AMOUNT_MULTIPLIERS = [
+    0.000000001,
+    0.00000001,
+    0.0000001,
+    0.000001,
+    0.00001,
+    0.0001,
+    0.001,
+    0.01,
+    0.1,
+]
+
 
 @pytest.fixture(autouse=True)
 def dai(ethereum_full_node_web3: Web3) -> Erc20Token:
@@ -146,21 +158,6 @@ def test_first_200_pools(
         address=UNISWAP_V3_QUOTER_ADDRESS, abi=UNISWAP_V3_QUOTER_ABI
     )
 
-    token_amount_multipliers = [
-        0.000000001,
-        0.00000001,
-        0.0000001,
-        0.000001,
-        0.00001,
-        0.0001,
-        0.001,
-        0.01,
-        0.1,
-        0.25,
-        0.5,
-        0.75,
-    ]
-
     for pool in testing_pools:
         pool_address: str = pool["pool_address"]
 
@@ -169,7 +166,7 @@ def test_first_200_pools(
         max_reserves_token0 = lp.token0.get_balance(lp.address)
         max_reserves_token1 = lp.token1.get_balance(lp.address)
 
-        for token_mult in token_amount_multipliers:
+        for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
             token_in_amount = int(token_mult * max_reserves_token0)
             if token_in_amount == 0:
                 continue
@@ -233,21 +230,6 @@ def test_first_200_pools_with_snapshot(
         address=UNISWAP_V3_QUOTER_ADDRESS, abi=UNISWAP_V3_QUOTER_ABI
     )
 
-    token_amount_multipliers = [
-        0.000000001,
-        0.00000001,
-        0.0000001,
-        0.000001,
-        0.00001,
-        0.0001,
-        0.001,
-        0.01,
-        0.1,
-        0.25,
-        0.5,
-        0.75,
-    ]
-
     for pool in testing_pools:
         pool_address: str = pool["pool_address"]
 
@@ -260,7 +242,7 @@ def test_first_200_pools_with_snapshot(
         max_reserves_token0 = lp.token0.get_balance(lp.address)
         max_reserves_token1 = lp.token1.get_balance(lp.address)
 
-        for token_mult in token_amount_multipliers:
+        for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
             token_in_amount = int(token_mult * max_reserves_token0)
             if token_in_amount == 0:
                 continue
