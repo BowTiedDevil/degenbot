@@ -1010,7 +1010,12 @@ def test_auto_update(fork_mainnet_full: AnvilFork) -> None:
     lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
     fork_mainnet_full.reset(block_number=current_block)
     lp.auto_update()
-    lp.auto_update()  # update twice to cover the "no update" cases
+    lp.auto_update()  # update twice to cover the "no update" case
+
+
+def test_late_auto_update(fork_mainnet_full: AnvilFork) -> None:
+    set_web3(fork_mainnet_full.w3)
+    lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
 
     # Attempt an update in the past
     with pytest.raises(LateUpdateError):
