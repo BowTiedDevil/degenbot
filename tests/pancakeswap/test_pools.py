@@ -51,45 +51,35 @@ def test_pancakeswap_calculations(fork_base_full: AnvilFork, test_pools: list[An
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
 
-        if max_reserves_token1 >= 2:
-            for token_mult in token_amount_multipliers:
-                token_in_amount = int(token_mult * max_reserves_token0)
-                if token_in_amount == 0:
-                    continue
-                print(f"{token_in_amount=} with {token_mult=}")
+        for token_mult in token_amount_multipliers:
+            token_in_amount = int(token_mult * max_reserves_token0)
+            if token_in_amount == 0:
+                continue
 
-                try:
-                    helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
-                        token_in=lp.token0,
-                        token_in_quantity=token_in_amount,
-                    )
-                    _, contract_amount_out = pancake_v2_router_contract.functions.getAmountsOut(
-                        token_in_amount,
-                        [lp.token0.address, lp.token1.address],
-                    ).call()
-                except Exception as e:
-                    print(f"Failure {e} on pool {pool_address}")
-                    raise
-                else:
-                    assert contract_amount_out == helper_amount_out, f"{pool_address=}"
+            _, contract_amount_out = pancake_v2_router_contract.functions.getAmountsOut(
+                token_in_amount,
+                [lp.token0.address, lp.token1.address],
+            ).call()
 
-        if max_reserves_token0 >= 2:
-            for token_mult in token_amount_multipliers:
-                token_in_amount = int(token_mult * max_reserves_token1)
-                if token_in_amount == 0 or max_reserves_token1 <= 1:
-                    continue
-                print(f"{token_in_amount=} with {token_mult=}")
-                try:
-                    helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
-                        token_in=lp.token1,
-                        token_in_quantity=token_in_amount,
-                    )
-                    _, contract_amount_out = pancake_v2_router_contract.functions.getAmountsOut(
-                        token_in_amount,
-                        [lp.token1.address, lp.token0.address],
-                    ).call()
-                except Exception as e:
-                    print(f"Failure {e} on pool {pool_address}")
-                    raise
-                else:
-                    assert contract_amount_out == helper_amount_out, f"{pool_address=}"
+            helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
+                token_in=lp.token0,
+                token_in_quantity=token_in_amount,
+            )
+            assert contract_amount_out == helper_amount_out, f"{pool_address=}"
+
+        for token_mult in token_amount_multipliers:
+            token_in_amount = int(token_mult * max_reserves_token1)
+            if token_in_amount == 0:
+                continue
+
+            _, contract_amount_out = pancake_v2_router_contract.functions.getAmountsOut(
+                token_in_amount,
+                [lp.token1.address, lp.token0.address],
+            ).call()
+
+            helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
+                token_in=lp.token1,
+                token_in_quantity=token_in_amount,
+            )
+
+            assert contract_amount_out == helper_amount_out, f"{pool_address=}"
