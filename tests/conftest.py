@@ -92,7 +92,15 @@ def _set_degenbot_logging():
     degenbot.logging.logger.setLevel(logging.DEBUG)
 
 
-@pytest.fixture
+@pytest.fixture(
+    scope="session",
+    params=[
+        pytest.param(
+            "fork_arbitrum_full",
+            marks=pytest.mark.xdist_group("fork_arbitrum_full"),
+        )
+    ],
+)
 def fork_arbitrum_full() -> AnvilFork:
     return AnvilFork(
         fork_url=ARBITRUM_FULL_NODE_WS_URI,
@@ -100,7 +108,15 @@ def fork_arbitrum_full() -> AnvilFork:
     )
 
 
-@pytest.fixture
+@pytest.fixture(
+    scope="session",
+    params=[
+        pytest.param(
+            "fork_base_archive",
+            marks=pytest.mark.xdist_group("fork_base_archive"),
+        )
+    ],
+)
 def fork_base_archive() -> AnvilFork:
     return AnvilFork(
         fork_url=BASE_ARCHIVE_NODE_WS_URI,
@@ -113,7 +129,15 @@ def fork_base_full() -> AnvilFork:
     return AnvilFork(fork_url=BASE_FULL_NODE_WS_URI)
 
 
-@pytest.fixture
+@pytest.fixture(
+    scope="session",
+    params=[
+        pytest.param(
+            "fork_mainnet_archive",
+            marks=pytest.mark.xdist_group("fork_mainnet_archive"),
+        )
+    ],
+)
 def fork_mainnet_archive() -> AnvilFork:
     return AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_WS_URI,
