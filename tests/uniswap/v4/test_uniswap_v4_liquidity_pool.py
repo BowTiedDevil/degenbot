@@ -128,8 +128,8 @@ def _test_pool_exact_input(
 
     assert isinstance(lp, UniswapV4Pool)
 
-    max_reserves_token0 = lp.token0.get_balance(lp.address)
-    max_reserves_token1 = lp.token1.get_balance(lp.address)
+    max_reserves_token0 = 1 * 10**lp.token0.decimals
+    max_reserves_token1 = 1 * 10**lp.token1.decimals
 
     if max_reserves_token0 == 0 or max_reserves_token1 == 0:
         return
@@ -247,8 +247,8 @@ def _test_pool_exact_output(
 
     assert isinstance(lp, UniswapV4Pool)
 
-    max_reserves_token0 = lp.token0.get_balance(lp.address)
-    max_reserves_token1 = lp.token1.get_balance(lp.address)
+    max_reserves_token0 = 1 * 10**lp.token0.decimals
+    max_reserves_token1 = 1 * 10**lp.token1.decimals
 
     if max_reserves_token0 == 0 or max_reserves_token1 == 0:
         return

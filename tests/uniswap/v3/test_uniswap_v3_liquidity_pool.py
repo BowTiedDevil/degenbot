@@ -164,8 +164,8 @@ def test_first_200_pools(
 
         lp = UniswapV3Pool(address=pool_address)
 
-        max_reserves_token0 = lp.token0.get_balance(lp.address)
-        max_reserves_token1 = lp.token1.get_balance(lp.address)
+        max_reserves_token0 = 1 * 10**lp.token0.decimals
+        max_reserves_token1 = 1 * 10**lp.token1.decimals
 
         for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
             token_in_amount = int(token_mult * max_reserves_token0)
@@ -240,8 +240,8 @@ def test_first_200_pools_with_snapshot(
             address=pool_address, tick_bitmap=pool_tick_bitmap, tick_data=pool_tick_data
         )
 
-        max_reserves_token0 = lp.token0.get_balance(lp.address)
-        max_reserves_token1 = lp.token1.get_balance(lp.address)
+        max_reserves_token0 = 1 * 10**lp.token0.decimals
+        max_reserves_token1 = 1 * 10**lp.token1.decimals
 
         for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
             token_in_amount = int(token_mult * max_reserves_token0)
