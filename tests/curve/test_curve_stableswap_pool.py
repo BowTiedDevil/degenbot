@@ -215,7 +215,6 @@ def test_metapool_over_multiple_blocks_to_verify_cache_behavior(fork_mainnet_arc
     span = 30
 
     fork_mainnet_archive.reset(block_number=start_block)
-    fork_mainnet_archive.w3.provider.timeout = 60  # type: ignore[attr-defined]
     set_web3(fork_mainnet_archive.w3)
 
     lp = CurveStableswapPool(address=pool_address)

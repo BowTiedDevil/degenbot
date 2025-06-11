@@ -1105,7 +1105,6 @@ def test_universal_router_transactions(
     set_web3(fork_mainnet_archive.w3)
     fork_mainnet_archive.reset(block_number=block_number)
     assert fork_mainnet_archive.w3.eth.get_block_number() == block_number
-    fork_mainnet_archive.w3.provider.timeout = 600  # type: ignore[attr-defined]
 
     tx = UniswapTransaction(**tx_dict)
 
@@ -1151,8 +1150,6 @@ def test_expired_transaction(fork_mainnet_archive: AnvilFork):
     block_number = 19195827 - 1
     fork_mainnet_archive.reset(block_number=block_number)
     assert fork_mainnet_archive.w3.eth.get_block_number() == block_number
-
-    fork_mainnet_archive.w3.provider.timeout = 600  # type: ignore[attr-defined]
 
     tx = UniswapTransaction(
         chain_id=1,
