@@ -113,10 +113,7 @@ class AnvilFork:
             self.ipc_provider_kwargs = {"cache_allowed_requests": True}
 
         self._anvil_command = build_anvil_command(path_to_anvil=path_to_anvil)
-        self._process = self._setup_subprocess(
-            anvil_command=self._anvil_command, ipc_path=self.ipc_path
-        )
-        self.w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
+        self._setup_process_and_w3(anvil_command=self._anvil_command, ipc_path=self.ipc_path)
 
         self._block_number = (
             fork_block if fork_block is not None else self.w3.eth.get_block_number()
@@ -172,7 +169,7 @@ class AnvilFork:
             _, _port = sock.getsockname()
             return cast("int", _port)
 
-    def _setup_subprocess(
+    def _setup_process_and_w3(
         self, anvil_command: list[str], ipc_path: pathlib.Path
     ) -> subprocess.Popen[Any]:
         """
@@ -210,7 +207,9 @@ class AnvilFork:
             observer.stop()
             observer.join()
 
-        return process
+        self._process = process
+        self.w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
+        assert self.w3.is_connected()
 
     def __del__(self) -> None:
         if hasattr(self, "_process"):
@@ -281,12 +280,10 @@ class AnvilFork:
         if transaction_hash is not None:
             self._anvil_command.append(f"--fork-transaction-hash={transaction_hash}")
 
-        self._process = self._setup_subprocess(
+        self._setup_process_and_w3(
             anvil_command=self._anvil_command,
             ipc_path=self.ipc_path,
         )
-        self.w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
-        assert self.w3.is_connected()
 
     def return_to_snapshot(self, snapshot_id: int) -> bool:
         if snapshot_id < 0:
