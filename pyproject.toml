@@ -153,6 +153,7 @@ dev-dependencies = [
     "pytest-asyncio",
     "pytest-benchmark",
     "pytest-cov",
+    "pytest-randomly",
     "pytest-xdist",
     "python-dotenv",
 ]
