@@ -385,7 +385,6 @@ def test_first_200_pools_with_snapshot(
     liquidity_snapshot,
 ):
     fork_mainnet_archive.reset(block_number=liquidity_snapshot["snapshot_block"])
-    print(f"Forked at block {liquidity_snapshot['snapshot_block']}")
 
     for pool in testing_pools:
         _test_pool_exact_input(
