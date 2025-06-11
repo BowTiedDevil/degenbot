@@ -135,7 +135,7 @@ def _test_pool_exact_input(
         return
 
     for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
-        token0_in_amount = int(token_mult * max_reserves_token0)
+        token0_in_amount = max(1, int(token_mult * max_reserves_token0))
 
         try:
             quoter_amount_out, _ = quoter.functions.quoteExactInputSingle(
@@ -174,7 +174,7 @@ def _test_pool_exact_input(
         )
 
     for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
-        token1_in_amount = int(token_mult * max_reserves_token1)
+        token1_in_amount = max(1, int(token_mult * max_reserves_token1))
 
         try:
             quoter_amount_out, _ = quoter.functions.quoteExactInputSingle(
