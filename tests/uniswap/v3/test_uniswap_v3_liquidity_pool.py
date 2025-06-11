@@ -137,8 +137,12 @@ def convert_unsigned_integer_to_signed(num: int):
 
 
 def test_first_200_pools(
+    fork_mainnet_full: AnvilFork,
+    testing_pools,
+):
+    set_web3(fork_mainnet_full.w3)
 
-    quoter = fork_mainnet_archive.w3.eth.contract(
+    quoter = fork_mainnet_full.w3.eth.contract(
         address=UNISWAP_V3_QUOTER_ADDRESS, abi=UNISWAP_V3_QUOTER_ABI
     )
 
@@ -1017,18 +1021,18 @@ def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
     assert upper_tick not in lp.tick_data
 
 
-def test_auto_update(fork_mainnet_archive: AnvilFork) -> None:
-    current_block = fork_mainnet_archive.w3.eth.block_number
-    fork_mainnet_archive.reset(block_number=current_block - 500_000)
-    set_web3(fork_mainnet_archive.w3)
+def test_auto_update(fork_mainnet_full: AnvilFork) -> None:
+    current_block = fork_mainnet_full.w3.eth.block_number
+    fork_mainnet_full.reset(block_number=current_block - 10_000)
+    set_web3(fork_mainnet_full.w3)
     lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
-    fork_mainnet_archive.reset(block_number=current_block)
+    fork_mainnet_full.reset(block_number=current_block)
     lp.auto_update()
     lp.auto_update()  # update twice to cover the "no update" cases
 
     # Attempt an update in the past
     with pytest.raises(LateUpdateError):
-        lp.auto_update(block_number=current_block - 10)
+        lp.auto_update(block_number=fork_mainnet_full.w3.eth.block_number - 10)
 
 
 def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):

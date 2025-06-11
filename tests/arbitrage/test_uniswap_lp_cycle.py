@@ -2241,15 +2241,14 @@ def test_arbitrage_with_overrides(
     assert result.input_amount == 20454968409226055680
 
 
-@pytest.mark.skip("unreliable RPC")
-async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum_archive: AnvilFork):
+async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum_full: AnvilFork):
     # Arbitrum-specific token addresses
     weth_address = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
 
     camelot_weth_wbtc_pool_address = "0x96059759C6492fb4e8a9777b65f307F2C811a34F"
     sushi_v2_weth_wbtc_pool_address = "0x515e252b2b5c22b4b2b6Df66c2eBeeA871AA4d69"
 
-    set_web3(fork_arbitrum_archive.w3)
+    set_web3(fork_arbitrum_full.w3)
 
     _weth = Erc20Token(weth_address)
 

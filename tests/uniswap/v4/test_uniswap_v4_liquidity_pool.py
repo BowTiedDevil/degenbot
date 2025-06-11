@@ -364,14 +364,18 @@ def test_pool_sqrt_price_checks(eth_usdc_v4: UniswapV4Pool):
 
 
 def test_first_200_pools(
+    fork_mainnet_full: AnvilFork,
+    testing_pools,
+):
+    set_web3(fork_mainnet_full.w3)
     for pool in testing_pools:
         _test_pool_exact_input(
             pool=pool,
-            fork=fork_mainnet_archive,
+            fork=fork_mainnet_full,
         )
         _test_pool_exact_output(
             pool=pool,
-            fork=fork_mainnet_archive,
+            fork=fork_mainnet_full,
         )
 
 
