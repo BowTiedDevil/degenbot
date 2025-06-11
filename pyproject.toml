@@ -139,7 +139,7 @@ ignore = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--import-mode=importlib --cov=./src/degenbot --cov-branch --cov-report=html"
+addopts = "-n auto --dist loadgroup --import-mode=importlib --cov=./src/degenbot --cov-branch --cov-report=html"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 pythonpath = "src"
