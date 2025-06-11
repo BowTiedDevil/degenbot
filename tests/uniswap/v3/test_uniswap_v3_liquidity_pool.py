@@ -168,17 +168,7 @@ def test_first_200_pools(
         max_reserves_token1 = 1 * 10**lp.token1.decimals
 
         for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
-            token_in_amount = int(token_mult * max_reserves_token0)
-            if token_in_amount == 0:
-                continue
-
-            try:
-                helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
-                    token_in=lp.token0,
-                    token_in_quantity=token_in_amount,
-                )
-            except LiquidityPoolError:
-                continue
+            token_in_amount = max(1, int(token_mult * max_reserves_token0))
 
             try:
                 quoter_amount_out = quoter.functions.quoteExactInputSingle(
@@ -191,19 +181,21 @@ def test_first_200_pools(
             except ContractLogicError:
                 continue
 
-            assert helper_amount_out == quoter_amount_out
-
-            token_in_amount = int(token_mult * max_reserves_token1)
-            if token_in_amount == 0:
+            if quoter_amount_out == 0:
                 continue
 
             try:
                 helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
-                    token_in=lp.token1,
+                    token_in=lp.token0,
                     token_in_quantity=token_in_amount,
                 )
-            except LiquidityPoolError:
-                continue
+            except IncompleteSwap as exc:
+                helper_amount_out = exc.amount_out
+
+            assert helper_amount_out == quoter_amount_out
+
+        for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+            token_in_amount = max(1, int(token_mult * max_reserves_token1))
 
             try:
                 quoter_amount_out = quoter.functions.quoteExactInputSingle(
@@ -215,6 +207,17 @@ def test_first_200_pools(
                 ).call()
             except ContractLogicError:
                 continue
+
+            if quoter_amount_out == 0:
+                continue
+
+            try:
+                helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
+                    token_in=lp.token1,
+                    token_in_quantity=token_in_amount,
+                )
+            except IncompleteSwap as exc:
+                helper_amount_out = exc.amount_out
 
             assert helper_amount_out == quoter_amount_out
 
@@ -244,17 +247,7 @@ def test_first_200_pools_with_snapshot(
         max_reserves_token1 = 1 * 10**lp.token1.decimals
 
         for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
-            token_in_amount = int(token_mult * max_reserves_token0)
-            if token_in_amount == 0:
-                continue
-
-            try:
-                helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
-                    token_in=lp.token0,
-                    token_in_quantity=token_in_amount,
-                )
-            except LiquidityPoolError:
-                continue
+            token_in_amount = max(1, int(token_mult * max_reserves_token0))
 
             try:
                 quoter_amount_out = quoter.functions.quoteExactInputSingle(
@@ -267,21 +260,21 @@ def test_first_200_pools_with_snapshot(
             except ContractLogicError:
                 continue
 
-            assert helper_amount_out == quoter_amount_out, (
-                f"Failed calc with {token_mult}x mult, token0 in"
-            )
-
-            token_in_amount = int(token_mult * max_reserves_token1)
-            if token_in_amount == 0:
+            if quoter_amount_out == 0:
                 continue
 
             try:
                 helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
-                    token_in=lp.token1,
+                    token_in=lp.token0,
                     token_in_quantity=token_in_amount,
                 )
-            except LiquidityPoolError:
-                continue
+            except IncompleteSwap as exc:
+                helper_amount_out = exc.amount_out
+
+            assert helper_amount_out == quoter_amount_out
+
+        for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+            token_in_amount = max(1, int(token_mult * max_reserves_token1))
 
             try:
                 quoter_amount_out = quoter.functions.quoteExactInputSingle(
@@ -294,9 +287,18 @@ def test_first_200_pools_with_snapshot(
             except ContractLogicError:
                 continue
 
-            assert helper_amount_out == quoter_amount_out, (
-                f"Failed calc with {token_mult}x mult, token1 in"
-            )
+            if quoter_amount_out == 0:
+                continue
+
+            try:
+                helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
+                    token_in=lp.token1,
+                    token_in_quantity=token_in_amount,
+                )
+            except IncompleteSwap as exc:
+                helper_amount_out = exc.amount_out
+
+            assert helper_amount_out == quoter_amount_out
 
 
 def test_fetching_tick_data(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool):

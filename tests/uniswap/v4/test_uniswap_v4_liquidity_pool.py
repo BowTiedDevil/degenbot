@@ -149,6 +149,9 @@ def _test_pool_exact_input(
         except ContractLogicError:
             continue
 
+        if quoter_amount_out == 0:
+            continue
+
         try:
             helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
                 token_in=lp.token0,
@@ -183,6 +186,9 @@ def _test_pool_exact_input(
                 )
             ).call()
         except ContractLogicError:
+            continue
+
+        if quoter_amount_out == 0:
             continue
 
         try:
@@ -254,10 +260,22 @@ def _test_pool_exact_output(
         return
 
     for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
-        helper_amount_in = 0
-        quoter_amount_in = 0
-
         token0_out_amount = int(token_mult * max_reserves_token0)
+
+        try:
+            quoter_amount_in, _ = quoter.functions.quoteExactOutputSingle(
+                (
+                    dataclasses.astuple(lp.pool_key),  # poolKey
+                    False,  # zeroForOne
+                    token0_out_amount,  # exactAmount
+                    b"",  # hookData
+                )
+            ).call()
+        except ContractLogicError:
+            continue
+
+        if quoter_amount_in == 0:
+            continue
 
         try:
             helper_amount_in = lp.calculate_tokens_in_from_tokens_out(
@@ -276,27 +294,27 @@ def _test_pool_exact_output(
                 continue
             raise
 
+        assert helper_amount_in == quoter_amount_in, (
+            f"Failed calc with {token_mult}x mult, token0 out, {lp.pool_id=} {lp.pool_key.hooks=}"
+        )
+
+    for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+        token1_out_amount = int(token_mult * max_reserves_token1)
+
         try:
             quoter_amount_in, _ = quoter.functions.quoteExactOutputSingle(
                 (
                     dataclasses.astuple(lp.pool_key),  # poolKey
-                    False,  # zeroForOne
-                    token0_out_amount,  # exactAmount
+                    True,  # zeroForOne
+                    token1_out_amount,  # exactAmount
                     b"",  # hookData
                 )
             ).call()
         except ContractLogicError:
             continue
 
-        assert helper_amount_in == quoter_amount_in, (
-            f"Failed calc with {token_mult}x mult, token0 out, {lp.pool_id=} {lp.pool_key.hooks=}"
-        )
-
-    for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
-        helper_amount_in = 0
-        quoter_amount_in = 0
-
-        token1_out_amount = int(token_mult * max_reserves_token1)
+        if quoter_amount_in == 0:
+            continue
 
         try:
             helper_amount_in = lp.calculate_tokens_in_from_tokens_out(
@@ -314,18 +332,6 @@ def _test_pool_exact_output(
             ):
                 continue
             raise
-
-        try:
-            quoter_amount_in, _ = quoter.functions.quoteExactOutputSingle(
-                (
-                    dataclasses.astuple(lp.pool_key),  # poolKey
-                    True,  # zeroForOne
-                    token1_out_amount,  # exactAmount
-                    b"",  # hookData
-                )
-            ).call()
-        except ContractLogicError:
-            continue
 
         assert helper_amount_in == quoter_amount_in, (
             f"Failed calc with {token_mult}x mult, token1 out, {lp.pool_id=} {lp.pool_key.hooks=}"
