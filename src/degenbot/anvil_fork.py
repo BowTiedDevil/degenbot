@@ -169,9 +169,7 @@ class AnvilFork:
             _, _port = sock.getsockname()
             return cast("int", _port)
 
-    def _setup_process_and_w3(
-        self, anvil_command: list[str], ipc_path: pathlib.Path
-    ) -> subprocess.Popen[Any]:
+    def _setup_process_and_w3(self, anvil_command: list[str], ipc_path: pathlib.Path) -> None:
         """
         Launch an Anvil subprocess, waiting for the IPC file to be created.
         """
