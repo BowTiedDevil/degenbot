@@ -17,7 +17,7 @@ from web3.types import RPCEndpoint
 from degenbot.constants import MAX_UINT256
 from degenbot.exceptions import DegenbotError, DegenbotValueError, InvalidUint256
 from degenbot.logging import logger
-from degenbot.types import ChainId
+from degenbot.types import BlockNumber, ChainId
 
 
 class AnvilNotFound(Exception):
@@ -240,7 +240,7 @@ class AnvilFork:
     def reset(
         self,
         fork_url: str | None = None,
-        block_number: int | None = None,
+        block_number: BlockNumber | None = None,
         transaction_hash: str | None = None,
     ) -> None:
         """

@@ -4,10 +4,10 @@
 # TODO: instead of appending pool states to list, replace with dict and only return final state
 
 import contextlib
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Self
 
 import eth_abi.abi
-from eth_typing import BlockNumber, ChecksumAddress
+from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
 
@@ -32,7 +32,7 @@ from degenbot.exceptions import (
 from degenbot.logging import logger
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.transaction.simulation_ledger import SimulationLedger
-from degenbot.types import AbstractSimulationResult, AbstractTransaction, ChainId
+from degenbot.types import AbstractSimulationResult, AbstractTransaction, BlockNumber, ChainId
 from degenbot.uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from degenbot.uniswap.deployments import (
     ROUTER_DEPLOYMENTS,
@@ -2143,7 +2143,7 @@ class UniswapTransaction(AbstractTransaction):
             block_number=(
                 connection_manager.get_web3(self.chain_id).eth.get_block_number()
                 if state_block is None
-                else cast("BlockNumber", state_block)
+                else state_block
             ),
         )
 

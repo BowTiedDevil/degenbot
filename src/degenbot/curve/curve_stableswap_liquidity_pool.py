@@ -16,7 +16,7 @@ from weakref import WeakSet
 import eth_abi.abi
 import web3.exceptions
 from eth_abi.exceptions import DecodingError, InsufficientDataBytes
-from eth_typing import AnyAddress, BlockNumber, ChecksumAddress
+from eth_typing import AnyAddress, ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.exceptions import Web3Exception
@@ -47,6 +47,7 @@ from degenbot.registry.all_pools import pool_registry
 from degenbot.types import (
     AbstractArbitrage,
     AbstractLiquidityPool,
+    BlockNumber,
     BoundedCache,
     ChainId,
     Message,
@@ -796,7 +797,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
 
         block_number = (
-            cast("BlockNumber", block_identifier)
+            block_identifier
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
@@ -826,7 +827,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, ...]:
         block_number = (
-            cast("BlockNumber", block_identifier)
+            block_identifier
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
@@ -921,7 +922,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         rates = self.rate_multipliers
 
         block_number = (
-            cast("BlockNumber", block_identifier)
+            block_identifier
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
@@ -1420,7 +1421,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         pool_balances = override_state.balances if override_state is not None else self.balances
 
         block_number = (
-            cast("BlockNumber", block_identifier)
+            block_identifier
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 identifier=block_identifier,
@@ -2272,7 +2273,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         """
 
         block_number = (
-            cast("BlockNumber", block_identifier)
+            block_identifier
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,

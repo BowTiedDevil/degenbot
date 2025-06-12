@@ -1,8 +1,8 @@
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
 import eth_account.messages
-from eth_typing import BlockNumber, ChecksumAddress
+from eth_typing import ChecksumAddress
 from eth_utils.conversions import to_hex
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
@@ -12,6 +12,7 @@ from web3.types import BlockIdentifier
 from degenbot.cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import DegenbotValueError, InvalidUint256
+from degenbot.types import BlockNumber
 
 if TYPE_CHECKING:
     from eth_account.datastructures import SignedMessage
@@ -117,7 +118,7 @@ def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3
         case None:
             return w3.eth.get_block_number()
         case int() as block_number_as_int:
-            return cast("BlockNumber", block_number_as_int)
+            return block_number_as_int
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
             block = w3.eth.get_block(block_tag)
             block_number = block.get("number")
@@ -126,13 +127,13 @@ def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3
             return block_number
         case str() as block_number_as_str:
             try:
-                return cast("BlockNumber", int(block_number_as_str, 16))
+                return int(block_number_as_str, 16)
             except ValueError:
                 raise DegenbotValueError(
                     message=f"Invalid block identifier {identifier!r}"
                 ) from None
         case bytes() as block_number_as_bytes:
-            return cast("BlockNumber", int.from_bytes(block_number_as_bytes, byteorder="big"))
+            return int.from_bytes(block_number_as_bytes, byteorder="big")
         case _:
             raise DegenbotValueError(message=f"Invalid block identifier {identifier!r}")
 
@@ -144,7 +145,7 @@ async def get_number_for_block_identifier_async(
         case None:
             return await w3.eth.get_block_number()
         case int() as block_number_as_int:
-            return cast("BlockNumber", block_number_as_int)
+            return block_number_as_int
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
             block = await w3.eth.get_block(block_tag)
             block_number = block.get("number")
@@ -153,13 +154,13 @@ async def get_number_for_block_identifier_async(
             return block_number
         case str() as block_number_as_str:
             try:
-                return cast("BlockNumber", int(block_number_as_str, 16))
+                return int(block_number_as_str, 16)
             except ValueError:
                 raise DegenbotValueError(
                     message=f"Invalid block identifier {identifier!r}"
                 ) from None
         case bytes() as block_number_as_bytes:
-            return cast("BlockNumber", int.from_bytes(block_number_as_bytes, byteorder="big"))
+            return int.from_bytes(block_number_as_bytes, byteorder="big")
         case _:
             raise DegenbotValueError(message=f"Invalid block identifier {identifier!r}")
 

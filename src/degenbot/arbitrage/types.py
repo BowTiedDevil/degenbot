@@ -2,10 +2,11 @@
 
 import dataclasses
 
-from eth_typing import BlockNumber, ChecksumAddress
+from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
 from degenbot.erc20_token import Erc20Token
+from degenbot.types import BlockNumber
 
 
 class AbstractSwapAmounts:

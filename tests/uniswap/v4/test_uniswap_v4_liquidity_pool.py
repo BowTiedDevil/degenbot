@@ -397,7 +397,6 @@ SINGLE_POOL_ID = ""
 def test_single_pool(
     fork_mainnet_archive: AnvilFork,
     testing_pools,
-    liquidity_snapshot,
 ):
     if not SINGLE_POOL_ID:
         return
@@ -406,12 +405,10 @@ def test_single_pool(
     _test_pool_exact_input(
         pool=pool,
         fork=fork_mainnet_archive,
-        block_number=liquidity_snapshot["snapshot_block"],
     )
     _test_pool_exact_output(
         pool=pool,
         fork=fork_mainnet_archive,
-        block_number=liquidity_snapshot["snapshot_block"],
     )
 
 
@@ -423,16 +420,16 @@ def test_single_pool_with_snapshot(
     if not SINGLE_POOL_ID:
         return
 
+    fork_mainnet_archive.reset(block_number=liquidity_snapshot["snapshot_block"])
+
     [pool] = [pool for pool in testing_pools if pool["pool_id"] == SINGLE_POOL_ID]
     _test_pool_exact_input(
         pool=pool,
         fork=fork_mainnet_archive,
-        block_number=liquidity_snapshot["snapshot_block"],
         snapshot=liquidity_snapshot,
     )
     _test_pool_exact_output(
         pool=pool,
         fork=fork_mainnet_archive,
-        block_number=liquidity_snapshot["snapshot_block"],
         snapshot=liquidity_snapshot,
     )

@@ -11,6 +11,7 @@ from eth_typing import HexStr
 
 from degenbot.exceptions import DegenbotValueError, ExternalServiceError
 from degenbot.functions import eip_191_hash
+from degenbot.types import BlockNumber
 
 if TYPE_CHECKING:
     from eth_account.signers.local import LocalAccount
@@ -93,8 +94,8 @@ class BuilderEndpoint:  # pragma: no cover
     async def call_eth_bundle(
         self,
         bundle: Iterable[HexBytes],
-        block_number: int,
-        state_block: int | Literal["latest"],
+        block_number: BlockNumber,
+        state_block: BlockNumber | Literal["latest"],
         signer_key: str,
         block_timestamp: int | None = None,
         http_session: aiohttp.ClientSession | None = None,
@@ -262,7 +263,7 @@ class BuilderEndpoint:  # pragma: no cover
     async def get_user_stats(
         self,
         signer_key: str,
-        recent_block_number: int,
+        recent_block_number: BlockNumber,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
         """
@@ -305,7 +306,7 @@ class BuilderEndpoint:  # pragma: no cover
     async def get_bundle_stats(
         self,
         bundle_hash: str,
-        block_number: int,
+        block_number: BlockNumber,
         signer_key: str,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:
@@ -350,7 +351,7 @@ class BuilderEndpoint:  # pragma: no cover
     async def send_eth_bundle(
         self,
         bundle: Iterable[HexBytes],
-        block_number: int,
+        block_number: BlockNumber,
         min_timestamp: int | None = None,
         max_timestamp: int | None = None,
         reverting_hashes: list[str] | None = None,
@@ -437,7 +438,7 @@ class BuilderEndpoint:  # pragma: no cover
         self,
         raw_transaction: HexBytes | str,
         signer_key: str,
-        max_block_number: int | None = None,
+        max_block_number: BlockNumber | None = None,
         preferences: dict[str, Any] | None = None,
         http_session: aiohttp.ClientSession | None = None,
     ) -> Any:

@@ -1,9 +1,8 @@
 from fractions import Fraction
 from threading import Lock
-from typing import cast
 
 import eth_abi.abi
-from eth_typing import BlockNumber, ChecksumAddress
+from eth_typing import ChecksumAddress
 
 from degenbot.balancer.libraries.fixed_point import mul_up
 from degenbot.balancer.libraries.scaling_helpers import (
@@ -19,7 +18,7 @@ from degenbot.config import connection_manager
 from degenbot.erc20_token import Erc20Token
 from degenbot.functions import encode_function_calldata
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
-from degenbot.types import AbstractLiquidityPool, ChainId, PublisherMixin
+from degenbot.types import AbstractLiquidityPool, BlockNumber, ChainId, PublisherMixin
 
 
 class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
@@ -31,7 +30,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         address: ChecksumAddress | str,
         *,
         chain_id: ChainId | None = None,
-        state_block: int | None = None,
+        state_block: BlockNumber | None = None,
         verify_address: bool = True,
         silent: bool = False,
     ):
@@ -40,7 +39,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
         state_block = (
-            cast("BlockNumber", state_block) if state_block is not None else w3.eth.block_number
+            state_block if state_block is not None else w3.eth.block_number
         )
 
         pool_id: bytes

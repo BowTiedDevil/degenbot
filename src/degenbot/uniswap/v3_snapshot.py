@@ -4,7 +4,7 @@ from collections.abc import Generator
 from typing import Any, TypedDict, cast
 
 import pydantic_core
-from eth_typing import ABIEvent, BlockNumber, ChecksumAddress, HexStr
+from eth_typing import ABIEvent, ChecksumAddress, HexStr
 from eth_utils.abi import event_abi_to_log_topic
 from hexbytes import HexBytes
 from web3 import Web3
@@ -16,7 +16,7 @@ from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
 from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
-from degenbot.types import ChainId
+from degenbot.types import BlockNumber, ChainId
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
 from degenbot.uniswap.types import (
     UniswapV3BitmapAtWord,

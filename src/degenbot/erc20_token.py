@@ -20,10 +20,10 @@ from degenbot.functions import (
 )
 from degenbot.logging import logger
 from degenbot.registry.all_tokens import token_registry
-from degenbot.types import AbstractErc20Token, BoundedCache, ChainId
+from degenbot.types import AbstractErc20Token, BlockNumber, BoundedCache, ChainId
 
 if TYPE_CHECKING:
-    from eth_typing import BlockNumber, ChecksumAddress
+    from eth_typing import ChecksumAddress
     from hexbytes import HexBytes
 
 
@@ -207,7 +207,7 @@ class Erc20Token(AbstractErc20Token):
         spender = get_checksum_address(spender)
 
         block_number = (
-            cast("BlockNumber", block_identifier)
+            block_identifier
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
@@ -247,7 +247,7 @@ class Erc20Token(AbstractErc20Token):
         spender = get_checksum_address(spender)
 
         block_number = (
-            cast("BlockNumber", block_identifier)
+            block_identifier
             if isinstance(block_identifier, int)
             else await get_number_for_block_identifier_async(
                 block_identifier,
@@ -285,7 +285,7 @@ class Erc20Token(AbstractErc20Token):
         address = get_checksum_address(address)
 
         block_number = (
-            cast("BlockNumber", block_identifier)
+            block_identifier
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
@@ -327,7 +327,7 @@ class Erc20Token(AbstractErc20Token):
         address = get_checksum_address(address)
 
         block_number = (
-            cast("BlockNumber", block_identifier)
+            block_identifier
             if isinstance(block_identifier, int)
             else await get_number_for_block_identifier_async(
                 block_identifier,
@@ -363,7 +363,7 @@ class Erc20Token(AbstractErc20Token):
         """
 
         block_number = (
-            cast("BlockNumber", block_identifier)
+            block_identifier
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
@@ -394,7 +394,7 @@ class Erc20Token(AbstractErc20Token):
         """
 
         block_number = (
-            cast("BlockNumber", block_identifier)
+            block_identifier
             if isinstance(block_identifier, int)
             else await get_number_for_block_identifier_async(
                 block_identifier,
@@ -473,7 +473,7 @@ class EtherPlaceholder(Erc20Token):
         address = get_checksum_address(address)
 
         block_number = (
-            cast("BlockNumber", block_identifier)
+            block_identifier
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,

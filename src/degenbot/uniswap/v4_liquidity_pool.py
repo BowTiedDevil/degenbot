@@ -9,7 +9,7 @@ from weakref import WeakSet
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
-from eth_typing import BlockNumber, ChecksumAddress
+from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.exceptions import ContractLogicError
@@ -37,6 +37,7 @@ from degenbot.registry.all_pools import pool_registry
 from degenbot.types import (
     AbstractArbitrage,
     AbstractLiquidityPool,
+    BlockNumber,
     BoundedCache,
     ChainId,
     Message,
@@ -202,9 +203,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             chain_id if chain_id is not None else connection_manager.default_chain_id
         )
         w3 = connection_manager.get_web3(self.chain_id)
-        state_block = (
-            cast("BlockNumber", state_block) if state_block is not None else w3.eth.block_number
-        )
+        state_block = state_block if state_block is not None else w3.eth.block_number
         self._initial_state_block = state_block
         self._state_view_address = get_checksum_address(state_view_address)
 
@@ -391,7 +390,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         word_position: int,
         tick_bitmap: dict[int, UniswapV4BitmapAtWord],
         tick_data: dict[int, UniswapV4LiquidityAtTick],
-        block_number: int | None = None,
+        block_number: BlockNumber | None = None,
     ) -> None:
         """
         Update the supplied tick bitmap with initialized tick values within a specified word
@@ -926,7 +925,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
     def auto_update(
         self,
-        block_number: int | None = None,
+        block_number: BlockNumber | None = None,
         silent: bool = True,
     ) -> None:
         """
@@ -944,11 +943,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             state_updated = False
 
             w3 = connection_manager.get_web3(self.chain_id)
-            block_number = (
-                cast("BlockNumber", block_number)
-                if block_number is not None
-                else w3.eth.get_block_number()
-            )
+            block_number = block_number if block_number is not None else w3.eth.get_block_number()
 
             _slot0, _liquidity = self._get_state_values(w3=w3, state_block=block_number)
             _sqrt_price_x96 = _slot0.sqrt_price_x96
@@ -1004,7 +999,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             )
 
         with self._state_lock:
-            state_block = cast("BlockNumber", update.block_number)
+            state_block = update.block_number
 
             state = dataclasses.replace(
                 self.state,
@@ -1041,7 +1036,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             return
 
         with self._state_lock:
-            state_block = cast("BlockNumber", update.block_number)
+            state_block = update.block_number
 
             # The tick bitmap and tick data dictionaries are copies, so they can be freely modified
             # without corrupting states for previous blocks
@@ -1224,7 +1219,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
     def discard_states_before_block(
         self,
-        block: int,
+        block: BlockNumber,
     ) -> None:
         """
         Discard states recorded prior to a target block.
@@ -1248,7 +1243,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
     def restore_state_before_block(
         self,
-        block: int,
+        block: BlockNumber,
     ) -> None:
         """
         Restore the last pool state recorded prior to a target block.

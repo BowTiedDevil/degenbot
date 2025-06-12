@@ -1,9 +1,8 @@
 import pickle
 from fractions import Fraction
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import pytest
-from eth_typing import BlockNumber
 from hexbytes import HexBytes
 
 import degenbot.uniswap.deployments
@@ -34,6 +33,8 @@ from degenbot.uniswap.v2_liquidity_pool import UnregisteredLiquidityPool
 
 if TYPE_CHECKING:
     from web3.contract.contract import Contract
+
+    from degenbot.types import BlockNumber
 
 UNISWAP_V2_ROUTER02 = get_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
@@ -540,7 +541,7 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
         address=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
         reserves_token0=16027096956,
         reserves_token1=2602647332090181827846,
-        block=cast("BlockNumber", 17_650_000),
+        block=17_650_000,
     )
 
     assert (
@@ -607,7 +608,6 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000: 
 
     # Provide some dummy updates, then simulate a reorg back to the starting state
     for block_number in range(first_update_block, last_update_block + 1):
-        block_number = cast("BlockNumber", block_number)
         assert block_number not in expected_block_states
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.external_update(
             update=UniswapV2PoolExternalUpdate(
@@ -679,7 +679,6 @@ def test_discard_before_finalized(
 
     # Provide some dummy updates, then simulate a reorg back to the starting state
     for block_number in range(first_update_block, last_update_block + 1):
-        block_number = cast("BlockNumber", block_number)
         assert block_number not in expected_block_states
 
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.external_update(
@@ -846,7 +845,7 @@ def test_simulations_with_override(
         initial_state=pool_state_override,
         final_state=UniswapV2PoolState(
             address=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
-            block=cast("BlockNumber", 17_600_000),
+            block=17_600_000,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
             + 8000000000,
             reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1
@@ -869,7 +868,7 @@ def test_simulations_with_override(
         initial_state=pool_state_override,
         final_state=UniswapV2PoolState(
             address=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.address,
-            block=cast("BlockNumber", 17_600_000),
+            block=17_600_000,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
             + 13752842264,
             reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1
@@ -966,7 +965,7 @@ def test_late_update(
     ):
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.external_update(
             update=UniswapV2PoolExternalUpdate(
-                block_number=BlockNumber(block_number),
+                block_number=block_number,
                 reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
                 + block_number * 10,
                 reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1
@@ -978,9 +977,8 @@ def test_late_update(
     with pytest.raises(ExternalUpdateError):
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.external_update(
             update=UniswapV2PoolExternalUpdate(
-                block_number=BlockNumber(
-                    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block - 1
-                ),
+                block_number=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block
+                - 1,
                 reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0
                 + 1,
                 reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1
@@ -991,9 +989,8 @@ def test_late_update(
     # Send a duplicate update
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.external_update(
         update=UniswapV2PoolExternalUpdate(
-            block_number=BlockNumber(
-                ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block + 1
-            ),
+            block_number=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.update_block
+            + 1,
             reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token0,
             reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000.reserves_token1,
         )

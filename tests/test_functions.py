@@ -1,5 +1,5 @@
 import pytest
-from eth_typing import BlockNumber, Hash32, HexStr
+from eth_typing import Hash32, HexStr
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
@@ -15,6 +15,7 @@ from degenbot.functions import (
     next_base_fee,
     raw_call,
 )
+from degenbot.types import BlockNumber
 
 
 def test_extract_argument_types_from_function_prototype():
@@ -148,24 +149,25 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
     safe_block = get_number_for_block_identifier("safe", w3)
     finalized_block = get_number_for_block_identifier("finalized", w3)
 
-    assert isinstance(latest_block, int)
-    assert isinstance(earliest_block, int)
-    assert isinstance(pending_block, int)
-    assert isinstance(safe_block, int)
-    assert isinstance(finalized_block, int)
+    assert BlockNumber.__value__ is int
+    assert isinstance(latest_block, BlockNumber.__value__)
+    assert isinstance(earliest_block, BlockNumber.__value__)
+    assert isinstance(pending_block, BlockNumber.__value__)
+    assert isinstance(safe_block, BlockNumber.__value__)
+    assert isinstance(finalized_block, BlockNumber.__value__)
 
     assert latest_block != earliest_block != pending_block != safe_block != finalized_block
 
     # BlockNumber
     assert isinstance(
-        get_number_for_block_identifier(BlockNumber(1), w3),
-        int,
+        get_number_for_block_identifier(1, w3),
+        BlockNumber.__value__,
     )
 
     # Hash32
     assert isinstance(
         get_number_for_block_identifier(Hash32((1).to_bytes(length=32, byteorder="big")), w3),
-        int,
+        BlockNumber.__value__,
     )
 
     # HexStr
@@ -173,14 +175,14 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
         get_number_for_block_identifier(
             HexStr("0x" + (128).to_bytes(32, byteorder="big").hex()), w3
         ),
-        int,
+        BlockNumber.__value__,
     )
 
     # HexBytes
-    assert isinstance(get_number_for_block_identifier(HexBytes(1), w3), int)
+    assert isinstance(get_number_for_block_identifier(HexBytes(1), w3), BlockNumber.__value__)
 
     # int
-    assert isinstance(get_number_for_block_identifier(1, w3), int)
+    assert isinstance(get_number_for_block_identifier(1, w3), BlockNumber.__value__)
 
     for invalid_tag in ["Latest", "latest ", "next", "previous"]:
         with pytest.raises(DegenbotValueError):

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakSet
 
 import eth_abi.abi
-from eth_typing import BlockNumber, ChecksumAddress
+from eth_typing import ChecksumAddress
 from web3 import Web3
 from web3.types import BlockIdentifier
 
@@ -38,6 +38,7 @@ from degenbot.registry.all_pools import pool_registry
 from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
 from degenbot.types import (
     AbstractLiquidityPool,
+    BlockNumber,
     BoundedCache,
     ChainId,
     Message,
@@ -65,7 +66,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         *,
         chain_id: ChainId | None = None,
         deployer_address: str | None = None,
-        state_block: int | None = None,
+        state_block: BlockNumber | None = None,
         verify_address: bool = True,
         silent: bool = False,
         state_cache_depth: int = 8,
@@ -74,7 +75,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
-        state_block = BlockNumber(state_block) if state_block is not None else w3.eth.block_number
+        state_block = state_block if state_block is not None else w3.eth.block_number
 
         self.factory, (token0, token1), self.stable, fee, (reserves0, reserves1) = (
             self.get_factory_tokens_stable_reserves_batched(w3=w3, state_block=state_block)
@@ -190,7 +191,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
     def auto_update(
         self,
-        block_number: int | None = None,
+        block_number: BlockNumber | None = None,
         silent: bool = True,
     ) -> None:
         """
@@ -206,9 +207,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
             state_updated = False
             w3 = self.w3
-            block_number = (
-                w3.eth.get_block_number() if block_number is None else BlockNumber(block_number)
-            )
+            block_number = block_number if block_number is not None else w3.eth.get_block_number()
 
             reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
 
@@ -430,7 +429,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
     def get_factory_tokens_stable_reserves_batched(
         self,
         w3: Web3,
-        state_block: int,
+        state_block: BlockNumber,
     ) -> tuple[
         ChecksumAddress,  # factory
         tuple[ChecksumAddress, ChecksumAddress],  # tokens

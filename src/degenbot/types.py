@@ -4,12 +4,13 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol, Self
 from weakref import WeakSet, WeakValueDictionary
 
-from eth_typing import BlockNumber, ChecksumAddress
+from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
 from degenbot.cache import get_checksum_address
 
 type ChainId = int
+type BlockNumber = int
 
 
 class Message:

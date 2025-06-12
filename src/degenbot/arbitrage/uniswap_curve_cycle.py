@@ -35,6 +35,7 @@ from degenbot.logging import logger
 from degenbot.types import (
     AbstractArbitrage,
     AbstractLiquidityPool,
+    BlockNumber,
     Message,
     PoolStateMessage,
     Publisher,
@@ -186,7 +187,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
         self,
         token_in_quantity: int,
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState],
-        block_number: int | None = None,
+        block_number: BlockNumber | None = None,
     ) -> tuple[CurveOrUniswapSwapAmount, ...]:
         """
         Generate inputs for all swaps along the arbitrage path, starting with the specified amount
@@ -387,7 +388,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
     def _calculate(
         self,
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState],
-        block_number: int | None = None,
+        block_number: BlockNumber | None = None,
     ) -> ArbitrageCalculationResult:
         """
         Calculate the optimal arbitrage profit using the maximum input as an upper bound.

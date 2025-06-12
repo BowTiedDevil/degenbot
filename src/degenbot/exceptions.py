@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING, Any
 
 from eth_typing import ChecksumAddress
 
+from degenbot.types import BlockNumber
+
 if TYPE_CHECKING:
     from degenbot.uniswap.v4_liquidity_pool import Hooks
 
@@ -202,7 +204,7 @@ class NoPoolStateAvailable(LiquidityPoolError):
     This can occur, e.g. if a pool was created in a block at or after a re-organization.
     """
 
-    def __init__(self, block: int) -> None:
+    def __init__(self, block: BlockNumber) -> None:
         super().__init__(message=f"No pool state known prior to block {block}")
 
 

@@ -8,7 +8,7 @@ from weakref import WeakSet
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
-from eth_typing import BlockIdentifier, BlockNumber, ChecksumAddress
+from eth_typing import BlockIdentifier, ChecksumAddress
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
@@ -31,6 +31,7 @@ from degenbot.registry.all_pools import pool_registry
 from degenbot.types import (
     AbstractArbitrage,
     AbstractLiquidityPool,
+    BlockNumber,
     BoundedCache,
     ChainId,
     Message,
@@ -100,7 +101,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         deployer_address: str | None = None,
         init_hash: str | None = None,
         fee: Fraction | Iterable[Fraction] | None = None,
-        state_block: int | None = None,
+        state_block: BlockNumber | None = None,
         verify_address: bool = True,
         silent: bool = False,
         state_cache_depth: int = 8,
@@ -140,9 +141,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
-        state_block = (
-            cast("BlockNumber", state_block) if state_block is not None else w3.eth.block_number
-        )
+        state_block = state_block if state_block is not None else w3.eth.block_number
 
         try:
             self.factory, (token0, token1), (reserves0, reserves1) = (
@@ -261,7 +260,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
     def get_factory_tokens_reserves_batched(
         self,
         w3: Web3,
-        state_block: int,
+        state_block: BlockNumber,
     ) -> tuple[
         ChecksumAddress,  # factory
         tuple[ChecksumAddress, ChecksumAddress],  # tokens
@@ -354,7 +353,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
     def auto_update(
         self,
-        block_number: int | None = None,
+        block_number: BlockNumber | None = None,
         silent: bool = True,
     ) -> None:
         """
@@ -371,11 +370,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
             state_updated = False
             w3 = self.w3
-            block_number = (
-                w3.eth.get_block_number()
-                if block_number is None
-                else cast("BlockNumber", block_number)
-            )
+            block_number = block_number if block_number is not None else w3.eth.get_block_number()
             reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
 
             if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
@@ -647,7 +642,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
         return reserves_token0, reserves_token1
 
-    def discard_states_before_block(self, block: int) -> None:
+    def discard_states_before_block(self, block: BlockNumber) -> None:
         """
         Discard states recorded prior to a target block.
         """
@@ -670,7 +665,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
     def restore_state_before_block(
         self,
-        block: int,
+        block: BlockNumber,
     ) -> None:
         """
         Restore the last pool state recorded prior to a target block.

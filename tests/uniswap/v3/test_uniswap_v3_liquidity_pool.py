@@ -1,10 +1,10 @@
 import pathlib
 import pickle
-from typing import Any, cast
+from typing import Any
 
 import pydantic_core
 import pytest
-from eth_typing import BlockNumber, ChainId
+from eth_typing import ChainId
 from hexbytes import HexBytes
 from web3.exceptions import ContractLogicError
 
@@ -690,7 +690,7 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None
             tick=257907,
             tick_bitmap=lp.tick_bitmap,
             tick_data=lp.tick_data,
-            block=cast("BlockNumber", 17_600_000),
+            block=17_600_000,
         ),
     )
 
@@ -724,7 +724,7 @@ def test_simulations(wbtc_weth_v3_lp_at_block_17_600_000: UniswapV3Pool) -> None
             tick=257906,
             tick_bitmap=lp.tick_bitmap,
             tick_data=lp.tick_data,
-            block=cast("BlockNumber", 17_600_000),
+            block=17_600_000,
         ),
     )
 

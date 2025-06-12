@@ -1,4 +1,3 @@
-from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -12,9 +11,6 @@ from degenbot.uniswap.types import (
     UniswapV3LiquidityEvent,
 )
 from degenbot.uniswap.v3_snapshot import LiquidityMap, UniswapV3LiquiditySnapshot
-
-if TYPE_CHECKING:
-    from eth_typing import BlockNumber
 
 EMPTY_SNAPSHOT_FILENAME = "tests/uniswap/v3/empty_v3_liquidity_snapshot.json"
 EMPTY_SNAPSHOT_BLOCK = (
@@ -36,7 +32,7 @@ def first_250_blocks_snapshot(
     set_web3(fork_mainnet_full.w3)
     snapshot = UniswapV3LiquiditySnapshot(EMPTY_SNAPSHOT_FILENAME)
     snapshot.fetch_new_events(
-        to_block=cast("BlockNumber", EMPTY_SNAPSHOT_BLOCK + 250), blocks_per_request=50
+        to_block=EMPTY_SNAPSHOT_BLOCK + 250, blocks_per_request=50
     )
     return snapshot
 
