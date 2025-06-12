@@ -179,7 +179,6 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         self._state_cache = BoundedCache(max_items=state_cache_depth)
         self._state_cache[self.update_block] = self.state
 
-        deployer_address = None
         try:
             # Use degenbot deployment values if available
             factory_deployment = FACTORY_DEPLOYMENTS[self.chain_id][self.factory]
@@ -193,7 +192,9 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                 init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
             )
 
-        self.deployer = deployer_address if deployer_address is not None else self.factory
+        self.deployer = (
+            get_checksum_address(deployer_address) if deployer_address is not None else self.factory
+        )
 
         match fee:
             case Iterable():
