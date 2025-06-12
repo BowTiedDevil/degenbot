@@ -3,9 +3,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import aiohttp
-import eth_account.datastructures
-import eth_account.messages
-import eth_account.signers.local
+import eth_account
 import pydantic
 from eth_typing import HexStr
 
