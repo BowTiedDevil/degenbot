@@ -3,7 +3,7 @@ import dataclasses
 from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Self, TypedDict, cast
 from weakref import WeakSet
 
 import eth_abi.abi
@@ -84,6 +84,17 @@ if TYPE_CHECKING:
 
 type Token0Amount = int
 type Token1Amount = int
+
+
+class UniswapV3LiquidityAtTickAsDict(TypedDict):
+    block: int
+    liquidity_gross: int
+    liquidity_net: int
+
+
+class UniswapV3BitmapAtWordAsDict(TypedDict):
+    bitmap: int
+    block: int
 
 
 class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
@@ -176,8 +187,16 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         chain_id: ChainId | None = None,
         deployer_address: str | None = None,
         init_hash: str | None = None,
-        tick_data: dict[int, dict[str, Any] | UniswapV3LiquidityAtTick] | None = None,
-        tick_bitmap: dict[int, dict[str, Any] | UniswapV3BitmapAtWord] | None = None,
+        tick_bitmap: dict[
+            int | str,
+            UniswapV3BitmapAtWordAsDict | UniswapV3BitmapAtWord,
+        ]
+        | None = None,
+        tick_data: dict[
+            int | str,
+            UniswapV3LiquidityAtTickAsDict | UniswapV3LiquidityAtTick,
+        ]
+        | None = None,
         state_block: BlockNumber | None = None,
         verify_address: bool = True,
         silent: bool = False,
@@ -249,40 +268,31 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         # If liquidity info was not provided, treat the mapping as sparse
         self.sparse_liquidity_map = tick_bitmap is None or tick_data is None
 
-        _tick_bitmap = {}
-        _tick_data = {}
+        _tick_bitmap = (
+            {}
+            if tick_bitmap is None
+            else {
+                int(word): (
+                    bitmap_at_word
+                    if isinstance(bitmap_at_word, UniswapV3BitmapAtWord)
+                    else UniswapV3BitmapAtWord(**bitmap_at_word)
+                )
+                for word, bitmap_at_word in tick_bitmap.items()
+            }
+        )
 
-        if tick_bitmap is not None:
-            # transform dict to UniswapV3BitmapAtWord
-            _tick_bitmap.update(
-                {
-                    int(word): (
-                        UniswapV3BitmapAtWord(**bitmap_at_word)
-                        if not isinstance(
-                            bitmap_at_word,
-                            UniswapV3BitmapAtWord,
-                        )
-                        else bitmap_at_word
-                    )
-                    for word, bitmap_at_word in tick_bitmap.items()
-                }
-            )
-
-        if tick_data is not None:
-            _tick_data.update(
-                {
-                    int(tick): (
-                        # transform dict to LiquidityAtTick
-                        UniswapV3LiquidityAtTick(**liquidity_at_tick)
-                        if not isinstance(
-                            liquidity_at_tick,
-                            UniswapV3LiquidityAtTick,
-                        )
-                        else liquidity_at_tick
-                    )
-                    for tick, liquidity_at_tick in tick_data.items()
-                }
-            )
+        _tick_data = (
+            {}
+            if tick_data is None
+            else {
+                int(tick): (
+                    liquidity_at_tick
+                    if isinstance(liquidity_at_tick, UniswapV3LiquidityAtTick)
+                    else UniswapV3LiquidityAtTick(**liquidity_at_tick)
+                )
+                for tick, liquidity_at_tick in tick_data.items()
+            }
+        )
 
         if tick_bitmap is None and tick_data is None:
             word, _ = get_tick_word_and_bit_position(tick=_tick, tick_spacing=self.tick_spacing)
