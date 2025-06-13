@@ -266,7 +266,7 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
             token_in_amount = int(amount_multiplier * basepool.balances[token_index])
             amount_array[token_index] = token_in_amount
             print(f"{token_in_amount=}")
-            calc_token_amount = basepool._calc_token_amount(
+            calc_token_amount = basepool.calc_token_amount(
                 amounts=amount_array,
                 deposit=True,
             )

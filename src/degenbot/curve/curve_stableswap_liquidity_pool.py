@@ -777,7 +777,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         return scaled_a
 
-    def _calc_token_amount(
+    def calc_token_amount(
         self,
         amounts: Sequence[int],
         deposit: bool,
@@ -824,7 +824,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         return diff * token_amount // d_0
 
-    def _calc_withdraw_one_coin(
+    def calc_withdraw_one_coin(
         self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, ...]:
         block_number = (
@@ -892,7 +892,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         self._cached_scaled_redemption_price[block_number] = result
         return result
 
-    def _get_dy(
+    def get_dy(
         self,
         i: int,
         j: int,
@@ -1465,7 +1465,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 base_inputs[base_i] = dx
                 # Token amount transformed to underlying "dollars"
                 x = (
-                    self.base_pool._calc_token_amount(
+                    self.base_pool.calc_token_amount(
                         amounts=base_inputs,
                         deposit=True,
                         block_identifier=block_number,
@@ -1482,7 +1482,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 x += xp[max_coin]
             else:
                 # If both are from the base pool
-                return self.base_pool._get_dy(
+                return self.base_pool.get_dy(
                     i=base_i,
                     j=base_j,
                     dx=dx,
@@ -1502,7 +1502,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if base_j >= 0:
                 # j is from BasePool
                 # The fee is already accounted for
-                dy, *_ = self.base_pool._calc_withdraw_one_coin(
+                dy, *_ = self.base_pool.calc_withdraw_one_coin(
                     _token_amount=dy * self.PRECISION // vp_rate,
                     i=base_j,
                     block_identifier=block_number,
@@ -1541,7 +1541,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 base_inputs[base_i] = dx
                 # Token amount transformed to underlying "dollars"
                 x = (
-                    self.base_pool._calc_token_amount(
+                    self.base_pool.calc_token_amount(
                         amounts=base_inputs,
                         deposit=True,
                         block_identifier=block_number,
@@ -1558,7 +1558,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 x += xp[max_coin]
             else:
                 # If both are from the base pool
-                return self.base_pool._get_dy(
+                return self.base_pool.get_dy(
                     i=base_i,
                     j=base_j,
                     dx=dx,
@@ -1577,7 +1577,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             else:
                 # j is from BasePool
                 # The fee is already accounted for
-                dy, *_ = self.base_pool._calc_withdraw_one_coin(
+                dy, *_ = self.base_pool.calc_withdraw_one_coin(
                     _token_amount=dy * self.PRECISION // rates[1],
                     i=base_j,
                     block_identifier=block_number,
@@ -1615,7 +1615,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             base_inputs[base_i] = dx
             # Token amount transformed to underlying "dollars"
             x = (
-                self.base_pool._calc_token_amount(
+                self.base_pool.calc_token_amount(
                     amounts=base_inputs,
                     deposit=True,
                     block_identifier=block_number,
@@ -1630,7 +1630,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             x += xp[max_coin]
         else:
             # If both are from the base pool
-            return self.base_pool._get_dy(
+            return self.base_pool.get_dy(
                 i=base_i,
                 j=base_j,
                 dx=dx,
@@ -1649,7 +1649,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         else:
             # j is from BasePool
             # The fee is already accounted for
-            dy, *_ = self.base_pool._calc_withdraw_one_coin(
+            dy, *_ = self.base_pool.calc_withdraw_one_coin(
                 _token_amount=dy * self.PRECISION // vp_rate,
                 i=base_j,
                 block_identifier=block_number,
@@ -2305,7 +2305,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if any(balance == 0 for balance in self.balances):
                 raise NoLiquidity(message="One or more of the tokens has a zero balance.")
 
-            return self._get_dy(
+            return self.get_dy(
                 i=self.tokens.index(token_in),
                 j=self.tokens.index(token_out),
                 dx=token_in_quantity,
