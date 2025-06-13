@@ -4,19 +4,16 @@ import shutil
 import socket
 import subprocess
 from collections.abc import AsyncIterator, Iterable
-from queue import Empty, Queue
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import tenacity
-import watchdog.events
-import watchdog.observers
 from eth_typing import HexAddress
 from web3 import AsyncIPCProvider, AsyncWeb3, IPCProvider, Web3
 from web3.middleware import Middleware
 from web3.types import RPCEndpoint
 
 from degenbot.constants import MAX_UINT256
-from degenbot.exceptions import DegenbotError, DegenbotValueError, InvalidUint256
+from degenbot.exceptions import DegenbotValueError, InvalidUint256
 from degenbot.logging import logger
 from degenbot.types import BlockNumber, ChainId
 
@@ -114,7 +111,7 @@ class AnvilFork:
             self.ipc_provider_kwargs = {"cache_allowed_requests": True}
 
         self._anvil_command = build_anvil_command(path_to_anvil=path_to_anvil)
-        self._setup_process_and_w3(anvil_command=self._anvil_command, ipc_path=self.ipc_path)
+        self._setup_process_and_w3(anvil_command=self._anvil_command)
 
         self._block_number = (
             fork_block if fork_block is not None else self.w3.eth.get_block_number()
@@ -170,52 +167,33 @@ class AnvilFork:
             _, _port = sock.getsockname()
             return cast("int", _port)
 
-    def _setup_process_and_w3(self, anvil_command: list[str], ipc_path: pathlib.Path) -> None:
+    def _setup_process_and_w3(self, anvil_command: list[str]) -> None:
         """
-        Launch an Anvil subprocess, waiting for the IPC file to be created.
+        Launch an Anvil subprocess and wait for a `Web3` connection to be established with its
+        IPC socket.
         """
 
-        class WaitForIPCReady(watchdog.events.FileSystemEventHandler):
-            def __init__(self, queue: Queue[Any], ipc_filename: str):
-                self.queue = queue
-                self.ipc_filename = ipc_filename
-
-            def on_created(self, event: watchdog.events.FileSystemEvent) -> None:
-                if event.src_path == self.ipc_filename:  # pragma: no branch
-                    self.queue.put(object())
-
-        queue: Queue[Any] = Queue()
-        observer = watchdog.observers.Observer()
-        observer.schedule(
-            event_handler=WaitForIPCReady(
-                queue=queue,
-                ipc_filename=str(self.ipc_filename),
-            ),
-            path=str(ipc_path),
-        )
-        observer.start()
         process = subprocess.Popen(anvil_command)
 
-        try:
-            queue.get(timeout=30)
-        except Empty:
-            process.terminate()
-            process.wait(timeout=10)
-            raise DegenbotError(message="Timeout waiting for Anvil process to start.") from None
-        finally:
-            observer.stop()
-            observer.join()
-
-        self._process = process
-        self.w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
-
-        for attempt in tenacity.Retrying(
+        filename_check_with_retry = tenacity.Retrying(
             stop=tenacity.stop_after_delay(10),
-            wait=tenacity.wait_fixed(0.1),
+            wait=tenacity.wait_fixed(0.01),
             retry=tenacity.retry_if_result(lambda result: result is False),
-        ):
-            with attempt:
-                attempt.retry_state.set_result(self.w3.is_connected())
+            reraise=True,
+        )
+        filename_check_with_retry(fn=self.ipc_filename.exists)
+
+        w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
+        w3_connected_check_with_retry = tenacity.Retrying(
+            stop=tenacity.stop_after_delay(10),
+            wait=tenacity.wait_fixed(0.01),
+            retry=tenacity.retry_if_result(lambda result: result is False),
+            reraise=True,
+        )
+        w3_connected_check_with_retry(fn=w3.is_connected)
+
+        self.w3 = w3
+        self._process = process
 
     def __del__(self) -> None:
         if hasattr(self, "_process"):
@@ -286,10 +264,7 @@ class AnvilFork:
         if transaction_hash is not None:
             self._anvil_command.append(f"--fork-transaction-hash={transaction_hash}")
 
-        self._setup_process_and_w3(
-            anvil_command=self._anvil_command,
-            ipc_path=self.ipc_path,
-        )
+        self._setup_process_and_w3(anvil_command=self._anvil_command)
 
     def return_to_snapshot(self, snapshot_id: int) -> bool:
         if snapshot_id < 0:
