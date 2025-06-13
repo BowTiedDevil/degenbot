@@ -49,12 +49,7 @@ from degenbot.uniswap.v3_functions import (
     exchange_rate_from_sqrt_price_x96,
     get_tick_word_and_bit_position,
 )
-from degenbot.uniswap.v3_types import (
-    BitmapWord,
-    Liquidity,
-    Pip,
-    Tick,
-)
+from degenbot.uniswap.v3_types import BitmapWord, Liquidity, LiquidityGross, LiquidityNet, Pip, Tick
 from degenbot.uniswap.v4_libraries.swap_math import (
     MAX_SWAP_FEE,
     compute_swap_step,
@@ -403,7 +398,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             block_number = w3.eth.get_block_number()
 
         _tick_bitmap: int = 0
-        _tick_data: list[tuple[int, int, int]] = []
+        _tick_data: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
         _tick_bitmap = self.get_tick_bitmap_at_word(
             w3=w3,
             word_position=word_position,

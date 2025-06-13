@@ -13,6 +13,8 @@ from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128, Va
 type BitmapWord = int
 type Pip = int  # V3 pool fees are expressed in pips equaling one hundredth of 1%
 type Liquidity = int
+type LiquidityGross = int
+type LiquidityNet = int
 type SqrtPriceX96 = int
 type Tick = int
 type TickBitmap = int

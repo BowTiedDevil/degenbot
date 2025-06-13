@@ -65,7 +65,9 @@ from degenbot.uniswap.v3_libraries.tick_math import (
 from degenbot.uniswap.v3_types import (
     InitializedTickMap,
     Liquidity,
+    LiquidityGross,
     LiquidityMap,
+    LiquidityNet,
     SqrtPriceX96,
     Tick,
     TickBitmap,
@@ -600,7 +602,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             block_number = w3.eth.get_block_number()
 
         _tick_bitmap: int = 0
-        _tick_data: list[tuple[int, int, int]] = []
+        _tick_data: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
         _tick_bitmap = self.get_tick_bitmap_at_word(
             w3=w3,
             word_position=word_position,
