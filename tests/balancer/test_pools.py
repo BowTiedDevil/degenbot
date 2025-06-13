@@ -77,11 +77,6 @@ def test_calculations(
         abi=BALANCER_V2_QUERY_CONTRACT_ABI,
     )
 
-    pool_contract = fork_mainnet_full.w3.eth.contract(
-        address=BALANCER_V2_WETH_BAL_POOL_ADDRESS,
-        abi=BALANCER_V2_WETH_BAL_POOL_ABI,
-    )
-
     vault_contract = fork_mainnet_full.w3.eth.contract(
         address=BALANCER_V2_VAULT_ADDRESS,
         abi=BALANCER_V2_VAULT_ABI,
