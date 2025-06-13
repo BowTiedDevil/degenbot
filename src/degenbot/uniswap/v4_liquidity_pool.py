@@ -164,11 +164,6 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
     FEE_DENOMINATOR = 1_000_000
 
     @dataclasses.dataclass(slots=True)
-    class SwapCache:
-        liquidity_start: int
-        tick_cumulative: int
-
-    @dataclasses.dataclass(slots=True)
     class SwapState:
         amount_specified_remaining: int
         amount_calculated: int
