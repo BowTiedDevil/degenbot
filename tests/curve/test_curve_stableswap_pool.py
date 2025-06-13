@@ -238,7 +238,7 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
         for amount_multiplier in [0.01, 0.10, 0.25]:
             token_in_amount = int(amount_multiplier * basepool.balances[token_index])
             print(f"Withdrawing {token_in_amount} {token}")
-            calc_amount, *_ = basepool._calc_withdraw_one_coin(
+            calc_amount, *_ = basepool.calc_withdraw_one_coin(
                 _token_amount=token_in_amount, i=token_index
             )
 
