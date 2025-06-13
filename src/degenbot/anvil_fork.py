@@ -36,7 +36,7 @@ class AnvilFork:
     def __init__(
         self,
         fork_url: str,
-        fork_block: int | None = None,
+        fork_block: BlockNumber | None = None,
         fork_transaction_hash: str | None = None,
         hardfork: str = "latest",
         chain_id: ChainId | None = None,

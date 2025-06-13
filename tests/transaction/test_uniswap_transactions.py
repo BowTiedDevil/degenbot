@@ -7,6 +7,7 @@ from degenbot import AnvilFork
 from degenbot.config import set_web3
 from degenbot.exceptions import DeadlineExpired, TransactionError, UnknownRouterAddress
 from degenbot.transaction.uniswap_transaction import UniswapTransaction
+from degenbot.types import BlockNumber
 
 
 @pytest.mark.parametrize(
@@ -751,7 +752,7 @@ def test_v2_router_transactions(
 )
 def test_v3_router_transactions(
     fork_mainnet_archive: AnvilFork,
-    block_number: int,
+    block_number: BlockNumber,
     tx_dict: dict[str, Any],
     exception_match: str | None,
 ):

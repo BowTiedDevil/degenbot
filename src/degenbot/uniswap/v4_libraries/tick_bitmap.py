@@ -29,7 +29,7 @@ def flip_tick(
     sparse: bool,
     tick: ValidatedTick,
     tick_spacing: ValidatedInt24,
-    update_block: int,
+    update_block: BlockNumber,
 ) -> None:
     """
     Flips the initialized state for a given tick from false to true, or vice versa

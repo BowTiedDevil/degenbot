@@ -2006,7 +2006,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                         block_identifier=block_number,
                     ),
                 )
-                old_block: int
+                old_block: BlockNumber
                 (old_block,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
@@ -2093,7 +2093,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                     block_identifier=block_number,
                 ),
             )
-            old_block: int
+            old_block: BlockNumber
             (old_block,) = eth_abi.abi.decode(
                 types=["uint256"],
                 data=w3.eth.call(
