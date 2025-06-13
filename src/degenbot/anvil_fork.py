@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Iterable
 from queue import Empty, Queue
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+import tenacity
 import watchdog.events
 import watchdog.observers
 from eth_typing import HexAddress
@@ -207,7 +208,14 @@ class AnvilFork:
 
         self._process = process
         self.w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
-        assert self.w3.is_connected()
+
+        for attempt in tenacity.Retrying(
+            stop=tenacity.stop_after_delay(10),
+            wait=tenacity.wait_fixed(0.1),
+            retry=tenacity.retry_if_result(lambda result: result is False),
+        ):
+            with attempt:
+                attempt.retry_state.set_result(self.w3.is_connected())
 
     def __del__(self) -> None:
         if hasattr(self, "_process"):
