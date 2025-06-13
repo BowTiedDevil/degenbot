@@ -72,7 +72,7 @@ def eth_usdc_v4(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
 
 @pytest.fixture
 def testing_pools() -> list[dict[str, Any]]:
-    pools = pydantic_core.from_json(
+    pools: list[dict[str, Any]] = pydantic_core.from_json(
         pathlib.Path("tests/uniswap/v4/first_200_uniswap_v4_pools.json").read_bytes()
     )
     assert len(pools) == 200
