@@ -10,11 +10,11 @@ requires-python = ">=3.12"
 dependencies = [
     "cchecksum >=0.2.6, <1",
     "cvxpy >= 1.6, <2",
-    "pydantic >= 2.10, <3",
+    "pydantic >= 2.11, <3",
     "scipy >=1.15, <1.16",
     "tenacity >= 9.1.2, <10",
     "watchdog >= 6.0, <7",
-    "web3 >=7.9, <8",
+    "web3 >=7.12, <8",
 ]
 license = {text = "MIT"}
 classifiers = [
