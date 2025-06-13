@@ -70,7 +70,6 @@ from degenbot.uniswap.v3_types import (
     LiquidityNet,
     SqrtPriceX96,
     Tick,
-    TickBitmap,
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
