@@ -34,21 +34,22 @@ from .sushiswap.managers import SushiswapV2PoolManager, SushiswapV3PoolManager
 from .sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
 from .transaction.uniswap_transaction import UniswapTransaction
 from .uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
-from .uniswap.types import (
+from .uniswap.v2_liquidity_pool import UniswapV2Pool
+from .uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
+)
+from .uniswap.v3_liquidity_pool import UniswapV3Pool
+from .uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
+from .uniswap.v3_types import (
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
-    UniswapV4PoolExternalUpdate,
-    UniswapV4PoolState,
 )
-from .uniswap.v2_liquidity_pool import UniswapV2Pool
-from .uniswap.v3_liquidity_pool import UniswapV3Pool
-from .uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from .uniswap.v4_liquidity_pool import UniswapV4Pool
 from .uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
+from .uniswap.v4_types import UniswapV4PoolExternalUpdate, UniswapV4PoolState
 
 __all__ = (
     "AerodromeV2Pool",

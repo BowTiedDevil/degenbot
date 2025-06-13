@@ -6,9 +6,15 @@ from pydantic import SkipValidation, validate_call
 
 from degenbot.constants import MAX_UINT8
 from degenbot.exceptions import LiquidityMapWordMissing
-from degenbot.uniswap.types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
+from degenbot.functions import evm_divide
+from degenbot.types import BlockNumber
 from degenbot.uniswap.v3_libraries.bit_math import least_significant_bit, most_significant_bit
 from degenbot.uniswap.v3_libraries.tick_math import ValidatedTick
+from degenbot.uniswap.v3_types import (
+    InitializedTickMap,
+    UniswapV3BitmapAtWord,
+    UniswapV3LiquidityAtTick,
+)
 from degenbot.validation.evm_values import ValidatedInt16, ValidatedInt24
 
 # NOTE: Pydantic validation is applied to certain functions to enforce the built-in integer range
@@ -19,7 +25,7 @@ from degenbot.validation.evm_values import ValidatedInt16, ValidatedInt24
 
 @validate_call
 def flip_tick(
-    tick_bitmap: SkipValidation[dict[int, UniswapV3BitmapAtWord]],
+    tick_bitmap: SkipValidation[InitializedTickMap],
     sparse: bool,
     tick: ValidatedTick,
     tick_spacing: ValidatedInt24,
@@ -31,7 +37,7 @@ def flip_tick(
 
     assert tick % tick_spacing == 0, "Invalid tick or spacing"
 
-    word_pos, bit_pos = position(-(-tick // tick_spacing) if tick < 0 else tick // tick_spacing)
+    word_pos, bit_pos = position(evm_divide(tick, tick_spacing))
 
     if word_pos not in tick_bitmap:
         if sparse:

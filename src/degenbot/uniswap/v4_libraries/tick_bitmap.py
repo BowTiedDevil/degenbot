@@ -5,8 +5,11 @@ from itertools import count
 from pydantic import SkipValidation, validate_call
 
 from degenbot.exceptions import LiquidityMapWordMissing
-from degenbot.uniswap.types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
+from degenbot.functions import evm_divide
+from degenbot.types import BlockNumber
 from degenbot.uniswap.v3_libraries.tick_math import ValidatedTick
+from degenbot.uniswap.v3_types import Tick
+from degenbot.uniswap.v4_types import InitializedTickMap, LiquidityMap, UniswapV4BitmapAtWord
 from degenbot.validation.evm_values import ValidatedInt16, ValidatedInt24
 
 
@@ -25,7 +28,7 @@ def compress(
 
 @validate_call
 def flip_tick(
-    tick_bitmap: SkipValidation[dict[int, UniswapV4BitmapAtWord]],
+    tick_bitmap: SkipValidation[InitializedTickMap],
     sparse: bool,
     tick: ValidatedTick,
     tick_spacing: ValidatedInt24,
@@ -37,7 +40,7 @@ def flip_tick(
 
     assert tick % tick_spacing == 0, "Invalid tick or spacing"
 
-    word_pos, bit_pos = position(-(-tick // tick_spacing) if tick < 0 else tick // tick_spacing)
+    word_pos, bit_pos = position(evm_divide(tick, tick_spacing))
 
     if word_pos not in tick_bitmap:
         if sparse:
@@ -56,11 +59,11 @@ def flip_tick(
 
 @validate_call
 def gen_ticks(
-    tick_data: SkipValidation[dict[int, UniswapV4LiquidityAtTick]],
+    tick_data: SkipValidation[LiquidityMap],
     starting_tick: ValidatedTick,
     tick_spacing: ValidatedInt24,
     less_than_or_equal: bool,
-) -> Generator[tuple[int, bool], None, None]:
+) -> Generator[tuple[Tick, bool], None, None]:
     """
     Yields ticks from the set of all possible ticks at 32 byte (256 bit) word boundaries and
     initialized ticks found in the liquidity mapping. The ticks are yielded in descending order when
@@ -138,8 +141,8 @@ def gen_ticks(
 
 @validate_call(validate_return=True)
 def next_initialized_tick_within_one_word(
-    tick_bitmap: SkipValidation[dict[int, UniswapV4BitmapAtWord]],
-    tick_data: SkipValidation[dict[int, UniswapV4LiquidityAtTick]],
+    tick_bitmap: SkipValidation[InitializedTickMap],
+    tick_data: SkipValidation[LiquidityMap],
     tick: ValidatedTick,
     tick_spacing: ValidatedInt24,
     less_than_or_equal: bool,

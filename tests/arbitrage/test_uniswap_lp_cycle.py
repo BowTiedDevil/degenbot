@@ -28,10 +28,12 @@ from degenbot.arbitrage.types import (
 from degenbot.cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import ArbitrageError, DegenbotValueError, RateOfExchangeBelowMinimum
-from degenbot.uniswap.types import (
+from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolState,
     UniswapV2PoolStateUpdated,
+)
+from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,

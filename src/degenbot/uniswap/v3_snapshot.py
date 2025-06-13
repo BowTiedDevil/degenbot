@@ -18,7 +18,7 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.types import BlockNumber, ChainId
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
-from degenbot.uniswap.types import (
+from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3LiquidityEvent,

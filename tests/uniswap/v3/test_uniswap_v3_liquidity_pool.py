@@ -28,14 +28,6 @@ from degenbot.uniswap.deployments import (
     UniswapFactoryDeployment,
     UniswapV3ExchangeDeployment,
 )
-from degenbot.uniswap.types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
-    UniswapV3PoolExternalUpdate,
-    UniswapV3PoolLiquidityMappingUpdate,
-    UniswapV3PoolSimulationResult,
-    UniswapV3PoolState,
-)
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries.tick_math import (
     MAX_SQRT_RATIO,
@@ -44,6 +36,14 @@ from degenbot.uniswap.v3_libraries.tick_math import (
     MIN_TICK,
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v3_types import (
+    UniswapV3BitmapAtWord,
+    UniswapV3LiquidityAtTick,
+    UniswapV3PoolExternalUpdate,
+    UniswapV3PoolLiquidityMappingUpdate,
+    UniswapV3PoolSimulationResult,
+    UniswapV3PoolState,
+)
 
 WBTC_WETH_V3_POOL_ADDRESS = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 WETH_CONTRACT_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")

@@ -10,11 +10,12 @@ from hexbytes import HexBytes
 
 from degenbot.cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
-from degenbot.functions import create2_address
+from degenbot.functions import create2_address, evm_divide
 from degenbot.uniswap.v3_libraries import tick_bitmap
+from degenbot.uniswap.v3_types import Pip
 
 
-def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
+def decode_v3_path(path: bytes) -> list[ChecksumAddress | Pip]:
     """
     Decode the `path` bytes used by the Uniswap V3 Router/Router2 contracts. `path` is a
     close-packed encoding of 20 byte pool addresses, interleaved with 3 byte fees.
@@ -25,7 +26,7 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
     def _extract_address(chunk: bytes) -> ChecksumAddress:
         return get_checksum_address(chunk)
 
-    def _extract_fee(chunk: bytes) -> int:
+    def _extract_fee(chunk: bytes) -> Pip:
         return int.from_bytes(chunk, byteorder="big")
 
     if any(
@@ -41,7 +42,7 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
             int,
             Callable[
                 [bytes],
-                ChecksumAddress | int,
+                ChecksumAddress | Pip,
             ],
         ]
     ] = cycle(
@@ -52,7 +53,7 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | int]:
     )
 
     path_offset = 0
-    decoded_path: list[ChecksumAddress | int] = []
+    decoded_path: list[ChecksumAddress | Pip] = []
     while path_offset != len(path):
         byte_length, extraction_func = next(chunk_length_and_decoder_function)
         path_chunk = HexBytes(path[path_offset : path_offset + byte_length])
@@ -75,7 +76,7 @@ def exchange_rate_from_sqrt_price_x96(sqrt_price_x96: int) -> Fraction:
 def generate_v3_pool_address(
     deployer_address: str | bytes,
     token_addresses: Iterable[str | bytes],
-    fee: int,
+    fee: Pip,
     init_hash: str | bytes,
 ) -> ChecksumAddress:
     """
@@ -108,4 +109,4 @@ def get_tick_word_and_bit_position(
     """
     Retrieves the word and bit position for the tick, accounting for tick spacing.
     """
-    return tick_bitmap.position(-(-tick // tick_spacing) if tick < 0 else tick // tick_spacing)
+    return tick_bitmap.position(evm_divide(tick, tick_spacing))

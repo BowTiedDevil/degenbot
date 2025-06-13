@@ -41,16 +41,12 @@ from degenbot.uniswap.deployments import (
     UniswapV3ExchangeDeployment,
 )
 from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
-from degenbot.uniswap.types import (
-    UniswapV2PoolSimulationResult,
-    UniswapV2PoolState,
-    UniswapV3PoolSimulationResult,
-    UniswapV3PoolState,
-)
 from degenbot.uniswap.v2_functions import generate_v2_pool_address, get_v2_pools_from_token_path
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool, UnregisteredLiquidityPool
+from degenbot.uniswap.v2_types import UniswapV2PoolSimulationResult, UniswapV2PoolState
 from degenbot.uniswap.v3_functions import decode_v3_path
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v3_types import UniswapV3PoolSimulationResult, UniswapV3PoolState
 
 
 class UniversalRouterSpecialAddress:

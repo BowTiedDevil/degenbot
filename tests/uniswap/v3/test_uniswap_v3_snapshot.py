@@ -1,16 +1,15 @@
-
 import pytest
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.cache import get_checksum_address
 from degenbot.config import set_web3
 from degenbot.uniswap.managers import UniswapV3PoolManager
-from degenbot.uniswap.types import (
+from degenbot.uniswap.v3_snapshot import LiquidityMap, UniswapV3LiquiditySnapshot
+from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3LiquidityEvent,
 )
-from degenbot.uniswap.v3_snapshot import LiquidityMap, UniswapV3LiquiditySnapshot
 
 EMPTY_SNAPSHOT_FILENAME = "tests/uniswap/v3/empty_v3_liquidity_snapshot.json"
 EMPTY_SNAPSHOT_BLOCK = (
@@ -31,9 +30,7 @@ def first_250_blocks_snapshot(
 ) -> UniswapV3LiquiditySnapshot:
     set_web3(fork_mainnet_full.w3)
     snapshot = UniswapV3LiquiditySnapshot(EMPTY_SNAPSHOT_FILENAME)
-    snapshot.fetch_new_events(
-        to_block=EMPTY_SNAPSHOT_BLOCK + 250, blocks_per_request=50
-    )
+    snapshot.fetch_new_events(to_block=EMPTY_SNAPSHOT_BLOCK + 250, blocks_per_request=50)
     return snapshot
 
 

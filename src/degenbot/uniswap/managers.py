@@ -14,7 +14,7 @@ from degenbot.exceptions import (
 )
 from degenbot.logging import logger
 from degenbot.registry.all_pools import pool_registry
-from degenbot.types import AbstractPoolManager
+from degenbot.types import AbstractPoolManager, ChainId
 from degenbot.uniswap.deployments import (
     FACTORY_DEPLOYMENTS,
     UniswapV2ExchangeDeployment,
@@ -25,8 +25,6 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_functions import generate_v3_pool_address
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
-
-type ChainId = int
 
 
 class UniswapV2PoolManager(AbstractPoolManager):

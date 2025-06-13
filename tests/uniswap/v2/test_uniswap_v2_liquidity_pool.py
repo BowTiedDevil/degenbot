@@ -24,12 +24,12 @@ from degenbot.pancakeswap.pools import PancakeV2Pool
 from degenbot.registry.all_pools import pool_registry
 from degenbot.uniswap.abi import UNISWAP_V2_ROUTER_ABI
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
-from degenbot.uniswap.types import (
+from degenbot.uniswap.v2_liquidity_pool import UnregisteredLiquidityPool
+from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
-from degenbot.uniswap.v2_liquidity_pool import UnregisteredLiquidityPool
 
 if TYPE_CHECKING:
     from web3.contract.contract import Contract

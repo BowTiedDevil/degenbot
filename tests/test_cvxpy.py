@@ -23,8 +23,8 @@ from degenbot.cache import get_checksum_address
 from degenbot.config import set_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
-from degenbot.uniswap.types import UniswapV2PoolState
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"

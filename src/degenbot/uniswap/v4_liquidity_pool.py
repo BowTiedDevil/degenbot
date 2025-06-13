@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from enum import Enum
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Final, NewType, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 from weakref import WeakSet
 
 import eth_abi.abi
@@ -45,18 +45,15 @@ from degenbot.types import (
     PublisherMixin,
     Subscriber,
 )
-from degenbot.uniswap.types import (
-    UniswapV4BitmapAtWord,
-    UniswapV4LiquidityAtTick,
-    UniswapV4PoolExternalUpdate,
-    UniswapV4PoolKey,
-    UniswapV4PoolLiquidityMappingUpdate,
-    UniswapV4PoolState,
-    UniswapV4PoolStateUpdated,
-)
 from degenbot.uniswap.v3_functions import (
     exchange_rate_from_sqrt_price_x96,
     get_tick_word_and_bit_position,
+)
+from degenbot.uniswap.v3_types import (
+    BitmapWord,
+    Liquidity,
+    Pip,
+    Tick,
 )
 from degenbot.uniswap.v4_libraries.swap_math import (
     MAX_SWAP_FEE,
@@ -75,6 +72,19 @@ from degenbot.uniswap.v4_libraries.tick_math import (
     MIN_TICK,
     get_sqrt_price_at_tick,
     get_tick_at_sqrt_price,
+)
+from degenbot.uniswap.v4_types import (
+    FeeToProtocol,
+    InitializedTickMap,
+    LiquidityMap,
+    SwapFee,
+    UniswapV4BitmapAtWord,
+    UniswapV4LiquidityAtTick,
+    UniswapV4PoolExternalUpdate,
+    UniswapV4PoolKey,
+    UniswapV4PoolLiquidityMappingUpdate,
+    UniswapV4PoolState,
+    UniswapV4PoolStateUpdated,
 )
 
 
@@ -113,11 +123,6 @@ class Slot0:
     tick: int
     protocol_fee: ProtocolFee
     lp_fee: int
-
-
-FeeToProtocol = NewType("FeeToProtocol", int)
-SwapFee = NewType("SwapFee", int)
-Liquidity = NewType("Liquidity", int)
 
 
 PIPS_DENOMINATOR = 1_000_000
@@ -189,12 +194,12 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         pool_manager_address: str,
         state_view_address: str,
         tokens: Sequence[str],
-        fee: int,
+        fee: Pip,
         tick_spacing: int,
         hook_address: str | None = None,
         chain_id: ChainId | None = None,
-        tick_data: dict[int, dict[str, Any] | UniswapV4LiquidityAtTick] | None = None,
-        tick_bitmap: dict[int, dict[str, Any] | UniswapV4BitmapAtWord] | None = None,
+        tick_data: dict[Tick, dict[str, Any] | UniswapV4LiquidityAtTick] | None = None,
+        tick_bitmap: dict[BitmapWord, dict[str, Any] | UniswapV4BitmapAtWord] | None = None,
         state_block: BlockNumber | int | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
@@ -388,8 +393,8 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
     def _fetch_and_populate_initialized_ticks(
         self,
         word_position: int,
-        tick_bitmap: dict[int, UniswapV4BitmapAtWord],
-        tick_data: dict[int, UniswapV4LiquidityAtTick],
+        tick_bitmap: InitializedTickMap,
+        tick_data: LiquidityMap,
         block_number: BlockNumber | None = None,
     ) -> None:
         """
@@ -466,6 +471,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         price, tick, protocol_fee, lp_fee = eth_abi.abi.decode(
             types=self.SLOT0_STRUCT_TYPES, data=cast("HexBytes", slot0)
         )
+        liquidity: int
         (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", liquidity))
 
         # Extract the two fees from the packed protocol fee
@@ -563,8 +569,8 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         if amount_specified == 0:
             return (
                 SwapDelta(currency0=0, currency1=0),
-                cast("FeeToProtocol", 0),
-                cast("SwapFee", swap_fee),
+                0,
+                swap_fee,
                 result,
             )
 
@@ -705,12 +711,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 currency1=amount_calculated,
             )
 
-        return (
-            swap_delta,
-            cast("FeeToProtocol", protocol_fee),
-            cast("SwapFee", swap_fee),
-            result,
-        )
+        return swap_delta, protocol_fee, swap_fee, result
 
     def _notify_subscribers(self: Publisher, message: Message) -> None:
         for subscriber in self._subscribers:
@@ -898,11 +899,11 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         return self.state.tick
 
     @property
-    def tick_bitmap(self) -> dict[int, UniswapV4BitmapAtWord]:
+    def tick_bitmap(self) -> InitializedTickMap:
         return self.state.tick_bitmap.copy()
 
     @property
-    def tick_data(self) -> dict[int, UniswapV4LiquidityAtTick]:
+    def tick_data(self) -> LiquidityMap:
         return self.state.tick_data.copy()
 
     @property

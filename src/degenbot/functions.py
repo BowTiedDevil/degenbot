@@ -113,6 +113,13 @@ def eip_191_hash(message: str, private_key: str) -> str:
     return result.signature.to_0x_hex()
 
 
+def evm_divide(numerator: int, denominator: int) -> int:
+    """
+    Perform integer division, rounding towards zero to match the EVM behavior.
+    """
+    return -(-numerator // denominator) if numerator < 0 else numerator // denominator
+
+
 def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3) -> BlockNumber:
     match identifier:
         case None:

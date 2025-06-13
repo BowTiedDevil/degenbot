@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from eth_typing import ChecksumAddress
 
 from degenbot.types import AbstractExchangeDeployment, AbstractPoolState, PoolStateMessage
-from degenbot.uniswap.types import UniswapV2PoolExternalUpdate, UniswapV3PoolState
+from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
+from degenbot.uniswap.v3_types import UniswapV3PoolState
 
 
 @dataclass(slots=True, frozen=True)

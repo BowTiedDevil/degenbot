@@ -40,16 +40,16 @@ from degenbot.types import (
     Subscriber,
 )
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
-from degenbot.uniswap.types import (
-    UniswapV2PoolExternalUpdate,
-    UniswapV2PoolSimulationResult,
-    UniswapV2PoolState,
-    UniswapV2PoolStateUpdated,
-)
 from degenbot.uniswap.v2_functions import (
     constant_product_calc_exact_in,
     constant_product_calc_exact_out,
     generate_v2_pool_address,
+)
+from degenbot.uniswap.v2_types import (
+    UniswapV2PoolExternalUpdate,
+    UniswapV2PoolSimulationResult,
+    UniswapV2PoolState,
+    UniswapV2PoolStateUpdated,
 )
 
 if TYPE_CHECKING:

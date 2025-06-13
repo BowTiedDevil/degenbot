@@ -43,15 +43,6 @@ from degenbot.types import (
     Subscriber,
 )
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV3ExchangeDeployment
-from degenbot.uniswap.types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
-    UniswapV3PoolExternalUpdate,
-    UniswapV3PoolLiquidityMappingUpdate,
-    UniswapV3PoolSimulationResult,
-    UniswapV3PoolState,
-    UniswapV3PoolStateUpdated,
-)
 from degenbot.uniswap.v3_functions import (
     exchange_rate_from_sqrt_price_x96,
     generate_v3_pool_address,
@@ -71,9 +62,27 @@ from degenbot.uniswap.v3_libraries.tick_math import (
     get_sqrt_ratio_at_tick,
     get_tick_at_sqrt_ratio,
 )
+from degenbot.uniswap.v3_types import (
+    InitializedTickMap,
+    Liquidity,
+    LiquidityMap,
+    SqrtPriceX96,
+    Tick,
+    TickBitmap,
+    UniswapV3BitmapAtWord,
+    UniswapV3LiquidityAtTick,
+    UniswapV3PoolExternalUpdate,
+    UniswapV3PoolLiquidityMappingUpdate,
+    UniswapV3PoolSimulationResult,
+    UniswapV3PoolState,
+    UniswapV3PoolStateUpdated,
+)
 
 if TYPE_CHECKING:
     from hexbytes import HexBytes
+
+type Token0Amount = int
+type Token1Amount = int
 
 
 class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
@@ -349,7 +358,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         amount_specified: int,
         sqrt_price_limit_x96: int,
         override_state: PoolState | None = None,
-    ) -> tuple[int, int, int, int, int]:
+    ) -> tuple[Token0Amount, Token1Amount, SqrtPriceX96, Liquidity, Tick]:
         """
         This function is ported and adapted from the UniswapV3Pool.sol contract at
         https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol
@@ -581,8 +590,8 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
     def _fetch_and_populate_initialized_ticks(
         self,
         word_position: int,
-        tick_bitmap: dict[int, UniswapV3BitmapAtWord],
-        tick_data: dict[int, UniswapV3LiquidityAtTick],
+        tick_bitmap: InitializedTickMap,
+        tick_data: LiquidityMap,
         block_number: BlockNumber | None = None,
     ) -> None:
         """
@@ -759,11 +768,11 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         return self.state.tick
 
     @property
-    def tick_bitmap(self) -> dict[int, UniswapV3BitmapAtWord]:
+    def tick_bitmap(self) -> InitializedTickMap:
         return self.state.tick_bitmap.copy()
 
     @property
-    def tick_data(self) -> dict[int, UniswapV3LiquidityAtTick]:
+    def tick_data(self) -> LiquidityMap:
         return self.state.tick_data.copy()
 
     @property
@@ -864,7 +873,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         token_in: Erc20Token,
         token_in_quantity: int,
         override_state: PoolState | None = None,
-    ) -> int:
+    ) -> Token0Amount | Token1Amount:
         """
         This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
         to calculate the number of tokens withdrawn (out) for a given number of tokens deposited

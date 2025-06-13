@@ -16,8 +16,9 @@ from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError, DegenbotValueError, NoLiquidity
 from degenbot.managers.erc20_token_manager import Erc20TokenManager
-from degenbot.uniswap.types import UniswapV2PoolState, UniswapV3PoolState
+from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
+from degenbot.uniswap.v3_types import UniswapV3PoolState
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"

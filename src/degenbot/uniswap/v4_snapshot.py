@@ -17,7 +17,7 @@ from degenbot.config import connection_manager
 from degenbot.logging import logger
 from degenbot.types import BlockNumber, ChainId
 from degenbot.uniswap.abi import UNISWAP_V4_POOL_MANAGER_ABI
-from degenbot.uniswap.types import (
+from degenbot.uniswap.v4_types import (
     UniswapV4BitmapAtWord,
     UniswapV4LiquidityAtTick,
     UniswapV4LiquidityEvent,

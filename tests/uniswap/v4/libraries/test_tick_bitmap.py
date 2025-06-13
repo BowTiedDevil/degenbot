@@ -2,6 +2,7 @@ import hypothesis
 import hypothesis.strategies
 
 from degenbot.constants import MAX_INT24, MIN_INT24
+from degenbot.functions import evm_divide
 from degenbot.uniswap.v4_libraries.tick_bitmap import compress, position
 
 # All tests ported from Foundry tests on Uniswap V4 Github repo
@@ -21,8 +22,7 @@ from degenbot.uniswap.v4_libraries.tick_bitmap import compress, position
 def test_fuzz_compress(tick: int, tick_spacing: int):
     hypothesis.assume(tick_spacing >= 1)
 
-    # emulate the EVM division behavior, which floors toward zero
-    compressed = -(-tick // tick_spacing) if tick < 0 else tick // tick_spacing
+    compressed = evm_divide(tick, tick_spacing)
     if tick < 0 and tick % tick_spacing != 0:
         compressed -= 1
 

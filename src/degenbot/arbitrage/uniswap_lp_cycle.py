@@ -41,15 +41,17 @@ from degenbot.types import (
     Subscriber,
     TextMessage,
 )
-from degenbot.uniswap.types import UniswapV2PoolState, UniswapV3PoolState, UniswapV4PoolState
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_math import (
     MAX_SQRT_RATIO,
     MIN_SQRT_RATIO,
     get_sqrt_ratio_at_tick,
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v3_types import UniswapV3PoolState
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.uniswap.v4_types import UniswapV4PoolState
 
 type Pool = AerodromeV2Pool | AerodromeV3Pool | UniswapV2Pool | UniswapV3Pool | UniswapV4Pool
 type PoolState = AerodromeV2PoolState | UniswapV2PoolState | UniswapV3PoolState | UniswapV4PoolState

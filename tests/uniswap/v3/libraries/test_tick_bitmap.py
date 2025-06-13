@@ -3,7 +3,6 @@ from typing import Any
 import pytest
 
 from degenbot.exceptions import LiquidityMapWordMissing
-from degenbot.uniswap.types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
 from degenbot.uniswap.v3_libraries.tick_bitmap import (
     flip_tick,
     next_initialized_tick_within_one_word,
@@ -11,6 +10,7 @@ from degenbot.uniswap.v3_libraries.tick_bitmap import (
     position,
 )
 from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK
+from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/TickBitmap.spec.ts
