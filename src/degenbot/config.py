@@ -60,15 +60,11 @@ class ConnectionManager:
     @property
     def default_chain_id(self) -> ChainId:
         if self._default_chain_id is None:
-            raise DegenbotValueError(message="A default chain ID has not been provided.")
+            raise DegenbotValueError(message="A default Web3 instance has not been registered.")
         return self._default_chain_id
 
 
 def get_web3() -> web3.Web3:
-    if connection_manager.default_chain_id is None:
-        raise DegenbotValueError(
-            message="A default Web3 instance has not been registered."
-        ) from None
     return connection_manager.get_web3(chain_id=connection_manager.default_chain_id)
 
 
