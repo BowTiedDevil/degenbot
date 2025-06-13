@@ -256,7 +256,8 @@ def test_arb_calculation_pre_checks_v3(fork_mainnet_full: AnvilFork, weth: Erc20
                 ),
             }
         )
-    # Test with uninitialized pool (empty tick_bitmap)
+
+    # Test with no-liquidity pool (empty tick_bitmap)
     with pytest.raises(
         NoLiquidity,
         match=f"V3 pool {uniswap_v3_weth_usdc_lp.address} has no liquidity \\(empty bitmap\\)",
