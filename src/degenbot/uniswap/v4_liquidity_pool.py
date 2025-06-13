@@ -498,9 +498,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         protocol_fee &= 0xFFF
         lp_fee &= 0xFFFFFF
         numerator = protocol_fee * lp_fee
-        return SwapFee(
-            (protocol_fee + lp_fee) - (numerator // PIPS_DENOMINATOR),
-        )
+        return (protocol_fee + lp_fee) - (numerator // PIPS_DENOMINATOR)
 
     def _calculate_swap(
         self,
