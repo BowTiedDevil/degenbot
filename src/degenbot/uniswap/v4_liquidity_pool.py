@@ -174,9 +174,9 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
     @dataclasses.dataclass(slots=True)
     class StepComputations:
         sqrt_price_start_x96: int = 0
+        sqrt_price_next_x96: int = 0
         tick_next: int = 0
         initialized: bool = False
-        sqrt_price_next_x96: int = 0
         amount_in: int = 0
         amount_out: int = 0
         fee_amount: int = 0
