@@ -1511,8 +1511,8 @@ class UniswapTransaction(AbstractTransaction):
                                         token0_address,
                                         token1_address,
                                     ),
-                                    deployer_address=self.v2_pool_manager._factory_address,
-                                    init_hash=self.v2_pool_manager._pool_init_hash,
+                                    deployer_address=self.v2_pool_manager.factory_address,
+                                    init_hash=self.v2_pool_manager.pool_init_hash,
                                 ),
                                 tokens=[
                                     token_manager.get_erc20token(

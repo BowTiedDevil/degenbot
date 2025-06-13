@@ -65,7 +65,7 @@ class ConnectionManager:
 
 
 def get_web3() -> web3.Web3:
-    if connection_manager._default_chain_id is None:
+    if connection_manager.default_chain_id is None:
         raise DegenbotValueError(
             message="A default Web3 instance has not been registered."
         ) from None
@@ -80,7 +80,7 @@ def set_web3(w3: web3.Web3, optimize_middleware: bool = True) -> None:
 
 
 def get_async_web3() -> web3.AsyncWeb3:
-    if async_connection_manager._default_chain_id is None:
+    if async_connection_manager.default_chain_id is None:
         raise DegenbotValueError(
             message="A default Web3 instance has not been registered."
         ) from None

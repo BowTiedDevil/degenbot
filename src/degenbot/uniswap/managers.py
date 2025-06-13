@@ -85,8 +85,8 @@ class UniswapV2PoolManager(AbstractPoolManager):
 
         self._lock = Lock()
         self._chain_id = chain_id
-        self._factory_address = factory_address
         self._deployer_address = deployer_address
+        self._factory_address = factory_address
         self._pool_init_hash = pool_init_hash
         self._tracked_pools = {}
         self._untracked_pools: set[ChecksumAddress] = set()
@@ -97,6 +97,18 @@ class UniswapV2PoolManager(AbstractPoolManager):
     @property
     def chain_id(self) -> ChainId:
         return self._chain_id
+
+    @property
+    def deployer_address(self) -> ChecksumAddress:
+        return self._deployer_address
+
+    @property
+    def factory_address(self) -> ChecksumAddress:
+        return self._factory_address
+
+    @property
+    def pool_init_hash(self) -> str:
+        return self._pool_init_hash
 
     def _add_tracked_pool(self, pool_helper: Pool) -> None:
         with self._lock:
