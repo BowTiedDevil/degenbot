@@ -31,16 +31,18 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         *,
         chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
-        verify_address: bool = True,
+        verify_address: bool = False,
         silent: bool = False,
     ):
         self.address = get_checksum_address(address)
 
+        if verify_address:
+            # TODO: add functionality
+            raise NotImplementedError
+
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
-        state_block = (
-            state_block if state_block is not None else w3.eth.block_number
-        )
+        state_block = state_block if state_block is not None else w3.eth.block_number
 
         pool_id: bytes
         (pool_id,) = eth_abi.abi.decode(
@@ -167,7 +169,11 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         assert token_in_quantity - fee_amount == amount_new
 
+        if override_state is not None:
+            # TODO: add functionality
+            raise NotImplementedError
         balances = list(self.balances)  # make a copy because _upscale_array will mutate it
+
         _upscale_array(amounts=balances, scaling_factors=self.scaling_factors)
         amount_new = _upscale(amount_new, scaling_factor=self.scaling_factors[token_in_index])
 
