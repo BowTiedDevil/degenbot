@@ -460,14 +460,16 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 )
             )
 
-            slot0, liquidity = batch.execute()
+            slot0_result, liquidity_result = batch.execute()
 
         protocol_fee: int
         price, tick, protocol_fee, lp_fee = eth_abi.abi.decode(
-            types=self.SLOT0_STRUCT_TYPES, data=cast("HexBytes", slot0)
+            types=self.SLOT0_STRUCT_TYPES, data=cast("HexBytes", slot0_result)
         )
         liquidity: int
-        (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", liquidity))
+        (liquidity,) = eth_abi.abi.decode(
+            types=["uint256"], data=cast("HexBytes", liquidity_result)
+        )
 
         # Extract the two fees from the packed protocol fee
         # ref: https://github.com/Uniswap/v4-core/blob/main/src/types/Slot0.sol
@@ -485,7 +487,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 ),
                 lp_fee=cast("int", lp_fee),
             ),
-            Liquidity(cast("int", liquidity)),
+            liquidity,
         )
 
     def _calculate_swap_fee(
