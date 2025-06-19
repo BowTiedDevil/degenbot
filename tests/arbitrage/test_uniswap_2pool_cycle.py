@@ -18,6 +18,7 @@ from degenbot.cache import get_checksum_address
 from degenbot.erc20_token import EtherPlaceholder
 from degenbot.exceptions import PossibleInaccurateResult, RateOfExchangeBelowMinimum
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from tests.conftest import env_values
 
 # Token addresses
 NATIVE_ADDRESS = get_checksum_address("0x0000000000000000000000000000000000000000")
@@ -411,8 +412,6 @@ def test_v4_v2_dai_arb_base(fork_base_archive: AnvilFork):
 
     assert v4_amount_in < v2_amount_out
 
-    from tests.conftest import env_values
-
     v4_v2_executor_contract_address = get_checksum_address(
         env_values["V4_V2_EXECUTOR_CONTRACT_ADDRESS"]
     )
@@ -508,9 +507,6 @@ def test_v2_v4_usdc_arb_base(fork_base_archive: AnvilFork):
     v2_amount_out = max(v2_swap_amount.amounts_out)
 
     assert v4_amount_in < v2_amount_out
-
-    # Send the transaction on the fork
-    from tests.conftest import env_values
 
     v4_v2_executor_contract_address = get_checksum_address(
         env_values["V4_V2_EXECUTOR_CONTRACT_ADDRESS"]
