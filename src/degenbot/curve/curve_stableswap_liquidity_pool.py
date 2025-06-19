@@ -2316,7 +2316,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if TYPE_CHECKING:
                 assert self.base_pool is not None
 
-            # TODO: see if any of these checks are unnecessary (partial zero balanece OK?)
+            # TODO: see if any of these checks are unnecessary (partial zero balance OK?)
             if any(balance == 0 for balance in self.base_pool.balances):
                 raise NoLiquidity(message="One or more of the base pool tokens has a zero balance.")
             if any(balance == 0 for balance in self.balances):
