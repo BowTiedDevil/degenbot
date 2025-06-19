@@ -7,6 +7,7 @@ CURVE_V1_METAREGISTRY_ADDRESS = get_checksum_address("0xF98B45FA17DE75FB1aD0e7aF
 BROKEN_CURVE_V1_POOLS = tuple(
     get_checksum_address(pool_address)
     for pool_address in (
+        "0x110cc323ca53d622469EdD217387E2E6B33F1dF5",
         "0x1F71f05CF491595652378Fe94B7820344A551B8E",
         "0x28B0Cf1baFB707F2c6826d10caf6DD901a6540C5",
         "0x3685646651FCcC80e7CCE7Ee24c5f47Ed9b434ac",
