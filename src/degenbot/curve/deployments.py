@@ -1,4 +1,3 @@
-# ruff:noqa:C408
 from degenbot.cache import get_checksum_address
 
 CURVE_V1_REGISTRY_ADDRESS = get_checksum_address("0x90E00ACe148ca3b23Ac1bC8C240C2a7Dd9c2d7f5")
