@@ -87,19 +87,19 @@ TOKEN_AMOUNT_MULTIPLIERS = [
 ]
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def dai(fork_mainnet_full: AnvilFork) -> Erc20Token:
     set_web3(fork_mainnet_full.w3)
     return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(DAI_CONTRACT_ADDRESS)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def wbtc(fork_mainnet_full: AnvilFork) -> Erc20Token:
     set_web3(fork_mainnet_full.w3)
     return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WBTC_CONTRACT_ADDRESS)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
     set_web3(fork_mainnet_full.w3)
     return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WETH_CONTRACT_ADDRESS)
