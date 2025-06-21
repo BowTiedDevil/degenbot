@@ -1,6 +1,6 @@
-import contextlib
 import pathlib
-from collections.abc import Generator
+from collections import defaultdict
+from collections.abc import Callable, Generator
 from typing import Any, TypedDict, cast
 
 import pydantic_core
@@ -26,6 +26,20 @@ from degenbot.uniswap.v3_types import (
 )
 
 
+class KeyedDefaultDict[KT, VT](defaultdict[KT, VT]):
+    """
+    defaultdict does not pass the key to the default_factory, so inherit and plug this behavior in.
+    """
+
+    def __init__(self, default_factory: Callable[[KT], VT]):
+        self.default_factory_with_key_as_argument = default_factory
+
+    def __missing__(self, key: KT) -> VT:
+        value = self.default_factory_with_key_as_argument(key)
+        self[key] = value
+        return value
+
+
 class LiquidityMap(TypedDict):
     tick_bitmap: dict[int, UniswapV3BitmapAtWord]
     tick_data: dict[int, UniswapV3LiquidityAtTick]
@@ -41,16 +55,23 @@ class UniswapV3LiquiditySnapshot:
         path: pathlib.Path | str,
         chain_id: ChainId | None = None,
     ):
-        path = pathlib.Path(path).expanduser()
-        assert path.exists()
-
-        self._liquidity_snapshot: dict[ChecksumAddress, LiquidityMap]
-
-        if path.is_file():
-            liquidity_snapshot_as_file: dict[str, Any] = pydantic_core.from_json(path.read_bytes())
-            snapshot_block = liquidity_snapshot_as_file.pop("snapshot_block")
-            self._liquidity_snapshot = {
-                get_checksum_address(pool_address): LiquidityMap(
+        def _get_pool_map(pool_address: ChecksumAddress) -> LiquidityMap:
+            if self._file_snapshot and pool_address in self._file_snapshot:
+                return LiquidityMap(
+                    tick_bitmap={
+                        int(k): UniswapV3BitmapAtWord(**v)
+                        for k, v in self._file_snapshot["tick_bitmap"].items()
+                    },
+                    tick_data={
+                        int(k): UniswapV3LiquidityAtTick(**v)
+                        for k, v in self._file_snapshot["tick_data"].items()
+                    },
+                )
+            if self._dir_path and (
+                (pool_map_file := self._dir_path / f"{pool_address}.json").exists()
+            ):
+                pool_liquidity_snapshot = pydantic_core.from_json(pool_map_file.read_bytes())
+                return LiquidityMap(
                     tick_bitmap={
                         int(k): UniswapV3BitmapAtWord(**v)
                         for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
@@ -60,85 +81,55 @@ class UniswapV3LiquiditySnapshot:
                         for k, v in pool_liquidity_snapshot["tick_data"].items()
                     },
                 )
-                for pool_address, pool_liquidity_snapshot in liquidity_snapshot_as_file.items()
-            }
+
+            return LiquidityMap(
+                tick_bitmap={},
+                tick_data={},
+            )
+
+        path = pathlib.Path(path).expanduser()
+        assert path.exists()
+
+        self.newest_block: BlockNumber
+        self._dir_path: pathlib.Path | None = None
+        self._file_snapshot: dict[str, Any] | None = None
+
+        if path.is_file():
+            self._file_snapshot = pydantic_core.from_json(path.read_bytes())
+            self.newest_block = self._file_snapshot.pop("snapshot_block")
         elif path.is_dir():
+            self._dir_path = path
             metadata_path = path / "_metadata.json"
             assert metadata_path.exists()
-            snapshot_block = pydantic_core.from_json(metadata_path.read_bytes())["block"]
-
-            self._liquidity_snapshot = {}
-            for pool_liquidity_map_file in path.glob("0x*.json"):
-                pool_liquidity_snapshot = pydantic_core.from_json(
-                    pool_liquidity_map_file.read_bytes()
-                )
-                self._liquidity_snapshot[get_checksum_address(pool_liquidity_map_file.stem)] = (
-                    LiquidityMap(
-                        tick_bitmap={
-                            int(k): UniswapV3BitmapAtWord(**v)
-                            for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
-                        },
-                        tick_data={
-                            int(k): UniswapV3LiquidityAtTick(**v)
-                            for k, v in pool_liquidity_snapshot["tick_data"].items()
-                        },
-                    )
-                )
+            self.newest_block = pydantic_core.from_json(metadata_path.read_bytes())["block"]
         else:
             raise DegenbotValueError(message="Cannot identify provided path.")
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        self.newest_block = snapshot_block
 
         logger.info(
-            f"Loaded Uniswap V3 LP snapshot: {len(self._liquidity_snapshot)} pools @ block {self.newest_block}"  # noqa:E501
+            f"Loaded Uniswap V3 LP snapshot: {len(self._file_snapshot) if self._file_snapshot else len(tuple(path.glob('0x*.json')))} pools @ block {self.newest_block}"  # noqa:E501
         )
 
-        self._liquidity_events: dict[ChecksumAddress, list[UniswapV3LiquidityEvent]] = {}
-
-    @property
-    def pools(self) -> Generator[ChecksumAddress]:
-        yield from self._liquidity_snapshot.keys()
+        self._liquidity_events: dict[ChecksumAddress, list[UniswapV3LiquidityEvent]] = defaultdict(
+            list
+        )
+        self._liquidity_snapshot: dict[ChecksumAddress, LiquidityMap] = KeyedDefaultDict(
+            _get_pool_map
+        )
 
     @property
     def chain_id(self) -> int:
         return self._chain_id
 
-    def _add_pool_if_missing(
-        self,
-        pool_address: HexStr,
-    ) -> None:
-        """
-        Create entries for the pool if missing.
-        """
-
-        pool_address = get_checksum_address(pool_address)
-
-        if pool_address not in self._liquidity_events:
-            self._liquidity_events[pool_address] = []
-
-        if pool_address not in self._liquidity_snapshot:
-            self._liquidity_snapshot[pool_address] = LiquidityMap(
-                tick_bitmap={},
-                tick_data={},
-            )
-
-    def clear(
-        self,
-        pool_address: HexStr,
-    ) -> None:
-        """
-        Clear the liquidity mapping and pending events for the pool.
-        """
-
-        pool_address = get_checksum_address(pool_address)
-
-        with contextlib.suppress(KeyError):
-            self._liquidity_snapshot[pool_address]["tick_bitmap"].clear()
-        with contextlib.suppress(KeyError):
-            self._liquidity_snapshot[pool_address]["tick_data"].clear()
-        with contextlib.suppress(KeyError):
-            self._liquidity_events[pool_address].clear()
+    @property
+    def pools(self) -> Generator[ChecksumAddress]:
+        if self._dir_path:
+            for pool_filename in self._dir_path.glob("0x*.json"):
+                yield get_checksum_address(pool_filename.stem)
+        elif self._file_snapshot:
+            for pool_address in self._file_snapshot:
+                yield get_checksum_address(pool_address)
 
     def fetch_new_events(
         self,
@@ -210,8 +201,6 @@ class UniswapV3LiquiditySnapshot:
                     pool_address, liquidity_event = process_liquidity_event_log(
                         event_instance, event_log
                     )
-
-                    self._add_pool_if_missing(pool_address)
                     self._liquidity_events[pool_address].append(liquidity_event)
 
                 if end_block == to_block:
@@ -225,14 +214,11 @@ class UniswapV3LiquiditySnapshot:
         pool_address: HexStr,
     ) -> tuple[UniswapV3PoolLiquidityMappingUpdate, ...]:
         """
-        Consume pending liquidity updates for the pool.
+        Consume pending liquidity updates for the pool, sorted chronologically.
         """
 
-        pool_address = get_checksum_address(pool_address)
-        self._add_pool_if_missing(pool_address)
-
-        pending_events = self._liquidity_events[pool_address]
-        self._liquidity_events[pool_address] = []
+        pending_events = tuple(self._liquidity_events[get_checksum_address(pool_address)])
+        self._liquidity_events[get_checksum_address(pool_address)] = []
 
         # Mint/Burn events must be applied in chronological order to ensure effective liquidity
         # invariant checks. Sort events by block, then by log order within the block.
@@ -253,24 +239,22 @@ class UniswapV3LiquiditySnapshot:
 
     def tick_bitmap(self, pool_address: HexStr) -> dict[int, UniswapV3BitmapAtWord]:
         """
-        Consume the tick bitmaps for the pool.
+        Consume the tick initialization bitmaps for the pool.
         """
 
         pool_address = get_checksum_address(pool_address)
-        self._add_pool_if_missing(pool_address)
-        tick_bitmap = self._liquidity_snapshot[pool_address]["tick_bitmap"].copy()
-        self._liquidity_snapshot[pool_address]["tick_bitmap"].clear()
+        tick_bitmap = self._liquidity_snapshot[pool_address]["tick_bitmap"]
+        self._liquidity_snapshot[pool_address]["tick_bitmap"] = {}
         return tick_bitmap
 
     def tick_data(self, pool_address: HexStr) -> dict[int, UniswapV3LiquidityAtTick]:
         """
-        Consume the tick data for the pool.
+        Consume the liquidity mapping for the pool.
         """
 
         pool_address = get_checksum_address(pool_address)
-        self._add_pool_if_missing(pool_address)
-        tick_data = self._liquidity_snapshot[pool_address]["tick_data"].copy()
-        self._liquidity_snapshot[pool_address]["tick_data"].clear()
+        tick_data = self._liquidity_snapshot[pool_address]["tick_data"]
+        self._liquidity_snapshot[pool_address]["tick_data"] = {}
         return tick_data
 
     def update(
@@ -284,6 +268,5 @@ class UniswapV3LiquiditySnapshot:
         """
 
         pool = get_checksum_address(pool)
-        self._add_pool_if_missing(pool)
         self._liquidity_snapshot[pool]["tick_bitmap"].update(tick_bitmap)
         self._liquidity_snapshot[pool]["tick_data"].update(tick_data)

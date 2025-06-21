@@ -4,7 +4,7 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.cache import get_checksum_address
 from degenbot.config import set_web3
 from degenbot.uniswap.managers import UniswapV3PoolManager
-from degenbot.uniswap.v3_snapshot import LiquidityMap, UniswapV3LiquiditySnapshot
+from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
@@ -45,21 +45,18 @@ def test_fetch_liquidity_events_first_250_blocks(
 ):
     set_web3(fork_mainnet_full.w3)
 
-    empty_snapshot: LiquidityMap = {
-        "tick_bitmap": {},
-        "tick_data": {},
-    }
-
     # Liquidity snapshots for each pool will be empty, since they only reflect the starting
     # liquidity at the initial snapshot block
-    assert first_250_blocks_snapshot._liquidity_snapshot == {
-        "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801": empty_snapshot,
-        "0x6c6Bc977E13Df9b0de53b251522280BB72383700": empty_snapshot,
-        "0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387": empty_snapshot,
-        "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD": empty_snapshot,
-        "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8": empty_snapshot,
-        "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf": empty_snapshot,
-    }
+    for pool in [
+        "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
+        "0x6c6Bc977E13Df9b0de53b251522280BB72383700",
+        "0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387",
+        "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
+        "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8",
+        "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf",
+    ]:
+        assert first_250_blocks_snapshot.tick_bitmap(pool) == {}
+        assert first_250_blocks_snapshot.tick_data(pool) == {}
 
     # Unprocessed events should be found for these pools
     assert first_250_blocks_snapshot._liquidity_events == {
@@ -218,7 +215,7 @@ def test_pool_manager_applies_snapshots(
     )
 
     # Check that the pending events were applied
-    for pool_address in first_250_blocks_snapshot._liquidity_snapshot:
+    for pool_address in first_250_blocks_snapshot.pools:
         pool = pool_manager.get_pool(pool_address)
 
         match pool.address:
@@ -358,5 +355,5 @@ def test_pool_manager_applies_snapshots(
                     assert pool.tick_bitmap[word] == bitmap
 
     # Check that the injected events were removed from the queue
-    for pool_address in first_250_blocks_snapshot._liquidity_events:
-        assert first_250_blocks_snapshot._liquidity_events[pool_address] == []
+    for pool_address in first_250_blocks_snapshot.pools:
+        assert first_250_blocks_snapshot.pending_updates(pool_address) == []
