@@ -19,8 +19,16 @@ class AsyncConnectionManager:
             ) from None
 
     async def register_web3(self, w3: web3.AsyncWeb3, optimize_middleware: bool = True) -> None:
-        if await w3.is_connected() is False:
-            raise DegenbotValueError(message="Web3 instance is not connected.")
+        async_w3_connected_check_with_retry = tenacity.AsyncRetrying(
+            stop=tenacity.stop_after_delay(10),
+            wait=tenacity.wait_exponential_jitter(),
+            retry=tenacity.retry_if_result(lambda result: result is False),
+        )
+        try:
+            await async_w3_connected_check_with_retry(w3.is_connected)
+        except tenacity.RetryError as exc:
+            raise DegenbotValueError(message="Web3 instance is not connected.") from exc
+
         if optimize_middleware:
             w3.middleware_onion.clear()
         self.connections[await w3.eth.chain_id] = w3
@@ -101,8 +109,16 @@ def get_async_web3() -> web3.AsyncWeb3:
 
 
 async def set_async_web3(w3: web3.AsyncWeb3, optimize_middleware: bool = True) -> None:
-    if await w3.is_connected() is False:
-        raise DegenbotValueError(message="Web3 instance is not connected.")
+    async_w3_connected_check_with_retry = tenacity.AsyncRetrying(
+        stop=tenacity.stop_after_delay(10),
+        wait=tenacity.wait_exponential_jitter(),
+        retry=tenacity.retry_if_result(lambda result: result is False),
+    )
+    try:
+        await async_w3_connected_check_with_retry(w3.is_connected)
+    except tenacity.RetryError as exc:
+        raise DegenbotValueError(message="Web3 instance is not connected.") from exc
+
     await async_connection_manager.register_web3(w3, optimize_middleware=optimize_middleware)
     async_connection_manager.set_default_chain(await w3.eth.chain_id)
 
