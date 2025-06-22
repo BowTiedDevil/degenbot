@@ -7,13 +7,14 @@ from collections.abc import AsyncIterator, Iterable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import tenacity
-from eth_typing import HexAddress
+from eth_typing import HexAddress, HexStr
+from hexbytes import HexBytes
 from web3 import AsyncIPCProvider, AsyncWeb3, IPCProvider, Web3
 from web3.middleware import Middleware
 from web3.types import RPCEndpoint
 
 from degenbot.constants import MAX_UINT256
-from degenbot.exceptions import DegenbotValueError, InvalidUint256
+from degenbot.exceptions import DegenbotError, DegenbotValueError, InvalidUint256
 from degenbot.logging import logger
 from degenbot.types import BlockNumber, ChainId
 
@@ -108,7 +109,7 @@ class AnvilFork:
         if ipc_provider_kwargs is not None:
             self.ipc_provider_kwargs = ipc_provider_kwargs
         else:
-            self.ipc_provider_kwargs = {"cache_allowed_requests": True}
+            self.ipc_provider_kwargs = {}
 
         self._anvil_command = build_anvil_command(path_to_anvil=path_to_anvil)
         self._setup_process_and_w3(anvil_command=self._anvil_command)
@@ -175,22 +176,28 @@ class AnvilFork:
 
         process = subprocess.Popen(anvil_command)
 
-        filename_check_with_retry = tenacity.Retrying(
-            stop=tenacity.stop_after_delay(10),
-            wait=tenacity.wait_fixed(0.01),
-            retry=tenacity.retry_if_result(lambda result: result is False),
-            reraise=True,
-        )
-        filename_check_with_retry(fn=self.ipc_filename.exists)
+        try:
+            # Storage I/O should be fast, so use a low fixed wait time
+            filename_check_with_retry = tenacity.Retrying(
+                stop=tenacity.stop_after_delay(10),
+                wait=tenacity.wait_fixed(0.01),
+                retry=tenacity.retry_if_result(lambda result: result is False),
+            )
+            filename_check_with_retry(fn=self.ipc_filename.exists)
+        except tenacity.RetryError as exc:
+            raise DegenbotError(message="Timed out waiting for IPC socket to be created.") from exc
 
-        w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
-        w3_connected_check_with_retry = tenacity.Retrying(
-            stop=tenacity.stop_after_delay(10),
-            wait=tenacity.wait_fixed(0.01),
-            retry=tenacity.retry_if_result(lambda result: result is False),
-            reraise=True,
-        )
-        w3_connected_check_with_retry(fn=w3.is_connected)
+        try:
+            # network I/O is less reliable, so wait with an exponential delay and jitter
+            w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
+            w3_connected_check_with_retry = tenacity.Retrying(
+                stop=tenacity.stop_after_delay(10),
+                wait=tenacity.wait_exponential_jitter(),
+                retry=tenacity.retry_if_result(lambda result: result is False),
+            )
+            w3_connected_check_with_retry(fn=w3.is_connected)
+        except tenacity.RetryError as exc:
+            raise DegenbotError(message="Timed out waiting for Web3 connection.") from exc
 
         self.w3 = w3
         self._process = process
@@ -210,15 +217,10 @@ class AnvilFork:
     @property
     @contextlib.asynccontextmanager
     async def async_w3(self) -> AsyncIterator[AsyncWeb3]:
-        async with AsyncWeb3(
-            AsyncIPCProvider(
-                self.ipc_filename,
-                cache_allowed_requests=True,
-            )
-        ) as async_w3:
+        # TODO: investigate why cache_allowed_requests causes sequential is_connected calls to fail...
+        async with AsyncWeb3(AsyncIPCProvider(self.ipc_filename)) as async_w3:
             if TYPE_CHECKING:
                 assert isinstance(async_w3, AsyncWeb3)
-            async_w3.middleware_onion.clear()
             yield async_w3
 
     def reset(
@@ -324,4 +326,17 @@ class AnvilFork:
                 params=[],
             )["result"],
             16,
+        )
+
+    def set_storage(self, address: HexStr | bytes, position: int, value: HexStr | bytes):
+        self.w3.provider.make_request(
+            method=RPCEndpoint("anvil_setStorageAt"),
+            params=[
+                address,
+                position,
+                (
+                    # Storage value must be padded to 32 bytes
+                    HexBytes(value).hex().zfill(64)
+                ),
+            ],
         )

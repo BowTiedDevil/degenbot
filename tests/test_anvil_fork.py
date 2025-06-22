@@ -55,6 +55,27 @@ def test_set_bytecode():
     assert fork.w3.eth.get_code(VITALIK_ADDRESS) == fake_bytecode
 
 
+def test_set_storage():
+    storage_position = 0
+    new_storage_value = "0x42069"
+    new_storage_value_padded = new_storage_value[2:].zfill(64)
+
+    fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
+    assert (
+        fork.w3.eth.get_storage_at(
+            account=WETH_ADDRESS,
+            position=storage_position,
+        )
+        != new_storage_value_padded
+    )
+    fork.set_storage(WETH_ADDRESS, position=storage_position, value=new_storage_value)
+
+    assert fork.w3.eth.get_storage_at(
+        account=WETH_ADDRESS,
+        position=storage_position,
+    ) == HexBytes(new_storage_value_padded)
+
+
 def test_rpc_methods(fork_mainnet_full: AnvilFork):
     with pytest.raises(InvalidUint256):
         fork_mainnet_full.set_next_base_fee(-1)
