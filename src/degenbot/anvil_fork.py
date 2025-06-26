@@ -328,7 +328,7 @@ class AnvilFork:
             16,
         )
 
-    def set_storage(self, address: HexStr | bytes, position: int, value: HexStr | bytes):
+    def set_storage(self, address: HexStr | bytes, position: int, value: HexStr | bytes) -> None:
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setStorageAt"),
             params=[
