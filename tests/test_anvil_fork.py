@@ -57,17 +57,14 @@ def test_set_bytecode():
 
 def test_set_storage():
     storage_position = 0
-    new_storage_value = "0x42069"
-    new_storage_value_padded = new_storage_value[2:].zfill(64)
+    new_storage_value = HexBytes("0x42069")
+    new_storage_value_padded = new_storage_value.hex().zfill(64)
 
     fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
-    assert (
-        fork.w3.eth.get_storage_at(
-            account=WETH_ADDRESS,
-            position=storage_position,
-        )
-        != new_storage_value_padded
-    )
+    assert fork.w3.eth.get_storage_at(
+        account=WETH_ADDRESS,
+        position=storage_position,
+    ) != HexBytes(new_storage_value_padded)
     fork.set_storage(WETH_ADDRESS, position=storage_position, value=new_storage_value)
 
     assert fork.w3.eth.get_storage_at(
