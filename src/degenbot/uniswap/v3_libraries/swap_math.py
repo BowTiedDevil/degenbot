@@ -1,6 +1,10 @@
 from degenbot.uniswap.v3_libraries import full_math, sqrt_price_math
 from degenbot.uniswap.v3_types import SqrtPriceX96
 
+type AmountIn = int
+type AmountOut = int
+type FeeTaken = int
+
 
 def compute_swap_step(
     sqrt_ratio_x96_current: int,
@@ -8,7 +12,7 @@ def compute_swap_step(
     liquidity: int,
     amount_remaining: int,
     fee_pips: int,
-) -> tuple[SqrtPriceX96, int, int, int]:
+) -> tuple[SqrtPriceX96, AmountIn, AmountOut, FeeTaken]:
     zero_for_one = sqrt_ratio_x96_current >= sqrt_ratio_x96_target
     exact_in = amount_remaining >= 0
 
