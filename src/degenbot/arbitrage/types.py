@@ -1,4 +1,3 @@
-
 import dataclasses
 
 from eth_typing import ChecksumAddress
