@@ -12,6 +12,7 @@ from eth_typing import BlockIdentifier, ChecksumAddress
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
+from degenbot.arbitrage.types import UniswapPoolSwapVector
 from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
 from degenbot.erc20_token import Erc20Token
@@ -350,6 +351,15 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
     @property
     def w3(self) -> Web3:
         return connection_manager.get_web3(self.chain_id)
+
+    def swap_is_viable(
+        self,
+        state: PoolState,
+        vector: UniswapPoolSwapVector,
+    ) -> bool:
+        if state.reserves_token0 == 0 or state.reserves_token1 == 0:
+            return False
+        return state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
 
     def auto_update(
         self,

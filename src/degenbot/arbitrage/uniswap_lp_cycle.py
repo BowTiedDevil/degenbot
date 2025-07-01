@@ -325,66 +325,14 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         """
 
         match pool, state:
-            case (
-                AerodromeV2Pool(),
-                AerodromeV2PoolState(),
-            ):
-                if state.reserves_token0 == 0 or state.reserves_token1 == 0:
-                    return False
-
-                return (
-                    state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
-                )
-            case (
-                UniswapV2Pool(),
-                UniswapV2PoolState(),
-            ):
-                if state.reserves_token0 == 0 or state.reserves_token1 == 0:
-                    return False
-
-                return (
-                    state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
-                )
-
-            case (
-                UniswapV3Pool() | UniswapV4Pool(),
-                UniswapV3PoolState() | UniswapV4PoolState(),
-            ):
-                if pool.sparse_liquidity_map:
-                    # Liquidity cannot be checked with a sparse mapping, so default to True
-                    return True
-
-                if state.tick_data == {}:
-                    # The pool has no liquidity
-                    return False
-
-                if state.sqrt_price_x96 == 0:
-                    # The pool is not initialized
-                    assert state.tick_data == {}, (
-                        f"Found pool @ {pool.address} with liquidity positions, but price=0!"
-                    )
-                    return False
-
-                if (vector.zero_for_one is True and state.sqrt_price_x96 <= MIN_SQRT_RATIO + 1) or (
-                    vector.zero_for_one is False and state.sqrt_price_x96 >= MAX_SQRT_RATIO - 1
-                ):
-                    # The price has reached the min/max price, and the swap would drive it beyond
-                    # that limit
-                    return False
-
-                # ----------------------------------------------------------------------------------
-                # After this point, at least one liquidity position is assumed
-                # ----------------------------------------------------------------------------------
-
-                if vector.zero_for_one:
-                    # A 0->1 swap will lower the price & tick, so pool viability can be
-                    # determined by checking for a liquidity position starting below
-                    # the current price
-                    return get_sqrt_ratio_at_tick(min(state.tick_data)) < state.sqrt_price_x96
-                # A 1->0 swap will raise the price & tick. Check for a liquidity position
-                # above the current price, similar to the above comment.
-                return get_sqrt_ratio_at_tick(max(state.tick_data)) > state.sqrt_price_x96
-
+            case AerodromeV2Pool(), AerodromeV2PoolState():
+                return pool.swap_is_viable(state=state, vector=vector)
+            case UniswapV2Pool(), UniswapV2PoolState():
+                return pool.swap_is_viable(state=state, vector=vector)
+            case UniswapV3Pool(), UniswapV3PoolState():
+                return pool.swap_is_viable(state=state, vector=vector)
+            case UniswapV4Pool(), UniswapV4PoolState():
+                return pool.swap_is_viable(state=state, vector=vector)
             case _:  # pragma: no cover
                 raise DegenbotValueError(
                     message=f"Could not identify pool {pool} and state {state}."

@@ -15,6 +15,7 @@ from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import BlockIdentifier
 
+from degenbot.arbitrage.types import UniswapPoolSwapVector
 from degenbot.cache import get_checksum_address
 from degenbot.config import connection_manager
 from degenbot.constants import MAX_INT256, MIN_INT256, ZERO_ADDRESS
@@ -913,6 +914,45 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         if TYPE_CHECKING:
             assert self.state.block is not None
         return self.state.block
+
+    def swap_is_viable(
+        self,
+        state: UniswapV4PoolState,
+        vector: UniswapPoolSwapVector,
+    ) -> bool:
+        if self.sparse_liquidity_map:
+            # Liquidity cannot be checked with a sparse mapping, so default to True
+            return True
+
+        if state.tick_data == {}:
+            # The pool has no liquidity
+            return False
+
+        if state.sqrt_price_x96 == 0:
+            # The pool is not initialized
+            assert state.tick_data == {}, (
+                f"Found pool @ {self.address} with liquidity positions, but price=0!"
+            )
+            return False
+
+        if (vector.zero_for_one is True and state.sqrt_price_x96 <= MIN_SQRT_PRICE + 1) or (
+            vector.zero_for_one is False and state.sqrt_price_x96 >= MAX_SQRT_PRICE - 1
+        ):
+            # The price has reached the min/max price, and the swap would drive it beyond
+            # that limit
+            return False
+
+        # ----------------------------------------------------------------------------------
+        # After this point, at least one liquidity position is assumed
+        # ----------------------------------------------------------------------------------
+        if vector.zero_for_one:
+            # A 0->1 swap will lower the price & tick, so pool viability can be
+            # determined by checking for a liquidity position starting below
+            # the current price
+            return get_sqrt_price_at_tick(min(state.tick_data)) < state.sqrt_price_x96
+        # A 1->0 swap will raise the price & tick. Check for a liquidity position
+        # above the current price, similar to the above comment.
+        return get_sqrt_price_at_tick(max(state.tick_data)) > state.sqrt_price_x96
 
     def auto_update(
         self,
