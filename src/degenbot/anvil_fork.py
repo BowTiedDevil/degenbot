@@ -61,35 +61,18 @@ class AnvilFork:
         prune_history: bool = False,
         anvil_opts: list[str] | None = None,  # Additional options passed to the Anvil command
     ):
-        def build_anvil_command(path_to_anvil: pathlib.Path) -> list[str]:  # pragma: no cover
-            command = [
-                str(path_to_anvil),
-                "--silent",
-                "--auto-impersonate",
-                "--no-rate-limit",
-                f"--fork-url={fork_url}",
-                f"--hardfork={hardfork}",
-                f"--port={self.port}",
-                f"--ipc={self.ipc_filename}",
-                f"--mnemonic={mnemonic}",
-            ]
-            if fork_block:
-                command.append(f"--fork-block-number={fork_block}")
-            if fork_transaction_hash:
-                command.append(f"--fork-transaction-hash={fork_transaction_hash}")
-            if chain_id:
-                command.append(f"--chain-id={chain_id}")
+        def _parse_base_fee_arg(command: AnvilCommandList) -> None:
             if base_fee:
                 command.append(f"--base-fee={base_fee}")
-            if storage_caching is False:
-                command.append("--no-storage-caching")
-            if prune_history:
-                command.append("--prune-history")
-            if anvil_opts:
-                command.extend(anvil_opts)
+
+        def _parse_block_number_arg(command: AnvilCommandList) -> None:
+            if fork_block:
+                command.append(f"--fork-block-number={fork_block}")
+
+        def _parse_mining_mode_arg(command: AnvilCommandList) -> None:
             match mining_mode:
                 case "auto":
-                    pass
+                    return
                 case "interval":
                     if mining_interval is None:
                         raise DegenbotValueError(
@@ -102,7 +85,13 @@ class AnvilFork:
                 case _:
                     raise DegenbotValueError(message=f"Unknown mining mode '{mining_mode}'.")
 
-            return command
+        def _parse_storage_caching_arg(command: AnvilCommandList) -> None:
+            if storage_caching is False:
+                command.append("--no-storage-caching")
+
+        def _parse_transaction_hash_arg(command: AnvilCommandList) -> None:
+            if fork_transaction_hash:
+                command.append(f"--fork-transaction-hash={fork_transaction_hash}")
 
         _path_to_anvil = shutil.which("anvil")
         if _path_to_anvil is None:  # pragma: no cover
@@ -116,12 +105,29 @@ class AnvilFork:
         else:
             self.ipc_provider_kwargs = {}
 
-        self._anvil_command = build_anvil_command(path_to_anvil=path_to_anvil)
-        self._setup_process_and_w3(anvil_command=self._anvil_command)
+        self.port = self._get_free_port_number()
 
-        self._block_number = (
-            fork_block if fork_block is not None else self.w3.eth.get_block_number()
-        )
+        command: AnvilCommandList = [
+            str(path_to_anvil),
+            "--silent",
+            "--auto-impersonate",
+            "--no-rate-limit",
+            f"--fork-url={fork_url}",
+            f"--port={self.port}",
+            f"--ipc={self.ipc_filename}",
+            f"--mnemonic={mnemonic}",
+        ]
+        _parse_base_fee_arg(command)
+        _parse_block_number_arg(command)
+        _parse_mining_mode_arg(command)
+        _parse_storage_caching_arg(command)
+        _parse_transaction_hash_arg(command)
+        if anvil_opts:
+            command.extend(anvil_opts)
+
+        self._anvil_command = command
+        self._setup_process_and_w3(self._anvil_command)
+
         self._fork_url = fork_url
 
         if middlewares is not None:
@@ -181,7 +187,7 @@ class AnvilFork:
             _, _port = sock.getsockname()
             return cast("int", _port)
 
-    def _setup_process_and_w3(self, anvil_command: list[str]) -> None:
+    def _setup_process_and_w3(self, anvil_command: AnvilCommandList) -> None:
         """
         Launch an Anvil subprocess and wait for a `Web3` connection to be established with its
         IPC socket.
