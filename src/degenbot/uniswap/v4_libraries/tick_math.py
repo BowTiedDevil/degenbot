@@ -63,46 +63,31 @@ def get_sqrt_price_at_tick(tick: ValidatedTick) -> ValidatedUint160:
     #         0x100000000000000000000000000000000;
     #     or price = int(2**128 / sqrt(1.0001)) if (absTick & 0x1) else 1 << 128
 
-    price = (1 << 128) ^ (((1 << 128) ^ 0xFFFCB933BD6FAD37AA2D162D1A594001) * (abs_tick & 0x1))
+    price = (1 << 128) ^ (((1 << 128) ^ 340265354078544963557816517032075149313) * (abs_tick & 1))
 
-    if abs_tick & 0x2 != 0:
-        price = (price * 0xFFF97272373D413259A46990580E213A) >> 128
-    if abs_tick & 0x4 != 0:
-        price = (price * 0xFFF2E50F5F656932EF12357CF3C7FDCC) >> 128
-    if abs_tick & 0x8 != 0:
-        price = (price * 0xFFE5CACA7E10E4E61C3624EAA0941CD0) >> 128
-    if abs_tick & 0x10 != 0:
-        price = (price * 0xFFCB9843D60F6159C9DB58835C926644) >> 128
-    if abs_tick & 0x20 != 0:
-        price = (price * 0xFF973B41FA98C081472E6896DFB254C0) >> 128
-    if abs_tick & 0x40 != 0:
-        price = (price * 0xFF2EA16466C96A3843EC78B326B52861) >> 128
-    if abs_tick & 0x80 != 0:
-        price = (price * 0xFE5DEE046A99A2A811C461F1969C3053) >> 128
-    if abs_tick & 0x100 != 0:
-        price = (price * 0xFCBE86C7900A88AEDCFFC83B479AA3A4) >> 128
-    if abs_tick & 0x200 != 0:
-        price = (price * 0xF987A7253AC413176F2B074CF7815E54) >> 128
-    if abs_tick & 0x400 != 0:
-        price = (price * 0xF3392B0822B70005940C7A398E4B70F3) >> 128
-    if abs_tick & 0x800 != 0:
-        price = (price * 0xE7159475A2C29B7443B29C7FA6E889D9) >> 128
-    if abs_tick & 0x1000 != 0:
-        price = (price * 0xD097F3BDFD2022B8845AD8F792AA5825) >> 128
-    if abs_tick & 0x2000 != 0:
-        price = (price * 0xA9F746462D870FDF8A65DC1F90E061E5) >> 128
-    if abs_tick & 0x4000 != 0:
-        price = (price * 0x70D869A156D2A1B890BB3DF62BAF32F7) >> 128
-    if abs_tick & 0x8000 != 0:
-        price = (price * 0x31BE135F97D08FD981231505542FCFA6) >> 128
-    if abs_tick & 0x10000 != 0:
-        price = (price * 0x9AA508B5B7A84E1C677DE54F3E99BC9) >> 128
-    if abs_tick & 0x20000 != 0:
-        price = (price * 0x5D6AF8DEDB81196699C329225EE604) >> 128
-    if abs_tick & 0x40000 != 0:
-        price = (price * 0x2216E584F5FA1EA926041BEDFE98) >> 128
-    if abs_tick & 0x80000 != 0:
-        price = (price * 0x48A170391F7DC42444E8FA2) >> 128
+    for tick_mask, ratio_multiplier in (
+        (2, 340248342086729790484326174814286782778),
+        (4, 340214320654664324051920982716015181260),
+        (8, 340146287995602323631171512101879684304),
+        (16, 340010263488231146823593991679159461444),
+        (32, 339738377640345403697157401104375502016),
+        (64, 339195258003219555707034227454543997025),
+        (128, 338111622100601834656805679988414885971),
+        (256, 335954724994790223023589805789778977700),
+        (512, 331682121138379247127172139078559817300),
+        (1024, 323299236684853023288211250268160618739),
+        (2048, 307163716377032989948697243942600083929),
+        (4096, 277268403626896220162999269216087595045),
+        (8192, 225923453940442621947126027127485391333),
+        (16384, 149997214084966997727330242082538205943),
+        (32768, 66119101136024775622716233608466517926),
+        (65536, 12847376061809297530290974190478138313),
+        (131072, 485053260817066172746253684029974020),
+        (262144, 691415978906521570653435304214168),
+        (524288, 1404880482679654955896180642),
+    ):
+        if abs_tick & tick_mask != 0:
+            price = (price * ratio_multiplier) >> 128
 
     if tick > 0:
         price = MAX_UINT256 // price
@@ -129,74 +114,16 @@ def get_tick_at_sqrt_price(sqrt_price_x96: ValidatedSqrtPrice) -> ValidatedTick:
     r = price >> msb - 127 if msb >= 128 else price << 127 - msb
 
     log_2 = (msb - 128) << 64
-    r = (r * r) >> 127
-    f = r >> 128
-    log_2 = log_2 | (f << 63)
-    r = r >> f
+
+    for factor in (63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51):
+        r = (r * r) >> 127
+        f = r >> 128
+        log_2 |= f << factor
+        r >>= f
 
     r = (r * r) >> 127
     f = r >> 128
-    log_2 = log_2 | (f << 62)
-    r = r >> f
-
-    r = (r * r) >> 127
-    f = r >> 128
-    log_2 = log_2 | (f << 61)
-    r = r >> f
-
-    r = (r * r) >> 127
-    f = r >> 128
-    log_2 = log_2 | (f << 60)
-    r = r >> f
-
-    r = (r * r) >> 127
-    f = r >> 128
-    log_2 = log_2 | (f << 59)
-    r = r >> f
-
-    r = (r * r) >> 127
-    f = r >> 128
-    log_2 = log_2 | (f << 58)
-    r = r >> f
-
-    r = (r * r) >> 127
-    f = r >> 128
-    log_2 = log_2 | (f << 57)
-    r = r >> f
-
-    r = (r * r) >> 127
-    f = r >> 128
-    log_2 = log_2 | (f << 56)
-    r = r >> f
-
-    r = (r * r) >> 127
-    f = r >> 128
-    log_2 = log_2 | (f << 55)
-    r = r >> f
-
-    r = (r * r) >> 127
-    f = r >> 128
-    log_2 = log_2 | (f << 54)
-    r = r >> f
-
-    r = (r * r) >> 127
-    f = r >> 128
-    log_2 = log_2 | (f << 53)
-    r = r >> f
-
-    r = (r * r) >> 127
-    f = r >> 128
-    log_2 = log_2 | (f << 52)
-    r = r >> f
-
-    r = (r * r) >> 127
-    f = r >> 128
-    log_2 = log_2 | (f << 51)
-    r = r >> f
-
-    r = (r * r) >> 127
-    f = r >> 128
-    log_2 = log_2 | (f << 50)
+    log_2 |= f << 50
 
     log_sqrt10001 = log_2 * 255738958999603826347141  # Q22.128 number
 
