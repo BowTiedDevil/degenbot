@@ -72,6 +72,15 @@ def test_set_storage():
         position=storage_position,
     ) == HexBytes(new_storage_value_padded)
 
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_overrides=[(WETH_ADDRESS, storage_position, new_storage_value)],
+    )
+    assert fork.w3.eth.get_storage_at(
+        account=WETH_ADDRESS,
+        position=storage_position,
+    ) == HexBytes(new_storage_value_padded)
+
 
 def test_rpc_methods(fork_mainnet_full: AnvilFork):
     with pytest.raises(InvalidUint256):

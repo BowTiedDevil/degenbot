@@ -52,6 +52,8 @@ class AnvilFork:
         balance_overrides: Iterable[tuple[HexAddress, int]] | None = None,
         bytecode_overrides: Iterable[tuple[HexAddress, bytes]] | None = None,
         nonce_overrides: Iterable[tuple[HexAddress, int]] | None = None,
+        storage_overrides: Iterable[tuple[HexAddress | bytes, int, HexStr | bytes | int]]
+        | None = None,
         ipc_provider_kwargs: dict[str, Any] | None = None,
         prune_history: bool = False,
         anvil_opts: list[str] | None = None,  # Additional options passed to the Anvil command
@@ -134,6 +136,14 @@ class AnvilFork:
         if nonce_overrides is not None:
             for account, nonce in nonce_overrides:
                 self.set_nonce(account, nonce)
+
+        if storage_overrides is not None:
+            for address, position, value in storage_overrides:
+                self.set_storage(
+                    address=address,
+                    position=position,
+                    value=value,
+                )
 
         if coinbase is not None:
             self.set_coinbase(coinbase)
