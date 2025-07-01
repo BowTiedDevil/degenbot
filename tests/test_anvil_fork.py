@@ -30,7 +30,6 @@ def test_anvil_forks():
 
     # Test optional arguments
     AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, fork_block=18_000_000)
-    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, chain_id=1)
     AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, base_fee=10 * 10**9)
 
 

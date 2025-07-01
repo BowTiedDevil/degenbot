@@ -40,8 +40,6 @@ class AnvilFork:
         fork_url: str,
         fork_block: BlockNumber | None = None,
         fork_transaction_hash: str | None = None,
-        hardfork: str = "latest",
-        chain_id: ChainId | None = None,
         mining_mode: Literal["auto", "interval", "none"] = "auto",
         mining_interval: int | None = None,
         storage_caching: bool = True,
@@ -59,7 +57,6 @@ class AnvilFork:
         storage_overrides: Iterable[tuple[HexAddress | bytes, int, HexStr | bytes | int]]
         | None = None,
         ipc_provider_kwargs: dict[str, Any] | None = None,
-        prune_history: bool = False,
         anvil_opts: list[str] | None = None,  # Additional options passed to the Anvil command
     ):
         def _parse_base_fee_arg(command: AnvilCommandList) -> None:
