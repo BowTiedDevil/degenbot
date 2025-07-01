@@ -24,6 +24,9 @@ class AnvilNotFound(Exception):
         super().__init__("Anvil path could not be located.")
 
 
+type AnvilCommandList = list[str]
+
+
 class AnvilFork:
     """
     Launch an Anvil fork as a separate process and expose methods for commonly-used RPC calls.
@@ -338,7 +341,12 @@ class AnvilFork:
             16,
         )
 
-    def set_storage(self, address: HexStr | bytes, position: int, value: HexStr | bytes) -> None:
+    def set_storage(
+        self,
+        address: HexAddress | bytes,
+        position: int,
+        value: HexStr | bytes | int,
+    ) -> None:
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setStorageAt"),
             params=[
