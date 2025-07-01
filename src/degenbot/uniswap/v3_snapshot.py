@@ -4,7 +4,7 @@ from collections.abc import Callable, Generator
 from typing import Any, TypedDict, cast
 
 import pydantic_core
-from eth_typing import ABIEvent, ChecksumAddress, HexStr
+from eth_typing import ABIEvent, ChecksumAddress, HexAddress
 from eth_utils.abi import event_abi_to_log_topic
 from hexbytes import HexBytes
 from web3 import Web3
@@ -211,7 +211,7 @@ class UniswapV3LiquiditySnapshot:
 
     def pending_updates(
         self,
-        pool_address: HexStr,
+        pool_address: HexAddress,
     ) -> tuple[UniswapV3PoolLiquidityMappingUpdate, ...]:
         """
         Consume pending liquidity updates for the pool, sorted chronologically.
@@ -237,7 +237,7 @@ class UniswapV3LiquiditySnapshot:
             for event in sorted_events
         )
 
-    def tick_bitmap(self, pool_address: HexStr) -> dict[int, UniswapV3BitmapAtWord]:
+    def tick_bitmap(self, pool_address: HexAddress) -> dict[int, UniswapV3BitmapAtWord]:
         """
         Consume the tick initialization bitmaps for the pool.
         """
@@ -247,7 +247,7 @@ class UniswapV3LiquiditySnapshot:
         self._liquidity_snapshot[pool_address]["tick_bitmap"] = {}
         return tick_bitmap
 
-    def tick_data(self, pool_address: HexStr) -> dict[int, UniswapV3LiquidityAtTick]:
+    def tick_data(self, pool_address: HexAddress) -> dict[int, UniswapV3LiquidityAtTick]:
         """
         Consume the liquidity mapping for the pool.
         """
@@ -259,7 +259,7 @@ class UniswapV3LiquiditySnapshot:
 
     def update(
         self,
-        pool: HexStr,
+        pool: HexAddress,
         tick_data: dict[int, UniswapV3LiquidityAtTick],
         tick_bitmap: dict[int, UniswapV3BitmapAtWord],
     ) -> None:

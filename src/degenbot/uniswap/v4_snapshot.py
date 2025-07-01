@@ -4,7 +4,7 @@ from collections.abc import Generator
 from typing import Any, TypedDict, cast
 
 import pydantic_core
-from eth_typing import ABIEvent, ChecksumAddress, HexStr
+from eth_typing import ABIEvent, ChecksumAddress, HexAddress, HexStr
 from eth_utils.abi import event_abi_to_log_topic
 from hexbytes import HexBytes
 from web3 import Web3
@@ -40,7 +40,7 @@ class UniswapV4LiquiditySnapshot:
     def __init__(
         self,
         file: pathlib.Path | str,
-        pool_manager_address: HexStr,
+        pool_manager_address: HexAddress,
         chain_id: ChainId | None = None,
     ):
         if isinstance(file, str):
@@ -90,7 +90,7 @@ class UniswapV4LiquiditySnapshot:
 
     def _add_pool_if_missing(
         self,
-        pool_manager_address: HexStr,
+        pool_manager_address: HexAddress,
         pool_id: PoolId,
     ) -> None:
         """
@@ -111,7 +111,7 @@ class UniswapV4LiquiditySnapshot:
 
     def clear(
         self,
-        pool_manager_address: HexStr,
+        pool_manager_address: HexAddress,
         pool_id: PoolId,
     ) -> None:
         """
@@ -224,7 +224,7 @@ class UniswapV4LiquiditySnapshot:
 
     def pending_updates(
         self,
-        pool_manager_address: HexStr,
+        pool_manager_address: HexAddress,
         pool_id: PoolId,
     ) -> tuple[UniswapV4PoolLiquidityMappingUpdate, ...]:
         """
@@ -249,7 +249,7 @@ class UniswapV4LiquiditySnapshot:
 
     def tick_bitmap(
         self,
-        pool_manager_address: HexStr,
+        pool_manager_address: HexAddress,
         pool_id: PoolId,
     ) -> dict[int, UniswapV4BitmapAtWord]:
         """
@@ -266,7 +266,7 @@ class UniswapV4LiquiditySnapshot:
 
     def tick_data(
         self,
-        pool_manager_address: HexStr,
+        pool_manager_address: HexAddress,
         pool_id: PoolId,
     ) -> dict[int, UniswapV4LiquidityAtTick]:
         """
@@ -283,7 +283,7 @@ class UniswapV4LiquiditySnapshot:
 
     def update(
         self,
-        pool_manager_address: HexStr,
+        pool_manager_address: HexAddress,
         pool_id: PoolId,
         tick_data: dict[int, UniswapV4LiquidityAtTick],
         tick_bitmap: dict[int, UniswapV4BitmapAtWord],
