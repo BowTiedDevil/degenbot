@@ -3,6 +3,7 @@ import pathlib
 import shutil
 import socket
 import subprocess
+import sys
 from collections.abc import AsyncIterator, Iterable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -45,7 +46,7 @@ class AnvilFork:
         mining_interval: int | None = None,
         storage_caching: bool = True,
         base_fee: int | None = None,
-        ipc_path: pathlib.Path = pathlib.Path("/tmp/"),
+        ipc_path: pathlib.Path | None = None,
         mnemonic: str = (
             # Default mnemonic used by Brownie for Ganache forks
             "patient rude simple dog close planet oval animal hunt sketch suspect slim"
@@ -98,8 +99,16 @@ class AnvilFork:
             raise AnvilNotFound
         path_to_anvil = pathlib.Path(_path_to_anvil)
 
-        self.port = self._get_free_port_number()
+        if ipc_path is None:
+            if sys.platform == "win32":
+                ipc_path = pathlib.Path("~").expanduser() / "AppData" / "Local" / "Temp"
+            elif sys.platform in ("linux", "darwin"):
+                ipc_path = pathlib.Path("/tmp/")
+            else:
+                err_msg = "Operating System not recognized"
+                raise RuntimeError(err_msg)
         self.ipc_path = ipc_path
+
         if ipc_provider_kwargs is not None:
             self.ipc_provider_kwargs = ipc_provider_kwargs
         else:
