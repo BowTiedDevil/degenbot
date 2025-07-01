@@ -5,6 +5,7 @@ from typing import Annotated
 from pydantic import Field, validate_call
 
 from degenbot.constants import MAX_INT16, MAX_UINT256
+from degenbot.functions import evm_divide
 from degenbot.uniswap.v4_libraries import bit_math
 from degenbot.validation.evm_values import ValidatedInt24, ValidatedUint160
 
@@ -37,7 +38,7 @@ def min_usable_tick(tick_spacing: ValidatedInt24) -> ValidatedInt24:
     Given a tickSpacing, compute the minimum usable tick
     """
 
-    return (MIN_TICK // tick_spacing) * tick_spacing
+    return evm_divide(MIN_TICK, tick_spacing) * tick_spacing
 
 
 @validate_call(validate_return=True)
