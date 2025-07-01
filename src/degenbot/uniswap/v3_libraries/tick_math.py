@@ -89,14 +89,13 @@ def get_tick_at_sqrt_ratio(
         (2, 15),
         (1, 3),
     ):
-        f = (
-            r > factor  # Python casts the bool to int when applying the shift operator
-        ) << shift
-        msb = msb | f
+        f = (r > factor) << shift
+        msb |= f
         r >>= f
 
     f = r > 1
-    msb = msb | f
+    msb |= f
+    r = ratio >> msb - 127 if msb >= MOST_SIGNIFICANT_BIT_FOR_MAX_INT128 else ratio << 127 - msb
 
     most_significant_bit_for_max_int128 = 128
     r = ratio >> msb - 127 if msb >= most_significant_bit_for_max_int128 else ratio << 127 - msb
@@ -105,13 +104,13 @@ def get_tick_at_sqrt_ratio(
 
     for factor in (63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51):
         r = (r * r) >> 127
-        f = r >> most_significant_bit_for_max_int128
-        log_2 = log_2 | (f << factor)
-        r = r >> f
+        f = r >> 128
+        log_2 |= f << factor
+        r >>= f
 
     r = (r * r) >> 127
-    f = r >> most_significant_bit_for_max_int128
-    log_2 = log_2 | (f << 50)
+    f = r >> 128
+    log_2 |= f << 50
 
     log_sqrt10001 = log_2 * 255738958999603826347141  # 128.128 number
 
