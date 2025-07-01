@@ -24,15 +24,6 @@ VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA960
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 
-def test_anvil_forks():
-    # Basic constructor
-    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
-
-    # Test optional arguments
-    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, fork_block=18_000_000)
-    AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, base_fee=10 * 10**9)
-
-
 def test_web3_endpoints():
     fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
     assert fork.http_url == f"http://localhost:{fork.port}"
@@ -143,6 +134,14 @@ def test_set_next_block_base_fee(fork_mainnet_full: AnvilFork):
     fork_mainnet_full.set_next_base_fee(base_fee_override)
     fork_mainnet_full.mine()
     assert fork_mainnet_full.w3.eth.get_block("latest")["baseFeePerGas"] == base_fee_override
+
+
+def test_set_next_block_base_fee_in_constructor():
+    base_fee_override = 69 * 10**9
+
+    fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, base_fee=base_fee_override)
+    fork.mine()
+    assert fork.w3.eth.get_block("latest")["baseFeePerGas"] == base_fee_override
 
 
 def test_reset_and_set_next_block_base_fee(fork_mainnet_full: AnvilFork):
