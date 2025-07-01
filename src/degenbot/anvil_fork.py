@@ -167,10 +167,6 @@ class AnvilFork:
             self.set_block_timestamp_interval(mining_interval)
 
     @property
-    def block_number(self) -> int:
-        return self._block_number
-
-    @property
     def fork_url(self) -> str:
         return self._fork_url
 
