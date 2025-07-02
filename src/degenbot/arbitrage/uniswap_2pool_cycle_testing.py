@@ -1058,8 +1058,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 logger.exception("v2_hi_v4_lo_calc")
                 raise
 
-            # TODO: check more thoroughly for this condition - why did the pre-calc check not flag
-            # the pool?
             if v4_pool_max_output == 0:
                 raise ArbitrageError(message="Insufficient liquidity")
 
