@@ -1,6 +1,5 @@
 import pathlib
 import pickle
-import time
 from typing import Any
 
 import hypothesis
@@ -14,7 +13,7 @@ from web3.exceptions import ContractLogicError
 from degenbot.anvil_fork import AnvilFork
 from degenbot.cache import get_checksum_address
 from degenbot.config import set_web3
-from degenbot.constants import MAX_UINT256, MIN_UINT256
+from degenbot.constants import MAX_INT256
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
     AddressMismatch,
@@ -600,9 +599,9 @@ def test_calculate_tokens_out_from_tokens_in(
 
 
 @hypothesis.given(
-    amount_in=hypothesis.strategies.integers(
-        min_value=MIN_UINT256 + 1,
-        max_value=MAX_UINT256,
+    amount=hypothesis.strategies.integers(
+        min_value=1,
+        max_value=MAX_INT256,
     )
 )
 @hypothesis.settings(
@@ -611,38 +610,61 @@ def test_calculate_tokens_out_from_tokens_in(
     ],
     deadline=None,
 )
-def test_calculate_tokens_out_from_tokens_in_matches_when_repeated(
-    amount_in: int,
+def test_cached_calculations(
+    amount: int,
     wbtc_weth_v3_lp: UniswapV3Pool,
+    fork_mainnet_full: AnvilFork,
 ) -> None:
-    for token_in in [
-        wbtc_weth_v3_lp.token0,
-        wbtc_weth_v3_lp.token1,
+    quoter = fork_mainnet_full.w3.eth.contract(
+        address=UNISWAP_V3_QUOTER_ADDRESS,
+        abi=UNISWAP_V3_QUOTER_ABI,
+    )
+
+    for token_in, token_out in [
+        (wbtc_weth_v3_lp.token0, wbtc_weth_v3_lp.token1),
+        (wbtc_weth_v3_lp.token1, wbtc_weth_v3_lp.token0),
     ]:
-        start_time_1 = time.perf_counter()
         try:
-            amount_out_1 = wbtc_weth_v3_lp.calculate_tokens_out_from_tokens_in(
+            amount_out = wbtc_weth_v3_lp.calculate_tokens_out_from_tokens_in(
                 token_in=token_in,
-                token_in_quantity=amount_in,
+                token_in_quantity=amount,
             )
         except IncompleteSwap as exc:
-            amount_out_1 = exc.amount_out
-        finish_time_1 = time.perf_counter()
+            amount_out = exc.amount_out
 
-        start_time_2 = time.perf_counter()
+        quoter_amount_out = quoter.functions.quoteExactInputSingle(
+            token_in.address,  # tokenIn
+            token_out.address,  # tokenOut
+            wbtc_weth_v3_lp.fee,  # fee
+            amount,  # amountIn
+            MIN_SQRT_RATIO + 1
+            if token_in is wbtc_weth_v3_lp.token0
+            else MAX_SQRT_RATIO - 1,  # sqrtPriceLimitX96
+        ).call()
+
+        assert amount_out == quoter_amount_out
+
+        print(f"{wbtc_weth_v3_lp.get_range_cache_stats()=}")
+
         try:
-            amount_out_2 = wbtc_weth_v3_lp.calculate_tokens_out_from_tokens_in(
-                token_in=token_in,
-                token_in_quantity=amount_in,
+            amount_in = wbtc_weth_v3_lp.calculate_tokens_in_from_tokens_out(
+                token_out=token_out,
+                token_out_quantity=amount,
             )
         except IncompleteSwap as exc:
-            amount_out_2 = exc.amount_out
-        finish_time_2 = time.perf_counter()
+            amount_in = exc.amount_in
 
-        assert amount_out_1 == amount_out_2
-        print()
-        print(f"uncached calc completed in {finish_time_1 - start_time_1:.2f}s")
-        print(f"cached calc completed in {finish_time_2 - start_time_2:.2f}s")
+        quoter_amount_in = quoter.functions.quoteExactOutputSingle(
+            token_in.address,  # tokenIn
+            token_out.address,  # tokenOut
+            wbtc_weth_v3_lp.fee,  # fee
+            amount,  # amountOut
+            MIN_SQRT_RATIO + 1
+            if token_in is wbtc_weth_v3_lp.token0
+            else MAX_SQRT_RATIO - 1,  # sqrtPriceLimitX96
+        ).call()
+
+        assert amount_in == quoter_amount_in
 
 
 def test_calculate_tokens_out_from_tokens_in_with_override(
@@ -693,52 +715,6 @@ def test_calculate_tokens_in_from_tokens_out(
         )
         == 15904996952773072855
     )
-
-
-@hypothesis.given(
-    amount_out=hypothesis.strategies.integers(
-        min_value=MIN_UINT256 + 1,
-        max_value=MAX_UINT256,
-    )
-)
-@hypothesis.settings(
-    suppress_health_check=[
-        hypothesis.HealthCheck.function_scoped_fixture,
-    ],
-    deadline=None,
-)
-def test_calculate_tokens_in_from_tokens_out_matches_when_repeated(
-    amount_out: int,
-    wbtc_weth_v3_lp: UniswapV3Pool,
-) -> None:
-    for token_out in [
-        wbtc_weth_v3_lp.token0,
-        wbtc_weth_v3_lp.token1,
-    ]:
-        start_time_1 = time.perf_counter()
-        try:
-            amount_out_1 = wbtc_weth_v3_lp.calculate_tokens_in_from_tokens_out(
-                token_out=token_out,
-                token_out_quantity=amount_out,
-            )
-        except IncompleteSwap as exc:
-            amount_out_1 = exc.amount_out
-        finish_time_1 = time.perf_counter()
-
-        start_time_2 = time.perf_counter()
-        try:
-            amount_out_2 = wbtc_weth_v3_lp.calculate_tokens_in_from_tokens_out(
-                token_out=token_out,
-                token_out_quantity=amount_out,
-            )
-        except IncompleteSwap as exc:
-            amount_out_2 = exc.amount_out
-        finish_time_2 = time.perf_counter()
-
-        assert amount_out_1 == amount_out_2
-        print()
-        print(f"uncached calc completed in {finish_time_1 - start_time_1:.2f}s")
-        print(f"cached calc completed in {finish_time_2 - start_time_2:.2f}s")
 
 
 def test_calculate_tokens_in_from_tokens_out_with_override(
