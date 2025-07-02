@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pydantic_core
 import pytest
 from hexbytes import HexBytes
+from web3.contract import Contract
 from web3.exceptions import ContractLogicError
 
 from degenbot import pool_registry
@@ -91,10 +92,9 @@ def liquidity_snapshot() -> dict[str, Any]:
 def _test_pool_exact_input(
     pool: dict[str, Any],
     fork: AnvilFork,
+    quoter: Contract,
     snapshot: dict[str, Any] | None = None,
 ):
-    quoter = fork.w3.eth.contract(address=UNISWAP_V4_QUOTER_ADDRESS, abi=UNISWAP_V4_QUOTER_ABI)
-
     pool_id: HexStr = pool["pool_id"]
 
     lp = pool_registry.get(
@@ -216,10 +216,9 @@ def _test_pool_exact_input(
 def _test_pool_exact_output(
     pool: dict[str, Any],
     fork: AnvilFork,
+    quoter: Contract,
     snapshot: dict[str, Any] | None = None,
 ):
-    quoter = fork.w3.eth.contract(address=UNISWAP_V4_QUOTER_ADDRESS, abi=UNISWAP_V4_QUOTER_ABI)
-
     pool_id: HexStr = pool["pool_id"]
 
     lp = pool_registry.get(
