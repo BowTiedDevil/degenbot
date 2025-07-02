@@ -43,11 +43,7 @@ from degenbot.types import (
 )
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
-from degenbot.uniswap.v3_libraries.tick_math import (
-    MAX_SQRT_RATIO,
-    MIN_SQRT_RATIO,
-    get_sqrt_ratio_at_tick,
-)
+from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import UniswapV3PoolState
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
