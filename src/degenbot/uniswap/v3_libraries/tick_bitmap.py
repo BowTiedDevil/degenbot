@@ -10,11 +10,7 @@ from degenbot.functions import evm_divide
 from degenbot.types import BlockNumber
 from degenbot.uniswap.v3_libraries.bit_math import least_significant_bit, most_significant_bit
 from degenbot.uniswap.v3_libraries.tick_math import ValidatedTick
-from degenbot.uniswap.v3_types import (
-    InitializedTickMap,
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
-)
+from degenbot.uniswap.v3_types import InitializedTickMap, LiquidityMap, Tick, UniswapV3BitmapAtWord
 from degenbot.validation.evm_values import ValidatedInt16, ValidatedInt24
 
 # NOTE: Pydantic validation is applied to certain functions to enforce the built-in integer range
@@ -115,11 +111,11 @@ def next_initialized_tick_within_one_word_legacy(
 
 @validate_call
 def gen_ticks(
-    tick_data: SkipValidation[dict[int, UniswapV3LiquidityAtTick]],
+    tick_data: SkipValidation[LiquidityMap],
     starting_tick: ValidatedTick,
     tick_spacing: ValidatedInt24,
     less_than_or_equal: bool,
-) -> Generator[tuple[int, bool], None, None]:
+) -> Generator[tuple[Tick, bool], None, None]:
     """
     Yields ticks from the set of all possible ticks at 32 byte (256 bit) word boundaries and
     initialized ticks found in the liquidity mapping. The ticks are yielded in descending order when
@@ -197,8 +193,8 @@ def gen_ticks(
 
 @validate_call(validate_return=True)
 def next_initialized_tick_within_one_word(
-    tick_bitmap: SkipValidation[dict[int, UniswapV3BitmapAtWord]],
-    tick_data: SkipValidation[dict[int, UniswapV3LiquidityAtTick]],
+    tick_bitmap: SkipValidation[InitializedTickMap],
+    tick_data: SkipValidation[LiquidityMap],
     tick: ValidatedTick,
     tick_spacing: ValidatedInt24,
     less_than_or_equal: bool,
