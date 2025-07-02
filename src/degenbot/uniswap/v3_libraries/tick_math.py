@@ -12,6 +12,16 @@ MIN_SQRT_RATIO = 4295128739
 MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342
 
 
+# Magic number represents the minimum value of the error when approximating log_sqrt10001(x),
+# when sqrtPrice is from the range (2^-64, 2^64). This is safe as MIN_SQRT_PRICE is more than
+# 2^-64. If MIN_SQRT_PRICE is changed, this may need to be changed too
+MIN_ERROR = 291339464771989622907027621153398088495
+
+# Magic number represents the ceiling of the maximum value of the error when
+# approximating log_sqrt10001(x)
+MAX_ERROR = 3402992956809132418596140100660247210
+
+
 type ValidatedTick = Annotated[int, Field(strict=True, ge=MIN_TICK, le=MAX_TICK)]
 type ValidatedSqrtPrice = Annotated[int, Field(strict=True, ge=MIN_SQRT_RATIO, le=MAX_SQRT_RATIO)]
 
@@ -95,12 +105,9 @@ def get_tick_at_sqrt_ratio(
 
     f = r > 1
     msb |= f
-    r = ratio >> msb - 127 if msb >= MOST_SIGNIFICANT_BIT_FOR_MAX_INT128 else ratio << 127 - msb
+    r = ratio >> msb - 127 if msb >= 128 else ratio << 127 - msb  # noqa: PLR2004
 
-    most_significant_bit_for_max_int128 = 128
-    r = ratio >> msb - 127 if msb >= most_significant_bit_for_max_int128 else ratio << 127 - msb
-
-    log_2 = (msb - most_significant_bit_for_max_int128) << 64
+    log_2 = (msb - 128) << 64
 
     for factor in (63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51):
         r = (r * r) >> 127
@@ -114,8 +121,8 @@ def get_tick_at_sqrt_ratio(
 
     log_sqrt10001 = log_2 * 255738958999603826347141  # 128.128 number
 
-    tick_low = (log_sqrt10001 - 3402992956809132418596140100660247210) >> 128
-    tick_high = (log_sqrt10001 + 291339464771989622907027621153398088495) >> 128
+    tick_low = (log_sqrt10001 - MAX_ERROR) >> 128
+    tick_high = (log_sqrt10001 + MIN_ERROR) >> 128
 
     return (
         tick_low
