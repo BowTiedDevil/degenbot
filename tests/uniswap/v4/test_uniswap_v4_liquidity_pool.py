@@ -14,7 +14,7 @@ from degenbot import pool_registry
 from degenbot.anvil_fork import AnvilFork
 from degenbot.cache import get_checksum_address
 from degenbot.config import set_web3
-from degenbot.constants import ZERO_ADDRESS
+from degenbot.constants import MAX_INT128, ZERO_ADDRESS
 from degenbot.exceptions import IncompleteSwap, LiquidityPoolError, PossibleInaccurateResult
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -433,14 +433,21 @@ def test_first_200_pools(
 ):
     set_web3(fork_mainnet_full.w3)
 
+    quoter = fork_mainnet_full.w3.eth.contract(
+        address=UNISWAP_V4_QUOTER_ADDRESS,
+        abi=UNISWAP_V4_QUOTER_ABI,
+    )
+
     for pool in testing_pools:
         _test_pool_exact_input(
             pool=pool,
             fork=fork_mainnet_full,
+            quoter=quoter,
         )
         _test_pool_exact_output(
             pool=pool,
             fork=fork_mainnet_full,
+            quoter=quoter,
         )
 
 
@@ -452,15 +459,22 @@ def test_first_200_pools_with_snapshot(
     fork_mainnet_archive.reset(block_number=liquidity_snapshot["snapshot_block"])
     set_web3(fork_mainnet_archive.w3)
 
+    quoter = fork_mainnet_archive.w3.eth.contract(
+        address=UNISWAP_V4_QUOTER_ADDRESS,
+        abi=UNISWAP_V4_QUOTER_ABI,
+    )
+
     for pool in testing_pools:
         _test_pool_exact_input(
             pool=pool,
             fork=fork_mainnet_archive,
+            quoter=quoter,
             snapshot=liquidity_snapshot,
         )
         _test_pool_exact_output(
             pool=pool,
             fork=fork_mainnet_archive,
+            quoter=quoter,
             snapshot=liquidity_snapshot,
         )
 
