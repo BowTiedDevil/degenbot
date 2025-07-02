@@ -1,4 +1,7 @@
 import functools
+from typing import overload
+
+from pydantic import validate_call
 
 from degenbot.constants import MAX_UINT160, MAX_UINT256
 from degenbot.exceptions import EVMRevertError
@@ -7,19 +10,47 @@ from degenbot.uniswap.v3_libraries.constants import Q96, Q96_RESOLUTION
 from degenbot.uniswap.v3_libraries.full_math import muldiv, muldiv_rounding_up
 from degenbot.uniswap.v3_libraries.functions import to_int256, to_uint160
 from degenbot.uniswap.v3_libraries.unsafe_math import div_rounding_up
+from degenbot.validation.evm_values import (
+    ValidatedInt128,
+    ValidatedInt256,
+    ValidatedUint128,
+    ValidatedUint128NonZero,
+    ValidatedUint160,
+    ValidatedUint160NonZero,
+    ValidatedUint256,
+)
 
 """
 ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/SqrtPriceMath.sol
 """
 
 
-@functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
+@overload
 def get_amount0_delta(
-    sqrt_ratio_a_x96: int,
-    sqrt_ratio_b_x96: int,
-    liquidity: int,
+    sqrt_ratio_a_x96: ValidatedUint160,
+    sqrt_ratio_b_x96: ValidatedUint160,
+    liquidity: ValidatedInt128,
+    round_up: bool,
+) -> ValidatedUint256: ...
+
+
+@overload
+def get_amount0_delta(
+    sqrt_ratio_a_x96: ValidatedUint160,
+    sqrt_ratio_b_x96: ValidatedUint160,
+    liquidity: ValidatedInt128,
+    round_up: None,
+) -> ValidatedInt256: ...
+
+
+@functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
+@validate_call(validate_return=True)
+def get_amount0_delta(
+    sqrt_ratio_a_x96: ValidatedUint160NonZero,
+    sqrt_ratio_b_x96: ValidatedUint160,
+    liquidity: ValidatedInt128 | ValidatedUint128,
     round_up: bool | None = None,
-) -> int:
+) -> ValidatedInt256 | ValidatedUint256:
     # The Solidity function is overloaded with respect to `roundUp`.
     # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/sqrt_price_math.sol
 
@@ -49,13 +80,32 @@ def get_amount0_delta(
     )
 
 
-@functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
+@overload
 def get_amount1_delta(
-    sqrt_ratio_a_x96: int,
-    sqrt_ratio_b_x96: int,
-    liquidity: int,
+    sqrt_ratio_a_x96: ValidatedUint160,
+    sqrt_ratio_b_x96: ValidatedUint160,
+    liquidity: ValidatedInt128,
+    round_up: bool,
+) -> ValidatedUint256: ...
+
+
+@overload
+def get_amount1_delta(
+    sqrt_ratio_a_x96: ValidatedUint160,
+    sqrt_ratio_b_x96: ValidatedUint160,
+    liquidity: ValidatedInt128,
+    round_up: None,
+) -> ValidatedInt256: ...
+
+
+@functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
+@validate_call(validate_return=True)
+def get_amount1_delta(
+    sqrt_ratio_a_x96: ValidatedUint160,
+    sqrt_ratio_b_x96: ValidatedUint160,
+    liquidity: ValidatedInt128 | ValidatedUint128,
     round_up: bool | None = None,
-) -> int:
+) -> ValidatedInt256 | ValidatedUint256:
     # The Solidity function is overloaded with respect to `roundUp`. Both modes are encapsulated
     # here by the optional `round_up` argument.
 
@@ -79,12 +129,13 @@ def get_amount1_delta(
 
 
 @functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
+@validate_call(validate_return=True)
 def get_next_sqrt_price_from_amount0_rounding_up(
-    sqrt_price_x96: int,
-    liquidity: int,
-    amount: int,
+    sqrt_price_x96: ValidatedUint160,
+    liquidity: ValidatedUint128,
+    amount: ValidatedUint256,
     add: bool,
-) -> int:
+) -> ValidatedUint160:
     if amount == 0:
         return sqrt_price_x96
 
@@ -119,12 +170,13 @@ def get_next_sqrt_price_from_amount0_rounding_up(
 
 
 @functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
+@validate_call(validate_return=True)
 def get_next_sqrt_price_from_amount1_rounding_down(
-    sqrt_price_x96: int,
-    liquidity: int,
-    amount: int,
+    sqrt_price_x96: ValidatedUint160,
+    liquidity: ValidatedUint128,
+    amount: ValidatedUint256,
     add: bool,
-) -> int:
+) -> ValidatedUint160:
     if add:
         quotient = (
             (amount << Q96_RESOLUTION) // liquidity
@@ -147,12 +199,13 @@ def get_next_sqrt_price_from_amount1_rounding_down(
 
 
 @functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
+@validate_call(validate_return=True)
 def get_next_sqrt_price_from_input(
-    sqrt_price_x96: int,
-    liquidity: int,
-    amount_in: int,
+    sqrt_price_x96: ValidatedUint160NonZero,
+    liquidity: ValidatedUint128NonZero,
+    amount_in: ValidatedUint256,
     zero_for_one: bool,
-) -> int:
+) -> ValidatedUint160:
     if not (sqrt_price_x96 > 0):
         raise EVMRevertError(error="required: sqrt_price_x96 > 0")
 
@@ -170,10 +223,11 @@ def get_next_sqrt_price_from_input(
 
 
 @functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
+@validate_call(validate_return=True)
 def get_next_sqrt_price_from_output(
-    sqrt_price_x96: int,
-    liquidity: int,
-    amount_out: int,
+    sqrt_price_x96: ValidatedUint160NonZero,
+    liquidity: ValidatedUint128NonZero,
+    amount_out: ValidatedUint256,
     zero_for_one: bool,
 ) -> int:
     if not (sqrt_price_x96 > 0):

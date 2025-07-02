@@ -1,5 +1,4 @@
-# ruff: noqa: PLR2004
-
+import functools
 from typing import Annotated
 
 from pydantic import Field, validate_call
@@ -7,6 +6,7 @@ from pydantic import Field, validate_call
 from degenbot.constants import MAX_INT16, MAX_UINT256
 from degenbot.functions import evm_divide
 from degenbot.uniswap.v4_libraries import bit_math
+from degenbot.uniswap.v4_libraries._config import V4_LIB_CACHE_SIZE
 from degenbot.validation.evm_values import ValidatedInt24, ValidatedUint160
 
 MIN_TICK = -887272
@@ -52,6 +52,7 @@ def min_usable_tick(tick_spacing: ValidatedInt24) -> ValidatedInt24:
     return evm_divide(MIN_TICK, tick_spacing) * tick_spacing
 
 
+@functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
 @validate_call(validate_return=True)
 def get_sqrt_price_at_tick(tick: ValidatedTick) -> ValidatedUint160:
     """
@@ -111,6 +112,7 @@ def get_sqrt_price_at_tick(tick: ValidatedTick) -> ValidatedUint160:
     return (price + ((1 << 32) - 1)) >> 32
 
 
+@functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
 @validate_call(validate_return=True)
 def get_tick_at_sqrt_price(sqrt_price_x96: ValidatedSqrtPrice) -> ValidatedTick:
     """
