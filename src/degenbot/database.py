@@ -26,7 +26,7 @@ class PoolLiquidityMap(pydantic.BaseModel):
     tick_data: dict[Tick, LiquidityAtTick]
 
 
-class IntMappedToString(TypeDecorator):
+class IntMappedToString(TypeDecorator[int]):
     """
     EVM integers can be up to 32 bytes, which exceeds the usual 8 byte limit for most SQL backends.
     Map these values to a 78 character VARCHAR which can hold a string representation of all
@@ -40,7 +40,7 @@ class IntMappedToString(TypeDecorator):
         self,
         value: int | None,
         dialect: Dialect,  # noqa: ARG002
-    ) -> str:
+    ) -> str | None:
         """
         Perform the Python type -> DB type conversion.
         """
@@ -52,7 +52,7 @@ class IntMappedToString(TypeDecorator):
         self,
         value: str | None,
         dialect: Dialect,  # noqa: ARG002
-    ) -> int:
+    ) -> int | None:
         """
         Perform the DB type -> Python type conversion.
         """
