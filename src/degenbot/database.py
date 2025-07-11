@@ -188,6 +188,9 @@ class SushiswapV3Pool(UniswapV3Pool):
 
 
 def create_new_sqlite_database(db_path: pathlib.Path):
+    if db_path.exists():
+        db_path.unlink()
+
     engine = create_engine(
         f"sqlite:///{db_path.absolute()}",
     )

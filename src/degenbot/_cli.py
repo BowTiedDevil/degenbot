@@ -2,6 +2,8 @@ import click
 import tomlkit
 from pydantic import TypeAdapter
 
+from degenbot.database import create_new_sqlite_database
+
 from ._config import settings
 
 
@@ -54,9 +56,17 @@ def config_show(output_format: str | None) -> None:
 def database() -> None: ...
 
 
-@database.command("create")
-def database_create() -> None:
-    click.echo(f"(placeholder) DB created at {settings.database.path}")
+@database.command("reset")
+def database_reset() -> None:
+    user_confirm = click.confirm(
+        f"All existing data held in the DB at {settings.database.path} will be lost. Do you want to proceed?",
+        default=False,
+    )
+    if user_confirm:
+        create_new_sqlite_database(settings.database.path)
+    else:
+        raise click.Abort()
+
 
 
 @database.command("verify")
