@@ -207,7 +207,7 @@ class SushiswapV3Pool(UniswapV3Pool):
     }
 
 
-def create_new_sqlite_database(db_path: pathlib.Path):
+def create_new_sqlite_database(db_path: pathlib.Path) -> None:
     if db_path.exists():
         db_path.unlink()
 
