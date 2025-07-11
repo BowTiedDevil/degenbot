@@ -143,15 +143,16 @@ Index(
 
 class Pool(Base):
     __tablename__ = "pools"
-    __mapper_args__: ClassVar = {
-        "polymorphic_on": "type",
-        "polymorphic_identity": "pool",
-    }
 
     id: Mapped[PrimaryKeyInteger]
     address: Mapped[Address] = mapped_column(unique=True, index=True)
     chain: Mapped[int]
-    type: Mapped[str]
+    kind: Mapped[str] = mapped_column()
+
+    __mapper_args__ = {  # noqa: RUF012
+        "polymorphic_on": kind,
+        "polymorphic_identity": "pool",
+    }
 
 
 class AbstractUniswapPool(Pool):
@@ -160,7 +161,7 @@ class AbstractUniswapPool(Pool):
     child classes. This class should not be directly instantiated.
     """
 
-    __mapper_args__: ClassVar = {
+    __mapper_args__ = {  # noqa: RUF012
         "polymorphic_abstract": True,
     }
 
@@ -171,13 +172,13 @@ class AbstractUniswapPool(Pool):
 
 
 class UniswapV2Pool(AbstractUniswapPool):
-    __mapper_args__: ClassVar = {
+    __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "uniswap_v2",
     }
 
 
 class UniswapV3Pool(AbstractUniswapPool):
-    __mapper_args__: ClassVar = {
+    __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "uniswap_v3",
     }
 
@@ -190,19 +191,19 @@ class UniswapV3Pool(AbstractUniswapPool):
 
 
 class AerodromeV3Pool(UniswapV3Pool):
-    __mapper_args__: ClassVar = {
+    __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "aerodrome_v3",
     }
 
 
 class PancakeswapV3Pool(UniswapV3Pool):
-    __mapper_args__: ClassVar = {
+    __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "pancakeswap_v3",
     }
 
 
 class SushiswapV3Pool(UniswapV3Pool):
-    __mapper_args__: ClassVar = {
+    __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "sushiswap_v3",
     }
 
