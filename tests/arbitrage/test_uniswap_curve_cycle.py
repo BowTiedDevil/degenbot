@@ -8,10 +8,9 @@ import time
 import pytest
 from eth_typing import ChainId
 
-from degenbot import UniswapV2Pool, UniswapV3Pool
+from degenbot import UniswapV2Pool, UniswapV3Pool, set_web3
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
-from degenbot.config import set_web3
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import ArbitrageError, DegenbotValueError, NoLiquidity

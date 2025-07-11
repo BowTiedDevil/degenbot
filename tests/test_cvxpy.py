@@ -17,10 +17,9 @@ from cvxpy.atoms.affine.bmat import bmat as cvxpy_bmat
 from cvxpy.atoms.affine.sum import sum as cvxpy_sum
 from cvxpy.atoms.geo_mean import geo_mean
 
+from degenbot import set_web3
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage.uniswap_multipool_cycle_testing import _UniswapMultiPoolCycleTesting
-from degenbot.cache import get_checksum_address
-from degenbot.config import set_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool

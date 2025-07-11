@@ -2,9 +2,9 @@ import pytest
 from hexbytes import HexBytes
 from web3 import AsyncWeb3
 
+from degenbot import async_connection_manager, set_web3
 from degenbot.anvil_fork import AnvilFork
 from degenbot.cache import get_checksum_address
-from degenbot.config import async_connection_manager, set_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token, EtherPlaceholder
 from degenbot.exceptions import DegenbotValueError, NoPriceOracle

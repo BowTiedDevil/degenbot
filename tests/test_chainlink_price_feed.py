@@ -1,7 +1,7 @@
+from degenbot import set_web3
 from degenbot.anvil_fork import AnvilFork
 from degenbot.cache import get_checksum_address
 from degenbot.chainlink import ChainlinkPriceContract
-from degenbot.config import set_web3
 
 
 def test_chainlink_feed(fork_mainnet_full: AnvilFork):

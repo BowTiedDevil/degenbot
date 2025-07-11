@@ -11,8 +11,8 @@ from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
 
+from degenbot import connection_manager
 from degenbot.cache import get_checksum_address
-from degenbot.config import connection_manager
 from degenbot.constants import WRAPPED_NATIVE_TOKENS
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (

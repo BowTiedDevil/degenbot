@@ -6,11 +6,11 @@ import pytest
 import web3
 
 import degenbot
-import degenbot.config
 import degenbot.logging
 import degenbot.managers
 import degenbot.managers.erc20_token_manager
 import degenbot.types
+from degenbot import connection_manager
 from degenbot.anvil_fork import AnvilFork
 from degenbot.registry.all_pools import pool_registry
 from degenbot.registry.all_tokens import token_registry
@@ -46,8 +46,8 @@ def _initialize_and_reset_after_each_test():
     """
     Before each test, clear/reset global values and singletons
     """
-    degenbot.config.connection_manager.connections.clear()
-    degenbot.config.connection_manager._default_chain_id = None
+    connection_manager.connections.clear()
+    connection_manager._default_chain_id = None
     degenbot.managers.erc20_token_manager.Erc20TokenManager._state.clear()
     pool_registry._all_pools.clear()
     pool_registry._v4_pool_registry._all_v4_pools.clear()

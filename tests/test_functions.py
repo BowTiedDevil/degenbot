@@ -3,8 +3,7 @@ from eth_typing import Hash32, HexStr
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-import degenbot.config
-from degenbot import AnvilFork
+from degenbot import AnvilFork, set_web3
 from degenbot.cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.functions import (
@@ -56,7 +55,7 @@ def test_encode_function_calldata():
 
 
 def test_low_level_call_for_factory_address(fork_mainnet_full: AnvilFork):
-    degenbot.config.set_web3(fork_mainnet_full.w3)
+    set_web3(fork_mainnet_full.w3)
 
     pool_address = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
@@ -140,7 +139,7 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
     """
 
     w3 = fork_mainnet_full.w3
-    degenbot.config.set_web3(w3)
+    set_web3(w3)
 
     # Known string literals
     latest_block = get_number_for_block_identifier("latest", w3)

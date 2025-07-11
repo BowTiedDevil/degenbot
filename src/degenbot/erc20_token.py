@@ -9,7 +9,7 @@ from web3.types import BlockIdentifier
 
 from degenbot.cache import get_checksum_address
 from degenbot.chainlink import ChainlinkPriceContract
-from degenbot.config import async_connection_manager, connection_manager
+from degenbot.connection_manager import async_connection_manager, connection_manager
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import DegenbotValueError, NoPriceOracle
 from degenbot.functions import (

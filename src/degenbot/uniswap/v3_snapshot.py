@@ -12,9 +12,8 @@ from web3.contract.base_contract import BaseContractEvent
 from web3.types import EventData, FilterParams, LogReceipt
 from web3.utils import get_abi_element
 
+from degenbot import connection_manager
 from degenbot.cache import get_checksum_address
-from degenbot.config import connection_manager
-from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.types import BlockNumber, ChainId
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI

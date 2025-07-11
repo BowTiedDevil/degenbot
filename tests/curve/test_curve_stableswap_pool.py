@@ -12,8 +12,7 @@ if TYPE_CHECKING:
     from web3.contract.contract import Contract
     from web3.types import Timestamp
 
-from degenbot import AnvilFork
-from degenbot.config import connection_manager, set_web3
+from degenbot import AnvilFork, connection_manager, set_web3
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions import BrokenPool, InvalidSwapInputAmount, NoLiquidity

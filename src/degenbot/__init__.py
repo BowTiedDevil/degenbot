@@ -23,7 +23,14 @@ from .arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from .builder_endpoint import BuilderEndpoint
 from .camelot.pools import CamelotLiquidityPool
 from .chainlink import ChainlinkPriceContract
-from .config import get_async_web3, get_web3, set_async_web3, set_web3
+from .connection_manager import (
+    async_connection_manager,
+    connection_manager,
+    get_async_web3,
+    get_web3,
+    set_async_web3,
+    set_web3,
+)
 from .curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from .erc20_token import Erc20Token
 from .logging import logger
@@ -96,8 +103,10 @@ __all__ = (
     "UniswapV4PoolState",
     "aerodrome",
     "arbitrage",
+    "async_connection_manager",
     "camelot",
     "cli",
+    "connection_manager",
     "constants",
     "curve",
     "exceptions",

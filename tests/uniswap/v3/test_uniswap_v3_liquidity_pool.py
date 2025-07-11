@@ -10,9 +10,9 @@ from eth_typing import ChainId
 from hexbytes import HexBytes
 from web3.exceptions import ContractLogicError
 
+from degenbot import set_web3
 from degenbot.anvil_fork import AnvilFork
 from degenbot.cache import get_checksum_address
-from degenbot.config import set_web3
 from degenbot.constants import MAX_INT256
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (

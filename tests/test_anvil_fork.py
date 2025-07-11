@@ -4,9 +4,8 @@ import pytest
 import web3.middleware
 from hexbytes import HexBytes
 
-from degenbot import AnvilFork
+from degenbot import AnvilFork, set_web3
 from degenbot.cache import get_checksum_address
-from degenbot.config import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import DegenbotValueError, EVMRevertError, InvalidUint256
 

@@ -1,7 +1,7 @@
 import pydantic_core
 from web3.contract.contract import Contract
 
-from degenbot import config
+from degenbot import connection_manager
 from degenbot.cache import get_checksum_address
 from degenbot.types import ChainId
 
@@ -27,7 +27,9 @@ class ChainlinkPriceContract:
     ):
         self.address = get_checksum_address(address)
         self._chain_id = (
-            chain_id if chain_id is not None else config.connection_manager.default_chain_id
+            chain_id
+            if chain_id is not None
+            else connection_manager.connection_manager.default_chain_id
         )
         self.decimals: int = self.w3_contract.functions.decimals().call()
 
@@ -37,7 +39,7 @@ class ChainlinkPriceContract:
 
     @property
     def w3_contract(self) -> Contract:
-        return config.connection_manager.get_web3(self.chain_id).eth.contract(
+        return connection_manager.connection_manager.get_web3(self.chain_id).eth.contract(
             address=self.address,
             abi=CHAINLINK_PRICE_FEED_ABI,
         )

@@ -1,15 +1,14 @@
 import pytest
 import web3
 
-from degenbot.anvil_fork import AnvilFork
-from degenbot.config import (
+from degenbot import (
     async_connection_manager,
     connection_manager,
-    get_async_web3,
     get_web3,
     set_async_web3,
     set_web3,
 )
+from degenbot.anvil_fork import AnvilFork
 from degenbot.exceptions import DegenbotValueError
 
 from .conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
@@ -60,7 +59,6 @@ def test_connection_manager(fork_mainnet_full: AnvilFork):
 
 async def test_async_connection_manager(fork_mainnet_full: AnvilFork):
     async with fork_mainnet_full.async_w3 as async_w3:
-        async_w3: web3.AsyncWeb3
         await set_async_web3(async_w3)
         assert async_connection_manager.default_chain_id == await async_w3.eth.chain_id
         assert async_connection_manager.get_web3(await async_w3.eth.chain_id) is async_w3
