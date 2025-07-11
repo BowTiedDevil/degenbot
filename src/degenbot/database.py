@@ -76,6 +76,26 @@ class Base(DeclarativeBase):
     }
 
 
+class Erc20TokenTableEntry(Base):
+    __tablename__ = "erc20_tokens"
+
+    id: Mapped[PrimaryKeyInteger]
+    address: Mapped[Address]
+    chain: Mapped[int]
+    name: Mapped[str]
+    symbol: Mapped[str]
+    decimals: Mapped[int]
+
+
+# A (address, ChainId) tuple is unique for ERC-20 tokens
+Index(
+    "ix_erc20_tokens_address_chain",
+    Erc20TokenTableEntry.address,
+    Erc20TokenTableEntry.chain,
+    unique=True,
+)
+
+
 class MetadataTableEntry(Base):
     __tablename__ = "metadata"
 
