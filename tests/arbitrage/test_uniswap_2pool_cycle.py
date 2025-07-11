@@ -8,13 +8,13 @@ from degenbot import (
     Erc20Token,
     UniswapV2Pool,
     UniswapV3Pool,
+    get_checksum_address,
     pool_registry,
     set_web3,
     token_registry,
 )
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts, UniswapV4PoolSwapAmounts
 from degenbot.arbitrage.uniswap_2pool_cycle_testing import _UniswapTwoPoolCycleTesting
-from degenbot.cache import get_checksum_address
 from degenbot.erc20_token import EtherPlaceholder
 from degenbot.exceptions import PossibleInaccurateResult, RateOfExchangeBelowMinimum
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool

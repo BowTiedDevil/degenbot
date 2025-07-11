@@ -9,7 +9,7 @@ from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
 from web3.types import BlockIdentifier
 
-from degenbot.cache import get_checksum_address
+from degenbot import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import DegenbotValueError, InvalidUint256
 from degenbot.types import BlockNumber

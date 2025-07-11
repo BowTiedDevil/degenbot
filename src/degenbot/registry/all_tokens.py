@@ -1,7 +1,7 @@
 import contextlib
 from typing import TYPE_CHECKING, Self
 
-from degenbot.cache import get_checksum_address
+from degenbot import get_checksum_address
 from degenbot.exceptions import DegenbotValueError, RegistryAlreadyInitialized
 from degenbot.types import ChainId
 

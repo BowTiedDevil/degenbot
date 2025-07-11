@@ -1,4 +1,4 @@
-from degenbot.cache import get_checksum_address
+from degenbot import get_checksum_address
 
 # @dev All sqrtPrice calculations are calculated as
 # sqrtPriceX96 = floor(sqrt(A / B) * 2 ** 96) where A and B are the currency reserves

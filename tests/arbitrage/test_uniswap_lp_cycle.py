@@ -18,6 +18,7 @@ from degenbot import (
     UniswapLpCycle,
     UniswapV2Pool,
     UniswapV3Pool,
+    get_checksum_address,
     set_web3,
 )
 from degenbot.arbitrage.types import (
@@ -25,7 +26,6 @@ from degenbot.arbitrage.types import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
-from degenbot.cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import ArbitrageError, DegenbotValueError, RateOfExchangeBelowMinimum
 from degenbot.uniswap.v2_types import (

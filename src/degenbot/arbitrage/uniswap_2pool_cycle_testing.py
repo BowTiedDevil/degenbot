@@ -31,13 +31,13 @@ from degenbot import (
     UniswapV3PoolState,
     UniswapV4Pool,
     UniswapV4PoolState,
+    get_checksum_address,
 )
 from degenbot.arbitrage.types import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
     UniswapV4PoolSwapAmounts,
 )
-from degenbot.cache import get_checksum_address
 from degenbot.constants import MAX_INT256, WRAPPED_NATIVE_TOKENS
 from degenbot.exceptions import (
     ArbitrageError,

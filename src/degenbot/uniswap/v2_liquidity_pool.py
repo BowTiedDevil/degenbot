@@ -12,9 +12,8 @@ from eth_typing import BlockIdentifier, ChecksumAddress
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
-from degenbot import connection_manager
+from degenbot import connection_manager, get_checksum_address
 from degenbot.arbitrage.types import UniswapPoolSwapVector
-from degenbot.cache import get_checksum_address
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
     AddressMismatch,

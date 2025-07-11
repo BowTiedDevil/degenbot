@@ -1,6 +1,5 @@
-from degenbot import set_web3
+from degenbot import get_checksum_address, set_web3
 from degenbot.anvil_fork import AnvilFork
-from degenbot.cache import get_checksum_address
 from degenbot.chainlink import ChainlinkPriceContract
 
 

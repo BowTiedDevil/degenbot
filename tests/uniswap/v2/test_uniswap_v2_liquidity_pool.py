@@ -6,8 +6,14 @@ import pytest
 from hexbytes import HexBytes
 
 import degenbot.uniswap.deployments
-from degenbot import AnvilFork, CamelotLiquidityPool, Erc20Token, UniswapV2Pool, set_web3
-from degenbot.cache import get_checksum_address
+from degenbot import (
+    AnvilFork,
+    CamelotLiquidityPool,
+    Erc20Token,
+    UniswapV2Pool,
+    get_checksum_address,
+    set_web3,
+)
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import (

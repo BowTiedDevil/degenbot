@@ -10,9 +10,8 @@ from hexbytes import HexBytes
 from web3.contract import Contract
 from web3.exceptions import ContractLogicError
 
-from degenbot import pool_registry, set_web3
+from degenbot import get_checksum_address, pool_registry, set_web3
 from degenbot.anvil_fork import AnvilFork
-from degenbot.cache import get_checksum_address
 from degenbot.constants import MAX_INT128, ZERO_ADDRESS
 from degenbot.exceptions import IncompleteSwap, LiquidityPoolError, PossibleInaccurateResult
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool

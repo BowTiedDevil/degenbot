@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Self
 
 from hexbytes import HexBytes
 
-from degenbot.cache import get_checksum_address
+from degenbot import get_checksum_address
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress

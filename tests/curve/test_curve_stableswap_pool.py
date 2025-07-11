@@ -6,7 +6,7 @@ import eth_abi.abi
 import pytest
 from web3 import Web3
 
-from degenbot.cache import get_checksum_address
+from degenbot import get_checksum_address
 
 if TYPE_CHECKING:
     from web3.contract.contract import Contract

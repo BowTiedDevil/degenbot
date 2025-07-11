@@ -1,8 +1,7 @@
 import pytest
 from eth_typing import ChainId
 
-from degenbot import AnvilFork, set_web3
-from degenbot.cache import get_checksum_address
+from degenbot import AnvilFork, get_checksum_address, set_web3
 from degenbot.exceptions import (
     ManagerAlreadyInitialized,
     ManagerError,

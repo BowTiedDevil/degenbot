@@ -1,7 +1,6 @@
 import pytest
 
-from degenbot import AnvilFork, Erc20Token, UniswapV2Pool, set_web3
-from degenbot.cache import get_checksum_address
+from degenbot import AnvilFork, Erc20Token, UniswapV2Pool, get_checksum_address, set_web3
 from degenbot.exceptions import DegenbotValueError, RegistryAlreadyInitialized
 from degenbot.registry.all_pools import PoolRegistry, pool_registry
 from degenbot.registry.all_tokens import TokenRegistry, token_registry

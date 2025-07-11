@@ -3,8 +3,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
-from degenbot import connection_manager
-from degenbot.cache import get_checksum_address
+from degenbot import connection_manager, get_checksum_address
 from degenbot.erc20_token import Erc20Token, EtherPlaceholder
 from degenbot.registry.all_tokens import token_registry
 from degenbot.types import AbstractManager, ChainId

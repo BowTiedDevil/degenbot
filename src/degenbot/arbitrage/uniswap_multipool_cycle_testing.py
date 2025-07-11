@@ -23,9 +23,9 @@ from degenbot import (
     UniswapLpCycle,
     UniswapV2Pool,
     UniswapV2PoolState,
+    get_checksum_address,
 )
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
-from degenbot.cache import get_checksum_address
 from degenbot.exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError
 from degenbot.logging import logger
 

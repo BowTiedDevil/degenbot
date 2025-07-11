@@ -4,7 +4,7 @@ from threading import Lock
 import eth_abi.abi
 from eth_typing import ChecksumAddress
 
-from degenbot import connection_manager
+from degenbot import connection_manager, get_checksum_address
 from degenbot.balancer.libraries.fixed_point import mul_up
 from degenbot.balancer.libraries.scaling_helpers import (
     _compute_scaling_factor,
@@ -14,7 +14,6 @@ from degenbot.balancer.libraries.scaling_helpers import (
 )
 from degenbot.balancer.libraries.weighted_math import _calc_out_given_in, _subtract_swap_fee_amount
 from degenbot.balancer.types import BalancerV2PoolState
-from degenbot.cache import get_checksum_address
 from degenbot.erc20_token import Erc20Token
 from degenbot.functions import encode_function_calldata
 from degenbot.managers.erc20_token_manager import Erc20TokenManager

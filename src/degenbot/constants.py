@@ -23,7 +23,7 @@ import typing
 
 from eth_typing import ChainId, ChecksumAddress
 
-from degenbot.cache import get_checksum_address
+from degenbot import get_checksum_address
 
 
 def _min_uint(_: int) -> int:

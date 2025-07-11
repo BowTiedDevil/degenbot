@@ -1,11 +1,11 @@
 from typing import Any
 
+from degenbot import get_checksum_address
 from degenbot.aerodrome.functions import (
     generate_aerodrome_v2_pool_address,
     generate_aerodrome_v3_pool_address,
 )
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
-from degenbot.cache import get_checksum_address
 from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 
 

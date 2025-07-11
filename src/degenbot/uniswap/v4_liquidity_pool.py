@@ -15,9 +15,8 @@ from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import BlockIdentifier
 
-from degenbot import connection_manager
+from degenbot import connection_manager, get_checksum_address
 from degenbot.arbitrage.types import UniswapPoolSwapVector
-from degenbot.cache import get_checksum_address
 from degenbot.constants import MAX_INT256, MIN_INT256, ZERO_ADDRESS
 from degenbot.erc20_token import Erc20Token
 from degenbot.exceptions import (
