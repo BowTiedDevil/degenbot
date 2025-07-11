@@ -11,6 +11,8 @@ from . import (
     sushiswap,
     uniswap,
 )
+from ._cli import cli
+from ._config import settings
 from .aerodrome.managers import AerodromeV2PoolManager, AerodromeV3PoolManager
 from .aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from .aerodrome.types import AerodromeV2PoolState, AerodromeV3PoolState
@@ -95,6 +97,7 @@ __all__ = (
     "aerodrome",
     "arbitrage",
     "camelot",
+    "cli",
     "constants",
     "curve",
     "exceptions",
@@ -106,6 +109,7 @@ __all__ = (
     "pool_registry",
     "set_async_web3",
     "set_web3",
+    "settings",
     "solidly",
     "sushiswap",
     "token_registry",
