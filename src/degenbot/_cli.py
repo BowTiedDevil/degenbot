@@ -5,10 +5,8 @@ import click
 import tomlkit
 from pydantic import TypeAdapter
 
-from degenbot import __version__
-from degenbot.database import create_new_sqlite_database
-
-from ._config import settings
+from degenbot import __version__, settings
+from degenbot.database import create_new_sqlite_database, update_existing_sqlite_database
 
 
 @click.group()
@@ -89,6 +87,7 @@ def database_upgrade(force: bool) -> None:
         default=False,
     ):
         click.echo(f"(placeholder) The DB at {settings.database.path} has been upgraded")
+        update_existing_sqlite_database(settings.database.path)
     else:
         raise click.Abort()
 
