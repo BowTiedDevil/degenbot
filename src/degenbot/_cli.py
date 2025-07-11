@@ -1,7 +1,9 @@
+from textwrap import dedent
 import click
 import tomlkit
 from pydantic import TypeAdapter
 
+from degenbot import __version__
 from degenbot.database import create_new_sqlite_database
 
 from ._config import settings
@@ -59,7 +61,11 @@ def database() -> None: ...
 @database.command("reset")
 def database_reset() -> None:
     user_confirm = click.confirm(
-        f"All existing data held in the DB at {settings.database.path} will be lost. Do you want to proceed?",
+        dedent(
+            f"""\
+            The existing DB at {settings.database.path} will be removed and a new, empty DB will be created and initialized using the schema included in {__package__} version {__version__}.
+            Do you want to proceed?"""  # noqa: E501
+        ),
         default=False,
     )
     if user_confirm:
