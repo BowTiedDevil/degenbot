@@ -1,4 +1,6 @@
 from textwrap import dedent
+from typing import Literal
+
 import click
 import tomlkit
 from pydantic import TypeAdapter
@@ -20,6 +22,13 @@ def config() -> None: ...
 
 @config.command("show")
 @click.option(
+    "--json",
+    "output_format",
+    flag_value="json",
+    type=str,
+    help="Show configuration in JSON format",
+)
+@click.option(
     "--toml",
     "output_format",
     flag_value="toml",
@@ -27,14 +36,7 @@ def config() -> None: ...
     help="Show configuration in TOML format (default)",
     default=True,
 )
-@click.option(
-    "--json",
-    "output_format",
-    flag_value="json",
-    type=str,
-    help="Show configuration in JSON format",
-)
-def config_show(output_format: str | None) -> None:
+def config_show(output_format: Literal["json", "toml"]) -> None:
     match output_format:
         case "json":
             click.echo(
@@ -49,9 +51,6 @@ def config_show(output_format: str | None) -> None:
                     settings.model_dump(),
                 ),
             )
-        case _:
-            click.echo("Please specify either --json or --toml", err=True)
-            raise click.Abort()
 
 
 @cli.group()
