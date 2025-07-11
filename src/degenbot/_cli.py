@@ -73,6 +73,25 @@ def database_reset() -> None:
         raise click.Abort()
 
 
+@database.command("upgrade")
+@click.option("--force", is_flag=True, help="Skip confirmation prompt")
+def database_upgrade(force: bool) -> None:
+    # TODO: convert placeholder values to real
+    old = 1
+    new = 2
+
+    if force or click.confirm(
+        dedent(
+            f"""\
+            The DB at {settings.database.path} will be upgraded from version {old} to {new}.
+            Do you want to proceed?"""
+        ),
+        default=False,
+    ):
+        click.echo(f"(placeholder) The DB at {settings.database.path} has been upgraded")
+    else:
+        raise click.Abort()
+
 
 @database.command("verify")
 def database_verify() -> None:
