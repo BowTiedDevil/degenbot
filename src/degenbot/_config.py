@@ -6,6 +6,8 @@ import tomlkit
 from pydantic import BaseModel, FilePath, PlainSerializer
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from degenbot.database import create_new_sqlite_database
+
 CONFIG_DIR = pathlib.Path.home() / ".config" / "degenbot"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 DEFAULT_DB_PATH = CONFIG_DIR / "degenbot.db"
@@ -23,13 +25,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict()
 
     database: DatabaseSettings
-
-
-_default_settings = Settings(
-    database=DatabaseSettings(
-        path=DEFAULT_DB_PATH,
-    ),
-)
 
 
 def load_config_from_file(config_path: pathlib.Path) -> Settings:
@@ -55,6 +50,15 @@ if not CONFIG_DIR.exists():
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 if not CONFIG_FILE.exists():
+    # Pydantic will validate that the DB path exists, so initialize it first
+    create_new_sqlite_database(DEFAULT_DB_PATH)
+
+    _default_settings = Settings(
+        database=DatabaseSettings(
+            path=DEFAULT_DB_PATH,
+        ),
+    )
+
     save_config_to_file(_default_settings)
 
 settings = load_config_from_file(CONFIG_FILE)
