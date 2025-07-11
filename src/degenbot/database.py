@@ -216,3 +216,12 @@ def create_new_sqlite_database(db_path: pathlib.Path):
     )
     Base.metadata.create_all(bind=engine)
     logger.info(f"Initialized new SQLite database at {db_path}")
+
+
+def upgrade_existing_sqlite_database(db_path: pathlib.Path) -> None:
+    db_path_abs = db_path.absolute()
+    engine = create_engine(
+        f"sqlite:///{db_path_abs}",
+    )
+    Base.metadata.create_all(bind=engine)
+    logger.info(f"Updated existing SQLite database at {db_path_abs}")

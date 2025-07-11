@@ -86,8 +86,7 @@ def database_upgrade(force: bool) -> None:
         ),
         default=False,
     ):
-        click.echo(f"(placeholder) The DB at {settings.database.path} has been upgraded")
-        update_existing_sqlite_database(settings.database.path)
+        upgrade_existing_sqlite_database(settings.database.path)
     else:
         raise click.Abort()
 
