@@ -7,7 +7,7 @@ from web3 import AsyncWeb3, Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
-from degenbot.cache import get_checksum_address
+from degenbot import get_checksum_address
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.connection_manager import async_connection_manager, connection_manager
 from degenbot.constants import ZERO_ADDRESS
