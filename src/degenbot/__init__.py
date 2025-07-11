@@ -117,6 +117,7 @@ __all__ = (
     "exceptions",
     "functions",
     "get_async_web3",
+    "get_checksum_address",
     "get_web3",
     "logger",
     "pancakeswap",
