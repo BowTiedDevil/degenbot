@@ -36,7 +36,7 @@ Tracker = "https://github.com/BowTiedDevil/degenbot/issues"
 Twitter = "https://twitter.com/BowTiedDevil"
 
 [project.scripts]
-degenbot = "degenbot:cli"
+degenbot = "degenbot._cli:cli"
 
 [build-system]
 requires = ["setuptools"]

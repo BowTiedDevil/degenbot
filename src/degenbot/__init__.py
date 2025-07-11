@@ -11,7 +11,6 @@ from . import (
     sushiswap,
     uniswap,
 )
-from ._cli import cli
 from ._config import settings
 from .aerodrome.managers import AerodromeV2PoolManager, AerodromeV3PoolManager
 from .aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
