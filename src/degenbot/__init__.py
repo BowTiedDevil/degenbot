@@ -4,6 +4,7 @@ __version__ = version(__package__)
 
 
 from ._cache import get_checksum_address
+from ._config import settings
 from ._connection import (
     async_connection_manager,
     connection_manager,
@@ -22,7 +23,6 @@ from .arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from .builder_endpoint import BuilderEndpoint
 from .camelot.pools import CamelotLiquidityPool
 from .chainlink import ChainlinkPriceContract
-from .config import settings
 from .curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from .erc20_token import Erc20Token
 from .logging import logger
