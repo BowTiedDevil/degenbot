@@ -114,7 +114,7 @@ class LiquidityPositionTableEntry(Base):
     liquidity_gross: Mapped[BigInteger]
 
 
-# Index the unique (pool_id, tick) tuple
+# A (PoolId, tick) tuple is unique for each liquidity position
 Index(
     "ix_liquidity_positions_pool_id_tick",
     LiquidityPositionTableEntry.pool_id,
@@ -132,7 +132,7 @@ class InitializationMapTableEntry(Base):
     bitmap: Mapped[BigInteger]
 
 
-# Index the unique (pool_id, word) tuple
+# A (PoolId, word) tuple is unique for each initialization map
 Index(
     "ix_initialization_maps_pool_id_word",
     InitializationMapTableEntry.pool_id,
