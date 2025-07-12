@@ -1,6 +1,5 @@
 import pathlib
 from collections import defaultdict
-from collections.abc import Callable, Generator
 from typing import Any, TypedDict, cast
 
 import pydantic_core
