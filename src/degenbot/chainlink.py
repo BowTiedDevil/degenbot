@@ -25,11 +25,7 @@ class ChainlinkPriceContract:
         chain_id: ChainId | None = None,
     ):
         self.address = get_checksum_address(address)
-        self._chain_id = (
-            chain_id
-            if chain_id is not None
-            else connection_manager.connection_manager.default_chain_id
-        )
+        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         self.decimals: int = self.w3_contract.functions.decimals().call()
 
     @property
@@ -38,7 +34,7 @@ class ChainlinkPriceContract:
 
     @property
     def w3_contract(self) -> Contract:
-        return connection_manager.connection_manager.get_web3(self.chain_id).eth.contract(
+        return connection_manager.get_web3(self.chain_id).eth.contract(
             address=self.address,
             abi=CHAINLINK_PRICE_FEED_ABI,
         )
