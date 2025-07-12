@@ -86,13 +86,11 @@ class UniswapV3LiquiditySnapshot:
         if path.is_file():
             self._file_snapshot = pydantic_core.from_json(path.read_bytes())
             self.newest_block = self._file_snapshot.pop("snapshot_block")
-        elif path.is_dir():
+        if path.is_dir():
             self._dir_path = path
             metadata_path = path / "_metadata.json"
             assert metadata_path.exists()
             self.newest_block = pydantic_core.from_json(metadata_path.read_bytes())["block"]
-        else:
-            raise DegenbotValueError(message="Cannot identify provided path.")
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
 
