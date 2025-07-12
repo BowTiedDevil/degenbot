@@ -43,11 +43,11 @@ class UniswapV3LiquiditySnapshot:
                 return LiquidityMap(
                     tick_bitmap={
                         int(k): UniswapV3BitmapAtWord(**v)
-                        for k, v in self._file_snapshot["tick_bitmap"].items()
+                        for k, v in self._file_snapshot[pool_address]["tick_bitmap"].items()
                     },
                     tick_data={
                         int(k): UniswapV3LiquidityAtTick(**v)
-                        for k, v in self._file_snapshot["tick_data"].items()
+                        for k, v in self._file_snapshot[pool_address]["tick_data"].items()
                     },
                 )
             if self._dir_path and (
