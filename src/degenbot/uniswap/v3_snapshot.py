@@ -106,13 +106,17 @@ class UniswapV3LiquiditySnapshot:
         return self._chain_id
 
     @property
-    def pools(self) -> Generator[ChecksumAddress]:
-        if self._dir_path:
-            for pool_filename in self._dir_path.glob("0x*.json"):
-                yield get_checksum_address(pool_filename.stem)
-        elif self._file_snapshot:
-            for pool_address in self._file_snapshot:
-                yield get_checksum_address(pool_address)
+    def pools(self) -> set[ChecksumAddress]:
+        if self._file_snapshot is not None:
+            return {get_checksum_address(pool) for pool in self._file_snapshot} | {
+                get_checksum_address(pool) for pool in self._liquidity_events
+            }
+        if self._dir_path is not None:
+            return {
+                get_checksum_address(pool_filename.stem)
+                for pool_filename in self._dir_path.glob("0x*.json")
+            }
+        raise RuntimeError  # pragma: no cover
 
     def fetch_new_events(
         self,
