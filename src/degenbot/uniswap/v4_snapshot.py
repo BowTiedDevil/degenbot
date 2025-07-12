@@ -1,6 +1,5 @@
-import contextlib
 import pathlib
-from collections.abc import Generator
+from collections import defaultdict
 from typing import Any, TypedDict, cast
 
 import pydantic_core
@@ -14,7 +13,7 @@ from web3.utils import get_abi_element
 
 from degenbot import connection_manager, get_checksum_address
 from degenbot.logging import logger
-from degenbot.types import BlockNumber, ChainId
+from degenbot.types import BlockNumber, ChainId, KeyedDefaultDict
 from degenbot.uniswap.abi import UNISWAP_V4_POOL_MANAGER_ABI
 from degenbot.uniswap.v4_types import (
     UniswapV4BitmapAtWord,
@@ -23,7 +22,9 @@ from degenbot.uniswap.v4_types import (
     UniswapV4PoolLiquidityMappingUpdate,
 )
 
-type PoolId = bytes | HexStr
+type PoolManagerAddress = ChecksumAddress
+type PoolId = str
+type ManagedPoolIdentifier = tuple[PoolManagerAddress, PoolId]
 
 
 class LiquidityMap(TypedDict):
@@ -38,94 +39,87 @@ class UniswapV4LiquiditySnapshot:
 
     def __init__(
         self,
-        file: pathlib.Path | str,
-        pool_manager_address: HexAddress,
+        path: pathlib.Path | str,
         chain_id: ChainId | None = None,
     ):
-        if isinstance(file, str):
-            file = pathlib.Path(file)
-        json_liquidity_snapshot: dict[str, Any] = pydantic_core.from_json(file.read_bytes())
+        def _get_pool_map(pool_identifier: ManagedPoolIdentifier) -> LiquidityMap:
+            """
+            Get the liquidity map for the pool, identified by an ordered tuple of the pool manager
+            address and the pool ID.
+            """
+
+            _pool_manager, _pool_id = pool_identifier
+
+            if self._file_snapshot is not None and _pool_id in self._file_snapshot:
+                return LiquidityMap(
+                    tick_bitmap={
+                        int(k): UniswapV4BitmapAtWord(**v)
+                        for k, v in self._file_snapshot[_pool_id]["tick_bitmap"].items()
+                    },
+                    tick_data={
+                        int(k): UniswapV4LiquidityAtTick(**v)
+                        for k, v in self._file_snapshot[_pool_id]["tick_data"].items()
+                    },
+                )
+            if self._dir_path is not None and (
+                (pool_map_file := self._dir_path / f"{_pool_id}.json").exists()
+            ):
+                pool_liquidity_snapshot = pydantic_core.from_json(pool_map_file.read_bytes())
+                return LiquidityMap(
+                    tick_bitmap={
+                        int(k): UniswapV4BitmapAtWord(**v)
+                        for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
+                    },
+                    tick_data={
+                        int(k): UniswapV4LiquidityAtTick(**v)
+                        for k, v in pool_liquidity_snapshot["tick_data"].items()
+                    },
+                )
+
+            return LiquidityMap(
+                tick_bitmap={},
+                tick_data={},
+            )
+
+        path = pathlib.Path(path).expanduser()
+        assert path.exists()
+
+        self.newest_block: BlockNumber
+        self._dir_path: pathlib.Path | None = None
+        self._file_snapshot: dict[str, Any] | None = None
+
+        if path.is_file():
+            self._file_snapshot = pydantic_core.from_json(path.read_bytes())
+            self.pool_manager = self._file_snapshot.pop("pool_manager")
+            self.newest_block = self._file_snapshot.pop("snapshot_block")
+        if path.is_dir():
+            metadata_path = path / "_metadata.json"
+            assert metadata_path.exists()
+            metadata = pydantic_core.from_json(metadata_path.read_bytes())
+            self.pool_manager = metadata["pool_manager"]
+            self.newest_block = metadata["snapshot_block"]
+            self._dir_path = path
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        self.pool_manager_address = get_checksum_address(pool_manager_address)
-        self.newest_block = json_liquidity_snapshot.pop("snapshot_block")
-
-        self._liquidity_snapshot: dict[
-            tuple[
-                ChecksumAddress,  # PoolManager address
-                HexBytes,  # PoolId
-            ],
-            LiquidityMap,
-        ] = {
-            (self.pool_manager_address, HexBytes(pool_id)): {
-                "tick_bitmap": {
-                    int(k): UniswapV4BitmapAtWord(**v)
-                    for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
-                },
-                "tick_data": {
-                    int(k): UniswapV4LiquidityAtTick(**v)
-                    for k, v in pool_liquidity_snapshot["tick_data"].items()
-                },
-            }
-            for pool_id, pool_liquidity_snapshot in json_liquidity_snapshot.items()
-        }
 
         logger.info(
-            f"Loaded LP snapshot: {len(json_liquidity_snapshot)} pools @ block {self.newest_block}"
+            f"Loaded Uniswap V4 LP snapshot: {len(self._file_snapshot) if self._file_snapshot else len(tuple(path.glob('0x*.json')))} pools @ block {self.newest_block}"  # noqa:E501
         )
 
-        self._liquidity_events: dict[
-            tuple[ChecksumAddress, HexBytes],  # PoolManager address, PoolId
-            list[UniswapV4LiquidityEvent],
-        ] = {}
+        self._liquidity_events: dict[ManagedPoolIdentifier, list[UniswapV4LiquidityEvent]] = (
+            defaultdict(list)
+        )
+        self._liquidity_snapshot: dict[ManagedPoolIdentifier, LiquidityMap] = KeyedDefaultDict(
+            _get_pool_map
+        )
 
     @property
     def chain_id(self) -> int:
         return self._chain_id
 
     @property
-    def pools(self) -> Generator[tuple[ChecksumAddress, HexBytes]]:
-        yield from self._liquidity_snapshot.keys()
-
-    def _add_pool_if_missing(
-        self,
-        pool_manager_address: HexAddress,
-        pool_id: PoolId,
-    ) -> None:
-        """
-        Create entries for the pool manager and pool ID if missing.
-        """
-
-        pool_manager_address = get_checksum_address(pool_manager_address)
-        pool_id = HexBytes(pool_id)
-
-        if (pool_manager_address, pool_id) not in self._liquidity_events:
-            self._liquidity_events[(pool_manager_address, pool_id)] = []
-
-        if (pool_manager_address, pool_id) not in self._liquidity_snapshot:
-            self._liquidity_snapshot[(pool_manager_address, pool_id)] = LiquidityMap(
-                tick_bitmap={},
-                tick_data={},
-            )
-
-    def clear(
-        self,
-        pool_manager_address: HexAddress,
-        pool_id: PoolId,
-    ) -> None:
-        """
-        Clear the liquidity mapping and pending events for the pool.
-        """
-
-        pool_manager_address = get_checksum_address(pool_manager_address)
-        pool_id = HexBytes(pool_id)
-
-        with contextlib.suppress(KeyError):
-            self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_bitmap"].clear()
-        with contextlib.suppress(KeyError):
-            self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_data"].clear()
-        with contextlib.suppress(KeyError):
-            self._liquidity_events[(pool_manager_address, pool_id)].clear()
+    def pools(self) -> set[ManagedPoolIdentifier]:
+        return set(self._liquidity_snapshot.keys())
 
     def fetch_new_events(
         self,
@@ -137,9 +131,9 @@ class UniswapV4LiquiditySnapshot:
         `eth_getLogs`. Blocks per request will be capped at `blocks_per_request`.
         """
 
-        def process_liquidity_event_log(
+        def _process_liquidity_event_log(
             event: BaseContractEvent, log: LogReceipt
-        ) -> tuple[ChecksumAddress, HexBytes, UniswapV4LiquidityEvent]:
+        ) -> tuple[ChecksumAddress, str, UniswapV4LiquidityEvent]:
             """
             Decode an event log and convert to an address, pool ID, and a `UniswapV4LiquidityEvent`
             for processing with `UniswapV4Pool.update_liquidity_map`.
@@ -147,7 +141,7 @@ class UniswapV4LiquiditySnapshot:
 
             decoded_event: EventData = event.process_log(log)
             pool_manager_address = get_checksum_address(decoded_event["address"])
-            pool_id = HexBytes(decoded_event["args"]["id"])
+            pool_id = HexBytes(decoded_event["args"]["id"]).to_0x_hex()
             tx_index = decoded_event["transactionIndex"]
             log_index = decoded_event["logIndex"]
             liquidity_block = decoded_event["blockNumber"]
@@ -205,14 +199,13 @@ class UniswapV4LiquiditySnapshot:
             )
 
             for event_log in w3.eth.get_logs(event_filter_params):
-                pool_manager_address, pool_id, liquidity_event = process_liquidity_event_log(
+                pool_manager_address, pool_id, liquidity_event = _process_liquidity_event_log(
                     event_instance, event_log
                 )
 
                 if liquidity_event.liquidity == 0:  # pragma: no cover
                     continue
 
-                self._add_pool_if_missing(pool_manager_address, pool_id)
                 self._liquidity_events[(pool_manager_address, pool_id)].append(liquidity_event)
 
             if end_block == to_block:
@@ -223,18 +216,16 @@ class UniswapV4LiquiditySnapshot:
 
     def pending_updates(
         self,
-        pool_manager_address: HexAddress,
-        pool_id: PoolId,
+        pool_manager: HexAddress | bytes,
+        pool_id: HexStr | bytes,
     ) -> tuple[UniswapV4PoolLiquidityMappingUpdate, ...]:
         """
         Consume and return all pending liquidity events for this pool.
         """
 
-        pool_manager_address = get_checksum_address(pool_manager_address)
-        pool_id = HexBytes(pool_id)
-
-        pending_events = self._liquidity_events.get((pool_manager_address, pool_id), [])
-        self._liquidity_events[(pool_manager_address, pool_id)] = []
+        pool_key = get_checksum_address(pool_manager), HexBytes(pool_id).to_0x_hex()
+        pending_events = tuple(self._liquidity_events[pool_key])
+        self._liquidity_events[pool_key] = []
 
         return tuple(
             UniswapV4PoolLiquidityMappingUpdate(
@@ -248,42 +239,44 @@ class UniswapV4LiquiditySnapshot:
 
     def tick_bitmap(
         self,
-        pool_manager_address: HexAddress,
-        pool_id: PoolId,
+        pool_manager: HexAddress | bytes,
+        pool_id: HexStr | bytes,
     ) -> dict[int, UniswapV4BitmapAtWord]:
         """
-        Consume the tick bitmaps for the pool.
+        Consume the tick initialization bitmaps for the pool.
         """
 
-        pool_manager_address = get_checksum_address(pool_manager_address)
-        pool_id = HexBytes(pool_id)
-        self._add_pool_if_missing(pool_manager_address=pool_manager_address, pool_id=pool_id)
+        pool_key: ManagedPoolIdentifier = (
+            get_checksum_address(pool_manager),
+            HexBytes(pool_id).to_0x_hex(),
+        )
+        tick_bitmap = self._liquidity_snapshot[pool_key]["tick_bitmap"]
+        self._liquidity_snapshot[pool_key]["tick_bitmap"] = {}
 
-        tick_bitmap = self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_bitmap"]
-        self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_bitmap"] = {}
         return tick_bitmap
 
     def tick_data(
         self,
-        pool_manager_address: HexAddress,
-        pool_id: PoolId,
+        pool_manager: HexAddress | bytes,
+        pool_id: HexStr | bytes,
     ) -> dict[int, UniswapV4LiquidityAtTick]:
         """
-        Consume the tick data for the pool.
+        Consume the liquidity mapping for the pool.
         """
 
-        pool_manager_address = get_checksum_address(pool_manager_address)
-        pool_id = HexBytes(pool_id)
-        self._add_pool_if_missing(pool_manager_address=pool_manager_address, pool_id=pool_id)
+        pool_key: ManagedPoolIdentifier = (
+            get_checksum_address(pool_manager),
+            HexBytes(pool_id).to_0x_hex(),
+        )
+        tick_data = self._liquidity_snapshot[pool_key]["tick_data"]
+        self._liquidity_snapshot[pool_key]["tick_data"] = {}
 
-        tick_data = self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_data"]
-        self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_data"] = {}
         return tick_data
 
     def update(
         self,
-        pool_manager_address: HexAddress,
-        pool_id: PoolId,
+        pool_manager: HexAddress | bytes,
+        pool_id: HexStr | bytes,
         tick_data: dict[int, UniswapV4LiquidityAtTick],
         tick_bitmap: dict[int, UniswapV4BitmapAtWord],
     ) -> None:
@@ -291,8 +284,9 @@ class UniswapV4LiquiditySnapshot:
         Update the liquidity mapping for the pool.
         """
 
-        pool_manager_address = get_checksum_address(pool_manager_address)
-        pool_id = HexBytes(pool_id)
-        self._add_pool_if_missing(pool_manager_address=pool_manager_address, pool_id=pool_id)
-        self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_bitmap"].update(tick_bitmap)
-        self._liquidity_snapshot[(pool_manager_address, pool_id)]["tick_data"].update(tick_data)
+        pool_key: ManagedPoolIdentifier = (
+            get_checksum_address(pool_manager),
+            HexBytes(pool_id).to_0x_hex(),
+        )
+        self._liquidity_snapshot[pool_key]["tick_bitmap"].update(tick_bitmap)
+        self._liquidity_snapshot[pool_key]["tick_data"].update(tick_data)
