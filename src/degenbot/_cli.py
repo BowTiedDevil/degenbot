@@ -1,5 +1,4 @@
 from textwrap import dedent
-from typing import Literal
 
 import click
 import tomlkit
@@ -34,7 +33,7 @@ def config() -> None: ...
     help="Show configuration in TOML format (default)",
     default=True,
 )
-def config_show(output_format: Literal["json", "toml"]) -> None:
+def config_show(output_format: str) -> None:
     match output_format:
         case "json":
             click.echo(
@@ -49,6 +48,8 @@ def config_show(output_format: Literal["json", "toml"]) -> None:
                     settings.model_dump(),
                 ),
             )
+        case _:
+            ...
 
 
 @cli.group()
