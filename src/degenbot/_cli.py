@@ -6,7 +6,7 @@ import tomlkit
 from pydantic import TypeAdapter
 
 from degenbot import __version__, settings
-from degenbot.database import create_new_sqlite_database, update_existing_sqlite_database
+from degenbot.database import create_new_sqlite_database, upgrade_existing_sqlite_database
 
 
 @click.group()
