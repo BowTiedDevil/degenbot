@@ -204,8 +204,9 @@ class UniswapV3LiquiditySnapshot:
         Consume pending liquidity updates for the pool, sorted chronologically.
         """
 
-        pending_events = tuple(self._liquidity_events[get_checksum_address(pool_address)])
-        self._liquidity_events[get_checksum_address(pool_address)] = []
+        pool_key = get_checksum_address(pool_address)
+        pending_events = tuple(self._liquidity_events[pool_key])
+        self._liquidity_events[pool_key] = []
 
         # Mint/Burn events must be applied in chronological order to ensure effective liquidity
         # invariant checks. Sort events by block, then by log order within the block.
@@ -239,9 +240,9 @@ class UniswapV3LiquiditySnapshot:
         Consume the liquidity mapping for the pool.
         """
 
-        pool_address = get_checksum_address(pool_address)
-        tick_data = self._liquidity_snapshot[pool_address]["tick_data"]
-        self._liquidity_snapshot[pool_address]["tick_data"] = {}
+        pool_key = get_checksum_address(pool_address)
+        tick_data = self._liquidity_snapshot[pool_key]["tick_data"]
+        self._liquidity_snapshot[pool_key]["tick_data"] = {}
         return tick_data
 
     def update(
@@ -254,6 +255,6 @@ class UniswapV3LiquiditySnapshot:
         Update the liquidity mapping for the pool.
         """
 
-        pool = get_checksum_address(pool)
-        self._liquidity_snapshot[pool]["tick_bitmap"].update(tick_bitmap)
-        self._liquidity_snapshot[pool]["tick_data"].update(tick_data)
+        pool_key = get_checksum_address(pool)
+        self._liquidity_snapshot[pool_key]["tick_bitmap"].update(tick_bitmap)
+        self._liquidity_snapshot[pool_key]["tick_data"].update(tick_data)
