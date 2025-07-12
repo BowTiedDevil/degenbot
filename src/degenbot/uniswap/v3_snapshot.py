@@ -38,8 +38,14 @@ class UniswapV3LiquiditySnapshot:
         path: pathlib.Path | str,
         chain_id: ChainId | None = None,
     ):
-        def _get_pool_map(pool_address: ChecksumAddress) -> LiquidityMap:
-            if self._file_snapshot and pool_address in self._file_snapshot:
+        def _get_pool_map(pool_address: HexAddress | bytes) -> LiquidityMap:
+            """
+            Get the liquidity map for the pool.
+            """
+
+            pool_address = get_checksum_address(pool_address)
+
+            if self._file_snapshot is not None and pool_address in self._file_snapshot:
                 return LiquidityMap(
                     tick_bitmap={
                         int(k): UniswapV3BitmapAtWord(**v)
@@ -50,7 +56,7 @@ class UniswapV3LiquiditySnapshot:
                         for k, v in self._file_snapshot[pool_address]["tick_data"].items()
                     },
                 )
-            if self._dir_path and (
+            if self._dir_path is not None and (
                 (pool_map_file := self._dir_path / f"{pool_address}.json").exists()
             ):
                 pool_liquidity_snapshot = pydantic_core.from_json(pool_map_file.read_bytes())
