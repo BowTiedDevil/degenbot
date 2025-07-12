@@ -14,7 +14,7 @@ from web3.utils import get_abi_element
 
 from degenbot import connection_manager, get_checksum_address
 from degenbot.logging import logger
-from degenbot.types import BlockNumber, ChainId
+from degenbot.types import BlockNumber, ChainId, KeyedDefaultDict
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
@@ -22,20 +22,6 @@ from degenbot.uniswap.v3_types import (
     UniswapV3LiquidityEvent,
     UniswapV3PoolLiquidityMappingUpdate,
 )
-
-
-class KeyedDefaultDict[KT, VT](defaultdict[KT, VT]):
-    """
-    defaultdict does not pass the key to the default_factory, so inherit and plug this behavior in.
-    """
-
-    def __init__(self, default_factory: Callable[[KT], VT]):
-        self.default_factory_with_key_as_argument = default_factory
-
-    def __missing__(self, key: KT) -> VT:
-        value = self.default_factory_with_key_as_argument(key)
-        self[key] = value
-        return value
 
 
 class LiquidityMap(TypedDict):

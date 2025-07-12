@@ -1,5 +1,5 @@
-from collections import OrderedDict
-from collections.abc import Sequence
+from collections import OrderedDict, defaultdict
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol, Self
 from weakref import WeakSet, WeakValueDictionary
@@ -11,6 +11,20 @@ from degenbot import get_checksum_address
 
 type ChainId = int
 type BlockNumber = int
+
+
+class KeyedDefaultDict[KT, VT](defaultdict[KT, VT]):
+    """
+    A modified defaultdict that passes the key to default_factory.
+    """
+
+    def __init__(self, default_factory: Callable[[KT], VT]):
+        self._default_factory = default_factory
+
+    def __missing__(self, key: KT) -> VT:
+        value = self._default_factory(key)
+        self[key] = value
+        return value
 
 
 class Message:
