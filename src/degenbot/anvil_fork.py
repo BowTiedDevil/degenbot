@@ -3,7 +3,7 @@ import pathlib
 import shutil
 import socket
 import subprocess
-import sys
+import tempfile
 from collections.abc import AsyncIterator, Iterable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -96,15 +96,13 @@ class AnvilFork:
             raise AnvilNotFound
         path_to_anvil = pathlib.Path(_path_to_anvil)
 
-        if ipc_path is None:
-            if sys.platform == "win32":
-                ipc_path = pathlib.Path("~").expanduser() / "AppData" / "Local" / "Temp"
-            elif sys.platform in ("linux", "darwin"):
-                ipc_path = pathlib.Path("/tmp/")
-            else:
-                err_msg = "Operating System not recognized"
-                raise RuntimeError(err_msg)
-        self.ipc_path = ipc_path
+        self.ipc_path = (
+            pathlib.Path(
+                tempfile.gettempdir(),
+            )
+            if ipc_path is None
+            else ipc_path
+        )
 
         if ipc_provider_kwargs is not None:
             self.ipc_provider_kwargs = ipc_provider_kwargs
