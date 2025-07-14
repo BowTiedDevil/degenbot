@@ -10,7 +10,7 @@ import cvxpy.atoms.geo_mean
 import cvxpy.settings
 import cvxpy.transforms
 import cvxpy.transforms.indicator
-import numpy
+import numpy as np
 import pytest
 from cvxpy.atoms.affine.binary_operators import multiply as cvxpy_multiply
 from cvxpy.atoms.affine.bmat import bmat as cvxpy_bmat
@@ -210,12 +210,12 @@ def test_2pool_uniswap_v2_decimal_corrected(
     compressed_reserves_pre_swap = cvxpy.Parameter(
         name="compressed_reserves_pre_swap",
         shape=(num_pools, num_tokens),
-        value=numpy.array(
+        value=np.array(
             (
                 _compressed_starting_reserves_pool_hi,
                 _compressed_starting_reserves_pool_lo,
             ),
-            dtype=numpy.float64,
+            dtype=np.float64,
         ),
     )
 
@@ -436,12 +436,12 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
     compressed_reserves_pre_swap = cvxpy.Parameter(
         name="compressed_reserves_pre_swap",
         shape=(num_pools, num_tokens),
-        value=numpy.array(
+        value=np.array(
             (
                 _compressed_starting_reserves_pool_hi,
                 _compressed_starting_reserves_pool_lo,
             ),
-            dtype=numpy.float64,
+            dtype=np.float64,
         ),
     )
 
@@ -539,10 +539,10 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
         - 1,
     )
     uncompressed_deposits = cvxpy_multiply(
-        deposits, numpy.array([compression_factor_token0, compression_factor_token1])
+        deposits, np.array([compression_factor_token0, compression_factor_token1])
     )
     uncompressed_withdrawals = cvxpy_multiply(
-        withdrawals, numpy.array([compression_factor_token1, compression_factor_token1])
+        withdrawals, np.array([compression_factor_token1, compression_factor_token1])
     )
     # uncompressed_deposits = compression_factor * deposits
     # uncompressed_withdrawals = compression_factor * withdrawals
@@ -670,12 +670,12 @@ def test_base_2pool(
     compressed_reserves_pre_swap = cvxpy.Parameter(
         name="compressed_reserves_pre_swap",
         shape=(num_pools, num_tokens),
-        value=numpy.array(
+        value=np.array(
             (
                 _compressed_starting_reserves_pool_hi,
                 _compressed_starting_reserves_pool_lo,
             ),
-            dtype=numpy.float64,
+            dtype=np.float64,
         ),
     )
 
@@ -779,10 +779,10 @@ def test_base_2pool(
         - 1,
     )
     uncompressed_deposits = cvxpy_multiply(
-        deposits, numpy.array([compression_factor_token0, compression_factor_token1])
+        deposits, np.array([compression_factor_token0, compression_factor_token1])
     )
     uncompressed_withdrawals = cvxpy_multiply(
-        withdrawals, numpy.array([compression_factor_token1, compression_factor_token1])
+        withdrawals, np.array([compression_factor_token0, compression_factor_token1])
     )
     print()
     print("Solved")

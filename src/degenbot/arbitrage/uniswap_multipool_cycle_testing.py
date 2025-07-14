@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import cvxpy.settings
 import eth_abi.abi
-import numpy
+import numpy as np
 import web3
 from cvxpy import Maximize, Parameter, Problem, Variable
 from cvxpy.atoms.affine.binary_operators import multiply
@@ -93,9 +93,9 @@ def _build_convex_problem(num_pools: int) -> Problem:
     # ...
     # The last pool holds token_n, token_1 where token_n is equal to the number of tokens
 
-    uncompressed_reserves = numpy.zeros(
+    uncompressed_reserves = np.zeros(
         shape=(num_pools, num_tokens),
-        dtype=numpy.float64,
+        dtype=np.float64,
     )
     for pool_index in range(num_pools):
         if pool_index == num_pools - 1:
@@ -107,7 +107,7 @@ def _build_convex_problem(num_pools: int) -> Problem:
 
     # Identify the largest value to use as a common divisor for each token.
     token_compression_factors = [
-        numpy.max(uncompressed_reserves[:, global_token_index[token]]) for token in ordered_tokens
+        np.max(uncompressed_reserves[:, global_token_index[token]]) for token in ordered_tokens
     ]
 
     # SET UP PARAMETERS
@@ -116,12 +116,12 @@ def _build_convex_problem(num_pools: int) -> Problem:
     compressed_reserves_pre_swap = Parameter(
         shape=(num_pools, num_tokens),
         name="compressed_reserves_pre_swap",
-        value=numpy.multiply(uncompressed_reserves, numpy.reciprocal(token_compression_factors)),
+        value=np.multiply(uncompressed_reserves, np.reciprocal(token_compression_factors)),
     )
     swap_fees = Parameter(
         shape=(num_pools, num_tokens),
         name="swap_fees",
-        value=numpy.array(
+        value=np.array(
             [
                 [
                     (
@@ -135,7 +135,7 @@ def _build_convex_problem(num_pools: int) -> Problem:
                 ]
                 for pool in ordered_pools
             ],
-            dtype=numpy.float64,
+            dtype=np.float64,
         ),
     )
     pool_ks_pre_swap = Parameter(
@@ -306,7 +306,7 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
             global_pool_index = {pool: i for i, pool in enumerate(ordered_pools)}
             global_token_index = {token: i for i, token in enumerate(ordered_tokens)}
 
-            uncompressed_reserves = numpy.array(
+            uncompressed_reserves = np.array(
                 [
                     [
                         get_token_balance_at_pool(
@@ -318,12 +318,12 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
                     ]
                     for pool in ordered_pools
                 ],
-                dtype=numpy.float64,
+                dtype=np.float64,
             )
 
             # Identify the largest value to use as a common divisor for each token.
             token_compression_factors = [
-                numpy.max(uncompressed_reserves[:, global_token_index[token]])
+                np.max(uncompressed_reserves[:, global_token_index[token]])
                 for token in ordered_tokens
             ]
 
@@ -339,7 +339,7 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
                 assert isinstance(pool_ks_pre_swap, cvxpy.Parameter)
 
             swap_fees.save_value(
-                numpy.array(
+                np.array(
                     [
                         [
                             pool.fee_token0
@@ -351,11 +351,11 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
                         ]
                         for pool in ordered_pools
                     ],
-                    dtype=numpy.float64,
+                    dtype=np.float64,
                 ),
             )
             compressed_reserves_pre_swap.save_value(
-                numpy.multiply(uncompressed_reserves, numpy.reciprocal(token_compression_factors))
+                np.multiply(uncompressed_reserves, np.reciprocal(token_compression_factors))
             )
             pool_ks_pre_swap.save_value(
                 [

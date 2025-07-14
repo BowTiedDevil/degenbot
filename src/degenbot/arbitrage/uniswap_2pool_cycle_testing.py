@@ -6,7 +6,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import eth_abi.abi
-import numpy
+import numpy as np
 import web3
 from cvxpy import Maximize, Parameter, Problem, Variable
 from cvxpy.atoms.affine.binary_operators import multiply
@@ -147,23 +147,23 @@ def _build_convex_problem(num_pools: int) -> Problem:
     fee_multiplier = Parameter(
         shape=(num_pools, num_tokens),
         name="fee_multiplier",
-        value=numpy.array(
+        value=np.array(
             (
                 (Fraction(3, 1000), Fraction(3, 1000)),
                 (Fraction(3, 1000), Fraction(3, 1000)),
             ),
-            dtype=numpy.float64,
+            dtype=np.float64,
         ),
     )
     compressed_reserves_pre_swap = Parameter(
         name="compressed_reserves_pre_swap",
         shape=(num_pools, num_tokens),
-        value=numpy.array(
+        value=np.array(
             (
                 _compressed_starting_reserves_pool_hi,
                 _compressed_starting_reserves_pool_lo,
             ),
-            dtype=numpy.float64,
+            dtype=np.float64,
         ),
     )
     pool_hi_k_pre_swap = Parameter(
@@ -2035,21 +2035,21 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 assert isinstance(compressed_reserves_pre_swap, Parameter)
 
             fee_multiplier.save_value(
-                numpy.array(
+                np.array(
                     (
                         (v2_pool_hi.fee_token0, v2_pool_hi.fee_token1),
                         (v2_pool_lo.fee_token0, v2_pool_lo.fee_token1),
                     ),
-                    dtype=numpy.float64,
+                    dtype=np.float64,
                 ),
             )
             compressed_reserves_pre_swap.save_value(
-                numpy.array(
+                np.array(
                     (
                         _compressed_starting_reserves_pool_hi,
                         _compressed_starting_reserves_pool_lo,
                     ),
-                    dtype=numpy.float64,
+                    dtype=np.float64,
                 )
             )
             pool_hi_k_pre_swap.save_value(
