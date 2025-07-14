@@ -41,7 +41,7 @@ class UniswapV4LiquiditySnapshot:
         self,
         path: pathlib.Path | str,
         chain_id: ChainId | None = None,
-    ):
+    ) -> None:
         def _get_pool_map(pool_identifier: ManagedPoolIdentifier) -> LiquidityMap:
             """
             Get the liquidity map for the pool, identified by an ordered tuple of the pool manager

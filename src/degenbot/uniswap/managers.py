@@ -52,7 +52,7 @@ class UniswapV2PoolManager(AbstractPoolManager):
         chain_id: ChainId | None = None,
         deployer_address: ChecksumAddress | str | None = None,
         pool_init_hash: str | None = None,
-    ):
+    ) -> None:
         factory_address = get_checksum_address(factory_address)
 
         if chain_id is None:
@@ -235,7 +235,7 @@ class UniswapV3PoolManager(AbstractPoolManager):
         chain_id: ChainId | None = None,
         pool_init_hash: str | None = None,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
-    ):
+    ) -> None:
         if chain_id is None:
             chain_id = connection_manager.default_chain_id
 

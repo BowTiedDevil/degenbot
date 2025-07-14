@@ -18,7 +18,7 @@ class KeyedDefaultDict[KT, VT](defaultdict[KT, VT]):
     A modified defaultdict that passes the key to default_factory.
     """
 
-    def __init__(self, default_factory: Callable[[KT], VT]):
+    def __init__(self, default_factory: Callable[[KT], VT]) -> None:
         self._default_factory = default_factory
 
     def __missing__(self, key: KT) -> VT:

@@ -23,7 +23,7 @@ class ChainlinkPriceContract:
         address: str,
         *,
         chain_id: ChainId | None = None,
-    ):
+    ) -> None:
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         self.decimals: int = self.w3_contract.functions.decimals().call()

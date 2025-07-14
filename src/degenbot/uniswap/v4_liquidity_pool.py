@@ -193,7 +193,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         state_block: BlockNumber | int | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
-    ):
+    ) -> None:
         self._chain_id: Final[int] = (
             chain_id if chain_id is not None else connection_manager.default_chain_id
         )

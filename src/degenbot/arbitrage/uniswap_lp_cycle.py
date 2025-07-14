@@ -91,7 +91,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         swap_pools: Iterable[Pool],
         id: str,  # noqa:A002
         max_input: int | None = None,
-    ):
+    ) -> None:
         for swap_pool in swap_pools:
             if not isinstance(swap_pool, Pool.__value__):
                 raise DegenbotValueError(

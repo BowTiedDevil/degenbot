@@ -95,7 +95,7 @@ class UniswapTransaction(AbstractTransaction):
         tx_nonce: int | str,
         tx_value: int | str,
         tx_sender: str,
-    ):
+    ) -> None:
         """
         Build a standalone representation of a transaction submitted to a known Uniswap-based
         router contract.

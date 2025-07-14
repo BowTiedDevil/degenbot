@@ -242,7 +242,7 @@ class DeadlineExpired(TransactionError): ...
 
 
 class InsufficientOutput(TransactionError):
-    def __init__(self, minimum: int, received: int):
+    def __init__(self, minimum: int, received: int) -> None:
         """
         The received amount was less than the minimum.
         """
@@ -250,7 +250,7 @@ class InsufficientOutput(TransactionError):
 
 
 class InsufficientInput(TransactionError):
-    def __init__(self, minimum: int, deposited: int):
+    def __init__(self, minimum: int, deposited: int) -> None:
         """
         The deposited amount was less than the minimum.
         """
@@ -264,7 +264,7 @@ class LeftoverRouterBalance(TransactionError):
             ChecksumAddress,  # token address
             int,  # balance
         ],
-    ):
+    ) -> None:
         self.balances = balances
         super().__init__(message="Leftover balance at router after transaction")
 

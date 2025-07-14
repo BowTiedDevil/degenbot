@@ -58,7 +58,7 @@ class AnvilFork:
         | None = None,
         ipc_provider_kwargs: dict[str, Any] | None = None,
         anvil_opts: list[str] | None = None,  # Additional options passed to the Anvil command
-    ):
+    ) -> None:
         def _parse_base_fee_arg(command: AnvilCommandList) -> None:
             if base_fee:
                 command.append(f"--base-fee={base_fee}")
