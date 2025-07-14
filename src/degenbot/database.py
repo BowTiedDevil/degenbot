@@ -3,7 +3,7 @@ from typing import Annotated, ClassVar
 
 import pydantic
 from sqlalchemy import Dialect, ForeignKey, Index, String, Text, create_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from sqlalchemy.types import TypeDecorator
 
 from .logging import logger
@@ -226,3 +226,9 @@ def upgrade_existing_sqlite_database(db_path: pathlib.Path) -> None:
     )
     Base.metadata.create_all(bind=engine)
     logger.info(f"Updated existing SQLite database at {db_path_abs}")
+
+
+_default_engine = create_engine(
+    f"sqlite:///{settings.database.path.absolute()}",
+)
+default_session = sessionmaker(_default_engine)
