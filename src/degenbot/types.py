@@ -168,7 +168,7 @@ class AbstractLiquidityPool:
             case _:
                 return NotImplemented
 
-    def __lt__(self, other: Any) -> bool:
+    def __lt__(self, other: object) -> bool:
         match other:
             case AbstractLiquidityPool():
                 return self.address < other.address
@@ -181,7 +181,7 @@ class AbstractLiquidityPool:
             case _:
                 return NotImplemented
 
-    def __gt__(self, other: Any) -> bool:
+    def __gt__(self, other: object) -> bool:
         match other:
             case AbstractLiquidityPool():
                 return self.address > other.address
@@ -220,7 +220,7 @@ class AbstractErc20Token:
             case _:
                 return NotImplemented
 
-    def __lt__(self, other: Any) -> bool:
+    def __lt__(self, other: object) -> bool:
         match other:
             case AbstractErc20Token():
                 return self.address < other.address
@@ -233,7 +233,7 @@ class AbstractErc20Token:
             case _:
                 return NotImplemented
 
-    def __gt__(self, other: Any) -> bool:
+    def __gt__(self, other: object) -> bool:
         match other:
             case AbstractErc20Token():
                 return self.address > other.address

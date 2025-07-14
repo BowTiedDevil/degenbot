@@ -857,7 +857,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
 
         return payloads
 
-    def notify(self, publisher: Publisher, message: Any) -> None:
+    def notify(self, publisher: Publisher, message: Message) -> None:
         match publisher, message:
             case (
                 AbstractLiquidityPool(),
