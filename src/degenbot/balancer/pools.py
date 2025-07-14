@@ -32,7 +32,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         state_block: BlockNumber | None = None,
         verify_address: bool = False,
         silent: bool = False,
-    ):
+    ) -> None:
         self.address = get_checksum_address(address)
 
         if verify_address:
