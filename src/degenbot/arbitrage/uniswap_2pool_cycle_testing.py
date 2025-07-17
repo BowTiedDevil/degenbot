@@ -39,10 +39,10 @@ from degenbot.arbitrage.types import (
     UniswapV4PoolSwapAmounts,
 )
 from degenbot.constants import MAX_INT256, WRAPPED_NATIVE_TOKENS
-from degenbot.exceptions import (
-    ArbitrageError,
-    DegenbotValueError,
-    EVMRevertError,
+from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.arbitrage import ArbitrageError
+from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.liquidity_pool import (
     IncompleteSwap,
     LiquidityPoolError,
     PossibleInaccurateResult,

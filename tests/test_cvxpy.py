@@ -6,10 +6,7 @@ from typing import cast
 from weakref import WeakSet
 
 import cvxpy
-import cvxpy.atoms.geo_mean
 import cvxpy.settings
-import cvxpy.transforms
-import cvxpy.transforms.indicator
 import numpy as np
 import pytest
 from cvxpy.atoms.affine.binary_operators import multiply as cvxpy_multiply
@@ -17,13 +14,16 @@ from cvxpy.atoms.affine.bmat import bmat as cvxpy_bmat
 from cvxpy.atoms.affine.sum import sum as cvxpy_sum
 from cvxpy.atoms.geo_mean import geo_mean
 
-from degenbot import get_checksum_address, set_web3
-from degenbot.anvil_fork import AnvilFork
+from degenbot import (
+    AnvilFork,
+    Erc20Token,
+    UniswapV2Pool,
+    UniswapV2PoolState,
+    get_checksum_address,
+    set_web3,
+)
 from degenbot.arbitrage.uniswap_multipool_cycle_testing import _UniswapMultiPoolCycleTesting
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.erc20_token import Erc20Token
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -622,6 +622,9 @@ def test_base_2pool(
         pool_hi = test_pool_b
         pool_lo = test_pool_a
 
+    assert pool_hi == test_pool_a
+    assert pool_lo == test_pool_b
+
     num_pools = 2
     num_tokens = 2
 
@@ -636,6 +639,8 @@ def test_base_2pool(
     forward_token_index = 1 if pool_hi.token0 == profit_token else 0
     profit_token_index = 0 if pool_hi.token0 == profit_token else 1
     assert forward_token_index != profit_token_index
+
+    profit_token_decimals = token0_decimals if profit_token_index == 0 else token1_decimals
 
     pool_hi_fees = [pool_hi.fee_token0, pool_hi.fee_token1]
     pool_lo_fees = [pool_lo.fee_token0, pool_lo.fee_token1]
@@ -656,6 +661,9 @@ def test_base_2pool(
     )
     compression_factor_forward_token = (
         compression_factor_token0 if forward_token_index == 0 else compression_factor_token1
+    )
+    compression_factor_profit_token = (
+        compression_factor_token0 if profit_token_index == 0 else compression_factor_token1
     )
 
     # Compress all pool reserves into a 0.0 - 1.0 value range
@@ -741,26 +749,30 @@ def test_base_2pool(
     pool_hi_final_k = geo_mean(final_reserves[pool_hi_index])
     pool_lo_final_k = geo_mean(final_reserves[pool_lo_index])
 
-    objective = cvxpy.Maximize(cvxpy_sum((withdrawals - deposits)[:, profit_token_index]))
+    objective = cvxpy.Maximize(pool_hi_profit_token_out - pool_lo_profit_token_in)
     constraints = [
         # Pool invariant (x*y=k)
         pool_hi_post_swap_k >= pool_hi_pre_swap_k,
         pool_lo_post_swap_k >= pool_lo_pre_swap_k,
         # Withdrawals can't exceed pool reserves
-        pool_hi_profit_token_out <= compressed_reserves_pre_swap[pool_hi_index, profit_token_index],
-        forward_token_amount <= compressed_reserves_pre_swap[pool_lo_index, forward_token_index],
+        # pool_hi_profit_token_out <= compressed_reserves_pre_swap[pool_hi_index, profit_token_index],
+        # forward_token_amount <= compressed_reserves_pre_swap[pool_lo_index, forward_token_index],
     ]
 
     problem = cvxpy.Problem(objective, constraints)
-    clarabel_tols = 1e-10
+    # clarabel_tols = 1e-8
     problem.solve(
         solver=cvxpy.CLARABEL,
         verbose=True,
-        tol_gap_abs=clarabel_tols,  # absolute duality gap tolerance
-        tol_gap_rel=clarabel_tols,  # relative duality gap tolerance
-        tol_feas=clarabel_tols,  # feasibility check tolerance (primal and dual)
-        tol_infeas_abs=clarabel_tols,  # absolute infeasibility tolerance (primal and dual)
-        tol_infeas_rel=clarabel_tols,  # relative infeasibility tolerance (primal and dual)
+        # tol_gap_abs=clarabel_tols,  # absolute duality gap tolerance
+        # tol_gap_rel=clarabel_tols,  # relative duality gap tolerance
+        # tol_feas=clarabel_tols,  # feasibility check tolerance (primal and dual)
+        # tol_infeas_abs=clarabel_tols,  # absolute infeasibility tolerance (primal and dual)
+        # tol_infeas_rel=clarabel_tols,  # relative infeasibility tolerance (primal and dual)
+        # static_regularization_enable=False,
+        # dynamic_regularization_enable=False,
+        # iterative_refinement_enable=False,
+        # equilibrate_enable=False,
     )
 
     assert problem.status in cvxpy.settings.SOLUTION_PRESENT
@@ -784,44 +796,32 @@ def test_base_2pool(
     uncompressed_withdrawals = cvxpy_multiply(
         withdrawals, np.array([compression_factor_token0, compression_factor_token1])
     )
+    # fmt:off
     print()
     print("Solved")
-    print(
-        f"fee_multiplier                        = {[(float(fee[0]), float(fee[1])) for fee in fee_multiplier.value]}"
-    )
+    print(f"fee_multiplier                        = {[(float(fee[0]), float(fee[1])) for fee in fee_multiplier.value]}")
     print(f"forward_token_amount                  = {uncompressed_forward_token_amount}")
-    print(
-        f"uncompressed withdrawals (pool_hi)    = {uncompressed_withdrawals[pool_hi_index].value}"
-    )
-    print(
-        f"uncompressed withdrawals (pool_lo)    = {uncompressed_withdrawals[pool_lo_index].value}"
-    )
+    print(f"uncompressed withdrawals (pool_hi)    = {uncompressed_withdrawals[pool_hi_index].value}")
+    print(f"uncompressed withdrawals (pool_lo)    = {uncompressed_withdrawals[pool_lo_index].value}")
     print(f"uncompressed deposits    (pool_hi)    = {uncompressed_deposits[pool_hi_index].value}")
     print(f"uncompressed deposits    (pool_lo)    = {uncompressed_deposits[pool_lo_index].value}")
-    print(
-        f"reserves_pre_swap    (pool_hi)        = {[res for res in compressed_reserves_pre_swap[pool_hi_index].value]}"
-    )
-    print(
-        f"reserves_ending      (pool_hi)        = {[res for res in compressed_reserves_post_swap[pool_hi_index].value]}"
-    )
-    print(
-        f"reserves_final       (pool_hi)        = {[res for res in compressed_reserves_post_swap[pool_hi_index].value]}"
-    )
-    print(
-        f"reserves_pre_swap    (pool_lo)        = {[res for res in compressed_reserves_pre_swap[pool_lo_index].value]}"
-    )
-    print(
-        f"reserves_post_swap   (pool_lo)        = {[res for res in compressed_reserves_post_swap[pool_lo_index].value]}"
-    )
-    print(
-        f"reserves_final       (pool_lo)        = {[res for res in compressed_reserves_post_swap[pool_lo_index].value]}"
-    )
+    print(f"compressed withdrawals   (pool_hi)    = {withdrawals[pool_hi_index].value}")
+    print(f"compressed withdrawals   (pool_lo)    = {withdrawals[pool_lo_index].value}")
+    print(f"compressed deposits      (pool_hi)    = {deposits[pool_hi_index].value}")
+    print(f"compressed deposits      (pool_lo)    = {deposits[pool_lo_index].value}")
+    print(f"reserves_pre_swap    (pool_hi)        = {[res for res in compressed_reserves_pre_swap[pool_hi_index].value]}")
+    print(f"reserves_ending      (pool_hi)        = {[res for res in compressed_reserves_post_swap[pool_hi_index].value]}")
+    print(f"reserves_final       (pool_hi)        = {[res for res in compressed_reserves_post_swap[pool_hi_index].value]}")
+    print(f"reserves_pre_swap    (pool_lo)        = {[res for res in compressed_reserves_pre_swap[pool_lo_index].value]}")
+    print(f"reserves_post_swap   (pool_lo)        = {[res for res in compressed_reserves_post_swap[pool_lo_index].value]}")
+    print(f"reserves_final       (pool_lo)        = {[res for res in compressed_reserves_post_swap[pool_lo_index].value]}")
     print(f"pool_lo_pre_swap_k                    = {pool_lo_pre_swap_k.value}")
     print(f"pool_lo_post_swap_k                   = {pool_lo_post_swap_k.value}")
     print(f"pool_lo_final_k                       = {pool_lo_final_k.value}")
     print(f"pool_hi_pre_swap_k                    = {pool_hi_pre_swap_k.value}")
     print(f"pool_hi_post_swap_k                   = {pool_hi_post_swap_k.value}")
     print(f"pool_hi_final_k                       = {pool_hi_final_k.value}")
+    # fmt:on
 
     # assert pool_hi_final_k.value >= pool_hi_start_k.value
     # assert pool_lo_final_k.value >= pool_lo_start_k.value
@@ -835,7 +835,16 @@ def test_base_2pool(
         token_out=forward_token,
         token_out_quantity=uncompressed_forward_token_amount,
     )
-    print(f"Actual profit                         = {weth_out - weth_in}")
+    # fmt: off
+    print(f"Fees (pool_hi)                        = {fees_removed[pool_hi_index, :].value}")
+    print(f"Fees (pool_lo)                        = {fees_removed[pool_lo_index, :].value}")
+    print(f"WETH out (approximate)                = {int(compression_factor_profit_token * 10**profit_token_decimals * pool_hi_profit_token_out.value)}")
+    print(f"WETH out (actual)                     = {weth_out}")
+    print(f"WETH in  (approximate)                = {int(compression_factor_profit_token * 10**profit_token_decimals * pool_lo_profit_token_in.value)}")
+    print(f"WETH in  (actual)                     = {weth_in}")
+    print(f"Profit (approximate)                  = {int(compression_factor_profit_token * 10**profit_token_decimals * pool_hi_profit_token_out.value) - int(compression_factor_profit_token * 10**profit_token_decimals * pool_lo_profit_token_in.value)}")
+    print(f"Profit (actual)                       = {weth_out - weth_in}")
+    # fmt:on
 
 
 def test_base_3pool(

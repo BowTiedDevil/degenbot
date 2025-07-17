@@ -15,33 +15,29 @@ from degenbot.arbitrage.types import (
     ArbitrageCalculationResult,
     CurveStableSwapPoolSwapAmounts,
     CurveStableSwapPoolVector,
-    UniswapPoolSwapVector,
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
 from degenbot.constants import MAX_UINT256
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.types import CurveStableswapPoolState
-from degenbot.erc20_token import Erc20Token
-from degenbot.exceptions import (
-    ArbitrageError,
-    DegenbotValueError,
-    EVMRevertError,
-    LiquidityPoolError,
-    NoLiquidity,
-)
+from degenbot.erc20 import Erc20Token
+from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.arbitrage import ArbitrageError, NoLiquidity
+from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.logging import logger
-from degenbot.types import (
-    AbstractArbitrage,
-    AbstractLiquidityPool,
-    BlockNumber,
-    Message,
+from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
+from degenbot.types.aliases import BlockNumber
+from degenbot.types.concrete import (
+    AbstractPublisherMessage,
     PoolStateMessage,
     Publisher,
     PublisherMixin,
     Subscriber,
     TextMessage,
 )
+from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
@@ -61,7 +57,7 @@ CURVE_V1_DEFAULT_DISCOUNT_FACTOR = 0.9999
 
 
 class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
-    def _notify_subscribers(self: Publisher, message: Message) -> None:
+    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
         for subscriber in self._subscribers:
             subscriber.notify(publisher=self, message=message)
 
@@ -582,6 +578,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
 
     def generate_payloads(
         self,
+        *,
         from_address: ChecksumAddress | str,
         swap_amount: int,
         pool_swap_amounts: Sequence[CurveOrUniswapSwapAmount],
@@ -857,7 +854,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
 
         return payloads
 
-    def notify(self, publisher: Publisher, message: Message) -> None:
+    def notify(self, publisher: Publisher, message: AbstractPublisherMessage) -> None:
         match publisher, message:
             case (
                 AbstractLiquidityPool(),

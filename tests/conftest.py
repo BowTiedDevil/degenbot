@@ -5,15 +5,15 @@ import dotenv
 import pytest
 import web3
 
-import degenbot
-import degenbot.logging
-import degenbot.managers
-import degenbot.managers.erc20_token_manager
-import degenbot.types
-from degenbot import connection_manager
-from degenbot.anvil_fork import AnvilFork
-from degenbot.registry.all_pools import pool_registry
-from degenbot.registry.all_tokens import token_registry
+from degenbot import (
+    AnvilFork,
+    Erc20TokenManager,
+    connection_manager,
+    logger,
+    pool_registry,
+    token_registry,
+)
+from degenbot.types.concrete import AbstractPublisherMessage, Publisher
 
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
@@ -48,7 +48,7 @@ def _initialize_and_reset_after_each_test():
     """
     connection_manager.connections.clear()
     connection_manager._default_chain_id = None
-    degenbot.managers.erc20_token_manager.Erc20TokenManager._state.clear()
+    Erc20TokenManager._state.clear()
     pool_registry._all_pools.clear()
     pool_registry._v4_pool_registry._all_v4_pools.clear()
     token_registry._all_tokens.clear()
@@ -59,7 +59,7 @@ def _set_degenbot_logging():
     """
     Set the logging level to DEBUG for the test run
     """
-    degenbot.logging.logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.DEBUG)
 
 
 @pytest.fixture(
@@ -129,7 +129,7 @@ class FakeSubscriber:
     def __init__(self) -> None:
         self.inbox: list[dict[str, Any]] = list()
 
-    def notify(self, publisher: degenbot.types.Publisher, message: degenbot.types.Message) -> None:
+    def notify(self, publisher: Publisher, message: AbstractPublisherMessage) -> None:
         self.inbox.append(
             {
                 "from": publisher,
@@ -137,8 +137,8 @@ class FakeSubscriber:
             }
         )
 
-    def subscribe(self, publisher: degenbot.types.Publisher) -> None:
+    def subscribe(self, publisher: Publisher) -> None:
         publisher.subscribe(self)
 
-    def unsubscribe(self, publisher: degenbot.types.Publisher) -> None:
+    def unsubscribe(self, publisher: Publisher) -> None:
         publisher.unsubscribe(self)

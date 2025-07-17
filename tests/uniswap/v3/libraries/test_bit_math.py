@@ -1,7 +1,7 @@
 import pytest
 
 from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.exceptions import EVMRevertError
+from degenbot.exceptions.evm import EVMRevertError
 from degenbot.uniswap.v3_libraries.bit_math import least_significant_bit, most_significant_bit
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo

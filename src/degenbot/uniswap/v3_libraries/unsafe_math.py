@@ -6,4 +6,4 @@ def div_rounding_up(x: int, y: int) -> int:
     """
 
     # x and y are uint256 values, so negative value floor division workarounds are unnecessary
-    return x // y + (x % y > 0)
+    return (0 if y == 0 else x // y) + ((0 if y == 0 else x % y) > 0)

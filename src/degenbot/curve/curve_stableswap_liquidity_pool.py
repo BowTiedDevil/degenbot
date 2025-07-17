@@ -31,25 +31,19 @@ from degenbot.curve.deployments import (
     CURVE_V1_REGISTRY_ADDRESS,
 )
 from degenbot.curve.types import CurveStableswapPoolState, CurveStableSwapPoolStateUpdated
-from degenbot.erc20_token import Erc20Token
-from degenbot.exceptions import (
-    BrokenPool,
-    DegenbotValueError,
-    EVMRevertError,
-    InvalidSwapInputAmount,
-    NoLiquidity,
-)
+from degenbot.erc20 import Erc20Token, Erc20TokenManager
+from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.arbitrage import NoLiquidity
+from degenbot.exceptions.liquidity_pool import BrokenPool, InvalidSwapInputAmount
 from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from degenbot.logging import logger
-from degenbot.managers.erc20_token_manager import Erc20TokenManager
-from degenbot.registry.all_pools import pool_registry
-from degenbot.types import (
-    AbstractArbitrage,
-    AbstractLiquidityPool,
-    BlockNumber,
+from degenbot.registry import pool_registry
+from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
+from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types.concrete import (
+    AbstractPublisherMessage,
     BoundedCache,
-    ChainId,
-    Message,
     Publisher,
     PublisherMixin,
     Subscriber,
@@ -168,7 +162,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         )
     )
 
-    def _notify_subscribers(self: Publisher, message: Message) -> None:
+    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
         for subscriber in self._subscribers:
             subscriber.notify(publisher=self, message=message)
 
@@ -779,6 +773,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
     def calc_token_amount(
         self,
+        *,
         amounts: Sequence[int],
         deposit: bool,
         block_identifier: BlockIdentifier | None = None,

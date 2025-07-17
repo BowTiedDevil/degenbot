@@ -13,7 +13,7 @@ from degenbot.functions import (
     next_base_fee,
     raw_call,
 )
-from degenbot.types import BlockNumber
+from degenbot.types.aliases import BlockNumber
 
 
 def test_extract_argument_types_from_function_prototype():

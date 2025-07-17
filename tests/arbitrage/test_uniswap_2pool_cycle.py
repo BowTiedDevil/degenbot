@@ -6,8 +6,10 @@ import web3
 from degenbot import (
     AnvilFork,
     Erc20Token,
+    EtherPlaceholder,
     UniswapV2Pool,
     UniswapV3Pool,
+    UniswapV4Pool,
     get_checksum_address,
     pool_registry,
     set_web3,
@@ -15,9 +17,8 @@ from degenbot import (
 )
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts, UniswapV4PoolSwapAmounts
 from degenbot.arbitrage.uniswap_2pool_cycle_testing import _UniswapTwoPoolCycleTesting
-from degenbot.erc20_token import EtherPlaceholder
-from degenbot.exceptions import PossibleInaccurateResult, RateOfExchangeBelowMinimum
-from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.exceptions.arbitrage import RateOfExchangeBelowMinimum
+from degenbot.exceptions.liquidity_pool import PossibleInaccurateResult
 from tests.conftest import env_values
 
 # Token addresses

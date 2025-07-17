@@ -4,7 +4,7 @@ import pytest
 
 from degenbot.balancer.libraries import weighted_math
 from degenbot.balancer.libraries.helpers import bn, from_fp, to_fp
-from degenbot.exceptions import EVMRevertError
+from degenbot.exceptions.evm import EVMRevertError
 
 MAX_RELATIVE_ERROR = Decimal("0.0001")
 

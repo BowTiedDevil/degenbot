@@ -14,12 +14,11 @@ from web3.exceptions import ContractLogicError
 from web3.types import BlockIdentifier
 
 from degenbot import connection_manager, get_checksum_address
-from degenbot.arbitrage.types import UniswapPoolSwapVector
-from degenbot.erc20_token import Erc20Token
-from degenbot.exceptions import (
+from degenbot.erc20 import Erc20Token, Erc20TokenManager
+from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.liquidity_pool import (
     AddressMismatch,
-    DegenbotValueError,
-    EVMRevertError,
     ExternalUpdateError,
     IncompleteSwap,
     LateUpdateError,
@@ -29,20 +28,18 @@ from degenbot.exceptions import (
 )
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
-from degenbot.managers.erc20_token_manager import Erc20TokenManager
-from degenbot.registry.all_pools import pool_registry
-from degenbot.types import (
-    AbstractArbitrage,
-    AbstractLiquidityPool,
-    BlockNumber,
+from degenbot.registry import pool_registry
+from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
+from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types.concrete import (
+    AbstractPublisherMessage,
     BoundedCache,
-    ChainId,
-    Message,
     Publisher,
     PublisherMixin,
     Subscriber,
 )
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV3ExchangeDeployment
+from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import (
     exchange_rate_from_sqrt_price_x96,
     generate_v3_pool_address,
@@ -103,12 +100,13 @@ class LiquidityRangeCacheKey:
     Cache key for liquidity range swap calculations.
     """
 
+    exact_input: bool
     tick_lower: int
     tick_upper: int
     liquidity: int
     zero_for_one: bool
-    sqrt_price_start_x96: int
-    exact_input: bool
+    price_start: SqrtPriceX96
+    price_end: SqrtPriceX96
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -120,7 +118,7 @@ class LiquidityRangeCacheValue:
     amount_in: int
     amount_out: int
     fee_amount: int
-    sqrt_price_end_x96: int
+    price_end: SqrtPriceX96
     amount_required: int  # Total amount needed to consume this range
 
 
@@ -203,7 +201,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             **kwargs,
         )
 
-    def _notify_subscribers(self: Publisher, message: Message) -> None:
+    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
         for subscriber in self._subscribers:
             subscriber.notify(publisher=self, message=message)
 
@@ -214,21 +212,25 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         chain_id: ChainId | None = None,
         deployer_address: str | None = None,
         init_hash: str | None = None,
-        tick_bitmap: dict[
-            int | str,
-            UniswapV3BitmapAtWordAsDict | UniswapV3BitmapAtWord,
-        ]
-        | None = None,
-        tick_data: dict[
-            int | str,
-            UniswapV3LiquidityAtTickAsDict | UniswapV3LiquidityAtTick,
-        ]
-        | None = None,
+        tick_bitmap: (
+            dict[int, UniswapV3BitmapAtWord]
+            | dict[str, UniswapV3BitmapAtWord]
+            | dict[int, UniswapV3BitmapAtWordAsDict]
+            | dict[str, UniswapV3BitmapAtWordAsDict]
+            | None
+        ) = None,
+        tick_data: (
+            dict[int, UniswapV3LiquidityAtTick]
+            | dict[str, UniswapV3LiquidityAtTick]
+            | dict[int, UniswapV3LiquidityAtTickAsDict]
+            | dict[str, UniswapV3LiquidityAtTickAsDict]
+            | None
+        ) = None,
         state_block: BlockNumber | None = None,
         verify_address: bool = True,
         silent: bool = False,
         state_cache_depth: int = 8,
-    ):
+    ) -> None:
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
@@ -344,10 +346,14 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         self._state_lock = Lock()
 
         # Liquidity range consumption cache
-        self._range_cache: dict[LiquidityRangeCacheKey, LiquidityRangeCacheValue] = {}
-        self._range_cache_lock = Lock()
+        self._swap_step_cache: dict[LiquidityRangeCacheKey, LiquidityRangeCacheValue] = {}
+        self._swap_step_cache_lock = Lock()
 
-        pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
+        pool_registry.add(
+            pool_address=self.address,
+            chain_id=self.chain_id,
+            pool=self,
+        )
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
@@ -370,8 +376,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             "_state_cache",
             "_state_lock",
             "_subscribers",
-            "_range_cache_lock",
-            "init_hash",
+            "_swap_step_cache_lock",
         }
 
         with self._state_lock:
@@ -383,7 +388,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         state["_state_lock"] = Lock()
-        state["_range_cache_lock"] = Lock()
+        state["_swap_step_cache_lock"] = Lock()
         self.__dict__ = state
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -394,6 +399,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
     def _calculate_swap(
         self,
+        *,
         zero_for_one: bool,
         amount_specified: int,
         sqrt_price_limit_x96: int,
@@ -417,8 +423,6 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
         exact_input = amount_specified > 0
 
-        # The tick bitmap and tick data dictionaries accessed through the attribute are copies, so
-        # they can be freely modified without corrupting the state
         if override_state is not None:
             liquidity_start = override_state.liquidity
             sqrt_price_x96_start = override_state.sqrt_price_x96
@@ -429,6 +433,8 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             liquidity_start = self.liquidity
             sqrt_price_x96_start = self.sqrt_price_x96
             tick_start = self.tick
+            # The tick bitmap and tick data dictionaries accessed through the attribute are copies,
+            # so they can be freely modified without corrupting the state
             tick_bitmap = self.tick_bitmap
             tick_data = self.tick_data
 
@@ -456,7 +462,10 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             # The liquidity mapping is complete. Optimize loop by building a generator that yields
             # ticks and initialization status along the swap path
             ticks_along_swap_path = gen_ticks(
-                tick_data, tick_start, self.tick_spacing, zero_for_one
+                tick_data=tick_data,
+                starting_tick=tick_start,
+                tick_spacing=self.tick_spacing,
+                less_than_or_equal=zero_for_one,
             )
 
         step = self.StepComputations()
@@ -472,11 +481,11 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             else:
                 try:
                     step.tick_next, step.initialized = next_initialized_tick_within_one_word(
-                        tick_bitmap,
-                        tick_data,
-                        swap_state.tick,
-                        self.tick_spacing,
-                        zero_for_one,
+                        tick_bitmap=tick_bitmap,
+                        tick_data=tick_data,
+                        tick=swap_state.tick,
+                        tick_spacing=self.tick_spacing,
+                        less_than_or_equal=zero_for_one,
                     )
                 except LiquidityMapWordMissing as exc:
                     missing_word = exc.word
@@ -499,22 +508,38 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             step.sqrt_price_next_x96 = get_sqrt_ratio_at_tick(step.tick_next)
 
             # Determine the current liquidity range boundaries
-            tick_lower = swap_state.tick if zero_for_one else step.tick_next
-            tick_upper = step.tick_next if zero_for_one else swap_state.tick
+            if zero_for_one:
+                tick_lower, tick_upper = (
+                    step.tick_next,
+                    step.tick_next + self.tick_spacing,
+                )
+            else:
+                tick_lower, tick_upper = (
+                    step.tick_next - self.tick_spacing,
+                    step.tick_next,
+                )
+            assert tick_lower < tick_upper, f"{tick_lower} should be < {tick_upper}"
 
-            if cached_result := self._get_cached_range_result(
-                tick_lower=tick_lower,
-                tick_upper=tick_upper,
-                liquidity=swap_state.liquidity,
-                zero_for_one=zero_for_one,
-                sqrt_price_start_x96=swap_state.sqrt_price_x96,
-                exact_input=exact_input,
-                amount_remaining=abs(swap_state.amount_specified_remaining),
+            cached_result = self._swap_step_cache.get(
+                LiquidityRangeCacheKey(
+                    exact_input=exact_input,
+                    tick_lower=tick_lower,
+                    tick_upper=tick_upper,
+                    liquidity=swap_state.liquidity,
+                    zero_for_one=zero_for_one,
+                    price_start=step.sqrt_price_start_x96,
+                    price_end=step.sqrt_price_next_x96,
+                )
+            )
+
+            if (
+                cached_result
+                and abs(swap_state.amount_specified_remaining) >= cached_result.amount_required
             ):
+                swap_state.sqrt_price_x96 = cached_result.price_end
                 step.amount_in = cached_result.amount_in
                 step.amount_out = cached_result.amount_out
                 step.fee_amount = cached_result.fee_amount
-                swap_state.sqrt_price_x96 = cached_result.sqrt_price_end_x96
             else:
                 # compute values to swap to the target tick, price limit, or point where
                 # the input/output amount is exhausted
@@ -543,27 +568,25 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
             if exact_input:
                 swap_state.amount_specified_remaining -= step.amount_in + step.fee_amount
-                swap_state.amount_calculated = swap_state.amount_calculated - step.amount_out
+                swap_state.amount_calculated -= step.amount_out
             else:
                 swap_state.amount_specified_remaining += step.amount_out
-                swap_state.amount_calculated = (
-                    swap_state.amount_calculated + step.amount_in + step.fee_amount
-                )
+                swap_state.amount_calculated += step.amount_in + step.fee_amount
 
             if swap_state.sqrt_price_x96 == step.sqrt_price_next_x96:  # pragma: no branch
                 # Cache the step if it consumed the liquidity range
                 if not cached_result:
-                    self._cache_range_result(
+                    self._cache_swap_step(
                         tick_lower=tick_lower,
                         tick_upper=tick_upper,
                         liquidity=swap_state.liquidity,
                         zero_for_one=zero_for_one,
-                        sqrt_price_start_x96=step.sqrt_price_start_x96,
                         exact_input=exact_input,
                         amount_in=step.amount_in,
                         amount_out=step.amount_out,
                         fee_amount=step.fee_amount,
-                        sqrt_price_end_x96=swap_state.sqrt_price_x96,
+                        price_start=step.sqrt_price_start_x96,
+                        price_end=swap_state.sqrt_price_x96,
                     )
                 # If the next tick is initialized, adjust the in-range liquidity
                 if step.initialized:
@@ -702,63 +725,32 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 block=block_number,
             )
 
-    def _get_cached_range_result(
+    def _cache_swap_step(
         self,
+        *,
         tick_lower: int,
         tick_upper: int,
         liquidity: int,
         zero_for_one: bool,
-        sqrt_price_start_x96: int,
-        exact_input: bool,
-        amount_remaining: int,
-    ) -> LiquidityRangeCacheValue | None:
-        """
-        Attempt to retrieve a cached result for complete liquidity range consumption.
-
-        Returns None if no suitable cache entry exists or if the remaining amount
-        is insufficient to consume the entire range.
-        """
-        cache_key = LiquidityRangeCacheKey(
-            tick_lower=tick_lower,
-            tick_upper=tick_upper,
-            liquidity=liquidity,
-            zero_for_one=zero_for_one,
-            sqrt_price_start_x96=sqrt_price_start_x96,
-            exact_input=exact_input,
-        )
-
-        with self._range_cache_lock:
-            cached_value = self._range_cache.get(cache_key)
-
-            # Check if the remaining amount is sufficient to consume the entire range
-            if cached_value and amount_remaining < cached_value.amount_required:
-                return None
-
-            return cached_value
-
-    def _cache_range_result(
-        self,
-        tick_lower: int,
-        tick_upper: int,
-        liquidity: int,
-        zero_for_one: bool,
-        sqrt_price_start_x96: int,
         exact_input: bool,
         amount_in: int,
         amount_out: int,
         fee_amount: int,
-        sqrt_price_end_x96: int,
+        price_start: SqrtPriceX96,
+        price_end: SqrtPriceX96,
     ) -> None:
         """
-        Cache the result of a swap step that consumed an entire liquidity range.
+        Cache the input and output of a swap step that reached a lower or upper limit of a liquidity
+        range.
         """
         cache_key = LiquidityRangeCacheKey(
+            exact_input=exact_input,
             tick_lower=tick_lower,
             tick_upper=tick_upper,
             liquidity=liquidity,
             zero_for_one=zero_for_one,
-            sqrt_price_start_x96=sqrt_price_start_x96,
-            exact_input=exact_input,
+            price_start=price_start,
+            price_end=price_end,
         )
 
         # Calculate the total amount required to consume this range
@@ -768,12 +760,12 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             amount_in=amount_in,
             amount_out=amount_out,
             fee_amount=fee_amount,
-            sqrt_price_end_x96=sqrt_price_end_x96,
+            price_end=price_end,
             amount_required=amount_required,
         )
 
-        with self._range_cache_lock:
-            self._range_cache[cache_key] = cache_value
+        with self._swap_step_cache_lock:
+            self._swap_step_cache[cache_key] = cache_value
 
     def _invalidate_range_cache_for_ticks(self, tick_lower: int, tick_upper: int) -> None:
         """
@@ -782,15 +774,14 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         This should be called when liquidity is updated in a range to ensure
         cached calculations remain valid.
         """
-        with self._range_cache_lock:
-            # Remove all cache keys that overlap with the updated range
-            keys_to_remove = (
-                cache_key
-                for cache_key in self._range_cache
-                if cache_key.tick_lower < tick_upper and cache_key.tick_upper > tick_lower
-            )
-            for key in keys_to_remove:
-                del self._range_cache[key]
+        with self._swap_step_cache_lock:
+            self._swap_step_cache = {
+                key: value
+                for key, value in self._swap_step_cache.items()
+                # Preserve only the cached values outside of the updated range
+                # TODO: determine if one or more inequalities can be <= or >=
+                if (tick_lower > key.tick_upper or tick_upper < key.tick_lower)
+            }
 
     def _verified_address(self) -> ChecksumAddress:
         return generate_v3_pool_address(
@@ -990,6 +981,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
     def auto_update(
         self,
+        *,
         block_number: BlockNumber | None = None,
         silent: bool = True,
     ) -> None:
@@ -1574,15 +1566,15 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 ),
             )
 
-    def clear_range_cache(self) -> None:
+    def clear_swap_step_cache(self) -> None:
         """
         Clear all cached liquidity range calculations.
 
         This can be useful for memory management or when you want to ensure
         fresh calculations.
         """
-        with self._range_cache_lock:
-            self._range_cache.clear()
+        with self._swap_step_cache_lock:
+            self._swap_step_cache.clear()
 
     def get_range_cache_stats(self) -> dict[str, int]:
         """
@@ -1591,10 +1583,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         Returns:
             Dictionary containing cache size and other metrics.
         """
-        with self._range_cache_lock:
+        with self._swap_step_cache_lock:
             return {
-                "cache_size": len(self._range_cache),
-                "total_cached_ranges": len(
-                    {(key.tick_lower, key.tick_upper) for key in self._range_cache}
-                ),
+                "cache_size": len(self._swap_step_cache),
             }

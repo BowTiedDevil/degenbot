@@ -3,8 +3,8 @@ import dataclasses
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
-from degenbot.erc20_token import Erc20Token
-from degenbot.types import BlockNumber
+from degenbot.erc20 import Erc20Token
+from degenbot.types.aliases import BlockNumber
 
 
 class AbstractSwapAmounts:
@@ -34,16 +34,6 @@ class CurveStableSwapPoolSwapAmounts(AbstractSwapAmounts):
     amount_in: int
     min_amount_out: int
     underlying: bool
-
-    def __post_init__(self) -> None:
-        assert self.token_in != self.token_out
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class UniswapPoolSwapVector:
-    token_in: Erc20Token
-    token_out: Erc20Token
-    zero_for_one: bool
 
     def __post_init__(self) -> None:
         assert self.token_in != self.token_out

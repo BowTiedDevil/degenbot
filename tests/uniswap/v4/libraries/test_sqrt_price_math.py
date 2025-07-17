@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from degenbot.constants import MAX_UINT128, MAX_UINT160, MAX_UINT256
-from degenbot.exceptions import EVMRevertError
+from degenbot.exceptions.evm import EVMRevertError
 from degenbot.uniswap.v4_libraries.constants import (
     SQRT_PRICE_1_1,
     SQRT_PRICE_2_1,
@@ -21,12 +21,22 @@ from degenbot.uniswap.v4_libraries.sqrt_price_math import (
 
 def test_get_next_sqrt_price_from_input_reverts_if_price_is_zero():
     with pytest.raises(ValidationError):
-        get_next_sqrt_price_from_input(0, 1, int(0.1 * 10**18), False)
+        get_next_sqrt_price_from_input(
+            sqrt_price_x96=0,
+            liquidity=1,
+            amount_in=int(0.1 * 10**18),
+            zero_for_one=False,
+        )
 
 
 def test_get_next_sqrt_price_from_input_reverts_if_liquidity_is_zero():
     with pytest.raises(ValidationError):
-        get_next_sqrt_price_from_input(1, 0, int(0.1 * 10**18), True)
+        get_next_sqrt_price_from_input(
+            sqrt_price_x96=1,
+            liquidity=0,
+            amount_in=int(0.1 * 10**18),
+            zero_for_one=True,
+        )
 
 
 def test_get_next_sqrt_price_from_input_reverts_if_input_amount_overflows_the_price():
@@ -34,51 +44,100 @@ def test_get_next_sqrt_price_from_input_reverts_if_input_amount_overflows_the_pr
     liquidity = 1024
     amount_in = 1024
     with pytest.raises(ValidationError):
-        get_next_sqrt_price_from_input(price, liquidity, amount_in, False)
+        get_next_sqrt_price_from_input(
+            sqrt_price_x96=price,
+            liquidity=liquidity,
+            amount_in=amount_in,
+            zero_for_one=False,
+        )
 
 
 def test_get_next_sqrt_price_from_input_any_input_amount_cannot_underflow_the_price():
     price = 1
     liquidity = 1
     amount_in = 2**255
-    sqrt_q = get_next_sqrt_price_from_input(price, liquidity, amount_in, True)
+    sqrt_q = get_next_sqrt_price_from_input(
+        sqrt_price_x96=price,
+        liquidity=liquidity,
+        amount_in=amount_in,
+        zero_for_one=True,
+    )
     assert sqrt_q == 1
 
 
 def test_get_next_sqrt_price_from_input_returns_input_price_if_amount_in_is_zero_and_zero_for_one_equals_true():  # noqa: E501
     price = SQRT_PRICE_1_1
     liquidity = 1
-    assert get_next_sqrt_price_from_input(price, liquidity, 0, True) == price
+    assert (
+        get_next_sqrt_price_from_input(
+            sqrt_price_x96=price,
+            liquidity=liquidity,
+            amount_in=0,
+            zero_for_one=True,
+        )
+        == price
+    )
 
 
 def test_get_next_sqrt_price_from_input_returns_input_price_if_amount_in_is_zero_and_zero_for_one_equals_false():  # noqa: E501
     price = SQRT_PRICE_1_1
     liquidity = 1
-    assert get_next_sqrt_price_from_input(price, liquidity, 0, False) == price
+    assert (
+        get_next_sqrt_price_from_input(
+            sqrt_price_x96=price,
+            liquidity=liquidity,
+            amount_in=0,
+            zero_for_one=False,
+        )
+        == price
+    )
 
 
 def test_get_next_sqrt_price_from_input_returns_the_minimum_price_for_max_inputs():
     sqrt_p = MAX_UINT160 - 1
     liquidity = MAX_UINT128
     max_amount_no_overflow = MAX_UINT256 - (MAX_UINT128 << 96) // sqrt_p
-    assert get_next_sqrt_price_from_input(sqrt_p, liquidity, max_amount_no_overflow, True) == 1
+    assert (
+        get_next_sqrt_price_from_input(
+            sqrt_price_x96=sqrt_p,
+            liquidity=liquidity,
+            amount_in=max_amount_no_overflow,
+            zero_for_one=True,
+        )
+        == 1
+    )
 
 
 def test_get_next_sqrt_price_from_input_input_amount_of0_1_currency1():
     sqrt_p = SQRT_PRICE_1_1
-    sqrt_q = get_next_sqrt_price_from_input(sqrt_p, 1 * 10**18, int(0.1 * 10**18), False)
+    sqrt_q = get_next_sqrt_price_from_input(
+        sqrt_price_x96=sqrt_p,
+        liquidity=1 * 10**18,
+        amount_in=int(0.1 * 10**18),
+        zero_for_one=False,
+    )
     assert sqrt_q == SQRT_PRICE_121_100
 
 
 def test_get_next_sqrt_price_from_input_input_amount_of0_1_currency0():
     sqrt_p = SQRT_PRICE_1_1
-    sqrt_q = get_next_sqrt_price_from_input(sqrt_p, 1 * 10**18, int(0.1 * 10**18), True)
+    sqrt_q = get_next_sqrt_price_from_input(
+        sqrt_price_x96=sqrt_p,
+        liquidity=1 * 10**18,
+        amount_in=int(0.1 * 10**18),
+        zero_for_one=True,
+    )
     assert sqrt_q == 72025602285694852357767227579
 
 
 def test_get_next_sqrt_price_from_input_amount_in_greater_than_type_uint96_max_and_zero_for_one_equals_true():  # noqa: E501
     sqrt_p = SQRT_PRICE_1_1
-    sqrt_q = get_next_sqrt_price_from_input(sqrt_p, (10 * 10**18), 2**100, True)
+    sqrt_q = get_next_sqrt_price_from_input(
+        sqrt_price_x96=sqrt_p,
+        liquidity=(10 * 10**18),
+        amount_in=2**100,
+        zero_for_one=True,
+    )
 
     # perfect answer:
     # https://www.wolframalpha.com/input/?i=624999999995069620+-+%28%281e19+*+1+%2F+%281e19+%2B+2%5E100+*+1%29%29+*+2%5E96%29
@@ -87,7 +146,12 @@ def test_get_next_sqrt_price_from_input_amount_in_greater_than_type_uint96_max_a
 
 def test_get_next_sqrt_price_from_input_can_return1_with_enough_amount_in_and_zero_for_one_equals_true():  # noqa: E501
     sqrt_p = SQRT_PRICE_1_1
-    sqrt_q = get_next_sqrt_price_from_input(sqrt_p, 1, MAX_UINT256 // 2, True)
+    sqrt_q = get_next_sqrt_price_from_input(
+        sqrt_price_x96=sqrt_p,
+        liquidity=1,
+        amount_in=MAX_UINT256 // 2,
+        zero_for_one=True,
+    )
     assert sqrt_q == 1
 
 
@@ -96,12 +160,22 @@ def test_get_next_sqrt_price_from_input_can_return1_with_enough_amount_in_and_ze
 
 def test_get_next_sqrt_price_from_output_reverts_if_price_is_zero():
     with pytest.raises(ValidationError):
-        get_next_sqrt_price_from_output(0, 1, int(0.1 * 10**18), False)
+        get_next_sqrt_price_from_output(
+            sqrt_price_x96=0,
+            liquidity=1,
+            amount_out=int(0.1 * 10**18),
+            zero_for_one=False,
+        )
 
 
 def test_get_next_sqrt_price_from_output_reverts_if_liquidity_is_zero():
     with pytest.raises(ValidationError):
-        get_next_sqrt_price_from_output(1, 0, int(0.1 * 10**18), True)
+        get_next_sqrt_price_from_output(
+            sqrt_price_x96=1,
+            liquidity=0,
+            amount_out=int(0.1 * 10**18),
+            zero_for_one=True,
+        )
 
 
 def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_exactly_the_virtual_reserves_of_currency0():  # noqa: E501
@@ -109,7 +183,12 @@ def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_exactly_the
     liquidity = 1024
     amount_out = 4
     with pytest.raises(ValidationError):
-        get_next_sqrt_price_from_output(price, liquidity, amount_out, False)
+        get_next_sqrt_price_from_output(
+            sqrt_price_x96=price,
+            liquidity=liquidity,
+            amount_out=amount_out,
+            zero_for_one=False,
+        )
 
 
 def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_greater_than_the_virtual_reserves_of_currency0():  # noqa: E501
@@ -117,7 +196,12 @@ def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_greater_tha
     liquidity = 1024
     amount_out = 5
     with pytest.raises(ValidationError):
-        get_next_sqrt_price_from_output(price, liquidity, amount_out, False)
+        get_next_sqrt_price_from_output(
+            sqrt_price_x96=price,
+            liquidity=liquidity,
+            amount_out=amount_out,
+            zero_for_one=False,
+        )
 
 
 def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_greater_than_the_virtual_reserves_of_currency1():  # noqa: E501
@@ -125,7 +209,12 @@ def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_greater_tha
     liquidity = 1024
     amount_out = 262145
     with pytest.raises(EVMRevertError):
-        get_next_sqrt_price_from_output(price, liquidity, amount_out, True)
+        get_next_sqrt_price_from_output(
+            sqrt_price_x96=price,
+            liquidity=liquidity,
+            amount_out=amount_out,
+            zero_for_one=True,
+        )
 
 
 def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_exactly_the_virtual_reserves_of_currency1():  # noqa: E501
@@ -133,14 +222,24 @@ def test_get_next_sqrt_price_from_output_reverts_if_output_amount_is_exactly_the
     liquidity = 1024
     amount_out = 262144
     with pytest.raises(EVMRevertError):
-        get_next_sqrt_price_from_output(price, liquidity, amount_out, True)
+        get_next_sqrt_price_from_output(
+            sqrt_price_x96=price,
+            liquidity=liquidity,
+            amount_out=amount_out,
+            zero_for_one=True,
+        )
 
 
 def test_get_next_sqrt_price_from_output_succeeds_if_output_amount_is_just_less_than_the_virtual_reserves_of_currency1():  # noqa: E501
     price = 20282409603651670423947251286016
     liquidity = 1024
     amount_out = 262143
-    sqrt_q = get_next_sqrt_price_from_output(price, liquidity, amount_out, True)
+    sqrt_q = get_next_sqrt_price_from_output(
+        sqrt_price_x96=price,
+        liquidity=liquidity,
+        amount_out=amount_out,
+        zero_for_one=True,
+    )
     assert sqrt_q == 77371252455336267181195264
 
 
@@ -149,30 +248,55 @@ def test_get_next_sqrt_price_from_output_puzzling_echidna_test():
     liquidity = 1024
     amount_out = 4
     with pytest.raises(ValidationError):
-        get_next_sqrt_price_from_output(price, liquidity, amount_out, False)
+        get_next_sqrt_price_from_output(
+            sqrt_price_x96=price,
+            liquidity=liquidity,
+            amount_out=amount_out,
+            zero_for_one=False,
+        )
 
 
 def test_get_next_sqrt_price_from_output_returns_input_price_if_amount_in_is_zero_and_zero_for_one_equals_true():  # noqa: E501
     sqrt_p = SQRT_PRICE_1_1
-    sqrt_q = get_next_sqrt_price_from_output(sqrt_p, int(0.1 * 10**18), 0, True)
+    sqrt_q = get_next_sqrt_price_from_output(
+        sqrt_price_x96=sqrt_p,
+        liquidity=int(0.1 * 10**18),
+        amount_out=0,
+        zero_for_one=True,
+    )
     assert sqrt_p == sqrt_q
 
 
 def test_get_next_sqrt_price_from_output_returns_input_price_if_amount_in_is_zero_and_zero_for_one_equals_false():  # noqa: E501
     sqrt_p = SQRT_PRICE_1_1
-    sqrt_q = get_next_sqrt_price_from_output(sqrt_p, int(0.1 * 10**18), 0, False)
+    sqrt_q = get_next_sqrt_price_from_output(
+        sqrt_price_x96=sqrt_p,
+        liquidity=int(0.1 * 10**18),
+        amount_out=0,
+        zero_for_one=False,
+    )
     assert sqrt_p == sqrt_q
 
 
 def test_get_next_sqrt_price_from_output_output_amount_of0_1_currency1():
     sqrt_p = SQRT_PRICE_1_1
-    sqrt_q = get_next_sqrt_price_from_output(sqrt_p, 1 * 10**18, int(0.1 * 10**18), False)
+    sqrt_q = get_next_sqrt_price_from_output(
+        sqrt_price_x96=sqrt_p,
+        liquidity=1 * 10**18,
+        amount_out=int(0.1 * 10**18),
+        zero_for_one=False,
+    )
     assert sqrt_q == 88031291682515930659493278152
 
 
 def test_get_nextsqrt_price_from_output_output_amount_of0_1_currency0():
     sqrt_p = SQRT_PRICE_1_1
-    sqrt_q = get_next_sqrt_price_from_output(sqrt_p, 1 * 10**18, int(0.1 * 10**18), True)
+    sqrt_q = get_next_sqrt_price_from_output(
+        sqrt_price_x96=sqrt_p,
+        liquidity=1 * 10**18,
+        amount_out=int(0.1 * 10**18),
+        zero_for_one=True,
+    )
     assert sqrt_q == 71305346262837903834189555302
 
 
@@ -180,7 +304,12 @@ def test_get_nextsqrt_price_from_output_reverts_if_amount_out_is_impossible_in_z
     sqrt_p = SQRT_PRICE_1_1
 
     with pytest.raises(ValidationError):
-        get_next_sqrt_price_from_output(sqrt_p, 1, MAX_UINT256, True)
+        get_next_sqrt_price_from_output(
+            sqrt_price_x96=sqrt_p,
+            liquidity=1,
+            amount_out=MAX_UINT256,
+            zero_for_one=True,
+        )
 
 
 def test_get_nextsqrt_price_from_output_reverts_if_amount_out_is_impossible_in_one_for_zero_direction():  # noqa: E501
@@ -193,25 +322,50 @@ def test_get_nextsqrt_price_from_output_reverts_if_amount_out_is_impossible_in_o
 # skip gas tests
 
 
-def test_get_amount0_delta_returns0_if_liquidity_is0():
-    amount0 = get_amount0_delta(SQRT_PRICE_1_1, SQRT_PRICE_2_1, 0, True)
+def test_get_amount0_delta_returns_0_if_liquidity_is_0():
+    amount0 = get_amount0_delta(
+        sqrt_price_a_x96=SQRT_PRICE_1_1,
+        sqrt_price_b_x96=SQRT_PRICE_2_1,
+        liquidity=0,
+        round_up=True,
+    )
     assert amount0 == 0
 
 
-def test_get_amount0_delta_returns0_if_prices_are_equal():
-    amount0 = get_amount0_delta(SQRT_PRICE_1_1, SQRT_PRICE_1_1, 0, True)
+def test_get_amount0_delta_returns_0_if_prices_are_equal():
+    amount0 = get_amount0_delta(
+        sqrt_price_a_x96=SQRT_PRICE_1_1,
+        sqrt_price_b_x96=SQRT_PRICE_1_1,
+        liquidity=0,
+        round_up=True,
+    )
     assert amount0 == 0
 
 
 def test_get_amount0_delta_reverts_if_price_is_zero():
     with pytest.raises(ValidationError):
-        get_amount0_delta(0, 1, 1, True)
+        get_amount0_delta(
+            sqrt_price_a_x96=0,
+            sqrt_price_b_x96=1,
+            liquidity=1,
+            round_up=True,
+        )
 
 
 def test_get_amount0_delta_1_amount1_for_price_of1_to1_21():
-    amount0 = get_amount0_delta(SQRT_PRICE_1_1, SQRT_PRICE_121_100, 1 * 10**18, True)
+    amount0 = get_amount0_delta(
+        sqrt_price_a_x96=SQRT_PRICE_1_1,
+        sqrt_price_b_x96=SQRT_PRICE_121_100,
+        liquidity=1 * 10**18,
+        round_up=True,
+    )
     assert amount0 == 90909090909090910
-    amount0_rounded_down = get_amount0_delta(SQRT_PRICE_1_1, SQRT_PRICE_121_100, 1 * 10**18, False)
+    amount0_rounded_down = get_amount0_delta(
+        sqrt_price_a_x96=SQRT_PRICE_1_1,
+        sqrt_price_b_x96=SQRT_PRICE_121_100,
+        liquidity=1 * 10**18,
+        round_up=False,
+    )
     assert amount0_rounded_down == amount0 - 1
 
 
@@ -220,8 +374,18 @@ def test_get_amount0_delta_works_for_prices_that_overflow():
     sqrt_p_1 = 2787593149816327892691964784081045188247552
     # sqrt_p_2 = encodesqrt_priceX96(2^96, 1)
     sqrt_p_2 = 22300745198530623141535718272648361505980416
-    amount0_up = get_amount0_delta(sqrt_p_1, sqrt_p_2, 1 * 10**18, True)
-    amount0_down = get_amount0_delta(sqrt_p_1, sqrt_p_2, 1 * 10**18, False)
+    amount0_up = get_amount0_delta(
+        sqrt_price_a_x96=sqrt_p_1,
+        sqrt_price_b_x96=sqrt_p_2,
+        liquidity=1 * 10**18,
+        round_up=True,
+    )
+    amount0_down = get_amount0_delta(
+        sqrt_price_a_x96=sqrt_p_1,
+        sqrt_price_b_x96=sqrt_p_2,
+        liquidity=1 * 10**18,
+        round_up=False,
+    )
     assert amount0_up == amount0_down + 1
 
 
@@ -229,19 +393,39 @@ def test_get_amount0_delta_works_for_prices_that_overflow():
 
 
 def test_get_amount1_delta_returns0_if_liquidity_is0():
-    amount1 = get_amount1_delta(SQRT_PRICE_1_1, SQRT_PRICE_2_1, 0, True)
+    amount1 = get_amount1_delta(
+        sqrt_price_a_x96=SQRT_PRICE_1_1,
+        sqrt_price_b_x96=SQRT_PRICE_2_1,
+        liquidity=0,
+        round_up=True,
+    )
     assert amount1 == 0
 
 
 def test_get_amount1_delta_returns0_if_prices_are_equal():
-    amount1 = get_amount1_delta(SQRT_PRICE_1_1, SQRT_PRICE_1_1, 0, True)
+    amount1 = get_amount1_delta(
+        sqrt_price_a_x96=SQRT_PRICE_1_1,
+        sqrt_price_b_x96=SQRT_PRICE_1_1,
+        liquidity=0,
+        round_up=True,
+    )
     assert amount1 == 0
 
 
 def test_get_amount1_delta_1_amount1_for_price_of1_to1_21():
-    amount1 = get_amount1_delta(SQRT_PRICE_1_1, SQRT_PRICE_121_100, 1 * 10**18, True)
+    amount1 = get_amount1_delta(
+        sqrt_price_a_x96=SQRT_PRICE_1_1,
+        sqrt_price_b_x96=SQRT_PRICE_121_100,
+        liquidity=1 * 10**18,
+        round_up=True,
+    )
     assert amount1 == 100000000000000000
-    amount1_rounded_down = get_amount1_delta(SQRT_PRICE_1_1, SQRT_PRICE_121_100, 1 * 10**18, False)
+    amount1_rounded_down = get_amount1_delta(
+        sqrt_price_a_x96=SQRT_PRICE_1_1,
+        sqrt_price_b_x96=SQRT_PRICE_121_100,
+        liquidity=1 * 10**18,
+        round_up=False,
+    )
     assert amount1_rounded_down == amount1 - 1
 
 
@@ -253,7 +437,17 @@ def test_swap_computation_sqrt_p_times_sqrt_q_overflows():
     liquidity = 50015962439936049619261659728067971248
     zero_for_one = True
     amount_in = 406
-    sqrt_q = get_next_sqrt_price_from_input(sqrt_p, liquidity, amount_in, zero_for_one)
+    sqrt_q = get_next_sqrt_price_from_input(
+        sqrt_price_x96=sqrt_p,
+        liquidity=liquidity,
+        amount_in=amount_in,
+        zero_for_one=zero_for_one,
+    )
     assert sqrt_q == 1025574284609383582644711336373707553698163132913
-    amount0_delta = get_amount0_delta(sqrt_q, sqrt_p, liquidity, True)
+    amount0_delta = get_amount0_delta(
+        sqrt_price_a_x96=sqrt_q,
+        sqrt_price_b_x96=sqrt_p,
+        liquidity=liquidity,
+        round_up=True,
+    )
     assert amount0_delta == 406

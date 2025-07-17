@@ -1,7 +1,7 @@
 import pytest
 
 from degenbot.constants import MAX_INT128, MAX_INT256, MIN_INT128, MIN_INT256
-from degenbot.exceptions import EVMRevertError
+from degenbot.exceptions.evm import EVMRevertError
 from degenbot.uniswap.v3_libraries import functions
 
 

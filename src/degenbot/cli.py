@@ -69,12 +69,12 @@ def database_reset() -> None:
     if user_confirm:
         create_new_sqlite_database(settings.database.path)
     else:
-        raise click.Abort()
+        raise click.Abort
 
 
 @database.command("upgrade")
 @click.option("--force", is_flag=True, help="Skip confirmation prompt")
-def database_upgrade(force: bool) -> None:
+def database_upgrade(*, force: bool) -> None:
     # TODO: convert placeholder values to real
     old = 1
     new = 2
@@ -89,7 +89,7 @@ def database_upgrade(force: bool) -> None:
     ):
         upgrade_existing_sqlite_database(settings.database.path)
     else:
-        raise click.Abort()
+        raise click.Abort
 
 
 @database.command("verify")

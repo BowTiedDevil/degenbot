@@ -1,12 +1,14 @@
 from threading import Lock
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from degenbot import connection_manager, get_checksum_address
+from degenbot.erc20 import Erc20Token, EtherPlaceholder
+from degenbot.registry import token_registry
+from degenbot.types.abstract import AbstractManager
+from degenbot.types.aliases import ChainId
+
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
-from degenbot import connection_manager, get_checksum_address
-from degenbot.erc20_token import Erc20Token, EtherPlaceholder
-from degenbot.registry.all_tokens import token_registry
-from degenbot.types import AbstractManager, ChainId
 
 
 class Erc20TokenManager(AbstractManager):

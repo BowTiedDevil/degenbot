@@ -14,10 +14,11 @@ from degenbot.balancer.libraries.scaling_helpers import (
 )
 from degenbot.balancer.libraries.weighted_math import _calc_out_given_in, _subtract_swap_fee_amount
 from degenbot.balancer.types import BalancerV2PoolState
-from degenbot.erc20_token import Erc20Token
+from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.functions import encode_function_calldata
-from degenbot.managers.erc20_token_manager import Erc20TokenManager
-from degenbot.types import AbstractLiquidityPool, BlockNumber, ChainId, PublisherMixin
+from degenbot.types.abstract import AbstractLiquidityPool
+from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types.concrete import PublisherMixin
 
 
 class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):

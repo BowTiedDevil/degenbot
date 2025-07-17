@@ -2,13 +2,13 @@ import pytest
 import web3
 
 from degenbot import (
+    AnvilFork,
     async_connection_manager,
     connection_manager,
     get_web3,
     set_async_web3,
     set_web3,
 )
-from degenbot.anvil_fork import AnvilFork
 from degenbot.exceptions import DegenbotValueError
 
 from .conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI

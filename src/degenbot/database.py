@@ -6,7 +6,8 @@ from sqlalchemy import Dialect, ForeignKey, Index, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from sqlalchemy.types import TypeDecorator
 
-from .logging import logger
+from degenbot.config import settings
+from degenbot.logging import logger
 
 type Tick = int
 type Word = int

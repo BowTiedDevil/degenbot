@@ -11,8 +11,9 @@ from web3.types import BlockIdentifier
 
 from degenbot import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.exceptions import DegenbotValueError, InvalidUint256
-from degenbot.types import BlockNumber
+from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.evm import InvalidUint256
+from degenbot.types.aliases import BlockNumber
 
 if TYPE_CHECKING:
     from eth_account.datastructures import SignedMessage

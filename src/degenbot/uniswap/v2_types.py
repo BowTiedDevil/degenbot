@@ -1,11 +1,8 @@
 import dataclasses
 
-from degenbot.types import (
-    AbstractPoolState,
-    AbstractSimulationResult,
-    BlockNumber,
-    PoolStateMessage,
-)
+from degenbot.types.abstract import AbstractPoolState, AbstractSimulationResult
+from degenbot.types.aliases import BlockNumber
+from degenbot.types.concrete import PoolStateMessage
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

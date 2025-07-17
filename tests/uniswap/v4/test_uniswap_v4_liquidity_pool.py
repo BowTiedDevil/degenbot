@@ -10,14 +10,17 @@ from hexbytes import HexBytes
 from web3.contract import Contract
 from web3.exceptions import ContractLogicError
 
-from degenbot import get_checksum_address, pool_registry, set_web3
-from degenbot.anvil_fork import AnvilFork
+from degenbot import AnvilFork, UniswapV4Pool, get_checksum_address, pool_registry, set_web3
 from degenbot.constants import MAX_INT128, ZERO_ADDRESS
-from degenbot.exceptions import IncompleteSwap, LiquidityPoolError, PossibleInaccurateResult
-from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.exceptions.liquidity_pool import (
+    IncompleteSwap,
+    LiquidityPoolError,
+    PossibleInaccurateResult,
+)
 
 if TYPE_CHECKING:
     from eth_typing import HexStr
+
 
 USDC_CONTRACT_ADDRESS = get_checksum_address("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
 NATIVE_CURRENCY_ADDRESS = ZERO_ADDRESS

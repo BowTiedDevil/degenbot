@@ -4,9 +4,9 @@ from itertools import count
 
 from pydantic import SkipValidation, validate_call
 
-from degenbot.exceptions import LiquidityMapWordMissing
+from degenbot.exceptions.liquidity_pool import LiquidityMapWordMissing
 from degenbot.functions import evm_divide
-from degenbot.types import BlockNumber
+from degenbot.types.aliases import BlockNumber
 from degenbot.uniswap.v3_libraries.tick_math import ValidatedTick
 from degenbot.uniswap.v3_types import Tick
 from degenbot.uniswap.v4_types import InitializedTickMap, LiquidityMap, UniswapV4BitmapAtWord
@@ -28,6 +28,7 @@ def compress(
 
 @validate_call
 def flip_tick(
+    *,
     tick_bitmap: SkipValidation[InitializedTickMap],
     sparse: bool,
     tick: ValidatedTick,
@@ -59,6 +60,7 @@ def flip_tick(
 
 @validate_call
 def gen_ticks(
+    *,
     tick_data: SkipValidation[LiquidityMap],
     starting_tick: ValidatedTick,
     tick_spacing: ValidatedInt24,
@@ -141,6 +143,7 @@ def gen_ticks(
 
 @validate_call(validate_return=True)
 def next_initialized_tick_within_one_word(
+    *,
     tick_bitmap: SkipValidation[InitializedTickMap],
     tick_data: SkipValidation[LiquidityMap],
     tick: ValidatedTick,

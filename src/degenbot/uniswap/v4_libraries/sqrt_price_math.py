@@ -4,7 +4,7 @@ from typing import overload
 from pydantic import validate_call
 
 from degenbot.constants import MAX_UINT160, MAX_UINT256, MIN_UINT160
-from degenbot.exceptions import EVMRevertError
+from degenbot.exceptions.evm import EVMRevertError
 from degenbot.uniswap.v4_libraries._config import V4_LIB_CACHE_SIZE
 from degenbot.uniswap.v4_libraries.fixed_point_96 import Q96, RESOLUTION
 from degenbot.uniswap.v4_libraries.full_math import muldiv, muldiv_rounding_up
@@ -23,8 +23,9 @@ from degenbot.validation.evm_values import (
 
 @overload
 def get_amount0_delta(
-    sqrt_ratio_a_x96: ValidatedUint160,
-    sqrt_ratio_b_x96: ValidatedUint160,
+    *,
+    sqrt_price_a_x96: ValidatedUint160,
+    sqrt_price_b_x96: ValidatedUint160,
     liquidity: ValidatedInt128,
     round_up: bool,
 ) -> ValidatedUint256: ...
@@ -32,8 +33,9 @@ def get_amount0_delta(
 
 @overload
 def get_amount0_delta(
-    sqrt_ratio_a_x96: ValidatedUint160,
-    sqrt_ratio_b_x96: ValidatedUint160,
+    *,
+    sqrt_price_a_x96: ValidatedUint160,
+    sqrt_price_b_x96: ValidatedUint160,
     liquidity: ValidatedInt128,
     round_up: None,
 ) -> ValidatedInt256: ...
@@ -42,20 +44,31 @@ def get_amount0_delta(
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
 @validate_call(validate_return=True)
 def get_amount0_delta(
+    *,
     sqrt_price_a_x96: ValidatedUint160NonZero,
     sqrt_price_b_x96: ValidatedUint160,
-    liquidity: ValidatedInt128 | ValidatedUint128,
+    liquidity: "ValidatedInt128 | ValidatedUint128",
     round_up: bool | None = None,
-) -> ValidatedInt256 | ValidatedUint256:
+) -> "ValidatedInt256 | ValidatedUint256":
     """
     Gets the amount0 delta between two prices
     """
 
     if round_up is None:
         return (
-            get_amount0_delta(sqrt_price_a_x96, sqrt_price_b_x96, -liquidity, False)
+            get_amount0_delta(
+                sqrt_price_a_x96=sqrt_price_a_x96,
+                sqrt_price_b_x96=sqrt_price_b_x96,
+                liquidity=-liquidity,
+                round_up=False,
+            )
             if liquidity < 0
-            else -get_amount0_delta(sqrt_price_a_x96, sqrt_price_b_x96, liquidity, True)
+            else -get_amount0_delta(
+                sqrt_price_a_x96=sqrt_price_a_x96,
+                sqrt_price_b_x96=sqrt_price_b_x96,
+                liquidity=liquidity,
+                round_up=True,
+            )
         )
 
     if sqrt_price_a_x96 > sqrt_price_b_x96:
@@ -74,8 +87,9 @@ def get_amount0_delta(
 
 @overload
 def get_amount1_delta(
-    sqrt_ratio_a_x96: ValidatedUint160,
-    sqrt_ratio_b_x96: ValidatedUint160,
+    *,
+    sqrt_price_a_x96: ValidatedUint160,
+    sqrt_price_b_x96: ValidatedUint160,
     liquidity: ValidatedInt128,
     round_up: bool,
 ) -> ValidatedUint256: ...
@@ -83,8 +97,9 @@ def get_amount1_delta(
 
 @overload
 def get_amount1_delta(
-    sqrt_ratio_a_x96: ValidatedUint160,
-    sqrt_ratio_b_x96: ValidatedUint160,
+    *,
+    sqrt_price_a_x96: ValidatedUint160,
+    sqrt_price_b_x96: ValidatedUint160,
     liquidity: ValidatedInt128,
     round_up: None,
 ) -> ValidatedInt256: ...
@@ -93,20 +108,31 @@ def get_amount1_delta(
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
 @validate_call(validate_return=True)
 def get_amount1_delta(
+    *,
     sqrt_price_a_x96: ValidatedUint160,
     sqrt_price_b_x96: ValidatedUint160,
-    liquidity: ValidatedInt128 | ValidatedUint128,
+    liquidity: "ValidatedInt128 | ValidatedUint128",
     round_up: bool | None = None,
-) -> ValidatedInt256 | ValidatedUint256:
+) -> "ValidatedInt256 | ValidatedUint256":
     """
     Gets the amount1 delta between two prices
     """
 
     if round_up is None:
         return (
-            get_amount1_delta(sqrt_price_a_x96, sqrt_price_b_x96, -liquidity, False)
+            get_amount1_delta(
+                sqrt_price_a_x96=sqrt_price_a_x96,
+                sqrt_price_b_x96=sqrt_price_b_x96,
+                liquidity=-liquidity,
+                round_up=False,
+            )
             if liquidity < 0
-            else -get_amount1_delta(sqrt_price_a_x96, sqrt_price_b_x96, liquidity, True)
+            else -get_amount1_delta(
+                sqrt_price_a_x96=sqrt_price_a_x96,
+                sqrt_price_b_x96=sqrt_price_b_x96,
+                liquidity=liquidity,
+                round_up=True,
+            )
         )
 
     numerator = abs(sqrt_price_a_x96 - sqrt_price_b_x96)
@@ -125,6 +151,7 @@ def get_amount1_delta(
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
 @validate_call(validate_return=True)
 def get_next_sqrt_price_from_amount0_rounding_up(
+    *,
     sqrt_price_x96: ValidatedUint160,
     liquidity: ValidatedUint128,
     amount: ValidatedUint256,
@@ -172,6 +199,7 @@ def get_next_sqrt_price_from_amount0_rounding_up(
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
 @validate_call(validate_return=True)
 def get_next_sqrt_price_from_amount1_rounding_down(
+    *,
     sqrt_price_x96: ValidatedUint160,
     liquidity: ValidatedUint128,
     amount: ValidatedUint256,
@@ -207,6 +235,7 @@ def get_next_sqrt_price_from_amount1_rounding_down(
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
 @validate_call(validate_return=True)
 def get_next_sqrt_price_from_input(
+    *,
     sqrt_price_x96: ValidatedUint160NonZero,
     liquidity: ValidatedUint128NonZero,
     amount_in: ValidatedUint256,
@@ -218,10 +247,18 @@ def get_next_sqrt_price_from_input(
     """
 
     return (
-        get_next_sqrt_price_from_amount0_rounding_up(sqrt_price_x96, liquidity, amount_in, True)
+        get_next_sqrt_price_from_amount0_rounding_up(
+            sqrt_price_x96=sqrt_price_x96,
+            liquidity=liquidity,
+            amount=amount_in,
+            add=True,
+        )
         if zero_for_one
         else get_next_sqrt_price_from_amount1_rounding_down(
-            sqrt_price_x96, liquidity, amount_in, True
+            sqrt_price_x96=sqrt_price_x96,
+            liquidity=liquidity,
+            amount=amount_in,
+            add=True,
         )
     )
 
@@ -229,6 +266,7 @@ def get_next_sqrt_price_from_input(
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
 @validate_call(validate_return=True)
 def get_next_sqrt_price_from_output(
+    *,
     sqrt_price_x96: ValidatedUint160NonZero,
     liquidity: ValidatedUint128NonZero,
     amount_out: ValidatedUint256,
@@ -240,9 +278,17 @@ def get_next_sqrt_price_from_output(
     """
 
     return (
-        get_next_sqrt_price_from_amount1_rounding_down(sqrt_price_x96, liquidity, amount_out, False)
+        get_next_sqrt_price_from_amount1_rounding_down(
+            sqrt_price_x96=sqrt_price_x96,
+            liquidity=liquidity,
+            amount=amount_out,
+            add=False,
+        )
         if zero_for_one
         else get_next_sqrt_price_from_amount0_rounding_up(
-            sqrt_price_x96, liquidity, amount_out, False
+            sqrt_price_x96=sqrt_price_x96,
+            liquidity=liquidity,
+            amount=amount_out,
+            add=False,
         )
     )

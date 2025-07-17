@@ -21,11 +21,10 @@ from degenbot.aerodrome.types import (
     AerodromeV2PoolStateUpdated,
     AerodromeV3PoolState,
 )
-from degenbot.arbitrage.types import UniswapPoolSwapVector
-from degenbot.erc20_token import Erc20Token
-from degenbot.exceptions import (
+from degenbot.erc20 import Erc20Token, Erc20TokenManager
+from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.liquidity_pool import (
     AddressMismatch,
-    DegenbotValueError,
     ExternalUpdateError,
     InvalidSwapInputAmount,
     LateUpdateError,
@@ -33,19 +32,18 @@ from degenbot.exceptions import (
 )
 from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from degenbot.logging import logger
-from degenbot.managers.erc20_token_manager import Erc20TokenManager
-from degenbot.registry.all_pools import pool_registry
+from degenbot.registry import pool_registry
 from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
-from degenbot.types import (
-    AbstractLiquidityPool,
-    BlockNumber,
+from degenbot.types.abstract import AbstractLiquidityPool
+from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types.concrete import (
+    AbstractPublisherMessage,
     BoundedCache,
-    ChainId,
-    Message,
     Publisher,
     PublisherMixin,
     Subscriber,
 )
+from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_functions import constant_product_calc_exact_out
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
@@ -142,7 +140,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
     def __repr__(self) -> str:  # pragma: no cover
         return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1}, stable={self.stable})"  # noqa:E501
 
-    def _notify_subscribers(self: Publisher, message: Message) -> None:
+    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
         for subscriber in self._subscribers:
             subscriber.notify(publisher=self, message=message)
 
@@ -200,6 +198,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
     def auto_update(
         self,
+        *,
         block_number: BlockNumber | None = None,
         silent: bool = True,
     ) -> None:

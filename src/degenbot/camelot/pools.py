@@ -2,11 +2,11 @@ from fractions import Fraction
 
 from degenbot import connection_manager, get_checksum_address
 from degenbot.camelot.functions import get_y_camelot, k_camelot
-from degenbot.erc20_token import Erc20Token
+from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
-from degenbot.types import ChainId
+from degenbot.types.aliases import ChainId
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 

@@ -1,7 +1,7 @@
 import pickle
 from typing import Any
 
-from degenbot.types import BoundedCache
+from degenbot.types.concrete import BoundedCache
 
 
 def test_pickle_bounded_cache():

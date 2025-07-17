@@ -10,14 +10,15 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import tenacity
 from eth_typing import HexAddress, HexStr
 from hexbytes import HexBytes
+from pydantic import validate_call
 from web3 import AsyncIPCProvider, AsyncWeb3, IPCProvider, Web3
 from web3.middleware import Middleware
 from web3.types import RPCEndpoint
 
-from degenbot.constants import MAX_UINT256
-from degenbot.exceptions import DegenbotError, DegenbotValueError, InvalidUint256
+from degenbot.exceptions import DegenbotError, DegenbotValueError
 from degenbot.logging import logger
-from degenbot.types import BlockNumber
+from degenbot.types.aliases import BlockNumber
+from degenbot.validation.evm_values import ValidatedUint256
 
 
 class AnvilNotFound(Exception):
@@ -37,6 +38,7 @@ class AnvilFork:
 
     def __init__(
         self,
+        *,
         fork_url: str,
         fork_block: BlockNumber | None = None,
         fork_transaction_hash: str | None = None,
@@ -193,7 +195,7 @@ class AnvilFork:
         IPC socket.
         """
 
-        process = subprocess.Popen(anvil_command)
+        process = subprocess.Popen(anvil_command)  # noqa: S603
 
         try:
             # Storage I/O should be fast, so use a low fixed wait time
@@ -297,10 +299,12 @@ class AnvilFork:
             )["result"]
         )
 
-    def set_balance(self, address: str, balance: int) -> None:
-        if not (0 <= balance <= MAX_UINT256):
-            raise InvalidUint256
-
+    @validate_call
+    def set_balance(
+        self,
+        address: str,
+        balance: ValidatedUint256,
+    ) -> None:
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setBalance"),
             params=[address, hex(balance)],
@@ -324,9 +328,11 @@ class AnvilFork:
             params=[interval],
         )
 
-    def set_next_base_fee(self, fee: int) -> None:
-        if not (0 <= fee <= MAX_UINT256):
-            raise InvalidUint256
+    @validate_call
+    def set_next_base_fee(
+        self,
+        fee: ValidatedUint256,
+    ) -> None:
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setNextBlockBaseFeePerGas"),
             params=[fee],

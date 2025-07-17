@@ -26,7 +26,9 @@ from degenbot import (
     get_checksum_address,
 )
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
-from degenbot.exceptions import ArbitrageError, EVMRevertError, LiquidityPoolError
+from degenbot.exceptions.arbitrage import ArbitrageError
+from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.logging import logger
 
 DEBUG_VERIFY_CACHED_PROBLEM = False

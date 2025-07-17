@@ -13,11 +13,10 @@ from web3 import Web3
 from web3.exceptions import ContractLogicError
 
 from degenbot import connection_manager, get_checksum_address
-from degenbot.arbitrage.types import UniswapPoolSwapVector
-from degenbot.erc20_token import Erc20Token
-from degenbot.exceptions import (
+from degenbot.erc20 import Erc20Token, Erc20TokenManager
+from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.liquidity_pool import (
     AddressMismatch,
-    DegenbotValueError,
     ExternalUpdateError,
     InvalidSwapInputAmount,
     LateUpdateError,
@@ -26,20 +25,18 @@ from degenbot.exceptions import (
 )
 from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from degenbot.logging import logger
-from degenbot.managers.erc20_token_manager import Erc20TokenManager
-from degenbot.registry.all_pools import pool_registry
-from degenbot.types import (
-    AbstractArbitrage,
-    AbstractLiquidityPool,
-    BlockNumber,
+from degenbot.registry import pool_registry
+from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
+from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types.concrete import (
+    AbstractPublisherMessage,
     BoundedCache,
-    ChainId,
-    Message,
     Publisher,
     PublisherMixin,
     Subscriber,
 )
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
+from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_functions import (
     constant_product_calc_exact_in,
     constant_product_calc_exact_out,
@@ -89,7 +86,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             **kwargs,
         )
 
-    def _notify_subscribers(self: Publisher, message: Message) -> None:
+    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
         for subscriber in self._subscribers:
             subscriber.notify(publisher=self, message=message)
 
@@ -362,6 +359,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
     def auto_update(
         self,
+        *,
         block_number: BlockNumber | None = None,
         silent: bool = True,
     ) -> None:

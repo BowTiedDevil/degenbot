@@ -13,7 +13,8 @@ from degenbot.aerodrome.types import (
     AerodromeV2PoolState,
     AerodromeV3PoolState,
 )
-from degenbot.exceptions import ExternalUpdateError, LateUpdateError
+from degenbot.exceptions import DegenbotError
+from degenbot.exceptions.liquidity_pool import ExternalUpdateError, LateUpdateError
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 
 WETH_CONTRACT_ADDRESS = get_checksum_address("0x4200000000000000000000000000000000000006")
@@ -94,7 +95,7 @@ def test_auto_update(
     lp.auto_update()
 
     with pytest.raises(LateUpdateError):
-        lp.auto_update(lp.update_block - 10)
+        lp.auto_update(block_number=lp.update_block - 10)
 
 
 def test_external_update(
@@ -264,7 +265,7 @@ def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
                         token_in_amount,
                         lp.token0.address,
                     ).call()
-                except Exception as e:
+                except DegenbotError as e:
                     print(f"Failure {e} on pool {pool_address}")
                 else:
                     assert contract_amount_out == helper_amount_out, f"{pool_address=}"
@@ -284,7 +285,7 @@ def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
                         token_in_amount,
                         lp.token1.address,
                     ).call()
-                except Exception as e:
+                except DegenbotError as e:
                     print(f"Failure {e} on pool {pool_address}")
                 else:
                     assert contract_amount_out == helper_amount_out, f"{pool_address=}"

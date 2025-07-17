@@ -8,7 +8,7 @@ from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from degenbot.exceptions import EVMRevertError
+from degenbot.exceptions.evm import EVMRevertError
 from degenbot.functions import eip_1167_clone_address, raise_if_invalid_uint256
 from degenbot.solidly.solidly_functions import (
     general_calc_d,
@@ -102,6 +102,7 @@ def _k_aerodrome(
 
 
 def generate_aerodrome_v2_pool_address(
+    *,
     deployer_address: str | bytes,
     token_addresses: Sequence[str | bytes],
     implementation_address: str | bytes,

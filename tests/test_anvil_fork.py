@@ -3,10 +3,11 @@ from typing import TYPE_CHECKING
 import pytest
 import web3.middleware
 from hexbytes import HexBytes
+from pydantic import ValidationError
 
 from degenbot import AnvilFork, get_checksum_address, set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.exceptions import DegenbotValueError, EVMRevertError, InvalidUint256
+from degenbot.exceptions import DegenbotValueError
 
 from .conftest import (
     BASE_FULL_NODE_HTTP_URI,
@@ -71,9 +72,9 @@ def test_set_storage():
 
 
 def test_rpc_methods(fork_mainnet_full: AnvilFork):
-    with pytest.raises(InvalidUint256):
-        fork_mainnet_full.set_next_base_fee(-1)
-    with pytest.raises(InvalidUint256):
+    with pytest.raises(ValidationError):
+        fork_mainnet_full.set_next_base_fee(MIN_UINT256 - 1)
+    with pytest.raises(ValidationError):
         fork_mainnet_full.set_next_base_fee(MAX_UINT256 + 1)
     fork_mainnet_full.set_next_base_fee(11 * 10**9)
 
@@ -93,9 +94,9 @@ def test_rpc_methods(fork_mainnet_full: AnvilFork):
         assert fork_mainnet_full.w3.eth.get_balance(VITALIK_ADDRESS) == balance
 
     # Balances outside of uint256 should be rejected
-    with pytest.raises(EVMRevertError):
+    with pytest.raises(ValidationError):
         fork_mainnet_full.set_balance(VITALIK_ADDRESS, MIN_UINT256 - 1)
-    with pytest.raises(EVMRevertError):
+    with pytest.raises(ValidationError):
         fork_mainnet_full.set_balance(VITALIK_ADDRESS, MAX_UINT256 + 1)
 
     fake_coinbase = get_checksum_address("0x0420042004200420042004200420042004200420")

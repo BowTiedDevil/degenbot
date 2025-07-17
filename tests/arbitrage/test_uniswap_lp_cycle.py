@@ -13,31 +13,27 @@ import pytest
 
 from degenbot import (
     AnvilFork,
+    ArbitrageCalculationResult,
     CamelotLiquidityPool,
     Erc20Token,
     UniswapLpCycle,
     UniswapV2Pool,
+    UniswapV2PoolExternalUpdate,
+    UniswapV2PoolState,
     UniswapV3Pool,
+    UniswapV3PoolExternalUpdate,
+    UniswapV3PoolState,
     get_checksum_address,
     set_web3,
 )
-from degenbot.arbitrage.types import (
-    ArbitrageCalculationResult,
-    UniswapV2PoolSwapAmounts,
-    UniswapV3PoolSwapAmounts,
-)
+from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts, UniswapV3PoolSwapAmounts
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.exceptions import ArbitrageError, DegenbotValueError, RateOfExchangeBelowMinimum
-from degenbot.uniswap.v2_types import (
-    UniswapV2PoolExternalUpdate,
-    UniswapV2PoolState,
-    UniswapV2PoolStateUpdated,
-)
+from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.arbitrage import ArbitrageError, RateOfExchangeBelowMinimum
+from degenbot.uniswap.v2_types import UniswapV2PoolStateUpdated
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
-    UniswapV3PoolExternalUpdate,
-    UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
 from tests.conftest import FakeSubscriber

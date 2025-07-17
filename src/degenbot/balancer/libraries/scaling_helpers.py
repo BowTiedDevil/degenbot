@@ -3,7 +3,7 @@ from typing import cast
 
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.libraries.fixed_point import div_down, div_up, mul_down
-from degenbot.erc20_token import Erc20Token
+from degenbot.erc20 import Erc20Token
 
 # To simplify Pool logic, all token balances and amounts are normalized to behave as if the token
 # had 18 decimals. e.g. When comparing DAI (18 decimals) and USDC (6 decimals), 1 USDC and 1 DAI

@@ -3,10 +3,9 @@ from typing import Any
 import pytest
 from hexbytes import HexBytes
 
-from degenbot import AnvilFork, set_web3
-from degenbot.exceptions import DeadlineExpired, TransactionError, UnknownRouterAddress
-from degenbot.transaction.uniswap_transaction import UniswapTransaction
-from degenbot.types import BlockNumber
+from degenbot import AnvilFork, UniswapTransaction, set_web3
+from degenbot.exceptions.transaction import DeadlineExpired, TransactionError, UnknownRouterAddress
+from degenbot.types.aliases import BlockNumber
 
 
 @pytest.mark.parametrize(

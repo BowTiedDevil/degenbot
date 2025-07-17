@@ -1,6 +1,6 @@
 from eth_typing import ChecksumAddress
 
-from degenbot.exceptions import EVMRevertError
+from degenbot.exceptions.evm import EVMRevertError
 
 
 def ensure_input_length_match(*nums: int) -> None:

@@ -6,14 +6,15 @@ import aiohttp
 import eth_account
 import pydantic
 from eth_typing import HexStr
+from hexbytes import HexBytes
 
-from degenbot.exceptions import DegenbotValueError, ExternalServiceError
+from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.base import ExternalServiceError
 from degenbot.functions import eip_191_hash
-from degenbot.types import BlockNumber
+from degenbot.types.aliases import BlockNumber
 
 if TYPE_CHECKING:
     from eth_account.signers.local import LocalAccount
-from hexbytes import HexBytes
 
 
 class BuilderEndpoint:  # pragma: no cover
@@ -27,7 +28,7 @@ class BuilderEndpoint:  # pragma: no cover
         url: str,
         endpoints: Iterable[str],
         authentication_header_label: str | None = None,
-    ):
+    ) -> None:
         if not url.startswith(("http://", "https://")):
             raise DegenbotValueError(message="Invalid URL")
         self.url = url

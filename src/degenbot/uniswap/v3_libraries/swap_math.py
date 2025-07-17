@@ -22,40 +22,52 @@ def compute_swap_step(
         amount_remaining_minus_fee = full_math.muldiv(amount_remaining, 1000000 - fee_pips, 1000000)
         amount_in = (
             sqrt_price_math.get_amount0_delta(
-                sqrt_ratio_x96_target, sqrt_ratio_x96_current, liquidity, True
+                sqrt_ratio_a_x96=sqrt_ratio_x96_target,
+                sqrt_ratio_b_x96=sqrt_ratio_x96_current,
+                liquidity=liquidity,
+                round_up=True,
             )
             if zero_for_one
             else sqrt_price_math.get_amount1_delta(
-                sqrt_ratio_x96_current, sqrt_ratio_x96_target, liquidity, True
+                sqrt_ratio_a_x96=sqrt_ratio_x96_current,
+                sqrt_ratio_b_x96=sqrt_ratio_x96_target,
+                liquidity=liquidity,
+                round_up=True,
             )
         )
         if amount_remaining_minus_fee >= amount_in:
             sqrt_ratio_x96_next = sqrt_ratio_x96_target
         else:
             sqrt_ratio_x96_next = sqrt_price_math.get_next_sqrt_price_from_input(
-                sqrt_ratio_x96_current,
-                liquidity,
-                amount_remaining_minus_fee,
-                zero_for_one,
+                sqrt_price_x96=sqrt_ratio_x96_current,
+                liquidity=liquidity,
+                amount_in=amount_remaining_minus_fee,
+                zero_for_one=zero_for_one,
             )
     else:
         amount_out = (
             sqrt_price_math.get_amount1_delta(
-                sqrt_ratio_x96_target, sqrt_ratio_x96_current, liquidity, False
+                sqrt_ratio_a_x96=sqrt_ratio_x96_target,
+                sqrt_ratio_b_x96=sqrt_ratio_x96_current,
+                liquidity=liquidity,
+                round_up=False,
             )
             if zero_for_one
             else sqrt_price_math.get_amount0_delta(
-                sqrt_ratio_x96_current, sqrt_ratio_x96_target, liquidity, False
+                sqrt_ratio_a_x96=sqrt_ratio_x96_current,
+                sqrt_ratio_b_x96=sqrt_ratio_x96_target,
+                liquidity=liquidity,
+                round_up=False,
             )
         )
         if -amount_remaining >= amount_out:
             sqrt_ratio_x96_next = sqrt_ratio_x96_target
         else:
             sqrt_ratio_x96_next = sqrt_price_math.get_next_sqrt_price_from_output(
-                sqrt_ratio_x96_current,
-                liquidity,
-                -amount_remaining,
-                zero_for_one,
+                sqrt_price_x96=sqrt_ratio_x96_current,
+                liquidity=liquidity,
+                amount_out=-amount_remaining,
+                zero_for_one=zero_for_one,
             )
 
     reached_target_price = sqrt_ratio_x96_target == sqrt_ratio_x96_next
@@ -65,14 +77,20 @@ def compute_swap_step(
             amount_in
             if (reached_target_price and exact_in)
             else sqrt_price_math.get_amount0_delta(
-                sqrt_ratio_x96_next, sqrt_ratio_x96_current, liquidity, True
+                sqrt_ratio_a_x96=sqrt_ratio_x96_next,
+                sqrt_ratio_b_x96=sqrt_ratio_x96_current,
+                liquidity=liquidity,
+                round_up=True,
             )
         )
         amount_out = (
             amount_out
             if (reached_target_price and not exact_in)
             else sqrt_price_math.get_amount1_delta(
-                sqrt_ratio_x96_next, sqrt_ratio_x96_current, liquidity, False
+                sqrt_ratio_a_x96=sqrt_ratio_x96_next,
+                sqrt_ratio_b_x96=sqrt_ratio_x96_current,
+                liquidity=liquidity,
+                round_up=False,
             )
         )
     else:
@@ -80,14 +98,20 @@ def compute_swap_step(
             amount_in
             if (reached_target_price and exact_in)
             else sqrt_price_math.get_amount1_delta(
-                sqrt_ratio_x96_current, sqrt_ratio_x96_next, liquidity, True
+                sqrt_ratio_a_x96=sqrt_ratio_x96_current,
+                sqrt_ratio_b_x96=sqrt_ratio_x96_next,
+                liquidity=liquidity,
+                round_up=True,
             )
         )
         amount_out = (
             amount_out
             if (reached_target_price and not exact_in)
             else sqrt_price_math.get_amount0_delta(
-                sqrt_ratio_x96_current, sqrt_ratio_x96_next, liquidity, False
+                sqrt_ratio_a_x96=sqrt_ratio_x96_current,
+                sqrt_ratio_b_x96=sqrt_ratio_x96_next,
+                liquidity=liquidity,
+                round_up=False,
             )
         )
 

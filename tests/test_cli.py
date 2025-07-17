@@ -4,7 +4,7 @@ import pytest
 from click.testing import CliRunner
 
 from degenbot import __version__
-from degenbot._cli import cli
+from degenbot.cli import cli
 
 
 @pytest.fixture

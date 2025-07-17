@@ -1,3 +1,4 @@
+
 from pydantic import validate_call
 
 from degenbot.uniswap.v4_libraries import full_math, sqrt_price_math
@@ -14,6 +15,7 @@ MAX_SWAP_FEE = 1 * 10**6
 
 @validate_call(validate_return=True)
 def get_sqrt_price_target(
+    *,
     zero_for_one: bool,
     sqrt_price_next_x96: ValidatedUint160,
     sqrt_price_limit_x96: ValidatedUint160,
@@ -36,6 +38,7 @@ def get_sqrt_price_target(
 
 @validate_call(validate_return=True)
 def compute_swap_step(
+    *,
     sqrt_ratio_x96_current: ValidatedUint160,
     sqrt_ratio_x96_target: ValidatedUint160,
     liquidity: ValidatedUint128,
@@ -49,19 +52,23 @@ def compute_swap_step(
     zero_for_one = sqrt_ratio_x96_current >= sqrt_ratio_x96_target
     exact_in = amount_remaining < 0
 
-    assert liquidity >= 0
-
     if exact_in:
         amount_remaining_less_fee = full_math.muldiv(
             -amount_remaining, MAX_SWAP_FEE - fee_pips, MAX_SWAP_FEE
         )
         amount_in = (
             sqrt_price_math.get_amount0_delta(
-                sqrt_ratio_x96_target, sqrt_ratio_x96_current, liquidity, True
+                sqrt_price_a_x96=sqrt_ratio_x96_target,
+                sqrt_price_b_x96=sqrt_ratio_x96_current,
+                liquidity=liquidity,
+                round_up=True,
             )
             if zero_for_one
             else sqrt_price_math.get_amount1_delta(
-                sqrt_ratio_x96_current, sqrt_ratio_x96_target, liquidity, True
+                sqrt_price_a_x96=sqrt_ratio_x96_current,
+                sqrt_price_b_x96=sqrt_ratio_x96_target,
+                liquidity=liquidity,
+                round_up=True,
             )
         )
         if amount_remaining_less_fee >= amount_in:
@@ -76,28 +83,43 @@ def compute_swap_step(
             # exhaust the remaining amount
             amount_in = amount_remaining_less_fee
             sqrt_price_next_x96 = sqrt_price_math.get_next_sqrt_price_from_input(
-                sqrt_ratio_x96_current, liquidity, amount_remaining_less_fee, zero_for_one
+                sqrt_price_x96=sqrt_ratio_x96_current,
+                liquidity=liquidity,
+                amount_in=amount_remaining_less_fee,
+                zero_for_one=zero_for_one,
             )
             # we didn't reach the target, so take the remainder of the maximum input as fee
             fee_amount = -amount_remaining - amount_in
 
         amount_out = (
             sqrt_price_math.get_amount1_delta(
-                sqrt_price_next_x96, sqrt_ratio_x96_current, liquidity, False
+                sqrt_price_a_x96=sqrt_price_next_x96,
+                sqrt_price_b_x96=sqrt_ratio_x96_current,
+                liquidity=liquidity,
+                round_up=False,
             )
             if zero_for_one
             else sqrt_price_math.get_amount0_delta(
-                sqrt_ratio_x96_current, sqrt_price_next_x96, liquidity, False
+                sqrt_price_a_x96=sqrt_ratio_x96_current,
+                sqrt_price_b_x96=sqrt_price_next_x96,
+                liquidity=liquidity,
+                round_up=False,
             )
         )
     else:
         amount_out = (
             sqrt_price_math.get_amount1_delta(
-                sqrt_ratio_x96_target, sqrt_ratio_x96_current, liquidity, False
+                sqrt_price_a_x96=sqrt_ratio_x96_target,
+                sqrt_price_b_x96=sqrt_ratio_x96_current,
+                liquidity=liquidity,
+                round_up=False,
             )
             if zero_for_one
             else sqrt_price_math.get_amount0_delta(
-                sqrt_ratio_x96_current, sqrt_ratio_x96_target, liquidity, False
+                sqrt_price_a_x96=sqrt_ratio_x96_current,
+                sqrt_price_b_x96=sqrt_ratio_x96_target,
+                liquidity=liquidity,
+                round_up=False,
             )
         )
         if amount_remaining >= amount_out:
@@ -107,16 +129,25 @@ def compute_swap_step(
             # cap the output amount to not exceed the remaining output amount
             amount_out = amount_remaining
             sqrt_price_next_x96 = sqrt_price_math.get_next_sqrt_price_from_output(
-                sqrt_ratio_x96_current, liquidity, amount_out, zero_for_one
+                sqrt_price_x96=sqrt_ratio_x96_current,
+                liquidity=liquidity,
+                amount_out=amount_out,
+                zero_for_one=zero_for_one,
             )
 
         amount_in = (
             sqrt_price_math.get_amount0_delta(
-                sqrt_price_next_x96, sqrt_ratio_x96_current, liquidity, True
+                sqrt_price_a_x96=sqrt_price_next_x96,
+                sqrt_price_b_x96=sqrt_ratio_x96_current,
+                liquidity=liquidity,
+                round_up=True,
             )
             if zero_for_one
             else sqrt_price_math.get_amount1_delta(
-                sqrt_ratio_x96_current, sqrt_price_next_x96, liquidity, True
+                sqrt_price_a_x96=sqrt_ratio_x96_current,
+                sqrt_price_b_x96=sqrt_price_next_x96,
+                liquidity=liquidity,
+                round_up=True,
             )
         )
         # `feePips` cannot be `MAX_SWAP_FEE` for exact out

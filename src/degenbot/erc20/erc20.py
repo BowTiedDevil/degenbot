@@ -3,14 +3,19 @@ from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
+from eth_typing import ChecksumAddress
+from sqlalchemy import select
 from web3 import AsyncWeb3, Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
-from degenbot import async_connection_manager, connection_manager, get_checksum_address
+import degenbot.registry
+from degenbot import get_checksum_address
 from degenbot.chainlink import ChainlinkPriceContract
-from degenbot.constants import ZERO_ADDRESS
-from degenbot.exceptions import DegenbotValueError, NoPriceOracle
+from degenbot.connection import async_connection_manager, connection_manager
+from degenbot.database import Erc20TokenTableEntry, default_session
+from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.erc20 import NoPriceOracle
 from degenbot.functions import (
     encode_function_calldata,
     get_number_for_block_identifier,
@@ -18,12 +23,27 @@ from degenbot.functions import (
     raw_call,
 )
 from degenbot.logging import logger
-from degenbot.registry.all_tokens import token_registry
-from degenbot.types import AbstractErc20Token, BlockNumber, BoundedCache, ChainId
+from degenbot.types.abstract import AbstractErc20Token
+from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types.concrete import BoundedCache
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
     from hexbytes import HexBytes
+
+
+def add_token_to_database(token: Erc20TokenTableEntry) -> None:
+    with default_session() as session, session.begin():
+        session.add(token)
+
+
+def get_token_from_database(token: ChecksumAddress, chain_id: int) -> Erc20TokenTableEntry | None:
+    with default_session() as session:
+        return session.scalar(
+            select(Erc20TokenTableEntry).where(
+                Erc20TokenTableEntry.address == token,
+                Erc20TokenTableEntry.chain == chain_id,
+            )
+        )
 
 
 class Erc20Token(AbstractErc20Token):
@@ -43,47 +63,61 @@ class Erc20Token(AbstractErc20Token):
         oracle_address: str | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
+        use_database: bool = True,
     ) -> None:
         self.address = get_checksum_address(address)
-
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        w3 = self.w3
 
-        self.name = self.UNKNOWN_NAME
-        self.symbol = self.UNKNOWN_SYMBOL
-        self.decimals = self.UNKNOWN_DECIMALS
-        try:
-            self.name, self.symbol, self.decimals = self.get_name_symbol_decimals_batched(w3=w3)
-        except (Web3Exception, DecodingError):
-            for func_prototype in ("name()", "NAME()"):
-                try:
-                    self.name = self.get_name(w3=w3, func_prototype=func_prototype)
-                except (Web3Exception, DecodingError):
-                    continue
-                break
+        token_from_db: Erc20TokenTableEntry | None = None
+        if use_database:
+            token_from_db = get_token_from_database(
+                token=self.address,
+                chain_id=self.chain_id,
+            )
 
-            for func_prototype in ("symbol()", "SYMBOL()"):
-                try:
-                    self.symbol = self.get_symbol(w3=w3, func_prototype=func_prototype)
-                except (Web3Exception, DecodingError):
-                    continue
-                break
+        if token_from_db:
+            logger.info("Using token data from DB")
+            self.name = token_from_db.name
+            self.symbol = token_from_db.symbol
+            self.decimals = token_from_db.decimals
+        else:
+            self.name = self.UNKNOWN_NAME
+            self.symbol = self.UNKNOWN_SYMBOL
+            self.decimals = self.UNKNOWN_DECIMALS
 
-            for func_prototype in ("decimals()", "DECIMALS()"):
-                try:
-                    self.decimals = self.get_decimals(w3=w3, func_prototype=func_prototype)
-                except (Web3Exception, DecodingError):
-                    continue
-                break
+            w3 = self.w3
+            try:
+                self.name, self.symbol, self.decimals = self.get_name_symbol_decimals_batched(w3=w3)
+            except (Web3Exception, DecodingError):
+                for func_prototype in ("name()", "NAME()"):
+                    try:
+                        self.name = self.get_name(w3=w3, func_prototype=func_prototype)
+                    except (Web3Exception, DecodingError):
+                        continue
+                    break
 
-        if all(
-            [
-                self.name == self.UNKNOWN_NAME,
-                self.symbol == self.UNKNOWN_SYMBOL,
-                self.decimals == self.UNKNOWN_DECIMALS,
-            ]
-        ) and not w3.eth.get_code(self.address):
-            raise DegenbotValueError(message="No contract deployed at this address")
+                for func_prototype in ("symbol()", "SYMBOL()"):
+                    try:
+                        self.symbol = self.get_symbol(w3=w3, func_prototype=func_prototype)
+                    except (Web3Exception, DecodingError):
+                        continue
+                    break
+
+                for func_prototype in ("decimals()", "DECIMALS()"):
+                    try:
+                        self.decimals = self.get_decimals(w3=w3, func_prototype=func_prototype)
+                    except (Web3Exception, DecodingError):
+                        continue
+                    break
+
+            if all(
+                [
+                    self.name == self.UNKNOWN_NAME,
+                    self.symbol == self.UNKNOWN_SYMBOL,
+                    self.decimals == self.UNKNOWN_DECIMALS,
+                ]
+            ) and not w3.eth.get_code(self.address):
+                raise DegenbotValueError(message="No contract deployed at this address")
 
         self._price_oracle = (
             ChainlinkPriceContract(address=oracle_address, chain_id=self.chain_id)
@@ -91,7 +125,9 @@ class Erc20Token(AbstractErc20Token):
             else None
         )
 
-        token_registry.add(token_address=self.address, chain_id=self.chain_id, token=self)
+        degenbot.registry.token_registry.add(
+            token_address=self.address, chain_id=self.chain_id, token=self
+        )
 
         self._state_cache_depth = state_cache_depth
         self._cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
@@ -102,6 +138,17 @@ class Erc20Token(AbstractErc20Token):
 
         if not silent:  # pragma: no cover
             logger.info(f"• {self.symbol} ({self.name})")
+
+        if use_database and token_from_db is None:
+            add_token_to_database(
+                Erc20TokenTableEntry(
+                    address=self.address,
+                    chain=self.chain_id,
+                    name=self.name,
+                    symbol=self.symbol,
+                    decimals=self.decimals,
+                )
+            )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"Erc20Token(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"  # noqa:E501
@@ -435,65 +482,3 @@ class Erc20Token(AbstractErc20Token):
     @property
     def async_w3(self) -> AsyncWeb3:
         return async_connection_manager.get_web3(self.chain_id)
-
-
-class EtherPlaceholder(Erc20Token):
-    """
-    An Erc20Token-like adapter for pools using the 'all Es' or zero address placeholder to represent
-    native Ether.
-    """
-
-    addresses = (
-        ZERO_ADDRESS,
-        get_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"),
-    )
-    symbol = "ETH"
-    name = "Ether Placeholder"
-    decimals = 18
-
-    def __init__(
-        self,
-        address: str,
-        *,
-        chain_id: ChainId | None = None,
-        state_cache_depth: int = 8,
-    ) -> None:
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
-        self.address = get_checksum_address(address)
-        token_registry.add(token_address=self.address, chain_id=self._chain_id, token=self)
-        self._state_cache_depth = state_cache_depth
-
-    def get_balance(
-        self,
-        address: str,
-        block_identifier: BlockIdentifier | None = None,
-    ) -> int:
-        address = get_checksum_address(address)
-
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                self.w3,
-            )
-        )
-
-        with contextlib.suppress(KeyError):
-            return self._cached_balance[address][block_number]
-
-        balance = self.w3.eth.get_balance(
-            address,
-            block_identifier=block_number,
-        )
-
-        balance_cache_at_address: BoundedCache[BlockNumber, int]
-        try:
-            balance_cache_at_address = self._cached_balance[address]
-        except KeyError:
-            balance_cache_at_address = BoundedCache(max_items=self._state_cache_depth)
-
-        balance_cache_at_address[block_number] = balance
-        self._cached_balance[address] = balance_cache_at_address
-        return balance

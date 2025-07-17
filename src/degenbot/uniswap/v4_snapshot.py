@@ -13,7 +13,8 @@ from web3.utils import get_abi_element
 
 from degenbot import connection_manager, get_checksum_address
 from degenbot.logging import logger
-from degenbot.types import BlockNumber, ChainId, KeyedDefaultDict
+from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.abi import UNISWAP_V4_POOL_MANAGER_ABI
 from degenbot.uniswap.v4_types import (
     UniswapV4BitmapAtWord,
@@ -81,8 +82,7 @@ class UniswapV4LiquiditySnapshot:
                 tick_data={},
             )
 
-        path = pathlib.Path(path).expanduser()
-        assert path.exists()
+        path = pathlib.Path(path)
 
         self.newest_block: BlockNumber
         self._dir_path: pathlib.Path | None = None
@@ -94,11 +94,10 @@ class UniswapV4LiquiditySnapshot:
             self.newest_block = self._file_snapshot.pop("snapshot_block")
         if path.is_dir():
             metadata_path = path / "_metadata.json"
-            assert metadata_path.exists()
             metadata = pydantic_core.from_json(metadata_path.read_bytes())
             self.pool_manager = metadata["pool_manager"]
             self.newest_block = metadata["snapshot_block"]
-            self._dir_path = path
+            self._dir_path = path.absolute()
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
 

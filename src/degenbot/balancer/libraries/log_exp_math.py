@@ -1,4 +1,4 @@
-from degenbot.exceptions import EVMRevertError
+from degenbot.exceptions.evm import EVMRevertError
 
 ONE_18 = 1 * 10**18
 

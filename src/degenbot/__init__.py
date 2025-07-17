@@ -1,11 +1,10 @@
 from importlib.metadata import version
 
-__version__ = version(__package__)
+# isort: split
 
-
-from ._cache import get_checksum_address
-from ._config import settings
-from ._connection import (
+from .checksum_cache import get_checksum_address
+from .config import settings
+from .connection import (
     async_connection_manager,
     connection_manager,
     get_async_web3,
@@ -13,44 +12,56 @@ from ._connection import (
     set_async_web3,
     set_web3,
 )
-from .aerodrome.managers import AerodromeV2PoolManager, AerodromeV3PoolManager
-from .aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
-from .aerodrome.types import AerodromeV2PoolState, AerodromeV3PoolState
+
+# isort: split
+
+from .aerodrome import (
+    AerodromeV2Pool,
+    AerodromeV2PoolManager,
+    AerodromeV2PoolState,
+    AerodromeV3Pool,
+    AerodromeV3PoolManager,
+    AerodromeV3PoolState,
+)
 from .anvil_fork import AnvilFork
-from .arbitrage.types import ArbitrageCalculationResult
-from .arbitrage.uniswap_curve_cycle import UniswapCurveCycle
-from .arbitrage.uniswap_lp_cycle import UniswapLpCycle
+from .arbitrage import ArbitrageCalculationResult, UniswapCurveCycle, UniswapLpCycle
 from .builder_endpoint import BuilderEndpoint
-from .camelot.pools import CamelotLiquidityPool
+from .camelot import CamelotLiquidityPool
 from .chainlink import ChainlinkPriceContract
-from .curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from .erc20_token import Erc20Token
+from .curve import (
+    CurveStableswapPool,
+    CurveStableswapPoolSimulationResult,
+    CurveStableswapPoolState,
+    CurveStableSwapPoolStateUpdated,
+)
+from .erc20 import Erc20Token, Erc20TokenManager, EtherPlaceholder
 from .logging import logger
-from .managers.erc20_token_manager import Erc20TokenManager
-from .pancakeswap.managers import PancakeV2PoolManager, PancakeV3PoolManager
-from .pancakeswap.pools import PancakeV2Pool, PancakeV3Pool
-from .registry.all_pools import pool_registry
-from .registry.all_tokens import token_registry
-from .sushiswap.managers import SushiswapV2PoolManager, SushiswapV3PoolManager
-from .sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
-from .transaction.uniswap_transaction import UniswapTransaction
-from .uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
-from .uniswap.v2_liquidity_pool import UniswapV2Pool
-from .uniswap.v2_types import (
+from .pancakeswap import PancakeV2Pool, PancakeV2PoolManager, PancakeV3Pool, PancakeV3PoolManager
+from .registry import pool_registry, token_registry
+from .sushiswap import (
+    SushiswapV2Pool,
+    SushiswapV2PoolManager,
+    SushiswapV3Pool,
+    SushiswapV3PoolManager,
+)
+from .transaction import UniswapTransaction
+from .uniswap import (
+    UniswapV2Pool,
     UniswapV2PoolExternalUpdate,
+    UniswapV2PoolManager,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
-)
-from .uniswap.v3_liquidity_pool import UniswapV3Pool
-from .uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
-from .uniswap.v3_types import (
+    UniswapV3LiquiditySnapshot,
+    UniswapV3Pool,
     UniswapV3PoolExternalUpdate,
+    UniswapV3PoolManager,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
+    UniswapV4LiquiditySnapshot,
+    UniswapV4Pool,
+    UniswapV4PoolExternalUpdate,
+    UniswapV4PoolState,
 )
-from .uniswap.v4_liquidity_pool import UniswapV4Pool
-from .uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
-from .uniswap.v4_types import UniswapV4PoolExternalUpdate, UniswapV4PoolState
 
 __all__ = (
     "AerodromeV2Pool",
@@ -64,9 +75,13 @@ __all__ = (
     "BuilderEndpoint",
     "CamelotLiquidityPool",
     "ChainlinkPriceContract",
+    "CurveStableSwapPoolStateUpdated",
     "CurveStableswapPool",
+    "CurveStableswapPoolSimulationResult",
+    "CurveStableswapPoolState",
     "Erc20Token",
     "Erc20TokenManager",
+    "EtherPlaceholder",
     "PancakeV2Pool",
     "PancakeV2PoolManager",
     "PancakeV3Pool",
@@ -96,24 +111,33 @@ __all__ = (
     "aerodrome",
     "arbitrage",
     "async_connection_manager",
+    "balancer",
     "camelot",
     "cli",
     "connection_manager",
     "constants",
     "curve",
+    "erc20",
     "exceptions",
     "functions",
     "get_async_web3",
     "get_checksum_address",
     "get_web3",
     "logger",
+    "managers",
     "pancakeswap",
     "pool_registry",
+    "registry",
     "set_async_web3",
     "set_web3",
     "settings",
     "solidly",
     "sushiswap",
     "token_registry",
+    "transaction",
+    "types",
     "uniswap",
+    "utils",
+    "validation",
 )
+__version__ = version(__package__)

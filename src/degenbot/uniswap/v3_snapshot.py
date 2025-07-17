@@ -13,7 +13,8 @@ from web3.utils import get_abi_element
 
 from degenbot import connection_manager, get_checksum_address
 from degenbot.logging import logger
-from degenbot.types import BlockNumber, ChainId, KeyedDefaultDict
+from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
@@ -229,7 +230,7 @@ class UniswapV3LiquiditySnapshot:
             for event in sorted_events
         )
 
-    def tick_bitmap(self, pool_address: HexAddress) -> dict[int, UniswapV3BitmapAtWord]:
+    def tick_bitmap(self, pool_address: str | bytes) -> dict[int, UniswapV3BitmapAtWord]:
         """
         Consume the tick initialization bitmaps for the pool.
         """
@@ -239,7 +240,7 @@ class UniswapV3LiquiditySnapshot:
         self._liquidity_snapshot[pool_address]["tick_bitmap"] = {}
         return tick_bitmap
 
-    def tick_data(self, pool_address: HexAddress) -> dict[int, UniswapV3LiquidityAtTick]:
+    def tick_data(self, pool_address: str | bytes) -> dict[int, UniswapV3LiquidityAtTick]:
         """
         Consume the liquidity mapping for the pool.
         """

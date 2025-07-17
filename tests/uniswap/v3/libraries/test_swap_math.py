@@ -46,7 +46,10 @@ def test_compute_swap_step():
     assert amount_in + fee_amount < amount
 
     price_after_whole_input_amount = get_next_sqrt_price_from_input(
-        price, liquidity, amount, zero_for_one
+        sqrt_price_x96=price,
+        liquidity=liquidity,
+        amount_in=amount,
+        zero_for_one=zero_for_one,
     )
 
     assert sqrt_q == price_target
@@ -70,7 +73,10 @@ def test_compute_swap_step():
     assert amount_out < -amount
 
     price_after_whole_output_amount = get_next_sqrt_price_from_output(
-        price, liquidity, -amount, zero_for_one
+        sqrt_price_x96=price,
+        liquidity=liquidity,
+        amount_out=-amount,
+        zero_for_one=zero_for_one,
     )
 
     assert sqrt_q == price_target
@@ -94,7 +100,10 @@ def test_compute_swap_step():
     assert amount_in + fee_amount == amount
 
     price_after_whole_input_amount_less_fee = get_next_sqrt_price_from_input(
-        price, liquidity, amount - fee_amount, zero_for_one
+        sqrt_price_x96=price,
+        liquidity=liquidity,
+        amount_in=amount - fee_amount,
+        zero_for_one=zero_for_one,
     )
 
     assert sqrt_q < price_target
@@ -109,7 +118,11 @@ def test_compute_swap_step():
     zero_for_one = False
 
     sqrt_q, amount_in, amount_out, fee_amount = compute_swap_step(
-        price, price_target, liquidity, amount, fee
+        price,
+        price_target,
+        liquidity,
+        amount,
+        fee,
     )
 
     assert amount_in == 2000000000000000000
@@ -117,7 +130,10 @@ def test_compute_swap_step():
     assert amount_out == -amount
 
     price_after_whole_output_amount = get_next_sqrt_price_from_output(
-        price, liquidity, -amount, zero_for_one
+        sqrt_price_x96=price,
+        liquidity=liquidity,
+        amount_out=-amount,
+        zero_for_one=zero_for_one,
     )
 
     assert sqrt_q < price_target

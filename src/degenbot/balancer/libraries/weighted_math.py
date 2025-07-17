@@ -8,7 +8,7 @@ from degenbot.balancer.libraries.fixed_point import (
     pow_down,
     pow_up,
 )
-from degenbot.exceptions import EVMRevertError
+from degenbot.exceptions.evm import EVMRevertError
 
 _MIN_WEIGHT = int(0.01 * 10**18)
 # Having a minimum normalized weight imposes a limit on the maximum number of tokens;

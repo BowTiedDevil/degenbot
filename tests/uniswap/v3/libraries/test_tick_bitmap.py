@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from degenbot.exceptions import LiquidityMapWordMissing
+from degenbot.exceptions.liquidity_pool import LiquidityMapWordMissing
 from degenbot.uniswap.v3_libraries.tick_bitmap import (
     flip_tick,
     next_initialized_tick_within_one_word,
@@ -70,14 +70,26 @@ def test_flip_tick() -> None:
     tick_spacing = 1
     tick_bitmap = empty_full_bitmap(spacing=tick_spacing)
 
-    flip_tick(tick_bitmap, sparse=False, tick=-230, tick_spacing=tick_spacing, update_block=0)
+    flip_tick(
+        tick_bitmap=tick_bitmap,
+        sparse=False,
+        tick=-230,
+        tick_spacing=tick_spacing,
+        update_block=0,
+    )
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-230) is True
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-231) is False
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-229) is False
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-230 + 256) is False
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-230 - 256) is False
 
-    flip_tick(tick_bitmap, sparse=False, tick=-230, tick_spacing=tick_spacing, update_block=0)
+    flip_tick(
+        tick_bitmap=tick_bitmap,
+        sparse=False,
+        tick=-230,
+        tick_spacing=tick_spacing,
+        update_block=0,
+    )
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-230) is False
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-231) is False
     assert is_initialized(tick_bitmap=tick_bitmap, tick=-229) is False
@@ -391,7 +403,13 @@ def test_next_initialized_tick_within_one_word() -> None:
         less_than_or_equal=True,
     ) == (768, False)
 
-    flip_tick(tick_bitmap=tick_bitmap, sparse=False, tick=329, tick_spacing=1, update_block=0)
+    flip_tick(
+        tick_bitmap=tick_bitmap,
+        sparse=False,
+        tick=329,
+        tick_spacing=1,
+        update_block=0,
+    )
     tick_data[329] = UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0)
 
     assert next_initialized_tick_within_one_word_legacy(

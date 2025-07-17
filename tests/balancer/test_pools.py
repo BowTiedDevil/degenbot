@@ -4,8 +4,7 @@ from fractions import Fraction
 import pytest
 from hexbytes import HexBytes
 
-from degenbot import get_checksum_address, set_web3
-from degenbot.anvil_fork import AnvilFork
+from degenbot import AnvilFork, get_checksum_address, set_web3
 from degenbot.balancer.pools import BalancerV2Pool
 
 BALANCER_V2_WETH_BAL_POOL_ADDRESS = get_checksum_address(

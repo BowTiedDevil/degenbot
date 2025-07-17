@@ -13,25 +13,24 @@ from web3 import Web3
 
 from degenbot import connection_manager, get_checksum_address
 from degenbot.constants import WRAPPED_NATIVE_TOKENS
-from degenbot.erc20_token import Erc20Token
-from degenbot.exceptions import (
+from degenbot.erc20 import Erc20Token, Erc20TokenManager
+from degenbot.exceptions import DegenbotError, DegenbotValueError
+from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.liquidity_pool import LiquidityPoolError
+from degenbot.exceptions.manager import ManagerError
+from degenbot.exceptions.transaction import (
     DeadlineExpired,
-    DegenbotError,
-    DegenbotValueError,
-    EVMRevertError,
     InsufficientInput,
     InsufficientOutput,
     LeftoverRouterBalance,
-    LiquidityPoolError,
-    ManagerError,
     PreviousBlockMismatch,
     TransactionError,
     UnknownRouterAddress,
 )
 from degenbot.logging import logger
-from degenbot.managers.erc20_token_manager import Erc20TokenManager
 from degenbot.transaction.simulation_ledger import SimulationLedger
-from degenbot.types import AbstractSimulationResult, AbstractTransaction, BlockNumber, ChainId
+from degenbot.types.abstract import AbstractSimulationResult, AbstractTransaction
+from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.uniswap.abi import UNISWAP_V3_ROUTER2_ABI, UNISWAP_V3_ROUTER_ABI
 from degenbot.uniswap.deployments import (
     ROUTER_DEPLOYMENTS,
@@ -223,6 +222,7 @@ class UniswapTransaction(AbstractTransaction):
 
     def _simulate_v2_swap_exact_in(
         self,
+        *,
         pool: UniswapV2Pool,
         recipient: ChecksumAddress | str,
         token_in: Erc20Token,
@@ -314,6 +314,7 @@ class UniswapTransaction(AbstractTransaction):
 
     def _simulate_v2_swap_exact_out(
         self,
+        *,
         pool: UniswapV2Pool,
         recipient: ChecksumAddress | str,
         token_in: Erc20Token,
@@ -366,6 +367,7 @@ class UniswapTransaction(AbstractTransaction):
 
     def _simulate_v3_swap_exact_in(
         self,
+        *,
         pool: UniswapV3Pool,
         recipient: str,
         token_in: Erc20Token,
@@ -444,6 +446,7 @@ class UniswapTransaction(AbstractTransaction):
 
     def _simulate_v3_swap_exact_out(
         self,
+        *,
         pool: UniswapV3Pool,
         recipient: str,
         token_in: Erc20Token,
@@ -2108,6 +2111,7 @@ class UniswapTransaction(AbstractTransaction):
 
     def simulate(
         self,
+        *,
         silent: bool = False,
         state_block: BlockNumber | int | None = None,
     ) -> list[

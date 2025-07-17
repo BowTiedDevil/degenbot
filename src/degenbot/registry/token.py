@@ -1,14 +1,15 @@
 import contextlib
 from typing import TYPE_CHECKING, Self
 
+import degenbot.exceptions
 from degenbot import get_checksum_address
-from degenbot.exceptions import DegenbotValueError, RegistryAlreadyInitialized
-from degenbot.types import ChainId
+from degenbot.exceptions.registry import RegistryAlreadyInitialized
+from degenbot.types.aliases import ChainId
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.erc20_token import Erc20Token
+    from degenbot.erc20 import Erc20Token
 
 
 class TokenRegistry:
@@ -41,7 +42,7 @@ class TokenRegistry:
     def add(self, token_address: str, chain_id: ChainId, token: "Erc20Token") -> None:
         token_address = get_checksum_address(token_address)
         if self.get(token_address=token_address, chain_id=chain_id):
-            raise DegenbotValueError(message="Token is already registered")
+            raise degenbot.exceptions.DegenbotValueError(message="Token is already registered")
         self._all_tokens[(chain_id, token_address)] = token
 
     def remove(self, token_address: str, chain_id: ChainId) -> None:
@@ -49,6 +50,3 @@ class TokenRegistry:
 
         with contextlib.suppress(KeyError):
             del self._all_tokens[(chain_id, token_address)]
-
-
-token_registry = TokenRegistry()

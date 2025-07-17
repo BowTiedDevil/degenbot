@@ -2,12 +2,9 @@ import dataclasses
 
 import pydantic
 
-from degenbot.types import (
-    AbstractPoolState,
-    AbstractSimulationResult,
-    BlockNumber,
-    PoolStateMessage,
-)
+from degenbot.types.abstract import AbstractPoolState, AbstractSimulationResult
+from degenbot.types.aliases import BlockNumber
+from degenbot.types.concrete import PoolStateMessage
 from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128, ValidatedUint256
 
 type BitmapWord = int

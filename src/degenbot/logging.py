@@ -1,10 +1,10 @@
 import logging
 
 """
-Create a global logger instance for this module.
+Create a global logger instance.
 """
 
-logger = logging.getLogger("degenbot")
+logger = logging.getLogger(__name__)
 logger.propagate = False
 logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())

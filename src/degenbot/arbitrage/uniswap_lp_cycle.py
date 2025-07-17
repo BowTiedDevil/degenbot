@@ -13,34 +13,30 @@ from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
 from degenbot import get_checksum_address
-from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
-from degenbot.aerodrome.types import AerodromeV2PoolState
+from degenbot.aerodrome import AerodromeV2Pool, AerodromeV2PoolState, AerodromeV3Pool
 from degenbot.arbitrage.types import (
     ArbitrageCalculationResult,
-    UniswapPoolSwapVector,
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
     UniswapV4PoolSwapAmounts,
 )
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
-from degenbot.erc20_token import Erc20Token, EtherPlaceholder
-from degenbot.exceptions import (
-    ArbitrageError,
-    DegenbotValueError,
-    EVMRevertError,
-    LiquidityPoolError,
-    RateOfExchangeBelowMinimum,
-)
+from degenbot.erc20 import Erc20Token, EtherPlaceholder
+from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.arbitrage import ArbitrageError, RateOfExchangeBelowMinimum
+from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.logging import logger
-from degenbot.types import (
-    AbstractArbitrage,
-    Message,
+from degenbot.types.abstract import AbstractArbitrage
+from degenbot.types.concrete import (
+    AbstractPublisherMessage,
     PoolStateMessage,
     Publisher,
     PublisherMixin,
     Subscriber,
     TextMessage,
 )
+from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
@@ -64,24 +60,13 @@ class V4PoolKey:
     hooks: ChecksumAddress
 
 
-UNISWAP_V2_SWAP_FUNCTION_PROTOTYPE = "swap(uint256,uint256,address,bytes)"
-UNISWAP_V2_SWAP_FUNCTION_SELECTOR = Web3.keccak(
-    text=UNISWAP_V2_SWAP_FUNCTION_PROTOTYPE,
-)[:4]
-
-UNISWAP_V3_SWAP_FUNCTION_PROTOTYPE = "swap(address,bool,int256,uint160,bytes)"
-UNISWAP_V3_SWAP_FUNCTION_SELECTOR = Web3.keccak(
-    text=UNISWAP_V3_SWAP_FUNCTION_PROTOTYPE,
-)[:4]
-
-ERC20_TOKEN_TRANSFER_FUNCTION_PROTOTYPE = "transfer(address,uint256)"
-ERC20_TOKEN_TRANSFER_FUNCTION_SELECTOR = Web3.keccak(
-    text=ERC20_TOKEN_TRANSFER_FUNCTION_PROTOTYPE,
-)[:4]
+UNISWAP_V2_SWAP_FUNCTION_SELECTOR = Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
+UNISWAP_V3_SWAP_FUNCTION_SELECTOR = Web3.keccak(text="swap(address,bool,int256,uint160,bytes)")[:4]
+ERC20_TOKEN_TRANSFER_FUNCTION_SELECTOR = Web3.keccak(text="transfer(address,uint256)")[:4]
 
 
 class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
-    def _notify_subscribers(self: Publisher, message: Message) -> None:
+    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
         for subscriber in self._subscribers:
             subscriber.notify(publisher=self, message=message)
 
@@ -762,7 +747,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         return payloads
 
-    def notify(self, publisher: Publisher, message: Message) -> None:
+    def notify(self, publisher: Publisher, message: AbstractPublisherMessage) -> None:
         match publisher, message:
             case (
                 (

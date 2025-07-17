@@ -6,16 +6,20 @@ import eth_abi.abi
 import pytest
 from web3 import Web3
 
-from degenbot import get_checksum_address
+from degenbot import (
+    AnvilFork,
+    CurveStableswapPool,
+    connection_manager,
+    get_checksum_address,
+    set_web3,
+)
+from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
+from degenbot.exceptions.arbitrage import NoLiquidity
+from degenbot.exceptions.liquidity_pool import BrokenPool, InvalidSwapInputAmount
 
 if TYPE_CHECKING:
     from web3.contract.contract import Contract
     from web3.types import Timestamp
-
-from degenbot import AnvilFork, connection_manager, set_web3
-from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
-from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.exceptions import BrokenPool, InvalidSwapInputAmount, NoLiquidity
 
 FRXETH_WETH_CURVE_POOL_ADDRESS = get_checksum_address("0x9c3B46C0Ceb5B9e304FCd6D88Fc50f7DD24B31Bc")
 CURVE_V1_FACTORY_ADDRESS = get_checksum_address("0x127db66E7F0b16470Bec194d0f496F9Fa065d0A9")
