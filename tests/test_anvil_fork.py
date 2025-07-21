@@ -156,16 +156,20 @@ def test_reset_and_set_next_block_base_fee(fork_mainnet_full: AnvilFork):
     )
 
 
-def test_reset_to_new_endpoint(fork_mainnet_full: AnvilFork):
-    fork_mainnet_full.reset(fork_url=BASE_FULL_NODE_HTTP_URI)
-    assert fork_mainnet_full.fork_url == BASE_FULL_NODE_HTTP_URI
+def test_reset_to_new_endpoint():
+    fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
+    assert fork.w3.eth.chain_id == 1
+
+    fork.reset(fork_url=BASE_FULL_NODE_HTTP_URI)
+    assert fork.w3.eth.chain_id == 8453
 
 
-def test_reset_to_new_transaction_hash(fork_mainnet_archive: AnvilFork):
-    fork_mainnet_archive.reset(
+def test_reset_to_new_transaction_hash():
+    fork = AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+    fork.reset(
         transaction_hash="0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6"
     )
-    assert fork_mainnet_archive.w3.eth.block_number == 20987963
+    assert fork.w3.eth.block_number == 20987963
 
 
 def test_ipc_kwargs():
