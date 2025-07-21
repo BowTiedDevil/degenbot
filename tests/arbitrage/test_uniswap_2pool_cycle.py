@@ -345,16 +345,6 @@ def test_v4_v2_calculation_rejects_unprofitable_opportunity(arb_v4_v2: _UniswapT
 
 
 def test_v4_v2_dai_arb_base(fork_base_archive: AnvilFork):
-    """
-    From testing bot logs
-    ---
-
-    INFO - [28197806][+2.3s][0.00126/0.00126]
-    ERROR - ETH-DAI (UniswapV4Pool) → WETH-DAI (UniswapV2Pool, 0.30%) @ 0x69ca7e8fe6804a17e0f38eb1d5013ad10307f9f792f6435200c7a8e6fedefbb3: ('execution reverted: UniswapV2: K', '0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000c556e697377617056323a204b0000000000000000000000000000000000000000')
-    INFO - [28197807][+2.3s][0.00126/0.00126]
-
-    """  # noqa: E501
-
     set_web3(fork_base_archive.w3)
     fork_base_archive.reset(block_number=28197806)
 
