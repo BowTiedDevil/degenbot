@@ -132,7 +132,8 @@ class AnvilFork:
             command.extend(anvil_opts)
 
         self._anvil_command = command
-        self._setup_process_and_w3(self._anvil_command)
+        self._setup_process(self._anvil_command)
+        self._setup_w3()
 
         self._fork_url = fork_url
 
@@ -189,10 +190,29 @@ class AnvilFork:
             _, _port = sock.getsockname()
             return cast("int", _port)
 
-    def _setup_process_and_w3(self, anvil_command: AnvilCommandList) -> None:
+    def _setup_w3(self) -> None:
         """
-        Launch an Anvil subprocess and wait for a `Web3` connection to be established with its
-        IPC socket.
+        Create a Web3 connection to the IPC socket used by Anvil, waiting for the connection to be
+        established.
+        """
+
+        try:
+            # network I/O is less reliable, so wait with an exponential delay and jitter
+            w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
+            w3_connected_check_with_retry = tenacity.Retrying(
+                stop=tenacity.stop_after_delay(10),
+                wait=tenacity.wait_exponential_jitter(),
+                retry=tenacity.retry_if_result(lambda result: result is False),
+            )
+            w3_connected_check_with_retry(fn=w3.is_connected)
+        except tenacity.RetryError as exc:
+            raise DegenbotError(message="Timed out waiting for Web3 connection.") from exc
+
+        self.w3 = w3
+
+    def _setup_process(self, anvil_command: AnvilCommandList) -> None:
+        """
+        Launch an Anvil subprocess, waiting for the IPC socket to be created.
         """
 
         process = subprocess.Popen(anvil_command)  # noqa: S603
@@ -208,19 +228,6 @@ class AnvilFork:
         except tenacity.RetryError as exc:
             raise DegenbotError(message="Timed out waiting for IPC socket to be created.") from exc
 
-        try:
-            # network I/O is less reliable, so wait with an exponential delay and jitter
-            w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
-            w3_connected_check_with_retry = tenacity.Retrying(
-                stop=tenacity.stop_after_delay(10),
-                wait=tenacity.wait_exponential_jitter(),
-                retry=tenacity.retry_if_result(lambda result: result is False),
-            )
-            w3_connected_check_with_retry(fn=w3.is_connected)
-        except tenacity.RetryError as exc:
-            raise DegenbotError(message="Timed out waiting for Web3 connection.") from exc
-
-        self.w3 = w3
         self._process = process
 
     def __del__(self) -> None:
