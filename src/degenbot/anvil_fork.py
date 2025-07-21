@@ -241,6 +241,13 @@ class AnvilFork:
             params=[],
         )
 
+    async def mine_async(self) -> None:
+        async with self.async_w3 as async_w3:
+            await async_w3.provider.make_request(
+                method=RPCEndpoint("evm_mine"),
+                params=[],
+            )
+
     @property
     @contextlib.asynccontextmanager
     async def async_w3(self) -> AsyncIterator[AsyncWeb3]:
