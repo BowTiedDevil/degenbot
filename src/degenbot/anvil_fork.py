@@ -251,43 +251,60 @@ class AnvilFork:
         transaction_hash: str | None = None,
     ) -> None:
         """
-        Fork from a new block number or transaction hash.
+        Fork from a new endpoint, block number, or transaction hash.
+
+        Resetting to a new block number only can be done in-place without relaunching the Anvil
+        process or recreating the Web3 object. Resetting to a new endpoint or from a transaction
+        hash will create a new Anvil process, which is slower.
         """
 
-        # Terminate the old fork process
-        self._process.terminate()
-        self._process.wait(timeout=10)
+        if fork_url is not None or transaction_hash is not None:
+            self._process.terminate()
 
-        if block_number is not None and transaction_hash is not None:
-            block_number = None
-            logger.warning(
-                f"Forking from transaction hash {transaction_hash}, ignoring provided block number."
-            )
-
-        # Sanitize the command by stripping options that may conflict
-        self._anvil_command = [
-            option
-            for option in self._anvil_command.copy()
-            if all(
-                (
-                    "--fork-url" not in option,
-                    "--fork-block-number" not in option,
-                    "--fork-transaction-hash" not in option,
+            if block_number is not None:
+                logger.warning(
+                    f"Forking from transaction hash {transaction_hash}, ignoring provided block number."
                 )
+
+            # Sanitize the command by stripping options that may conflict
+            self._anvil_command = [
+                option
+                for option in self._anvil_command.copy()
+                if all(
+                    (
+                        "--fork-url" not in option,
+                        "--fork-block-number" not in option,
+                        "--fork-transaction-hash" not in option,
+                    )
+                )
+            ]
+
+            # Fork URL must be provided since a new process is being launched
+            if fork_url is not None:
+                self._fork_url = fork_url
+            self._anvil_command.append(f"--fork-url={self._fork_url}")
+
+            if block_number is not None:
+                self._anvil_command.append(f"--fork-block-number={block_number}")
+
+            if transaction_hash is not None:
+                self._anvil_command.append(f"--fork-transaction-hash={transaction_hash}")
+
+            self._setup_process(self._anvil_command)
+            self._setup_w3()
+
+        elif block_number is not None:
+            # Otherwise, the fork can be reset in place without launching a new process
+            fork_params = {}
+            if block_number:
+                fork_params["blockNumber"] = block_number
+
+            self.w3.provider.make_request(
+                method=RPCEndpoint("anvil_reset"),
+                params=[{"forking": fork_params}],
             )
-        ]
-
-        if fork_url is not None:
-            self._fork_url = fork_url
-        self._anvil_command.append(f"--fork-url={self._fork_url}")
-
-        if block_number is not None:
-            self._anvil_command.append(f"--fork-block-number={block_number}")
-
-        if transaction_hash is not None:
-            self._anvil_command.append(f"--fork-transaction-hash={transaction_hash}")
-
-        self._setup_process_and_w3(anvil_command=self._anvil_command)
+        else:
+            raise DegenbotValueError(message="No options provided.")
 
     def return_to_snapshot(self, snapshot_id: int) -> bool:
         if snapshot_id < 0:
