@@ -76,7 +76,6 @@ class Erc20Token(AbstractErc20Token):
             )
 
         if token_from_db:
-            logger.info("Using token data from DB")
             self.name = token_from_db.name
             self.symbol = token_from_db.symbol
             self.decimals = token_from_db.decimals
