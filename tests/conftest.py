@@ -3,7 +3,6 @@ from typing import Any
 
 import dotenv
 import pytest
-import web3
 
 from degenbot import (
     AnvilFork,
@@ -30,15 +29,6 @@ BASE_ARCHIVE_NODE_HTTP_URI = "https://base.llamarpc.com"
 BASE_ARCHIVE_NODE_WS_URI = "wss://base.llamarpc.com"
 BASE_FULL_NODE_HTTP_URI = "http://localhost:8544"
 BASE_FULL_NODE_WS_URI = "ws://localhost:8548"
-
-
-# Set up an async web3 connection to an Ethereum archive node
-@pytest.fixture
-async def ethereum_archive_node_async_web3() -> web3.AsyncWeb3:
-    async_w3: web3.AsyncWeb3 = await web3.AsyncWeb3(
-        web3.WebSocketProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
-    )
-    return async_w3
 
 
 @pytest.fixture(autouse=True)

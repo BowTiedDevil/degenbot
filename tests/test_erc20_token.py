@@ -1,6 +1,5 @@
 import pytest
 from hexbytes import HexBytes
-from web3 import AsyncWeb3
 
 from degenbot import (
     AnvilFork,
@@ -157,11 +156,12 @@ def test_erc20token_functions(fork_mainnet_full: AnvilFork, weth: Erc20Token):
     weth.get_balance(VITALIK_ADDRESS)
 
 
-async def test_async_erc20_functions(ethereum_archive_node_async_web3: AsyncWeb3, weth: Erc20Token):
-    await async_connection_manager.register_web3(w3=ethereum_archive_node_async_web3)
-    await weth.get_total_supply_async()
-    await weth.get_approval_async(VITALIK_ADDRESS, weth.address)
-    await weth.get_balance_async(VITALIK_ADDRESS)
+async def test_async_erc20_functions(fork_mainnet_full: AnvilFork, weth: Erc20Token):
+    async with fork_mainnet_full.async_w3 as w3:
+        await async_connection_manager.register_web3(w3)
+        await weth.get_total_supply_async()
+        await weth.get_approval_async(VITALIK_ADDRESS, weth.address)
+        await weth.get_balance_async(VITALIK_ADDRESS)
 
 
 def test_ether_placeholder(fork_mainnet_full: AnvilFork):
