@@ -2,17 +2,22 @@ from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
 import eth_account.messages
+import tenacity
 from eth_typing import ChecksumAddress
 from eth_utils.conversions import to_hex
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
-from web3.types import BlockIdentifier
+from web3.eth.eth import Timeout
+from web3.exceptions import Web3RPCError
+from web3.types import BlockIdentifier, FilterParams, LogReceipt
 
 from degenbot import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.base import DegenbotError
 from degenbot.exceptions.evm import InvalidUint256
+from degenbot.logging import logger
 from degenbot.types.aliases import BlockNumber
 
 if TYPE_CHECKING:
@@ -119,6 +124,82 @@ def evm_divide(numerator: int, denominator: int) -> int:
     Perform integer division, rounding towards zero to match the EVM behavior.
     """
     return -(-numerator // denominator) if numerator < 0 else numerator // denominator
+
+
+def fetch_logs_retrying(
+    w3: Web3,
+    start_block: BlockNumber,
+    end_block: BlockNumber,
+    max_retries: int,
+    max_blocks_per_request: int = 10_000,
+    topic_signature: list[HexBytes] | None = None,
+) -> list[LogReceipt]:
+    """
+    Fetch all event logs for the given signature (or all logs of omitted) inside the given block
+    range, inclusive.
+
+    The maximum number of blocks per request is capped by default at 10,000.
+    """
+
+    # The working block span is dynamic. It will be reduced quickly if timeouts occur, and increased
+    # slowly following successful fetches
+    working_span = max_blocks_per_request
+
+    event_logs = []
+
+    while True:
+        try:
+            for attempt in tenacity.Retrying(
+                stop=tenacity.stop_after_attempt(max_retries),
+                retry=tenacity.retry_if_exception_type(
+                    (Timeout, Web3RPCError),
+                ),
+            ):
+                chunk_end = min(end_block, start_block + working_span - 1)
+
+                with attempt:
+                    try:
+                        logger.info(
+                            f"Fetching logs for range {start_block}-{chunk_end} "
+                            f" ({chunk_end - start_block + 1} blocks)"
+                        )
+                        event_logs.extend(
+                            w3.eth.get_logs(
+                                FilterParams(
+                                    fromBlock=start_block,
+                                    toBlock=chunk_end,
+                                    topics=topic_signature,
+                                )
+                            )
+                        )
+                    except (Timeout, Web3RPCError):
+                        # Decrease quickly (50% per attempt)
+                        working_span = max(
+                            1,
+                            working_span // 2,
+                        )
+                        logger.info(
+                            f"Attempt {attempt.retry_state.attempt_number} timed out "
+                            f"fetching {chunk_end - start_block + 1} blocks. "
+                            f"Reducing to {working_span}..."
+                        )
+                        raise
+                    else:
+                        # Increase slowly up to the cap (25% per attempt)
+                        working_span = min(
+                            working_span + working_span // 4,
+                            max_blocks_per_request,
+                        )
+
+            if chunk_end == end_block:
+                return event_logs
+
+            start_block = chunk_end + 1
+
+        except tenacity.RetryError:
+            raise DegenbotError(
+                message=f"Timed out fetching logs after {max_retries} tries."
+            ) from None
 
 
 def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3) -> BlockNumber:

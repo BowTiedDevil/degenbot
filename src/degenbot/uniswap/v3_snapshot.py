@@ -3,15 +3,17 @@ from collections import defaultdict
 from typing import Any, TypedDict, cast
 
 import pydantic_core
+import tqdm
 from eth_typing import ABIEvent, ChecksumAddress, HexAddress
 from eth_utils.abi import event_abi_to_log_topic
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.contract.base_contract import BaseContractEvent
-from web3.types import EventData, FilterParams, LogReceipt
+from web3.types import EventData, LogReceipt
 from web3.utils import get_abi_element
 
 from degenbot import connection_manager, get_checksum_address
+from degenbot.functions import fetch_logs_retrying
 from degenbot.logging import logger
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
@@ -126,20 +128,40 @@ class UniswapV3LiquiditySnapshot:
     def fetch_new_events(
         self,
         to_block: BlockNumber,
-        blocks_per_request: int = 1000,
+        blocks_per_request: int = 1_000,
     ) -> None:
         """
         Fetch liquidity events from the block following the last-known event to the target block
         using `eth_getLogs`. Blocks per request will be capped at `blocks_per_request`.
         """
 
-        def process_liquidity_event_log(
+        def _process_liquidity_event_log(
             event: BaseContractEvent, log: LogReceipt
         ) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
             """
             Decode an event log and convert to an address and a `UniswapV3LiquidityEvent` for
             processing with `UniswapV3Pool.update_liquidity_map`.
             """
+
+            # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/interfaces/pool/IUniswapV3PoolEvents.sol
+            #
+            # event Mint(
+            #     address sender,
+            #     address indexed owner,
+            #     int24 indexed tickLower,
+            #     int24 indexed tickUpper,
+            #     uint128 amount,
+            #     uint256 amount0,
+            #     uint256 amount1
+            # );
+            # event Burn(
+            #     address indexed owner,
+            #     int24 indexed tickLower,
+            #     int24 indexed tickUpper,
+            #     uint128 amount,
+            #     uint256 amount0,
+            #     uint256 amount1
+            # );
 
             decoded_event: EventData = event.process_log(log)
             pool_address = get_checksum_address(decoded_event["address"])
@@ -165,39 +187,41 @@ class UniswapV3LiquiditySnapshot:
             )
 
         logger.info(f"Updating Uniswap V3 snapshot from block {self.newest_block} to {to_block}")
-        w3 = connection_manager.get_web3(self.chain_id)
 
         v3pool = Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI)
-        for event in [
+        for event in (
             v3pool.events.Mint,
             v3pool.events.Burn,
-        ]:
+        ):
             event_instance = event()
             logger.info(f"Processing {event.event_name} events")
             event_abi = cast(
-                "ABIEvent", get_abi_element(abi=v3pool.abi, abi_element_identifier=event.event_name)
+                "ABIEvent",
+                get_abi_element(
+                    abi=v3pool.abi,
+                    abi_element_identifier=event.event_name,
+                ),
             )
-            start_block = self.newest_block + 1
 
-            while True:
-                end_block = min(to_block, start_block + blocks_per_request - 1)
-                logger.info(f"Fetching events for blocks {start_block}-{end_block}")
+            event_logs = fetch_logs_retrying(
+                w3=connection_manager.get_web3(self.chain_id),
+                start_block=self.newest_block + 1,
+                end_block=to_block,
+                max_retries=5,
+                max_blocks_per_request=blocks_per_request,
+                topic_signature=[HexBytes(event_abi_to_log_topic(event_abi))],
+            )
 
-                event_filter_params = FilterParams(
-                    fromBlock=start_block,
-                    toBlock=end_block,
-                    topics=[HexBytes(event_abi_to_log_topic(event_abi))],
+            for event_log in tqdm.tqdm(
+                event_logs,
+                desc=f"{event.event_name} events",
+                unit="event",
+                bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
+            ):
+                pool_address, liquidity_event = _process_liquidity_event_log(
+                    event_instance, event_log
                 )
-
-                for event_log in w3.eth.get_logs(event_filter_params):
-                    pool_address, liquidity_event = process_liquidity_event_log(
-                        event_instance, event_log
-                    )
-                    self._liquidity_events[pool_address].append(liquidity_event)
-
-                if end_block == to_block:
-                    break
-                start_block = end_block + 1
+                self._liquidity_events[pool_address].append(liquidity_event)
 
         self.newest_block = to_block
 
