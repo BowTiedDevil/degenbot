@@ -1,4 +1,5 @@
 import dataclasses
+from bisect import bisect_left
 from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
@@ -29,6 +30,7 @@ from degenbot.exceptions.liquidity_pool import (
     InvalidSwapInputAmount,
     LateUpdateError,
     LiquidityPoolError,
+    NoPoolStateAvailable,
 )
 from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from degenbot.logging import logger
@@ -542,6 +544,58 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
         return cast("int", reserves_token0), cast("int", reserves_token1)
+
+    def discard_states_before_block(self, block: BlockNumber) -> None:
+        """
+        Discard states recorded prior to a target block.
+        """
+
+        with self._state_lock:
+            known_blocks = sorted(self._state_cache.keys())
+
+            # Finds the index prior to the requested block number
+            block_index = bisect_left(known_blocks, block)
+
+            # The earliest known state already meets the criterion, so return early
+            if block_index == 0:
+                return
+
+            if block_index == len(known_blocks):
+                raise NoPoolStateAvailable(block=block)
+
+            for known_block in known_blocks[:block_index]:
+                del self._state_cache[known_block]
+
+    def restore_state_before_block(
+        self,
+        block: BlockNumber,
+    ) -> None:
+        """
+        Restore the last pool state recorded prior to a target block.
+
+        Use this method to maintain consistent state data following a chain re-organization.
+        """
+
+        with self._state_lock:
+            known_blocks = sorted(self._state_cache.keys())
+
+            # Finds the index prior to the requested block number
+            block_index = bisect_left(known_blocks, block)
+
+            if block_index == 0:
+                raise NoPoolStateAvailable(block=block)
+
+            # The last known state already meets the criterion, so return early
+            if block_index == len(known_blocks):
+                return
+
+            # Remove states at and after the specified block
+            for known_block in known_blocks[block_index:]:
+                del self._state_cache[known_block]
+
+            # Restore previous state and block
+            self._state = list(self._state_cache.values())[-1]
+            self._notify_subscribers(message=AerodromeV2PoolStateUpdated(self.state))
 
 
 class AerodromeV3Pool(UniswapV3Pool):
