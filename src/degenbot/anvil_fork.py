@@ -257,6 +257,23 @@ class AnvilFork:
                 assert isinstance(async_w3, AsyncWeb3)
             yield async_w3
 
+    async def reset_async(
+        self,
+        block_number: BlockNumber,
+    ) -> None:
+        """
+        Reset to a new block number.
+        """
+
+        method = "anvil_reset"
+        async with self.async_w3 as async_w3:
+            resp = await async_w3.provider.make_request(
+                method=RPCEndpoint(method),
+                params=[{"forking": {"blockNumber": block_number}}],
+            )
+            if "error" in resp:
+                raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
+
     def reset(
         self,
         fork_url: str | None = None,
@@ -359,6 +376,20 @@ class AnvilFork:
         )
 
     @validate_call
+    async def set_next_base_fee_async(
+        self,
+        fee: ValidatedUint256,
+    ) -> None:
+        method = "anvil_setNextBlockBaseFeePerGas"
+        async with self.async_w3 as async_w3:
+            resp = await async_w3.provider.make_request(
+                method=RPCEndpoint(method),
+                params=[fee],
+            )
+            if "error" in resp:
+                raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
+
+    @validate_call
     def set_next_base_fee(
         self,
         fee: ValidatedUint256,
@@ -367,6 +398,35 @@ class AnvilFork:
             method=RPCEndpoint("anvil_setNextBlockBaseFeePerGas"),
             params=[fee],
         )
+        if "error" in resp:
+            raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
+
+    @validate_call
+    async def set_next_block_timestamp_async(
+        self,
+        timestamp: ValidatedUint256,
+    ) -> None:
+        method = "evm_setNextBlockTimestamp"
+        async with self.async_w3 as async_w3:
+            resp = await async_w3.provider.make_request(
+                method=RPCEndpoint(method),
+                params=[timestamp],
+            )
+            if "error" in resp:
+                raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
+
+    @validate_call
+    def set_next_block_timestamp(
+        self,
+        timestamp: ValidatedUint256,
+    ) -> None:
+        method = "evm_setNextBlockTimestamp"
+        resp = self.w3.provider.make_request(
+            method=RPCEndpoint(method),
+            params=[timestamp],
+        )
+        if "error" in resp:
+            raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
 
     def set_nonce(self, address: str, nonce: int) -> None:
         self.w3.provider.make_request(
