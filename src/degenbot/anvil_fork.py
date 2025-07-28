@@ -245,13 +245,12 @@ class AnvilFork:
             raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
 
     async def mine_async(self) -> None:
-        async with self.async_w3 as async_w3:
+        async with self.async_w3() as async_w3:
             await async_w3.provider.make_request(
                 method=RPCEndpoint("evm_mine"),
                 params=[],
             )
 
-    @property
     @contextlib.asynccontextmanager
     async def async_w3(self) -> AsyncIterator[AsyncWeb3]:
         # TODO: investigate why cache_allowed_requests causes sequential is_connected calls to fail
@@ -269,7 +268,7 @@ class AnvilFork:
         """
 
         method = "anvil_reset"
-        async with self.async_w3 as async_w3:
+        async with self.async_w3() as async_w3:
             resp = await async_w3.provider.make_request(
                 method=RPCEndpoint(method),
                 params=[{"forking": {"blockNumber": block_number}}],
@@ -388,7 +387,7 @@ class AnvilFork:
         fee: ValidatedUint256,
     ) -> None:
         method = "anvil_setNextBlockBaseFeePerGas"
-        async with self.async_w3 as async_w3:
+        async with self.async_w3() as async_w3:
             resp = await async_w3.provider.make_request(
                 method=RPCEndpoint(method),
                 params=[fee],
@@ -415,7 +414,7 @@ class AnvilFork:
         timestamp: ValidatedUint256,
     ) -> None:
         method = "evm_setNextBlockTimestamp"
-        async with self.async_w3 as async_w3:
+        async with self.async_w3() as async_w3:
             resp = await async_w3.provider.make_request(
                 method=RPCEndpoint(method),
                 params=[timestamp],
