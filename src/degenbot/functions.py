@@ -141,6 +141,9 @@ def fetch_logs_retrying(
     Max blocks per request is set to 5,000 if not specified.
     """
 
+    if topic_signature is None:
+        topic_signature = []
+
     if max_blocks_per_request is None:
         max_blocks_per_request = 5_000
 
