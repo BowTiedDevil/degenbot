@@ -8,7 +8,7 @@ from eth_utils.conversions import to_hex
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
-from web3.eth.eth import Timeout
+from web3._utils.threads import Timeout
 from web3.exceptions import Web3RPCError
 from web3.types import BlockIdentifier, FilterParams, LogReceipt
 
