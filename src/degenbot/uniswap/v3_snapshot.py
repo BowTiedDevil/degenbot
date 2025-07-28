@@ -212,7 +212,7 @@ class UniswapV3LiquiditySnapshot:
 
             for event_log in tqdm.tqdm(
                 event_logs,
-                desc=f"{event.event_name} events",
+                desc=f"Processing {event.event_name} events",
                 unit="event",
                 bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
             ):
