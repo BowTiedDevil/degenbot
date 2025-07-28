@@ -148,55 +148,6 @@ class UniswapV2PoolManager(AbstractUniswapV2PoolManager[UniswapV2Pool], pool_fac
     def pool_init_hash(self) -> str:
         return self._pool_init_hash
 
-    # def get_pool(
-    #     self,
-    #     pool_address: ChecksumAddress | str,
-    #     *,
-    #     silent: bool = False,
-    #     pool_class_kwargs: dict[str, Any] | None = None,
-    # ) -> UniswapV2Pool:
-    #     """
-    #     Get a pool from its address. If the pool is already tracked or found in the global registry,
-    #     that instance will be returned. Otherwise, a new one will be built.
-    #     """
-
-    #     pool_address = get_checksum_address(pool_address)
-
-    #     with contextlib.suppress(KeyError):
-    #         return self._tracked_pools[pool_address]
-
-    #     if pool_address in self._untracked_pools:
-    #         raise PoolNotAssociated(pool_address)
-
-    #     # Check if the pool registry already has this pool
-    #     if (
-    #         pool_from_registry := pool_registry.get(
-    #             pool_address=pool_address,
-    #             chain_id=self.chain_id,
-    #         )
-    #     ) is not None:
-    #         if TYPE_CHECKING:
-    #             assert isinstance(pool_from_registry, self.pool_factory)
-    #         if pool_from_registry.factory == self._factory_address:
-    #             self._add_tracked_pool(pool_from_registry)
-    #             return pool_from_registry
-    #         self._untracked_pools.add(pool_address)
-    #         raise PoolNotAssociated(pool_address)
-
-    #     try:
-    #         new_pool = UniswapV2Pool(
-    #             address=pool_address,
-    #             silent=silent,
-    #             **(pool_class_kwargs or {}),
-    #         )
-    #     except LiquidityPoolError as exc:
-    #         raise PoolCreationFailed(
-    #             message=f"Could not build V2 pool {pool_address}: {exc}"
-    #         ) from exc
-    #     else:
-    #         self._add_tracked_pool(new_pool)
-    #         return new_pool
-
     def get_pool_from_tokens(
         self,
         token_addresses: tuple[str, str],
