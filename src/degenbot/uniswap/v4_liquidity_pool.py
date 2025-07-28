@@ -266,9 +266,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
         self._pool_manager_address = get_checksum_address(pool_manager_address)
         self._pool_id: Final[HexBytes] = HexBytes(pool_id)
-        self.name = (
-            f"{self.token0}-{self.token1} ({type(self).__name__}, id={self.pool_id.to_0x_hex()})"
-        )
+        self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, id={self.pool_id.to_0x_hex()})"
 
         try:
             _slot0, _liquidity = self._get_state_values(w3=w3, state_block=state_block)
@@ -413,7 +411,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         self.__dict__ = state
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"{type(self).__name__}(pool_id={self.pool_id.to_0x_hex()},  token0={self.token0}, token1={self.token1}, fee={self.fee}, tick spacing={self.tick_spacing})"  # noqa:E501
+        return f"{self.__class__.__name__}(pool_id={self.pool_id.to_0x_hex()},  token0={self.token0}, token1={self.token1}, fee={self.fee}, tick spacing={self.tick_spacing})"  # noqa:E501
 
     def __str__(self) -> str:
         return self.name

@@ -142,7 +142,7 @@ class UniswapV2PoolManager(AbstractUniswapV2PoolManager[UniswapV2Pool], pool_fac
         )
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"UniswapV2PoolManager(factory={self._factory_address})"
+        return f"{self.__class__.__name__}(factory={self._factory_address})"
 
     @property
     def pool_init_hash(self) -> str:
@@ -387,7 +387,7 @@ class UniswapV3PoolManager(AbstractUniswapV3PoolManager[UniswapV3Pool], pool_fac
         )
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"UniswapV3PoolManager(factory={self._factory_address})"
+        return f"{self.__class__.__name__}(factory={self._factory_address})"
 
     def _build_pool(
         self,

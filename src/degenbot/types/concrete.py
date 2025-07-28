@@ -51,7 +51,7 @@ class TextMessage(AbstractPublisherMessage):
         return hash(self.text)
 
     def __repr__(self) -> str:
-        return f"{type(self).__name__}(text={self.text})"
+        return f"{self.__class__.__name__}(text={self.text})"
 
     def __str__(self) -> str:
         return self.text

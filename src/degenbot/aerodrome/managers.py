@@ -148,7 +148,7 @@ class AerodromeV2PoolManager(
         self._untracked_pools: set[ChecksumAddress] = set()
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"AerodromeV2PoolManager(factory={self._factory_address})"
+        return f"{self.__class__.__name__}(factory={self._factory_address})"
 
     def get_stable_pool(
         self,
@@ -205,7 +205,7 @@ class AerodromeV3PoolManager(
     POOL_IMPLEMENTATION_ADDRESS = get_checksum_address("0xeC8E5342B19977B4eF8892e02D8DAEcfa1315831")
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"AerodromeV3PoolManager(factory={self._factory_address})"
+        return f"{self.__class__.__name__}(factory={self._factory_address})"
 
     def get_pool_from_tokens_and_fee(
         self,

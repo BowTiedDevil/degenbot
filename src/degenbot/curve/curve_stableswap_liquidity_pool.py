@@ -707,7 +707,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
     def __repr__(self) -> str:  # pragma: no cover
         token_string = "-".join([token.symbol for token in self.tokens])
-        return f"CurveStableswapPool(address={self.address}, tokens={token_string}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"  # noqa:E501
+        return f"{self.__class__.__name__}(address={self.address}, tokens={token_string}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"  # noqa:E501
 
     @property
     def balances(self) -> tuple[int, ...]:
