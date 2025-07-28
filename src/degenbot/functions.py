@@ -130,16 +130,19 @@ def fetch_logs_retrying(
     w3: Web3,
     start_block: BlockNumber,
     end_block: BlockNumber,
-    max_retries: int,
-    max_blocks_per_request: int = 10_000,
+    max_retries: int = 10,
+    max_blocks_per_request: int | None = None,
     topic_signature: list[HexBytes] | None = None,
 ) -> list[LogReceipt]:
     """
-    Fetch all event logs for the given signature (or all logs of omitted) inside the given block
-    range, inclusive.
+    Fetch all event logs for the given topic signature (or all logs, if omitted), inclusive for the
+    given block range.
 
-    The maximum number of blocks per request is capped by default at 10,000.
+    Max blocks per request is set to 5,000 if not specified.
     """
+
+    if max_blocks_per_request is None:
+        max_blocks_per_request = 5_000
 
     # The working block span is dynamic. It will be reduced quickly if timeouts occur, and increased
     # slowly following successful fetches
@@ -173,7 +176,7 @@ def fetch_logs_retrying(
                             )
                         )
                     except (Timeout, Web3RPCError):
-                        # Decrease quickly (50% per attempt)
+                        # Decrease quickly (-50%)
                         working_span = max(
                             1,
                             working_span // 2,
@@ -185,9 +188,9 @@ def fetch_logs_retrying(
                         )
                         raise
                     else:
-                        # Increase slowly up to the cap (25% per attempt)
+                        # Increase slowly up to the cap (+10%)
                         working_span = min(
-                            working_span + working_span // 4,
+                            working_span + working_span // 10,
                             max_blocks_per_request,
                         )
 
