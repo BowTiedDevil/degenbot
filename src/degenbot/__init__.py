@@ -44,6 +44,7 @@ from .sushiswap import (
     SushiswapV3Pool,
     SushiswapV3PoolManager,
 )
+from .swapbased import SwapbasedV2Pool, SwapbasedV2PoolManager
 from .transaction import UniswapTransaction
 from .uniswap import (
     UniswapV2Pool,
@@ -90,6 +91,8 @@ __all__ = (
     "SushiswapV2PoolManager",
     "SushiswapV3Pool",
     "SushiswapV3PoolManager",
+    "SwapbasedV2Pool",
+    "SwapbasedV2PoolManager",
     "UniswapCurveCycle",
     "UniswapLpCycle",
     "UniswapTransaction",
