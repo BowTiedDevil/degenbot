@@ -99,28 +99,45 @@ line-length = 100
 indent-width = 4
 
 [tool.ruff.lint]
-select = [    
-#    "C90",      # mccabe
+select = [
+#    "DOC",      # pydoclint
 #    "D",        # pydocstyle
-    "PTH",      # builtin-open
+#    "COM",      # flake8-commas
+#    "FIX",      # flake8-fixme    
     "ERA",      # eradicate
+    "ANN",      # flake8-annotations
+    "ASYNC",    # flake8-async
+    "S",        # flake8-bandit
+    "BLE",      # flake8-blind-except
+    "FBT",      # flake8-boolean-trap
     "B",        # flake8-bugbear
     "A",        # flake8-builtins
     "C4",       # flake8-comprehensions
     "EM",       # flake8-errmsg
     "FA",       # flake8-future-annotations
-    "N",        # flake8-naming
+    "ICN",      # flake8-import-conventions
+    "LOG",      # flake8-logging
+    "G",        # flake8-logging-format
+    "INP",      # flake8-no-pep420
     "PIE",      # flake8-pie
     "T20",      # flake8-print
     "PYI",      # flake8-pyi
     "PT",       # flake8-pytest-style
+    "Q",        # flake8-quotes
+    "RSE",      # flake8-raise
     "RET",      # flake8-return
     "SLF",      # flake8-self
+#    "TD",       # flake8-todos
+    "PTH",      # flake8-use-pathlib
+    "FLY",      # flynt
+    "NPY",      # numpy-specific
     "SIM",      # flake8-simplify
     "TID",      # flake8-tidy-imports
     "TCH",      # flake8-type-checking
     "ARG",      # flake8-unused-arguments
     "I",        # isort
+    "C90",      # mccabe
+    "N",        # pep8-naming
     "E", "W",   # pycodestyle
     "F",        # pyflakes
     "PL",       # pylint
@@ -137,18 +154,29 @@ ignore = [
     "PLR0915",  # too-many-statements
     "N818",     # error-suffix-on-exception-name
 ]
+logger-objects = [
+    "logging.logger",
+    "degenbot.logger",
+]
+
+[tool.ruff.lint.flake8-annotations]
+allow-star-arg-any = true
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
     "C4",
+    "C90", # high complexity tests are acceptable
+    "ANN", # type annotations for tests are low priority
     "ERA",
+    "FBT",
     "PLR2004", # Many swap amount tests compare "magic" values — transforming to named constants is not worthwhile
+    "S", # asserts are expected for testing
     "SLF",
     "T20",
 ]
 
 [tool.pytest.ini_options]
-addopts = "-n auto --dist loadgroup --import-mode=importlib --cov=./src/degenbot --cov-branch --cov-report=html"
+addopts = "-n 4 --dist worksteal --import-mode=importlib --cov=./src/degenbot --cov-branch --cov-report=html --random-order"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 pythonpath = "src"
@@ -162,7 +190,7 @@ dev-dependencies = [
     "pytest-asyncio",
     "pytest-benchmark",
     "pytest-cov",
-    "pytest-randomly",
+    "pytest-random-order",
     "pytest-xdist",
     "python-dotenv",
 ]
