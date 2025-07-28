@@ -232,4 +232,4 @@ def upgrade_existing_sqlite_database(db_path: pathlib.Path) -> None:
 _default_engine = create_engine(
     f"sqlite:///{settings.database.path.absolute()}",
 )
-default_session = sessionmaker(_default_engine)
+default_session = sessionmaker(_default_engine)()
