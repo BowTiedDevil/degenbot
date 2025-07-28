@@ -236,10 +236,13 @@ class AnvilFork:
         self.ipc_filename.unlink(missing_ok=True)
 
     def mine(self) -> None:
-        self.w3.provider.make_request(
-            method=RPCEndpoint("evm_mine"),
+        method = "evm_mine"
+        resp = self.w3.provider.make_request(
+            method=RPCEndpoint(method),
             params=[],
         )
+        if "error" in resp:
+            raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
 
     async def mine_async(self) -> None:
         async with self.async_w3 as async_w3:
@@ -329,10 +332,14 @@ class AnvilFork:
             if block_number:
                 fork_params["blockNumber"] = block_number
 
-            self.w3.provider.make_request(
-                method=RPCEndpoint("anvil_reset"),
+            method = "anvil_reset"
+            resp = self.w3.provider.make_request(
+                method=RPCEndpoint(method),
                 params=[{"forking": fork_params}],
             )
+            if "error" in resp:
+                raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
+
         else:
             raise DegenbotValueError(message="No options provided.")
 
@@ -394,8 +401,9 @@ class AnvilFork:
         self,
         fee: ValidatedUint256,
     ) -> None:
-        self.w3.provider.make_request(
-            method=RPCEndpoint("anvil_setNextBlockBaseFeePerGas"),
+        method = "anvil_setNextBlockBaseFeePerGas"
+        resp = self.w3.provider.make_request(
+            method=RPCEndpoint(method),
             params=[fee],
         )
         if "error" in resp:
@@ -429,10 +437,13 @@ class AnvilFork:
             raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
 
     def set_nonce(self, address: str, nonce: int) -> None:
-        self.w3.provider.make_request(
-            method=RPCEndpoint("anvil_setNonce"),
+        method = "anvil_setNextBlockBaseFeePerGas"
+        resp = self.w3.provider.make_request(
+            method=RPCEndpoint(method),
             params=[address, nonce],
         )
+        if "error" in resp:
+            raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
 
     def set_snapshot(self) -> int:
         return int(
