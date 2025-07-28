@@ -295,7 +295,7 @@ class AnvilFork:
 
             if block_number is not None:
                 logger.warning(
-                    f"Forking from transaction hash {transaction_hash}, ignoring provided block number."
+                    f"Forking from transaction hash {transaction_hash}, ignoring provided block number."  # noqa:E501
                 )
 
             # Sanitize the command by stripping options that may conflict

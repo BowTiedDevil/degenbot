@@ -266,7 +266,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
         self._pool_manager_address = get_checksum_address(pool_manager_address)
         self._pool_id: Final[HexBytes] = HexBytes(pool_id)
-        self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, id={self.pool_id.to_0x_hex()})"
+        self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, id={self.pool_id.to_0x_hex()})"  # noqa:E501
 
         try:
             _slot0, _liquidity = self._get_state_values(w3=w3, state_block=state_block)
