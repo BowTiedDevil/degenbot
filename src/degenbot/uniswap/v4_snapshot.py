@@ -125,7 +125,7 @@ class UniswapV4LiquiditySnapshot:
     def fetch_new_events(
         self,
         to_block: BlockNumber,
-        blocks_per_request: int = 1_000,
+        blocks_per_request: int | None = None,
     ) -> None:
         """
         Fetch liquidity events from the block following the last-known event to the target block
@@ -190,7 +190,6 @@ class UniswapV4LiquiditySnapshot:
             w3=connection_manager.get_web3(self.chain_id),
             start_block=self.newest_block + 1,
             end_block=to_block,
-            max_retries=5,
             max_blocks_per_request=blocks_per_request,
             topic_signature=[HexBytes(event_abi_to_log_topic(event_abi))],
         )
