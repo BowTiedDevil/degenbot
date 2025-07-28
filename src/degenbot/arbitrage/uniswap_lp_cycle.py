@@ -23,8 +23,8 @@ from degenbot.arbitrage.types import (
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.arbitrage import ArbitrageError, RateOfExchangeBelowMinimum
+from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.types.abstract import AbstractArbitrage

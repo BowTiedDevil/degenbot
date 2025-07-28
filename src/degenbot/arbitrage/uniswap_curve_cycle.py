@@ -23,8 +23,8 @@ from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.types import CurveStableswapPoolState
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.arbitrage import ArbitrageError, NoLiquidity
+from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool

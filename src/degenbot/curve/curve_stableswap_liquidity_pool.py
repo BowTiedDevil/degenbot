@@ -33,8 +33,8 @@ from degenbot.curve.deployments import (
 from degenbot.curve.types import CurveStableswapPoolState, CurveStableSwapPoolStateUpdated
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.arbitrage import NoLiquidity
+from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import BrokenPool, InvalidSwapInputAmount
 from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from degenbot.logging import logger
