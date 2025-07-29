@@ -61,7 +61,7 @@ def upgrade() -> None:
         batch_op.alter_column("fee_token0", server_default=None)
         batch_op.alter_column("fee_token1", server_default=None)
         batch_op.alter_column("fee_denominator", server_default=None)
-        batch_op.alter_column("fee", new_column_name="fee_deprecated")
+        batch_op.alter_column("fee", new_column_name="fee_deprecated", nullable=True)
 
 
 def downgrade() -> None:
@@ -73,4 +73,4 @@ def downgrade() -> None:
         batch_op.drop_column("fee_denominator")
         batch_op.drop_column("fee_token1")
         batch_op.drop_column("fee_token0")
-        batch_op.alter_column("fee_deprecated", new_column_name="fee")
+        batch_op.alter_column("fee_deprecated", new_column_name="fee", nullable=False)
