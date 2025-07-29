@@ -43,14 +43,14 @@ def upgrade() -> None:
     with session.begin():
         # Copy the scalar fee value into the new columns
         session.execute(
-            sa.update(Pool.__table__).values(fee_token0=Pool.__table__.c.fee),
+            sa.update(Pool).values(fee_token0=Pool.__table__.c.fee),
         )
         session.execute(
-            sa.update(Pool.__table__).values(fee_token1=Pool.__table__.c.fee),
+            sa.update(Pool).values(fee_token1=Pool.__table__.c.fee),
         )
         # Set the denominator for V3 pools to 1_000_000
         session.execute(
-            sa.update(Pool.__table__)
+            sa.update(Pool)
             .where(Pool.__table__.c.kind.like("%_v3"))
             .values(fee_denominator=1_000_000),
         )
