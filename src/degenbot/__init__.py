@@ -1,5 +1,8 @@
 from importlib.metadata import version
 
+__version__: str = version(__package__)
+
+
 # isort: split
 
 from .checksum_cache import get_checksum_address
@@ -143,4 +146,3 @@ __all__ = (
     "utils",
     "validation",
 )
-__version__ = version(__package__)

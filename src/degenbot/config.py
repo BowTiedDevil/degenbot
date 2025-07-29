@@ -64,6 +64,6 @@ if not CONFIG_FILE.exists():
 
 settings: Settings = load_config_from_file(CONFIG_FILE)
 
-alembic_cfg = Config()
+alembic_cfg: Config = Config()
 alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{settings.database.path.absolute()}")
 alembic_cfg.set_main_option("script_location", "degenbot:migrations")
