@@ -3,6 +3,7 @@ import tomllib
 from typing import Annotated
 
 import tomlkit
+from alembic.config import Config
 from pydantic import BaseModel, FilePath, PlainSerializer
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -62,3 +63,7 @@ if not CONFIG_FILE.exists():
     save_config_to_file(_default_settings)
 
 settings: Settings = load_config_from_file(CONFIG_FILE)
+
+alembic_cfg = Config()
+alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{settings.database.path.absolute()}")
+alembic_cfg.set_main_option("script_location", "degenbot:migrations")

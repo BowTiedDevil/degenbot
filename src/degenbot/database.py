@@ -2,11 +2,15 @@ import pathlib
 from typing import Annotated, ClassVar
 
 import pydantic
+from alembic import command
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import Dialect, ForeignKey, Index, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from sqlalchemy.types import TypeDecorator
 
-from degenbot.config import settings
+from degenbot import __version__
+from degenbot.config import alembic_cfg, settings
 from degenbot.logging import logger
 
 type Tick = int
@@ -170,15 +174,18 @@ class AbstractUniswapPool(Pool):
     token1: Mapped[Address]
     factory: Mapped[Address | None]
     deployer: Mapped[Address | None]
+    fee_token0: Mapped[int]
+    fee_token1: Mapped[int]
+    fee_denominator: Mapped[int]
 
 
-class UniswapV2Pool(AbstractUniswapPool):
+class UniswapV2PoolEntry(AbstractUniswapPool):
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "uniswap_v2",
     }
 
 
-class UniswapV3Pool(AbstractUniswapPool):
+class UniswapV3PoolEntry(AbstractUniswapPool):
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "uniswap_v3",
     }
@@ -187,23 +194,27 @@ class UniswapV3Pool(AbstractUniswapPool):
     tick_spacing: Mapped[int]
     has_liquidity: Mapped[bool]
 
-    liquidity_positions: Mapped[list[LiquidityPositionTableEntry] | None] = relationship()
-    initialization_maps: Mapped[list[InitializationMapTableEntry] | None] = relationship()
+    liquidity_positions: Mapped[list[LiquidityPositionTableEntry] | None] = relationship(
+        cascade="all, delete"
+    )
+    initialization_maps: Mapped[list[InitializationMapTableEntry] | None] = relationship(
+        cascade="all, delete"
+    )
 
 
-class AerodromeV3Pool(UniswapV3Pool):
+class AerodromeV3PoolEntry(UniswapV3PoolEntry):
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "aerodrome_v3",
     }
 
 
-class PancakeswapV3Pool(UniswapV3Pool):
+class PancakeswapV3PoolEntry(UniswapV3PoolEntry):
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "pancakeswap_v3",
     }
 
 
-class SushiswapV3Pool(UniswapV3Pool):
+class SushiswapV3PoolEntry(UniswapV3PoolEntry):
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "sushiswap_v3",
     }
@@ -218,18 +229,26 @@ def create_new_sqlite_database(db_path: pathlib.Path) -> None:
     )
     Base.metadata.create_all(bind=engine)
     logger.info(f"Initialized new SQLite database at {db_path}")
+    command.stamp(alembic_cfg, "head")
 
 
-def upgrade_existing_sqlite_database(db_path: pathlib.Path) -> None:
-    db_path_abs = db_path.absolute()
-    engine = create_engine(
-        f"sqlite:///{db_path_abs}",
-    )
-    Base.metadata.create_all(bind=engine)
-    logger.info(f"Updated existing SQLite database at {db_path_abs}")
+def upgrade_existing_sqlite_database() -> None:
+    command.upgrade(alembic_cfg, "head")
+    logger.info(f"Updated existing SQLite database at {settings.database.path.absolute()}")
 
 
 _default_engine = create_engine(
     f"sqlite:///{settings.database.path.absolute()}",
 )
 default_session = sessionmaker(_default_engine)()
+
+current_rev = MigrationContext.configure(default_session.connection()).get_current_revision()
+current_head = ScriptDirectory.from_config(alembic_cfg).get_current_head()
+if current_rev != current_head:
+    logger.warning(
+        f"The current database revision ({current_rev}) does not match the latest ({current_head}) "
+        f"for {__package__} version {__version__}!"
+        "\n"
+        "Database-related features may raise exceptions if you continue! Run database migrations "
+        "with 'degenbot database upgrade'."
+    )

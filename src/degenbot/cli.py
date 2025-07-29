@@ -1,11 +1,14 @@
-from textwrap import dedent
-
 import click
 import tomlkit
 from pydantic import TypeAdapter
 
 from degenbot import __version__, settings
-from degenbot.database import create_new_sqlite_database, upgrade_existing_sqlite_database
+from degenbot.database import (
+    create_new_sqlite_database,
+    current_head,
+    current_rev,
+    upgrade_existing_sqlite_database,
+)
 
 
 @click.group()
@@ -59,11 +62,7 @@ def database() -> None: ...
 @database.command("reset")
 def database_reset() -> None:
     user_confirm = click.confirm(
-        dedent(
-            f"""\
-            The existing DB at {settings.database.path} will be removed and a new, empty DB will be created and initialized using the schema included in {__package__} version {__version__}.
-            Do you want to proceed?"""  # noqa: E501
-        ),
+        f"The existing DB at {settings.database.path} will be removed and a new, empty DB will be created and initialized using the schema included in {__package__} version {__version__}. Do you want to proceed?",  # noqa: E501
         default=False,
     )
     if user_confirm:
@@ -75,19 +74,11 @@ def database_reset() -> None:
 @database.command("upgrade")
 @click.option("--force", is_flag=True, help="Skip confirmation prompt")
 def database_upgrade(*, force: bool) -> None:
-    # TODO: convert placeholder values to real
-    old = 1
-    new = 2
-
     if force or click.confirm(
-        dedent(
-            f"""\
-            The DB at {settings.database.path} will be upgraded from version {old} to {new}.
-            Do you want to proceed?"""
-        ),
+        f"The DB at {settings.database.path} will be upgraded from version {current_rev} to {current_head}. Do you want to proceed?",  # noqa:E501
         default=False,
     ):
-        upgrade_existing_sqlite_database(settings.database.path)
+        upgrade_existing_sqlite_database()
     else:
         raise click.Abort
 
