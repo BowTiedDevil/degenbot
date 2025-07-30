@@ -33,7 +33,11 @@ from degenbot.exceptions.liquidity_pool import (
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.uniswap.abi import UNISWAP_V2_ROUTER_ABI
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
-from degenbot.uniswap.v2_liquidity_pool import UnregisteredLiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import (
+    UnregisteredLiquidityPool,
+    drop_pool_from_database,
+    get_pool_from_database,
+)
 
 if TYPE_CHECKING:
     from web3.contract.contract import Contract
@@ -109,6 +113,45 @@ def wbtc(fork_mainnet_full: AnvilFork) -> Erc20Token:
 def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
     set_web3(fork_mainnet_full.w3)
     return Erc20Token(WETH_CONTRACT_ADDRESS)
+
+
+def test_pool_can_be_retrieved_from_database(
+    fork_mainnet_full: AnvilFork,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool: UniswapV2Pool,
+):
+    set_web3(fork_mainnet_full.w3)
+
+    pool_from_db = get_pool_from_database(
+        address=ethereum_uniswap_v2_wbtc_weth_liquiditypool.address,
+        chain_id=fork_mainnet_full.w3.eth.chain_id,
+    )
+    assert pool_from_db is not None
+    assert pool_from_db.token0 == ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0.address
+    assert pool_from_db.token1 == ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1.address
+
+
+def test_pool_can_be_dropped_from_database(
+    fork_mainnet_full: AnvilFork,
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool: UniswapV2Pool,
+):
+    set_web3(fork_mainnet_full.w3)
+
+    pool_from_db = get_pool_from_database(
+        address=ethereum_uniswap_v2_wbtc_weth_liquiditypool.address,
+        chain_id=fork_mainnet_full.w3.eth.chain_id,
+    )
+    assert pool_from_db is not None
+    assert pool_from_db.token0 == ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0.address
+    assert pool_from_db.token1 == ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1.address
+
+    drop_pool_from_database(pool_from_db)
+
+    pool_from_db = get_pool_from_database(
+        address=ethereum_uniswap_v2_wbtc_weth_liquiditypool.address,
+        chain_id=fork_mainnet_full.w3.eth.chain_id,
+    )
+
+    assert pool_from_db is None
 
 
 def test_create_pool(fork_mainnet_full: AnvilFork):
@@ -307,6 +350,7 @@ def test_create_nonstandard_pools(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
         fee=Fraction(2, 1000),
+        use_database=False,
     )
     assert _lp.fee_token0 == Fraction(2, 1000)
     assert _lp.fee_token1 == Fraction(2, 1000)
@@ -319,6 +363,7 @@ def test_create_nonstandard_pools(
     _lp = UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         fee=(Fraction(3, 1000), Fraction(5, 1000)),
+        use_database=False,
     )
     assert _lp.fee_token0 == Fraction(3, 1000)
     assert _lp.fee_token1 == Fraction(5, 1000)
@@ -331,6 +376,7 @@ def test_create_nonstandard_pools(
     _lp = UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         fee=(Fraction(6, 1000), Fraction(6, 1000)),
+        use_database=False,
     )
     assert _lp.fee_token0 == Fraction(6, 1000)
     assert _lp.fee_token1 == Fraction(6, 1000)
@@ -586,6 +632,7 @@ def test_comparisons(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
         fee=Fraction(3, 1000),
+        use_database=False,
     )
 
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_block_17_600_000 == other_lp
