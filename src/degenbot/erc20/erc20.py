@@ -14,7 +14,7 @@ import degenbot.registry
 from degenbot import get_checksum_address
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.connection import async_connection_manager, connection_manager
-from degenbot.database import Erc20TokenTableEntry, default_session
+from degenbot.database import Erc20TokenTable, default_session
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.erc20 import NoPriceOracle
 from degenbot.functions import (
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 
 def add_token_to_database(
-    token: Erc20TokenTableEntry,
+    token: Erc20TokenTable,
     session: Session = default_session,
 ) -> None:
     with session.begin():
@@ -44,12 +44,12 @@ def get_token_from_database(
     token: ChecksumAddress,
     chain_id: int,
     session: Session = default_session,
-) -> Erc20TokenTableEntry | None:
+) -> Erc20TokenTable | None:
     with session:
         return session.scalar(
-            select(Erc20TokenTableEntry).where(
-                Erc20TokenTableEntry.address == token,
-                Erc20TokenTableEntry.chain == chain_id,
+            select(Erc20TokenTable).where(
+                Erc20TokenTable.address == token,
+                Erc20TokenTable.chain == chain_id,
             )
         )
 
@@ -76,7 +76,7 @@ class Erc20Token(AbstractErc20Token):
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
 
-        token_from_db: Erc20TokenTableEntry | None = None
+        token_from_db: Erc20TokenTable | None = None
         if use_database:
             token_from_db = get_token_from_database(
                 token=self.address,
@@ -148,7 +148,7 @@ class Erc20Token(AbstractErc20Token):
 
         if use_database and token_from_db is None:
             add_token_to_database(
-                Erc20TokenTableEntry(
+                Erc20TokenTable(
                     address=self.address,
                     chain=self.chain_id,
                     name=self.name,

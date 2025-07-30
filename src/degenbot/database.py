@@ -6,7 +6,14 @@ from alembic import command
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import Dialect, ForeignKey, Index, String, Text, create_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    declared_attr,
+    mapped_column,
+    relationship,
+    sessionmaker,
+)
 from sqlalchemy.types import TypeDecorator
 
 from degenbot import __version__
@@ -66,10 +73,26 @@ class IntMappedToString(TypeDecorator[int]):
         return None if value is None else int(value)
 
 
-Address = Annotated[str, mapped_column(String(42))]
-BigInteger = Annotated[int, IntMappedToString]
-PrimaryKeyInteger = Annotated[int, mapped_column(primary_key=True)]
-IndexedForeignKeyPoolId = Annotated[int, mapped_column(ForeignKey("pools.id"), index=True)]
+Address = Annotated[
+    str,
+    mapped_column(String(42)),
+]
+BigInteger = Annotated[
+    int,
+    IntMappedToString,
+]
+PrimaryKeyInt = Annotated[
+    int,
+    mapped_column(primary_key=True, autoincrement=True),
+]
+PrimaryForeignKeyPoolId = Annotated[
+    int,
+    mapped_column(ForeignKey("pools.id"), primary_key=True),
+]
+ForeignKeyPoolId = Annotated[
+    int,
+    mapped_column(ForeignKey("pools.id")),
+]
 
 
 class Base(DeclarativeBase):
@@ -81,10 +104,10 @@ class Base(DeclarativeBase):
     }
 
 
-class Erc20TokenTableEntry(Base):
+class Erc20TokenTable(Base):
     __tablename__ = "erc20_tokens"
 
-    id: Mapped[PrimaryKeyInteger]
+    id: Mapped[PrimaryKeyInt]
     address: Mapped[Address]
     chain: Mapped[int]
     name: Mapped[str]
@@ -95,25 +118,25 @@ class Erc20TokenTableEntry(Base):
 # A (address, ChainId) tuple is unique for ERC-20 tokens
 Index(
     "ix_erc20_tokens_address_chain",
-    Erc20TokenTableEntry.address,
-    Erc20TokenTableEntry.chain,
+    Erc20TokenTable.address,
+    Erc20TokenTable.chain,
     unique=True,
 )
 
 
-class MetadataTableEntry(Base):
+class MetadataTable(Base):
     __tablename__ = "metadata"
 
-    id: Mapped[PrimaryKeyInteger]
+    id: Mapped[PrimaryKeyInt]
     key: Mapped[str]
     value: Mapped[str]
 
 
-class LiquidityPositionTableEntry(Base):
+class LiquidityPositionTable(Base):
     __tablename__ = "liquidity_positions"
 
-    id: Mapped[PrimaryKeyInteger]
-    pool_id: Mapped[IndexedForeignKeyPoolId]
+    id: Mapped[PrimaryKeyInt]
+    pool_id: Mapped[ForeignKeyPoolId]
     tick: Mapped[int]
     liquidity_net: Mapped[BigInteger]
     liquidity_gross: Mapped[BigInteger]
@@ -122,17 +145,17 @@ class LiquidityPositionTableEntry(Base):
 # A (PoolId, tick) tuple is unique for each liquidity position
 Index(
     "ix_liquidity_positions_pool_id_tick",
-    LiquidityPositionTableEntry.pool_id,
-    LiquidityPositionTableEntry.tick,
+    LiquidityPositionTable.pool_id,
+    LiquidityPositionTable.tick,
     unique=True,
 )
 
 
-class InitializationMapTableEntry(Base):
+class InitializationMapTable(Base):
     __tablename__ = "initialization_maps"
 
-    id: Mapped[PrimaryKeyInteger]
-    pool_id: Mapped[IndexedForeignKeyPoolId]
+    id: Mapped[PrimaryKeyInt]
+    pool_id: Mapped[ForeignKeyPoolId]
     word: Mapped[int]
     bitmap: Mapped[BigInteger]
 
@@ -140,35 +163,17 @@ class InitializationMapTableEntry(Base):
 # A (PoolId, word) tuple is unique for each initialization map
 Index(
     "ix_initialization_maps_pool_id_word",
-    InitializationMapTableEntry.pool_id,
-    InitializationMapTableEntry.word,
+    InitializationMapTable.pool_id,
+    InitializationMapTable.word,
     unique=True,
 )
 
 
-class Pool(Base):
-    __tablename__ = "pools"
-
-    id: Mapped[PrimaryKeyInteger]
-    address: Mapped[Address] = mapped_column(unique=True, index=True)
-    chain: Mapped[int]
-    kind: Mapped[str] = mapped_column()
-
-    __mapper_args__ = {  # noqa: RUF012
-        "polymorphic_on": kind,
-        "polymorphic_identity": "pool",
-    }
-
-
-class AbstractUniswapPool(Pool):
+class UniswapPoolCommonColumnsMixin:
     """
-    This abstract class serves as a parent container for columns common to all Uniswap variant
-    child classes. This class should not be directly instantiated.
+    A mixin that adds columns common to all Uniswap variant classes and a link to an indexed
+    foreign key for the pool ID.
     """
-
-    __mapper_args__ = {  # noqa: RUF012
-        "polymorphic_abstract": True,
-    }
 
     token0: Mapped[Address]
     token1: Mapped[Address]
@@ -179,42 +184,124 @@ class AbstractUniswapPool(Pool):
     fee_denominator: Mapped[int]
 
 
-class UniswapV2PoolEntry(AbstractUniswapPool):
+class LiquidityPoolTable(Base):
+    __tablename__ = "pools"
+    __mapper_args__ = {  # noqa: RUF012
+        "polymorphic_on": "kind",
+        "polymorphic_identity": "base",
+    }
+
+    id: Mapped[PrimaryKeyInt]
+    address: Mapped[Address] = mapped_column(index=True)
+    chain: Mapped[int]
+    kind: Mapped[str]
+
+
+class AbstractUniswapV2Pool(LiquidityPoolTable, UniswapPoolCommonColumnsMixin):
+    """
+    This abstract class represents a parent for all Uniswap V2 variants. It should not be
+    instantiated directly, but may be used to query and select child classes.
+    """
+
+    __abstract__ = True
+
+    pool_id: Mapped[PrimaryForeignKeyPoolId]
+
+
+class AerodromeV2Pool(AbstractUniswapV2Pool):
+    __tablename__ = "aerodrome_v2_pools"
+    __mapper_args__ = {  # noqa: RUF012
+        "polymorphic_identity": "aerodrome_v2",
+    }
+
+
+class CamelotV2PoolTable(AbstractUniswapV2Pool):
+    __tablename__ = "camelot_v2_pools"
+    __mapper_args__ = {  # noqa: RUF012
+        "polymorphic_identity": "camelot_v2",
+    }
+
+
+class PancakeswapV2PoolTable(AbstractUniswapV2Pool):
+    __tablename__ = "pancakeswap_v2_pools"
+    __mapper_args__ = {  # noqa: RUF012
+        "polymorphic_identity": "pancakeswap_v2",
+    }
+
+
+class SushiswapV2PoolTable(AbstractUniswapV2Pool):
+    __tablename__ = "sushiswap_v2_pools"
+    __mapper_args__ = {  # noqa: RUF012
+        "polymorphic_identity": "sushiswap_v2",
+    }
+
+
+class SwapbasedV2PoolTable(AbstractUniswapV2Pool):
+    __tablename__ = "swapbased_v2_pools"
+    __mapper_args__ = {  # noqa: RUF012
+        "polymorphic_identity": "swapbased_v2",
+    }
+
+
+class UniswapV2PoolTable(AbstractUniswapV2Pool):
+    __tablename__ = "uniswap_v2_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "uniswap_v2",
     }
 
 
-class UniswapV3PoolEntry(AbstractUniswapPool):
-    __mapper_args__ = {  # noqa: RUF012
-        "polymorphic_identity": "uniswap_v3",
-    }
+class AbstractUniswapV3Pool(LiquidityPoolTable, UniswapPoolCommonColumnsMixin):
+    """
+    This abstract class represents a parent for all Uniswap V3 variants. It should not be
+    instantiated directly, but may be used to query and select child classes.
+    """
 
-    fee: Mapped[int]
+    __abstract__ = True
+
+    pool_id: Mapped[PrimaryForeignKeyPoolId]
     tick_spacing: Mapped[int]
     has_liquidity: Mapped[bool]
 
-    liquidity_positions: Mapped[list[LiquidityPositionTableEntry] | None] = relationship(
-        cascade="all, delete"
-    )
-    initialization_maps: Mapped[list[InitializationMapTableEntry] | None] = relationship(
-        cascade="all, delete"
-    )
+    @declared_attr
+    @classmethod
+    def liquidity_positions(cls) -> Mapped[list[LiquidityPositionTable]]:
+        return relationship(
+            "LiquidityPositionTable",
+            cascade="all, delete",
+        )
+
+    @declared_attr
+    @classmethod
+    def initialization_maps(cls) -> Mapped[list[InitializationMapTable]]:
+        return relationship(
+            "InitializationMapTable",
+            cascade="all, delete",
+        )
 
 
-class AerodromeV3PoolEntry(UniswapV3PoolEntry):
+class AerodromeV3PoolTable(AbstractUniswapV3Pool):
+    __tablename__ = "aerodrome_v3_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "aerodrome_v3",
     }
 
 
-class PancakeswapV3PoolEntry(UniswapV3PoolEntry):
+class UniswapV3PoolTable(AbstractUniswapV3Pool):
+    __tablename__ = "uniswap_v3_pools"
+    __mapper_args__ = {  # noqa: RUF012
+        "polymorphic_identity": "uniswap_v3",
+    }
+
+
+class PancakeswapV3PoolTable(AbstractUniswapV3Pool):
+    __tablename__ = "pancakeswap_v3_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "pancakeswap_v3",
     }
 
 
-class SushiswapV3PoolEntry(UniswapV3PoolEntry):
+class SushiswapV3PoolTable(AbstractUniswapV3Pool):
+    __tablename__ = "sushiswap_v3_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "sushiswap_v3",
     }
@@ -242,12 +329,15 @@ _default_engine = create_engine(
 )
 default_session = sessionmaker(_default_engine)()
 
-current_rev = MigrationContext.configure(default_session.connection()).get_current_revision()
-current_head = ScriptDirectory.from_config(alembic_cfg).get_current_head()
-if current_rev != current_head:
+current_database_version = MigrationContext.configure(
+    default_session.connection()
+).get_current_revision()
+latest_database_version = ScriptDirectory.from_config(alembic_cfg).get_current_head()
+
+if latest_database_version is not None and current_database_version != latest_database_version:
     logger.warning(
-        f"The current database revision ({current_rev}) does not match the latest ({current_head}) "
-        f"for {__package__} version {__version__}!"
+        f"The current database revision ({current_database_version}) does not match the latest "
+        f"({latest_database_version}) for {__package__} version {__version__}!"
         "\n"
         "Database-related features may raise exceptions if you continue! Run database migrations "
         "with 'degenbot database upgrade'."

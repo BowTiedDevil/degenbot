@@ -5,8 +5,8 @@ from pydantic import TypeAdapter
 from degenbot import __version__, settings
 from degenbot.database import (
     create_new_sqlite_database,
-    current_head,
-    current_rev,
+    current_database_version,
+    latest_database_version,
     upgrade_existing_sqlite_database,
 )
 
@@ -62,7 +62,7 @@ def database() -> None: ...
 @database.command("reset")
 def database_reset() -> None:
     user_confirm = click.confirm(
-        f"The existing DB at {settings.database.path} will be removed and a new, empty DB will be created and initialized using the schema included in {__package__} version {__version__}. Do you want to proceed?",  # noqa: E501
+        f"The existing database at {settings.database.path} will be removed and a new, empty database will be created and initialized using the schema included in {__package__} version {__version__}. Do you want to proceed?",  # noqa: E501
         default=False,
     )
     if user_confirm:
@@ -75,7 +75,7 @@ def database_reset() -> None:
 @click.option("--force", is_flag=True, help="Skip confirmation prompt")
 def database_upgrade(*, force: bool) -> None:
     if force or click.confirm(
-        f"The DB at {settings.database.path} will be upgraded from version {current_rev} to {current_head}. Do you want to proceed?",  # noqa:E501
+        f"The database at {settings.database.path} will be upgraded from version {current_database_version} to {latest_database_version}. Do you want to proceed?",  # noqa:E501
         default=False,
     ):
         upgrade_existing_sqlite_database()
@@ -85,4 +85,4 @@ def database_upgrade(*, force: bool) -> None:
 
 @database.command("verify")
 def database_verify() -> None:
-    click.echo(f"(placeholder) DB at {settings.database.path} verified")
+    click.echo(f"(placeholder) database at {settings.database.path} verified")
