@@ -11,7 +11,7 @@ import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from eth_typing import BlockIdentifier, ChecksumAddress
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, scoped_session
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
@@ -64,24 +64,31 @@ if TYPE_CHECKING:
 
 def add_pool_to_database(
     pool: AbstractUniswapV2Pool,
-    session: Session = default_session,
+    session: Session | scoped_session[Session] = default_session,
 ) -> None:
-    with session.begin():
-        session.add(pool)
+    session.add(pool)
+    session.commit()
+
+
+def drop_pool_from_database(
+    pool: AbstractUniswapV2Pool,
+    session: Session | scoped_session[Session] = default_session,
+) -> None:
+    session.delete(pool)
+    session.commit()
 
 
 def get_pool_from_database(
     address: ChecksumAddress,
     chain_id: int,
-    session: Session = default_session,
+    session: Session | scoped_session[Session] = default_session,
 ) -> AbstractUniswapV2Pool | None:
-    with session:
-        return session.scalar(
-            select(LiquidityPoolTable).where(
-                LiquidityPoolTable.address == address,
-                LiquidityPoolTable.chain == chain_id,
-            )
-        )  # type: ignore[return-value]
+    return session.scalar(
+        select(LiquidityPoolTable).where(
+            LiquidityPoolTable.address == address,
+            LiquidityPoolTable.chain == chain_id,
+        )
+    )  # type: ignore[return-value]
 
 
 class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):

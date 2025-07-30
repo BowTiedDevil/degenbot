@@ -5,7 +5,7 @@ import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, scoped_session
 from web3 import AsyncWeb3, Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
@@ -34,24 +34,23 @@ if TYPE_CHECKING:
 
 def add_token_to_database(
     token: Erc20TokenTable,
-    session: Session = default_session,
+    session: Session | scoped_session[Session] = default_session,
 ) -> None:
-    with session.begin():
-        session.add(token)
+    session.add(token)
+    session.commit()
 
 
 def get_token_from_database(
     token: ChecksumAddress,
     chain_id: int,
-    session: Session = default_session,
+    session: Session | scoped_session[Session] = default_session,
 ) -> Erc20TokenTable | None:
-    with session:
-        return session.scalar(
-            select(Erc20TokenTable).where(
-                Erc20TokenTable.address == token,
-                Erc20TokenTable.chain == chain_id,
-            )
+    return session.scalar(
+        select(Erc20TokenTable).where(
+            Erc20TokenTable.address == token,
+            Erc20TokenTable.chain == chain_id,
         )
+    )
 
 
 class Erc20Token(AbstractErc20Token):

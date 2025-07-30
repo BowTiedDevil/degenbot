@@ -12,6 +12,7 @@ from sqlalchemy.orm import (
     declared_attr,
     mapped_column,
     relationship,
+    scoped_session,
     sessionmaker,
 )
 from sqlalchemy.types import TypeDecorator
@@ -327,7 +328,9 @@ def upgrade_existing_sqlite_database() -> None:
 _default_engine = create_engine(
     f"sqlite:///{settings.database.path.absolute()}",
 )
-default_session = sessionmaker(_default_engine)()
+default_session = scoped_session(
+    session_factory=sessionmaker(bind=_default_engine),
+)
 
 current_database_version = MigrationContext.configure(
     default_session.connection()
