@@ -2,6 +2,7 @@ from fractions import Fraction
 
 from degenbot import connection_manager, get_checksum_address
 from degenbot.camelot.functions import get_y_camelot, k_camelot
+from degenbot.database import CamelotV2PoolTable
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.functions import encode_function_calldata, raw_call
@@ -12,6 +13,8 @@ from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 
 class CamelotLiquidityPool(UniswapV2Pool):
+    type DatabasePoolType = CamelotV2PoolTable
+
     CAMELOT_ARBITRUM_POOL_INIT_HASH = (
         "0xa856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"
     )

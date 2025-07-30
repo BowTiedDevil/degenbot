@@ -1,3 +1,4 @@
+import contextlib
 import dataclasses
 from bisect import bisect_left
 from collections.abc import Iterable
@@ -9,10 +10,18 @@ from weakref import WeakSet
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from eth_typing import BlockIdentifier, ChecksumAddress
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
 from degenbot import connection_manager, get_checksum_address
+from degenbot.database import (
+    AbstractUniswapV2Pool,
+    LiquidityPoolTable,
+    UniswapV2PoolTable,
+    default_session,
+)
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.liquidity_pool import (
@@ -53,12 +62,36 @@ if TYPE_CHECKING:
     from hexbytes import HexBytes
 
 
+def add_pool_to_database(
+    pool: AbstractUniswapV2Pool,
+    session: Session = default_session,
+) -> None:
+    with session.begin():
+        session.add(pool)
+
+
+def get_pool_from_database(
+    address: ChecksumAddress,
+    chain_id: int,
+    session: Session = default_session,
+) -> AbstractUniswapV2Pool | None:
+    with session:
+        return session.scalar(
+            select(LiquidityPoolTable).where(
+                LiquidityPoolTable.address == address,
+                LiquidityPoolTable.chain == chain_id,
+            )
+        )  # type: ignore[return-value]
+
+
 class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
     """
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
 
     type PoolState = UniswapV2PoolState
+    type DatabasePoolType = UniswapV2PoolTable
+
     _state: PoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
@@ -102,6 +135,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         verify_address: bool = True,
         silent: bool = False,
         state_cache_depth: int = 8,
+        use_database: bool = True,
     ) -> None:
         """
         An abstract representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
@@ -132,73 +166,96 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             Suppress status output.
         state_cache_depth:
             How many unique block-state pairs to hold in the state cache.
+        use_database:
+            Read and write pool values to the database. Subsequent initializations can read values
+            from the database instead of fetching them from the chain.
         """
 
         self.address = get_checksum_address(address)
-
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+
+        self.init_hash = (
+            init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
+        )
+
+        pool_from_db = None
+
+        if use_database:
+            pool_from_db = get_pool_from_database(
+                address=self.address,
+                chain_id=self.chain_id,
+            )
+
         w3 = connection_manager.get_web3(self.chain_id)
         state_block = state_block if state_block is not None else w3.eth.block_number
 
-        try:
-            self.factory, (token0, token1), (reserves0, reserves1) = (
-                self.get_factory_tokens_reserves_batched(w3=w3, state_block=state_block)
-            )
-        except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
-            # Contracts differ slightly across Uniswap V2 forks, so decoding may fail. Catch this
-            # here and raise as a pool-specific exception
-            raise LiquidityPoolError(message="Could not decode contract data") from exc
-
+        # Get the tokens held by the pool
+        if pool_from_db is not None:
+            token0_address = pool_from_db.token0
+            token1_address = pool_from_db.token1
+        else:
+            try:
+                _, (token0_address, token1_address), _ = self.get_factory_tokens_reserves_batched(
+                    w3=w3, state_block=state_block
+                )
+            except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
+                # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
+                # Catch this here and raise as a pool-specific exception
+                raise LiquidityPoolError(message="Could not decode contract data") from exc
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
-
         try:
-            self.token0, self.token1 = (
-                token_manager.get_erc20token(
-                    address=token0,
-                    silent=silent,
-                ),
-                token_manager.get_erc20token(
-                    address=token1,
-                    silent=silent,
-                ),
+            self.token0 = token_manager.get_erc20token(
+                address=token0_address,
+                silent=silent,
+            )
+            self.token1 = token_manager.get_erc20token(
+                address=token1_address,
+                silent=silent,
             )
         except DegenbotValueError as e:
             raise LiquidityPoolError(message="Could not build one or more tokens.") from e
 
-        self._state_lock = Lock()
-        self._state = self.PoolState.__value__(
-            address=self.address,
-            reserves_token0=reserves0,
-            reserves_token1=reserves1,
-            block=state_block,
-        )
-        self._state_cache = BoundedCache(max_items=state_cache_depth)
-        self._state_cache[self.update_block] = self.state
+        # Get the factory & deployer info
+        if pool_from_db is not None:
+            self.factory = get_checksum_address(pool_from_db.factory)
+            self.deployer = get_checksum_address(pool_from_db.deployer or self.factory)
+        else:
+            try:
+                self.factory, _, _ = self.get_factory_tokens_reserves_batched(
+                    w3=w3, state_block=state_block
+                )
+            except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
+                # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
+                # Catch this here and raise as a pool-specific exception
+                raise LiquidityPoolError(message="Could not decode contract data") from exc
 
-        try:
-            # Use degenbot deployment values if available
+            # The deployer address is not typically available via getter, so assume the factory
+            # deployed the pool unless an address was explicitly provided
+            self.deployer = get_checksum_address(deployer_address or self.factory)
+
+        # Use registered deployment values if available
+        with contextlib.suppress(KeyError):
             factory_deployment = FACTORY_DEPLOYMENTS[self.chain_id][self.factory]
             self.init_hash = factory_deployment.pool_init_hash
             if factory_deployment.deployer is not None:  # pragma: no cover
-                deployer_address = factory_deployment.deployer
-        except KeyError:
-            # Deployment is unknown. Uses any inputs provided, otherwise use default values from
-            # original Uniswap contracts
-            self.init_hash = (
-                init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
-            )
+                self.deployer = factory_deployment.deployer
 
-        self.deployer = (
-            get_checksum_address(deployer_address) if deployer_address is not None else self.factory
-        )
+        # Set the fees taken on swaps for both tokens
+        if fee is not None:
+            match fee:
+                case Iterable():
+                    self.fee_token0, self.fee_token1 = fee
+                case Fraction():
+                    self.fee_token0 = self.fee_token1 = fee
+                case _:
+                    raise DegenbotValueError(message="Fees not passed correctly.")
+        elif pool_from_db is not None:
+            self.fee_token0 = Fraction(pool_from_db.fee_token0, pool_from_db.fee_denominator)
+            self.fee_token1 = Fraction(pool_from_db.fee_token1, pool_from_db.fee_denominator)
+        else:
+            self.fee_token0 = self.fee_token1 = self.FEE
 
-        match fee:
-            case Iterable():
-                self.fee_token0, self.fee_token1 = fee
-            case Fraction():
-                self.fee_token0 = self.fee_token1 = fee
-            case None:
-                self.fee_token0 = self.fee_token1 = self.FEE
+        assert self.fee_token0.denominator == self.fee_token1.denominator
 
         if verify_address and self.address != self._verified_address():  # pragma: no branch
             raise AddressMismatch
@@ -214,14 +271,40 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
         self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {fee_string}%)"
 
-        pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
+        reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=state_block)
 
+        self._state_lock = Lock()
+        self._state = self.PoolState.__value__(
+            address=self.address,
+            reserves_token0=reserves0,
+            reserves_token1=reserves1,
+            block=state_block,
+        )
+        self._state_cache = BoundedCache(max_items=state_cache_depth)
+        self._state_cache[self.update_block] = self.state
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
         if not silent:  # pragma: no cover
             logger.info(self.name)
             logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
             logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
+
+        if use_database and pool_from_db is None:
+            add_pool_to_database(
+                self.DatabasePoolType.__value__(
+                    address=self.address,
+                    chain=self.chain_id,
+                    token0=self.token0.address,
+                    token1=self.token1.address,
+                    factory=self.factory,
+                    deployer=self.deployer,
+                    fee_token0=self.fee_token0.numerator,
+                    fee_token1=self.fee_token1.numerator,
+                    fee_denominator=self.fee_token0.denominator,
+                )
+            )
+
+        pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
     @property
     def chain_id(self) -> int:
