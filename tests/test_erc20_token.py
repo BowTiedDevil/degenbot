@@ -157,7 +157,7 @@ def test_erc20token_functions(fork_mainnet_full: AnvilFork, weth: Erc20Token):
 
 
 async def test_async_erc20_functions(fork_mainnet_full: AnvilFork, weth: Erc20Token):
-    async with fork_mainnet_full.async_w3 as w3:
+    async with fork_mainnet_full.async_w3() as w3:
         await async_connection_manager.register_web3(w3)
         await weth.get_total_supply_async()
         await weth.get_approval_async(VITALIK_ADDRESS, weth.address)
