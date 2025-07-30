@@ -262,8 +262,6 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         else:
             self.fee_token0 = self.fee_token1 = self.FEE
 
-        assert self.fee_token0.denominator == self.fee_token1.denominator
-
         if verify_address and self.address != self._verified_address():  # pragma: no branch
             raise AddressMismatch
 
@@ -297,6 +295,14 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
 
         if use_database and pool_from_db is None:
+            # the fees must be normalized to the same denominator
+            normalize_denominator = self.fee_token0.denominator != self.fee_token1.denominator
+
+            if normalize_denominator:
+                normalized_denominator = self.fee_token0.denominator * self.fee_token1.denominator
+            else:
+                normalized_denominator = self.fee_token0.denominator
+
             add_pool_to_database(
                 self.DatabasePoolType.__value__(
                     address=self.address,
@@ -305,9 +311,23 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                     token1=self.token1.address,
                     factory=self.factory,
                     deployer=self.deployer,
-                    fee_token0=self.fee_token0.numerator,
-                    fee_token1=self.fee_token1.numerator,
-                    fee_denominator=self.fee_token0.denominator,
+                    fee_token0=(
+                        self.fee_token0.numerator
+                        * (
+                            normalized_denominator // self.fee_token0.denominator
+                            if normalize_denominator
+                            else 1
+                        )
+                    ),
+                    fee_token1=(
+                        self.fee_token1.numerator
+                        * (
+                            normalized_denominator // self.fee_token1.denominator
+                            if normalize_denominator
+                            else 1
+                        )
+                    ),
+                    fee_denominator=normalized_denominator,
                 )
             )
 
