@@ -2310,8 +2310,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 pool_a_state_override = state_overrides.get(v4_pool_a)
                 pool_b_state_override = state_overrides.get(v4_pool_b)
                 if TYPE_CHECKING:
-                    assert isinstance(pool_a_state_override, (UniswapV4PoolState, None))
-                    assert isinstance(pool_b_state_override, (UniswapV4PoolState, None))
+                    assert isinstance(pool_a_state_override, (UniswapV4PoolState, type(None)))
+                    assert isinstance(pool_b_state_override, (UniswapV4PoolState, type(None)))
 
                 rate_of_exchange_a = v4_pool_a.get_absolute_exchange_rate(
                     token=(
@@ -2343,8 +2343,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 pool_a_state_override = state_overrides.get(v3_pool_a)
                 pool_b_state_override = state_overrides.get(v3_pool_b)
                 if TYPE_CHECKING:
-                    assert isinstance(pool_a_state_override, (UniswapV3PoolState, None))
-                    assert isinstance(pool_b_state_override, (UniswapV3PoolState, None))
+                    assert isinstance(pool_a_state_override, (UniswapV3PoolState, type(None)))
+                    assert isinstance(pool_b_state_override, (UniswapV3PoolState, type(None)))
 
                 rate_of_exchange_a = v3_pool_a.get_absolute_exchange_rate(
                     token=self.input_token,
@@ -2411,8 +2411,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 v3_pool_state_override = state_overrides.get(v3_pool)
                 v4_pool_state_override = state_overrides.get(v4_pool)
                 if TYPE_CHECKING:
-                    assert isinstance(v3_pool_state_override, (UniswapV3PoolState, None))
-                    assert isinstance(v4_pool_state_override, (UniswapV4PoolState, None))
+                    assert isinstance(v3_pool_state_override, (UniswapV3PoolState, type(None)))
+                    assert isinstance(v4_pool_state_override, (UniswapV4PoolState, type(None)))
 
                 rate_of_exchange_v3 = v3_pool.get_absolute_exchange_rate(
                     token=v3_input_token,
@@ -2500,7 +2500,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                         )
                     case UniswapV2Pool(), UniswapV2PoolState() | None:
                         if TYPE_CHECKING:
-                            assert isinstance(v2_pool_state, (UniswapV2PoolState, None))
+                            assert isinstance(v2_pool_state, (UniswapV2PoolState, type(None)))
                         rate_of_exchange_v2 = v2_pool.get_absolute_exchange_rate(
                             token=v2_input_token,
                             override_state=v2_pool_state,
@@ -2510,7 +2510,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
                 v4_pool_state = state_overrides.get(v4_pool)
                 if TYPE_CHECKING:
-                    assert isinstance(v4_pool_state, (UniswapV4PoolState, None))
+                    assert isinstance(v4_pool_state, (UniswapV4PoolState, type(None)))
 
                 rate_of_exchange_v4 = v4_pool.get_absolute_exchange_rate(
                     token=v4_input_token,
@@ -2558,9 +2558,9 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 v3_pool_state = state_overrides.get(v3_pool)
                 if TYPE_CHECKING:
                     assert isinstance(
-                        v2_pool_state, (AerodromeV2PoolState, UniswapV2PoolState, None)
+                        v2_pool_state, (AerodromeV2PoolState, UniswapV2PoolState, type(None))
                     )
-                    assert isinstance(v3_pool_state, (UniswapV3PoolState, None))
+                    assert isinstance(v3_pool_state, (UniswapV3PoolState, type(None)))
 
                 match v2_pool, v2_pool_state:
                     case UniswapV2Pool(), (UniswapV2PoolState() | None):
@@ -2611,14 +2611,14 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 match v2_pool_a:
                     case UniswapV2Pool():
                         if TYPE_CHECKING:
-                            assert isinstance(v2_pool_a_state, (UniswapV2PoolState, None))
+                            assert isinstance(v2_pool_a_state, (UniswapV2PoolState, type(None)))
                         rate_of_exchange_a = v2_pool_a.get_absolute_exchange_rate(
                             token=self.input_token,
                             override_state=v2_pool_a_state,
                         )
                     case AerodromeV2Pool():
                         if TYPE_CHECKING:
-                            assert isinstance(v2_pool_a_state, (AerodromeV2PoolState, None))
+                            assert isinstance(v2_pool_a_state, (AerodromeV2PoolState, type(None)))
                         rate_of_exchange_a = v2_pool_a.get_absolute_exchange_rate(
                             token=self.input_token,
                             override_state=v2_pool_a_state,
@@ -2629,14 +2629,14 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 match v2_pool_b:
                     case UniswapV2Pool():
                         if TYPE_CHECKING:
-                            assert isinstance(v2_pool_b_state, (UniswapV2PoolState, None))
+                            assert isinstance(v2_pool_b_state, (UniswapV2PoolState, type(None)))
                         rate_of_exchange_b = v2_pool_b.get_absolute_exchange_rate(
                             token=self.input_token,
                             override_state=v2_pool_b_state,
                         )
                     case AerodromeV2Pool():
                         if TYPE_CHECKING:
-                            assert isinstance(v2_pool_b_state, (AerodromeV2PoolState, None))
+                            assert isinstance(v2_pool_b_state, (AerodromeV2PoolState, type(None)))
                         rate_of_exchange_b = v2_pool_b.get_absolute_exchange_rate(
                             token=self.input_token,
                             override_state=v2_pool_b_state,
