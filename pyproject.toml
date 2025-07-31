@@ -156,6 +156,7 @@ ignore = [
     "PLR0915",  # too-many-statements
     "N818",     # error-suffix-on-exception-name
     "UP038",    # deprecated - ref: https://docs.astral.sh/ruff/rules/non-pep604-isinstance/
+    "S101",     # asserts are used often, but not as input validation
 ]
 logger-objects = [
     "logging.logger",
