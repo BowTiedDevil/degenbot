@@ -58,7 +58,7 @@ class IntMappedToString(TypeDecorator[int]):
         Perform the Python type -> DB type conversion.
         """
 
-        assert isinstance(value, int | None)
+        assert isinstance(value, (int, None))
         return None if value is None else str(value)
 
     def process_result_value(
@@ -70,7 +70,7 @@ class IntMappedToString(TypeDecorator[int]):
         Perform the DB type -> Python type conversion.
         """
 
-        assert isinstance(value, str | None)
+        assert isinstance(value, (str, None))
         return None if value is None else int(value)
 
 

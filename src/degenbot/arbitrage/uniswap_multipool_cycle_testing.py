@@ -489,7 +489,7 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
             )
 
         if all(
-            pool for pool in self.swap_pools if isinstance(pool, AerodromeV2Pool | UniswapV2Pool)
+            pool for pool in self.swap_pools if isinstance(pool, (AerodromeV2Pool, UniswapV2Pool))
         ):
             return v2_only_calc(
                 pools=self.swap_pools,
