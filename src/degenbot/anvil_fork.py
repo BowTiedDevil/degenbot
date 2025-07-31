@@ -436,7 +436,7 @@ class AnvilFork:
             raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
 
     def set_nonce(self, address: str, nonce: int) -> None:
-        method = "anvil_setNextBlockBaseFeePerGas"
+        method = "anvil_setNonce"
         resp = self.w3.provider.make_request(
             method=RPCEndpoint(method),
             params=[address, nonce],
