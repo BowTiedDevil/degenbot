@@ -78,12 +78,16 @@ def fork_base_archive() -> AnvilFork:
     return AnvilFork(
         fork_url=BASE_ARCHIVE_NODE_WS_URI,
         ipc_provider_kwargs={"timeout": 600},
+        anvil_opts=["--optimism"],
     )
 
 
 @pytest.fixture
 def fork_base_full() -> AnvilFork:
-    return AnvilFork(fork_url=BASE_FULL_NODE_WS_URI)
+    return AnvilFork(
+        fork_url=BASE_FULL_NODE_WS_URI,
+        anvil_opts=["--optimism"],
+    )
 
 
 @pytest.fixture(
