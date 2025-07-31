@@ -3,8 +3,8 @@ import json
 import pytest
 from click.testing import CliRunner
 
-from degenbot import __version__
 from degenbot.cli import cli
+from degenbot.version import __version__
 
 
 @pytest.fixture

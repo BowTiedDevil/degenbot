@@ -17,12 +17,9 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.types import TypeDecorator
 
-from degenbot import __version__
 from degenbot.config import alembic_cfg, settings
 from degenbot.logging import logger
-
-type Tick = int
-type Word = int
+from degenbot.version import __version__
 
 
 class TicksAtWord(pydantic.BaseModel):
