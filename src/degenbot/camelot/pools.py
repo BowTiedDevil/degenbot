@@ -1,7 +1,8 @@
 from fractions import Fraction
 
-from degenbot import connection_manager, get_checksum_address
 from degenbot.camelot.functions import get_y_camelot, k_camelot
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import connection_manager
 from degenbot.database import CamelotV2PoolTable
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError

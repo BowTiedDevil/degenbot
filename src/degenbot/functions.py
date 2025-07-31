@@ -12,7 +12,7 @@ from web3._utils.threads import Timeout
 from web3.exceptions import Web3RPCError
 from web3.types import BlockIdentifier, FilterParams, LogReceipt
 
-from degenbot import get_checksum_address
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.base import DegenbotError

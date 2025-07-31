@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 from eth_typing import ChecksumAddress
 
-from degenbot import get_checksum_address
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
 from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.exceptions.manager import (

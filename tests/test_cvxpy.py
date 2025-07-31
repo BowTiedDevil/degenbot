@@ -14,16 +14,13 @@ from cvxpy.atoms.affine.bmat import bmat as cvxpy_bmat
 from cvxpy.atoms.affine.sum import sum as cvxpy_sum
 from cvxpy.atoms.geo_mean import geo_mean
 
-from degenbot import (
-    AnvilFork,
-    Erc20Token,
-    UniswapV2Pool,
-    UniswapV2PoolState,
-    get_checksum_address,
-    set_web3,
-)
+from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage.uniswap_multipool_cycle_testing import _UniswapMultiPoolCycleTesting
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import set_web3
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.erc20.erc20 import Erc20Token
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool, UniswapV2PoolState
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"

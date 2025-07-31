@@ -11,8 +11,8 @@ from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
 import degenbot.registry
-from degenbot import get_checksum_address
 from degenbot.chainlink import ChainlinkPriceContract
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import async_connection_manager, connection_manager
 from degenbot.database import Erc20TokenTable, default_session
 from degenbot.exceptions import DegenbotValueError

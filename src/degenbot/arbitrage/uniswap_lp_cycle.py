@@ -12,7 +12,6 @@ from eth_typing import ChecksumAddress, HexStr
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
-from degenbot import get_checksum_address
 from degenbot.aerodrome import AerodromeV2Pool, AerodromeV2PoolState, AerodromeV3Pool
 from degenbot.arbitrage.types import (
     ArbitrageCalculationResult,
@@ -20,6 +19,7 @@ from degenbot.arbitrage.types import (
     UniswapV3PoolSwapAmounts,
     UniswapV4PoolSwapAmounts,
 )
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
 from degenbot.exceptions import DegenbotValueError

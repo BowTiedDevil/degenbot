@@ -18,27 +18,18 @@ from cvxpy.settings import SOLUTION_PRESENT
 from eth_typing import ChecksumAddress, HexStr
 from scipy.optimize import OptimizeResult, minimize_scalar
 
-from degenbot import (
-    AerodromeV2Pool,
-    AerodromeV2PoolState,
-    AerodromeV3Pool,
-    ArbitrageCalculationResult,
-    Erc20Token,
-    UniswapLpCycle,
-    UniswapV2Pool,
-    UniswapV2PoolState,
-    UniswapV3Pool,
-    UniswapV3PoolState,
-    UniswapV4Pool,
-    UniswapV4PoolState,
-    get_checksum_address,
-)
+from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
+from degenbot.aerodrome.types import AerodromeV2PoolState
 from degenbot.arbitrage.types import (
+    ArbitrageCalculationResult,
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
     UniswapV4PoolSwapAmounts,
 )
+from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT256, WRAPPED_NATIVE_TOKENS
+from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import ArbitrageError
 from degenbot.exceptions.evm import EVMRevertError
@@ -48,8 +39,13 @@ from degenbot.exceptions.liquidity_pool import (
     PossibleInaccurateResult,
 )
 from degenbot.logging import logger
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
-from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v3_types import UniswapV3PoolState
+from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS, UniswapV4Pool
+from degenbot.uniswap.v4_types import UniswapV4PoolState
 
 SLOW_ARB_CALC_THRESHOLD = 0.25
 SLOW_LOOP_TIME = 0.05

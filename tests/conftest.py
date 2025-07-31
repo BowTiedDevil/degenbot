@@ -4,14 +4,11 @@ from typing import Any
 import dotenv
 import pytest
 
-from degenbot import (
-    AnvilFork,
-    Erc20TokenManager,
-    connection_manager,
-    logger,
-    pool_registry,
-    token_registry,
-)
+from degenbot.anvil_fork import AnvilFork
+from degenbot.connection import connection_manager
+from degenbot.erc20.manager import Erc20TokenManager
+from degenbot.logging import logger
+from degenbot.registry import pool_registry, token_registry
 from degenbot.types.concrete import AbstractPublisherMessage, Publisher
 
 env_file = dotenv.find_dotenv("tests.env")

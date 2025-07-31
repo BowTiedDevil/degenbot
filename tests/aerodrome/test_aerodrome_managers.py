@@ -1,6 +1,7 @@
-from degenbot import get_checksum_address, set_web3
 from degenbot.aerodrome.managers import AerodromeV2PoolManager, AerodromeV3PoolManager
 from degenbot.anvil_fork import AnvilFork
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import set_web3
 
 BASE_AERODROME_V2_FACTORY = get_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da")
 BASE_AERODROME_V3_FACTORY = get_checksum_address("0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A")

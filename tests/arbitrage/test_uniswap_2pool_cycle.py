@@ -3,22 +3,19 @@ import dataclasses
 import pytest
 import web3
 
-from degenbot import (
-    AnvilFork,
-    Erc20Token,
-    EtherPlaceholder,
-    UniswapV2Pool,
-    UniswapV3Pool,
-    UniswapV4Pool,
-    get_checksum_address,
-    pool_registry,
-    set_web3,
-    token_registry,
-)
+from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts, UniswapV4PoolSwapAmounts
 from degenbot.arbitrage.uniswap_2pool_cycle_testing import _UniswapTwoPoolCycleTesting
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import set_web3
+from degenbot.erc20.erc20 import Erc20Token
+from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions.arbitrage import RateOfExchangeBelowMinimum
 from degenbot.exceptions.liquidity_pool import PossibleInaccurateResult
+from degenbot.registry import pool_registry, token_registry
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.conftest import env_values
 
 # Token addresses

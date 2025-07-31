@@ -3,7 +3,8 @@ from typing import TYPE_CHECKING
 import eth_account
 import pytest
 
-from degenbot import AnvilFork, BuilderEndpoint
+from degenbot.anvil_fork import AnvilFork
+from degenbot.builder_endpoint import BuilderEndpoint
 from degenbot.exceptions import DegenbotValueError
 
 if TYPE_CHECKING:

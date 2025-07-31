@@ -1,13 +1,11 @@
 import pytest
 
-from degenbot import (
-    AnvilFork,
-    UniswapV3LiquiditySnapshot,
-    UniswapV3PoolManager,
-    get_checksum_address,
-    set_web3,
-)
+from degenbot.anvil_fork import AnvilFork
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import set_web3
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.uniswap.managers import UniswapV3PoolManager
+from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,

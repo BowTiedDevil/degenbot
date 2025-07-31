@@ -10,7 +10,6 @@ from eth_typing import ChecksumAddress
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
-from degenbot import connection_manager, get_checksum_address
 from degenbot.arbitrage.types import (
     ArbitrageCalculationResult,
     CurveStableSwapPoolSwapAmounts,
@@ -18,6 +17,8 @@ from degenbot.arbitrage.types import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import connection_manager
 from degenbot.constants import MAX_UINT256
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.types import CurveStableswapPoolState

@@ -2,7 +2,7 @@ import contextlib
 from typing import TYPE_CHECKING, Self
 
 import degenbot.exceptions
-from degenbot import get_checksum_address
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.registry import RegistryAlreadyInitialized
 from degenbot.types.aliases import ChainId
 

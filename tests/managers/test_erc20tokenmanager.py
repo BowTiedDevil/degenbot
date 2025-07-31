@@ -1,7 +1,11 @@
 import pytest
 
-from degenbot import AnvilFork, Erc20TokenManager, get_checksum_address, set_web3, token_registry
+from degenbot.anvil_fork import AnvilFork
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import set_web3
+from degenbot.erc20.manager import Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
+from degenbot.registry import token_registry
 
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 WBTC_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")

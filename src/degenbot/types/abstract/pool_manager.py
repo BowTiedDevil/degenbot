@@ -4,7 +4,7 @@ from weakref import WeakValueDictionary
 
 from eth_typing import ChecksumAddress
 
-from degenbot import get_checksum_address
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
 from degenbot.types.aliases import ChainId
 

@@ -1,8 +1,8 @@
 import pytest
 import web3
 
-from degenbot import (
-    AnvilFork,
+from degenbot.anvil_fork import AnvilFork
+from degenbot.connection import (
     async_connection_manager,
     connection_manager,
     get_web3,

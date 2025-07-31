@@ -1,16 +1,12 @@
 import pytest
 from hexbytes import HexBytes
 
-from degenbot import (
-    AnvilFork,
-    Erc20Token,
-    EtherPlaceholder,
-    async_connection_manager,
-    get_checksum_address,
-    set_web3,
-)
+from degenbot.anvil_fork import AnvilFork
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import async_connection_manager, set_web3
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.erc20.erc20 import get_token_from_database
+from degenbot.erc20.erc20 import Erc20Token, get_token_from_database
+from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.erc20 import NoPriceOracle
 from degenbot.types.concrete import BoundedCache

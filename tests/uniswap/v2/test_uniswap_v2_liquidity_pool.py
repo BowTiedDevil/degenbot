@@ -6,21 +6,13 @@ import pytest
 from hexbytes import HexBytes
 
 import degenbot.uniswap.deployments
-from degenbot import (
-    AnvilFork,
-    CamelotLiquidityPool,
-    Erc20Token,
-    PancakeV2Pool,
-    UniswapV2Pool,
-    UniswapV2PoolExternalUpdate,
-    UniswapV2PoolSimulationResult,
-    UniswapV2PoolState,
-    get_checksum_address,
-    pool_registry,
-    set_web3,
-)
+from degenbot.anvil_fork import AnvilFork
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
+from degenbot.camelot.pools import CamelotLiquidityPool
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import set_web3
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.liquidity_pool import (
     AddressMismatch,
@@ -31,12 +23,20 @@ from degenbot.exceptions.liquidity_pool import (
     NoPoolStateAvailable,
 )
 from degenbot.functions import encode_function_calldata, raw_call
+from degenbot.pancakeswap.pools import PancakeV2Pool
+from degenbot.registry import pool_registry
 from degenbot.uniswap.abi import UNISWAP_V2_ROUTER_ABI
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.v2_liquidity_pool import (
+    UniswapV2Pool,
     UnregisteredLiquidityPool,
     drop_pool_from_database,
     get_pool_from_database,
+)
+from degenbot.uniswap.v2_types import (
+    UniswapV2PoolExternalUpdate,
+    UniswapV2PoolSimulationResult,
+    UniswapV2PoolState,
 )
 
 if TYPE_CHECKING:

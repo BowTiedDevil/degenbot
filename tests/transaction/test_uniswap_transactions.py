@@ -3,8 +3,10 @@ from typing import Any
 import pytest
 from hexbytes import HexBytes
 
-from degenbot import AnvilFork, UniswapTransaction, set_web3
+from degenbot.anvil_fork import AnvilFork
+from degenbot.connection import set_web3
 from degenbot.exceptions.transaction import DeadlineExpired, TransactionError, UnknownRouterAddress
+from degenbot.transaction.uniswap_transaction import UniswapTransaction
 from degenbot.types.aliases import BlockNumber
 
 

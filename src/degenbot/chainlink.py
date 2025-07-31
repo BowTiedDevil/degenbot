@@ -1,7 +1,7 @@
 import pydantic_core
 from web3.contract.contract import Contract
 
-from degenbot import get_checksum_address
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
 from degenbot.types.aliases import ChainId
 

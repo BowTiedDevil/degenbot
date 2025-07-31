@@ -10,7 +10,6 @@ from eth_typing import ChecksumAddress
 from web3 import Web3
 from web3.types import BlockIdentifier
 
-from degenbot import connection_manager, get_checksum_address
 from degenbot.aerodrome.functions import (
     calc_exact_in_stable,
     generate_aerodrome_v2_pool_address,
@@ -22,6 +21,8 @@ from degenbot.aerodrome.types import (
     AerodromeV2PoolStateUpdated,
     AerodromeV3PoolState,
 )
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import connection_manager
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.liquidity_pool import (

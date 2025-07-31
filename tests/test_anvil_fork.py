@@ -5,7 +5,9 @@ import web3.middleware
 from hexbytes import HexBytes
 from pydantic import ValidationError
 
-from degenbot import AnvilFork, get_checksum_address, set_web3
+from degenbot.anvil_fork import AnvilFork
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import DegenbotValueError
 

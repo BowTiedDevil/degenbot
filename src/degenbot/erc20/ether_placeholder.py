@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from web3.types import BlockIdentifier
 
 import degenbot.registry
-from degenbot import get_checksum_address
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20 import Erc20Token

@@ -3,7 +3,7 @@ import random
 import pytest
 from eth_typing import ChecksumAddress
 
-from degenbot import get_checksum_address
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.uniswap.deployments import (
     FACTORY_DEPLOYMENTS,

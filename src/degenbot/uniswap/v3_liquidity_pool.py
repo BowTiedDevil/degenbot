@@ -13,7 +13,8 @@ from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import BlockIdentifier
 
-from degenbot import connection_manager, get_checksum_address
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import connection_manager
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.evm import EVMRevertError

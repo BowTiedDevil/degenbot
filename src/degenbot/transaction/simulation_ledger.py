@@ -1,6 +1,6 @@
 from eth_typing import ChecksumAddress
 
-from degenbot import get_checksum_address
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.logging import logger
 

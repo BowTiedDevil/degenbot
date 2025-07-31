@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session, scoped_session
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
-from degenbot import connection_manager, get_checksum_address
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import connection_manager
 from degenbot.database import (
     AbstractUniswapV2Pool,
     LiquidityPoolTable,

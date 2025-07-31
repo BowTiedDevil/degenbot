@@ -6,14 +6,11 @@ import eth_abi.abi
 import pytest
 from web3 import Web3
 
-from degenbot import (
-    AnvilFork,
-    CurveStableswapPool,
-    connection_manager,
-    get_checksum_address,
-    set_web3,
-)
+from degenbot.anvil_fork import AnvilFork
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import connection_manager, set_web3
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
+from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions.arbitrage import NoLiquidity
 from degenbot.exceptions.liquidity_pool import BrokenPool, InvalidSwapInputAmount
 

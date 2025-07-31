@@ -4,12 +4,13 @@ from typing import TYPE_CHECKING, Any, Never, Self
 
 from eth_typing import ChecksumAddress
 
-from degenbot import connection_manager, get_checksum_address
 from degenbot.aerodrome.functions import (
     generate_aerodrome_v2_pool_address,
     generate_aerodrome_v3_pool_address,
 )
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import connection_manager
 from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.exceptions.manager import (
     ManagerAlreadyInitialized,

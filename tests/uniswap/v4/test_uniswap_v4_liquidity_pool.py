@@ -10,13 +10,17 @@ from hexbytes import HexBytes
 from web3.contract import Contract
 from web3.exceptions import ContractLogicError
 
-from degenbot import AnvilFork, UniswapV4Pool, get_checksum_address, pool_registry, set_web3
+from degenbot.anvil_fork import AnvilFork
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import set_web3
 from degenbot.constants import MAX_INT128, ZERO_ADDRESS
 from degenbot.exceptions.liquidity_pool import (
     IncompleteSwap,
     LiquidityPoolError,
     PossibleInaccurateResult,
 )
+from degenbot.registry import pool_registry
+from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 if TYPE_CHECKING:
     from eth_typing import HexStr

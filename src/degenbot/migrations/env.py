@@ -3,7 +3,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from degenbot import settings
+from degenbot.config import settings
 from degenbot.database import Base
 
 # this is the Alembic Config object, which provides

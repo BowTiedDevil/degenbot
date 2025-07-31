@@ -15,21 +15,18 @@ from cvxpy.atoms.geo_mean import geo_mean
 from cvxpy.error import SolverError
 from eth_typing import ChecksumAddress
 
-from degenbot import (
-    AerodromeV2Pool,
-    AerodromeV2PoolState,
-    ArbitrageCalculationResult,
-    Erc20Token,
-    UniswapLpCycle,
-    UniswapV2Pool,
-    UniswapV2PoolState,
-    get_checksum_address,
-)
-from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
+from degenbot.aerodrome.pools import AerodromeV2Pool
+from degenbot.aerodrome.types import AerodromeV2PoolState
+from degenbot.arbitrage.types import ArbitrageCalculationResult, UniswapV2PoolSwapAmounts
+from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.arbitrage import ArbitrageError
 from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.logging import logger
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 DEBUG_VERIFY_CACHED_PROBLEM = False
 

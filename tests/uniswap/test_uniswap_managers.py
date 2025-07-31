@@ -1,18 +1,13 @@
 import pytest
 from eth_typing import ChainId
 
-from degenbot import (
-    AnvilFork,
-    PancakeV3PoolManager,
-    SushiswapV2PoolManager,
-    SushiswapV3PoolManager,
-    UniswapV2PoolManager,
-    UniswapV3PoolManager,
-    get_checksum_address,
-    pool_registry,
-    set_web3,
-)
+from degenbot.anvil_fork import AnvilFork
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import set_web3
 from degenbot.exceptions.manager import ManagerAlreadyInitialized, ManagerError, PoolNotAssociated
+from degenbot.pancakeswap.managers import PancakeV3PoolManager
+from degenbot.registry import pool_registry
+from degenbot.sushiswap.managers import SushiswapV2PoolManager, SushiswapV3PoolManager
 from degenbot.uniswap.deployments import (
     EthereumMainnetSushiswapV2,
     EthereumMainnetSushiswapV3,
@@ -21,6 +16,7 @@ from degenbot.uniswap.deployments import (
     UniswapFactoryDeployment,
     UniswapV3ExchangeDeployment,
 )
+from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
 
 MAINNET_UNISWAP_V2_FACTORY_ADDRESS = get_checksum_address(

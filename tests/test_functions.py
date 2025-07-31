@@ -3,7 +3,9 @@ from eth_typing import Hash32, HexStr
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from degenbot import AnvilFork, get_checksum_address, set_web3
+from degenbot.anvil_fork import AnvilFork
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import set_web3
 from degenbot.exceptions import DegenbotValueError
 from degenbot.functions import (
     create2_address,

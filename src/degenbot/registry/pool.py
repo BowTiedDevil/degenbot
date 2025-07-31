@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Self
 from hexbytes import HexBytes
 
 import degenbot.exceptions
-from degenbot import get_checksum_address
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.registry import RegistryAlreadyInitialized
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractRegistry
 from degenbot.types.aliases import ChainId

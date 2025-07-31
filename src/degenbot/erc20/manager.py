@@ -1,7 +1,8 @@
 from threading import Lock
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from degenbot import connection_manager, get_checksum_address
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import connection_manager
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
 from degenbot.registry import token_registry
 from degenbot.types.abstract import AbstractManager
