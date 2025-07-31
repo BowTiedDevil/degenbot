@@ -19,6 +19,7 @@ from sqlalchemy.types import TypeDecorator
 
 from degenbot.config import alembic_cfg, settings
 from degenbot.logging import logger
+from degenbot.types.aliases import Tick, Word
 from degenbot.version import __version__
 
 
