@@ -58,7 +58,7 @@ def test_connection_manager(fork_mainnet_full: AnvilFork):
 
 
 async def test_async_connection_manager(fork_mainnet_full: AnvilFork):
-    async with fork_mainnet_full.async_w3 as async_w3:
+    async with fork_mainnet_full.async_w3() as async_w3:
         await set_async_web3(async_w3)
         assert async_connection_manager.default_chain_id == await async_w3.eth.chain_id
         assert async_connection_manager.get_web3(await async_w3.eth.chain_id) is async_w3
