@@ -1,4 +1,5 @@
 import pathlib
+import shutil
 from typing import Annotated, ClassVar
 
 import pydantic
@@ -304,6 +305,14 @@ class SushiswapV3PoolTable(AbstractUniswapV3Pool):
     }
 
 
+def back_up_sqlite_database(db_path: pathlib.Path) -> None:
+    assert db_path.exists()
+
+    backup_path = pathlib.Path(db_path).with_suffix(db_path.suffix + ".bak")
+    assert not backup_path.exists()  # TODO: raise an exception here instead
+    shutil.copy(db_path, backup_path)
+
+
 def create_new_sqlite_database(db_path: pathlib.Path) -> None:
     if db_path.exists():
         db_path.unlink()
@@ -314,6 +323,17 @@ def create_new_sqlite_database(db_path: pathlib.Path) -> None:
     Base.metadata.create_all(bind=engine)
     logger.info(f"Initialized new SQLite database at {db_path}")
     command.stamp(alembic_cfg, "head")
+
+
+def vacuum_sqlite_database(db_path: pathlib.Path) -> None:
+    engine = create_engine(
+        f"sqlite:///{db_path.absolute()}",
+    )
+    with engine.connect() as connection:
+        connection.execute(
+            text("VACUUM;"),
+        )
+        logger.info(f"Defragmented SQLite database at {db_path}")
 
 
 def upgrade_existing_sqlite_database() -> None:

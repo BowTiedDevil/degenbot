@@ -4,10 +4,12 @@ from pydantic import TypeAdapter
 
 from degenbot.config import settings
 from degenbot.database import (
+    back_up_sqlite_database,
     create_new_sqlite_database,
     current_database_version,
     latest_database_version,
     upgrade_existing_sqlite_database,
+    vacuum_sqlite_database,
 )
 from degenbot.version import __version__
 
@@ -70,6 +72,14 @@ def database() -> None:
     """
 
 
+@database.command("backup")
+def database_backup() -> None:
+    """
+    Back up the database.
+    """
+    back_up_sqlite_database(settings.database.path)
+
+
 @database.command("reset")
 def database_reset() -> None:
     """
@@ -100,6 +110,14 @@ def database_upgrade(*, force: bool) -> None:
         upgrade_existing_sqlite_database()
     else:
         raise click.Abort
+
+
+@database.command("defrag")
+def database_defragment() -> None:
+    """
+    Perform file-level defragmentation to the database.
+    """
+    vacuum_sqlite_database(settings.database.path)
 
 
 @database.command("verify")
