@@ -18,7 +18,10 @@ def cli() -> None: ...
 
 
 @cli.group()
-def config() -> None: ...
+def config() -> None:
+    """
+    Configuration commands
+    """
 
 
 @config.command("show")
@@ -38,6 +41,10 @@ def config() -> None: ...
     default=True,
 )
 def config_show(output_format: str) -> None:
+    """
+    Display the current configuration in JSON or TOML (default) format.
+    """
+
     match output_format:
         case "json":
             click.echo(
@@ -57,11 +64,18 @@ def config_show(output_format: str) -> None:
 
 
 @cli.group()
-def database() -> None: ...
+def database() -> None:
+    """
+    Database commands
+    """
 
 
 @database.command("reset")
 def database_reset() -> None:
+    """
+    Remove and recreate the database.
+    """
+
     user_confirm = click.confirm(
         f"The existing database at {settings.database.path} will be removed and a new, empty database will be created and initialized using the schema included in {__package__} version {__version__}. Do you want to proceed?",  # noqa: E501
         default=False,
@@ -75,6 +89,10 @@ def database_reset() -> None:
 @database.command("upgrade")
 @click.option("--force", is_flag=True, help="Skip confirmation prompt")
 def database_upgrade(*, force: bool) -> None:
+    """
+    Upgrade the database to the latest schema.
+    """
+
     if force or click.confirm(
         f"The database at {settings.database.path} will be upgraded from version {current_database_version} to {latest_database_version}. Do you want to proceed?",  # noqa:E501
         default=False,
@@ -86,4 +104,7 @@ def database_upgrade(*, force: bool) -> None:
 
 @database.command("verify")
 def database_verify() -> None:
+    """
+    (not implemented)
+    """
     click.echo(f"(placeholder) database at {settings.database.path} verified")
