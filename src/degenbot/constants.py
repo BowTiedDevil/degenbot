@@ -59,25 +59,3 @@ WRAPPED_NATIVE_TOKENS: dict[int, ChecksumAddress] = {
     ChainId.ARB1: get_checksum_address("0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"),
     ChainId.AVAX: get_checksum_address("0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7"),
 }
-
-
-__all__ = (
-    "MAX_INT16",
-    "MAX_INT24",
-    "MAX_INT128",
-    "MAX_INT256",
-    "MAX_UINT8",
-    "MAX_UINT128",
-    "MAX_UINT160",
-    "MAX_UINT256",
-    "MIN_INT16",
-    "MIN_INT24",
-    "MIN_INT128",
-    "MIN_INT256",
-    "MIN_UINT8",
-    "MIN_UINT128",
-    "MIN_UINT160",
-    "MIN_UINT256",
-    "WRAPPED_NATIVE_TOKENS",
-    "ZERO_ADDRESS",
-)
