@@ -14,7 +14,7 @@ import degenbot.registry
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import async_connection_manager, connection_manager
-from degenbot.database import Erc20TokenTable, default_session
+from degenbot.database import Erc20TokenTable, default_read_only_session, default_read_write_session
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.erc20 import NoPriceOracle
 from degenbot.functions import (
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 def add_token_to_database(
     token: Erc20TokenTable,
-    session: Session | scoped_session[Session] = default_session,
+    session: Session | scoped_session[Session] = default_read_write_session,
 ) -> None:
     session.add(token)
     session.commit()
@@ -43,7 +43,7 @@ def add_token_to_database(
 def get_token_from_database(
     token: ChecksumAddress,
     chain_id: int,
-    session: Session | scoped_session[Session] = default_session,
+    session: Session | scoped_session[Session] = default_read_only_session,
 ) -> Erc20TokenTable | None:
     return session.scalar(
         select(Erc20TokenTable).where(

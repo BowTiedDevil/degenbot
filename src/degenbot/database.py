@@ -5,7 +5,7 @@ import pydantic
 from alembic import command
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Dialect, ForeignKey, Index, String, Text, create_engine
+from sqlalchemy import URL, Dialect, ForeignKey, Index, String, Text, create_engine, text
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -321,15 +321,46 @@ def upgrade_existing_sqlite_database() -> None:
     logger.info(f"Updated existing SQLite database at {settings.database.path.absolute()}")
 
 
-_default_engine = create_engine(
-    f"sqlite:///{settings.database.path.absolute()}",
-)
-default_session = scoped_session(
-    session_factory=sessionmaker(bind=_default_engine),
+default_read_only_session = scoped_session(
+    session_factory=sessionmaker(
+        bind=create_engine(
+            URL.create(
+                drivername="sqlite",
+                database=str(settings.database.path.absolute()),
+                query={
+                    "mode": "ro",
+                },
+            ),
+        )
+    ),
 )
 
+
+default_read_write_session = scoped_session(
+    session_factory=sessionmaker(
+        bind=create_engine(
+            URL.create(
+                drivername="sqlite",
+                database=str(settings.database.path.absolute()),
+            ),
+        )
+    ),
+)
+
+if default_read_only_session.connection().execute(text("PRAGMA journal_mode;")).scalar() != "wal":
+    logger.warning(
+        "The current database is not set to write-ahead logging (WAL). This mode provides the best "
+        "performance and consistency during simultaneous reading & writing operations."
+        "\n"
+        "You can re-initialize the database using 'degenbot database reset'. To preserve the "
+        "existing database, you may set WAL mode using 'PRAGMA journal_mode=WAL;' with the "
+        "SQLite binary, or by using DB Browser for SQLite (https://sqlitebrowser.org/) "
+        "or similar."
+    )
+
+
 current_database_version = MigrationContext.configure(
-    default_session.connection()
+    default_read_only_session.connection()
 ).get_current_revision()
 latest_database_version = ScriptDirectory.from_config(alembic_cfg).get_current_head()
 
