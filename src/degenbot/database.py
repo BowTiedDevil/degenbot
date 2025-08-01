@@ -320,9 +320,24 @@ def create_new_sqlite_database(db_path: pathlib.Path) -> None:
     engine = create_engine(
         f"sqlite:///{db_path.absolute()}",
     )
-    Base.metadata.create_all(bind=engine)
-    logger.info(f"Initialized new SQLite database at {db_path}")
-    command.stamp(alembic_cfg, "head")
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("PRAGMA journal_mode=WAL;"),
+            ).scalar()
+            == "wal"
+        )
+        connection.execute(
+            text("PRAGMA auto_vacuum=FULL;"),
+        )
+
+        Base.metadata.create_all(bind=engine)
+        connection.execute(
+            text("VACUUM;"),
+        )
+
+        logger.info(f"Initialized new SQLite database at {db_path}")
+        command.stamp(alembic_cfg, "head")
 
 
 def vacuum_sqlite_database(db_path: pathlib.Path) -> None:
