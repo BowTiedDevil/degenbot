@@ -221,6 +221,42 @@ True
 HexBytes('0x45')
 ```
 
+### Anvil Options
+The Anvil client offers [many options](https://getfoundry.sh/anvil/reference/anvil/). The most common ones are exposed by constructor options to `AnvilFork`. 
+
+Users wanting fine-grained control over **all** client options may pass them through the `anvil_opts` argument, which takes a list of strings. These will be passed directly to the client after all of the managed options. 
+
+```
+# Launch with the Optimism feature set, which enables special transaction types.
+>>> fork = degenbot.AnvilFork(
+    fork_url='http://localhost:8544',
+    anvil_opts=['--optimism']
+)
+
+# Launch with a non-default hardfork, which may be necessary for accurate simulation on a historical block.
+>>> fork = degenbot.AnvilFork(
+    fork_url='http://localhost:8545',
+    fork_block=12_980_000,
+    anvil_opts=['--hardfork=london']
+)
+
+# Launch with a non-default transaction pool ordering scheme
+>>> fork = degenbot.AnvilFork(
+    fork_url='http://localhost:8545',
+    anvil_opts=['--order=fifo']
+)
+
+# Launch with certain debugging features enabled
+>>> fork = degenbot.AnvilFork(
+    fork_url='http://localhost:8545',
+    anvil_opts=[
+        '--disable-block-gas-limit',
+        '--disable-code-size-limit',
+        '--disable-min-priority-fee',
+    ]
+)
+```
+
 ## Uniswap Arbitrage
 Several classes are provided to simplify the calculation of optimal arbitrage amounts for a given sequence of pools.
 
