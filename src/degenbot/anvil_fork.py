@@ -253,7 +253,6 @@ class AnvilFork:
 
     @contextlib.asynccontextmanager
     async def async_w3(self) -> AsyncIterator[AsyncWeb3]:
-        # TODO: investigate why cache_allowed_requests causes sequential is_connected calls to fail
         async with AsyncWeb3(AsyncIPCProvider(self.ipc_filename)) as async_w3:
             if TYPE_CHECKING:
                 assert isinstance(async_w3, AsyncWeb3)
