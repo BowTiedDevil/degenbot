@@ -356,22 +356,7 @@ def upgrade_existing_sqlite_database() -> None:
     logger.info(f"Updated existing SQLite database at {settings.database.path.absolute()}")
 
 
-default_read_only_session = scoped_session(
-    session_factory=sessionmaker(
-        bind=create_engine(
-            URL.create(
-                drivername="sqlite",
-                database=str(settings.database.path.absolute()),
-                query={
-                    "mode": "ro",
-                },
-            ),
-        )
-    ),
-)
-
-
-default_read_write_session = scoped_session(
+default_session = scoped_session(
     session_factory=sessionmaker(
         bind=create_engine(
             URL.create(
@@ -382,7 +367,7 @@ default_read_write_session = scoped_session(
     ),
 )
 
-if default_read_only_session.connection().execute(text("PRAGMA journal_mode;")).scalar() != "wal":
+if default_session.connection().execute(text("PRAGMA journal_mode;")).scalar() != "wal":
     logger.warning(
         "The current database is not set to write-ahead logging (WAL). This mode provides the best "
         "performance and consistency during simultaneous reading & writing operations."
@@ -395,7 +380,7 @@ if default_read_only_session.connection().execute(text("PRAGMA journal_mode;")).
 
 
 current_database_version = MigrationContext.configure(
-    default_read_only_session.connection()
+    default_session.connection()
 ).get_current_revision()
 latest_database_version = ScriptDirectory.from_config(alembic_cfg).get_current_head()
 

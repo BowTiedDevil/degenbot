@@ -21,8 +21,7 @@ from degenbot.database import (
     AbstractUniswapV2Pool,
     LiquidityPoolTable,
     UniswapV2PoolTable,
-    default_read_only_session,
-    default_read_write_session,
+    default_session,
 )
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
@@ -66,7 +65,7 @@ if TYPE_CHECKING:
 
 def add_pool_to_database(
     pool: AbstractUniswapV2Pool,
-    session: Session | scoped_session[Session] = default_read_write_session,
+    session: Session | scoped_session[Session] = default_session,
 ) -> None:
     session.add(pool)
     session.commit()
@@ -74,7 +73,7 @@ def add_pool_to_database(
 
 def drop_pool_from_database(
     pool: AbstractUniswapV2Pool,
-    session: Session | scoped_session[Session] = default_read_write_session,
+    session: Session | scoped_session[Session] = default_session,
 ) -> None:
     session.delete(pool)
     session.commit()
@@ -83,7 +82,7 @@ def drop_pool_from_database(
 def get_pool_from_database(
     address: ChecksumAddress,
     chain_id: int,
-    session: Session | scoped_session[Session] = default_read_only_session,
+    session: Session | scoped_session[Session] = default_session,
 ) -> AbstractUniswapV2Pool | None:
     return session.scalar(
         select(LiquidityPoolTable).where(
