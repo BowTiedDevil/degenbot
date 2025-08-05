@@ -17,12 +17,12 @@ from web3.exceptions import ContractLogicError
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
-from degenbot.database import (
+from degenbot.database.models.pools import (
     AbstractUniswapV2Pool,
     LiquidityPoolTable,
     UniswapV2PoolTable,
-    default_session,
 )
+from degenbot.database.operations import default_session
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.liquidity_pool import (

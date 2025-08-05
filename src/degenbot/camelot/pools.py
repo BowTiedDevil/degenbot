@@ -3,7 +3,7 @@ from fractions import Fraction
 from degenbot.camelot.functions import get_y_camelot, k_camelot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
-from degenbot.database import CamelotV2PoolTable
+from degenbot.database.models import CamelotV2PoolTable
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.functions import encode_function_calldata, raw_call

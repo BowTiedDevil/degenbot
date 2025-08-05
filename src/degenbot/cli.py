@@ -3,7 +3,7 @@ import tomlkit
 from pydantic import TypeAdapter
 
 from degenbot.config import settings
-from degenbot.database import (
+from degenbot.database.operations import (
     back_up_sqlite_database,
     create_new_sqlite_database,
     current_database_version,

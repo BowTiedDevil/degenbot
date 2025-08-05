@@ -11,7 +11,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-from degenbot.database import IntMappedToString
+from degenbot.database.models import IntMappedToString
 
 # revision identifiers, used by Alembic.
 revision: str = "9347bbfcd47a"

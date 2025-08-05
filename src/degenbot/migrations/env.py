@@ -4,7 +4,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from degenbot.config import settings
-from degenbot.database import Base
+from degenbot.database.models import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

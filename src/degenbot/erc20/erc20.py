@@ -14,7 +14,8 @@ import degenbot.registry
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import async_connection_manager, connection_manager
-from degenbot.database import Erc20TokenTable, default_session
+from degenbot.database.models import Erc20TokenTable
+from degenbot.database.operations import default_session
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.erc20 import NoPriceOracle
 from degenbot.functions import (
