@@ -1,5 +1,4 @@
 import pathlib
-import shutil
 import sqlite3
 
 from alembic import command
@@ -10,22 +9,24 @@ from sqlalchemy.orm import scoped_session, sessionmaker
 
 from degenbot.config import alembic_cfg, settings
 from degenbot.database.models import Base
+from degenbot.exceptions.database import BackupExists
 from degenbot.logging import logger
 from degenbot.version import __version__
 
 
-def back_up_sqlite_database(db_path: pathlib.Path) -> None:
+def backup_sqlite_database(db_path: pathlib.Path) -> None:
     assert db_path.exists()
 
     backup_path = pathlib.Path(db_path).with_suffix(db_path.suffix + ".bak")
-    assert not backup_path.exists()  # TODO: raise an exception here instead
+    if backup_path.exists():
+        raise BackupExists(path=backup_path)
 
     engine = create_engine(
         f"sqlite:///{db_path.absolute()}",
     )
     with engine.connect() as connection:
         connection.execute(
-            text("PRAGMA wal_checkpoint(PASSIVE);"),
+            text("PRAGMA wal_checkpoint(FULL);"),
         )
 
     with sqlite3.connect(db_path) as src, sqlite3.connect(backup_path) as dest:

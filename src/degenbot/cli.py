@@ -4,7 +4,8 @@ from pydantic import TypeAdapter
 
 from degenbot.config import settings
 from degenbot.database.operations import (
-    back_up_sqlite_database,
+    BackupExists,
+    backup_sqlite_database,
     create_new_sqlite_database,
     current_database_version,
     latest_database_version,
@@ -77,7 +78,18 @@ def database_backup() -> None:
     """
     Back up the database.
     """
-    back_up_sqlite_database(settings.database.path)
+
+    try:
+        backup_sqlite_database(settings.database.path)
+    except BackupExists as exc:
+        user_confirm = click.confirm(
+            f"An existing backup was found at {exc.path}. Do you want to remove it and continue?",
+            default=False,
+        )
+        if user_confirm:
+            backup_sqlite_database(settings.database.path)
+        else:
+            raise click.Abort from None
 
 
 @database.command("reset")
