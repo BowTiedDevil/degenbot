@@ -8,7 +8,8 @@ from degenbot.types.abstract import AbstractPoolState
 
 class KeyedDefaultDict[KT, VT](defaultdict[KT, VT]):
     """
-    A modified defaultdict that passes the key to default_factory.
+    A modified defaultdict that passes the key to default_factory at runtime and records it.
+    This differs from the defaultdict behavior, which calls default_factory with no arguments.
     """
 
     def __init__(self, default_factory: Callable[[KT], VT]) -> None:
