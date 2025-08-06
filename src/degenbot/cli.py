@@ -4,7 +4,6 @@ from pydantic import TypeAdapter
 
 from degenbot.config import settings
 from degenbot.database.operations import (
-    BackupExists,
     backup_sqlite_database,
     create_new_sqlite_database,
     current_database_version,
@@ -12,6 +11,7 @@ from degenbot.database.operations import (
     upgrade_existing_sqlite_database,
     vacuum_sqlite_database,
 )
+from degenbot.exceptions.database import BackupExists
 from degenbot.version import __version__
 
 
