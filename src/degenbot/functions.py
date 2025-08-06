@@ -9,7 +9,7 @@ from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
 from web3._utils.threads import Timeout
-from web3.exceptions import Web3RPCError
+from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier, FilterParams, LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
@@ -158,7 +158,7 @@ def fetch_logs_retrying(
             for attempt in tenacity.Retrying(
                 stop=tenacity.stop_after_attempt(max_retries),
                 retry=tenacity.retry_if_exception_type(
-                    (Timeout, Web3RPCError),
+                    (Timeout, Web3Exception),
                 ),
             ):
                 chunk_end = min(end_block, start_block + working_span - 1)
@@ -178,11 +178,11 @@ def fetch_logs_retrying(
                                 )
                             )
                         )
-                    except (Timeout, Web3RPCError):
-                        # Decrease quickly (-50%)
-                        working_span = max(
-                            1,
-                            working_span // 2,
+                    except (Timeout, Web3Exception):
+                        working_span = _adjust_working_span(
+                            is_timeout=True,
+                            working_span=working_span,
+                            cap=max_blocks_per_request,
                         )
                         logger.info(
                             f"Attempt {attempt.retry_state.attempt_number} timed out "
@@ -191,10 +191,101 @@ def fetch_logs_retrying(
                         )
                         raise
                     else:
-                        # Increase slowly up to the cap (+10%)
-                        working_span = min(
-                            working_span + working_span // 10,
-                            max_blocks_per_request,
+                        working_span = _adjust_working_span(
+                            is_timeout=False,
+                            working_span=working_span,
+                            cap=max_blocks_per_request,
+                        )
+
+            if chunk_end == end_block:
+                return event_logs
+
+            start_block = chunk_end + 1
+
+        except tenacity.RetryError:
+            raise DegenbotError(
+                message=f"Timed out fetching logs after {max_retries} tries."
+            ) from None
+
+
+def _adjust_working_span(
+    *,
+    is_timeout: bool,
+    working_span: int,
+    cap: int,
+) -> int:
+    """
+    Decrease quickly (-50%) on timeout, increase slowly (+10%) on success up to the cap.
+    """
+    if is_timeout:
+        return max(1, working_span // 2)
+    return min(working_span + working_span // 10, cap)
+
+
+async def fetch_logs_retrying_async(
+    w3: AsyncWeb3,
+    start_block: BlockNumber,
+    end_block: BlockNumber,
+    max_retries: int = 10,
+    max_blocks_per_request: int | None = None,
+    topic_signature: list[HexBytes] | None = None,
+) -> list[LogReceipt]:
+    """
+    Async version of fetch_logs_retrying.
+
+    Fetch all event logs for the given topic signature (or all logs, if omitted), inclusive for the
+    given block range.
+
+    Max blocks per request is set to 5,000 if not specified.
+    """
+    if topic_signature is None:
+        topic_signature = []
+
+    if max_blocks_per_request is None:
+        max_blocks_per_request = 5_000
+
+    working_span = max_blocks_per_request
+    event_logs: list[LogReceipt] = []
+
+    while True:
+        try:
+            async for attempt in tenacity.AsyncRetrying(
+                stop=tenacity.stop_after_attempt(max_retries),
+                retry=tenacity.retry_if_exception_type((Timeout, Web3Exception)),
+            ):
+                chunk_end = min(end_block, start_block + working_span - 1)
+
+                with attempt:
+                    try:
+                        logger.info(
+                            f"Fetching logs for range {start_block}-{chunk_end} "
+                            f" ({chunk_end - start_block + 1} blocks)"
+                        )
+                        logs = await w3.eth.get_logs(
+                            FilterParams(
+                                fromBlock=start_block,
+                                toBlock=chunk_end,
+                                topics=topic_signature,
+                            )
+                        )
+                        event_logs.extend(logs)
+                    except (Timeout, Web3Exception):
+                        working_span = _adjust_working_span(
+                            is_timeout=True,
+                            working_span=working_span,
+                            cap=max_blocks_per_request,
+                        )
+                        logger.info(
+                            f"Attempt {attempt.retry_state.attempt_number} timed out "
+                            f"fetching {chunk_end - start_block + 1} blocks. "
+                            f"Reducing to {working_span}..."
+                        )
+                        raise
+                    else:
+                        working_span = _adjust_working_span(
+                            is_timeout=False,
+                            working_span=working_span,
+                            cap=max_blocks_per_request,
                         )
 
             if chunk_end == end_block:
