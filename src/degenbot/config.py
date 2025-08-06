@@ -49,7 +49,7 @@ if not CONFIG_DIR.exists():
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 if not CONFIG_FILE.exists():
-    from degenbot.database import create_new_sqlite_database
+    from degenbot.database.operations import create_new_sqlite_database
 
     # Pydantic will validate that the DB path exists, so initialize it first
     create_new_sqlite_database(DEFAULT_DB_PATH)
