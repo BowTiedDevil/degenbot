@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import pydantic_core
 import tqdm
+import tqdm.asyncio
 from eth_typing import ABIEvent, ChecksumAddress, HexAddress
 from eth_utils.abi import event_abi_to_log_topic
 from hexbytes import HexBytes
@@ -336,6 +337,88 @@ class UniswapV3LiquiditySnapshot:
             )
 
             for event_log in tqdm.tqdm(
+                event_logs,
+                desc=f"Processing {event.event_name} events",
+                unit="event",
+                bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
+            ):
+                pool_address, liquidity_event = _process_liquidity_event_log(
+                    event_instance, event_log
+                )
+                self._liquidity_events[pool_address].append(liquidity_event)
+
+        self.newest_block = to_block
+
+    async def fetch_new_events_async(
+        self,
+        to_block: BlockNumber,
+        blocks_per_request: int | None = None,
+    ) -> None:
+        """
+        Async version of fetch_new_events.
+
+        Fetch liquidity events from the block following the last-known event to the target block
+        using `eth_getLogs` via the async provider. Blocks per request will be capped at
+        `blocks_per_request`.
+        """
+
+        def _process_liquidity_event_log(
+            event: BaseContractEvent, log: LogReceipt
+        ) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
+            """
+            Decode an event log and convert to an address and a `UniswapV3LiquidityEvent` for
+            processing with `UniswapV3Pool.update_liquidity_map`.
+            """
+            decoded_event: EventData = event.process_log(log)
+            pool_address = get_checksum_address(decoded_event["address"])
+            tx_index = decoded_event["transactionIndex"]
+            log_index = decoded_event["logIndex"]
+            liquidity_block = decoded_event["blockNumber"]
+            liquidity = decoded_event["args"]["amount"]
+            if decoded_event["event"] == "Burn":
+                liquidity = -liquidity  # liquidity removal
+            tick_lower = decoded_event["args"]["tickLower"]
+            tick_upper = decoded_event["args"]["tickUpper"]
+
+            return (
+                pool_address,
+                UniswapV3LiquidityEvent(
+                    block_number=liquidity_block,
+                    tx_index=tx_index,
+                    log_index=log_index,
+                    liquidity=liquidity,
+                    tick_lower=tick_lower,
+                    tick_upper=tick_upper,
+                ),
+            )
+
+        logger.info(
+            f"(async) Updating Uniswap V3 snapshot from block {self.newest_block} to {to_block}"
+        )
+
+        v3pool = Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI)
+        for event in (
+            v3pool.events.Mint,
+            v3pool.events.Burn,
+        ):
+            event_instance = event()
+            event_abi = cast(
+                "ABIEvent",
+                get_abi_element(
+                    abi=v3pool.abi,
+                    abi_element_identifier=event.event_name,
+                ),
+            )
+
+            event_logs = await fetch_logs_retrying_async(
+                w3=async_connection_manager.get_web3(self.chain_id),
+                start_block=self.newest_block + 1,
+                end_block=to_block,
+                max_blocks_per_request=blocks_per_request,
+                topic_signature=[HexBytes(event_abi_to_log_topic(event_abi))],
+            )
+
+            async for event_log in tqdm.asyncio.tqdm(
                 event_logs,
                 desc=f"Processing {event.event_name} events",
                 unit="event",
