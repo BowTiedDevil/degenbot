@@ -539,7 +539,7 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
         deposits, np.array([compression_factor_token0, compression_factor_token1])
     )
     uncompressed_withdrawals = cvxpy_multiply(
-        withdrawals, np.array([compression_factor_token1, compression_factor_token1])
+        withdrawals, np.array([compression_factor_token0, compression_factor_token1])
     )
     # uncompressed_deposits = compression_factor * deposits
     # uncompressed_withdrawals = compression_factor * withdrawals
