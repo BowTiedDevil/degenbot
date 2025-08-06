@@ -286,7 +286,7 @@ class AbstractUniswapV4Pool(ManagedLiquidityPoolTable):
         )
 
 
-class UniswapV4Pool(AbstractUniswapV4Pool):
+class UniswapV4PoolTable(AbstractUniswapV4Pool):
     __tablename__ = "uniswap_v4_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_on": "kind",

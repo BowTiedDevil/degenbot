@@ -18,7 +18,7 @@ from .pools import (
     SwapbasedV2PoolTable,
     UniswapV2PoolTable,
     UniswapV3PoolTable,
-    UniswapV4Pool,
+    UniswapV4PoolTable,
 )
 
 __all__ = (
@@ -44,5 +44,5 @@ __all__ = (
     "SwapbasedV2PoolTable",
     "UniswapV2PoolTable",
     "UniswapV3PoolTable",
-    "UniswapV4Pool",
+    "UniswapV4PoolTable",
 )
