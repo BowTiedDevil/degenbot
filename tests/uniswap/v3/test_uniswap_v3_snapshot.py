@@ -4,8 +4,14 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import set_web3
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.exceptions.liquidity_pool import UnknownPool
 from degenbot.uniswap.managers import UniswapV3PoolManager
-from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
+from degenbot.uniswap.v3_snapshot import (
+    DatabaseSnapshot,
+    IndividualJsonFileSnapshot,
+    MonolithicJsonFileSnapshot,
+    UniswapV3LiquiditySnapshot,
+)
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
@@ -26,7 +32,10 @@ SNAPSHOT_AT_BLOCK_12_369_870_DIR = "tests/uniswap/v3/snapshot"
 @pytest.fixture
 def empty_snapshot_from_file(fork_mainnet_full: AnvilFork) -> UniswapV3LiquiditySnapshot:
     set_web3(fork_mainnet_full.w3)
-    return UniswapV3LiquiditySnapshot(EMPTY_SNAPSHOT_FILENAME)
+
+    return UniswapV3LiquiditySnapshot(
+        source=MonolithicJsonFileSnapshot(EMPTY_SNAPSHOT_FILENAME),
+    )
 
 
 @pytest.fixture
@@ -34,7 +43,10 @@ def empty_snapshot_from_file_with_pending_events_up_to_block_12_369_870(
     fork_mainnet_full: AnvilFork,
 ) -> UniswapV3LiquiditySnapshot:
     set_web3(fork_mainnet_full.w3)
-    snapshot = UniswapV3LiquiditySnapshot(EMPTY_SNAPSHOT_FILENAME)
+
+    snapshot = UniswapV3LiquiditySnapshot(
+        source=MonolithicJsonFileSnapshot(EMPTY_SNAPSHOT_FILENAME),
+    )
     snapshot.fetch_new_events(to_block=EMPTY_SNAPSHOT_BLOCK + 250, blocks_per_request=50)
     return snapshot
 
@@ -44,7 +56,9 @@ def snapshot_at_block_12_369_870_from_file(
     fork_mainnet_full: AnvilFork,
 ) -> UniswapV3LiquiditySnapshot:
     set_web3(fork_mainnet_full.w3)
-    return UniswapV3LiquiditySnapshot(SNAPSHOT_AT_BLOCK_12_369_870_FILENAME)
+    return UniswapV3LiquiditySnapshot(
+        source=MonolithicJsonFileSnapshot(SNAPSHOT_AT_BLOCK_12_369_870_FILENAME),
+    )
 
 
 @pytest.fixture
@@ -52,7 +66,19 @@ def snapshot_at_block_12_369_870_from_dir(
     fork_mainnet_full: AnvilFork,
 ) -> UniswapV3LiquiditySnapshot:
     set_web3(fork_mainnet_full.w3)
-    return UniswapV3LiquiditySnapshot(SNAPSHOT_AT_BLOCK_12_369_870_DIR)
+    return UniswapV3LiquiditySnapshot(
+        source=IndividualJsonFileSnapshot(SNAPSHOT_AT_BLOCK_12_369_870_DIR),
+    )
+
+
+@pytest.fixture
+def snapshot_from_database(
+    fork_mainnet_full: AnvilFork,
+) -> UniswapV3LiquiditySnapshot:
+    set_web3(fork_mainnet_full.w3)
+    return UniswapV3LiquiditySnapshot(
+        source=DatabaseSnapshot(),
+    )
 
 
 def test_snapshot_fixtures(
@@ -60,7 +86,24 @@ def test_snapshot_fixtures(
     empty_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,
     snapshot_at_block_12_369_870_from_file: UniswapV3LiquiditySnapshot,
     snapshot_at_block_12_369_870_from_dir: UniswapV3LiquiditySnapshot,
+    snapshot_from_database: UniswapV3LiquiditySnapshot,
 ): ...
+
+
+def test_fetch_pool_from_database_snapshot(
+    snapshot_from_database: UniswapV3LiquiditySnapshot,
+    fork_base_full: AnvilFork,
+):
+    set_web3(fork_base_full.w3)
+
+    # TODO: improve test by constructing standalone database and testing against it
+    # TODO: make sure that test database is upgraded with alembic
+
+    for pool in [
+        "0xFAD14c545E464e04c737d00643296144eb20c7F8",
+    ]:
+        assert snapshot_from_database.tick_bitmap(pool) is not None
+        assert snapshot_from_database.tick_data(pool) is not None
 
 
 def test_fetch_liquidity_events_first_250_blocks(
@@ -197,6 +240,20 @@ def test_get_new_liquidity_updates(
         )
 
 
+def test_apply_update_to_unknown_pool(
+    empty_snapshot_from_file: UniswapV3LiquiditySnapshot,
+    fork_mainnet_full: AnvilFork,
+):
+    set_web3(fork_mainnet_full.w3)
+
+    with pytest.raises(UnknownPool):
+        empty_snapshot_from_file.update(
+            pool=ZERO_ADDRESS,
+            tick_data={},
+            tick_bitmap={},
+        )
+
+
 def test_apply_update_to_snapshot(
     empty_snapshot_from_file: UniswapV3LiquiditySnapshot,
     fork_mainnet_full: AnvilFork,
@@ -241,17 +298,25 @@ def test_apply_update_to_snapshot(
     assert pool.tick_bitmap == tick_bitmap
 
 
-def test_snapshot_behaves_for_missing_pools(
+def test_liquidity_map_is_none_for_missing_pools(
     empty_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,
     snapshot_at_block_12_369_870_from_file: UniswapV3LiquiditySnapshot,
     snapshot_at_block_12_369_870_from_dir: UniswapV3LiquiditySnapshot,
 ):
-    empty_snapshot_from_file_with_pending_events_up_to_block_12_369_870.tick_bitmap(ZERO_ADDRESS)
-    empty_snapshot_from_file_with_pending_events_up_to_block_12_369_870.tick_data(ZERO_ADDRESS)
-    snapshot_at_block_12_369_870_from_file.tick_bitmap(ZERO_ADDRESS)
-    snapshot_at_block_12_369_870_from_file.tick_data(ZERO_ADDRESS)
-    snapshot_at_block_12_369_870_from_dir.tick_bitmap(ZERO_ADDRESS)
-    snapshot_at_block_12_369_870_from_dir.tick_data(ZERO_ADDRESS)
+    assert (
+        empty_snapshot_from_file_with_pending_events_up_to_block_12_369_870.tick_bitmap(
+            ZERO_ADDRESS
+        )
+        is None
+    )
+    assert (
+        empty_snapshot_from_file_with_pending_events_up_to_block_12_369_870.tick_data(ZERO_ADDRESS)
+        is None
+    )
+    assert snapshot_at_block_12_369_870_from_file.tick_bitmap(ZERO_ADDRESS) is None
+    assert snapshot_at_block_12_369_870_from_file.tick_data(ZERO_ADDRESS) is None
+    assert snapshot_at_block_12_369_870_from_dir.tick_bitmap(ZERO_ADDRESS) is None
+    assert snapshot_at_block_12_369_870_from_dir.tick_data(ZERO_ADDRESS) is None
 
 
 def test_snapshot_finds_known_pool(
@@ -269,7 +334,7 @@ def test_snapshot_finds_known_pool(
     snapshot_at_block_12_369_870_from_dir.tick_data(wbtc_weth_pool)
 
 
-def test_pool_manager_applies_snapshots(
+def test_pool_manager_applies_snapshot_from_file(
     empty_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,
     fork_mainnet_full: AnvilFork,
 ):
@@ -434,7 +499,7 @@ def test_pool_manager_applies_snapshots(
         )
 
 
-def test_pool_manager_applies_snapshots_from_dir(
+def test_pool_manager_applies_snapshot_from_dir(
     snapshot_at_block_12_369_870_from_dir: UniswapV3LiquiditySnapshot,
     fork_mainnet_full: AnvilFork,
 ):
@@ -599,8 +664,8 @@ def test_pools_property(
     snapshot_at_block_12_369_870_from_file: UniswapV3LiquiditySnapshot,
     snapshot_at_block_12_369_870_from_dir: UniswapV3LiquiditySnapshot,
 ):
-    assert len(list(snapshot_at_block_12_369_870_from_file.pools)) > 0
-    assert len(list(snapshot_at_block_12_369_870_from_dir.pools)) > 0
+    assert len(list(snapshot_at_block_12_369_870_from_file.pools)) == 6
+    assert len(list(snapshot_at_block_12_369_870_from_dir.pools)) == 6
 
 
 def test_fetch_large_range(snapshot_at_block_12_369_870_from_dir: UniswapV3LiquiditySnapshot):

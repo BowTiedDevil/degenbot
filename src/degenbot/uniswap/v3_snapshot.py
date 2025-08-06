@@ -1,20 +1,26 @@
 import pathlib
 from collections import defaultdict
-from typing import Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import pydantic_core
 import tqdm
 from eth_typing import ABIEvent, ChecksumAddress, HexAddress
 from eth_utils.abi import event_abi_to_log_topic
 from hexbytes import HexBytes
+from sqlalchemy import select
 from web3 import Web3
 from web3.contract.base_contract import BaseContractEvent
 from web3.types import EventData, LogReceipt
 from web3.utils import get_abi_element
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
-from degenbot.functions import fetch_logs_retrying
+from degenbot.config import settings
+from degenbot.connection import async_connection_manager, connection_manager
+from degenbot.database.models.base import MetadataTable
+from degenbot.database.models.pools import AbstractUniswapV3Pool, LiquidityPoolTable
+from degenbot.database.operations import default_session, get_scoped_sqlite_session
+from degenbot.exceptions.liquidity_pool import UnknownPool
+from degenbot.functions import fetch_logs_retrying, fetch_logs_retrying_async
 from degenbot.logging import logger
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
@@ -32,6 +38,187 @@ class LiquidityMap(TypedDict):
     tick_data: dict[int, UniswapV3LiquidityAtTick]
 
 
+class SnapshotSource(Protocol):
+    """
+    A minimal protocol allowing the UniswapV3LiquiditySnapshot class to retrieve pool data from a
+    generic source.
+    """
+
+    storage_kind: Literal["dir", "file", "db"]
+
+    # Any class implementing the protocol must implement these methods, transforming data as
+    # necessary to return the specified types.
+    def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None: ...
+    def get_newest_block(self) -> BlockNumber: ...
+    def get_pools(self) -> set[ChecksumAddress]: ...
+
+
+class MonolithicJsonFileSnapshot(SnapshotSource):
+    """
+    A pool liquidity source backed by a single JSON file with this structure:
+    {
+        "snapshot_block": int,
+        "0xPoolAddress1": {
+            "tick_bitmap": {
+                <word>: {
+                    'bitmap': <value>,
+                    'block': <value>,
+                },
+                ...
+            },
+            "tick_data": {
+                <tick>: {
+                    'liquidity_gross: <value>,
+                    'liquidity_net': <value>,
+                    'block: <value>,
+                }
+            }
+        },
+        "0xPoolAddress2": { ... },
+        "0xPoolAddress3": { ... },
+        ...
+    }
+    """
+
+    storage_kind = "file"
+
+    def __init__(self, path: pathlib.Path | str) -> None:
+        path = pathlib.Path(path).expanduser().absolute()
+        self._path = path
+        self._file_snapshot: dict[str, Any] = pydantic_core.from_json(path.read_bytes())
+
+    def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
+        if pool_address not in self._file_snapshot:
+            return None
+
+        return LiquidityMap(
+            tick_bitmap={
+                int(k): UniswapV3BitmapAtWord(**v)
+                for k, v in self._file_snapshot[pool_address]["tick_bitmap"].items()
+            },
+            tick_data={
+                int(k): UniswapV3LiquidityAtTick(**v)
+                for k, v in self._file_snapshot[pool_address]["tick_data"].items()
+            },
+        )
+
+    def get_newest_block(self) -> BlockNumber:
+        return int(self._file_snapshot["snapshot_block"])
+
+    def get_pools(self) -> set[ChecksumAddress]:
+        # all top-level keys except 'snapshot_block'
+        return {get_checksum_address(key) for key in self._file_snapshot if key != "snapshot_block"}
+
+
+class IndividualJsonFileSnapshot(SnapshotSource):
+    """
+    Snapshot source backed by a directory of JSON files with this tree structure:
+
+        /path/to/snapshots/
+        ├── _metadata.json              -> { "block": int }
+        ├── 0xPoolAddress1.json         -> { "tick_bitmap": {...}, "tick_data": {...} }
+        ├── 0xPoolAddress2.json         -> { "tick_bitmap": {...}, "tick_data": {...} }
+        └── 0xPoolAddress3.json         -> { "tick_bitmap": {...}, "tick_data": {...} }
+
+    Each pool file contains the same structure as the monolithic snapshot's per-pool entries.
+    """
+
+    storage_kind = "dir"
+
+    def __init__(self, path: pathlib.Path | str) -> None:
+        dir_path = pathlib.Path(path).expanduser().absolute()
+        assert dir_path.exists()
+        assert dir_path.is_dir()
+        self._dir = dir_path
+
+        metadata_path = self._dir / "_metadata.json"
+        self._metadata = pydantic_core.from_json(metadata_path.read_bytes())
+
+    def get_newest_block(self) -> BlockNumber:
+        return int(self._metadata["block"])
+
+    def get_pools(self) -> set[ChecksumAddress]:
+        return {get_checksum_address(pool_file.stem) for pool_file in self._dir.glob("0x*.json")}
+
+    def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
+        pool_path = self._dir / f"{pool_address}.json"
+        if not pool_path.exists():
+            return None
+
+        pool_liquidity_snapshot = pydantic_core.from_json(pool_path.read_bytes())
+        return LiquidityMap(
+            tick_bitmap={
+                int(k): UniswapV3BitmapAtWord(**v)
+                for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
+            },
+            tick_data={
+                int(k): UniswapV3LiquidityAtTick(**v)
+                for k, v in pool_liquidity_snapshot["tick_data"].items()
+            },
+        )
+
+
+class DatabaseSnapshot:
+    """
+    Snapshot source backed by built-in SQLite database using the ORM abstractions defined
+    in `degenbot.database`.
+
+    If a path to an SQLite database is not provided, the default location specified in
+    `degenbot.settings` will be used.
+    """
+
+    storage_kind = "db"
+
+    def __init__(self, database_path: pathlib.Path | None = None) -> None:
+        if database_path is None:
+            self.session = default_session
+            self.database_path = settings.database.path
+        else:
+            self.session = get_scoped_sqlite_session(database_path)
+            self.database_path = database_path
+
+    def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
+        pool_in_db = self.session.scalar(
+            select(LiquidityPoolTable).where(LiquidityPoolTable.address == pool_address)
+        )
+        if pool_in_db is None:
+            return None
+
+        if TYPE_CHECKING:
+            assert isinstance(pool_in_db, AbstractUniswapV3Pool)
+
+        return LiquidityMap(
+            tick_bitmap={
+                int(initialization_map.word): UniswapV3BitmapAtWord(
+                    bitmap=initialization_map.bitmap
+                )
+                for initialization_map in pool_in_db.initialization_maps
+            },
+            tick_data={
+                int(liquidity_position.tick): UniswapV3LiquidityAtTick(
+                    liquidity_gross=liquidity_position.liquidity_gross,
+                    liquidity_net=liquidity_position.liquidity_net,
+                )
+                for liquidity_position in pool_in_db.liquidity_positions
+            },
+        )
+
+    def get_newest_block(self) -> BlockNumber:
+        metadata = self.session.scalar(
+            select(MetadataTable).where(MetadataTable.key == "liquidity_map")
+        )
+        assert metadata is not None  # TODO: throw real exception here
+        assert metadata.value is not None  # TODO: throw real exception here
+        block = pydantic_core.from_json(metadata.value)["block"]
+        return int(block)
+
+    def get_pools(self) -> set[ChecksumAddress]:
+        return {
+            get_checksum_address(pool)
+            for pool in self.session.scalars(select(AbstractUniswapV3Pool.address)).all()
+        }
+
+
 class UniswapV3LiquiditySnapshot:
     """
     Retrieve and maintain liquidity positions for Uniswap V3 pools.
@@ -39,75 +226,21 @@ class UniswapV3LiquiditySnapshot:
 
     def __init__(
         self,
-        path: pathlib.Path | str,
+        source: SnapshotSource,
         chain_id: ChainId | None = None,
     ) -> None:
-        def _get_pool_map(pool_address: HexAddress | bytes) -> LiquidityMap:
-            """
-            Get the liquidity map for the pool.
-            """
-
-            pool_address = get_checksum_address(pool_address)
-
-            if self._file_snapshot is not None and pool_address in self._file_snapshot:
-                return LiquidityMap(
-                    tick_bitmap={
-                        int(k): UniswapV3BitmapAtWord(**v)
-                        for k, v in self._file_snapshot[pool_address]["tick_bitmap"].items()
-                    },
-                    tick_data={
-                        int(k): UniswapV3LiquidityAtTick(**v)
-                        for k, v in self._file_snapshot[pool_address]["tick_data"].items()
-                    },
-                )
-            if self._dir_path is not None and (
-                (pool_map_file := self._dir_path / f"{pool_address}.json").exists()
-            ):
-                pool_liquidity_snapshot = pydantic_core.from_json(pool_map_file.read_bytes())
-                return LiquidityMap(
-                    tick_bitmap={
-                        int(k): UniswapV3BitmapAtWord(**v)
-                        for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
-                    },
-                    tick_data={
-                        int(k): UniswapV3LiquidityAtTick(**v)
-                        for k, v in pool_liquidity_snapshot["tick_data"].items()
-                    },
-                )
-
-            return LiquidityMap(
-                tick_bitmap={},
-                tick_data={},
-            )
-
-        path = pathlib.Path(path).expanduser()
-        assert path.exists()
-
-        self.newest_block: BlockNumber
-        self._dir_path: pathlib.Path | None = None
-        self._file_snapshot: dict[str, Any] | None = None
-
-        if path.is_file():
-            self._file_snapshot = pydantic_core.from_json(path.read_bytes())
-            self.newest_block = self._file_snapshot.pop("snapshot_block")
-        if path.is_dir():
-            self._dir_path = path
-            metadata_path = path / "_metadata.json"
-            assert metadata_path.exists()
-            self.newest_block = pydantic_core.from_json(metadata_path.read_bytes())["block"]
-
+        self._source = source
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-
-        logger.info(
-            f"Loaded Uniswap V3 LP snapshot: {len(self._file_snapshot) if self._file_snapshot else len(tuple(path.glob('0x*.json')))} pools @ block {self.newest_block}"  # noqa:E501
-        )
+        self.newest_block = source.get_newest_block()
 
         self._liquidity_events: dict[ChecksumAddress, list[UniswapV3LiquidityEvent]] = defaultdict(
             list
         )
-        self._liquidity_snapshot: dict[ChecksumAddress, LiquidityMap] = KeyedDefaultDict(
-            _get_pool_map
+        self._liquidity_snapshot: dict[ChecksumAddress, LiquidityMap | None] = KeyedDefaultDict(
+            lambda key: self._source.get_liquidity_map(get_checksum_address(key))
         )
+
+        logger.info(f"Loaded Uniswap V3 LP snapshot from {source.storage_kind} source")
 
     @property
     def chain_id(self) -> int:
@@ -115,16 +248,7 @@ class UniswapV3LiquiditySnapshot:
 
     @property
     def pools(self) -> set[ChecksumAddress]:
-        if self._file_snapshot is not None:
-            return {get_checksum_address(pool) for pool in self._file_snapshot} | {
-                get_checksum_address(pool) for pool in self._liquidity_events
-            }
-        if self._dir_path is not None:
-            return {
-                get_checksum_address(pool_filename.stem)
-                for pool_filename in self._dir_path.glob("0x*.json")
-            }
-        raise RuntimeError  # pragma: no cover
+        return self._source.get_pools()
 
     def fetch_new_events(
         self,
@@ -253,24 +377,32 @@ class UniswapV3LiquiditySnapshot:
             for event in sorted_events
         )
 
-    def tick_bitmap(self, pool_address: str | bytes) -> dict[int, UniswapV3BitmapAtWord]:
+    def tick_bitmap(self, pool_address: str | bytes) -> dict[int, UniswapV3BitmapAtWord] | None:
         """
         Consume the tick initialization bitmaps for the pool.
         """
-
         pool_address = get_checksum_address(pool_address)
-        tick_bitmap = self._liquidity_snapshot[pool_address]["tick_bitmap"]
-        self._liquidity_snapshot[pool_address]["tick_bitmap"] = {}
+
+        pool_snapshot = self._liquidity_snapshot[pool_address]
+        if pool_snapshot is None:
+            return None
+
+        tick_bitmap = pool_snapshot["tick_bitmap"].copy()
+        pool_snapshot["tick_bitmap"] = {}
         return tick_bitmap
 
-    def tick_data(self, pool_address: str | bytes) -> dict[int, UniswapV3LiquidityAtTick]:
+    def tick_data(self, pool_address: str | bytes) -> dict[int, UniswapV3LiquidityAtTick] | None:
         """
         Consume the liquidity mapping for the pool.
         """
+        pool_address = get_checksum_address(pool_address)
 
-        pool_key = get_checksum_address(pool_address)
-        tick_data = self._liquidity_snapshot[pool_key]["tick_data"]
-        self._liquidity_snapshot[pool_key]["tick_data"] = {}
+        pool_snapshot = self._liquidity_snapshot[pool_address]
+        if pool_snapshot is None:
+            return None
+
+        tick_data = pool_snapshot["tick_data"].copy()
+        pool_snapshot["tick_data"] = {}
         return tick_data
 
     def update(
@@ -284,5 +416,10 @@ class UniswapV3LiquiditySnapshot:
         """
 
         pool_key = get_checksum_address(pool)
-        self._liquidity_snapshot[pool_key]["tick_bitmap"].update(tick_bitmap)
-        self._liquidity_snapshot[pool_key]["tick_data"].update(tick_data)
+
+        pool_snapshot = self._liquidity_snapshot[pool_key]
+        if pool_snapshot is None:
+            raise UnknownPool(pool_key)
+
+        pool_snapshot["tick_bitmap"].update(tick_bitmap)
+        pool_snapshot["tick_data"].update(tick_data)

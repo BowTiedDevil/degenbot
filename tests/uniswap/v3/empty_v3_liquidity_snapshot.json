@@ -1,3 +1,27 @@
 {
+  "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801": {
+    "tick_bitmap": {},
+    "tick_data": {}
+  },
+  "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD": {
+    "tick_bitmap": {},
+    "tick_data": {}
+  },
+  "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8": {
+    "tick_bitmap": {},
+    "tick_data": {}
+  },
+  "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf": {
+    "tick_bitmap": {},
+    "tick_data": {}
+  },
+  "0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387": {
+    "tick_bitmap": {},
+    "tick_data": {}
+  },
+  "0x6c6Bc977E13Df9b0de53b251522280BB72383700": {
+    "tick_bitmap": {},
+    "tick_data": {}
+  },
   "snapshot_block": 12369620
 }

@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING, Any
 
+from eth_typing import ChecksumAddress
+
 from degenbot.exceptions import DegenbotError
 from degenbot.types.aliases import BlockNumber
 
@@ -104,3 +106,14 @@ class PossibleInaccurateResult(LiquidityPoolError):
     def __reduce__(self) -> tuple[Any, ...]:
         # Pickling will raise an exception if a reduction method is not defined
         return self.__class__, (self.amount_in, self.amount_out, self.hooks)
+
+
+class UnknownPool(LiquidityPoolError):
+    """
+    Raised by the liquidity snapshot class `update` methods when an update is provided for a pool
+    address not present in the existing snapshot. Updates of this kind can lead to inconsistent
+    state, because the pool state prior to the update is unknown.
+    """
+
+    def __init__(self, pool: ChecksumAddress) -> None:
+        super().__init__(message=f"A liquidity update for unknown pool {pool} was provided.")
