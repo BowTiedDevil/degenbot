@@ -1,4 +1,3 @@
-
 from pydantic import validate_call
 
 from degenbot.uniswap.v4_libraries.functions import mulmod

@@ -1,4 +1,3 @@
-
 from pydantic import validate_call
 
 from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128
