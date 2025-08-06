@@ -76,16 +76,20 @@ def upgrade_existing_sqlite_database() -> None:
     logger.info(f"Updated existing SQLite database at {settings.database.path.absolute()}")
 
 
-default_session = scoped_session(
-    session_factory=sessionmaker(
-        bind=create_engine(
-            URL.create(
-                drivername="sqlite",
-                database=str(settings.database.path.absolute()),
-            ),
+def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Session]:
+    return scoped_session(
+        session_factory=sessionmaker(
+            bind=create_engine(
+                URL.create(
+                    drivername="sqlite",
+                    database=str(database_path.absolute()),
+                )
+            )
         )
-    ),
-)
+    )
+
+
+default_session = get_scoped_sqlite_session(database_path=settings.database.path)
 
 if default_session.connection().execute(text("PRAGMA journal_mode;")).scalar() != "wal":
     logger.warning(
