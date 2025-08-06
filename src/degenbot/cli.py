@@ -87,6 +87,7 @@ def database_backup() -> None:
             default=False,
         )
         if user_confirm:
+            exc.path.unlink()
             backup_sqlite_database(settings.database.path)
         else:
             raise click.Abort from None
