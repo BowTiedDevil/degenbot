@@ -7,8 +7,7 @@ from degenbot.erc20 import Erc20Token
 from degenbot.types.aliases import BlockNumber
 
 
-class AbstractSwapAmounts:
-    pass
+class AbstractSwapAmounts: ...
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
