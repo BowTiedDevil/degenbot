@@ -413,7 +413,9 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
     def _calculate(
         self,
         state_overrides: Mapping[Pool, PoolState] | None = None,
-    ) -> ArbitrageCalculationResult:
+    ) -> ArbitrageCalculationResult[
+        UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
+    ]:
         """
         Calculate the optimal arbitrage profit using the maximum input as an upper bound.
         """
@@ -534,7 +536,9 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         self,
         state_overrides: Mapping[Pool, PoolState] | None = None,
         min_rate_of_exchange: Fraction = Fraction(1, 1),
-    ) -> ArbitrageCalculationResult:
+    ) -> ArbitrageCalculationResult[
+        UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
+    ]:
         """
         Calculate the results of the arbitrage at the current pool states, or at one or more
         overridden pool states if provided.
@@ -552,7 +556,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
         state_overrides: Mapping[Pool, PoolState] | None = None,
         min_rate_of_exchange: Fraction = Fraction(1, 1),
-    ) -> asyncio.Future[ArbitrageCalculationResult]:
+    ) -> asyncio.Future[ArbitrageCalculationResult[SwapAmount]]:
         """
         Wrap the arbitrage calculation into an asyncio future using the specified executor.
 

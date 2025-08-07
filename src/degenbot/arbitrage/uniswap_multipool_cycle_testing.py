@@ -231,7 +231,6 @@ def _build_convex_problem(num_pools: int) -> Problem:
 
 type Pool = UniswapV2Pool | AerodromeV2Pool
 type PoolState = UniswapV2PoolState | AerodromeV2PoolState
-type SwapAmount = UniswapV2PoolSwapAmounts
 
 
 class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
@@ -249,7 +248,7 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
     def _calculate(  # type: ignore[override]
         self,
         state_overrides: Mapping[Pool, PoolState] | None = None,
-    ) -> ArbitrageCalculationResult:
+    ) -> ArbitrageCalculationResult[UniswapV2PoolSwapAmounts]:
         """
         Calculate the optimal arbitrage profit using the maximum input as an upper bound.
         """
@@ -263,7 +262,7 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
         def v2_only_calc(
             pools: Sequence[Pool],
             pool_states: Mapping[Pool, PoolState],
-        ) -> ArbitrageCalculationResult:
+        ) -> ArbitrageCalculationResult[UniswapV2PoolSwapAmounts]:
             """
             Calculate the optimal arbitrage for a sequence of Uniswap V2 (or compatible) pools of
             arbitrary length.

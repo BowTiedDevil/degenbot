@@ -237,7 +237,9 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
     def _calculate(
         self,
         state_overrides: Mapping[Pool, PoolState] | None = None,
-    ) -> ArbitrageCalculationResult:
+    ) -> ArbitrageCalculationResult[
+        UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
+    ]:
         """
         Calculate the optimal arbitrage profit using the maximum input as an upper bound.
         """
@@ -703,7 +705,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             forward_token: Erc20Token,
             v4_pool_hi_state_override: UniswapV4PoolState | None = None,
             v4_pool_lo_state_override: UniswapV4PoolState | None = None,
-        ) -> ArbitrageCalculationResult:
+        ) -> ArbitrageCalculationResult[UniswapV4PoolSwapAmounts]:
             # OPPORTUNITY:
             # - V4_lo ROE < V4_hi ROE
             # STRATEGY:
@@ -863,7 +865,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             forward_token: Erc20Token,
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v3_pool_state_override: UniswapV3PoolState | None = None,
-        ) -> ArbitrageCalculationResult:
+        ) -> ArbitrageCalculationResult[UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts]:
             # OPPORTUNITY:
             # - V3 ROE < V3 ROE
             # STRATEGY:
@@ -1028,7 +1030,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             forward_token: Erc20Token,
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
-        ) -> ArbitrageCalculationResult:
+        ) -> ArbitrageCalculationResult[UniswapV2PoolSwapAmounts | UniswapV4PoolSwapAmounts]:
             # OPPORTUNITY:
             # - V4 ROE < V2 ROE
             # STRATEGY:
@@ -1190,7 +1192,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             forward_token: Erc20Token,
             v3_pool_state_override: UniswapV3PoolState | None = None,
             v4_pool_state_override: UniswapV4PoolState | None = None,
-        ) -> ArbitrageCalculationResult:
+        ) -> ArbitrageCalculationResult[UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts]:
             # OPPORTUNITY:
             # - V4 ROE < V3 ROE
             # STRATEGY:
@@ -1350,7 +1352,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             forward_token: Erc20Token,
             v3_pool_hi_state_override: UniswapV3PoolState | None = None,
             v3_pool_lo_state_override: UniswapV3PoolState | None = None,
-        ) -> ArbitrageCalculationResult:
+        ) -> ArbitrageCalculationResult[UniswapV3PoolSwapAmounts]:
             # OPPORTUNITY:
             # - V3_lo ROE < V3_hi ROE
             # STRATEGY:
@@ -1494,7 +1496,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             forward_token: Erc20Token,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
             v3_pool_state_override: UniswapV3PoolState | None = None,
-        ) -> ArbitrageCalculationResult:
+        ) -> ArbitrageCalculationResult[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts]:
             # OPPORTUNITY:
             # - V2 ROE < V3 ROE
             # STRATEGY:
@@ -1653,7 +1655,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             forward_token: Erc20Token,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
             v4_pool_state_override: UniswapV4PoolState | None = None,
-        ) -> ArbitrageCalculationResult:
+        ) -> ArbitrageCalculationResult[UniswapV2PoolSwapAmounts | UniswapV4PoolSwapAmounts]:
             # OPPORTUNITY:
             # - V2 ROE < V4 ROE
             # STRATEGY:
@@ -1813,7 +1815,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             forward_token: Erc20Token,
             v3_pool_state_override: UniswapV3PoolState | None = None,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
-        ) -> ArbitrageCalculationResult:
+        ) -> ArbitrageCalculationResult[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts]:
             # OPPORTUNITY:
             # - V3 ROE < V2 ROE
             # STRATEGY:
@@ -1968,7 +1970,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             forward_token: Erc20Token,
             v2_pool_hi_state_override: UniswapV2PoolState | AerodromeV2PoolState | None = None,
             v2_pool_lo_state_override: UniswapV2PoolState | AerodromeV2PoolState | None = None,
-        ) -> ArbitrageCalculationResult:
+        ) -> ArbitrageCalculationResult[UniswapV2PoolSwapAmounts]:
             # Reuse the pre-compiled problem
             problem = self.__class__.convex_problem
 

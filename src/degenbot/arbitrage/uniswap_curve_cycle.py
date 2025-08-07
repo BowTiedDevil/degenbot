@@ -386,7 +386,9 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
         self,
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState],
         block_number: BlockNumber | None = None,
-    ) -> ArbitrageCalculationResult:
+    ) -> ArbitrageCalculationResult[
+        CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
+    ]:
         """
         Calculate the optimal arbitrage profit using the maximum input as an upper bound.
         """
@@ -498,7 +500,9 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
     def calculate(
         self,
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState] | None = None,
-    ) -> ArbitrageCalculationResult:
+    ) -> ArbitrageCalculationResult[
+        CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
+    ]:
         """
         Calculate the results of the arbitrage at the current pool states, or at one or more
         overridden pool states if provided.

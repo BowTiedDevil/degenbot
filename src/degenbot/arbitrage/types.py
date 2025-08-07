@@ -12,13 +12,28 @@ class AbstractSwapAmounts:
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class ArbitrageCalculationResult:
+class ArbitrageCalculationResult[SwapAmountType]:
+    """
+    The result of an arbitrage calculation.
+
+    This class is generic over the swap amount type. Calculations that build an
+    instance should specify this type in the return annotation, e.g.:
+
+    ```
+    def calculate(
+        self,
+        state_overrides: Mapping[ChecksumAddress, UniswapV2PoolState],
+        block_number: BlockNumber | None = None,
+    ) -> ArbitrageCalculationResult[UniswapV2PoolSwapAmounts]: ...
+    ```
+    """
+
     id: str
     input_token: Erc20Token
     profit_token: Erc20Token
     input_amount: int
     profit_amount: int
-    swap_amounts: tuple[AbstractSwapAmounts, ...]
+    swap_amounts: tuple[SwapAmountType, ...]
     state_block: BlockNumber | None
 
     def __post_init__(self) -> None:
