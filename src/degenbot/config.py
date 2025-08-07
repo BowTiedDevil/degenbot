@@ -62,7 +62,7 @@ if not CONFIG_FILE.exists():
 
     save_config_to_file(_default_settings)
 
-settings: Settings = load_config_from_file(CONFIG_FILE)
+settings = load_config_from_file(CONFIG_FILE)
 
 alembic_cfg: Config = Config()
 alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{settings.database.path.absolute()}")
