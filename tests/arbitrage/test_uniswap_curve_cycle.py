@@ -119,30 +119,28 @@ def test_arb_calculation(fork_mainnet_full: AnvilFork, weth: Erc20Token):
     uniswap_v3_weth_usdc_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDC_ADDRESS)
     uniswap_v3_weth_usdt_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDT_ADDRESS)
 
-    try:
-        for swap_pools in [
-            (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
-            (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
-            (uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_dai_lp),
-            (uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
-            (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_dai_lp),
-            (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
-            (uniswap_v3_weth_dai_lp, curve_tripool, uniswap_v3_weth_usdc_lp),
-            (uniswap_v3_weth_dai_lp, curve_tripool, uniswap_v3_weth_usdt_lp),
-            (uniswap_v3_weth_usdc_lp, curve_tripool, uniswap_v3_weth_dai_lp),
-            (uniswap_v3_weth_usdc_lp, curve_tripool, uniswap_v3_weth_usdt_lp),
-            (uniswap_v3_weth_usdt_lp, curve_tripool, uniswap_v3_weth_dai_lp),
-            (uniswap_v3_weth_usdt_lp, curve_tripool, uniswap_v3_weth_usdc_lp),
-        ]:
-            arb = UniswapCurveCycle(
-                input_token=weth,
-                swap_pools=swap_pools,  # type: ignore[arg-type]
-                id="test",
-                max_input=10 * 10**18,
-            )
+    for swap_pools in [
+        (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
+        (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
+        (uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_dai_lp),
+        (uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
+        (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_dai_lp),
+        (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
+        (uniswap_v3_weth_dai_lp, curve_tripool, uniswap_v3_weth_usdc_lp),
+        (uniswap_v3_weth_dai_lp, curve_tripool, uniswap_v3_weth_usdt_lp),
+        (uniswap_v3_weth_usdc_lp, curve_tripool, uniswap_v3_weth_dai_lp),
+        (uniswap_v3_weth_usdc_lp, curve_tripool, uniswap_v3_weth_usdt_lp),
+        (uniswap_v3_weth_usdt_lp, curve_tripool, uniswap_v3_weth_dai_lp),
+        (uniswap_v3_weth_usdt_lp, curve_tripool, uniswap_v3_weth_usdc_lp),
+    ]:
+        arb = UniswapCurveCycle(
+            input_token=weth,
+            swap_pools=swap_pools,  # type: ignore[arg-type]
+            id="test",
+            max_input=10 * 10**18,
+        )
+        with contextlib.suppress(ArbitrageError):
             arb.calculate()
-    except ArbitrageError:
-        pass
 
 
 def test_arb_calculation_pre_checks_v2(fork_mainnet_full: AnvilFork, weth: Erc20Token):
