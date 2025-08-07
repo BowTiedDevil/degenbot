@@ -1,6 +1,6 @@
 import pathlib
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
 import pydantic_core
 import tqdm
@@ -45,7 +45,7 @@ class SnapshotSource(Protocol):
     generic source.
     """
 
-    storage_kind: Literal["dir", "file", "db"]
+    storage_kind: str
 
     # Any class implementing the protocol must implement these methods, transforming data as
     # necessary to return the specified types.
