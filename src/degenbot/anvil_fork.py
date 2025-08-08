@@ -226,9 +226,10 @@ class AnvilFork:
             )
             filename_check_with_retry(fn=self.ipc_filename.exists)
         except tenacity.RetryError as exc:
+            process.terminate()
             raise DegenbotError(message="Timed out waiting for IPC socket to be created.") from exc
-
-        self._process = process
+        else:
+            self.process = process
 
     def __del__(self) -> None:
         if hasattr(self, "_process"):
