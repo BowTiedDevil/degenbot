@@ -229,7 +229,7 @@ class AnvilFork:
             process.terminate()
             raise DegenbotError(message="Timed out waiting for IPC socket to be created.") from exc
         else:
-            self.process = process
+            self._process = process
 
     def __del__(self) -> None:
         if hasattr(self, "_process"):
