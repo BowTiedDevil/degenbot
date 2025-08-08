@@ -66,7 +66,7 @@ class AnvilFork:
                 command.append(f"--base-fee={base_fee}")
 
         def _parse_block_number_arg(command: AnvilCommandList) -> None:
-            if fork_block:
+            if fork_block is not None:
                 command.append(f"--fork-block-number={fork_block}")
 
         def _parse_mining_mode_arg(command: AnvilCommandList) -> None:
@@ -115,7 +115,6 @@ class AnvilFork:
 
         command: AnvilCommandList = [
             str(path_to_anvil),
-            "--silent",
             "--auto-impersonate",
             "--no-rate-limit",
             f"--fork-url={fork_url}",
@@ -215,7 +214,12 @@ class AnvilFork:
         Launch an Anvil subprocess, waiting for the IPC socket to be created.
         """
 
-        process = subprocess.Popen(anvil_command)  # noqa: S603
+        process = subprocess.Popen(  # noqa: S603
+            anvil_command,
+            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
 
         try:
             # Storage I/O should be fast, so use a low fixed wait time
