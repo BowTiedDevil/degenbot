@@ -286,7 +286,7 @@ class UniswapV4LiquiditySnapshot:
             topic_signature=[HexBytes(event_abi_to_log_topic(event_abi))],
         )
 
-        for event_log in tqdm.asyncio.tqdm(
+        async for event_log in tqdm.asyncio.tqdm(
             event_logs,
             desc=f"Processing {event.event_name} events",
             unit="event",
