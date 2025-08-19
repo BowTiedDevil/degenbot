@@ -16,18 +16,29 @@ from degenbot.types.concrete import AbstractPublisherMessage, Publisher
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
 
-ARBITRUM_FULL_NODE_HTTP_URI = "https://arbitrum-one-rpc.publicnode.com"
-ARBITRUM_FULL_NODE_WS_URI = "wss://arbitrum-one-rpc.publicnode.com"
 
-ETHEREUM_ARCHIVE_NODE_HTTP_URI = "https://eth.llamarpc.com"
-ETHEREUM_ARCHIVE_NODE_WS_URI = "wss://eth.llamarpc.com"
-ETHEREUM_FULL_NODE_HTTP_URI = "http://localhost:8545"
-ETHEREUM_FULL_NODE_WS_URI = "ws://localhost:8546"
+ARBITRUM_FULL_NODE_HTTP_URI = (
+    env_values["ARBITRUM_FULL_NODE_HTTP_URI"] or "https://arbitrum-one-rpc.publicnode.com"
+)
+ARBITRUM_FULL_NODE_WS_URI = (
+    env_values["ARBITRUM_FULL_NODE_WS_URI"] or "wss://arbitrum-one-rpc.publicnode.com"
+)
 
-BASE_ARCHIVE_NODE_HTTP_URI = "https://base.llamarpc.com"
-BASE_ARCHIVE_NODE_WS_URI = "wss://base.llamarpc.com"
-BASE_FULL_NODE_HTTP_URI = "http://localhost:8544"
-BASE_FULL_NODE_WS_URI = "ws://localhost:8548"
+BASE_ARCHIVE_NODE_HTTP_URI = (
+    env_values["BASE_ARCHIVE_NODE_HTTP_URI"] or "https://base.llamarpc.com/"
+)
+BASE_ARCHIVE_NODE_WS_URI = env_values["BASE_ARCHIVE_NODE_WS_URI"] or "wss://base.llamarpc.com/"
+BASE_FULL_NODE_HTTP_URI = env_values["BASE_FULL_NODE_HTTP_URI"] or "http://localhost:8544/"
+BASE_FULL_NODE_WS_URI = env_values["BASE_FULL_NODE_WS_URI"] or "ws://localhost:8548/"
+
+ETHEREUM_ARCHIVE_NODE_HTTP_URI = (
+    env_values["ETHEREUM_ARCHIVE_NODE_HTTP_URI"] or "https://eth.llamarpc.com/"
+)
+ETHEREUM_ARCHIVE_NODE_WS_URI = (
+    env_values["ETHEREUM_ARCHIVE_NODE_WS_URI"] or "wss://eth.llamarpc.com/"
+)
+ETHEREUM_FULL_NODE_HTTP_URI = env_values["ETHEREUM_FULL_NODE_HTTP_URI"] or "http://localhost:8545/"
+ETHEREUM_FULL_NODE_WS_URI = env_values["ETHEREUM_FULL_NODE_WS_URI"] or "ws://localhost:8546/"
 
 
 @pytest.fixture(autouse=True)
