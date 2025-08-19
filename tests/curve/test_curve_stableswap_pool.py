@@ -8,11 +8,12 @@ from web3 import Web3
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager, set_web3
+from degenbot.connection import set_web3
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions.arbitrage import NoLiquidity
 from degenbot.exceptions.liquidity_pool import BrokenPool, InvalidSwapInputAmount
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 if TYPE_CHECKING:
     from web3.contract.contract import Contract
@@ -30,9 +31,9 @@ def tripool(fork_mainnet_full: AnvilFork) -> CurveStableswapPool:
     return CurveStableswapPool(TRIPOOL_ADDRESS)
 
 
-def _test_calculations(lp: CurveStableswapPool):
+def _test_calculations(lp: CurveStableswapPool, w3: Web3):
     state_block = lp.update_block
-    w3_contract = connection_manager.get_web3(lp.chain_id).eth.contract(
+    w3_contract = w3.eth.contract(
         address=lp.address,
         abi=CURVE_V1_POOL_ABI,
     )
@@ -49,7 +50,6 @@ def _test_calculations(lp: CurveStableswapPool):
                     token_in=token_in,
                     token_out=token_out,
                     token_in_quantity=amount,
-                    block_identifier=state_block,
                 )
             except (InvalidSwapInputAmount, NoLiquidity):
                 continue
@@ -67,9 +67,8 @@ def _test_calculations(lp: CurveStableswapPool):
                     ),
                 }
                 contract_amount, *_ = eth_abi.abi.decode(
-                    data=connection_manager.get_web3(lp.chain_id).eth.call(
+                    data=w3.eth.call(
                         transaction=tx,  # type: ignore[arg-type]
-                        block_identifier=state_block,
                     ),
                     types=["uint256"],
                 )
@@ -78,7 +77,7 @@ def _test_calculations(lp: CurveStableswapPool):
                     token_in_index,
                     token_out_index,
                     amount,
-                ).call(block_identifier=state_block)
+                ).call()
 
             assert calc_amount == contract_amount, (
                 f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}: {amount} {token_in} for {token_out}"  # noqa:E501
@@ -104,7 +103,6 @@ def _test_calculations(lp: CurveStableswapPool):
                         token_in=token_in,
                         token_out=token_out,
                         token_in_quantity=amount,
-                        block_identifier=state_block,
                     )
                 except (InvalidSwapInputAmount, NoLiquidity):
                     continue
@@ -113,7 +111,7 @@ def _test_calculations(lp: CurveStableswapPool):
                     token_in_index,
                     token_out_index,
                     amount,
-                ).call(block_identifier=state_block)
+                ).call()
 
                 assert calc_amount == contract_amount, (
                     f"Failure simulating swap (metapool) at block {state_block} for {lp.address}: "
@@ -126,19 +124,27 @@ def test_create_pool(fork_mainnet_full: AnvilFork):
     CurveStableswapPool(address=TRIPOOL_ADDRESS)
 
 
-def test_tripool(tripool: CurveStableswapPool):
-    _test_calculations(tripool)
+def test_tripool(
+    tripool: CurveStableswapPool,
+    fork_mainnet_full: AnvilFork,
+):
+    _test_calculations(lp=tripool, w3=fork_mainnet_full.w3)
 
 
 def test_pickle_tripool(tripool: CurveStableswapPool):
     pickle.dumps(tripool)
 
 
+@pytest.mark.parametrize(
+    "fork_mainnet_archive",
+    [18849426],
+    indirect=True,
+)
 def test_auto_update(fork_mainnet_archive: AnvilFork):
     # Build the pool at a known historical block
-    block_number = 18849426
-    fork_mainnet_archive.reset(block_number=block_number)
+
     set_web3(fork_mainnet_archive.w3)
+    block_number = fork_mainnet_archive.w3.eth.block_number
 
     _tripool = CurveStableswapPool(TRIPOOL_ADDRESS)
 
@@ -157,6 +163,11 @@ def test_auto_update(fork_mainnet_archive: AnvilFork):
     assert _tripool.balances == (75010632422398781503259123, 76437030384826, 34599346168546)
 
 
+@pytest.mark.parametrize(
+    "fork_mainnet_archive",
+    [14_900_000],
+    indirect=True,
+)
 def test_a_ramping(fork_mainnet_archive: AnvilFork):
     # A range:      5000 -> 2000
     # A time :      1653559305 -> 1654158027
@@ -166,7 +177,6 @@ def test_a_ramping(fork_mainnet_archive: AnvilFork):
     initial_a_time = 1653559305
     final_a_time = 1654158027
 
-    fork_mainnet_archive.reset(block_number=14_900_000)
     set_web3(fork_mainnet_archive.w3)
 
     tripool = CurveStableswapPool(address=TRIPOOL_ADDRESS)
@@ -177,24 +187,22 @@ def test_a_ramping(fork_mainnet_archive: AnvilFork):
     assert tripool._a(timestamp=(initial_a_time + final_a_time) // 2) == (initial_a + final_a) // 2
 
 
+@pytest.mark.parametrize(
+    "fork_mainnet_archive",
+    [None],  # Provide block number here if testing against a specific block
+    indirect=True,
+)
 def test_single_pool(
-    fork_mainnet_full: AnvilFork,
     fork_mainnet_archive: AnvilFork,
 ):
-    block_identifier = None
     pool_address = ""
-
     if not pool_address:
         return
 
-    if block_identifier is not None:
-        fork_mainnet_archive.reset(block_number=block_identifier)
-        set_web3(fork_mainnet_archive.w3)
-    else:
-        set_web3(fork_mainnet_full.w3)
+    set_web3(fork_mainnet_archive.w3)
 
     lp = CurveStableswapPool(address=pool_address)
-    _test_calculations(lp)
+    _test_calculations(lp=lp, w3=fork_mainnet_archive.w3)
 
 
 def test_tricrypto_pool(fork_mainnet_full: AnvilFork):
@@ -204,10 +212,10 @@ def test_tricrypto_pool(fork_mainnet_full: AnvilFork):
     pool_address = "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"
     set_web3(fork_mainnet_full.w3)
     lp = CurveStableswapPool(address=pool_address)
-    _test_calculations(lp)
+    _test_calculations(lp=lp, w3=fork_mainnet_full.w3)
 
 
-def test_metapool_over_multiple_blocks_to_verify_cache_behavior(fork_mainnet_archive: AnvilFork):
+def test_metapool_over_multiple_blocks_to_verify_cache_behavior():
     pool_address = "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d"
     start_block = 18_850_000
     end_block = 18_850_500
@@ -232,7 +240,7 @@ def test_metapool_over_multiple_blocks_to_verify_cache_behavior(fork_mainnet_arc
         set_web3(fork.w3)
         lp.auto_update()
         assert lp.update_block == block
-        _test_calculations(lp)
+        _test_calculations(lp=lp, w3=fork.w3)
 
 
 def test_base_pool(fork_mainnet_full: AnvilFork):
@@ -316,12 +324,12 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
         )
         pool_addresses = batch.execute()
 
-    for i, pool_address in enumerate(pool_addresses):
+    for i, pool_address in enumerate(pool_addresses, start=1):
         print(f"Testing factory pool {i}/{pool_count} @ {pool_address}")
 
         try:
             lp = CurveStableswapPool(address=cast("str", pool_address), silent=True)
-            _test_calculations(lp)
+            _test_calculations(lp=lp, w3=fork_mainnet_full.w3)
         except (BrokenPool, NoLiquidity):
             continue
         except Exception as e:
@@ -349,10 +357,10 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
         )
         pool_addresses = batch.execute()
 
-    for i, pool_address in enumerate(pool_addresses):
+    for i, pool_address in enumerate(pool_addresses, start=1):
         print(f"Testing registry pool {i}/{pool_count} @ {pool_address}")
         lp = CurveStableswapPool(address=cast("str", pool_address), silent=True)
-        _test_calculations(lp)
+        _test_calculations(lp=lp, w3=fork_mainnet_full.w3)
 
 
 def test_get_d(tripool: CurveStableswapPool):

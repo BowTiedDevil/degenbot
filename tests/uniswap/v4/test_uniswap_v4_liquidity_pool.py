@@ -53,6 +53,8 @@ TOKEN_AMOUNT_MULTIPLIERS = [
     0.1,
 ]
 
+SNAPSHOT_BLOCK = 21883665
+
 
 @pytest.fixture
 def eth_usdc_v4(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
@@ -429,8 +431,6 @@ def test_cached_calculations(
 
         assert amount_in == quoter_amount_in
 
-        print(f"{eth_usdc_v4.get_range_cache_stats()}")
-
 
 def test_first_200_pools(
     fork_mainnet_full: AnvilFork,
@@ -456,12 +456,16 @@ def test_first_200_pools(
         )
 
 
+@pytest.mark.parametrize(
+    "fork_mainnet_archive",
+    [SNAPSHOT_BLOCK],
+    indirect=True,
+)
 def test_first_200_pools_with_snapshot(
     fork_mainnet_archive: AnvilFork,
     testing_pools,
     liquidity_snapshot,
 ):
-    fork_mainnet_archive.reset(block_number=liquidity_snapshot["snapshot_block"])
     set_web3(fork_mainnet_archive.w3)
 
     quoter = fork_mainnet_archive.w3.eth.contract(
@@ -482,47 +486,3 @@ def test_first_200_pools_with_snapshot(
             quoter=quoter,
             snapshot=liquidity_snapshot,
         )
-
-
-SINGLE_POOL_ID = ""
-
-
-def test_single_pool(
-    fork_mainnet_archive: AnvilFork,
-    testing_pools,
-):
-    if not SINGLE_POOL_ID:
-        return
-
-    [pool] = [pool for pool in testing_pools if pool["pool_id"] == SINGLE_POOL_ID]
-    _test_pool_exact_input(
-        pool=pool,
-        fork=fork_mainnet_archive,
-    )
-    _test_pool_exact_output(
-        pool=pool,
-        fork=fork_mainnet_archive,
-    )
-
-
-def test_single_pool_with_snapshot(
-    fork_mainnet_archive: AnvilFork,
-    testing_pools,
-    liquidity_snapshot,
-):
-    if not SINGLE_POOL_ID:
-        return
-
-    fork_mainnet_archive.reset(block_number=liquidity_snapshot["snapshot_block"])
-
-    [pool] = [pool for pool in testing_pools if pool["pool_id"] == SINGLE_POOL_ID]
-    _test_pool_exact_input(
-        pool=pool,
-        fork=fork_mainnet_archive,
-        snapshot=liquidity_snapshot,
-    )
-    _test_pool_exact_output(
-        pool=pool,
-        fork=fork_mainnet_archive,
-        snapshot=liquidity_snapshot,
-    )

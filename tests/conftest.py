@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Generator
 from typing import Any
 
 import dotenv
@@ -51,66 +52,97 @@ def _set_degenbot_logging():
     logger.setLevel(logging.DEBUG)
 
 
-@pytest.fixture(
-    scope="session",
-    params=[
-        pytest.param(
-            "fork_arbitrum_full",
-            marks=pytest.mark.xdist_group("fork_arbitrum_full"),
-        )
-    ],
-)
-def fork_arbitrum_full() -> AnvilFork:
-    return AnvilFork(
-        fork_url=ARBITRUM_FULL_NODE_WS_URI,
-        ipc_provider_kwargs={"timeout": 600},
+@pytest.fixture  # (scope="session")
+def fork_arbitrum_full() -> Generator[AnvilFork, None, None]:
+    fork = AnvilFork(
+        fork_url=ARBITRUM_FULL_NODE_HTTP_URI,
+        ipc_provider_kwargs={"timeout": None},
+        storage_caching=False,
+        anvil_opts=["--accounts=0"],
     )
+    yield fork
+    fork.close()
 
 
-@pytest.fixture(
-    scope="session",
-    params=[
-        pytest.param(
-            "fork_base_archive",
-            marks=pytest.mark.xdist_group("fork_base_archive"),
-        )
-    ],
-)
-def fork_base_archive() -> AnvilFork:
-    return AnvilFork(
-        fork_url=BASE_ARCHIVE_NODE_WS_URI,
-        ipc_provider_kwargs={"timeout": 600},
-        anvil_opts=["--optimism"],
+@pytest.fixture  # (scope="session")
+def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, None, None]:
+    """
+    An AnvilFork using the default mainnet archive node. To fork from a specific block, parametrize
+    the test with an indirect parameter for this fixture, e.g.:
+
+    ```
+    @pytest.mark.parametrize(
+        "fork_base_archive", [block_number], indirect=True
     )
+    def test_using_fork(
+        fork_base_archive: AnvilFork
+    ):
+        ...
+    ```
+    """
 
+    block_number = getattr(request, "param", None)
 
-@pytest.fixture
-def fork_base_full() -> AnvilFork:
-    return AnvilFork(
-        fork_url=BASE_FULL_NODE_WS_URI,
-        anvil_opts=["--optimism"],
+    fork = AnvilFork(
+        fork_url=BASE_ARCHIVE_NODE_HTTP_URI,
+        fork_block=block_number,
+        ipc_provider_kwargs={"timeout": None},
+        anvil_opts=["--accounts=0", "--optimism"],
     )
+    yield fork
+    fork.close()
 
 
-@pytest.fixture(
-    scope="session",
-    params=[
-        pytest.param(
-            "fork_mainnet_archive",
-            marks=pytest.mark.xdist_group("fork_mainnet_archive"),
-        )
-    ],
-)
-def fork_mainnet_archive() -> AnvilFork:
-    return AnvilFork(
-        fork_url=ETHEREUM_ARCHIVE_NODE_WS_URI,
-        ipc_provider_kwargs={"timeout": 600},
+@pytest.fixture  # (scope="session")
+def fork_base_full() -> Generator[AnvilFork, None, None]:
+    fork = AnvilFork(
+        fork_url=BASE_FULL_NODE_HTTP_URI,
+        storage_caching=False,
+        anvil_opts=["--accounts=0", "--optimism"],
     )
+    yield fork
+    fork.close()
 
 
-@pytest.fixture
-def fork_mainnet_full() -> AnvilFork:
-    return AnvilFork(fork_url=ETHEREUM_FULL_NODE_WS_URI)
+@pytest.fixture  # (scope="session")
+def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, None, None]:
+    """
+    An AnvilFork using the default mainnet archive node. To fork from a specific block, parametrize
+    the test with an indirect parameter for this fixture, e.g.:
+
+    ```
+    @pytest.mark.parametrize(
+        "fork_mainnet_archive", [block_number], indirect=True
+    )
+    def test_using_fork(
+        fork_mainnet_archive: AnvilFork
+    ):
+        ...
+    ```
+    """
+
+    block_number = getattr(request, "param", None)
+
+    fork = AnvilFork(
+        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_block=block_number,
+        ipc_provider_kwargs={"timeout": None},
+        anvil_opts=["--accounts=0"],
+    )
+    yield fork
+    fork.close()
+
+
+@pytest.fixture  # (scope="session")
+def fork_mainnet_full():  # -> Generator[AnvilFork, None, None]:
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        ipc_provider_kwargs={"timeout": None},
+        storage_caching=False,
+        anvil_opts=["--accounts=0"],
+    )
+    yield fork
+    fork.close()
 
 
 class FakeSubscriber:

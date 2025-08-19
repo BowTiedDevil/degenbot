@@ -7,12 +7,11 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.connection import set_web3
 from degenbot.exceptions.transaction import DeadlineExpired, TransactionError, UnknownRouterAddress
 from degenbot.transaction.uniswap_transaction import UniswapTransaction
-from degenbot.types.aliases import BlockNumber
 
 
 @pytest.mark.parametrize(
     (
-        "block_number",
+        "fork_mainnet_archive",
         "tx_dict",
         "exception_match",
     ),
@@ -64,7 +63,7 @@ from degenbot.types.aliases import BlockNumber
             None,
         ),
         (
-            19195157 - 1,
+            19195156,
             dict(
                 chain_id=1,
                 tx_hash="0x4ecbc9a61b15f0a6e6ade2d871e1badcb9d89b3f58d70054d076541a7aa4af5d",
@@ -88,7 +87,7 @@ from degenbot.types.aliases import BlockNumber
             None,
         ),
         (
-            19651601 - 1,
+            19651600,
             dict(
                 chain_id=1,
                 tx_hash="0xb7941464e07ad5815503e275a4a11ecc3105784874f7323281cd5581462dd9d4",
@@ -109,7 +108,7 @@ from degenbot.types.aliases import BlockNumber
             None,
         ),
         (
-            19651990 - 1,
+            19651989,
             dict(
                 chain_id=1,
                 tx_hash="0x75cc383aa061e344829d2ca68dc5b9d7b639a575516560e9b1e14a5996fcd4ed",
@@ -130,7 +129,7 @@ from degenbot.types.aliases import BlockNumber
             None,
         ),
         (
-            20633610 - 1,
+            20633609,
             dict(
                 chain_id=1,
                 tx_hash="0xb73d4d15e0a215debed03950d368542017f1dc95f10ccd97ab9acb08a8129146",
@@ -144,19 +143,20 @@ from degenbot.types.aliases import BlockNumber
             "Aborting simulation involving unknown function",
         ),
     ],
+    indirect=[
+        # This parameter is marked indirect, thus it is passed to the fork fixture before calling
+        # the test, so the fork arrives already set to the correct block when the test begins
+        "fork_mainnet_archive"
+    ],
 )
 def test_v2_router_transactions(
     fork_mainnet_archive: AnvilFork,
-    block_number,
     tx_dict: dict[str, Any],
     exception_match: str | None,
 ) -> None:
     set_web3(fork_mainnet_archive.w3)
-    fork_mainnet_archive.reset(block_number=block_number)
-    assert fork_mainnet_archive.w3.eth.get_block_number() == block_number
 
     tx = UniswapTransaction(**tx_dict)
-
     if exception_match is not None:
         with pytest.raises(TransactionError, match=exception_match):
             tx.simulate()
@@ -167,7 +167,7 @@ def test_v2_router_transactions(
 
 @pytest.mark.parametrize(
     (
-        "block_number",
+        "fork_mainnet_archive",
         "tx_dict",
         "exception_match",
     ),
@@ -249,7 +249,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            19195876 - 1,
+            19195875,
             dict(
                 chain_id=1,
                 tx_hash="0x0492ef965901b7bc9c1b9d02868ea3e642f84a399f4d0179b006088cd2942d99",
@@ -272,7 +272,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            19195864 - 1,
+            19195863,
             dict(
                 chain_id=1,
                 tx_hash="0xf684531981c2169c168249db3a0e0ae92c8763d19bc7f01a40e4d42997e1b62c",
@@ -294,7 +294,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            19200547 - 1,
+            19200546,
             dict(
                 chain_id=1,
                 tx_hash="0x0348df6b2a08e73d356774a005c952dd6fa5c5403f34106c10d27d1b4aca56e7",
@@ -318,7 +318,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            19231984 - 1,
+            19231983,
             dict(
                 chain_id=1,
                 tx_hash="0xf9b1a43c34c400090cf695121b4b060324ea520aad2e0fee67365c5c462aacd2",
@@ -343,7 +343,7 @@ def test_v2_router_transactions(
         ),
         (
             # same as above, but in 4-tuple format (Router02)
-            19231984 - 1,
+            19231983,
             dict(
                 chain_id=1,
                 tx_hash="0xf9b1a43c34c400090cf695121b4b060324ea520aad2e0fee67365c5c462aacd2",
@@ -366,7 +366,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            19229539 - 1,
+            19229538,
             dict(
                 chain_id=1,
                 tx_hash="0x91f6955f167d8e79af01c4b1a0cddf714933075d750a66043f67348e6f926974",
@@ -411,7 +411,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            17588171 - 1,
+            17588170,
             dict(
                 chain_id=1,
                 tx_hash="0x7fdc920e5a8a1335ad97abe752e5421c3093b37d177cee333bd90e0ac1c78657",
@@ -453,7 +453,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            19195614 - 1,
+            19195613,
             dict(
                 chain_id=1,
                 tx_hash="0x62ede4ae1a1a92d07f580c46f74565e5bf2af2a49e8030b1c80e3f120169128e",
@@ -474,7 +474,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            19195847 - 1,
+            19195846,
             dict(
                 chain_id=1,
                 tx_hash="0x37709f0ea96b092fba26048e16a190d378dd9d5c2367fff0842ca5f42b3a9e8a",
@@ -498,7 +498,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            19199283 - 1,
+            19199282,
             dict(
                 chain_id=1,
                 tx_hash="0x07eac30cb8d9d96faef41c4cd04397195a93bfc53729806626b76dbc5f0146c1",
@@ -523,7 +523,7 @@ def test_v2_router_transactions(
         ),
         (
             # duplicate of the above, but in 5-tuple format (Router01)
-            19199283 - 1,
+            19199282,
             dict(
                 chain_id=1,
                 tx_hash="0x07eac30cb8d9d96faef41c4cd04397195a93bfc53729806626b76dbc5f0146c1",
@@ -548,7 +548,7 @@ def test_v2_router_transactions(
         ),
         (
             # duplicate of the above, but in 4-tuple format (Router02)
-            19199283 - 1,
+            19199282,
             dict(
                 chain_id=1,
                 tx_hash="0x07eac30cb8d9d96faef41c4cd04397195a93bfc53729806626b76dbc5f0146c1",
@@ -571,7 +571,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            19199376 - 1,
+            19199375,
             dict(
                 chain_id=1,
                 tx_hash="0xaa74821d005281080966e29c3a93ad0f4cb36cb86fd1f08d11c0e560dce5d90a",
@@ -592,7 +592,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            19199448 - 1,
+            19199447,
             dict(
                 chain_id=1,
                 tx_hash="0x7f93ec1914d4c4d5db9d69693bb452b0ea1e2635906e5ecb448e571ebe4f0786",
@@ -616,7 +616,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            19199470 - 1,
+            19199469,
             dict(
                 chain_id=1,
                 tx_hash="0x9549021fb039810f8da32d210c32f12e1e688747e9155b81238f6b9b2b84c88d",
@@ -642,7 +642,7 @@ def test_v2_router_transactions(
         ),
         (
             # duplicate of the above, but in 8-tuple format (Router01)
-            19199470 - 1,
+            19199469,
             dict(
                 chain_id=1,
                 tx_hash="0x9549021fb039810f8da32d210c32f12e1e688747e9155b81238f6b9b2b84c88d",
@@ -668,7 +668,7 @@ def test_v2_router_transactions(
         ),
         (
             # duplicate of the above, but in 7-tuple format (Router02)
-            19199470 - 1,
+            19199469,
             dict(
                 chain_id=1,
                 tx_hash="0x9549021fb039810f8da32d210c32f12e1e688747e9155b81238f6b9b2b84c88d",
@@ -692,7 +692,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            19211846 - 1,
+            19211845,
             dict(
                 chain_id=1,
                 tx_hash="0x1b3b1470a6fb67d4032fecab43f932c171a25a0079388b7b3b664ffc8141b1e5",
@@ -725,7 +725,7 @@ def test_v2_router_transactions(
             None,
         ),
         (
-            19229227 - 1,
+            19229226,
             dict(
                 chain_id=1,
                 tx_hash="0x68d27a8dbbf74d1cbead370da978c68e92a7f698107f7cb179eb82d82aeaf5bd",
@@ -749,16 +749,18 @@ def test_v2_router_transactions(
             None,
         ),
     ],
+    indirect=[
+        # This parameter is marked indirect, thus it is passed to the fork fixture before calling
+        # the test, so the fork arrives already set to the correct block when the test begins
+        "fork_mainnet_archive"
+    ],
 )
 def test_v3_router_transactions(
     fork_mainnet_archive: AnvilFork,
-    block_number: BlockNumber,
     tx_dict: dict[str, Any],
     exception_match: str | None,
 ):
     set_web3(fork_mainnet_archive.w3)
-    fork_mainnet_archive.reset(block_number=block_number)
-    assert fork_mainnet_archive.w3.eth.get_block_number() == block_number
 
     tx = UniswapTransaction(**tx_dict)
 
@@ -771,7 +773,7 @@ def test_v3_router_transactions(
 
 @pytest.mark.parametrize(
     (
-        "block_number",
+        "fork_mainnet_archive",
         "tx_dict",
         "exception_match",
     ),
@@ -801,7 +803,7 @@ def test_v3_router_transactions(
             None,
         ),
         (
-            19190900 - 1,
+            19190899,
             dict(
                 chain_id=1,
                 tx_hash="0x6bebd3432ebc56a6ba95c90959a227a7bd5865be93dc5167d8afc6468cd731fc",
@@ -826,7 +828,7 @@ def test_v3_router_transactions(
             None,
         ),
         (
-            19195827 - 1,
+            19195826,
             dict(
                 chain_id=1,
                 tx_hash="0xbc96aa9e03d61d6a3ea1928274e2b1df1533a8c5c30f6fb936ea3c04c512329f",
@@ -854,7 +856,7 @@ def test_v3_router_transactions(
             None,
         ),
         (
-            19196501 - 1,
+            19196500,
             dict(
                 chain_id=1,
                 tx_hash="0xfff49e25c2f14293f7ca7a9c71211982abf9baecd5a73ae4b63c6a1a14455c38",
@@ -888,7 +890,7 @@ def test_v3_router_transactions(
             None,
         ),
         (
-            19196536 - 1,
+            19196535,
             dict(
                 chain_id=1,
                 tx_hash="0x65fc99c9ed97036910f82b996bce94c7b3237de689485925ec57762ba52d5adc",
@@ -944,7 +946,7 @@ def test_v3_router_transactions(
             "Insufficient input: 327834453655960088 deposited, 343703158171727411 required.",
         ),
         (
-            19469214 - 1,
+            19469213,
             dict(
                 chain_id=1,
                 tx_hash="0x1d2a3cd8f5f480993f96b96e43e6567398e62f1edb30b8103b05b11cd83d4c9f",
@@ -969,7 +971,7 @@ def test_v3_router_transactions(
             "Insufficient output: 1284639942327 received, 1368810481905 required.",
         ),
         (
-            19742711 - 1,
+            19742710,
             dict(
                 chain_id=1,
                 tx_hash="0xec724de527b6e1a6dbfda8c2a38917a7f6a0c306c10d582fffb95fc413a27425",
@@ -1003,7 +1005,7 @@ def test_v3_router_transactions(
             None,
         ),
         (
-            20941418 - 1,
+            20941417,
             dict(
                 chain_id=1,
                 tx_hash="0xbd5ab657ff34ca551216defcc328914eaf6db64bffc30c10e4850b5e8c401df2",
@@ -1034,7 +1036,7 @@ def test_v3_router_transactions(
             None,
         ),
         (
-            20987086 - 1,
+            20987085,
             dict(
                 chain_id=1,
                 tx_hash="0x2ef1c72b5621d600b0a53ac8d1dd9e2cc9be6f3b2fafe7cc1639b2075f409a77",
@@ -1065,7 +1067,7 @@ def test_v3_router_transactions(
             None,
         ),
         (
-            20987086 - 1,
+            20987085,
             dict(
                 chain_id=1,
                 tx_hash="0x52d89350927e1f9a7d6b0e616bd86e626d6463b6376094c2736e0eb2547d87ba",
@@ -1096,16 +1098,18 @@ def test_v3_router_transactions(
             None,
         ),
     ],
+    indirect=[
+        # This parameter is marked indirect, thus it is passed to the fork fixture before calling
+        # the test, so the fork arrives already set to the correct block when the test begins
+        "fork_mainnet_archive"
+    ],
 )
 def test_universal_router_transactions(
     fork_mainnet_archive: AnvilFork,
-    block_number,
     tx_dict,
     exception_match,
 ) -> None:
     set_web3(fork_mainnet_archive.w3)
-    fork_mainnet_archive.reset(block_number=block_number)
-    assert fork_mainnet_archive.w3.eth.get_block_number() == block_number
 
     tx = UniswapTransaction(**tx_dict)
 
@@ -1146,11 +1150,13 @@ def test_invalid_router():
         )
 
 
+@pytest.mark.parametrize(
+    "fork_mainnet_archive",
+    [19195826],
+    indirect=True,
+)
 def test_expired_transaction(fork_mainnet_archive: AnvilFork):
     set_web3(fork_mainnet_archive.w3)
-    block_number = 19195827 - 1
-    fork_mainnet_archive.reset(block_number=block_number)
-    assert fork_mainnet_archive.w3.eth.get_block_number() == block_number
 
     tx = UniswapTransaction(
         chain_id=1,
