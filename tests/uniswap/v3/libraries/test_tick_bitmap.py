@@ -125,7 +125,7 @@ def test_flip_tick_sparse() -> None:
 def test_incorrect_tick_spacing_flip() -> None:
     tick_spacing = 3
     tick_bitmap = empty_full_bitmap(spacing=tick_spacing)
-    with pytest.raises(AssertionError, match="Invalid tick or spacing"):
+    with pytest.raises(ValueError, match="Invalid tick or spacing"):
         flip_tick(
             tick_bitmap=tick_bitmap, sparse=False, tick=2, tick_spacing=tick_spacing, update_block=0
         )
