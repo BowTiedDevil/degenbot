@@ -39,7 +39,9 @@ def flip_tick(
     Flips the initialized state for a given tick from false to true, or vice versa
     """
 
-    assert tick % tick_spacing == 0, "Invalid tick or spacing"
+    if tick % tick_spacing != 0:
+        msg = "Invalid tick or spacing"
+        raise ValueError(msg)
 
     word_pos, bit_pos = position(evm_divide(tick, tick_spacing))
 
