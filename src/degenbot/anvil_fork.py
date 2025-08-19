@@ -26,7 +26,7 @@ class AnvilNotFound(Exception):
         super().__init__("Anvil path could not be located.")
 
 
-type AnvilCommandList = list[str]
+type AnvilOptions = list[str]
 
 
 class AnvilFork:
@@ -61,15 +61,15 @@ class AnvilFork:
         ipc_provider_kwargs: dict[str, Any] | None = None,
         anvil_opts: list[str] | None = None,  # Additional options passed to the Anvil command
     ) -> None:
-        def _parse_base_fee_arg(command: AnvilCommandList) -> None:
+        def _parse_base_fee_arg(command: AnvilOptions) -> None:
             if base_fee:
                 command.append(f"--base-fee={base_fee}")
 
-        def _parse_block_number_arg(command: AnvilCommandList) -> None:
+        def _parse_block_number_arg(command: AnvilOptions) -> None:
             if fork_block is not None:
                 command.append(f"--fork-block-number={fork_block}")
 
-        def _parse_mining_mode_arg(command: AnvilCommandList) -> None:
+        def _parse_mining_mode_arg(command: AnvilOptions) -> None:
             match mining_mode:
                 case "auto":
                     return
@@ -85,11 +85,11 @@ class AnvilFork:
                 case _:
                     raise DegenbotValueError(message=f"Unknown mining mode '{mining_mode}'.")
 
-        def _parse_storage_caching_arg(command: AnvilCommandList) -> None:
+        def _parse_storage_caching_arg(command: AnvilOptions) -> None:
             if storage_caching is False:
                 command.append("--no-storage-caching")
 
-        def _parse_transaction_hash_arg(command: AnvilCommandList) -> None:
+        def _parse_transaction_hash_arg(command: AnvilOptions) -> None:
             if fork_transaction_hash:
                 command.append(f"--fork-transaction-hash={fork_transaction_hash}")
 
@@ -113,7 +113,7 @@ class AnvilFork:
 
         self.port = self._get_free_port_number()
 
-        command: AnvilCommandList = [
+        command: AnvilOptions = [
             str(path_to_anvil),
             "--auto-impersonate",
             "--no-rate-limit",
@@ -209,7 +209,7 @@ class AnvilFork:
 
         self.w3 = w3
 
-    def _setup_process(self, anvil_command: AnvilCommandList) -> None:
+    def _setup_process(self, anvil_command: AnvilOptions) -> None:
         """
         Launch an Anvil subprocess, waiting for the IPC socket to be created.
         """
