@@ -3,11 +3,17 @@ from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
 import eth_account.messages
-import tenacity
 from eth_typing import ChecksumAddress
 from eth_utils.conversions import to_hex
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
+from tenacity import (
+    AsyncRetrying,
+    RetryError,
+    Retrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+)
 from web3 import AsyncWeb3, Web3
 from web3._utils.threads import Timeout
 from web3.exceptions import Web3Exception
@@ -154,14 +160,16 @@ def fetch_logs_retrying(
 
     event_logs = []
 
+    retrier = Retrying(
+        stop=stop_after_attempt(max_retries),
+        retry=retry_if_exception_type(
+            (Timeout, Web3Exception),
+        ),
+    )
+
     while True:
         try:
-            for attempt in tenacity.Retrying(
-                stop=tenacity.stop_after_attempt(max_retries),
-                retry=tenacity.retry_if_exception_type(
-                    (Timeout, Web3Exception),
-                ),
-            ):
+            for attempt in retrier:
                 chunk_end = min(end_block, start_block + working_span - 1)
 
                 with attempt:
@@ -203,7 +211,7 @@ def fetch_logs_retrying(
 
             start_block = chunk_end + 1
 
-        except tenacity.RetryError:
+        except RetryError:
             raise DegenbotError(
                 message=f"Timed out fetching logs after {max_retries} tries."
             ) from None
@@ -248,12 +256,14 @@ async def fetch_logs_retrying_async(
     working_span = max_blocks_per_request
     event_logs: list[LogReceipt] = []
 
+    retrier = AsyncRetrying(
+        stop=stop_after_attempt(max_retries),
+        retry=retry_if_exception_type((Timeout, Web3Exception)),
+    )
+
     while True:
         try:
-            async for attempt in tenacity.AsyncRetrying(
-                stop=tenacity.stop_after_attempt(max_retries),
-                retry=tenacity.retry_if_exception_type((Timeout, Web3Exception)),
-            ):
+            async for attempt in retrier:
                 chunk_end = min(end_block, start_block + working_span - 1)
 
                 with attempt:
@@ -294,7 +304,7 @@ async def fetch_logs_retrying_async(
 
             start_block = chunk_end + 1
 
-        except tenacity.RetryError:
+        except RetryError:
             raise DegenbotError(
                 message=f"Timed out fetching logs after {max_retries} tries."
             ) from None
