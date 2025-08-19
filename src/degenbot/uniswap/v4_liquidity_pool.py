@@ -13,7 +13,7 @@ from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.exceptions import ContractLogicError
-from web3.types import BlockIdentifier
+from web3.types import BlockIdentifier, TxParams
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
@@ -468,26 +468,26 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             batch.add(
                 # This call uses a specific block so the mutable state values are consistent
                 w3.eth.call(
-                    transaction={
-                        "to": self._state_view_address,
-                        "data": encode_function_calldata(
+                    transaction=TxParams(
+                        to=self._state_view_address,
+                        data=encode_function_calldata(
                             function_prototype="getSlot0(bytes32)",
                             function_arguments=[self.pool_id],
                         ),
-                    },
+                    ),
                     block_identifier=state_block,
                 )
             )
             batch.add(
                 # This call uses a specific block so the mutable state values are consistent
                 w3.eth.call(
-                    transaction={
-                        "to": self._state_view_address,
-                        "data": encode_function_calldata(
+                    transaction=TxParams(
+                        to=self._state_view_address,
+                        data=encode_function_calldata(
                             function_prototype="getLiquidity(bytes32)",
                             function_arguments=[self.pool_id],
                         ),
-                    },
+                    ),
                     block_identifier=state_block,
                 )
             )
@@ -920,13 +920,13 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             for tick in active_ticks:
                 batch.add(
                     w3.eth.call(
-                        transaction={
-                            "to": self._state_view_address,
-                            "data": encode_function_calldata(
+                        transaction=TxParams(
+                            to=self._state_view_address,
+                            data=encode_function_calldata(
                                 function_prototype="getTickLiquidity(bytes32,int24)",
                                 function_arguments=[self.pool_id, tick],
                             ),
-                        },
+                        ),
                         block_identifier=block_identifier,
                     )
                 )

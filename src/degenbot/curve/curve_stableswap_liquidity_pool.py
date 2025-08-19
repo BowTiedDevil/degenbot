@@ -20,7 +20,7 @@ from eth_typing import AnyAddress, ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.exceptions import Web3Exception
-from web3.types import BlockIdentifier
+from web3.types import BlockIdentifier, TxParams
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
@@ -195,7 +195,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         """
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        w3 = connection_manager.get_web3(self.chain_id)
+        w3: web3.Web3 = connection_manager.get_web3(self.chain_id)
         if state_block is None:
             state_block = w3.eth.block_number
 
@@ -220,49 +220,49 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             ):
                 batch.add(
                     w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        transaction=TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="initial_A()",
                                 function_arguments=None,
                             ),
-                        },
+                        ),
                         block_identifier=self.update_block,
                     )
                 )
                 batch.add(
                     w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        transaction=TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="initial_A_time()",
                                 function_arguments=None,
                             ),
-                        },
+                        ),
                         block_identifier=self.update_block,
                     )
                 )
                 batch.add(
                     w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        transaction=TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="future_A()",
                                 function_arguments=None,
                             ),
-                        },
+                        ),
                         block_identifier=self.update_block,
-                    )
+                    ),
                 )
                 batch.add(
                     w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        transaction=TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="future_A_time()",
                                 function_arguments=None,
                             ),
-                        },
+                        ),
                         block_identifier=self.update_block,
                     )
                 )
@@ -293,37 +293,37 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             with w3.batch_requests() as batch:
                 batch.add(
                     w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        transaction=TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="A()",
                                 function_arguments=None,
                             ),
-                        },
+                        ),
                         block_identifier=self.update_block,
                     )
                 )
                 batch.add(
                     w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        transaction=TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="fee()",
                                 function_arguments=None,
                             ),
-                        },
+                        ),
                         block_identifier=self.update_block,
                     )
                 )
                 batch.add(
                     w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        transaction=TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="admin_fee()",
                                 function_arguments=None,
                             ),
-                        },
+                        ),
                         block_identifier=self.update_block,
                     )
                 )
@@ -351,11 +351,11 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 eth_abi.abi.decode(
                     types=["address"],
                     data=w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": Web3.keccak(text=f"coins({_type})")[:4]
+                        transaction=TxParams(
+                            to=self.address,
+                            data=Web3.keccak(text=f"coins({_type})")[:4]
                             + eth_abi.abi.encode(types=[_type], args=[0]),
-                        },
+                        ),
                         block_identifier=state_block,
                     ),
                 )
@@ -367,11 +367,11 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 eth_abi.abi.decode(
                     types=["address"],
                     data=w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": Web3.keccak(text=f"coins({_type})")[:4]
+                        transaction=TxParams(
+                            to=self.address,
+                            data=Web3.keccak(text=f"coins({_type})")[:4]
                             + eth_abi.abi.encode(types=[_type], args=[0]),
-                        },
+                        ),
                         block_identifier=state_block,
                     ),
                 )
@@ -397,9 +397,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                         return_types=["address"],
                         block_identifier=state_block,
                     )
-                    token_addresses.append(get_checksum_address(token_address))
                 except web3.exceptions.ContractLogicError:
                     break
+                else:
+                    token_addresses.append(get_checksum_address(token_address))
 
             return tuple(token_addresses)
 
@@ -502,10 +503,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                     (self.offpeg_fee_multiplier,) = eth_abi.abi.decode(
                         types=["uint256"],
                         data=w3.eth.call(
-                            transaction={
-                                "to": self.address,
-                                "data": Web3.keccak(text="offpeg_fee_multiplier()")[:4],
-                            },
+                            transaction=TxParams(
+                                to=self.address,
+                                data=Web3.keccak(text="offpeg_fee_multiplier()")[:4],
+                            ),
                             block_identifier=state_block,
                         ),
                     )
@@ -528,10 +529,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                     (self.offpeg_fee_multiplier,) = eth_abi.abi.decode(
                         types=["uint256"],
                         data=w3.eth.call(
-                            transaction={
-                                "to": self.address,
-                                "data": Web3.keccak(text="offpeg_fee_multiplier()")[:4],
-                            },
+                            transaction=TxParams(
+                                to=self.address,
+                                data=Web3.keccak(text="offpeg_fee_multiplier()")[:4],
+                            ),
                             block_identifier=state_block,
                         ),
                     )
@@ -639,11 +640,11 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             (token_balance,) = eth_abi.abi.decode(
                 types=[self._coin_index_type],
                 data=w3.eth.call(
-                    transaction={
-                        "to": self.address,
-                        "data": Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
+                    transaction=TxParams(
+                        to=self.address,
+                        data=Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
                         + eth_abi.abi.encode(types=[self._coin_index_type], args=[token_id]),
-                    },
+                    ),
                     block_identifier=state_block,
                 ),
             )
@@ -865,10 +866,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         (snap_contract_address,) = eth_abi.abi.decode(
             types=["address"],
             data=w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": Web3.keccak(text="redemption_price_snap()")[:4],
-                },
+                transaction=TxParams(
+                    to=self.address,
+                    data=Web3.keccak(text="redemption_price_snap()")[:4],
+                ),
                 block_identifier=block_number,
             ),
         )
@@ -877,10 +878,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         (rate,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
-                transaction={
-                    "to": get_checksum_address(snap_contract_address),
-                    "data": Web3.keccak(text="snappedRedemptionPrice()")[:4],
-                },
+                transaction=TxParams(
+                    to=get_checksum_address(snap_contract_address),
+                    data=Web3.keccak(text="snappedRedemptionPrice()")[:4],
+                ),
                 block_identifier=block_number,
             ),
         )
@@ -990,10 +991,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 (d,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": Web3.keccak(text="D()")[:4],
-                        },
+                        transaction=TxParams(
+                            to=self.address,
+                            data=Web3.keccak(text="D()")[:4],
+                        ),
                         block_identifier=block_number,
                     ),
                 )
@@ -1010,10 +1011,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 (gamma,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": Web3.keccak(text="gamma()")[:4],
-                        },
+                        transaction=TxParams(
+                            to=self.address,
+                            data=Web3.keccak(text="gamma()")[:4],
+                        ),
                         block_identifier=block_number,
                     ),
                 )
@@ -1033,14 +1034,11 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                     (price_scale[token_index],) = eth_abi.abi.decode(
                         types=["uint256"],
                         data=w3.eth.call(
-                            transaction={
-                                "to": self.address,
-                                "data": Web3.keccak(text="price_scale(uint256)")[:4]
-                                + eth_abi.abi.encode(
-                                    types=["uint256"],
-                                    args=[token_index],
-                                ),
-                            },
+                            transaction=TxParams(
+                                to=self.address,
+                                data=Web3.keccak(text="price_scale(uint256)")[:4]
+                                + eth_abi.abi.encode(types=["uint256"], args=[token_index]),
+                            ),
                             block_identifier=block_number,
                         ),
                     )
@@ -1663,10 +1661,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         (base_cache_updated,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": Web3.keccak(text="base_cache_updated()")[:4],
-                },
+                transaction=TxParams(
+                    to=self.address,
+                    data=Web3.keccak(text="base_cache_updated()")[:4],
+                ),
                 block_identifier=block_number,
             ),
         )
@@ -1683,10 +1681,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         (base_virtual_price,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": Web3.keccak(text="base_virtual_price()")[:4],
-                },
+                transaction=TxParams(
+                    to=self.address,
+                    data=Web3.keccak(text="base_virtual_price()")[:4],
+                ),
                 block_identifier=block_number,
             ),
         )
@@ -1715,10 +1713,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             (base_virtual_price,) = eth_abi.abi.decode(
                 types=["uint256"],
                 data=w3.eth.call(
-                    transaction={
-                        "to": self.base_pool.address,
-                        "data": Web3.keccak(text="get_virtual_price()")[:4],
-                    },
+                    transaction=TxParams(
+                        to=self.base_pool.address,
+                        data=Web3.keccak(text="get_virtual_price()")[:4],
+                    ),
                     block_identifier=block_number,
                 ),
             )
@@ -1957,10 +1955,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         (self.oracle_method,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": Web3.keccak(text="oracle_method()")[:4],
-                },
+                transaction=TxParams(
+                    to=self.address,
+                    data=Web3.keccak(text="oracle_method()")[:4],
+                ),
                 block_identifier=block_number,
             ),
         )
@@ -1984,10 +1982,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 (rate,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
-                        transaction={
-                            "to": token.address,
-                            "data": Web3.keccak(text="exchangeRateStored()")[:4],
-                        },
+                        transaction=TxParams(
+                            to=token.address,
+                            data=Web3.keccak(text="exchangeRateStored()")[:4],
+                        ),
                         block_identifier=block_number,
                     ),
                 )
@@ -1995,10 +1993,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 (supply_rate,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
-                        transaction={
-                            "to": token.address,
-                            "data": Web3.keccak(text="supplyRatePerBlock()")[:4],
-                        },
+                        transaction=TxParams(
+                            to=token.address,
+                            data=Web3.keccak(text="supplyRatePerBlock()")[:4],
+                        ),
                         block_identifier=block_number,
                     ),
                 )
@@ -2006,10 +2004,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 (old_block,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
-                        transaction={
-                            "to": token.address,
-                            "data": Web3.keccak(text="accrualBlockNumber()")[:4],
-                        },
+                        transaction=TxParams(
+                            to=token.address,
+                            data=Web3.keccak(text="accrualBlockNumber()")[:4],
+                        ),
                         block_identifier=block_number,
                     ),
                 )
@@ -2040,10 +2038,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 (rate,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=w3.eth.call(
-                        transaction={
-                            "to": token.address,
-                            "data": Web3.keccak(text="getPricePerFullShare()")[:4],
-                        },
+                        transaction=TxParams(
+                            to=token.address,
+                            data=Web3.keccak(text="getPricePerFullShare()")[:4],
+                        ),
                         block_identifier=block_number,
                     ),
                 )
@@ -2070,10 +2068,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 types=["uint256"],
                 data=(
                     w3.eth.call(
-                        transaction={
-                            "to": token.address,
-                            "data": Web3.keccak(text="exchangeRateStored()")[:4],
-                        },
+                        transaction=TxParams(
+                            to=token.address,
+                            data=Web3.keccak(text="exchangeRateStored()")[:4],
+                        ),
                         block_identifier=block_number,
                     )
                 ),
@@ -2082,10 +2080,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             (supply_rate,) = eth_abi.abi.decode(
                 types=["uint256"],
                 data=w3.eth.call(
-                    transaction={
-                        "to": token.address,
-                        "data": Web3.keccak(text="supplyRatePerBlock()")[:4],
-                    },
+                    transaction=TxParams(
+                        to=token.address,
+                        data=Web3.keccak(text="supplyRatePerBlock()")[:4],
+                    ),
                     block_identifier=block_number,
                 ),
             )
@@ -2093,10 +2091,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             (old_block,) = eth_abi.abi.decode(
                 types=["uint256"],
                 data=w3.eth.call(
-                    transaction={
-                        "to": token.address,
-                        "data": Web3.keccak(text="accrualBlockNumber()")[:4],
-                    },
+                    transaction=TxParams(
+                        to=token.address,
+                        data=Web3.keccak(text="accrualBlockNumber()")[:4],
+                    ),
                     block_identifier=block_number,
                 ),
             )
@@ -2118,10 +2116,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         (ratio,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
-                transaction={
-                    "to": self.tokens[1].address,
-                    "data": Web3.keccak(text="getExchangeRate()")[:4],
-                },
+                transaction=TxParams(
+                    to=self.tokens[1].address,
+                    data=Web3.keccak(text="getExchangeRate()")[:4],
+                ),
                 block_identifier=block_number,
             ),
         )
@@ -2144,10 +2142,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         (ratio,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
-                transaction={
-                    "to": self.tokens[1].address,
-                    "data": Web3.keccak(text="ratio()")[:4],
-                },
+                transaction=TxParams(
+                    to=self.tokens[1].address,
+                    data=Web3.keccak(text="ratio()")[:4],
+                ),
                 block_identifier=block_number,
             ),
         )
@@ -2176,10 +2174,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             (oracle_rate,) = eth_abi.abi.decode(
                 types=["uint256"],
                 data=connection_manager.get_web3(self.chain_id).eth.call(
-                    transaction={
-                        "to": get_checksum_address(HexBytes(self.oracle_method % 2**160)),
-                        "data": HexBytes(self.oracle_method & oracle_bit_mask),
-                    },
+                    transaction=TxParams(
+                        to=get_checksum_address(HexBytes(self.oracle_method % 2**160)),
+                        data=HexBytes(self.oracle_method & oracle_bit_mask),
+                    ),
                     block_identifier=block_number,
                 ),
             )
@@ -2213,11 +2211,11 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 (token_balance,) = eth_abi.abi.decode(
                     types=[self._coin_index_type],
                     data=w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
+                        transaction=TxParams(
+                            to=self.address,
+                            data=Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
                             + eth_abi.abi.encode(types=[self._coin_index_type], args=[token_id]),
-                        },
+                        ),
                         block_identifier=block_number,
                     ),
                 )

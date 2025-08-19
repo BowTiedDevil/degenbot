@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, cast
 import eth_abi.abi
 import pytest
 from web3 import Web3
+from web3.types import TxParams
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
@@ -58,18 +59,17 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
                 raise
 
             if lp.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
-                tx = {
-                    "to": lp.address,
-                    "data": Web3.keccak(text="get_dy(uint256,uint256,uint256)")[:4]
+                tx = TxParams(
+                    to=lp.address,
+                    data=Web3.keccak(text="get_dy(uint256,uint256,uint256)")[:4]
                     + eth_abi.abi.encode(
                         types=["uint256", "uint256", "uint256"],
                         args=[token_in_index, token_out_index, amount],
                     ),
-                }
+                )
+
                 contract_amount, *_ = eth_abi.abi.decode(
-                    data=w3.eth.call(
-                        transaction=tx,  # type: ignore[arg-type]
-                    ),
+                    data=w3.eth.call(transaction=tx),
                     types=["uint256"],
                 )
             else:
@@ -261,14 +261,14 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
             amount_contract, *_ = eth_abi.abi.decode(
                 types=["uint256"],
                 data=fork_mainnet_full.w3.eth.call(
-                    transaction={
-                        "to": basepool.address,
-                        "data": Web3.keccak(text="calc_withdraw_one_coin(uint256,int128)")[:4]
+                    transaction=TxParams(
+                        to=basepool.address,
+                        data=Web3.keccak(text="calc_withdraw_one_coin(uint256,int128)")[:4]
                         + eth_abi.abi.encode(
                             types=["uint256", "int128"],
                             args=[token_in_amount, token_index],
                         ),
-                    }
+                    )
                 ),
             )
             assert calc_amount == amount_contract
@@ -290,16 +290,16 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
             calc_token_amount_contract, *_ = eth_abi.abi.decode(
                 types=["uint256"],
                 data=fork_mainnet_full.w3.eth.call(
-                    transaction={
-                        "to": basepool.address,
-                        "data": Web3.keccak(
+                    transaction=TxParams(
+                        to=basepool.address,
+                        data=Web3.keccak(
                             text=f"calc_token_amount(uint256[{len(basepool.tokens)}],bool)"
                         )[:4]
                         + eth_abi.abi.encode(
                             types=[f"uint256[{len(basepool.tokens)}]", "bool"],
                             args=[amount_array, True],
                         ),
-                    }
+                    )
                 ),
             )
             assert calc_token_amount == calc_token_amount_contract

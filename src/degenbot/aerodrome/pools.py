@@ -8,7 +8,7 @@ from weakref import WeakSet
 import eth_abi.abi
 from eth_typing import ChecksumAddress
 from web3 import Web3
-from web3.types import BlockIdentifier
+from web3.types import BlockIdentifier, TxParams
 
 from degenbot.aerodrome.functions import (
     calc_exact_in_stable,
@@ -454,47 +454,47 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
                     # These calls default to use 'latest' for block number, which is OK since the
                     # values are immutable
                     w3.eth.call: [
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="factory()",
                                 function_arguments=None,
                             ),
-                        },
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="token0()",
                                 function_arguments=None,
                             ),
-                        },
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="token1()",
                                 function_arguments=None,
                             ),
-                        },
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="stable()",
                                 function_arguments=None,
                             ),
-                        },
+                        ),
                     ],
                 }
             )
             batch.add(
                 # This call uses a specific block so the reserve values are consistent
                 w3.eth.call(
-                    transaction={
-                        "to": self.address,
-                        "data": encode_function_calldata(
+                    transaction=TxParams(
+                        to=self.address,
+                        data=encode_function_calldata(
                             function_prototype="getReserves()",
                             function_arguments=None,
                         ),
-                    },
+                    ),
                     block_identifier=state_block,
                 )
             )
@@ -512,13 +512,13 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         (fee,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
-                transaction={
-                    "to": get_checksum_address(cast("str", factory)),
-                    "data": encode_function_calldata(
+                transaction=TxParams(
+                    to=get_checksum_address(cast("str", factory)),
+                    data=encode_function_calldata(
                         function_prototype="getFee(address,bool)",
                         function_arguments=[self.address, stable],
                     ),
-                }
+                )
             ),
         )
 

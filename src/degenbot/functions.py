@@ -10,7 +10,7 @@ from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
 from web3._utils.threads import Timeout
 from web3.exceptions import Web3Exception
-from web3.types import BlockIdentifier, FilterParams, LogReceipt
+from web3.types import BlockIdentifier, FilterParams, LogReceipt, TxParams
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
@@ -410,10 +410,10 @@ def raw_call(
     return eth_abi.abi.decode(
         types=return_types,
         data=w3.eth.call(
-            transaction={
-                "to": address,
-                "data": calldata,
-            },
+            transaction=TxParams(
+                to=address,
+                data=calldata,
+            ),
             block_identifier=get_number_for_block_identifier(block_identifier, w3),
         ),
     )

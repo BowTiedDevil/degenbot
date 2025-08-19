@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, scoped_session
 from web3 import Web3
 from web3.exceptions import ContractLogicError
+from web3.types import TxParams
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
@@ -380,40 +381,40 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                     # These calls default to use 'latest' for block number, which is OK since the
                     # values are immutable
                     w3.eth.call: [
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="factory()",
                                 function_arguments=None,
                             ),
-                        },
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="token0()",
                                 function_arguments=None,
                             ),
-                        },
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="token1()",
                                 function_arguments=None,
                             ),
-                        },
+                        ),
                     ],
                 }
             )
             batch.add(
                 # This call uses a specific block so the reserve values are consistent
                 w3.eth.call(
-                    transaction={
-                        "to": self.address,
-                        "data": encode_function_calldata(
+                    transaction=TxParams(
+                        to=self.address,
+                        data=encode_function_calldata(
                             function_prototype="getReserves()",
                             function_arguments=None,
                         ),
-                    },
+                    ),
                     block_identifier=state_block,
                 )
             )

@@ -3,6 +3,7 @@ from threading import Lock
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
+from web3.types import TxParams
 
 from degenbot.balancer.libraries.fixed_point import mul_up
 from degenbot.balancer.libraries.scaling_helpers import (
@@ -49,13 +50,13 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         (pool_id,) = eth_abi.abi.decode(
             types=["bytes32"],
             data=w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": encode_function_calldata(
+                transaction=TxParams(
+                    to=self.address,
+                    data=encode_function_calldata(
                         function_prototype="getPoolId()",
                         function_arguments=None,
                     ),
-                },
+                ),
                 block_identifier=state_block,
             ),
         )
@@ -66,13 +67,13 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         (vault_address,) = eth_abi.abi.decode(
             types=["address"],
             data=w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": encode_function_calldata(
+                transaction=TxParams(
+                    to=self.address,
+                    data=encode_function_calldata(
                         function_prototype="getVault()",
                         function_arguments=None,
                     ),
-                },
+                ),
                 block_identifier=state_block,
             ),
         )
@@ -81,13 +82,13 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         tokens, balances, _ = eth_abi.abi.decode(
             types=["address[]", "uint256[]", "uint256"],
             data=w3.eth.call(
-                transaction={
-                    "to": self.vault,
-                    "data": encode_function_calldata(
+                transaction=TxParams(
+                    to=self.vault,
+                    data=encode_function_calldata(
                         function_prototype="getPoolTokens(bytes32)",
                         function_arguments=[self.pool_id],
                     ),
-                },
+                ),
                 block_identifier=state_block,
             ),
         )
@@ -112,13 +113,13 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         (fee,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": encode_function_calldata(
+                transaction=TxParams(
+                    to=self.address,
+                    data=encode_function_calldata(
                         function_prototype="getSwapFeePercentage()",
                         function_arguments=None,
                     ),
-                },
+                ),
                 block_identifier=state_block,
             ),
         )
@@ -127,13 +128,13 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         (weights,) = eth_abi.abi.decode(
             types=["uint256[]"],
             data=w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": encode_function_calldata(
+                transaction=TxParams(
+                    to=self.address,
+                    data=encode_function_calldata(
                         function_prototype="getNormalizedWeights()",
                         function_arguments=None,
                     ),
-                },
+                ),
                 block_identifier=state_block,
             ),
         )

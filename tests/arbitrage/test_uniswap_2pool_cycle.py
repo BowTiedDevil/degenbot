@@ -2,6 +2,7 @@ import dataclasses
 
 import pytest
 import web3
+from web3.types import TxParams
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts, UniswapV4PoolSwapAmounts
@@ -419,11 +420,13 @@ def test_v4_v2_dai_arb_base(fork_base_archive: AnvilFork):
         v2_payload=dataclasses.astuple(v2_payload),
         v4_payload=dataclasses.astuple(v4_payload),
     ).build_transaction(
-        transaction={
-            "from": operator_address,
-            "chainId": fork_base_archive.w3.eth.chain_id,
-            "type": 2,
-        }
+        transaction=TxParams(
+            {
+                "from": operator_address,
+                "chainId": fork_base_archive.w3.eth.chain_id,
+                "type": 2,
+            }
+        )
     )
     arbitrage_transaction_params["gas"] = int(
         # bugfix: some TX run out of gas on chain because the gas estimation is too tight
@@ -524,9 +527,11 @@ def test_v2_v4_usdc_arb_base(fork_base_archive: AnvilFork):
             v2_payload=dataclasses.astuple(v2_payload),
             v4_payload=dataclasses.astuple(v4_payload),
         ).build_transaction(
-            transaction={
-                "from": operator_address,
-                "chainId": fork_base_archive.w3.eth.chain_id,
-                "type": 2,
-            }
+            transaction=TxParams(
+                {
+                    "from": operator_address,
+                    "chainId": fork_base_archive.w3.eth.chain_id,
+                    "type": 2,
+                }
+            )
         )

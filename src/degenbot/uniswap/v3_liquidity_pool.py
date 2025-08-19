@@ -11,7 +11,7 @@ from eth_abi.exceptions import DecodingError
 from eth_typing import ChecksumAddress
 from web3 import Web3
 from web3.exceptions import ContractLogicError
-from web3.types import BlockIdentifier
+from web3.types import BlockIdentifier, TxParams
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
@@ -662,13 +662,13 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             for tick in active_ticks:
                 batch.add(
                     w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        transaction=TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="ticks(int24)",
                                 function_arguments=[tick],
                             ),
-                        },
+                        ),
                         block_identifier=block_identifier,
                     )
                 )
@@ -811,67 +811,67 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                     # These calls default to use 'latest' for block number, which is OK since the
                     # values are immutable
                     w3.eth.call: [
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="factory()",
                                 function_arguments=None,
                             ),
-                        },
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="token0()",
                                 function_arguments=None,
                             ),
-                        },
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="token1()",
                                 function_arguments=None,
                             ),
-                        },
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="fee()",
                                 function_arguments=None,
                             ),
-                        },
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="tickSpacing()",
                                 function_arguments=None,
                             ),
-                        },
+                        ),
                     ],
                 }
             )
             batch.add(
                 # This call uses a specific block so the mutable state values are consistent
                 w3.eth.call(
-                    transaction={
-                        "to": self.address,
-                        "data": encode_function_calldata(
+                    transaction=TxParams(
+                        to=self.address,
+                        data=encode_function_calldata(
                             function_prototype="slot0()",
                             function_arguments=None,
                         ),
-                    },
+                    ),
                     block_identifier=state_block,
                 )
             )
             batch.add(
                 # This call uses a specific block so the mutable state values are consistent
                 w3.eth.call(
-                    transaction={
-                        "to": self.address,
-                        "data": encode_function_calldata(
+                    transaction=TxParams(
+                        to=self.address,
+                        data=encode_function_calldata(
                             function_prototype="liquidity()",
                             function_arguments=None,
                         ),
-                    },
+                    ),
                     block_identifier=state_block,
                 )
             )
@@ -1007,26 +1007,26 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 batch.add(
                     # This call uses a specific block so the mutable state values are consistent
                     w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        transaction=TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="slot0()",
                                 function_arguments=None,
                             ),
-                        },
+                        ),
                         block_identifier=block_number,
                     )
                 )
                 batch.add(
                     # This call uses a specific block so the mutable state values are consistent
                     w3.eth.call(
-                        transaction={
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        transaction=TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="liquidity()",
                                 function_arguments=None,
                             ),
-                        },
+                        ),
                         block_identifier=block_number,
                     )
                 )

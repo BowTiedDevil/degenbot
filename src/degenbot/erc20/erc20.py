@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, scoped_session
 from web3 import AsyncWeb3, Web3
 from web3.exceptions import Web3Exception
-from web3.types import BlockIdentifier
+from web3.types import BlockIdentifier, TxParams
 
 import degenbot.registry
 from degenbot.chainlink import ChainlinkPriceContract
@@ -165,27 +165,27 @@ class Erc20Token(AbstractErc20Token):
             batch.add_mapping(
                 {
                     w3.eth.call: [
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="name()",
                                 function_arguments=None,
                             ),
-                        },
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="symbol()",
                                 function_arguments=None,
                             ),
-                        },
-                        {
-                            "to": self.address,
-                            "data": encode_function_calldata(
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
                                 function_prototype="decimals()",
                                 function_arguments=None,
                             ),
-                        },
+                        ),
                     ]
                 }
             )
@@ -200,13 +200,13 @@ class Erc20Token(AbstractErc20Token):
 
     def get_name(self, w3: Web3, func_prototype: str) -> str:
         result = w3.eth.call(
-            {
-                "to": self.address,
-                "data": encode_function_calldata(
+            TxParams(
+                to=self.address,
+                data=encode_function_calldata(
                     function_prototype=func_prototype,
                     function_arguments=None,
                 ),
-            }
+            )
         )
 
         try:
@@ -218,13 +218,13 @@ class Erc20Token(AbstractErc20Token):
 
     def get_symbol(self, w3: Web3, func_prototype: str) -> str:
         result = w3.eth.call(
-            {
-                "to": self.address,
-                "data": encode_function_calldata(
+            TxParams(
+                to=self.address,
+                data=encode_function_calldata(
                     function_prototype=func_prototype,
                     function_arguments=None,
                 ),
-            }
+            )
         )
 
         try:
@@ -275,11 +275,11 @@ class Erc20Token(AbstractErc20Token):
         (approval,) = eth_abi.abi.decode(
             types=["uint256"],
             data=self.w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": Web3.keccak(text="allowance(address,address)")[:4]
+                transaction=TxParams(
+                    to=self.address,
+                    data=Web3.keccak(text="allowance(address,address)")[:4]
                     + eth_abi.abi.encode(types=["address", "address"], args=[owner, spender]),
-                },
+                ),
                 block_identifier=block_number,
             ),
         )
@@ -315,11 +315,11 @@ class Erc20Token(AbstractErc20Token):
         (approval,) = eth_abi.abi.decode(
             types=["uint256"],
             data=await self.async_w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": Web3.keccak(text="allowance(address,address)")[:4]
+                transaction=TxParams(
+                    to=self.address,
+                    data=Web3.keccak(text="allowance(address,address)")[:4]
                     + eth_abi.abi.encode(types=["address", "address"], args=[owner, spender]),
-                },
+                ),
                 block_identifier=block_number,
             ),
         )
@@ -353,11 +353,11 @@ class Erc20Token(AbstractErc20Token):
         (balance,) = eth_abi.abi.decode(
             types=["uint256"],
             data=self.w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": Web3.keccak(text="balanceOf(address)")[:4]
+                transaction=TxParams(
+                    to=self.address,
+                    data=Web3.keccak(text="balanceOf(address)")[:4]
                     + eth_abi.abi.encode(types=["address"], args=[address]),
-                },
+                ),
                 block_identifier=block_number,
             ),
         )
@@ -395,11 +395,11 @@ class Erc20Token(AbstractErc20Token):
         (balance,) = eth_abi.abi.decode(
             types=["uint256"],
             data=await self.async_w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": Web3.keccak(text="balanceOf(address)")[:4]
+                transaction=TxParams(
+                    to=self.address,
+                    data=Web3.keccak(text="balanceOf(address)")[:4]
                     + eth_abi.abi.encode(types=["address"], args=[address]),
-                },
+                ),
                 block_identifier=block_number,
             ),
         )
@@ -431,10 +431,10 @@ class Erc20Token(AbstractErc20Token):
         (total_supply,) = eth_abi.abi.decode(
             types=["uint256"],
             data=self.w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": Web3.keccak(text="totalSupply()")[:4],
-                },
+                transaction=TxParams(
+                    to=self.address,
+                    data=Web3.keccak(text="totalSupply()")[:4],
+                ),
                 block_identifier=block_number,
             ),
         )
@@ -462,10 +462,10 @@ class Erc20Token(AbstractErc20Token):
         (total_supply,) = eth_abi.abi.decode(
             types=["uint256"],
             data=await self.async_w3.eth.call(
-                transaction={
-                    "to": self.address,
-                    "data": Web3.keccak(text="totalSupply()")[:4],
-                },
+                transaction=TxParams(
+                    to=self.address,
+                    data=Web3.keccak(text="totalSupply()")[:4],
+                ),
                 block_identifier=block_number,
             ),
         )
