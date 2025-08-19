@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
@@ -45,7 +46,7 @@ def create2_address(
 
 
 def encode_function_calldata(
-    function_prototype: str, function_arguments: list[Any] | None
+    function_prototype: str, function_arguments: Sequence[Any] | None
 ) -> bytes:
     """
     Encode the calldata to execute a call to the given function prototype, with ordered arguments.
@@ -54,7 +55,7 @@ def encode_function_calldata(
     """
 
     if function_arguments is None:
-        function_arguments = []
+        function_arguments = ()
 
     return keccak(text=function_prototype)[:4] + eth_abi.abi.encode(
         types=extract_argument_types_from_function_prototype(function_prototype),
@@ -132,7 +133,7 @@ def fetch_logs_retrying(
     end_block: BlockNumber,
     max_retries: int = 10,
     max_blocks_per_request: int | None = None,
-    topic_signature: list[HexBytes] | None = None,
+    topic_signature: Sequence[HexBytes] | None = None,
 ) -> list[LogReceipt]:
     """
     Fetch all event logs for the given topic signature (or all logs, if omitted), inclusive for the
@@ -142,7 +143,7 @@ def fetch_logs_retrying(
     """
 
     if topic_signature is None:
-        topic_signature = []
+        topic_signature = ()
 
     if max_blocks_per_request is None:
         max_blocks_per_request = 5_000
@@ -228,7 +229,7 @@ async def fetch_logs_retrying_async(
     end_block: BlockNumber,
     max_retries: int = 10,
     max_blocks_per_request: int | None = None,
-    topic_signature: list[HexBytes] | None = None,
+    topic_signature: Sequence[HexBytes] | None = None,
 ) -> list[LogReceipt]:
     """
     Async version of fetch_logs_retrying.
@@ -239,7 +240,7 @@ async def fetch_logs_retrying_async(
     Max blocks per request is set to 5,000 if not specified.
     """
     if topic_signature is None:
-        topic_signature = []
+        topic_signature = ()
 
     if max_blocks_per_request is None:
         max_blocks_per_request = 5_000
