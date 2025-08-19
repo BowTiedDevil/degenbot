@@ -47,6 +47,7 @@ class AnvilFork:
         storage_caching: bool = True,
         base_fee: int | None = None,
         ipc_path: pathlib.Path | None = None,
+        capture_path: pathlib.Path | None = None,
         mnemonic: str = (
             # Default mnemonic used by Brownie for Ganache forks
             "patient rude simple dog close planet oval animal hunt sketch suspect slim"
@@ -98,13 +99,9 @@ class AnvilFork:
             raise AnvilNotFound
         path_to_anvil = pathlib.Path(_path_to_anvil)
 
-        self.ipc_path = (
-            pathlib.Path(
-                tempfile.gettempdir(),
-            )
-            if ipc_path is None
-            else ipc_path
-        )
+        tmp_dir = pathlib.Path(tempfile.gettempdir())
+        self.ipc_path = tmp_dir if ipc_path is None else ipc_path
+        self.capture_path = tmp_dir if capture_path is None else capture_path
 
         if ipc_provider_kwargs is not None:
             self.ipc_provider_kwargs = ipc_provider_kwargs
@@ -179,6 +176,14 @@ class AnvilFork:
         return self.ipc_path / f"anvil-{self.port}.ipc"
 
     @property
+    def stderr_capture_filename(self) -> pathlib.Path:
+        return self.capture_path / f"anvil-{self.port}.stderr"
+
+    @property
+    def stdout_capture_filename(self) -> pathlib.Path:
+        return self.capture_path / f"anvil-{self.port}.stdout"
+
+    @property
     def ws_url(self) -> str:
         return f"ws://localhost:{self.port}"
 
@@ -214,12 +219,16 @@ class AnvilFork:
         Launch an Anvil subprocess, waiting for the IPC socket to be created.
         """
 
-        process = subprocess.Popen(  # noqa: S603
-            anvil_command,
-            stderr=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            text=True,
-        )
+        with (
+            self.stderr_capture_filename.open("w") as stderr_capture,
+            self.stdout_capture_filename.open("w") as stdout_capture,
+        ):
+            process = subprocess.Popen(  # noqa: S603
+                anvil_command,
+                stderr=stderr_capture,
+                stdout=stdout_capture,
+                text=True,
+            )
 
         try:
             # Storage I/O should be fast, so use a low fixed wait time
