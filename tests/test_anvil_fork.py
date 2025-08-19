@@ -111,14 +111,15 @@ def test_rpc_methods(fork_mainnet_full: AnvilFork):
     assert block.get("miner") == fake_coinbase
 
 
-def test_mine_and_reset(fork_mainnet_full: AnvilFork):
-    starting_block = fork_mainnet_full.w3.eth.get_block_number()
-    fork_mainnet_full.mine()
-    fork_mainnet_full.mine()
-    fork_mainnet_full.mine()
-    assert fork_mainnet_full.w3.eth.get_block_number() == starting_block + 3
-    fork_mainnet_full.reset(block_number=starting_block)
-    assert fork_mainnet_full.w3.eth.get_block_number() == starting_block
+def test_mine_and_reset():
+    fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
+    starting_block = fork.w3.eth.get_block_number()
+    fork.mine()
+    fork.mine()
+    fork.mine()
+    assert fork.w3.eth.get_block_number() == starting_block + 3
+    fork.reset(block_number=starting_block)
+    assert fork.w3.eth.get_block_number() == starting_block
 
 
 def test_fork_from_transaction_hash():
@@ -145,17 +146,16 @@ def test_set_next_block_base_fee_in_constructor():
     assert fork.w3.eth.get_block("latest")["baseFeePerGas"] == base_fee_override
 
 
-def test_reset_and_set_next_block_base_fee(fork_mainnet_full: AnvilFork):
+def test_reset_and_set_next_block_base_fee():
+    fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
     base_fee_override = 69 * 10**9
 
-    starting_block = fork_mainnet_full.w3.eth.get_block_number()
-    fork_mainnet_full.reset(block_number=starting_block - 10)
-    fork_mainnet_full.set_next_base_fee(base_fee_override)
-    fork_mainnet_full.mine()
-    assert fork_mainnet_full.w3.eth.get_block_number() == starting_block - 9
-    assert (
-        fork_mainnet_full.w3.eth.get_block(starting_block - 9)["baseFeePerGas"] == base_fee_override
-    )
+    starting_block = fork.w3.eth.get_block_number()
+    fork.reset(block_number=starting_block - 10)
+    fork.set_next_base_fee(base_fee_override)
+    fork.mine()
+    assert fork.w3.eth.get_block_number() == starting_block - 9
+    assert fork.w3.eth.get_block(starting_block - 9)["baseFeePerGas"] == base_fee_override
 
 
 def test_reset_to_new_endpoint():

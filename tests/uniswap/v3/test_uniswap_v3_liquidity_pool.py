@@ -1079,11 +1079,18 @@ def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
 
 
 def test_auto_update(fork_mainnet_full: AnvilFork) -> None:
-    current_block = fork_mainnet_full.w3.eth.block_number
-    fork_mainnet_full.reset(block_number=current_block - 10_000)
     set_web3(fork_mainnet_full.w3)
+    current_block = fork_mainnet_full.w3.eth.block_number
+
     lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
-    fork_mainnet_full.reset(block_number=current_block)
+
+    fork = AnvilFork(
+        fork_url=fork_mainnet_full.fork_url,
+        fork_block=current_block - 5000,
+    )
+    assert fork.w3.eth.block_number == current_block - 5000
+    set_web3(fork.w3)
+
     lp.auto_update()
     lp.auto_update()  # update twice to cover the "no update" case
 
