@@ -245,9 +245,21 @@ class AnvilFork:
             self._process = process
 
     def __del__(self) -> None:
-        if hasattr(self, "_process"):
+        self.close()
+
+    def close(
+        self,
+        *,
+        preserve_capture: bool = False,
+    ) -> None:
+        if getattr(self, "_process", None):
             self._process.terminate()
-        self.ipc_filename.unlink(missing_ok=True)
+            self._process.wait(10)
+            self.ipc_filename.unlink(missing_ok=True)
+            del self._process
+        if not preserve_capture:
+            self.stderr_capture_filename.unlink(missing_ok=True)
+            self.stdout_capture_filename.unlink(missing_ok=True)
 
     def mine(self) -> None:
         method = "evm_mine"
@@ -304,7 +316,7 @@ class AnvilFork:
         """
 
         if fork_url is not None or transaction_hash is not None:
-            self._process.terminate()
+            self.close()
 
             if block_number is not None:
                 logger.warning(
