@@ -1,3 +1,7 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
 [project]
 name = "degenbot"
 version = "0.5.0a2"
@@ -39,10 +43,6 @@ Twitter = "https://twitter.com/BowTiedDevil"
 
 [project.scripts]
 degenbot = "degenbot.cli:cli"
-
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
 
 [tool.coverage.report]
 exclude_also = [
@@ -190,6 +190,7 @@ testpaths = "tests"
 [tool.uv]
 dev-dependencies = [
     "hypothesis",
+    "maturin",
     "pytest",
     "pytest-asyncio",
     "pytest-benchmark",
@@ -199,7 +200,13 @@ dev-dependencies = [
     "pytest-xdist",
     "python-dotenv",
 ]
+cache-keys = [{file = "pyproject.toml"}, {file = "rust/Cargo.toml"}, {file = "rust/src/*.rs"}]
 
+[tool.maturin]
+bindings = "pyo3"
+profile = "release"
+features = ["pyo3/extension-module"]
+python-packages = ["degenbot"]
 
 [tool.alembic]
 
