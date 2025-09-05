@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from sqlalchemy import ForeignKey, LargeBinary
+from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import mapped_column
 
 PrimaryKeyInt = Annotated[
@@ -28,6 +28,6 @@ ForeignKeyPoolManagerId = Annotated[
     mapped_column(ForeignKey("pool_managers.id")),
 ]
 ManagedPoolHash = Annotated[
-    bytes,
-    mapped_column(LargeBinary),
+    str,
+    mapped_column(String(66)),
 ]

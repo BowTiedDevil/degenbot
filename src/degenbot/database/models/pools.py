@@ -119,7 +119,7 @@ class PoolManagerTable(Base):
     __tablename__ = "pool_managers"
 
     id: Mapped[PrimaryKeyInt]
-    address: Mapped[Address] = mapped_column(index=True)
+    address: Mapped[Address] = mapped_column(index=True, unique=True)
     chain: Mapped[int]
     kind: Mapped[str]
 
@@ -259,7 +259,7 @@ class AbstractUniswapV4Pool(ManagedLiquidityPoolTable):
 
     managed_pool_id: Mapped[PrimaryForeignKeyManagedPoolId]
 
-    pool_hash: Mapped[ManagedPoolHash]
+    pool_hash: Mapped[ManagedPoolHash] = mapped_column(index=True, unique=True)
     hooks: Mapped[Address]
     currency0: Mapped[Address]
     currency1: Mapped[Address]
