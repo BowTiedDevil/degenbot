@@ -202,7 +202,6 @@ class AbstractUniswapV3Pool(LiquidityPoolTable, UniswapPoolCommonColumnsMixin):
 
     pool_id: Mapped[PrimaryForeignKeyPoolId]
     tick_spacing: Mapped[int]
-    has_liquidity: Mapped[bool]
 
     @declared_attr
     @classmethod
@@ -267,7 +266,6 @@ class AbstractUniswapV4Pool(ManagedLiquidityPoolTable):
     fee_currency1: Mapped[int]
     fee_denominator: Mapped[int]
     tick_spacing: Mapped[int]
-    has_liquidity: Mapped[bool]
 
     @declared_attr
     @classmethod
