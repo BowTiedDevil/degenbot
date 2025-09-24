@@ -30,4 +30,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
-    raise NotImplementedError("Downgrade is not supported for this migration.")
+    msg = "Downgrade is not supported for this migration."
+    raise NotImplementedError(msg)
