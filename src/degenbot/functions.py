@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
 import eth_account.messages
+import tqdm
 from eth_typing import ChecksumAddress
 from eth_utils.conversions import to_hex
 from eth_utils.crypto import keccak
@@ -167,6 +168,14 @@ def fetch_logs_retrying(
         ),
     )
 
+    pbar = tqdm.tqdm(
+        event_logs,
+        total=end_block - start_block + 1,
+        desc="Fetching blocks",
+        bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
+        leave=False,
+    )
+
     while True:
         try:
             for attempt in retrier:
@@ -174,7 +183,7 @@ def fetch_logs_retrying(
 
                 with attempt:
                     try:
-                        logger.info(
+                        logger.debug(
                             f"Fetching logs for range {start_block}-{chunk_end} "
                             f" ({chunk_end - start_block + 1} blocks)"
                         )
@@ -193,13 +202,14 @@ def fetch_logs_retrying(
                             working_span=working_span,
                             cap=max_blocks_per_request,
                         )
-                        logger.info(
+                        logger.debug(
                             f"Attempt {attempt.retry_state.attempt_number} timed out "
                             f"fetching {chunk_end - start_block + 1} blocks. "
                             f"Reducing to {working_span}..."
                         )
                         raise
                     else:
+                        pbar.update(chunk_end - start_block + 1)
                         working_span = _adjust_working_span(
                             is_timeout=False,
                             working_span=working_span,
@@ -207,6 +217,7 @@ def fetch_logs_retrying(
                         )
 
             if chunk_end == end_block:
+                pbar.close()
                 return event_logs
 
             start_block = chunk_end + 1
@@ -261,6 +272,14 @@ async def fetch_logs_retrying_async(
         retry=retry_if_exception_type((Timeout, Web3Exception)),
     )
 
+    pbar = tqdm.tqdm(
+        event_logs,
+        total=end_block - start_block + 1,
+        desc="Fetching blocks",
+        bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
+        leave=False,
+    )
+
     while True:
         try:
             async for attempt in retrier:
@@ -268,7 +287,7 @@ async def fetch_logs_retrying_async(
 
                 with attempt:
                     try:
-                        logger.info(
+                        logger.debug(
                             f"Fetching logs for range {start_block}-{chunk_end} "
                             f" ({chunk_end - start_block + 1} blocks)"
                         )
@@ -286,13 +305,14 @@ async def fetch_logs_retrying_async(
                             working_span=working_span,
                             cap=max_blocks_per_request,
                         )
-                        logger.info(
+                        logger.debug(
                             f"Attempt {attempt.retry_state.attempt_number} timed out "
                             f"fetching {chunk_end - start_block + 1} blocks. "
                             f"Reducing to {working_span}..."
                         )
                         raise
                     else:
+                        pbar.update(chunk_end - start_block + 1)
                         working_span = _adjust_working_span(
                             is_timeout=False,
                             working_span=working_span,
@@ -300,6 +320,7 @@ async def fetch_logs_retrying_async(
                         )
 
             if chunk_end == end_block:
+                pbar.close()
                 return event_logs
 
             start_block = chunk_end + 1
