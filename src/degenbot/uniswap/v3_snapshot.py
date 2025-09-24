@@ -1,3 +1,4 @@
+import asyncio
 import pathlib
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
@@ -419,6 +420,7 @@ class UniswapV3LiquiditySnapshot:
                 unit="event",
                 bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
             ):
+                await asyncio.sleep(0)
                 pool_address, liquidity_event = _process_liquidity_event_log(
                     event_instance, event_log
                 )
