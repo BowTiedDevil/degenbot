@@ -156,7 +156,6 @@ ignore = [
     "PLR0913",  # too-many-arguments
     "PLR0915",  # too-many-statements
     "S101",     # asserts are used often, but not as input validation
-    "UP038",    # deprecated - ref: https://docs.astral.sh/ruff/rules/non-pep604-isinstance/
 ]
 logger-objects = [
     "logging.logger",
