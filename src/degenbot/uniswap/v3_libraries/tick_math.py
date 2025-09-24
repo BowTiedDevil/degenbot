@@ -1,9 +1,8 @@
 import functools
-from typing import Annotated
-
-from pydantic import Field, validate_call
 
 from degenbot.constants import MAX_UINT128, MAX_UINT256
+from degenbot.exceptions.evm import EVMRevertError
+from degenbot.types.aliases import Tick
 from degenbot.uniswap.v3_libraries._config import V3_LIB_CACHE_SIZE
 
 MIN_TICK = -887272
@@ -22,20 +21,17 @@ MIN_ERROR = 291339464771989622907027621153398088495
 MAX_ERROR = 3402992956809132418596140100660247210
 
 
-type ValidatedTick = Annotated[int, Field(strict=True, ge=MIN_TICK, le=MAX_TICK)]
-type ValidatedSqrtPrice = Annotated[int, Field(strict=True, ge=MIN_SQRT_RATIO, le=MAX_SQRT_RATIO)]
-
-
 @functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
-@validate_call(validate_return=True)
-def get_sqrt_ratio_at_tick(tick: ValidatedTick) -> ValidatedSqrtPrice:
+def get_sqrt_ratio_at_tick(tick: int) -> int:
     """
     Find the square root ratio in Q128.96 form for the given tick.
     """
 
     abs_tick = abs(tick)
+    if not (abs_tick <= MAX_TICK):
+        raise EVMRevertError(error="required: abs_tick <= MAX_TICK")
 
-    ratio = 340265354078544963557816517032075149313 if abs_tick & 1 != 0 else MAX_UINT128
+    ratio = 340265354078544963557816517032075149313 if abs_tick & 0x1 != 0 else MAX_UINT128 + 1
 
     for tick_mask, ratio_multiplier in (
         (2, 340248342086729790484326174814286782778),
@@ -71,20 +67,16 @@ def get_sqrt_ratio_at_tick(tick: ValidatedTick) -> ValidatedSqrtPrice:
 
 
 @functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
-@validate_call(validate_return=True)
 def get_tick_at_sqrt_ratio(
-    sqrt_price_x96: Annotated[
-        int,
-        Field(
-            strict=True,
-            ge=MIN_SQRT_RATIO,
-            lt=MAX_SQRT_RATIO,  # Enforce the max price assertion from the contract
-        ),
-    ],
-) -> ValidatedTick:
+    sqrt_price_x96: int,
+) -> Tick:
     """
     Calculates the greatest tick value such that get_tick_at_sqrt_ratio(tick) <= ratio
     """
+
+    if not (sqrt_price_x96 >= MIN_SQRT_RATIO and sqrt_price_x96 < MAX_SQRT_RATIO):
+        msg = "R"
+        raise EVMRevertError(msg)
 
     ratio = sqrt_price_x96 << 32
 

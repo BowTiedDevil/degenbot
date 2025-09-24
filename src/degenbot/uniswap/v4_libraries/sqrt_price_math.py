@@ -1,55 +1,22 @@
 import functools
-from typing import overload
 
-from pydantic import validate_call
-
-from degenbot.constants import MAX_UINT160, MAX_UINT256, MIN_UINT160
+from degenbot.constants import MAX_UINT160, MAX_UINT256
 from degenbot.exceptions.evm import EVMRevertError
 from degenbot.uniswap.v4_libraries._config import V4_LIB_CACHE_SIZE
 from degenbot.uniswap.v4_libraries.fixed_point_96 import Q96, RESOLUTION
 from degenbot.uniswap.v4_libraries.full_math import muldiv, muldiv_rounding_up
 from degenbot.uniswap.v4_libraries.functions import mulmod
 from degenbot.uniswap.v4_libraries.unsafe_math import div_rounding_up
-from degenbot.validation.evm_values import (
-    ValidatedInt128,
-    ValidatedInt256,
-    ValidatedUint128,
-    ValidatedUint128NonZero,
-    ValidatedUint160,
-    ValidatedUint160NonZero,
-    ValidatedUint256,
-)
-
-
-@overload
-def get_amount0_delta(
-    *,
-    sqrt_price_a_x96: ValidatedUint160,
-    sqrt_price_b_x96: ValidatedUint160,
-    liquidity: ValidatedInt128,
-    round_up: bool,
-) -> ValidatedUint256: ...
-
-
-@overload
-def get_amount0_delta(
-    *,
-    sqrt_price_a_x96: ValidatedUint160,
-    sqrt_price_b_x96: ValidatedUint160,
-    liquidity: ValidatedInt128,
-    round_up: None,
-) -> ValidatedInt256: ...
 
 
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
-@validate_call(validate_return=True)
 def get_amount0_delta(
     *,
-    sqrt_price_a_x96: ValidatedUint160NonZero,
-    sqrt_price_b_x96: ValidatedUint160,
-    liquidity: "ValidatedInt128 | ValidatedUint128",
+    sqrt_price_a_x96: int,
+    sqrt_price_b_x96: int,
+    liquidity: int,
     round_up: bool | None = None,
-) -> "ValidatedInt256 | ValidatedUint256":
+) -> int:
     """
     Gets the amount0 delta between two prices
     """
@@ -74,6 +41,10 @@ def get_amount0_delta(
     if sqrt_price_a_x96 > sqrt_price_b_x96:
         sqrt_price_a_x96, sqrt_price_b_x96 = sqrt_price_b_x96, sqrt_price_a_x96
 
+    if sqrt_price_a_x96 == 0:
+        msg = "InvalidPrice"
+        raise EVMRevertError(msg)
+
     numerator1 = liquidity << RESOLUTION
     numerator2 = sqrt_price_b_x96 - sqrt_price_a_x96
     return (
@@ -85,35 +56,14 @@ def get_amount0_delta(
     )
 
 
-@overload
-def get_amount1_delta(
-    *,
-    sqrt_price_a_x96: ValidatedUint160,
-    sqrt_price_b_x96: ValidatedUint160,
-    liquidity: ValidatedInt128,
-    round_up: bool,
-) -> ValidatedUint256: ...
-
-
-@overload
-def get_amount1_delta(
-    *,
-    sqrt_price_a_x96: ValidatedUint160,
-    sqrt_price_b_x96: ValidatedUint160,
-    liquidity: ValidatedInt128,
-    round_up: None,
-) -> ValidatedInt256: ...
-
-
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
-@validate_call(validate_return=True)
 def get_amount1_delta(
     *,
-    sqrt_price_a_x96: ValidatedUint160,
-    sqrt_price_b_x96: ValidatedUint160,
-    liquidity: "ValidatedInt128 | ValidatedUint128",
+    sqrt_price_a_x96: int,
+    sqrt_price_b_x96: int,
+    liquidity: int,
     round_up: bool | None = None,
-) -> "ValidatedInt256 | ValidatedUint256":
+) -> int:
     """
     Gets the amount1 delta between two prices
     """
@@ -149,14 +99,13 @@ def get_amount1_delta(
 
 
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
-@validate_call(validate_return=True)
 def get_next_sqrt_price_from_amount0_rounding_up(
     *,
-    sqrt_price_x96: ValidatedUint160,
-    liquidity: ValidatedUint128,
-    amount: ValidatedUint256,
+    sqrt_price_x96: int,
+    liquidity: int,
+    amount: int,
     add: bool,
-) -> ValidatedUint160:
+) -> int:
     """
     Gets the next sqrt price given a delta of currency0
     """
@@ -173,7 +122,7 @@ def get_next_sqrt_price_from_amount0_rounding_up(
     # Python integer math cannot overflow, so check directly if the numerator exceeds the uint256
     # upper bound
     if add:
-        if product < MAX_UINT256:  # product did not overflow
+        if product <= MAX_UINT256:  # product did not overflow
             denominator = numerator1 + product
             if denominator >= numerator1:
                 # always fits in 160 bits
@@ -183,28 +132,37 @@ def get_next_sqrt_price_from_amount0_rounding_up(
                     denominator=denominator,
                 )
 
-        # product overflowed - failsafe path
-        result = div_rounding_up(
+        # product overflowed
+        return div_rounding_up(
             x=numerator1,
             y=(numerator1 // sqrt_price_x96) + amount,
         )
-        assert MIN_UINT160 <= result <= MAX_UINT160
-        return result
 
-    # @dev: removed overflow check on denominator in favor of input validation on muldiv_rounding_up
-    denominator = numerator1 - product
-    return muldiv_rounding_up(numerator1, sqrt_price_x96, denominator)
+    # equivalent: if (product / amount != sqrtPX96 || numerator1 <= product) revert PriceOverflow();
+    if product // amount != sqrt_price_x96 or numerator1 <= product:
+        msg = "PriceOverflow"
+        raise EVMRevertError(msg)
+
+    result = muldiv_rounding_up(
+        a=numerator1,
+        b=sqrt_price_x96,
+        denominator=numerator1 - product,
+    )
+    if result > MAX_UINT160:
+        msg = "Safecast Overflowed: uint160"
+        raise EVMRevertError(msg)
+
+    return result
 
 
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
-@validate_call(validate_return=True)
 def get_next_sqrt_price_from_amount1_rounding_down(
     *,
-    sqrt_price_x96: ValidatedUint160,
-    liquidity: ValidatedUint128,
-    amount: ValidatedUint256,
+    sqrt_price_x96: int,
+    liquidity: int,
+    amount: int,
     add: bool,
-) -> ValidatedUint160:
+) -> int:
     """
     Gets the next sqrt price given a delta of currency1
     """
@@ -217,7 +175,11 @@ def get_next_sqrt_price_from_amount1_rounding_down(
             if amount <= MAX_UINT160
             else muldiv(amount, Q96, liquidity)
         )
-        return sqrt_price_x96 + quotient
+        result = sqrt_price_x96 + quotient
+        if result > MAX_UINT160:
+            msg = "Result overflowed MAX_UINT160"
+            raise EVMRevertError(msg)
+        return result
 
     quotient = (
         div_rounding_up(amount << RESOLUTION, liquidity)
@@ -233,18 +195,21 @@ def get_next_sqrt_price_from_amount1_rounding_down(
 
 
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
-@validate_call(validate_return=True)
 def get_next_sqrt_price_from_input(
     *,
-    sqrt_price_x96: ValidatedUint160NonZero,
-    liquidity: ValidatedUint128NonZero,
-    amount_in: ValidatedUint256,
+    sqrt_price_x96: int,
+    liquidity: int,
+    amount_in: int,
     zero_for_one: bool,
-) -> ValidatedUint160:
+) -> int:
     """
     Gets the next sqrt price given an input amount of currency0 or currency1, rounding to ensure
     that the target price is not passed.
     """
+
+    if sqrt_price_x96 == 0 or liquidity == 0:
+        msg = "InvalidPriceOrLiquidity"
+        raise EVMRevertError(msg)
 
     return (
         get_next_sqrt_price_from_amount0_rounding_up(
@@ -264,18 +229,21 @@ def get_next_sqrt_price_from_input(
 
 
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
-@validate_call(validate_return=True)
 def get_next_sqrt_price_from_output(
     *,
-    sqrt_price_x96: ValidatedUint160NonZero,
-    liquidity: ValidatedUint128NonZero,
-    amount_out: ValidatedUint256,
+    sqrt_price_x96: int,
+    liquidity: int,
+    amount_out: int,
     zero_for_one: bool,
-) -> ValidatedUint160:
+) -> int:
     """
     Gets the next sqrt price given an output amount of currency0 or currency1, rounding to ensure
     that the target price is not passed.
     """
+
+    if sqrt_price_x96 == 0 or liquidity == 0:
+        msg = "InvalidPriceOrLiquidity"
+        raise EVMRevertError(msg)
 
     return (
         get_next_sqrt_price_from_amount1_rounding_down(

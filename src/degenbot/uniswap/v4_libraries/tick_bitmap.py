@@ -2,22 +2,17 @@ import bisect
 from collections.abc import Generator
 from itertools import count
 
-from pydantic import SkipValidation, validate_call
-
 from degenbot.exceptions.liquidity_pool import LiquidityMapWordMissing
 from degenbot.functions import evm_divide
 from degenbot.types.aliases import BlockNumber
-from degenbot.uniswap.v3_libraries.tick_math import ValidatedTick
 from degenbot.uniswap.v3_types import Tick
 from degenbot.uniswap.v4_types import InitializedTickMap, LiquidityMap, UniswapV4BitmapAtWord
-from degenbot.validation.evm_values import ValidatedInt16, ValidatedInt24
 
 
-@validate_call(validate_return=True)
 def compress(
-    tick: ValidatedInt24,
-    tick_spacing: ValidatedInt24,
-) -> ValidatedInt24:
+    tick: Tick,
+    tick_spacing: int,
+) -> int:
     """
     Compress the given tick by the spacing, rounding down towards negative infinity
     """
@@ -26,13 +21,12 @@ def compress(
     return tick // tick_spacing
 
 
-@validate_call
 def flip_tick(
     *,
-    tick_bitmap: SkipValidation[InitializedTickMap],
+    tick_bitmap: InitializedTickMap,
     sparse: bool,
-    tick: ValidatedTick,
-    tick_spacing: ValidatedInt24,
+    tick: Tick,
+    tick_spacing: int,
     update_block: BlockNumber,
 ) -> None:
     """
@@ -60,12 +54,11 @@ def flip_tick(
     tick_bitmap[word_pos] = new_bitmap
 
 
-@validate_call
 def gen_ticks(
     *,
-    tick_data: SkipValidation[LiquidityMap],
-    starting_tick: ValidatedTick,
-    tick_spacing: ValidatedInt24,
+    tick_data: LiquidityMap,
+    starting_tick: Tick,
+    tick_spacing: int,
     less_than_or_equal: bool,
 ) -> Generator[tuple[Tick, bool], None, None]:
     """
@@ -143,15 +136,14 @@ def gen_ticks(
         next_boundary_tick = next(boundary_ticks_iter)
 
 
-@validate_call(validate_return=True)
 def next_initialized_tick_within_one_word(
     *,
-    tick_bitmap: SkipValidation[InitializedTickMap],
-    tick_data: SkipValidation[LiquidityMap],
-    tick: ValidatedTick,
-    tick_spacing: ValidatedInt24,
+    tick_bitmap: InitializedTickMap,
+    tick_data: LiquidityMap,
+    tick: Tick,
+    tick_spacing: int,
     less_than_or_equal: bool,
-) -> tuple[ValidatedInt24, bool]:
+) -> tuple[Tick, bool]:
     """
     Returns the next initialized tick contained in the same word (or adjacent word) as the tick that
     is either to the left (less than or equal to) or right (greater than) of the given tick.
@@ -199,8 +191,9 @@ def next_initialized_tick_within_one_word(
     return next_tick, next_tick in tick_data
 
 
-@validate_call(validate_return=True)
-def position(tick: ValidatedInt24) -> tuple[ValidatedInt16, ValidatedInt16]:
+def position(
+    tick: Tick,
+) -> tuple[int, int]:
     """
     Computes the position in the mapping where the initialized bit for a tick is placed
     """

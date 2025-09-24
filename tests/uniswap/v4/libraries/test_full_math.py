@@ -1,9 +1,9 @@
 import hypothesis
 import hypothesis.strategies
 import pytest
-from pydantic import ValidationError
 
 from degenbot.constants import MAX_UINT256, MIN_UINT256
+from degenbot.exceptions.evm import EVMRevertError
 from degenbot.uniswap.v4_libraries.full_math import muldiv, muldiv_rounding_up
 from degenbot.uniswap.v4_libraries.functions import mulmod
 
@@ -24,23 +24,23 @@ Q128 = 2**128
         max_value=MAX_UINT256,
     ),
 )
-def test_fuzz_mul_div_reverts_with0_denominator(x: int, y: int):
-    with pytest.raises(ValidationError):
+def test_fuzz_mul_div_reverts_with_zero_denominator(x: int, y: int):
+    with pytest.raises(EVMRevertError, match="required: denominator > 0"):
         muldiv(x, y, 0)
 
 
 def test_mul_div_reverts_with_overflowing_numerator_and_zero_denominator():
-    with pytest.raises(ValidationError):
+    with pytest.raises(EVMRevertError, match="required: denominator > 0"):
         muldiv(Q128, Q128, 0)
 
 
 def test_mul_div_reverts_if_output_overflows():
-    with pytest.raises(ValidationError):
+    with pytest.raises(EVMRevertError, match="product > MAX_UINT256"):
         muldiv(Q128, Q128, 1)
 
 
 def test_mul_div_reverts_overflow_with_all_max_inputs():
-    with pytest.raises(ValidationError):
+    with pytest.raises(EVMRevertError, match="product > MAX_UINT256"):
         muldiv(MAX_UINT256, MAX_UINT256, MAX_UINT256 - 1)
 
 
@@ -95,8 +95,8 @@ def test_fuzz_mul_div(x: int, y: int, d: int):
         max_value=MAX_UINT256,
     ),
 )
-def test_fuzz_mul_div_rounding_up_reverts_with0_denominator(x: int, y: int):
-    with pytest.raises(ValidationError):
+def test_fuzz_mul_div_rounding_up_reverts_with_zero_denominator(x: int, y: int):
+    with pytest.raises(EVMRevertError, match="required: denominator > 0"):
         muldiv_rounding_up(x, y, 0)
 
 
@@ -122,7 +122,7 @@ def test_mul_div_rounding_up_valid_with_phantom_overflow_repeating_decimal():
 
 
 def test_mul_div_rounding_up_reverts_if_mul_div_overflows256_bits_after_rounding_up():
-    with pytest.raises(ValidationError):
+    with pytest.raises(EVMRevertError, match="product > MAX_UINT256"):
         muldiv_rounding_up(
             535006138814359,
             432862656469423142931042426214547535783388063929571229938474969,
@@ -131,7 +131,7 @@ def test_mul_div_rounding_up_reverts_if_mul_div_overflows256_bits_after_rounding
 
 
 def test_mul_div_rounding_up_reverts_if_mul_div_overflows256_bits_after_rounding_up_case2():
-    with pytest.raises(ValidationError):
+    with pytest.raises(EVMRevertError, match="product > MAX_UINT256"):
         muldiv_rounding_up(
             115792089237316195423570985008687907853269984659341747863450311749907997002549,
             115792089237316195423570985008687907853269984659341747863450311749907997002550,
@@ -287,12 +287,12 @@ def result_overflows(x: int, y: int, d: int) -> bool:
 
     try:
         muldiv(x, y, d)
-    except ValidationError:
+    except EVMRevertError:
         return True
 
     try:
         muldiv_rounding_up(x, y, d)
-    except ValidationError:
+    except EVMRevertError:
         return True
 
     return False

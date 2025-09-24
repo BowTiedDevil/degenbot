@@ -1,7 +1,6 @@
 from decimal import Decimal, getcontext
 
 import pytest
-from pydantic import ValidationError
 
 from degenbot.constants import MAX_UINT128, MAX_UINT256
 from degenbot.exceptions.evm import EVMRevertError
@@ -43,17 +42,17 @@ def encode_price_sqrt(reserve1: int, reserve0: int) -> int:
 
 def test_get_next_sqrt_price_from_input():
     # fails if price is zero
-    with pytest.raises(ValidationError):
+    with pytest.raises(EVMRevertError, match="required: sqrt_price_x96 > 0"):
         # this test should fail
         get_next_sqrt_price_from_input(
             sqrt_price_x96=0,
-            liquidity=0,
+            liquidity=1,
             amount_in=expand_to_18_decimals(1) // 10,
             zero_for_one=False,
         )
 
     # fails if liquidity is zero
-    with pytest.raises(ValidationError):
+    with pytest.raises(EVMRevertError, match="required: liquidity > 0"):
         # this test should fail
         get_next_sqrt_price_from_input(
             sqrt_price_x96=1,
@@ -170,16 +169,16 @@ def test_get_next_sqrt_price_from_input():
 
 
 def test_get_next_sqrt_price_from_output():
-    with pytest.raises(ValidationError):
+    with pytest.raises(EVMRevertError, match="required: sqrt_price_x96 > 0"):
         # this test should fail because liquidity cannot be zero
         get_next_sqrt_price_from_output(
             sqrt_price_x96=0,
-            liquidity=0,
+            liquidity=1,
             amount_out=expand_to_18_decimals(1) // 10,
             zero_for_one=False,
         )
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(EVMRevertError, match="required: liquidity must be > 0"):
         # this test should fail because liquidity cannot be zero
         get_next_sqrt_price_from_output(
             sqrt_price_x96=1,

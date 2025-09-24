@@ -1,13 +1,7 @@
-from pydantic import validate_call
-
-from degenbot.validation.evm_values import ValidatedUint256
-
-
-@validate_call(validate_return=True)
 def div_rounding_up(
-    x: ValidatedUint256,
-    y: ValidatedUint256,
-) -> ValidatedUint256:
+    x: int,
+    y: int,
+) -> int:
     """
     Calculates ceil(x/y)
 
@@ -17,12 +11,7 @@ def div_rounding_up(
     return 0 if y == 0 else x // y + int(x % y > 0)
 
 
-@validate_call(validate_return=True)
-def simple_mul_div(
-    a: ValidatedUint256,
-    b: ValidatedUint256,
-    denominator: ValidatedUint256,
-) -> ValidatedUint256:
+def simple_mul_div(a: int, b: int, denominator: int) -> int:
     """
     Calculates floor((a*b)/denominator))
 

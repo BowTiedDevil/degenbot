@@ -1,15 +1,13 @@
-from pydantic import validate_call
-
+from degenbot.constants import MAX_UINT256
+from degenbot.exceptions.evm import EVMRevertError
 from degenbot.uniswap.v4_libraries.functions import mulmod
-from degenbot.validation.evm_values import ValidatedUint256, ValidatedUint256NonZero
 
 
-@validate_call(validate_return=True)
 def muldiv(
-    a: ValidatedUint256,
-    b: ValidatedUint256,
-    denominator: ValidatedUint256NonZero,
-) -> ValidatedUint256:
+    a: int,
+    b: int,
+    denominator: int,
+) -> int:
     """
     Calculates floor(a*b/denominator) with full precision. Throws if result overflows a uint256 or
     denominator == 0.
@@ -20,15 +18,24 @@ def muldiv(
     checks for an invalid result.
     """
 
-    return (a * b) // denominator
+    if denominator <= 0:
+        msg = "required: denominator > 0"
+        raise EVMRevertError(msg)
+
+    result = (a * b) // denominator
+
+    if result > MAX_UINT256:
+        msg = "product > MAX_UINT256"
+        raise EVMRevertError(msg)
+
+    return result
 
 
-@validate_call(validate_return=True)
 def muldiv_rounding_up(
-    a: ValidatedUint256,
-    b: ValidatedUint256,
-    denominator: ValidatedUint256NonZero,
-) -> ValidatedUint256:
+    a: int,
+    b: int,
+    denominator: int,
+) -> int:
     """
     Calculates ceil(a*b//denominator) with full precision. Throws if result overflows a uint256 or
     denominator == 0.
@@ -36,4 +43,14 @@ def muldiv_rounding_up(
     ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/FullMath.sol
     """
 
-    return muldiv(a, b, denominator) + int(mulmod(a, b, denominator) > 0)
+    if denominator <= 0:
+        msg = "required: denominator > 0"
+        raise EVMRevertError(msg)
+
+    result = muldiv(a, b, denominator) + int(mulmod(a, b, denominator) > 0)
+
+    if result > MAX_UINT256:
+        msg = "product > MAX_UINT256"
+        raise EVMRevertError(msg)
+
+    return result

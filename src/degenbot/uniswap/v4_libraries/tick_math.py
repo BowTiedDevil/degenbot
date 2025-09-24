@@ -1,13 +1,10 @@
 import functools
-from typing import Annotated
-
-from pydantic import Field, validate_call
 
 from degenbot.constants import MAX_INT16, MAX_UINT256
+from degenbot.exceptions.evm import EVMRevertError
 from degenbot.functions import evm_divide
 from degenbot.uniswap.v4_libraries import bit_math
 from degenbot.uniswap.v4_libraries._config import V4_LIB_CACHE_SIZE
-from degenbot.validation.evm_values import ValidatedInt24, ValidatedUint160
 
 MIN_TICK = -887272
 MAX_TICK = 887272
@@ -30,12 +27,7 @@ MIN_ERROR = 291339464771989622907027621153398088495
 MAX_ERROR = 3402992956809132418596140100660247210
 
 
-type ValidatedTick = Annotated[int, Field(strict=True, ge=MIN_TICK, le=MAX_TICK)]
-type ValidatedSqrtPrice = Annotated[int, Field(strict=True, ge=MIN_SQRT_PRICE, le=MAX_SQRT_PRICE)]
-
-
-@validate_call(validate_return=True)
-def max_usable_tick(tick_spacing: ValidatedInt24) -> ValidatedInt24:
+def max_usable_tick(tick_spacing: int) -> int:
     """
     Given a tickSpacing, compute the maximum usable tick
     """
@@ -43,8 +35,7 @@ def max_usable_tick(tick_spacing: ValidatedInt24) -> ValidatedInt24:
     return (MAX_TICK // tick_spacing) * tick_spacing
 
 
-@validate_call(validate_return=True)
-def min_usable_tick(tick_spacing: ValidatedInt24) -> ValidatedInt24:
+def min_usable_tick(tick_spacing: int) -> int:
     """
     Given a tickSpacing, compute the minimum usable tick
     """
@@ -53,8 +44,7 @@ def min_usable_tick(tick_spacing: ValidatedInt24) -> ValidatedInt24:
 
 
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
-@validate_call(validate_return=True)
-def get_sqrt_price_at_tick(tick: ValidatedTick) -> ValidatedUint160:
+def get_sqrt_price_at_tick(tick: int) -> int:
     """
     Calculates sqrt(1.0001^tick) * 2^96, a fixed point Q64.96 number representing the sqrt of the
     price of the two assets (currency1/currency0) at the given tick.
@@ -64,6 +54,9 @@ def get_sqrt_price_at_tick(tick: ValidatedTick) -> ValidatedUint160:
 
     # Use abs instead of reimplementing the Solidity contract's inline Yul
     abs_tick = abs(tick)
+    if abs_tick > MAX_TICK:
+        msg = "InvalidTick"
+        raise EVMRevertError(msg)
 
     # The tick is decomposed into bits, and for each bit with index i that is set, the product of
     # 1/sqrt(1.0001^(2^i)) is calculated (using Q128.128). The constants used for this calculation
@@ -113,13 +106,16 @@ def get_sqrt_price_at_tick(tick: ValidatedTick) -> ValidatedUint160:
 
 
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
-@validate_call(validate_return=True)
-def get_tick_at_sqrt_price(sqrt_price_x96: ValidatedSqrtPrice) -> ValidatedTick:
+def get_tick_at_sqrt_price(sqrt_price_x96: int) -> int:
     """
     Calculates the greatest tick value such that getSqrtPriceAtTick(tick) <= sqrtPriceX96
 
     @dev raises exception if sqrt_price_x96 is below MIN_SQRT_PRICE or above MAX_SQRT_PRICE.
     """
+
+    if sqrt_price_x96 < MIN_SQRT_PRICE or sqrt_price_x96 > MAX_SQRT_PRICE:
+        msg = "InvalidSqrtPrice"
+        raise EVMRevertError(msg)
 
     price = sqrt_price_x96 << 32
     msb = bit_math.most_significant_bit(price)

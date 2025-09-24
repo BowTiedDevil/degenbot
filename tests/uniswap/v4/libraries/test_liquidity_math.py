@@ -1,9 +1,9 @@
 import hypothesis
 import hypothesis.strategies
 import pytest
-from pydantic import ValidationError
 
 from degenbot.constants import MAX_INT128, MAX_UINT128, MIN_INT128, MIN_UINT128
+from degenbot.exceptions.evm import EVMRevertError
 from degenbot.uniswap.v4_libraries.liquidity_math import add_delta
 
 # All tests ported from Foundry tests on Uniswap V4 Github repo
@@ -11,14 +11,14 @@ from degenbot.uniswap.v4_libraries.liquidity_math import add_delta
 
 
 def test_add_delta_throws_for_underflow():
-    with pytest.raises(ValidationError):
+    with pytest.raises(EVMRevertError, match="SafeCastOverflow"):
         add_delta(0, -1)
-    with pytest.raises(ValidationError):
+    with pytest.raises(EVMRevertError, match="SafeCastOverflow"):
         add_delta(MAX_INT128, MIN_INT128)
 
 
 def test_add_delta_throws_for_overflow():
-    with pytest.raises(ValidationError):
+    with pytest.raises(EVMRevertError, match="SafeCastOverflow"):
         add_delta(MAX_UINT128, 1)
 
 
@@ -38,5 +38,5 @@ def test_add_delta_fuzz(x: int, y: int):
 
     try:
         add_delta(x, y)
-    except ValidationError:
+    except EVMRevertError:
         assert x + y < MIN_UINT128 or x + y > MAX_UINT128
