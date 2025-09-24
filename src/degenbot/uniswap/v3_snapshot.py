@@ -54,7 +54,7 @@ class SnapshotSource(Protocol):
     def get_pools(self) -> set[ChecksumAddress]: ...
 
 
-class MonolithicJsonFileSnapshot(SnapshotSource):
+class MonolithicJsonFileSnapshot:
     """
     A pool liquidity source backed by a single JSON file with this structure:
     {
@@ -111,7 +111,7 @@ class MonolithicJsonFileSnapshot(SnapshotSource):
         return {get_checksum_address(key) for key in self._file_snapshot if key != "snapshot_block"}
 
 
-class IndividualJsonFileSnapshot(SnapshotSource):
+class IndividualJsonFileSnapshot:
     """
     Snapshot source backed by a directory of JSON files with this tree structure:
 
