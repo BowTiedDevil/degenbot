@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any
 
 from eth_typing import ChecksumAddress
+from hexbytes import HexBytes
 
 from degenbot.exceptions import DegenbotError
 from degenbot.types.aliases import BlockNumber
