@@ -894,7 +894,7 @@ class UniswapTransaction(AbstractTransaction):
                     final state of the pool after the swap completes.
                     """
 
-                    tx_recipient, tx_amount_in, tx_amount_out_min, tx_path, tx_payer_is_user = (
+                    tx_recipient, tx_amount_in, tx_amount_out_min, tx_path, _tx_payer_is_user = (
                         eth_abi.abi.decode(
                             types=(
                                 "address",
@@ -960,7 +960,7 @@ class UniswapTransaction(AbstractTransaction):
                     final state of the pool after the swap completes.
                     """
 
-                    tx_recipient, tx_amount_out, tx_amount_in_max, tx_path, tx_payer_is_user = (
+                    tx_recipient, tx_amount_out, tx_amount_in_max, tx_path, _tx_payer_is_user = (
                         eth_abi.abi.decode(
                             types=(
                                 "address",
@@ -1041,7 +1041,7 @@ class UniswapTransaction(AbstractTransaction):
                     the pool after the swap completes.
                     """
 
-                    tx_recipient, tx_amount_in, tx_amount_out_min, tx_path, tx_payer_is_user = (
+                    tx_recipient, tx_amount_in, tx_amount_out_min, tx_path, _tx_payer_is_user = (
                         eth_abi.abi.decode(
                             types=(
                                 "address",
@@ -1126,7 +1126,7 @@ class UniswapTransaction(AbstractTransaction):
                     final state of the pool after the swap completes.
                     """
 
-                    tx_recipient, tx_amount_out, tx_amount_in_max, tx_path, tx_payer_is_user = (
+                    tx_recipient, tx_amount_out, tx_amount_in_max, tx_path, _tx_payer_is_user = (
                         eth_abi.abi.decode(
                             types=(
                                 "address",
@@ -1576,7 +1576,9 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_amount_in = func_params["params"]["amountIn"]
                                 tx_amount_out_min = func_params["params"]["amountOutMinimum"]
                                 tx_deadline = func_params["params"].get("deadline")
-                                tx_sqrt_price_limit_x96 = func_params["params"]["sqrtPriceLimitX96"]
+                                _tx_sqrt_price_limit_x96 = func_params["params"][
+                                    "sqrtPriceLimitX96"
+                                ]
                             case tuple(), 8:
                                 # Decode with ISwapRouter ABI
                                 # ref: https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
@@ -1588,7 +1590,7 @@ class UniswapTransaction(AbstractTransaction):
                                     tx_deadline,
                                     tx_amount_in,
                                     tx_amount_out_min,
-                                    tx_sqrt_price_limit_x96,
+                                    _tx_sqrt_price_limit_x96,
                                 ) = func_params["params"]
                             case tuple(), 7:
                                 # Decode with IV3SwapRouter ABI (aka Router2)
@@ -1600,7 +1602,7 @@ class UniswapTransaction(AbstractTransaction):
                                     tx_recipient,
                                     tx_amount_in,
                                     tx_amount_out_min,
-                                    tx_sqrt_price_limit_x96,
+                                    _tx_sqrt_price_limit_x96,
                                 ) = func_params["params"]
                                 tx_deadline = None
                             case _:
@@ -1754,7 +1756,9 @@ class UniswapTransaction(AbstractTransaction):
                                 tx_deadline = func_params["params"].get("deadline")
                                 tx_amount_out = func_params["params"]["amountOut"]
                                 tx_amount_in_max = func_params["params"]["amountInMaximum"]
-                                tx_sqrt_price_limit_x96 = func_params["params"]["sqrtPriceLimitX96"]
+                                _tx_sqrt_price_limit_x96 = func_params["params"][
+                                    "sqrtPriceLimitX96"
+                                ]
                             case tuple(), 8:
                                 # Decode with ISwapRouter ABI
                                 # https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/ISwapRouter.sol
@@ -1766,7 +1770,7 @@ class UniswapTransaction(AbstractTransaction):
                                     tx_deadline,
                                     tx_amount_out,
                                     tx_amount_in_max,
-                                    tx_sqrt_price_limit_x96,
+                                    _tx_sqrt_price_limit_x96,
                                 ) = func_params["params"]
 
                             case tuple(), 7:
@@ -1779,7 +1783,7 @@ class UniswapTransaction(AbstractTransaction):
                                     tx_recipient,
                                     tx_amount_out,
                                     tx_amount_in_max,
-                                    tx_sqrt_price_limit_x96,
+                                    _tx_sqrt_price_limit_x96,
                                 ) = func_params["params"]
                                 tx_deadline = None
                             case _:
