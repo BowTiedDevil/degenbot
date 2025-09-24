@@ -342,6 +342,7 @@ class UniswapV3LiquiditySnapshot:
                 desc=f"Processing {event.event_name} events",
                 unit="event",
                 bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
+                leave=False,
             ):
                 pool_address, liquidity_event = _process_liquidity_event_log(
                     event_instance, event_log
@@ -388,9 +389,7 @@ class UniswapV3LiquiditySnapshot:
                 ),
             )
 
-        logger.info(
-            f"(async) Updating Uniswap V3 snapshot from block {self.newest_block} to {to_block}"
-        )
+        logger.info(f"Updating Uniswap V3 snapshot from block {self.newest_block} to {to_block}")
 
         v3pool = Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI)
         for event in (
@@ -419,6 +418,7 @@ class UniswapV3LiquiditySnapshot:
                 desc=f"Processing {event.event_name} events",
                 unit="event",
                 bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
+                leave=False,
             ):
                 await asyncio.sleep(0)
                 pool_address, liquidity_event = _process_liquidity_event_log(
