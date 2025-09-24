@@ -2358,7 +2358,7 @@ async def test_process_pool_calculation(
 
         assert isinstance(wbtc_weth_arb.swap_pools[1], UniswapV3Pool)
         wbtc_weth_arb.swap_pools[1].sparse_liquidity_map = True
-        with pytest.raises(DegenbotValueError, match="One or more V3 pools has a sparse bitmap."):
+        with pytest.raises(DegenbotValueError, match=r"One or more V3 pools has a sparse bitmap."):
             await wbtc_weth_arb.calculate_with_pool(
                 executor=executor,
                 state_overrides=overrides,
@@ -2455,7 +2455,7 @@ def test_no_max_input(
 def test_zero_max_input(
     wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
 ):
-    with pytest.raises(DegenbotValueError, match="Maximum input must be positive."):
+    with pytest.raises(DegenbotValueError, match=r"Maximum input must be positive."):
         UniswapLpCycle(
             id="test_arb",
             input_token=weth_token,

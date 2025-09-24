@@ -336,7 +336,7 @@ def test_pool_creation_with_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
 
 def test_creation_with_bad_liquidity_overrides(fork_mainnet_full: AnvilFork) -> None:
     set_web3(fork_mainnet_full.w3)
-    with pytest.raises(DegenbotValueError, match="Provide both tick_bitmap and tick_data."):
+    with pytest.raises(DegenbotValueError, match=r"Provide both tick_bitmap and tick_data."):
         UniswapV3Pool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
             tick_bitmap={
@@ -346,7 +346,7 @@ def test_creation_with_bad_liquidity_overrides(fork_mainnet_full: AnvilFork) -> 
             },
         )
 
-    with pytest.raises(DegenbotValueError, match="Provide both tick_bitmap and tick_data."):
+    with pytest.raises(DegenbotValueError, match=r"Provide both tick_bitmap and tick_data."):
         UniswapV3Pool(
             address=WBTC_WETH_V3_POOL_ADDRESS,
             tick_data={

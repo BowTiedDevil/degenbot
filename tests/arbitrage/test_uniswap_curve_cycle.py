@@ -66,7 +66,7 @@ def test_create_arb(fork_mainnet_full: AnvilFork, weth: Erc20Token, dai: Erc20To
     )
 
     with pytest.raises(
-        DegenbotValueError, match="Not implemented for Curve pools at position != 1."
+        DegenbotValueError, match=r"Not implemented for Curve pools at position != 1."
     ):
         UniswapCurveCycle(
             input_token=dai,
@@ -80,7 +80,7 @@ def test_create_arb(fork_mainnet_full: AnvilFork, weth: Erc20Token, dai: Erc20To
         )
 
     with pytest.raises(
-        DegenbotValueError, match="Not implemented for Curve pools at position != 1."
+        DegenbotValueError, match=r"Not implemented for Curve pools at position != 1."
     ):
         UniswapCurveCycle(
             input_token=dai,
@@ -518,7 +518,7 @@ def test_zero_max_input(fork_mainnet_full: AnvilFork, weth: Erc20Token):
     curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
     uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
-    with pytest.raises(DegenbotValueError, match="Maximum input must be positive."):
+    with pytest.raises(DegenbotValueError, match=r"Maximum input must be positive."):
         UniswapCurveCycle(
             id="test_arb",
             input_token=weth,

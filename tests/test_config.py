@@ -16,16 +16,16 @@ from .conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 def test_disconnected_web3():
     w3 = web3.Web3(web3.HTTPProvider("https://google.com"))
-    with pytest.raises(DegenbotValueError, match="Web3 instance is not connected."):
+    with pytest.raises(DegenbotValueError, match=r"Web3 instance is not connected."):
         set_web3(w3)
 
-    with pytest.raises(DegenbotValueError, match="Web3 instance is not connected."):
+    with pytest.raises(DegenbotValueError, match=r"Web3 instance is not connected."):
         connection_manager.register_web3(w3)
 
 
 def test_legacy_interface(fork_mainnet_full: AnvilFork):
     with pytest.raises(
-        DegenbotValueError, match="A default Web3 instance has not been registered."
+        DegenbotValueError, match=r"A default Web3 instance has not been registered."
     ):
         get_web3()
 
