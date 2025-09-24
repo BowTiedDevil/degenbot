@@ -116,3 +116,17 @@ def test_invariant_least_significant_bit(x: int):
     lsb = bit_math.least_significant_bit(x)
     assert x & (2**lsb) != 0
     assert x & (2**lsb - 1) == 0
+
+
+@hypothesis.given(
+    number=hypothesis.strategies.integers(min_value=1),
+)
+def test_least_significant_bit_equivalence(number):
+    assert bit_math.least_significant_bit_legacy(number) == bit_math.least_significant_bit(number)
+
+
+@hypothesis.given(
+    number=hypothesis.strategies.integers(min_value=1),
+)
+def test_most_significant_bit_equivalence(number):
+    assert bit_math.most_significant_bit_legacy(number) == bit_math.most_significant_bit(number)
