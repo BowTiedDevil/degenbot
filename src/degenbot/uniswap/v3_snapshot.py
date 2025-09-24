@@ -370,25 +370,20 @@ class UniswapV3LiquiditySnapshot:
             processing with `UniswapV3Pool.update_liquidity_map`.
             """
             decoded_event: EventData = event.process_log(log)
-            pool_address = get_checksum_address(decoded_event["address"])
-            tx_index = decoded_event["transactionIndex"]
-            log_index = decoded_event["logIndex"]
-            liquidity_block = decoded_event["blockNumber"]
-            liquidity = decoded_event["args"]["amount"]
-            if decoded_event["event"] == "Burn":
-                liquidity = -liquidity  # liquidity removal
-            tick_lower = decoded_event["args"]["tickLower"]
-            tick_upper = decoded_event["args"]["tickUpper"]
 
             return (
-                pool_address,
+                get_checksum_address(decoded_event["address"]),
                 UniswapV3LiquidityEvent(
-                    block_number=liquidity_block,
-                    tx_index=tx_index,
-                    log_index=log_index,
-                    liquidity=liquidity,
-                    tick_lower=tick_lower,
-                    tick_upper=tick_upper,
+                    block_number=decoded_event["blockNumber"],
+                    tx_index=decoded_event["transactionIndex"],
+                    log_index=decoded_event["logIndex"],
+                    liquidity=(
+                        -decoded_event["args"]["amount"]
+                        if decoded_event["event"] == "Burn"
+                        else decoded_event["args"]["amount"]
+                    ),
+                    tick_lower=decoded_event["args"]["tickLower"],
+                    tick_upper=decoded_event["args"]["tickUpper"],
                 ),
             )
 
