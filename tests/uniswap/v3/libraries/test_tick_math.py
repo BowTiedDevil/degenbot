@@ -1,6 +1,10 @@
+import random
 from decimal import Decimal, getcontext
 from math import floor, log
 
+import degenbot_rs
+import hypothesis
+import hypothesis.strategies
 import pytest
 
 from degenbot.constants import MAX_UINT160, MIN_UINT160
@@ -104,3 +108,98 @@ def test_get_tick_at_sqrt_ratio() -> None:
         ratio_of_tick_plus_one = get_sqrt_ratio_at_tick(tick + 1)
         assert ratio >= ratio_of_tick
         assert ratio < ratio_of_tick_plus_one
+
+
+@hypothesis.given(
+    tick=hypothesis.strategies.integers(
+        min_value=MIN_TICK,
+        max_value=MAX_TICK,
+    )
+)
+def test_get_sqrt_ratio_at_tick_rs(tick: int):
+    assert get_sqrt_ratio_at_tick(tick) == degenbot_rs.get_sqrt_ratio_at_tick_alloy_translator(tick)
+
+
+@hypothesis.given(
+    sqrt_price_x96=hypothesis.strategies.integers(
+        min_value=MIN_SQRT_RATIO,
+        max_value=MAX_SQRT_RATIO - 1,
+    )
+)
+def test_get_tick_at_sqrt_ratio_rs(sqrt_price_x96: int):
+    assert get_tick_at_sqrt_ratio(
+        sqrt_price_x96
+    ) == degenbot_rs.get_tick_at_sqrt_ratio_alloy_translator(sqrt_price_x96)
+
+
+@pytest.fixture(scope="session")
+def sqrt_prices_to_test():
+    return hypothesis.find(
+        hypothesis.strategies.lists(
+            hypothesis.strategies.integers(
+                min_value=MIN_SQRT_RATIO,
+                max_value=MAX_SQRT_RATIO - 1,
+            ),
+            min_size=1_000,
+            max_size=1_000,
+        ),
+        lambda _: True,
+    )
+
+
+@pytest.fixture(scope="session")
+def ticks_to_test():
+    return [random.randint(MIN_TICK, MAX_TICK) for _ in range(1_000)]
+
+
+@pytest.mark.skip
+def test_benchmark_get_tick_at_sqrt_ratio_py(
+    benchmark,
+    sqrt_prices_to_test,
+):
+    def run_py():
+        # bypass the LRU cache
+        func = get_tick_at_sqrt_ratio.__wrapped__
+        for sqrt_price in sqrt_prices_to_test:
+            func(sqrt_price)
+
+    benchmark(run_py)
+
+
+@pytest.mark.skip
+def test_benchmark_get_tick_at_sqrt_ratio_alloy(
+    benchmark,
+    sqrt_prices_to_test,
+):
+    def run_rs():
+        func = degenbot_rs.get_tick_at_sqrt_ratio_alloy_translator
+        for sqrt_price in sqrt_prices_to_test:
+            func(sqrt_price)
+
+    benchmark(run_rs)
+
+
+@pytest.mark.skip
+def test_benchmark_get_sqrt_ratio_at_tick_py(
+    benchmark,
+    ticks_to_test,
+):
+    def run_py():
+        func = get_sqrt_ratio_at_tick.__wrapped__
+        for tick in ticks_to_test:
+            func(tick)
+
+    benchmark(run_py)
+
+
+@pytest.mark.skip
+def test_benchmark_get_sqrt_ratio_at_tick_alloy(
+    benchmark,
+    ticks_to_test,
+):
+    def run_rs():
+        func = degenbot_rs.get_sqrt_ratio_at_tick_alloy_translator
+        for tick in ticks_to_test:
+            func(tick)
+
+    benchmark(run_rs)
