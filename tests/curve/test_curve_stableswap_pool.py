@@ -154,7 +154,11 @@ def test_auto_update(fork_mainnet_archive: AnvilFork):
     expected_balances = (75010632422398781503259123, 76382820384826, 34653521595900)
     assert _tripool.balances == expected_balances
 
-    fork = AnvilFork(fork_url=fork_mainnet_archive.fork_url, fork_block=block_number + 1)
+    fork = AnvilFork(
+        fork_url=fork_mainnet_archive.fork_url,
+        storage_caching=False,
+        fork_block=block_number + 1,
+    )
     set_web3(fork.w3)
     assert fork.w3.eth.get_block_number() == block_number + 1
 
@@ -226,6 +230,7 @@ def test_metapool_over_multiple_blocks_to_verify_cache_behavior():
 
     fork = AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        storage_caching=False,
         fork_block=18_850_000,
     )
     set_web3(fork.w3)
@@ -235,6 +240,7 @@ def test_metapool_over_multiple_blocks_to_verify_cache_behavior():
     for block in range(start_block + span, end_block, span):
         fork = AnvilFork(
             fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+            storage_caching=False,
             fork_block=block,
         )
         set_web3(fork.w3)

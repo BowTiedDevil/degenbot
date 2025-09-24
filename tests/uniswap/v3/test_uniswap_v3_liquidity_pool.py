@@ -1162,6 +1162,7 @@ def test_auto_update(fork_mainnet_full: AnvilFork) -> None:
 
     fork = AnvilFork(
         fork_url=fork_mainnet_full.fork_url,
+        storage_caching=False,
         fork_block=current_block - 5000,
     )
     assert fork.w3.eth.block_number == current_block - 5000

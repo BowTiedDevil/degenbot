@@ -1053,7 +1053,11 @@ def test_auto_update(
 ):
     block_number = 18_000_000
 
-    fork = AnvilFork(fork_url=fork_mainnet_archive.fork_url, fork_block=block_number)
+    fork = AnvilFork(
+        fork_url=fork_mainnet_archive.fork_url,
+        storage_caching=False,
+        fork_block=block_number,
+    )
     assert fork.w3.eth.block_number == block_number
     set_web3(fork.w3)
 

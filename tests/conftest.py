@@ -96,6 +96,7 @@ def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, No
 
     fork = AnvilFork(
         fork_url=BASE_ARCHIVE_NODE_HTTP_URI,
+        storage_caching=True,
         fork_block=block_number,
         ipc_provider_kwargs={"timeout": None},
         anvil_opts=["--accounts=0", "--optimism"],
@@ -136,6 +137,7 @@ def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork,
 
     fork = AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        storage_caching=True,
         fork_block=block_number,
         ipc_provider_kwargs={"timeout": None},
         anvil_opts=["--accounts=0"],

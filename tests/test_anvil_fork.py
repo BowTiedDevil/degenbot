@@ -26,7 +26,10 @@ WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 
 def test_web3_endpoints():
-    fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
+    )
     assert fork.http_url == f"http://localhost:{fork.port}"
     assert fork.ws_url == f"ws://localhost:{fork.port}"
 
@@ -39,6 +42,7 @@ def test_set_bytecode():
     fake_bytecode = HexBytes("0x42069")
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
         bytecode_overrides=[
             (VITALIK_ADDRESS, fake_bytecode),
         ],
@@ -51,7 +55,10 @@ def test_set_storage():
     new_storage_value = HexBytes("0x42069")
     new_storage_value_padded = new_storage_value.hex().zfill(64)
 
-    fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
+    )
     assert fork.w3.eth.get_storage_at(
         account=WETH_ADDRESS,
         position=storage_position,
@@ -65,6 +72,7 @@ def test_set_storage():
 
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
         storage_overrides=[(WETH_ADDRESS, storage_position, new_storage_value)],
     )
     assert fork.w3.eth.get_storage_at(
@@ -112,7 +120,10 @@ def test_rpc_methods(fork_mainnet_full: AnvilFork):
 
 
 def test_mine_and_reset():
-    fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
+    )
     starting_block = fork.w3.eth.get_block_number()
     fork.mine()
     fork.mine()
@@ -125,6 +136,7 @@ def test_mine_and_reset():
 def test_fork_from_transaction_hash():
     fork = AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        storage_caching=False,
         fork_transaction_hash="0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6",
     )
     assert fork.w3.eth.block_number == 20987963
@@ -141,13 +153,20 @@ def test_set_next_block_base_fee(fork_mainnet_full: AnvilFork):
 def test_set_next_block_base_fee_in_constructor():
     base_fee_override = 69 * 10**9
 
-    fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI, base_fee=base_fee_override)
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
+        base_fee=base_fee_override,
+    )
     fork.mine()
     assert fork.w3.eth.get_block("latest")["baseFeePerGas"] == base_fee_override
 
 
 def test_reset_and_set_next_block_base_fee():
-    fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
+    )
     base_fee_override = 69 * 10**9
 
     starting_block = fork.w3.eth.get_block_number()
@@ -159,7 +178,10 @@ def test_reset_and_set_next_block_base_fee():
 
 
 def test_reset_to_new_endpoint():
-    fork = AnvilFork(fork_url=ETHEREUM_FULL_NODE_HTTP_URI)
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
+    )
     assert fork.w3.eth.chain_id == 1
 
     fork.reset(fork_url=BASE_FULL_NODE_HTTP_URI)
@@ -167,7 +189,10 @@ def test_reset_to_new_endpoint():
 
 
 def test_reset_to_new_transaction_hash():
-    fork = AnvilFork(fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+    fork = AnvilFork(
+        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        storage_caching=False,
+    )
     fork.reset(
         transaction_hash="0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6"
     )
@@ -177,6 +202,7 @@ def test_reset_to_new_transaction_hash():
 def test_ipc_kwargs():
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
         ipc_provider_kwargs=dict(timeout=None),
     )
     if TYPE_CHECKING:
@@ -188,6 +214,7 @@ def test_balance_overrides_in_constructor():
     fake_balance = 100 * 10**18
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
         balance_overrides=[
             (VITALIK_ADDRESS, fake_balance),
         ],
@@ -199,6 +226,7 @@ def test_nonce_overrides_in_constructor():
     fake_nonce = 69
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
         nonce_overrides=[
             (VITALIK_ADDRESS, fake_nonce),
         ],
@@ -211,7 +239,9 @@ def test_bytecode_overrides_in_constructor():
     fake_bytecode = HexBytes("0x0420")
 
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI, bytecode_overrides=[(fake_address, fake_bytecode)]
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
+        bytecode_overrides=[(fake_address, fake_bytecode)],
     )
     assert fork.w3.eth.get_code(fake_address) == fake_bytecode
 
@@ -221,6 +251,7 @@ def test_coinbase_override_in_constructor():
 
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
         coinbase=fake_coinbase,
     )
     fork.mine()
@@ -231,6 +262,7 @@ def test_coinbase_override_in_constructor():
 def test_injecting_middleware():
     fork = AnvilFork(
         fork_url="https://polygon-bor-rpc.publicnode.com",
+        storage_caching=False,
         middlewares=[
             (web3.middleware.ExtraDataToPOAMiddleware, 0),
         ],
