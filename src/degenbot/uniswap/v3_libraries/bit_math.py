@@ -26,7 +26,7 @@ def least_significant_bit(number: int) -> int:
            ^---- LSB @ position 0
     """
 
-    num_string = bin(number)[2:][::-1]
+    num_string = f"{number:b}"[::-1]
     return num_string.find("1")
 
 
@@ -51,5 +51,5 @@ def most_significant_bit(number: int) -> int:
      ^-------- MSB @ index 0 (position 7 after reversing)
     """
 
-    num_string = bin(number)[2:]
+    num_string = f"{number:b}"
     return (len(num_string) - 1) - num_string.find("1")
