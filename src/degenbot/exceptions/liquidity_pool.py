@@ -117,3 +117,15 @@ class UnknownPool(LiquidityPoolError):
 
     def __init__(self, pool: ChecksumAddress) -> None:
         super().__init__(message=f"A liquidity update for unknown pool {pool} was provided.")
+
+
+class UnknownPoolId(LiquidityPoolError):
+    """
+    Raised by the liquidity snapshot class `update` methods when an update is provided for a pool
+    address not present in the existing snapshot. Updates of this kind can lead to inconsistent
+    state, because the pool state prior to the update is unknown.
+    """
+
+    def __init__(self, pool_id: bytes | str) -> None:
+        pool_id = HexBytes(pool_id).to_0x_hex()
+        super().__init__(message=f"A liquidity update for unknown pool ID {pool_id} was provided.")
