@@ -233,7 +233,7 @@ class AbstractUniswapV3PoolManager[Pool: UniswapV3Pool](AbstractPoolManager[Pool
         Apply all pending updates from the snapshot.
         """
 
-        if self._snapshot:
+        if self._snapshot is not None:
             for liquidity_update in self._snapshot.pending_updates(pool.address):
                 pool.update_liquidity_map(liquidity_update)
 
