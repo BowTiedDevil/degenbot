@@ -73,9 +73,18 @@ class LiquidityPoolTable(Base):
     }
 
     id: Mapped[PrimaryKeyInt]
-    address: Mapped[Address] = mapped_column(index=True)
+    address: Mapped[Address]
     chain: Mapped[int]
     kind: Mapped[str]
+
+
+# The (address, chainId) tuple is unique for each liquidity pool
+Index(
+    "ix_liquidity_pool_address_chain",
+    LiquidityPoolTable.address,
+    LiquidityPoolTable.chain,
+    unique=True,
+)
 
 
 class ManagedPoolLiquidityPositionTable(Base):
