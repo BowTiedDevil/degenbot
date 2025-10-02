@@ -10,7 +10,6 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-${imports if imports else ""}
 
 # revision identifiers, used by Alembic.
 revision: str = ${repr(up_revision)}
@@ -25,5 +24,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Downgrade schema."""
-    ${downgrades if downgrades else "pass"}
+    """Downgrade schema."""    
+    msg = "Downgrade is not supported for this migration."
+    raise NotImplementedError(msg)
+    
