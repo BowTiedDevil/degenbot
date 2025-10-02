@@ -156,6 +156,8 @@ class AerodromeV2PoolTable(AbstractUniswapV2Pool):
         "polymorphic_identity": "aerodrome_v2",
     }
 
+    stable: Mapped[bool]
+
 
 class CamelotV2PoolTable(AbstractUniswapV2Pool):
     __tablename__ = "camelot_v2_pools"
