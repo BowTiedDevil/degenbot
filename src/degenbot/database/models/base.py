@@ -59,3 +59,13 @@ class MetadataTable(Base):
     id: Mapped[PrimaryKeyInt]
     key: Mapped[str]
     value: Mapped[str]
+
+
+class ExchangeTable(Base):
+    __tablename__ = "exchanges"
+
+    id: Mapped[PrimaryKeyInt]
+    chain_id: Mapped[int]
+    name: Mapped[str]
+    active: Mapped[bool]
+    last_update_block: Mapped[int] = mapped_column(nullable=True)
