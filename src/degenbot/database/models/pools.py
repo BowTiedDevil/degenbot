@@ -214,6 +214,9 @@ class AbstractUniswapV3Pool(LiquidityPoolTable, UniswapPoolCommonColumnsMixin):
     pool_id: Mapped[PrimaryForeignKeyPoolId]
     tick_spacing: Mapped[int]
 
+    liquidity_update_block: Mapped[int | None]
+    liquidity_update_log_index: Mapped[int | None]
+
     @declared_attr
     @classmethod
     def liquidity_positions(cls) -> Mapped[list[LiquidityPositionTable]]:

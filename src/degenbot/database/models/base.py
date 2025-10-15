@@ -68,4 +68,6 @@ class ExchangeTable(Base):
     chain_id: Mapped[int]
     name: Mapped[str]
     active: Mapped[bool]
-    last_update_block: Mapped[int] = mapped_column(nullable=True)
+    last_update_block: Mapped[int | None]
+    factory: Mapped[Address]
+    deployer: Mapped[Address | None]
