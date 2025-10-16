@@ -77,7 +77,7 @@ def snapshot_from_database(
 ) -> UniswapV3LiquiditySnapshot:
     set_web3(fork_mainnet_full.w3)
     return UniswapV3LiquiditySnapshot(
-        source=DatabaseSnapshot(),
+        source=DatabaseSnapshot(chain_id=1),
     )
 
 

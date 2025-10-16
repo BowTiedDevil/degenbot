@@ -23,5 +23,6 @@
     "tick_bitmap": {},
     "tick_data": {}
   },
-  "snapshot_block": 12369620
+  "snapshot_block": 12369620,
+  "chain_id": 1
 }

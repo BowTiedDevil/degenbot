@@ -151,5 +151,6 @@
       }
     }
   },
-  "snapshot_block": 12369870
+  "snapshot_block": 12369870,
+  "chain_id": 1
 }

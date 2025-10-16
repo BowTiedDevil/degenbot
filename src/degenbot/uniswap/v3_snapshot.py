@@ -18,9 +18,10 @@ from web3.utils import get_abi_element
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import settings
 from degenbot.connection import async_connection_manager, connection_manager
-from degenbot.database.models.base import MetadataTable
+from degenbot.database import default_db_session
+from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.pools import AbstractUniswapV3Pool, LiquidityPoolTable
-from degenbot.database.operations import default_session, get_scoped_sqlite_session
+from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.exceptions.liquidity_pool import UnknownPool
 from degenbot.functions import fetch_logs_retrying, fetch_logs_retrying_async
 from degenbot.logging import logger
@@ -47,11 +48,12 @@ class SnapshotSource(Protocol):
     """
 
     storage_kind: str
+    chain_id: int
 
     # Any class implementing the protocol must implement these methods, transforming data as
     # necessary to return the specified types.
     def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None: ...
-    def get_newest_block(self) -> BlockNumber: ...
+    def get_newest_block(self) -> BlockNumber | None: ...
     def get_pools(self) -> set[ChecksumAddress]: ...
 
 
@@ -60,6 +62,7 @@ class MonolithicJsonFileSnapshot:
     A pool liquidity source backed by a single JSON file with this structure:
     {
         "snapshot_block": int,
+        "chain_id": int,
         "0xPoolAddress1": {
             "tick_bitmap": {
                 <word>: {
@@ -88,6 +91,7 @@ class MonolithicJsonFileSnapshot:
         path = pathlib.Path(path).expanduser().absolute()
         self._path = path
         self._file_snapshot: dict[str, Any] = pydantic_core.from_json(path.read_bytes())
+        self.chain_id: int = self._file_snapshot["chain_id"]
 
     def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
         if pool_address not in self._file_snapshot:
@@ -104,12 +108,19 @@ class MonolithicJsonFileSnapshot:
             },
         )
 
-    def get_newest_block(self) -> BlockNumber:
-        return int(self._file_snapshot["snapshot_block"])
+    def get_newest_block(self) -> BlockNumber | None:
+        newest_block = self._file_snapshot.get("snapshot_block")
+        if newest_block is None:
+            return None
+        return int(newest_block)
 
     def get_pools(self) -> set[ChecksumAddress]:
-        # all top-level keys except 'snapshot_block'
-        return {get_checksum_address(key) for key in self._file_snapshot if key != "snapshot_block"}
+        # all top-level keys except metadata entries
+        return {
+            get_checksum_address(key)
+            for key in self._file_snapshot
+            if key not in ("chain_id", "snapshot_block")
+        }
 
 
 class IndividualJsonFileSnapshot:
@@ -117,7 +128,7 @@ class IndividualJsonFileSnapshot:
     Snapshot source backed by a directory of JSON files with this tree structure:
 
         /path/to/snapshots/
-        ├── _metadata.json              -> { "block": int }
+        ├── _metadata.json              -> { "block": int, "chain_id": int }
         ├── 0xPoolAddress1.json         -> { "tick_bitmap": {...}, "tick_data": {...} }
         ├── 0xPoolAddress2.json         -> { "tick_bitmap": {...}, "tick_data": {...} }
         └── 0xPoolAddress3.json         -> { "tick_bitmap": {...}, "tick_data": {...} }
@@ -134,10 +145,14 @@ class IndividualJsonFileSnapshot:
         self._dir = dir_path
 
         metadata_path = self._dir / "_metadata.json"
-        self._metadata = pydantic_core.from_json(metadata_path.read_bytes())
+        self._metadata: dict[str, Any] = pydantic_core.from_json(metadata_path.read_bytes())
+        self.chain_id: int = self._metadata["chain_id"]
 
     def get_newest_block(self) -> BlockNumber:
-        return int(self._metadata["block"])
+        newest_block = self._metadata.get("block")
+        if newest_block is None:
+            return None
+        return int(newest_block)
 
     def get_pools(self) -> set[ChecksumAddress]:
         return {get_checksum_address(pool_file.stem) for pool_file in self._dir.glob("0x*.json")}
@@ -171,13 +186,15 @@ class DatabaseSnapshot:
 
     storage_kind = "db"
 
-    def __init__(self, database_path: pathlib.Path | None = None) -> None:
+    def __init__(self, chain_id: ChainId, database_path: pathlib.Path | None = None) -> None:
         if database_path is None:
-            self.session = default_session
+            self.session = default_db_session
             self.database_path = settings.database.path
         else:
             self.session = get_scoped_sqlite_session(database_path)
             self.database_path = database_path
+
+        self.chain_id = chain_id
 
     def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
         pool_in_db = self.session.scalar(
@@ -205,14 +222,20 @@ class DatabaseSnapshot:
             },
         )
 
-    def get_newest_block(self) -> BlockNumber:
-        metadata = self.session.scalar(
-            select(MetadataTable).where(MetadataTable.key == "liquidity_map")
+    def get_newest_block(self) -> BlockNumber | None:
+        last_update_blocks = set(
+            default_db_session.scalars(
+                select(ExchangeTable.last_update_block).where(
+                    ExchangeTable.active,
+                    ExchangeTable.chain_id == self.chain_id,
+                    ExchangeTable.name.like("%!_v3", escape="!"),
+                )
+            ).all()
         )
-        assert metadata is not None  # TODO: throw real exception here
-        assert metadata.value is not None  # TODO: throw real exception here
-        block = pydantic_core.from_json(metadata.value)["block"]
-        return int(block)
+
+        if not last_update_blocks:
+            return None
+        return max(last_update_blocks)
 
     def get_pools(self) -> set[ChecksumAddress]:
         return {
@@ -226,13 +249,9 @@ class UniswapV3LiquiditySnapshot:
     Retrieve and maintain liquidity positions for Uniswap V3 pools.
     """
 
-    def __init__(
-        self,
-        source: SnapshotSource,
-        chain_id: ChainId | None = None,
-    ) -> None:
+    def __init__(self, source: SnapshotSource) -> None:
         self._source = source
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+        self._chain_id = source.chain_id
         self.newest_block = source.get_newest_block()
 
         self._liquidity_events: dict[ChecksumAddress, list[UniswapV3LiquidityEvent]] = defaultdict(
