@@ -44,7 +44,7 @@ def test_erc20_token_database(
 def test_bad_address(fork_mainnet_full: AnvilFork):
     set_web3(fork_mainnet_full.w3)
     with pytest.raises(DegenbotValueError, match="No contract deployed at this address"):
-        Erc20Token(VITALIK_ADDRESS)
+        Erc20Token(ZERO_ADDRESS)
 
 
 def test_caches(fork_mainnet_full: AnvilFork, wbtc: Erc20Token):
