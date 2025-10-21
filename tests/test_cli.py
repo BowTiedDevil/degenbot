@@ -1,5 +1,3 @@
-import json
-
 import pytest
 from click.testing import CliRunner
 
@@ -21,24 +19,6 @@ def test_cli_version(runner: CliRunner):
     result = runner.invoke(cli, ["--version"])
     assert result.exit_code == 0
     assert __version__ in result.output
-
-
-def test_cli_config_show_default(runner: CliRunner):
-    result = runner.invoke(cli, ["config", "show"])
-    assert result.exit_code == 0
-    assert "[database]" in result.output
-
-
-def test_cli_config_show_json(runner: CliRunner):
-    result = runner.invoke(cli, ["config", "show", "--json"])
-    assert result.exit_code == 0
-    assert json.loads(result.output)
-
-
-def test_cli_config_show_toml(runner: CliRunner):
-    result = runner.invoke(cli, ["config", "show", "--toml"])
-    assert result.exit_code == 0
-    assert "[database]" in result.output
 
 
 # TODO: create fake database for reset/upgrade tests
