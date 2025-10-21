@@ -1,69 +1,22 @@
 import click
-import tomlkit
-from pydantic import TypeAdapter
 
+from degenbot.cli import cli
 from degenbot.config import settings
+from degenbot.database import current_database_version, default_db_session, latest_database_version
 from degenbot.database.operations import (
     backup_sqlite_database,
+    compact_sqlite_database,
     create_new_sqlite_database,
-    current_database_version,
-    latest_database_version,
     upgrade_existing_sqlite_database,
-    vacuum_sqlite_database,
 )
 from degenbot.exceptions.database import BackupExists
 from degenbot.version import __version__
 
+if default_db_session is None:
+    msg = "Database operations may not be performed without a valid database path."
+    raise ValueError(msg)
 
-@click.group()
-@click.version_option()
-def cli() -> None: ...
-
-
-@cli.group()
-def config() -> None:
-    """
-    Configuration commands
-    """
-
-
-@config.command("show")
-@click.option(
-    "--json",
-    "output_format",
-    flag_value="json",
-    type=str,
-    help="Show configuration in JSON format",
-)
-@click.option(
-    "--toml",
-    "output_format",
-    flag_value="toml",
-    type=str,
-    help="Show configuration in TOML format (default)",
-    default=True,
-)
-def config_show(output_format: str) -> None:
-    """
-    Display the current configuration in JSON or TOML (default) format.
-    """
-
-    match output_format:
-        case "json":
-            click.echo(
-                TypeAdapter(dict).dump_json(
-                    settings.model_dump(),
-                    indent=2,
-                ),
-            )
-        case "toml":
-            click.echo(
-                tomlkit.dumps(
-                    settings.model_dump(),
-                ),
-            )
-        case _:
-            ...
+assert default_db_session is not None
 
 
 @cli.group()
@@ -110,7 +63,11 @@ def database_reset() -> None:
 
 
 @database.command("upgrade")
-@click.option("--force", is_flag=True, help="Skip confirmation prompt")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
 def database_upgrade(*, force: bool) -> None:
     """
     Upgrade the database to the latest schema.
@@ -125,17 +82,9 @@ def database_upgrade(*, force: bool) -> None:
         raise click.Abort
 
 
-@database.command("defrag")
-def database_defragment() -> None:
+@database.command("compact")
+def database_compact() -> None:
     """
-    Perform file-level defragmentation to the database.
+    Compact the database.
     """
-    vacuum_sqlite_database(settings.database.path)
-
-
-@database.command("verify")
-def database_verify() -> None:
-    """
-    (not implemented)
-    """
-    click.echo(f"(placeholder) database at {settings.database.path} verified")
+    compact_sqlite_database(settings.database.path)
