@@ -11,7 +11,7 @@ import tenacity
 from eth_typing import HexAddress, HexStr
 from hexbytes import HexBytes
 from pydantic import validate_call
-from web3 import AsyncIPCProvider, AsyncWeb3, IPCProvider, Web3
+from web3 import AsyncBaseProvider, AsyncIPCProvider, AsyncWeb3, IPCProvider, Web3
 from web3.middleware import Middleware
 from web3.types import RPCEndpoint
 
@@ -278,7 +278,7 @@ class AnvilFork:
             )
 
     @contextlib.asynccontextmanager
-    async def async_w3(self) -> AsyncIterator[AsyncWeb3]:
+    async def async_w3(self) -> AsyncIterator[AsyncWeb3[AsyncBaseProvider]]:
         async with AsyncWeb3(AsyncIPCProvider(self.ipc_filename)) as async_w3:
             if TYPE_CHECKING:
                 assert isinstance(async_w3, AsyncWeb3)

@@ -15,7 +15,7 @@ from tenacity import (
     retry_if_exception_type,
     stop_after_attempt,
 )
-from web3 import AsyncWeb3, Web3
+from web3 import AsyncBaseProvider, AsyncWeb3, Web3
 from web3._utils.threads import Timeout
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier, FilterParams, LogReceipt, TxParams
@@ -266,7 +266,7 @@ def _reduce_working_span(
 
 
 async def fetch_logs_retrying_async(
-    w3: AsyncWeb3,
+    w3: AsyncWeb3[AsyncBaseProvider],
     start_block: BlockNumber,
     end_block: BlockNumber,
     max_retries: int = 10,
@@ -388,7 +388,8 @@ def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3
 
 
 async def get_number_for_block_identifier_async(
-    identifier: BlockIdentifier | None, w3: AsyncWeb3
+    identifier: BlockIdentifier | None,
+    w3: AsyncWeb3[AsyncBaseProvider],
 ) -> BlockNumber:
     match identifier:
         case None:

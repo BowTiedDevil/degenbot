@@ -1,5 +1,5 @@
 import tenacity
-import web3
+from web3 import AsyncBaseProvider, AsyncWeb3, Web3
 
 from degenbot.exceptions import DegenbotValueError
 
@@ -7,7 +7,7 @@ from .async_connection_manager import AsyncConnectionManager
 from .connection_manager import ConnectionManager
 
 
-def get_async_web3() -> web3.AsyncWeb3:
+def get_async_web3() -> AsyncWeb3[AsyncBaseProvider]:
     if async_connection_manager.default_chain_id is None:
         raise DegenbotValueError(
             message="A default Web3 instance has not been registered."
@@ -16,7 +16,7 @@ def get_async_web3() -> web3.AsyncWeb3:
 
 
 async def set_async_web3(
-    w3: web3.AsyncWeb3,
+    w3: AsyncWeb3[AsyncBaseProvider],
     *,
     optimize_middleware: bool = True,
 ) -> None:
@@ -34,12 +34,12 @@ async def set_async_web3(
     async_connection_manager.set_default_chain(await w3.eth.chain_id)
 
 
-def get_web3() -> web3.Web3:
+def get_web3() -> Web3:
     return connection_manager.get_web3(chain_id=connection_manager.default_chain_id)
 
 
 def set_web3(
-    w3: web3.Web3,
+    w3: Web3,
     *,
     optimize_middleware: bool = True,
 ) -> None:

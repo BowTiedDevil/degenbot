@@ -1,5 +1,5 @@
 import tenacity
-import web3
+from web3 import AsyncBaseProvider, AsyncWeb3
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.aliases import ChainId
@@ -7,10 +7,10 @@ from degenbot.types.aliases import ChainId
 
 class AsyncConnectionManager:
     def __init__(self) -> None:
-        self.connections: dict[ChainId, web3.AsyncWeb3] = {}
+        self.connections: dict[ChainId, AsyncWeb3[AsyncBaseProvider]] = {}
         self._default_chain_id: ChainId | None = None
 
-    def get_web3(self, chain_id: ChainId) -> "web3.AsyncWeb3":
+    def get_web3(self, chain_id: ChainId) -> AsyncWeb3[AsyncBaseProvider]:
         try:
             return self.connections[chain_id]
         except KeyError:
@@ -20,7 +20,7 @@ class AsyncConnectionManager:
 
     async def register_web3(
         self,
-        w3: web3.AsyncWeb3,
+        w3: AsyncWeb3[AsyncBaseProvider],
         *,
         optimize_middleware: bool = True,
     ) -> None:

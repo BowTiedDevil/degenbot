@@ -6,7 +6,7 @@ from eth_abi.exceptions import DecodingError
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, scoped_session
-from web3 import AsyncWeb3, Web3
+from web3 import AsyncBaseProvider, AsyncWeb3, Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier, TxParams
 
@@ -506,5 +506,5 @@ class Erc20Token(AbstractErc20Token):
         return connection_manager.get_web3(self.chain_id)
 
     @property
-    def async_w3(self) -> AsyncWeb3:
+    def async_w3(self) -> AsyncWeb3[AsyncBaseProvider]:
         return async_connection_manager.get_web3(self.chain_id)
