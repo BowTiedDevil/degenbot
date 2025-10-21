@@ -975,18 +975,19 @@ def test_zero_swaps(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool) -> None:
     indirect=True,
 )
 def test_swap_for_all(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool) -> None:
+    # Both calculations should raise an exception, since the reserves are insufficient to satisfy
+    # the requested swap
+
     with pytest.raises(IncompleteSwap):
-        # pool has ~94,000 WETH, calculation should throw
         wbtc_weth_v3_lp_at_historical_block.calculate_tokens_in_from_tokens_out(
             token_out=wbtc_weth_v3_lp_at_historical_block.token0,
-            token_out_quantity=2500 * 10**8,
+            token_out_quantity=2500 * 10**wbtc_weth_v3_lp_at_historical_block.token0.decimals,
         )
 
     with pytest.raises(IncompleteSwap):
-        # pool has ~94,000 WETH, calculation should throw
         wbtc_weth_v3_lp_at_historical_block.calculate_tokens_in_from_tokens_out(
             token_out=wbtc_weth_v3_lp_at_historical_block.token1,
-            token_out_quantity=150_000 * 10**18,
+            token_out_quantity=150_000 * 10**wbtc_weth_v3_lp_at_historical_block.token1.decimals,
         )
 
 
