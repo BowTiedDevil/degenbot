@@ -1,19 +1,17 @@
 import asyncio
 import pathlib
 from collections import defaultdict
-from typing import Any, Protocol, TypedDict, cast
+from typing import Any, Protocol, TypedDict
 
 import pydantic_core
 import tqdm
 import tqdm.asyncio
-from eth_typing import ABIEvent, ChecksumAddress, HexAddress, HexStr
-from eth_utils.abi import event_abi_to_log_topic
+from eth_abi.abi import decode as abi_decode
+from eth_typing import ChecksumAddress, HexAddress, HexStr
 from hexbytes import HexBytes
 from sqlalchemy import select
 from web3 import Web3
-from web3.contract.base_contract import BaseContractEvent
-from web3.types import EventData, LogReceipt
-from web3.utils import get_abi_element
+from web3.types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import settings
@@ -52,13 +50,14 @@ class UniswapV4LiquiditySnapshotSource(Protocol):
     """
 
     storage_kind: str
+    chain_id: int
 
     # Any class implementing the protocol must implement these methods, transforming data as
     # necessary to return the specified types.
     def get_liquidity_map(
         self, pool_manager: ChecksumAddress, pool_id: bytes | str
     ) -> LiquidityMap | None: ...
-    def get_newest_block(self) -> BlockNumber: ...
+    def get_newest_block(self) -> BlockNumber | None: ...
     def get_pools(self) -> set[PoolId]: ...
 
 
@@ -67,6 +66,7 @@ class MonolithicJsonFileSnapshot:
     A pool liquidity source backed by a single JSON file with this structure:
     {
         "snapshot_block": int,
+        "chain_id": int,
         "0xPoolId1": {
             "tick_bitmap": {
                 <word>: {
@@ -95,6 +95,7 @@ class MonolithicJsonFileSnapshot:
         path = pathlib.Path(path).expanduser().absolute()
         self._path = path
         self._file_snapshot: dict[PoolId, Any] = pydantic_core.from_json(path.read_bytes())
+        self.chain_id: int = self._file_snapshot["chain_id"]
 
     def get_liquidity_map(
         self,
@@ -117,11 +118,19 @@ class MonolithicJsonFileSnapshot:
             },
         )
 
-    def get_newest_block(self) -> BlockNumber:
-        return int(self._file_snapshot["snapshot_block"])
+    def get_newest_block(self) -> BlockNumber | None:
+        newest_block = self._file_snapshot.get("snapshot_block")
+        if newest_block is None:
+            return None
+        return int(newest_block)
 
     def get_pools(self) -> set[PoolId]:
-        return set(self._file_snapshot)
+        # all top-level keys except metadata entries
+        return {
+            get_checksum_address(key)
+            for key in self._file_snapshot
+            if key not in ("chain_id", "snapshot_block")
+        }
 
 
 class DatabaseSnapshot:
@@ -202,14 +211,18 @@ class UniswapV4LiquiditySnapshot:
     Retrieve and maintain liquidity positions for Uniswap V4 pools.
     """
 
-    def __init__(
-        self,
-        source: UniswapV4LiquiditySnapshotSource,
-        chain_id: ChainId | None = None,
-    ) -> None:
+    UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH = HexBytes(
+        Web3().eth.contract(abi=UNISWAP_V4_POOL_MANAGER_ABI).events.ModifyLiquidity().topic
+    )
+
+    def __init__(self, source: UniswapV4LiquiditySnapshotSource) -> None:
         self._source = source
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        self.newest_block = source.get_newest_block()
+        self._chain_id = source.chain_id
+
+        if (source_block := source.get_newest_block()) is None:
+            msg = "The provided source is uninitialized."
+            raise ValueError(msg)
+        self.newest_block: BlockNumber = source_block
 
         self._liquidity_events: dict[
             tuple[ChecksumAddress, PoolId], list[UniswapV4LiquidityEvent]
@@ -234,6 +247,45 @@ class UniswapV4LiquiditySnapshot:
     def pools(self) -> set[ManagedPoolIdentifier]:
         return {(pool_manager, pool_id) for pool_manager, pool_id in self._liquidity_snapshot}
 
+    def _process_liquidity_event_log(
+        self,
+        log: LogReceipt,
+    ) -> tuple[ChecksumAddress, PoolId, UniswapV4LiquidityEvent]:
+        """
+        Decode an event log and convert to an address, pool ID, and a `UniswapV4LiquidityEvent`
+        for processing with `UniswapV4Pool.update_liquidity_map`.
+        """
+
+        # ref: https://github.com/Uniswap/v4-core/blob/main/src/interfaces/IPoolManager.sol
+        # event ModifyLiquidity(
+        #     PoolId indexed id,
+        #     address indexed sender,
+        #     int24 tickLower,
+        #     int24 tickUpper,
+        #     int256 liquidityDelta,
+        #     bytes32 salt,
+        # );
+
+        assert not log["removed"]
+
+        tick_lower, tick_upper, liquidity_delta, _ = abi_decode(
+            types=["int24", "int24", "int256", "bytes32"],
+            data=log["data"],
+        )
+
+        return (
+            log["address"],  # pool manager address
+            log["topics"][1].to_0x_hex(),  # pool ID
+            UniswapV4LiquidityEvent(
+                block_number=log["blockNumber"],
+                tx_index=log["transactionIndex"],
+                log_index=log["logIndex"],
+                liquidity=liquidity_delta,
+                tick_lower=tick_lower,
+                tick_upper=tick_upper,
+            ),
+        )
+
     def fetch_new_events(
         self,
         to_block: BlockNumber,
@@ -244,77 +296,29 @@ class UniswapV4LiquiditySnapshot:
         using `eth_getLogs`. Blocks per request will be capped at `blocks_per_request`.
         """
 
-        def _process_liquidity_event_log(
-            event: BaseContractEvent, log: LogReceipt
-        ) -> tuple[ChecksumAddress, str, UniswapV4LiquidityEvent]:
-            """
-            Decode an event log and convert to an address, pool ID, and a `UniswapV4LiquidityEvent`
-            for processing with `UniswapV4Pool.update_liquidity_map`.
-            """
-
-            # ref: https://github.com/Uniswap/v4-core/blob/main/src/interfaces/IPoolManager.sol
-            # event ModifyLiquidity(
-            #     id,
-            #     msg.sender,
-            #     params.tickLower,
-            #     params.tickUpper,
-            #     params.liquidityDelta,
-            #     params.salt
-            # );
-
-            decoded_event: EventData = event.process_log(log)
-            pool_manager_address = get_checksum_address(decoded_event["address"])
-            pool_id = HexBytes(decoded_event["args"]["id"]).to_0x_hex()
-            tx_index = decoded_event["transactionIndex"]
-            log_index = decoded_event["logIndex"]
-            liquidity_block = decoded_event["blockNumber"]
-            liquidity = decoded_event["args"]["liquidityDelta"]
-            tick_lower = decoded_event["args"]["tickLower"]
-            tick_upper = decoded_event["args"]["tickUpper"]
-
-            return (
-                pool_manager_address,
-                pool_id,
-                UniswapV4LiquidityEvent(
-                    block_number=liquidity_block,
-                    tx_index=tx_index,
-                    log_index=log_index,
-                    liquidity=liquidity,
-                    tick_lower=tick_lower,
-                    tick_upper=tick_upper,
-                ),
-            )
-
         logger.info(f"Updating Uniswap V4 snapshot from block {self.newest_block} to {to_block}")
-
-        v4_pool_manager = Web3().eth.contract(abi=UNISWAP_V4_POOL_MANAGER_ABI)
-        event = v4_pool_manager.events.ModifyLiquidity
-        event_instance = event()
-        event_abi = cast(
-            "ABIEvent",
-            get_abi_element(
-                abi=v4_pool_manager.abi,
-                abi_element_identifier=event.event_name,
-            ),
-        )
 
         event_logs = fetch_logs_retrying(
             w3=connection_manager.get_web3(self.chain_id),
             start_block=self.newest_block + 1,
             end_block=to_block,
             max_blocks_per_request=blocks_per_request,
-            topic_signature=[HexBytes(event_abi_to_log_topic(event_abi))],
+            topic_signature=[
+                [
+                    self.UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH,
+                ],  # match topic0: ModifyLiquidity
+            ],
         )
 
         for event_log in tqdm.tqdm(
             event_logs,
-            desc=f"Processing {event.event_name} events",
+            desc="Processing liquidity events",
             unit="event",
             bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
             leave=False,
         ):
-            pool_manager_address, pool_id, liquidity_event = _process_liquidity_event_log(
-                event_instance, event_log
+            pool_manager_address, pool_id, liquidity_event = self._process_liquidity_event_log(
+                event_log
             )
             self._liquidity_events[(pool_manager_address, pool_id)].append(liquidity_event)
 
@@ -333,70 +337,30 @@ class UniswapV4LiquiditySnapshot:
         `blocks_per_request`.
         """
 
-        def _process_liquidity_event_log(
-            event: BaseContractEvent, log: LogReceipt
-        ) -> tuple[ChecksumAddress, str, UniswapV4LiquidityEvent]:
-            """
-            Decode an event log and convert to an address, pool ID, and a `UniswapV4LiquidityEvent`
-            for processing with `UniswapV4Pool.update_liquidity_map`.
-            """
-
-            # ref: https://github.com/Uniswap/v4-core/blob/main/src/interfaces/IPoolManager.sol
-            # event ModifyLiquidity(
-            #     id,
-            #     msg.sender,
-            #     params.tickLower,
-            #     params.tickUpper,
-            #     params.liquidityDelta,
-            #     params.salt
-            # );
-
-            decoded_event: EventData = event.process_log(log)
-
-            return (
-                get_checksum_address(decoded_event["address"]),
-                HexBytes(decoded_event["args"]["id"]).to_0x_hex(),
-                UniswapV4LiquidityEvent(
-                    block_number=decoded_event["blockNumber"],
-                    tx_index=decoded_event["transactionIndex"],
-                    log_index=decoded_event["logIndex"],
-                    liquidity=decoded_event["args"]["liquidityDelta"],
-                    tick_lower=decoded_event["args"]["tickLower"],
-                    tick_upper=decoded_event["args"]["tickUpper"],
-                ),
-            )
-
         logger.info(f"Updating Uniswap V4 snapshot from block {self.newest_block} to {to_block}")
-
-        v4_pool_manager = Web3().eth.contract(abi=UNISWAP_V4_POOL_MANAGER_ABI)
-        event = v4_pool_manager.events.ModifyLiquidity
-        event_instance = event()
-        event_abi = cast(
-            "ABIEvent",
-            get_abi_element(
-                abi=v4_pool_manager.abi,
-                abi_element_identifier=event.event_name,
-            ),
-        )
 
         event_logs = await fetch_logs_retrying_async(
             w3=async_connection_manager.get_web3(self.chain_id),
             start_block=self.newest_block + 1,
             end_block=to_block,
             max_blocks_per_request=blocks_per_request,
-            topic_signature=[HexBytes(event_abi_to_log_topic(event_abi))],
+            topic_signature=[
+                [
+                    self.UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH,
+                ],  # match topic0: ModifyLiquidity
+            ],
         )
 
         async for event_log in tqdm.asyncio.tqdm(
             event_logs,
-            desc=f"Processing {event.event_name} events",
+            desc="Processing liquidity events",
             unit="event",
             bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
             leave=False,
         ):
             await asyncio.sleep(0)
-            pool_manager_address, pool_id, liquidity_event = _process_liquidity_event_log(
-                event_instance, event_log
+            pool_manager_address, pool_id, liquidity_event = self._process_liquidity_event_log(
+                event_log
             )
             self._liquidity_events[(pool_manager_address, pool_id)].append(liquidity_event)
 
