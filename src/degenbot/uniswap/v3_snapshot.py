@@ -228,13 +228,12 @@ class DatabaseSnapshot:
     def get_newest_block(self) -> BlockNumber | None:
         last_update_blocks: Sequence[int | None] = default_db_session.scalars(
             select(ExchangeTable.last_update_block).where(
-                ExchangeTable.active,
                 ExchangeTable.chain_id == self.chain_id,
                 ExchangeTable.name.like("%!_v3", escape="!"),
             )
         ).all()
 
-        if None in last_update_blocks:
+        if not last_update_blocks or None in last_update_blocks:
             return None
 
         return max(
