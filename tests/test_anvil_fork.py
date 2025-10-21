@@ -136,7 +136,6 @@ def test_mine_and_reset():
 def test_fork_from_transaction_hash():
     fork = AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
-        storage_caching=False,
         fork_transaction_hash="0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6",
     )
     assert fork.w3.eth.block_number == 20987963
@@ -191,7 +190,6 @@ def test_reset_to_new_endpoint():
 def test_reset_to_new_transaction_hash():
     fork = AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
-        storage_caching=False,
     )
     fork.reset(
         transaction_hash="0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6"
