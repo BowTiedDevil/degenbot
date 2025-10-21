@@ -1184,10 +1184,11 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         conditions when used with threads.
         """
 
-        if update.block_number < self.update_block:
-            raise ExternalUpdateError(
-                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
-            )
+        if (
+            update.block_number <= self._initial_state_block
+            or update.block_number < self.update_block
+        ):
+            raise ExternalUpdateError(message=f"Rejected update for block {update.block_number}")
 
         with self._state_lock:
             state_block = update.block_number
