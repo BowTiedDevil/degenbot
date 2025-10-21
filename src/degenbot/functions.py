@@ -32,6 +32,9 @@ if TYPE_CHECKING:
     from eth_account.datastructures import SignedMessage
 
 
+# TODO: remove progress bar
+
+
 def create2_address(
     deployer: str | bytes,
     salt: bytes | str,
@@ -140,26 +143,35 @@ def fetch_logs_retrying(
     end_block: BlockNumber,
     max_retries: int = 10,
     max_blocks_per_request: int | None = None,
-    topic_signature: Sequence[HexBytes] | None = None,
+    address: list[ChecksumAddress] | None = None,
+    topic_signature: Sequence[Sequence[HexBytes] | HexBytes] | None = None,
 ) -> list[LogReceipt]:
     """
-    Fetch all event logs for the given topic signature (or all logs, if omitted), inclusive for the
+    Yield all event logs for the given topic signature (or all logs, if omitted), inclusive for the
     given block range.
 
     Max blocks per request is set to 5,000 if not specified.
+
+    See `https://ethereum.org/developers/docs/apis/json-rpc/#eth_getfilterchanges` for formatting of
+    topic signatures.
     """
 
+    if end_block < start_block:
+        msg = "End block cannot be earlier than start block."
+        raise ValueError(msg)
+
+    if address is None:
+        address = []
+
     if topic_signature is None:
-        topic_signature = ()
+        topic_signature = []
 
     if max_blocks_per_request is None:
         max_blocks_per_request = 5_000
 
     # The working block span is dynamic. It will be reduced quickly if timeouts occur, and increased
     # slowly following successful fetches
-    working_span = max_blocks_per_request
-
-    event_logs = []
+    working_span = 100
 
     retrier = Retrying(
         stop=stop_after_attempt(max_retries),
@@ -168,13 +180,7 @@ def fetch_logs_retrying(
         ),
     )
 
-    pbar = tqdm.tqdm(
-        event_logs,
-        total=end_block - start_block + 1,
-        desc="Fetching blocks",
-        bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-        leave=False,
-    )
+    event_logs: list[LogReceipt] = []
 
     while True:
         try:
@@ -190,6 +196,7 @@ def fetch_logs_retrying(
                         event_logs.extend(
                             w3.eth.get_logs(
                                 FilterParams(
+                                    address=address,
                                     fromBlock=start_block,
                                     toBlock=chunk_end,
                                     topics=topic_signature,
@@ -197,27 +204,24 @@ def fetch_logs_retrying(
                             )
                         )
                     except (Timeout, Web3Exception):
-                        working_span = _adjust_working_span(
-                            is_timeout=True,
+                        working_span = _reduce_working_span(
                             working_span=working_span,
-                            cap=max_blocks_per_request,
+                            percent=25,
                         )
-                        logger.debug(
+                        logger.info(
                             f"Attempt {attempt.retry_state.attempt_number} timed out "
                             f"fetching {chunk_end - start_block + 1} blocks. "
                             f"Reducing to {working_span}..."
                         )
                         raise
                     else:
-                        pbar.update(chunk_end - start_block + 1)
-                        working_span = _adjust_working_span(
-                            is_timeout=False,
+                        working_span = _increase_working_span(
                             working_span=working_span,
-                            cap=max_blocks_per_request,
+                            percent=1,
+                            ceiling=max_blocks_per_request,
                         )
 
             if chunk_end == end_block:
-                pbar.close()
                 return event_logs
 
             start_block = chunk_end + 1
@@ -228,18 +232,37 @@ def fetch_logs_retrying(
             ) from None
 
 
-def _adjust_working_span(
-    *,
-    is_timeout: bool,
+def _increase_working_span(
     working_span: int,
-    cap: int,
+    percent: int,
+    ceiling: int,
 ) -> int:
     """
-    Decrease quickly (-50%) on timeout, increase slowly (+10%) on success up to the cap.
+    Increase the working span by the given percentage, not to exceed the given ceiling.
     """
-    if is_timeout:
-        return max(1, working_span // 2)
-    return min(working_span + working_span // 10, cap)
+
+    return min(
+        ceiling,
+        int(
+            working_span + working_span * (percent / 100),
+        ),
+    )
+
+
+def _reduce_working_span(
+    working_span: int,
+    percent: int,
+) -> int:
+    """
+    Reduce the working span by the given percentage, not to fall below 1.
+    """
+
+    return max(
+        1,
+        int(
+            working_span - working_span * (percent / 100),
+        ),
+    )
 
 
 async def fetch_logs_retrying_async(
@@ -248,6 +271,7 @@ async def fetch_logs_retrying_async(
     end_block: BlockNumber,
     max_retries: int = 10,
     max_blocks_per_request: int | None = None,
+    address: ChecksumAddress | None = None,
     topic_signature: Sequence[HexBytes] | None = None,
 ) -> list[LogReceipt]:
     """
@@ -264,7 +288,8 @@ async def fetch_logs_retrying_async(
     if max_blocks_per_request is None:
         max_blocks_per_request = 5_000
 
-    working_span = max_blocks_per_request
+    working_span = 100
+
     event_logs: list[LogReceipt] = []
 
     retrier = AsyncRetrying(
@@ -293,6 +318,13 @@ async def fetch_logs_retrying_async(
                         )
                         logs = await w3.eth.get_logs(
                             FilterParams(
+                                address=address,
+                                fromBlock=start_block,
+                                toBlock=chunk_end,
+                                topics=topic_signature,
+                            )
+                            if address is not None
+                            else FilterParams(
                                 fromBlock=start_block,
                                 toBlock=chunk_end,
                                 topics=topic_signature,
@@ -300,10 +332,9 @@ async def fetch_logs_retrying_async(
                         )
                         event_logs.extend(logs)
                     except (Timeout, Web3Exception):
-                        working_span = _adjust_working_span(
-                            is_timeout=True,
+                        working_span = _reduce_working_span(
                             working_span=working_span,
-                            cap=max_blocks_per_request,
+                            percent=25,
                         )
                         logger.debug(
                             f"Attempt {attempt.retry_state.attempt_number} timed out "
@@ -313,10 +344,10 @@ async def fetch_logs_retrying_async(
                         raise
                     else:
                         pbar.update(chunk_end - start_block + 1)
-                        working_span = _adjust_working_span(
-                            is_timeout=False,
+                        working_span = _increase_working_span(
                             working_span=working_span,
-                            cap=max_blocks_per_request,
+                            percent=1,
+                            ceiling=max_blocks_per_request,
                         )
 
             if chunk_end == end_block:
