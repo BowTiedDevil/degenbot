@@ -9,11 +9,11 @@ class Erc20TokenTable(Base):
     __tablename__ = "erc20_tokens"
 
     id: Mapped[PrimaryKeyInt]
-    address: Mapped[Address]
     chain: Mapped[int]
-    name: Mapped[str]
-    symbol: Mapped[str]
-    decimals: Mapped[int]
+    address: Mapped[Address]
+    name: Mapped[str | None]
+    symbol: Mapped[str | None]
+    decimals: Mapped[int | None]
 
 
 # The (address, ChainId) tuple is unique for ERC-20 tokens

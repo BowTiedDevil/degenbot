@@ -27,6 +27,10 @@ ForeignKeyPoolManagerId = Annotated[
     int,
     mapped_column(ForeignKey("pool_managers.id")),
 ]
+ForeignKeyTokenId = Annotated[
+    int,
+    mapped_column(ForeignKey("erc20_tokens.id")),
+]
 ManagedPoolHash = Annotated[
     str,
     mapped_column(String(66)),

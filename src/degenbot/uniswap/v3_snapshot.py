@@ -35,6 +35,9 @@ from degenbot.uniswap.v3_types import (
     UniswapV3PoolLiquidityMappingUpdate,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 
 class LiquidityMap(TypedDict):
     tick_bitmap: dict[int, UniswapV3BitmapAtWord]
@@ -148,7 +151,7 @@ class IndividualJsonFileSnapshot:
         self._metadata: dict[str, Any] = pydantic_core.from_json(metadata_path.read_bytes())
         self.chain_id: int = self._metadata["chain_id"]
 
-    def get_newest_block(self) -> BlockNumber:
+    def get_newest_block(self) -> BlockNumber | None:
         newest_block = self._metadata.get("block")
         if newest_block is None:
             return None
@@ -223,19 +226,22 @@ class DatabaseSnapshot:
         )
 
     def get_newest_block(self) -> BlockNumber | None:
-        last_update_blocks = set(
-            default_db_session.scalars(
-                select(ExchangeTable.last_update_block).where(
-                    ExchangeTable.active,
-                    ExchangeTable.chain_id == self.chain_id,
-                    ExchangeTable.name.like("%!_v3", escape="!"),
-                )
-            ).all()
-        )
+        last_update_blocks: Sequence[int | None] = default_db_session.scalars(
+            select(ExchangeTable.last_update_block).where(
+                ExchangeTable.active,
+                ExchangeTable.chain_id == self.chain_id,
+                ExchangeTable.name.like("%!_v3", escape="!"),
+            )
+        ).all()
 
-        if not last_update_blocks:
+        if None in last_update_blocks:
             return None
-        return max(last_update_blocks)
+
+        return max(
+            last_update_block
+            for last_update_block in last_update_blocks
+            if isinstance(last_update_block, int)
+        )
 
     def get_pools(self) -> set[ChecksumAddress]:
         return {
@@ -252,7 +258,11 @@ class UniswapV3LiquiditySnapshot:
     def __init__(self, source: SnapshotSource) -> None:
         self._source = source
         self._chain_id = source.chain_id
-        self.newest_block = source.get_newest_block()
+
+        if (source_block := source.get_newest_block()) is None:
+            msg = "The provided source is uninitialized."
+            raise ValueError(msg)
+        self.newest_block: BlockNumber = source_block
 
         self._liquidity_events: dict[ChecksumAddress, list[UniswapV3LiquidityEvent]] = defaultdict(
             list

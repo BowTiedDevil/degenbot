@@ -18,9 +18,10 @@ from web3.utils import get_abi_element
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import settings
 from degenbot.connection import async_connection_manager, connection_manager
-from degenbot.database.models.base import MetadataTable
+from degenbot.database import default_db_session
+from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.pools import UniswapV4PoolTable
-from degenbot.database.operations import default_session, get_scoped_sqlite_session
+from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.exceptions.liquidity_pool import UnknownPoolId
 from degenbot.functions import fetch_logs_retrying, fetch_logs_retrying_async
 from degenbot.logging import logger
@@ -96,7 +97,9 @@ class MonolithicJsonFileSnapshot:
         self._file_snapshot: dict[PoolId, Any] = pydantic_core.from_json(path.read_bytes())
 
     def get_liquidity_map(
-        self, pool_manager: ChecksumAddress, pool_id: bytes | str
+        self,
+        pool_manager: ChecksumAddress,  # noqa: ARG002
+        pool_id: bytes | str,
     ) -> LiquidityMap | None:
         pool_id = HexBytes(pool_id).to_0x_hex()
 
@@ -132,16 +135,20 @@ class DatabaseSnapshot:
 
     storage_kind = "db"
 
-    def __init__(self, database_path: pathlib.Path | None = None) -> None:
+    def __init__(self, chain_id: ChainId, database_path: pathlib.Path | None = None) -> None:
         if database_path is None:
-            self.session = default_session
+            self.session = default_db_session
             self.database_path = settings.database.path
         else:
             self.session = get_scoped_sqlite_session(database_path)
             self.database_path = database_path
 
+        self.chain_id = chain_id
+
     def get_liquidity_map(
-        self, pool_manager: ChecksumAddress, pool_id: bytes | str
+        self,
+        pool_manager: ChecksumAddress,  # noqa: ARG002
+        pool_id: bytes | str,
     ) -> LiquidityMap | None:
         pool_in_db = self.session.scalar(
             select(UniswapV4PoolTable).where(
@@ -167,14 +174,25 @@ class DatabaseSnapshot:
             },
         )
 
-    def get_newest_block(self) -> BlockNumber:
-        metadata = self.session.scalar(
-            select(MetadataTable).where(MetadataTable.key == "liquidity_map")
+    def get_newest_block(self) -> BlockNumber | None:
+        last_update_blocks = set(
+            default_db_session.scalars(
+                select(ExchangeTable.last_update_block).where(
+                    ExchangeTable.active,
+                    ExchangeTable.chain_id == self.chain_id,
+                    ExchangeTable.name.like("%!_v4", escape="!"),
+                )
+            ).all()
         )
-        assert metadata is not None  # TODO: throw real exception here
-        assert metadata.value is not None  # TODO: throw real exception here
-        block = pydantic_core.from_json(metadata.value)["block"]
-        return int(block)
+
+        if None in last_update_blocks:
+            return None
+
+        return max(
+            last_update_block
+            for last_update_block in last_update_blocks
+            if isinstance(last_update_block, int)
+        )
 
     def get_pools(self) -> set[PoolId]:
         return set(self.session.scalars(select(UniswapV4PoolTable.pool_hash)).all())

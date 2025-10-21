@@ -1,11 +1,14 @@
-from sqlalchemy import Index
+from sqlalchemy import ForeignKey, Index
 from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
 
-from .base import Address, Base, BigInteger
+from degenbot.database.models.erc20 import Erc20TokenTable
+
+from .base import Address, Base, BigInteger, ExchangeTable
 from .types import (
     ForeignKeyManagedPoolId,
     ForeignKeyPoolId,
     ForeignKeyPoolManagerId,
+    ForeignKeyTokenId,
     ManagedPoolHash,
     PrimaryForeignKeyManagedPoolId,
     PrimaryForeignKeyPoolId,
@@ -23,7 +26,7 @@ class LiquidityPositionTable(Base):
     liquidity_gross: Mapped[BigInteger]
 
 
-# A (PoolId, tick) tuple is unique for each liquidity position
+# The (PoolId, tick) tuple is unique for each liquidity position
 Index(
     "ix_liquidity_positions_pool_id_tick",
     LiquidityPositionTable.pool_id,
@@ -41,7 +44,7 @@ class InitializationMapTable(Base):
     bitmap: Mapped[BigInteger]
 
 
-# A (PoolId, word) tuple is unique for each initialization map
+# The (PoolId, word) tuple is unique for each initialization map
 Index(
     "ix_initialization_maps_pool_id_word",
     InitializationMapTable.pool_id,
@@ -52,17 +55,30 @@ Index(
 
 class UniswapPoolCommonColumnsMixin:
     """
-    A mixin that adds columns common to all Uniswap V2 & V3 variants and a link to an indexed
-    foreign key for the pool ID.
+    A mixin that adds columns common to all Uniswap V2 & V3 variants.
     """
 
-    token0: Mapped[Address]
-    token1: Mapped[Address]
-    factory: Mapped[Address | None]
-    deployer: Mapped[Address | None]
+    token0_id: Mapped[ForeignKeyTokenId]
+    token1_id: Mapped[ForeignKeyTokenId]
     fee_token0: Mapped[int]
     fee_token1: Mapped[int]
     fee_denominator: Mapped[int]
+
+    @declared_attr
+    @classmethod
+    def token0(cls) -> Mapped[Erc20TokenTable]:
+        return relationship(
+            "Erc20TokenTable",
+            foreign_keys=cls.token0_id,
+        )
+
+    @declared_attr
+    @classmethod
+    def token1(cls) -> Mapped[Erc20TokenTable]:
+        return relationship(
+            "Erc20TokenTable",
+            foreign_keys=cls.token1_id,
+        )
 
 
 class LiquidityPoolTable(Base):
@@ -76,6 +92,9 @@ class LiquidityPoolTable(Base):
     address: Mapped[Address]
     chain: Mapped[int]
     kind: Mapped[str]
+
+    exchange: Mapped[ExchangeTable] = relationship("ExchangeTable")
+    exchange_id: Mapped[int] = mapped_column(ForeignKey("exchanges.id"))
 
 
 # The (address, chainId) tuple is unique for each liquidity pool
@@ -97,7 +116,7 @@ class ManagedPoolLiquidityPositionTable(Base):
     liquidity_gross: Mapped[BigInteger]
 
 
-# A (PoolId, tick) tuple is unique for each liquidity position
+# The (PoolId, tick) tuple is unique for each liquidity position
 Index(
     "ix_managed_pool_liquidity_positions_pool_id_tick",
     ManagedPoolLiquidityPositionTable.managed_pool_id,
@@ -115,7 +134,7 @@ class ManagedPoolInitializationMapTable(Base):
     bitmap: Mapped[BigInteger]
 
 
-# A (ManagedPoolId, word) tuple is unique for each initialization map
+# The (ManagedPoolId, word) tuple is unique for each initialization map
 Index(
     "ix_managed_pool_initialization_maps_pool_id_word",
     ManagedPoolInitializationMapTable.managed_pool_id,
@@ -128,9 +147,21 @@ class PoolManagerTable(Base):
     __tablename__ = "pool_managers"
 
     id: Mapped[PrimaryKeyInt]
-    address: Mapped[Address] = mapped_column(index=True, unique=True)
+    address: Mapped[Address]
     chain: Mapped[int]
     kind: Mapped[str]
+
+    exchange_id: Mapped[int] = mapped_column(ForeignKey("exchanges.id"))
+    exchange: Mapped[ExchangeTable] = relationship("ExchangeTable")
+
+
+# The (address, chainId) tuple is unique for each pool manager
+Index(
+    "ix_pool_manager_address_chain",
+    PoolManagerTable.address,
+    PoolManagerTable.chain,
+    unique=True,
+)
 
 
 class ManagedLiquidityPoolTable(Base):
@@ -141,11 +172,10 @@ class ManagedLiquidityPoolTable(Base):
     }
 
     id: Mapped[PrimaryKeyInt]
-    manager_id: Mapped[ForeignKeyPoolManagerId]
     kind: Mapped[str]
 
-
-# TODO: investigate if token0/token1 and currency0/currency1 should map back to erc20 table
+    manager_id: Mapped[ForeignKeyPoolManagerId]
+    manager: Mapped[PoolManagerTable] = relationship("PoolManagerTable")
 
 
 class AbstractUniswapV2Pool(LiquidityPoolTable, UniswapPoolCommonColumnsMixin):
@@ -274,12 +304,15 @@ class AbstractUniswapV4Pool(ManagedLiquidityPoolTable):
 
     pool_hash: Mapped[ManagedPoolHash] = mapped_column(index=True, unique=True)
     hooks: Mapped[Address]
-    currency0: Mapped[Address]
-    currency1: Mapped[Address]
+    currency0_id: Mapped[ForeignKeyTokenId]
+    currency1_id: Mapped[ForeignKeyTokenId]
     fee_currency0: Mapped[int]
     fee_currency1: Mapped[int]
     fee_denominator: Mapped[int]
     tick_spacing: Mapped[int]
+
+    liquidity_update_block: Mapped[int | None]
+    liquidity_update_log_index: Mapped[int | None]
 
     @declared_attr
     @classmethod
@@ -295,6 +328,22 @@ class AbstractUniswapV4Pool(ManagedLiquidityPoolTable):
         return relationship(
             "ManagedPoolInitializationMapTable",
             cascade="all, delete",
+        )
+
+    @declared_attr
+    @classmethod
+    def currency0(cls) -> Mapped[Erc20TokenTable]:
+        return relationship(
+            "Erc20TokenTable",
+            foreign_keys=cls.currency0_id,
+        )
+
+    @declared_attr
+    @classmethod
+    def currency1(cls) -> Mapped[Erc20TokenTable]:
+        return relationship(
+            "Erc20TokenTable",
+            foreign_keys=cls.currency1_id,
         )
 
 

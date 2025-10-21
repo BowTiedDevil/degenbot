@@ -18,12 +18,12 @@ from web3.types import TxParams
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
+from degenbot.database import default_db_session
 from degenbot.database.models.pools import (
     AbstractUniswapV2Pool,
     LiquidityPoolTable,
     UniswapV2PoolTable,
 )
-from degenbot.database.operations import default_session
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.liquidity_pool import (
@@ -64,26 +64,10 @@ if TYPE_CHECKING:
     from hexbytes import HexBytes
 
 
-def add_pool_to_database(
-    pool: AbstractUniswapV2Pool,
-    session: Session | scoped_session[Session] = default_session,
-) -> None:
-    session.add(pool)
-    session.commit()
-
-
-def drop_pool_from_database(
-    pool: AbstractUniswapV2Pool,
-    session: Session | scoped_session[Session] = default_session,
-) -> None:
-    session.delete(pool)
-    session.commit()
-
-
 def get_pool_from_database(
     address: ChecksumAddress,
     chain_id: int,
-    session: Session | scoped_session[Session] = default_session,
+    session: Session | scoped_session[Session] = default_db_session,
 ) -> AbstractUniswapV2Pool | None:
     return session.scalar(
         select(LiquidityPoolTable).where(
@@ -144,7 +128,6 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         verify_address: bool = True,
         silent: bool = False,
         state_cache_depth: int = 8,
-        use_database: bool = True,
     ) -> None:
         """
         An abstract representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
@@ -175,9 +158,6 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             Suppress status output.
         state_cache_depth:
             How many unique block-state pairs to hold in the state cache.
-        use_database:
-            Read and write pool values to the database. Subsequent initializations can read values
-            from the database instead of fetching them from the chain.
         """
 
         self.address = get_checksum_address(address)
@@ -187,21 +167,20 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
         )
 
-        pool_from_db = None
-
-        if use_database:
-            pool_from_db = get_pool_from_database(
-                address=self.address,
-                chain_id=self.chain_id,
+        pool_from_db: AbstractUniswapV2Pool = default_db_session.scalar(
+            select(LiquidityPoolTable).where(
+                LiquidityPoolTable.address == self.address,
+                LiquidityPoolTable.chain == self._chain_id,
             )
+        )
 
         w3 = connection_manager.get_web3(self.chain_id)
         state_block = state_block if state_block is not None else w3.eth.block_number
 
         # Get the tokens held by the pool
         if pool_from_db is not None:
-            token0_address = pool_from_db.token0
-            token1_address = pool_from_db.token1
+            token0_address = pool_from_db.token0.address
+            token1_address = pool_from_db.token1.address
         else:
             try:
                 _, (token0_address, token1_address), _ = self.get_factory_tokens_reserves_batched(
@@ -211,6 +190,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                 # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
                 # Catch this here and raise as a pool-specific exception
                 raise LiquidityPoolError(message="Could not decode contract data") from exc
+
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
         try:
             self.token0 = token_manager.get_erc20token(
@@ -226,8 +206,12 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         # Get the factory & deployer info
         if pool_from_db is not None:
-            self.factory = get_checksum_address(pool_from_db.factory)
-            self.deployer = get_checksum_address(pool_from_db.deployer or self.factory)
+            self.factory = get_checksum_address(pool_from_db.exchange.factory)
+            self.deployer = (
+                get_checksum_address(pool_from_db.exchange.deployer)
+                if pool_from_db.exchange.deployer is not None
+                else self.factory
+            )
         else:
             try:
                 self.factory, _, _ = self.get_factory_tokens_reserves_batched(
@@ -295,43 +279,6 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             logger.info(self.name)
             logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
             logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
-
-        if use_database and pool_from_db is None:
-            # the fees must be normalized to the same denominator
-            normalize_denominator = self.fee_token0.denominator != self.fee_token1.denominator
-
-            if normalize_denominator:
-                normalized_denominator = self.fee_token0.denominator * self.fee_token1.denominator
-            else:
-                normalized_denominator = self.fee_token0.denominator
-
-            add_pool_to_database(
-                self.DatabasePoolType.__value__(
-                    address=self.address,
-                    chain=self.chain_id,
-                    token0=self.token0.address,
-                    token1=self.token1.address,
-                    factory=self.factory,
-                    deployer=self.deployer,
-                    fee_token0=(
-                        self.fee_token0.numerator
-                        * (
-                            normalized_denominator // self.fee_token0.denominator
-                            if normalize_denominator
-                            else 1
-                        )
-                    ),
-                    fee_token1=(
-                        self.fee_token1.numerator
-                        * (
-                            normalized_denominator // self.fee_token1.denominator
-                            if normalize_denominator
-                            else 1
-                        )
-                    ),
-                    fee_denominator=normalized_denominator,
-                )
-            )
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 

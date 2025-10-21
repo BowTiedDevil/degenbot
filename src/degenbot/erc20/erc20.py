@@ -10,12 +10,11 @@ from web3 import AsyncWeb3, Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier, TxParams
 
-import degenbot.registry
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import async_connection_manager, connection_manager
+from degenbot.database import default_db_session
 from degenbot.database.models import Erc20TokenTable
-from degenbot.database.operations import default_session
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.erc20 import NoPriceOracle
 from degenbot.functions import (
@@ -25,6 +24,7 @@ from degenbot.functions import (
     raw_call,
 )
 from degenbot.logging import logger
+from degenbot.registry import token_registry
 from degenbot.types.abstract import AbstractErc20Token
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import BoundedCache
@@ -33,18 +33,10 @@ if TYPE_CHECKING:
     from hexbytes import HexBytes
 
 
-def add_token_to_database(
-    token: Erc20TokenTable,
-    session: Session | scoped_session[Session] = default_session,
-) -> None:
-    session.add(token)
-    session.commit()
-
-
 def get_token_from_database(
     token: ChecksumAddress,
     chain_id: int,
-    session: Session | scoped_session[Session] = default_session,
+    session: Session | scoped_session[Session] = default_db_session,
 ) -> Erc20TokenTable | None:
     return session.scalar(
         select(Erc20TokenTable).where(
@@ -52,6 +44,33 @@ def get_token_from_database(
             Erc20TokenTable.chain == chain_id,
         )
     )
+
+
+def set_token_decimals(
+    token: Erc20TokenTable,
+    decimals: int,
+    session: Session | scoped_session[Session] = default_db_session,
+) -> None:
+    token.decimals = decimals
+    session.commit()
+
+
+def set_token_name(
+    token: Erc20TokenTable,
+    name: str,
+    session: Session | scoped_session[Session] = default_db_session,
+) -> None:
+    token.name = name
+    session.commit()
+
+
+def set_token_symbol(
+    token: Erc20TokenTable,
+    symbol: str,
+    session: Session | scoped_session[Session] = default_db_session,
+) -> None:
+    token.symbol = symbol
+    session.commit()
 
 
 class Erc20Token(AbstractErc20Token):
@@ -71,28 +90,39 @@ class Erc20Token(AbstractErc20Token):
         oracle_address: str | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
-        use_database: bool = True,
     ) -> None:
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
 
-        token_from_db: Erc20TokenTable | None = None
-        if use_database:
-            token_from_db = get_token_from_database(
-                token=self.address,
-                chain_id=self.chain_id,
-            )
+        token_from_db = get_token_from_database(
+            token=self.address,
+            chain_id=self.chain_id,
+        )
 
-        if token_from_db:
-            self.name = token_from_db.name
-            self.symbol = token_from_db.symbol
-            self.decimals = token_from_db.decimals
-        else:
-            self.name = self.UNKNOWN_NAME
-            self.symbol = self.UNKNOWN_SYMBOL
-            self.decimals = self.UNKNOWN_DECIMALS
+        self.decimals = self.UNKNOWN_DECIMALS
+        self.name = self.UNKNOWN_NAME
+        self.symbol = self.UNKNOWN_SYMBOL
 
+        # Attempt to load values from the DB
+        if token_from_db is not None:
+            if token_from_db.decimals is not None:
+                self.decimals = token_from_db.decimals
+            if token_from_db.name is not None:
+                self.name = token_from_db.name
+            if token_from_db.symbol is not None:
+                self.symbol = token_from_db.symbol
+
+        # Look up values from the contract if all defaults are still set
+        if (
+            self.decimals == self.UNKNOWN_DECIMALS
+            and self.name == self.UNKNOWN_NAME
+            and self.symbol == self.UNKNOWN_SYMBOL
+        ):
             w3 = self.w3
+
+            if not w3.eth.get_code(self.address):
+                raise DegenbotValueError(message="No contract deployed at this address")
+
             try:
                 self.name, self.symbol, self.decimals = self.get_name_symbol_decimals_batched(w3=w3)
             except (Web3Exception, DecodingError):
@@ -101,30 +131,32 @@ class Erc20Token(AbstractErc20Token):
                         self.name = self.get_name(w3=w3, func_prototype=func_prototype)
                     except (Web3Exception, DecodingError):
                         continue
-                    break
+                    else:
+                        break
 
                 for func_prototype in ("symbol()", "SYMBOL()"):
                     try:
                         self.symbol = self.get_symbol(w3=w3, func_prototype=func_prototype)
                     except (Web3Exception, DecodingError):
                         continue
-                    break
+                    else:
+                        break
 
                 for func_prototype in ("decimals()", "DECIMALS()"):
                     try:
                         self.decimals = self.get_decimals(w3=w3, func_prototype=func_prototype)
                     except (Web3Exception, DecodingError):
                         continue
-                    break
+                    else:
+                        break
 
-            if all(
-                [
-                    self.name == self.UNKNOWN_NAME,
-                    self.symbol == self.UNKNOWN_SYMBOL,
-                    self.decimals == self.UNKNOWN_DECIMALS,
-                ]
-            ) and not w3.eth.get_code(self.address):
-                raise DegenbotValueError(message="No contract deployed at this address")
+            if token_from_db is not None:
+                if self.decimals != self.UNKNOWN_DECIMALS:
+                    set_token_decimals(token=token_from_db, decimals=self.decimals)
+                if self.name != self.UNKNOWN_NAME:
+                    set_token_name(token=token_from_db, name=self.name)
+                if self.symbol != self.UNKNOWN_SYMBOL:
+                    set_token_symbol(token=token_from_db, symbol=self.symbol)
 
         self._price_oracle = (
             ChainlinkPriceContract(address=oracle_address, chain_id=self.chain_id)
@@ -132,9 +164,7 @@ class Erc20Token(AbstractErc20Token):
             else None
         )
 
-        degenbot.registry.token_registry.add(
-            token_address=self.address, chain_id=self.chain_id, token=self
-        )
+        token_registry.add(token_address=self.address, chain_id=self.chain_id, token=self)
 
         self._state_cache_depth = state_cache_depth
         self._cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
@@ -145,17 +175,6 @@ class Erc20Token(AbstractErc20Token):
 
         if not silent:  # pragma: no cover
             logger.info(f"• {self.symbol} ({self.name})")
-
-        if use_database and token_from_db is None:
-            add_token_to_database(
-                Erc20TokenTable(
-                    address=self.address,
-                    chain=self.chain_id,
-                    name=self.name,
-                    symbol=self.symbol,
-                    decimals=self.decimals,
-                )
-            )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"{self.__class__.__name__}(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"  # noqa:E501

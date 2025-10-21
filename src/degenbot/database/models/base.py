@@ -53,14 +53,6 @@ class Base(DeclarativeBase):
     }
 
 
-class MetadataTable(Base):
-    __tablename__ = "metadata"
-
-    id: Mapped[PrimaryKeyInt]
-    key: Mapped[str]
-    value: Mapped[str]
-
-
 class ExchangeTable(Base):
     __tablename__ = "exchanges"
 
