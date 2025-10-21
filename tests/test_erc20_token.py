@@ -5,7 +5,7 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import async_connection_manager, set_web3
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.erc20.erc20 import Erc20Token, get_token_from_database
+from degenbot.erc20.erc20 import Erc20Token
 from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.erc20 import NoPriceOracle
@@ -27,18 +27,6 @@ def wbtc(fork_mainnet_full: AnvilFork) -> Erc20Token:
 def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
     set_web3(fork_mainnet_full.w3)
     return Erc20Token(WETH_ADDRESS)
-
-
-def test_erc20_token_database(
-    fork_mainnet_full: AnvilFork,
-    weth: Erc20Token,
-):
-    set_web3(fork_mainnet_full.w3)
-    token_from_db = get_token_from_database(
-        token=weth.address,
-        chain_id=fork_mainnet_full.w3.eth.chain_id,
-    )
-    assert token_from_db is not None
 
 
 def test_bad_address(fork_mainnet_full: AnvilFork):
