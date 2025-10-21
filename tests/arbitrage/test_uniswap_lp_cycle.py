@@ -2088,6 +2088,7 @@ def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
         tick_data=pool.tick_data,
         block=pool.update_block,
     )
+    pool._initial_state_block = 0
 
     return pool
 
