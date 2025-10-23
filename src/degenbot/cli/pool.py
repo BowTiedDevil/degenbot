@@ -259,6 +259,9 @@ def apply_v3_liquidity_updates(
                 liquidity_event["data"],
             )
 
+        if amount == 0:
+            continue
+
         lp_helper.update_liquidity_map(
             update=UniswapV3PoolLiquidityMappingUpdate(
                 block_number=liquidity_event["blockNumber"],
@@ -498,6 +501,9 @@ def apply_v4_liquidity_updates(
             types=["int24", "int24", "int256", "bytes32"],
             data=liquidity_event["data"],
         )
+
+        if liquidity_delta == 0:
+            continue
 
         lp_helper.update_liquidity_map(
             update=UniswapV4PoolLiquidityMappingUpdate(
