@@ -1,7 +1,8 @@
+from json import JSONDecodeError
 from typing import TYPE_CHECKING, cast
 
-import pydantic_core
 import tenacity
+from ujson import loads as ujson_loads
 from web3 import AsyncBaseProvider, AsyncWeb3, JSONBaseProvider
 from web3.types import RPCResponse
 
@@ -10,7 +11,16 @@ from degenbot.types.aliases import ChainId
 
 
 def _fast_decode_rpc_response(raw_response: bytes) -> RPCResponse:
-    return cast("RPCResponse", pydantic_core.from_json(raw_response))
+    """
+    Decode the JSON-RPC response using ujson.
+    """
+
+    try:
+        return cast("RPCResponse", ujson_loads(raw_response))
+    except ValueError:
+        # Re-raise as a dummy JSONDecodeError so web3py's exception handling works as intended.
+        msg = "JSON failure"
+        raise JSONDecodeError(msg, "[]", 0) from None
 
 
 class AsyncConnectionManager:
