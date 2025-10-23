@@ -157,8 +157,6 @@ UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH = HexBytes(
     "0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec"
 )
 
-DEFAULT_BLOCK_CHUNK_SIZE = 1_000
-
 
 def apply_v3_liquidity_updates(
     w3: Web3,
@@ -1470,7 +1468,14 @@ def pool() -> None:
 
 
 @pool.command("update")
-def pool_update() -> None:
+@click.option(
+    "--chunk",
+    "chunk_size",
+    default=10_000,
+    help="The maximum number of blocks to process before committing changes to the database "
+    "(default 10,000).",
+)
+def pool_update(chunk_size: int) -> None:
     """
     Update liquidity pool information for activated exchanges.
     """
@@ -1537,7 +1542,7 @@ def pool_update() -> None:
             # - all update blocks for active exchanges
             working_end_block = min(
                 [safe_end_block]
-                + [working_start_block + DEFAULT_BLOCK_CHUNK_SIZE - 1]
+                + [working_start_block + chunk_size - 1]
                 + [
                     exchange.last_update_block
                     for exchange in active_exchanges
