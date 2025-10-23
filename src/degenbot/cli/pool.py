@@ -1467,6 +1467,123 @@ def pool() -> None:
     """
 
 
+@pool.command("repair")
+@click.argument("pool_address")
+@click.option(
+    "--chain",
+    "chain_id",
+    help="The chain ID to use if multiple pools are found with the same address.",
+)
+@click.option(
+    "--chunk",
+    "chunk_size",
+    default=10_000,
+    help="The maximum number of blocks to process before committing changes to the database "
+    "(default 10,000).",
+)
+def pool_repair(chunk_size: int, pool_address: str, chain_id: int | None) -> None:
+    """
+    Repair the pool liquidity map for a single pool.
+    """
+
+    pool_address = get_checksum_address(pool_address)
+
+    if chain_id is None:
+        pool = default_db_session.scalar(
+            select(LiquidityPoolTable).where(LiquidityPoolTable.address == pool_address)
+        )
+        assert pool is not None
+        chain_id = pool.chain
+    else:
+        pool = default_db_session.scalar(
+            select(LiquidityPoolTable).where(
+                LiquidityPoolTable.address == pool_address, LiquidityPoolTable.chain == chain_id
+            )
+        )
+
+    assert isinstance(pool, AbstractUniswapV3Pool)
+    assert pool.exchange.last_update_block is not None
+
+    if chain_id not in connection_manager.connections:
+        match endpoint := settings.rpc.get(chain_id):
+            case HttpUrl():
+                w3 = Web3(HTTPProvider(str(endpoint)))
+            case WebsocketUrl():
+                w3 = Web3(LegacyWebSocketProvider(str(endpoint)))
+            case Path():
+                w3 = Web3(IPCProvider(str(endpoint)))
+            case None:
+                msg = (
+                    f"Chain ID {chain_id} does not have an RPC defined in config file {CONFIG_FILE}"
+                )
+                raise ValueError(msg)
+
+        connection_manager.register_web3(w3)
+
+    working_start_block = initial_start_block = 0
+
+    block_pbar = tqdm.tqdm(
+        desc="Processing new blocks",
+        total=pool.exchange.last_update_block - initial_start_block + 1,
+        bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
+        leave=False,
+    )
+
+    block_pbar.n = working_start_block - initial_start_block
+    block_pbar.refresh()
+
+    exchanges_to_update: set[ExchangeTable] = {pool.exchange}
+
+    # Clear the mapping and reset the pool update timestamps
+    pool.liquidity_update_block = None
+    pool.liquidity_update_log_index = None
+    for position in pool.liquidity_positions:
+        default_db_session.delete(position)
+    for map_ in pool.initialization_maps:
+        default_db_session.delete(map_)
+    default_db_session.flush()
+
+    while True:
+        # Cap the working end block at the lowest of:
+        # - the end of the working chunk size
+        # - the last update block for the exchange
+        working_end_block = min(
+            working_start_block + chunk_size - 1,
+            pool.exchange.last_update_block,
+        )
+        assert working_end_block >= working_start_block
+
+        for _address, _events in tqdm.tqdm(
+            get_v3_liquidity_events(
+                w3=w3,
+                start_block=working_start_block,
+                end_block=working_end_block,
+                address=pool_address,
+            ).items(),
+            desc="Updating pool liquidity",
+            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
+            leave=False,
+        ):
+            assert _address == pool_address
+            apply_v3_liquidity_updates(
+                w3=w3,
+                pool_address=_address,
+                liquidity_events=_events,
+                exchanges_in_scope=exchanges_to_update,
+            )
+
+        default_db_session.commit()
+
+        if working_end_block == pool.exchange.last_update_block:
+            break
+        working_start_block = working_end_block + 1
+
+        block_pbar.n = working_end_block - initial_start_block
+        block_pbar.refresh()
+
+    block_pbar.close()
+
+
 @pool.command("update")
 @click.option(
     "--chunk",
