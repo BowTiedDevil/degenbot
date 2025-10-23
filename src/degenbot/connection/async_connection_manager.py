@@ -1,8 +1,16 @@
+from typing import TYPE_CHECKING, cast
+
+import pydantic_core
 import tenacity
-from web3 import AsyncBaseProvider, AsyncWeb3
+from web3 import AsyncBaseProvider, AsyncWeb3, JSONBaseProvider
+from web3.types import RPCResponse
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.aliases import ChainId
+
+
+def _fast_decode_rpc_response(raw_response: bytes) -> RPCResponse:
+    return cast("RPCResponse", pydantic_core.from_json(raw_response))
 
 
 class AsyncConnectionManager:
@@ -22,7 +30,7 @@ class AsyncConnectionManager:
         self,
         w3: AsyncWeb3[AsyncBaseProvider],
         *,
-        optimize_middleware: bool = True,
+        optimize: bool = True,
     ) -> None:
         async_w3_connected_check_with_retry = tenacity.AsyncRetrying(
             stop=tenacity.stop_after_delay(10),
@@ -34,8 +42,13 @@ class AsyncConnectionManager:
         except tenacity.RetryError as exc:
             raise DegenbotValueError(message="Web3 instance is not connected.") from exc
 
-        if optimize_middleware:
+        if optimize:
+            # Remove all middleware and monkey-patch the JSON decoding for RPC responses
             w3.middleware_onion.clear()
+            if TYPE_CHECKING:
+                assert isinstance(w3.provider, JSONBaseProvider)
+            w3.provider.decode_rpc_response = _fast_decode_rpc_response  # type:ignore[method-assign]
+
         self.connections[await w3.eth.chain_id] = w3
 
     def set_default_chain(self, chain_id: ChainId) -> None:
