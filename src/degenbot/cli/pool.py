@@ -1701,7 +1701,7 @@ def pool_update(chunk_size: int) -> None:
                         exchanges_in_scope=exchanges_to_update,
                     )
 
-            # Fetch liquidity events if the working block range would affect an active V3 exchange
+            # Fetch liquidity events if the working block range would affect an active V4 exchange
             if any("_v4" in exchange.name for exchange in exchanges_to_update):
                 for pool_id, liquidity_events in tqdm.tqdm(
                     get_v4_liquidity_events(
