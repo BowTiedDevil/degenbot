@@ -167,11 +167,16 @@ def apply_v3_liquidity_updates(
     """
     Apply the liquidity updates to the provided pool.
 
-    @dev:
     This function assumes that the liquidity updates are ordered by block number and log index,
-    ascending. This function silently discards old updates to avoid double-application, but makes
-    no effort to maintain or verify the updates or the resulting mapping. Submitting out-of-order
-    updates will corrupt the liquidity map.
+    ascending.
+
+    Two invariants must be met:
+        The block number for a new event must be equal to or greater than the last update stamp.
+        For events from the same block as the last update stamp, the log index must be greater.
+
+    A set of assertions guards these invariants, but the function otherwise makes no effort to
+    verify the updates or validate the resulting mapping against the chain state.
+    Omitting updates will corrupt the liquidity map!
     """
 
     pool_in_db = default_db_session.scalar(
@@ -229,18 +234,15 @@ def apply_v3_liquidity_updates(
     while liquidity_events:
         liquidity_event = liquidity_events.popleft()
 
-        # Discard any liquidity event that occured in the past
+        # Guard against applying a liquidity event that occured in the past
         if (
             pool_in_db.liquidity_update_block is not None
             and pool_in_db.liquidity_update_log_index is not None
-        ) and any(
-            [
-                liquidity_event["blockNumber"] < pool_in_db.liquidity_update_block,
-                liquidity_event["blockNumber"] == pool_in_db.liquidity_update_block
-                and liquidity_event["logIndex"] < pool_in_db.liquidity_update_log_index,
-            ]
         ):
-            continue
+            if liquidity_event["blockNumber"] == pool_in_db.liquidity_update_block:
+                assert liquidity_event["logIndex"] > pool_in_db.liquidity_update_log_index
+            else:
+                assert liquidity_event["blockNumber"] > pool_in_db.liquidity_update_block
 
         (tick_lower,) = abi_decode(["int24"], liquidity_event["topics"][2])
         (tick_upper,) = abi_decode(["int24"], liquidity_event["topics"][3])
@@ -373,11 +375,16 @@ def apply_v4_liquidity_updates(
     """
     Apply the liquidity updates to the provided pool.
 
-    @dev:
     This function assumes that the liquidity updates are ordered by block number and log index,
-    ascending. This function silently discards old updates to avoid double-application, but makes
-    no effort to maintain or verify the updates or the resulting mapping. Submitting out-of-order
-    updates will corrupt the liquidity map.
+    ascending.
+
+    Two invariants must be met:
+        The block number for a new event must be equal to or greater than the last update stamp.
+        For events from the same block as the last update stamp, the log index must be greater.
+
+    A set of assertions guards these invariants, but the function otherwise makes no effort to
+    verify the updates or validate the resulting mapping against the chain state.
+    Omitting updates will corrupt the liquidity map!
     """
 
     pool_in_db = default_db_session.scalar(
@@ -477,18 +484,15 @@ def apply_v4_liquidity_updates(
     while liquidity_events:
         liquidity_event = liquidity_events.popleft()
 
-        # Discard any liquidity event that occured in the past
+        # Guard against applying a liquidity event that occured in the past
         if (
             pool_in_db.liquidity_update_block is not None
             and pool_in_db.liquidity_update_log_index is not None
-        ) and any(
-            [
-                liquidity_event["blockNumber"] < pool_in_db.liquidity_update_block,
-                liquidity_event["blockNumber"] == pool_in_db.liquidity_update_block
-                and liquidity_event["logIndex"] < pool_in_db.liquidity_update_log_index,
-            ]
         ):
-            continue
+            if liquidity_event["blockNumber"] == pool_in_db.liquidity_update_block:
+                assert liquidity_event["logIndex"] > pool_in_db.liquidity_update_log_index
+            else:
+                assert liquidity_event["blockNumber"] > pool_in_db.liquidity_update_block
 
         tick_lower, tick_upper, liquidity_delta, _ = abi_decode(
             types=["int24", "int24", "int256", "bytes32"],
