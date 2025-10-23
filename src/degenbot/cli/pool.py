@@ -1767,6 +1767,7 @@ def get_v3_liquidity_events(
     w3: Web3,
     start_block: int,
     end_block: int,
+    address: ChecksumAddress | None = None,
 ) -> dict[ChecksumAddress, deque[LogReceipt]]:
     """
     Fetch new Mint & Burn events for the given range.
@@ -1778,6 +1779,7 @@ def get_v3_liquidity_events(
         w3=w3,
         start_block=start_block,
         end_block=end_block,
+        address=None if address is None else [address],
         topic_signature=[
             # matches topic0 on `Mint` OR `Burn`
             [UNISWAP_V3_MINT_EVENT_HASH, UNISWAP_V3_BURN_EVENT_HASH],
