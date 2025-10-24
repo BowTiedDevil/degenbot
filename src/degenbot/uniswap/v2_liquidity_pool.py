@@ -162,6 +162,8 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+        w3 = connection_manager.get_web3(self.chain_id)
+        state_block = state_block if state_block is not None else w3.eth.block_number
 
         self.init_hash = (
             init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
@@ -174,18 +176,13 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             )
         )
 
-        w3 = connection_manager.get_web3(self.chain_id)
-        state_block = state_block if state_block is not None else w3.eth.block_number
-
         # Get the tokens held by the pool
         if pool_from_db is not None:
             token0_address = pool_from_db.token0.address
             token1_address = pool_from_db.token1.address
         else:
             try:
-                _, (token0_address, token1_address), _ = self.get_factory_tokens_reserves_batched(
-                    w3=w3, state_block=state_block
-                )
+                _, (token0_address, token1_address) = self.get_immutable_pool_values(w3=w3)
             except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
                 # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
                 # Catch this here and raise as a pool-specific exception
@@ -214,9 +211,8 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             )
         else:
             try:
-                self.factory, _, _ = self.get_factory_tokens_reserves_batched(
-                    w3=w3, state_block=state_block
-                )
+                factory, _ = self.get_immutable_pool_values(w3=w3)
+                self.factory = get_checksum_address(factory)
             except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
                 # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
                 # Catch this here and raise as a pool-specific exception
@@ -313,14 +309,12 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             init_hash=self.init_hash,
         )
 
-    def get_factory_tokens_reserves_batched(
+    def get_immutable_pool_values(
         self,
         w3: Web3,
-        state_block: BlockNumber,
     ) -> tuple[
-        ChecksumAddress,  # factory
-        tuple[ChecksumAddress, ChecksumAddress],  # tokens
-        tuple[int, int],  # reserves
+        str,  # factory
+        tuple[str, str],  # tokens
     ]:
         with w3.batch_requests() as batch:
             batch.add_mapping(
@@ -352,33 +346,16 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                     ],
                 }
             )
-            batch.add(
-                # This call uses a specific block so the reserve values are consistent
-                w3.eth.call(
-                    transaction=TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="getReserves()",
-                            function_arguments=None,
-                        ),
-                    ),
-                    block_identifier=state_block,
-                )
-            )
 
-            factory, token0, token1, reserves = batch.execute()
+            factory, token0, token1 = batch.execute()
 
         (factory,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", factory))
         (token0,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token0))
         (token1,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token1))
-        reserves0, reserves1, *_ = eth_abi.abi.decode(
-            types=self.RESERVES_STRUCT_TYPES, data=cast("HexBytes", reserves)
-        )
 
         return (
-            get_checksum_address(cast("str", factory)),
-            (get_checksum_address(cast("str", token0)), get_checksum_address(cast("str", token1))),
-            (cast("int", reserves0), cast("int", reserves1)),
+            cast("str", factory),
+            cast("tuple[str,str]", (token0, token1)),
         )
 
     @property
