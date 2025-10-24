@@ -180,7 +180,7 @@ def fetch_logs_retrying(
     topic_signature: Sequence[Sequence[HexBytes] | HexBytes] | None = None,
 ) -> list[LogReceipt]:
     """
-    Yield all event logs for the given topic signature (or all logs, if omitted), inclusive for the
+    Fetch all event logs for the given topic signature (or all logs, if omitted), inclusive for the
     given block range.
 
     Max blocks per request is set to 5,000 if not specified.
@@ -276,11 +276,6 @@ async def fetch_logs_retrying_async(
 ) -> list[LogReceipt]:
     """
     Async version of fetch_logs_retrying.
-
-    Fetch all event logs for the given topic signature (or all logs, if omitted), inclusive for the
-    given block range.
-
-    Max blocks per request is set to 5,000 if not specified.
     """
     if topic_signature is None:
         topic_signature = ()
