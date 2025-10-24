@@ -197,6 +197,7 @@ dev = [
     "pytest-cov",
     "pytest-random-order",
     "pytest-rerunfailures",
+    "pytest-sugar",
     "pytest-xdist",
     "python-dotenv",
 ]
