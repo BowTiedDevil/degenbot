@@ -272,7 +272,7 @@ async def fetch_logs_retrying_async(
     max_retries: int = 10,
     max_blocks_per_request: int | None = None,
     address: ChecksumAddress | None = None,
-    topic_signature: Sequence[HexBytes] | None = None,
+    topic_signature: Sequence[Sequence[HexBytes] | HexBytes] | None = None,
 ) -> list[LogReceipt]:
     """
     Async version of fetch_logs_retrying.
