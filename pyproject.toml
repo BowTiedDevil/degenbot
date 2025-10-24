@@ -202,6 +202,11 @@ dev-dependencies = [
 ]
 cache-keys = [{file = "pyproject.toml"}, {file = "rust/Cargo.toml"}, {file = "rust/src/*.rs"}]
 
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+
 [tool.maturin]
 bindings = "pyo3"
 profile = "release"
