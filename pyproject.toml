@@ -180,7 +180,17 @@ allow-star-arg-any = true
 ]
 
 [tool.pytest.ini_options]
-addopts = "--reruns 5 --rerun-except AssertionError --import-mode=importlib --cov=./src/degenbot --cov-branch --cov-report=html --random-order" # -n auto --dist worksteal
+addopts = [
+    "--numprocesses", "4",
+    "--dist", "worksteal",
+    "--reruns", "5",
+    "--rerun-except", "AssertionError",
+    "--import-mode", "importlib",
+    "--cov", "src/degenbot",
+    "--cov-branch",
+    "--cov-report", "html",
+    "--random-order"
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 pythonpath = "src"
