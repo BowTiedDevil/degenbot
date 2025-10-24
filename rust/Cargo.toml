@@ -12,3 +12,4 @@ crate-type = ["cdylib"]
 alloy-primitives = { version = "*" }
 num-bigint = { version = "*" }
 pyo3 = { version = "0.26", features = [ "extension-module", "num-bigint"] }
+rayon = { version = "*" }

@@ -1,11 +1,14 @@
 use alloy_primitives::{
-    Address, I256,
-    aliases::{I24, U160, U256},
+    Address,
+    aliases::{I24, I256, U160, U256},
     hex, keccak256, uint,
 };
 use num_bigint::BigUint;
-use pyo3::PyResult;
-use pyo3::prelude::*;
+use pyo3::{
+    prelude::*,
+    types::{PyBytes, PyString},
+};
+use rayon::prelude::*;
 
 uint! {
     const MIN_SQRT_RATIO: U160 = 4295128739_U160;
@@ -165,13 +168,13 @@ pub fn to_checksum_address_alloy(address: &str) -> String {
 }
 
 pub fn to_checksum_address_native(address: &str) -> String {
-    let stripped: String = address.strip_prefix("0x").unwrap().to_lowercase();
-    let hex_hash: String = hex::encode(keccak256(stripped.as_bytes()));
+    let address: String = address.strip_prefix("0x").unwrap_or(address).to_lowercase();
+    let hex_hash: String = hex::encode(keccak256(address.as_bytes()));
 
     let mut checksummed_address = String::with_capacity(42);
     checksummed_address.push_str("0x");
 
-    for (addr_char, hash_char) in stripped.chars().zip(hex_hash.chars()) {
+    for (addr_char, hash_char) in address.chars().zip(hex_hash.chars()) {
         checksummed_address.push(
             if addr_char.is_alphabetic() && hash_char.to_digit(16).unwrap() > 7 {
                 addr_char.to_ascii_uppercase()
@@ -185,22 +188,67 @@ pub fn to_checksum_address_native(address: &str) -> String {
 }
 
 #[pyfunction]
-pub fn to_checksum_address(address: &str) -> String {
-    to_checksum_address_native(address)
+pub fn to_checksum_address(address: Bound<'_, PyAny>) -> String {
+    let mut _address: String = String::with_capacity(40);
+
+    if address.is_instance_of::<PyString>() {
+        to_checksum_address_alloy(address.extract().unwrap())
+    } else if address.is_instance_of::<PyBytes>() {
+        let address_bytes: [u8; 20] = address.extract().unwrap();
+        let address_hex: String = address_bytes
+            .iter()
+            .map(|b: &u8| format!("{:02x}", b))
+            .collect();
+        to_checksum_address_alloy(&address_hex)
+    } else {
+        panic!("Address must be string or bytes")
+    }
+}
+
+#[pyfunction]
+pub fn to_checksum_addresses_parallel(addresses: Bound<'_, PyAny>) -> Vec<String> {
+    let _addresses = addresses.extract::<Vec<[u8; 20]>>().unwrap();
+
+    let checksummed: Vec<String> = _addresses
+        .par_iter()
+        .map(|address| {
+            let address_hex: String = address.iter().map(|b: &u8| format!("{:02x}", b)).collect();
+            to_checksum_address_alloy(&address_hex)
+        })
+        .collect();
+
+    checksummed
+}
+
+#[pyfunction]
+pub fn to_checksum_addresses_sequential(addresses: Bound<'_, PyAny>) -> Vec<String> {
+    let _addresses = addresses.extract::<Vec<[u8; 20]>>().unwrap();
+
+    let checksummed: Vec<String> = _addresses
+        .iter()
+        .map(|addr| {
+            let address_hex: String = addr.iter().map(|b: &u8| format!("{:02x}", b)).collect();
+            to_checksum_address_alloy(&address_hex)
+        })
+        .collect();
+
+    checksummed
 }
 
 #[pymodule]
 fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(
-        get_sqrt_ratio_at_tick_alloy_translator,
-        m
-    )?)?;
-    m.add_function(wrap_pyfunction!(
-        get_tick_at_sqrt_ratio_alloy_translator,
-        m
-    )?)?;
+    m.add_function(wrap_pyfunction!(get_sqrt_ratio_at_tick_alloy_translator, m).unwrap())
+        .unwrap();
+    m.add_function(wrap_pyfunction!(get_tick_at_sqrt_ratio_alloy_translator, m).unwrap())
+        .unwrap();
 
-    m.add_function(wrap_pyfunction!(to_checksum_address, m)?)?;
+    m.add_function(wrap_pyfunction!(to_checksum_address, m).unwrap())
+        .unwrap();
+    m.add_function(wrap_pyfunction!(to_checksum_addresses_parallel, m).unwrap())
+        .unwrap();
+    m.add_function(wrap_pyfunction!(to_checksum_addresses_sequential, m).unwrap())
+        .unwrap();
+
     Ok(())
 }
 
