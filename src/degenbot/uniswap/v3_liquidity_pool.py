@@ -9,12 +9,16 @@ from weakref import WeakSet
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from eth_typing import ChecksumAddress
+from sqlalchemy import select
+from sqlalchemy.orm import Session, scoped_session
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import BlockIdentifier, TxParams
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
+from degenbot.database import default_db_session
+from degenbot.database.models.pools import AbstractUniswapV3Pool, LiquidityPoolTable
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.evm import EVMRevertError
@@ -121,6 +125,19 @@ class LiquidityRangeCacheValue:
     fee_amount: int
     price_end: SqrtPriceX96
     amount_required: int  # Total amount needed to consume this range
+
+
+def get_pool_from_database(
+    address: ChecksumAddress,
+    chain_id: int,
+    session: Session | scoped_session[Session] = default_db_session,
+) -> AbstractUniswapV3Pool | None:
+    return session.scalar(
+        select(LiquidityPoolTable).where(
+            LiquidityPoolTable.address == address,
+            LiquidityPoolTable.chain == chain_id,
+        )
+    )  # type: ignore[return-value]
 
 
 class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
@@ -238,22 +255,40 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         state_block = state_block if state_block is not None else w3.eth.block_number
         self._initial_state_block = state_block
 
+        pool_from_db = get_pool_from_database(address=self.address, chain_id=self.chain_id)
+
+        if pool_from_db is not None:
+            token0_address = pool_from_db.token0.address
+            token1_address = pool_from_db.token1.address
+
+            factory_address = pool_from_db.exchange.factory
+            deployer_address = pool_from_db.exchange.deployer
+
+            assert pool_from_db.fee_token0 == pool_from_db.fee_token1
+            self.fee = pool_from_db.fee_token0
+
+            self.tick_spacing = pool_from_db.tick_spacing
+        else:
+            try:
+                factory_address, (token0_address, token1_address), self.fee, self.tick_spacing = (
+                    self.get_immutable_pool_values(w3=w3)
+                )
+
+            except (ContractLogicError, DecodingError) as exc:
+                # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch
+                # this here and raise as a pool-specific exception
+                raise LiquidityPoolError(message="Could not decode contract data") from exc
+
         try:
-            (
-                factory,
-                (token0, token1),
-                self.fee,
-                self.tick_spacing,
-                _sqrt_price_x96,
-                _tick,
-                _liquidity,
-            ) = self.get_factory_tokens_liquidity_price_tick_batched(w3=w3, state_block=state_block)
+            sqrt_price_x96, tick, liquidity = self.get_mutable_pool_values(
+                w3=w3, state_block=state_block
+            )
         except (ContractLogicError, DecodingError) as exc:
             # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
             # here and raise as a pool-specific exception
             raise LiquidityPoolError(message="Could not decode contract data") from exc
 
-        self.factory = factory
+        self.factory = get_checksum_address(factory_address)
         self.deployer_address = (
             get_checksum_address(deployer_address) if deployer_address is not None else self.factory
         )
@@ -272,15 +307,14 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             )
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
-
         try:
             self.token0, self.token1 = (
                 token_manager.get_erc20token(
-                    address=token0,
+                    address=token0_address,
                     silent=silent,
                 ),
                 token_manager.get_erc20token(
-                    address=token1,
+                    address=token1_address,
                     silent=silent,
                 ),
             )
@@ -325,7 +359,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
         if tick_bitmap is None and tick_data is None:
-            word, _ = get_tick_word_and_bit_position(tick=_tick, tick_spacing=self.tick_spacing)
+            word, _ = get_tick_word_and_bit_position(tick=tick, tick_spacing=self.tick_spacing)
             self._fetch_and_populate_initialized_ticks(
                 word_position=word,
                 tick_bitmap=_tick_bitmap,
@@ -335,9 +369,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
         self._state = self.PoolState.__value__(
             address=self.address,
-            liquidity=_liquidity,
-            sqrt_price_x96=_sqrt_price_x96,
-            tick=_tick,
+            liquidity=liquidity,
+            sqrt_price_x96=sqrt_price_x96,
+            tick=tick,
             tick_bitmap=_tick_bitmap,
             tick_data=_tick_data,
             block=state_block,
@@ -792,115 +826,133 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             init_hash=self.init_hash,
         )
 
-    def get_factory_tokens_liquidity_price_tick_batched(
+    def get_immutable_pool_values(
+        self,
+        w3: Web3,
+    ) -> tuple[
+        str,  # factory
+        tuple[str, str],  # tokens
+        int,  # fee
+        int,  # tick spacing
+    ]:
+        try:
+            with w3.batch_requests() as batch:
+                batch.add_mapping(
+                    {
+                        w3.eth.call: [
+                            TxParams(
+                                to=self.address,
+                                data=encode_function_calldata(
+                                    function_prototype="factory()",
+                                    function_arguments=None,
+                                ),
+                            ),
+                            TxParams(
+                                to=self.address,
+                                data=encode_function_calldata(
+                                    function_prototype="token0()",
+                                    function_arguments=None,
+                                ),
+                            ),
+                            TxParams(
+                                to=self.address,
+                                data=encode_function_calldata(
+                                    function_prototype="token1()",
+                                    function_arguments=None,
+                                ),
+                            ),
+                            TxParams(
+                                to=self.address,
+                                data=encode_function_calldata(
+                                    function_prototype="fee()",
+                                    function_arguments=None,
+                                ),
+                            ),
+                            TxParams(
+                                to=self.address,
+                                data=encode_function_calldata(
+                                    function_prototype="tickSpacing()",
+                                    function_arguments=None,
+                                ),
+                            ),
+                        ],
+                    }
+                )
+
+                factory, token0, token1, fee, tick_spacing = batch.execute()
+
+            (factory,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", factory))
+            (token0,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token0))
+            (token1,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token1))
+            (fee,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", fee))
+            (tick_spacing,) = eth_abi.abi.decode(
+                types=["uint256"], data=cast("HexBytes", tick_spacing)
+            )
+
+        except (ContractLogicError, DecodingError) as exc:
+            # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
+            # here and raise as a pool-specific exception
+            raise LiquidityPoolError(message="Could not decode contract data") from exc
+
+        else:
+            return (
+                cast("str", factory),
+                cast("tuple[str,str]", (token0, token1)),
+                cast("int", fee),
+                cast("int", tick_spacing),
+            )
+
+    def get_mutable_pool_values(
         self,
         w3: Web3,
         state_block: BlockNumber,
-    ) -> tuple[
-        ChecksumAddress,  # factory
-        tuple[ChecksumAddress, ChecksumAddress],  # tokens
-        int,  # fee
-        int,  # tick spacing
-        int,  # liquidity
-        int,  # price
-        int,  # tick
-    ]:
-        with w3.batch_requests() as batch:
-            batch.add_mapping(
-                {
-                    # These calls default to use 'latest' for block number, which is OK since the
-                    # values are immutable
-                    w3.eth.call: [
-                        TxParams(
+    ) -> tuple[SqrtPriceX96, Tick, Liquidity]:
+        try:
+            with w3.batch_requests() as batch:
+                # This calls use a specific block so the mutable state values are consistent
+                batch.add(
+                    w3.eth.call(
+                        transaction=TxParams(
                             to=self.address,
                             data=encode_function_calldata(
-                                function_prototype="factory()",
+                                function_prototype="slot0()",
                                 function_arguments=None,
                             ),
                         ),
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="token0()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="token1()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="fee()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="tickSpacing()",
-                                function_arguments=None,
-                            ),
-                        ),
-                    ],
-                }
-            )
-            batch.add(
-                # This call uses a specific block so the mutable state values are consistent
-                w3.eth.call(
-                    transaction=TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="slot0()",
-                            function_arguments=None,
-                        ),
-                    ),
-                    block_identifier=state_block,
+                        block_identifier=state_block,
+                    )
                 )
-            )
-            batch.add(
-                # This call uses a specific block so the mutable state values are consistent
-                w3.eth.call(
-                    transaction=TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="liquidity()",
-                            function_arguments=None,
+                batch.add(
+                    w3.eth.call(
+                        transaction=TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
+                                function_prototype="liquidity()",
+                                function_arguments=None,
+                            ),
                         ),
-                    ),
-                    block_identifier=state_block,
+                        block_identifier=state_block,
+                    )
                 )
+
+                slot0, liquidity = batch.execute()
+
+            price, tick, *_ = eth_abi.abi.decode(
+                types=self.SLOT0_STRUCT_TYPES, data=cast("HexBytes", slot0)
             )
+            (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", liquidity))
 
-            factory, token0, token1, fee, tick_spacing, slot0, liquidity = batch.execute()
+        except (ContractLogicError, DecodingError) as exc:
+            # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
+            # here and raise as a pool-specific exception
+            raise LiquidityPoolError(message="Could not decode contract data") from exc
 
-        (factory,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", factory))
-        (token0,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token0))
-        (token1,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token1))
-        (fee,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", fee))
-        (tick_spacing,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", tick_spacing))
-
-        price, tick, *_ = eth_abi.abi.decode(
-            types=self.SLOT0_STRUCT_TYPES, data=cast("HexBytes", slot0)
-        )
-        (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", liquidity))
-
-        return (
-            get_checksum_address(cast("str", factory)),
-            (
-                get_checksum_address(cast("str", token0)),
-                get_checksum_address(cast("str", token1)),
-            ),
-            cast("int", fee),
-            cast("int", tick_spacing),
-            cast("int", price),
-            cast("int", tick),
-            cast("int", liquidity),
-        )
+        else:
+            return (
+                cast("int", price),
+                cast("int", tick),
+                cast("int", liquidity),
+            )
 
     @property
     def chain_id(self) -> int:
