@@ -257,7 +257,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         }
 
         # Construct the PoolKey
-        self._pool_key: Final[UniswapV4PoolKey] = UniswapV4PoolKey(
+        self._pool_key = UniswapV4PoolKey(
             currency0=self.token0.address,
             currency1=self.token1.address,
             fee=fee,
