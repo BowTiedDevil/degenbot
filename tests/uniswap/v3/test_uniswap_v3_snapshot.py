@@ -85,7 +85,7 @@ def base_snapshot_from_database(
 
 def test_snapshot_fixtures(
     empty_mainnet_snapshot_from_file: UniswapV3LiquiditySnapshot,
-    empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,
+    empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     mainnet_snapshot_at_block_12_369_870_from_file: UniswapV3LiquiditySnapshot,
     mainnet_snapshot_at_block_12_369_870_from_dir: UniswapV3LiquiditySnapshot,
     base_snapshot_from_database: UniswapV3LiquiditySnapshot,
@@ -109,7 +109,7 @@ def test_fetch_pool_from_database_snapshot(
 
 
 def test_fetch_liquidity_events_first_250_blocks(
-    empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,
+    empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     fork_mainnet_full: AnvilFork,
 ):
     set_web3(fork_mainnet_full.w3)
@@ -234,7 +234,7 @@ def test_fetch_liquidity_events_first_250_blocks(
 
 
 def test_get_new_liquidity_updates(
-    empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,
+    empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     fork_mainnet_full: AnvilFork,
 ):
     set_web3(fork_mainnet_full.w3)
@@ -317,7 +317,7 @@ def test_apply_update_to_snapshot(
 
 
 def test_liquidity_map_is_none_for_missing_pools(
-    empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,
+    empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     mainnet_snapshot_at_block_12_369_870_from_file: UniswapV3LiquiditySnapshot,
     mainnet_snapshot_at_block_12_369_870_from_dir: UniswapV3LiquiditySnapshot,
 ):
@@ -340,7 +340,7 @@ def test_liquidity_map_is_none_for_missing_pools(
 
 
 def test_snapshot_finds_known_pool(
-    empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,
+    empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     mainnet_snapshot_at_block_12_369_870_from_file: UniswapV3LiquiditySnapshot,
     mainnet_snapshot_at_block_12_369_870_from_dir: UniswapV3LiquiditySnapshot,
 ):
@@ -359,7 +359,7 @@ def test_snapshot_finds_known_pool(
 
 
 def test_pool_manager_applies_snapshot_from_file(
-    empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,
+    empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     fork_mainnet_full: AnvilFork,
 ):
     set_web3(fork_mainnet_full.w3)
@@ -520,8 +520,10 @@ def test_pool_manager_applies_snapshot_from_file(
     for (
         pool_address
     ) in empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870.pools:
-        assert not empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870.pending_updates(
-            pool_address
+        assert not (
+            empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870.pending_updates(
+                pool_address
+            )
         )
 
 
