@@ -220,6 +220,7 @@ cache-keys = [{file = "pyproject.toml"}, {file = "rust/Cargo.toml"}, {file = "ru
 name = "testpypi"
 url = "https://test.pypi.org/simple/"
 publish-url = "https://test.pypi.org/legacy/"
+explicit = true
 
 [tool.maturin]
 bindings = "pyo3"
