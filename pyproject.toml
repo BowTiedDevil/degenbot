@@ -187,8 +187,8 @@ pythonpath = "src"
 python_files = "test_*.py"
 testpaths = "tests"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "hypothesis",
     "maturin",
     "pytest",
@@ -200,6 +200,8 @@ dev-dependencies = [
     "pytest-xdist",
     "python-dotenv",
 ]
+
+[tool.uv]
 cache-keys = [{file = "pyproject.toml"}, {file = "rust/Cargo.toml"}, {file = "rust/src/*.rs"}]
 
 [[tool.uv.index]]
