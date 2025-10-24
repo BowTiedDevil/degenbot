@@ -41,7 +41,7 @@ def test_optimized_web3():
 
     w3 = web3.Web3(web3.HTTPProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI))
     middlewares = w3.middleware_onion.middleware
-    set_web3(w3, optimize_middleware=False)
+    set_web3(w3, optimize=False)
     assert w3.middleware_onion.middleware == middlewares
 
 
