@@ -278,7 +278,7 @@ async def fetch_logs_retrying_async(
     Async version of fetch_logs_retrying.
     """
     if topic_signature is None:
-        topic_signature = ()
+        topic_signature = []
 
     if max_blocks_per_request is None:
         max_blocks_per_request = 5_000
