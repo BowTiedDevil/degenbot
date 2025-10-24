@@ -137,6 +137,39 @@ def evm_divide(numerator: int, denominator: int) -> int:
     return -(-numerator // denominator) if numerator < 0 else numerator // denominator
 
 
+def _increase_working_span(
+    working_span: int,
+    percent: int,
+    ceiling: int,
+) -> int:
+    """
+    Increase the working span by the given percentage, not to exceed the given ceiling.
+    """
+
+    return min(
+        ceiling,
+        int(
+            working_span + working_span * (percent / 100),
+        ),
+    )
+
+
+def _reduce_working_span(
+    working_span: int,
+    percent: int,
+) -> int:
+    """
+    Reduce the working span by the given percentage, not to fall below 1.
+    """
+
+    return max(
+        1,
+        int(
+            working_span - working_span * (percent / 100),
+        ),
+    )
+
+
 def fetch_logs_retrying(
     w3: Web3,
     start_block: BlockNumber,
@@ -230,39 +263,6 @@ def fetch_logs_retrying(
             raise DegenbotError(
                 message=f"Timed out fetching logs after {max_retries} tries."
             ) from None
-
-
-def _increase_working_span(
-    working_span: int,
-    percent: int,
-    ceiling: int,
-) -> int:
-    """
-    Increase the working span by the given percentage, not to exceed the given ceiling.
-    """
-
-    return min(
-        ceiling,
-        int(
-            working_span + working_span * (percent / 100),
-        ),
-    )
-
-
-def _reduce_working_span(
-    working_span: int,
-    percent: int,
-) -> int:
-    """
-    Reduce the working span by the given percentage, not to fall below 1.
-    """
-
-    return max(
-        1,
-        int(
-            working_span - working_span * (percent / 100),
-        ),
-    )
 
 
 async def fetch_logs_retrying_async(
