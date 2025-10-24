@@ -59,8 +59,9 @@ exclude_also = [
 [tool.coverage.run]
 source = ["src/degenbot"]
 omit = [
-    "abi.py",
-    "exceptions.py",
+    "**/exceptions/**/*.py",
+    "**/migrations/**/*.py",
+    "**/cli/**/*.py",
 ]
 
 [tool.mypy]
