@@ -17,11 +17,32 @@ def test_to_checksum_address(addresses_to_test: list[bytes]):
 
 
 @pytest.mark.skip
-def test_benchmark_checksums_rs(benchmark, addresses_to_test):
+def test_parallel_checksum_address(addresses_to_test: list[bytes]):
+    degenbot_rs.to_checksum_addresses(addresses_to_test)
+
+
+# @pytest.mark.skip
+def test_benchmark_checksums_rs_loop(benchmark, addresses_to_test):
     def run_rs():
         func = degenbot_rs.to_checksum_address
         for address in addresses_to_test:
             func(address)
+
+    benchmark(run_rs)
+
+
+# @pytest.mark.skip
+def test_benchmark_checksums_rs_sequential(benchmark, addresses_to_test):
+    def run_rs():
+        degenbot_rs.to_checksum_addresses_sequential(addresses_to_test)
+
+    benchmark(run_rs)
+
+
+# @pytest.mark.skip
+def test_benchmark_checksums_rs_parallel(benchmark, addresses_to_test):
+    def run_rs():
+        degenbot_rs.to_checksum_addresses_parallel(addresses_to_test)
 
     benchmark(run_rs)
 
