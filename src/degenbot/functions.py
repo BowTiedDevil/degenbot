@@ -241,7 +241,7 @@ def fetch_logs_retrying(
                             working_span=working_span,
                             percent=25,
                         )
-                        logger.info(
+                        logger.debug(
                             f"Attempt {attempt.retry_state.attempt_number} timed out "
                             f"fetching {chunk_end - start_block + 1} blocks. "
                             f"Reducing to {working_span}..."
