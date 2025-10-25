@@ -17,19 +17,19 @@ PrimaryForeignKeyManagedPoolId = Annotated[
 ]
 ForeignKeyManagedPoolId = Annotated[
     int,
-    mapped_column(ForeignKey("managed_pools.id")),
+    mapped_column(ForeignKey("managed_pools.id"), index=True),
 ]
 ForeignKeyPoolId = Annotated[
     int,
-    mapped_column(ForeignKey("pools.id")),
+    mapped_column(ForeignKey("pools.id"), index=True),
 ]
 ForeignKeyPoolManagerId = Annotated[
     int,
-    mapped_column(ForeignKey("pool_managers.id")),
+    mapped_column(ForeignKey("pool_managers.id"), index=True),
 ]
 ForeignKeyTokenId = Annotated[
     int,
-    mapped_column(ForeignKey("erc20_tokens.id")),
+    mapped_column(ForeignKey("erc20_tokens.id"), index=True),
 ]
 ManagedPoolHash = Annotated[
     str,
