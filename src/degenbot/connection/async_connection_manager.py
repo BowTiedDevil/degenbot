@@ -57,7 +57,7 @@ class AsyncConnectionManager:
             w3.middleware_onion.clear()
             if TYPE_CHECKING:
                 assert isinstance(w3.provider, JSONBaseProvider)
-            w3.provider.decode_rpc_response = _fast_decode_rpc_response  # type:ignore[method-assign]
+            w3.provider.decode_rpc_response = _fast_decode_rpc_response
 
         self.connections[await w3.eth.chain_id] = w3
 
