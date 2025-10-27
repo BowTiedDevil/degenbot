@@ -16,7 +16,7 @@ from web3.types import LogReceipt
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import settings
 from degenbot.connection import async_connection_manager, connection_manager
-from degenbot.database import default_db_session
+from degenbot.database import db_session
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.pools import AbstractUniswapV3Pool, LiquidityPoolTable
 from degenbot.database.operations import get_scoped_sqlite_session
@@ -189,7 +189,7 @@ class DatabaseSnapshot:
 
     def __init__(self, chain_id: ChainId, database_path: pathlib.Path | None = None) -> None:
         if database_path is None:
-            self.session = default_db_session
+            self.session = db_session
             self.database_path = settings.database.path
         else:
             self.session = get_scoped_sqlite_session(database_path)
@@ -224,7 +224,7 @@ class DatabaseSnapshot:
         )
 
     def get_newest_block(self) -> BlockNumber | None:
-        last_update_blocks: Sequence[int | None] = default_db_session.scalars(
+        last_update_blocks: Sequence[int | None] = db_session.scalars(
             select(ExchangeTable.last_update_block).where(
                 ExchangeTable.chain_id == self.chain_id,
                 ExchangeTable.name.like("%!_v3", escape="!"),

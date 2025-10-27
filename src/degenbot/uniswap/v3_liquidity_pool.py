@@ -17,7 +17,7 @@ from web3.types import BlockIdentifier, TxParams
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
-from degenbot.database import default_db_session
+from degenbot.database import db_session
 from degenbot.database.models.pools import AbstractUniswapV3Pool, LiquidityPoolTable
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
@@ -130,7 +130,7 @@ class LiquidityRangeCacheValue:
 def get_pool_from_database(
     address: ChecksumAddress,
     chain_id: int,
-    session: Session | scoped_session[Session] = default_db_session,
+    session: Session | scoped_session[Session] = db_session,
 ) -> AbstractUniswapV3Pool | None:
     return session.scalar(
         select(LiquidityPoolTable).where(

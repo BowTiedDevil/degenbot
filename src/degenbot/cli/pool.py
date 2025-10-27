@@ -23,7 +23,7 @@ from degenbot.cli import cli
 from degenbot.config import CONFIG_FILE, settings
 from degenbot.connection import connection_manager
 from degenbot.constants import MAX_UINT256
-from degenbot.database import default_db_session
+from degenbot.database import db_session
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import (
@@ -179,7 +179,7 @@ def apply_v3_liquidity_updates(
     Omitting updates will corrupt the liquidity map!
     """
 
-    pool_in_db = default_db_session.scalar(
+    pool_in_db = db_session.scalar(
         select(LiquidityPoolTable).where(
             LiquidityPoolTable.address == pool_address,
             LiquidityPoolTable.chain == w3.eth.chain_id,
@@ -281,7 +281,7 @@ def apply_v3_liquidity_updates(
 
     # Drop any positions found in the DB but not the helper
     if ticks_to_drop := db_ticks - helper_ticks:
-        default_db_session.execute(
+        db_session.execute(
             delete(LiquidityPositionTable).where(
                 LiquidityPositionTable.pool_id == pool_in_db.id,
                 LiquidityPositionTable.tick.in_(ticks_to_drop),
@@ -319,7 +319,7 @@ def apply_v3_liquidity_updates(
                 where=(LiquidityPositionTable.liquidity_net != stmt.excluded.liquidity_net)
                 | (LiquidityPositionTable.liquidity_gross != stmt.excluded.liquidity_gross),
             )
-            default_db_session.execute(stmt)
+            db_session.execute(stmt)
 
     db_words = {map_.word for map_ in pool_in_db.initialization_maps}
     helper_words = {
@@ -330,7 +330,7 @@ def apply_v3_liquidity_updates(
 
     # Drop any initialization map found in the DB but not the helper
     if words_to_drop := db_words - helper_words:
-        default_db_session.execute(
+        db_session.execute(
             delete(InitializationMapTable).where(
                 InitializationMapTable.pool_id == pool_in_db.id,
                 InitializationMapTable.word.in_(words_to_drop),
@@ -366,7 +366,7 @@ def apply_v3_liquidity_updates(
                 },
                 where=InitializationMapTable.bitmap != stmt.excluded.bitmap,
             )
-            default_db_session.execute(stmt)
+            db_session.execute(stmt)
 
 
 def apply_v4_liquidity_updates(
@@ -390,7 +390,7 @@ def apply_v4_liquidity_updates(
     Omitting updates will corrupt the liquidity map!
     """
 
-    pool_in_db = default_db_session.scalar(
+    pool_in_db = db_session.scalar(
         select(UniswapV4PoolTable).where(
             UniswapV4PoolTable.pool_hash == pool_id.to_0x_hex(),
             UniswapV4PoolTable.manager.has(chain=w3.eth.chain_id),
@@ -525,7 +525,7 @@ def apply_v4_liquidity_updates(
 
     # Drop any positions found in the DB but not the helper
     if ticks_to_drop := db_ticks - helper_ticks:
-        default_db_session.execute(
+        db_session.execute(
             delete(ManagedPoolLiquidityPositionTable).where(
                 ManagedPoolLiquidityPositionTable.managed_pool_id == pool_in_db.id,
                 ManagedPoolLiquidityPositionTable.tick.in_(ticks_to_drop),
@@ -568,7 +568,7 @@ def apply_v4_liquidity_updates(
                     != stmt.excluded.liquidity_gross
                 ),
             )
-            default_db_session.execute(stmt)
+            db_session.execute(stmt)
 
     db_words = {map_.word for map_ in pool_in_db.initialization_maps}
     helper_words = {
@@ -579,7 +579,7 @@ def apply_v4_liquidity_updates(
 
     # Drop any initialization map found in the DB but not the helper
     if words_to_drop := db_words - helper_words:
-        default_db_session.execute(
+        db_session.execute(
             delete(ManagedPoolInitializationMapTable).where(
                 ManagedPoolInitializationMapTable.managed_pool_id == pool_in_db.id,
                 ManagedPoolInitializationMapTable.word.in_(words_to_drop),
@@ -615,7 +615,7 @@ def apply_v4_liquidity_updates(
                 },
                 where=ManagedPoolInitializationMapTable.bitmap != stmt.excluded.bitmap,
             )
-            default_db_session.execute(stmt)
+            db_session.execute(stmt)
 
 
 def base_aerodrome_v2_pool_updater(
@@ -653,13 +653,13 @@ def base_aerodrome_v2_pool_updater(
 
             (stable,) = abi_decode(["bool"], new_pool_event["topics"][3])
 
-            token0_in_db = default_db_session.scalar(
+            token0_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = default_db_session.scalar(
+            token1_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -671,15 +671,15 @@ def base_aerodrome_v2_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                default_db_session.add(token0_in_db)
-                default_db_session.flush()
+                db_session.add(token0_in_db)
+                db_session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                default_db_session.add(token1_in_db)
-                default_db_session.flush()
+                db_session.add(token1_in_db)
+                db_session.flush()
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
@@ -696,7 +696,7 @@ def base_aerodrome_v2_pool_updater(
                 return_types=["uint256"],
             )
 
-            default_db_session.add(
+            db_session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -751,13 +751,13 @@ def base_aerodrome_v3_pool_updater(
             (pool_address,) = abi_decode(types=["address"], data=new_pool_event["data"])
             pool_address = get_checksum_address(pool_address)
 
-            token0_in_db = default_db_session.scalar(
+            token0_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = default_db_session.scalar(
+            token1_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -769,15 +769,15 @@ def base_aerodrome_v3_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                default_db_session.add(token0_in_db)
-                default_db_session.flush()
+                db_session.add(token0_in_db)
+                db_session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                default_db_session.add(token1_in_db)
-                default_db_session.flush()
+                db_session.add(token1_in_db)
+                db_session.flush()
 
             (fee,) = raw_call(
                 w3=w3,
@@ -789,7 +789,7 @@ def base_aerodrome_v3_pool_updater(
                 return_types=["uint24"],
             )
 
-            default_db_session.add(
+            db_session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=pool_address,
@@ -837,13 +837,13 @@ def base_pancakeswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = default_db_session.scalar(
+            token0_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = default_db_session.scalar(
+            token1_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -855,22 +855,22 @@ def base_pancakeswap_v2_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                default_db_session.add(token0_in_db)
-                default_db_session.flush()
+                db_session.add(token0_in_db)
+                db_session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                default_db_session.add(token1_in_db)
-                default_db_session.flush()
+                db_session.add(token1_in_db)
+                db_session.flush()
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
                 data=new_pool_event["data"],
             )
 
-            default_db_session.add(
+            db_session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -921,13 +921,13 @@ def base_pancakeswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = default_db_session.scalar(
+            token0_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = default_db_session.scalar(
+            token1_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -939,22 +939,22 @@ def base_pancakeswap_v3_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                default_db_session.add(token0_in_db)
-                default_db_session.flush()
+                db_session.add(token0_in_db)
+                db_session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                default_db_session.add(token1_in_db)
-                default_db_session.flush()
+                db_session.add(token1_in_db)
+                db_session.flush()
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
                 data=new_pool_event["data"],
             )
 
-            default_db_session.add(
+            db_session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1002,13 +1002,13 @@ def base_sushiswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = default_db_session.scalar(
+            token0_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = default_db_session.scalar(
+            token1_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1020,22 +1020,22 @@ def base_sushiswap_v2_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                default_db_session.add(token0_in_db)
-                default_db_session.flush()
+                db_session.add(token0_in_db)
+                db_session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                default_db_session.add(token1_in_db)
-                default_db_session.flush()
+                db_session.add(token1_in_db)
+                db_session.flush()
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
                 data=new_pool_event["data"],
             )
 
-            default_db_session.add(
+            db_session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1086,13 +1086,13 @@ def base_sushiswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = default_db_session.scalar(
+            token0_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = default_db_session.scalar(
+            token1_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1104,22 +1104,22 @@ def base_sushiswap_v3_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                default_db_session.add(token0_in_db)
-                default_db_session.flush()
+                db_session.add(token0_in_db)
+                db_session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                default_db_session.add(token1_in_db)
-                default_db_session.flush()
+                db_session.add(token1_in_db)
+                db_session.flush()
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
                 data=new_pool_event["data"],
             )
 
-            default_db_session.add(
+            db_session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1167,13 +1167,13 @@ def base_swapbased_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = default_db_session.scalar(
+            token0_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = default_db_session.scalar(
+            token1_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1185,22 +1185,22 @@ def base_swapbased_v2_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                default_db_session.add(token0_in_db)
-                default_db_session.flush()
+                db_session.add(token0_in_db)
+                db_session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                default_db_session.add(token1_in_db)
-                default_db_session.flush()
+                db_session.add(token1_in_db)
+                db_session.flush()
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
                 data=new_pool_event["data"],
             )
 
-            default_db_session.add(
+            db_session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1246,13 +1246,13 @@ def base_uniswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = default_db_session.scalar(
+            token0_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = default_db_session.scalar(
+            token1_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1264,22 +1264,22 @@ def base_uniswap_v2_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                default_db_session.add(token0_in_db)
-                default_db_session.flush()
+                db_session.add(token0_in_db)
+                db_session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                default_db_session.add(token1_in_db)
-                default_db_session.flush()
+                db_session.add(token1_in_db)
+                db_session.flush()
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
                 data=new_pool_event["data"],
             )
 
-            default_db_session.add(
+            db_session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1330,13 +1330,13 @@ def base_uniswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = default_db_session.scalar(
+            token0_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = default_db_session.scalar(
+            token1_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1348,22 +1348,22 @@ def base_uniswap_v3_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                default_db_session.add(token0_in_db)
-                default_db_session.flush()
+                db_session.add(token0_in_db)
+                db_session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                default_db_session.add(token1_in_db)
-                default_db_session.flush()
+                db_session.add(token1_in_db)
+                db_session.flush()
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
                 data=new_pool_event["data"],
             )
 
-            default_db_session.add(
+            db_session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1393,7 +1393,7 @@ def base_uniswap_v4_pool_updater(
 
     database_type = UniswapV4PoolTable
 
-    manager_in_db = default_db_session.scalar(
+    manager_in_db = db_session.scalar(
         select(PoolManagerTable).where(PoolManagerTable.address == exchange.factory)
     )
     assert manager_in_db is not None
@@ -1421,13 +1421,13 @@ def base_uniswap_v4_pool_updater(
             currency0 = get_checksum_address(currency0)
             currency1 = get_checksum_address(currency1)
 
-            currency0_in_db = default_db_session.scalar(
+            currency0_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == currency0,
                 )
             )
-            currency1_in_db = default_db_session.scalar(
+            currency1_in_db = db_session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == currency1,
@@ -1439,15 +1439,15 @@ def base_uniswap_v4_pool_updater(
                     chain=exchange.chain_id,
                     address=currency0,
                 )
-                default_db_session.add(currency0_in_db)
-                default_db_session.flush()
+                db_session.add(currency0_in_db)
+                db_session.flush()
             if currency1_in_db is None:
                 currency1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=currency1,
                 )
-                default_db_session.add(currency1_in_db)
-                default_db_session.flush()
+                db_session.add(currency1_in_db)
+                db_session.flush()
 
             fee, tick_spacing, hooks = abi_decode(
                 ["uint24", "int24", "address"],
@@ -1455,7 +1455,7 @@ def base_uniswap_v4_pool_updater(
             )
             hooks = get_checksum_address(hooks)
 
-            default_db_session.add(
+            db_session.add(
                 database_type(
                     manager_id=manager_in_db.id,
                     pool_hash=pool_hash,
@@ -1499,13 +1499,13 @@ def pool_repair(chunk_size: int, pool_address: str, chain_id: int | None) -> Non
     pool_address = get_checksum_address(pool_address)
 
     if chain_id is None:
-        pool = default_db_session.scalar(
+        pool = db_session.scalar(
             select(LiquidityPoolTable).where(LiquidityPoolTable.address == pool_address)
         )
         assert pool is not None
         chain_id = pool.chain
     else:
-        pool = default_db_session.scalar(
+        pool = db_session.scalar(
             select(LiquidityPoolTable).where(
                 LiquidityPoolTable.address == pool_address, LiquidityPoolTable.chain == chain_id
             )
@@ -1548,10 +1548,10 @@ def pool_repair(chunk_size: int, pool_address: str, chain_id: int | None) -> Non
     pool.liquidity_update_block = None
     pool.liquidity_update_log_index = None
     for position in pool.liquidity_positions:
-        default_db_session.delete(position)
+        db_session.delete(position)
     for map_ in pool.initialization_maps:
-        default_db_session.delete(map_)
-    default_db_session.flush()
+        db_session.delete(map_)
+    db_session.flush()
 
     while True:
         # Cap the working end block at the lowest of:
@@ -1582,7 +1582,7 @@ def pool_repair(chunk_size: int, pool_address: str, chain_id: int | None) -> Non
                 exchanges_in_scope=exchanges_to_update,
             )
 
-        default_db_session.commit()
+        db_session.commit()
 
         if working_end_block == pool.exchange.last_update_block:
             break
@@ -1608,7 +1608,7 @@ def pool_update(chunk_size: int) -> None:
     """
 
     active_chains = set(
-        default_db_session.scalars(select(ExchangeTable.chain_id).where(ExchangeTable.active)).all()
+        db_session.scalars(select(ExchangeTable.chain_id).where(ExchangeTable.active)).all()
     )
 
     end_blocks: dict[ChainId, BlockNumber] = {}
@@ -1631,7 +1631,7 @@ def pool_update(chunk_size: int) -> None:
             end_blocks[chain_id] = w3.eth.get_block(block_identifier="safe")["number"]
 
     for chain_id in active_chains:
-        active_exchanges = default_db_session.scalars(
+        active_exchanges = db_session.scalars(
             select(ExchangeTable).where(
                 ExchangeTable.active,
                 ExchangeTable.chain_id == chain_id,
@@ -1735,7 +1735,7 @@ def pool_update(chunk_size: int) -> None:
             for exchange in exchanges_to_update:
                 exchange.last_update_block = working_end_block
             exchanges_to_update.clear()
-            default_db_session.commit()
+            db_session.commit()
 
             if working_end_block == safe_end_block:
                 break

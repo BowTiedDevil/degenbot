@@ -2,7 +2,7 @@ import click
 
 from degenbot.cli import cli
 from degenbot.config import settings
-from degenbot.database import current_database_version, default_db_session, latest_database_version
+from degenbot.database import current_database_version, latest_database_version
 from degenbot.database.operations import (
     backup_sqlite_database,
     compact_sqlite_database,
@@ -11,12 +11,6 @@ from degenbot.database.operations import (
 )
 from degenbot.exceptions.database import BackupExists
 from degenbot.version import __version__
-
-if default_db_session is None:
-    msg = "Database operations may not be performed without a valid database path."
-    raise ValueError(msg)
-
-assert default_db_session is not None
 
 
 @cli.group()
@@ -57,6 +51,7 @@ def database_reset() -> None:
         default=False,
     )
     if user_confirm:
+        settings.database.path.unlink()
         create_new_sqlite_database(settings.database.path)
     else:
         raise click.Abort

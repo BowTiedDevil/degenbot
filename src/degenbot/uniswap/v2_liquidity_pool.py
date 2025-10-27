@@ -18,7 +18,7 @@ from web3.types import TxParams
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
-from degenbot.database import default_db_session
+from degenbot.database import db_session
 from degenbot.database.models.pools import (
     AbstractUniswapV2Pool,
     LiquidityPoolTable,
@@ -67,7 +67,7 @@ if TYPE_CHECKING:
 def get_pool_from_database(
     address: ChecksumAddress,
     chain_id: int,
-    session: Session | scoped_session[Session] = default_db_session,
+    session: Session | scoped_session[Session] = db_session,
 ) -> AbstractUniswapV2Pool | None:
     return session.scalar(
         select(LiquidityPoolTable).where(
@@ -169,7 +169,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
         )
 
-        pool_from_db: AbstractUniswapV2Pool = default_db_session.scalar(
+        pool_from_db: AbstractUniswapV2Pool = db_session.scalar(
             select(LiquidityPoolTable).where(
                 LiquidityPoolTable.address == self.address,
                 LiquidityPoolTable.chain == self._chain_id,

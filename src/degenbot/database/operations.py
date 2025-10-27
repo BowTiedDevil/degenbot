@@ -2,10 +2,11 @@ import pathlib
 import sqlite3
 
 from alembic import command
+from alembic.config import Config
 from sqlalchemy import URL, create_engine, text
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
-from degenbot.config import get_alembic_config
+from degenbot.config import settings
 from degenbot.database.models import Base
 from degenbot.exceptions.database import BackupExists
 from degenbot.logging import logger
@@ -31,9 +32,6 @@ def backup_sqlite_database(db_path: pathlib.Path) -> None:
 
 
 def create_new_sqlite_database(db_path: pathlib.Path) -> None:
-    if db_path.exists():
-        db_path.unlink()
-
     engine = create_engine(
         f"sqlite:///{db_path.absolute()}",
     )
@@ -84,3 +82,11 @@ def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Ses
             )
         )
     )
+
+
+def get_alembic_config() -> Config:
+    cfg = Config()
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{settings.database.path.absolute()}")
+    cfg.set_main_option("script_location", "degenbot:migrations")
+
+    return cfg

@@ -13,7 +13,7 @@ from web3.types import BlockIdentifier, TxParams
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import async_connection_manager, connection_manager
-from degenbot.database import default_db_session
+from degenbot.database import db_session
 from degenbot.database.models import Erc20TokenTable
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.erc20 import NoPriceOracle
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 def get_token_from_database(
     token: ChecksumAddress,
     chain_id: int,
-    session: Session | scoped_session[Session] = default_db_session,
+    session: Session | scoped_session[Session] = db_session,
 ) -> Erc20TokenTable | None:
     return session.scalar(
         select(Erc20TokenTable).where(
@@ -49,7 +49,7 @@ def get_token_from_database(
 def set_token_decimals(
     token: Erc20TokenTable,
     decimals: int,
-    session: Session | scoped_session[Session] = default_db_session,
+    session: Session | scoped_session[Session] = db_session,
 ) -> None:
     token.decimals = decimals
     session.commit()
@@ -58,7 +58,7 @@ def set_token_decimals(
 def set_token_name(
     token: Erc20TokenTable,
     name: str,
-    session: Session | scoped_session[Session] = default_db_session,
+    session: Session | scoped_session[Session] = db_session,
 ) -> None:
     token.name = name
     session.commit()
@@ -67,7 +67,7 @@ def set_token_name(
 def set_token_symbol(
     token: Erc20TokenTable,
     symbol: str,
-    session: Session | scoped_session[Session] = default_db_session,
+    session: Session | scoped_session[Session] = db_session,
 ) -> None:
     token.symbol = symbol
     session.commit()

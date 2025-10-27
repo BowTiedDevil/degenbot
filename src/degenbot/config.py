@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Annotated
 
 import tomlkit
-from alembic.config import Config
 from pydantic import BaseModel, HttpUrl, PlainSerializer, WebsocketUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,7 +11,7 @@ from degenbot.types.aliases import ChainId
 
 CONFIG_DIR = Path.home() / ".config" / "degenbot"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
-DEFAULT_DB_PATH = CONFIG_DIR / "degenbot.db"
+DB_PATH = CONFIG_DIR / "degenbot.db"
 
 
 class DatabaseSettings(BaseModel):
@@ -67,34 +66,22 @@ def save_config_to_file(config: Settings) -> None:
 
 if not CONFIG_DIR.exists():
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    logger.info(f"A configuration directory at {CONFIG_DIR} has been created.")
+    logger.info(f"Created a configuration directory at {CONFIG_DIR}.")
 
-if not CONFIG_FILE.exists():
-    _default_settings = Settings(
+if CONFIG_FILE.exists():
+    settings = load_config_from_file(CONFIG_FILE)
+else:
+    settings = Settings(
         database=DatabaseSettings(
-            path=DEFAULT_DB_PATH,
+            path=DB_PATH,
         ),
         rpc={},
     )
 
-    if not _default_settings.database.path.exists():
+    save_config_to_file(settings)
+    logger.info(f"Created a configuration file at {CONFIG_FILE}.")
+
+    if not settings.database.path.exists():
         from degenbot.database.operations import create_new_sqlite_database
 
-        create_new_sqlite_database(db_path=_default_settings.database.path)
-        logger.warning(
-            "The database specified in the configuration file does not exist. An empty database "
-            "has been initialized."
-        )
-
-    save_config_to_file(_default_settings)
-    logger.info(f"A configuration file has been created at {CONFIG_FILE}.")
-
-settings = load_config_from_file(CONFIG_FILE)
-
-
-def get_alembic_config() -> Config:
-    cfg = Config()
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{settings.database.path.absolute()}")
-    cfg.set_main_option("script_location", "degenbot:migrations")
-
-    return cfg
+        create_new_sqlite_database(db_path=settings.database.path)
