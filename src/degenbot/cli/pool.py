@@ -2180,26 +2180,27 @@ def pool_update(chunk_size: int) -> None:
         db_session.scalars(select(ExchangeTable.chain_id).where(ExchangeTable.active)).all()
     )
 
-    end_blocks: dict[ChainId, BlockNumber] = {}
     for chain_id in active_chains:
-        if chain_id not in connection_manager.connections:
-            match endpoint := settings.rpc.get(chain_id):
-                case HttpUrl():
-                    w3 = Web3(HTTPProvider(str(endpoint)))
-                case WebsocketUrl():
-                    w3 = Web3(LegacyWebSocketProvider(str(endpoint)))
-                case Path():
-                    w3 = Web3(IPCProvider(str(endpoint)))
-                case None:
-                    msg = f"Chain ID {chain_id} does not have an RPC defined in config file {CONFIG_FILE}"  # noqa: E501
-                    raise ValueError(msg)
+        match endpoint := settings.rpc.get(chain_id):
+            case HttpUrl():
+                w3 = Web3(HTTPProvider(str(endpoint)))
+            case WebsocketUrl():
+                w3 = Web3(LegacyWebSocketProvider(str(endpoint)))
+            case Path():
+                w3 = Web3(IPCProvider(str(endpoint)))
+            case None:
+                msg = (
+                    f"Chain ID {chain_id} does not have an RPC defined in config file {CONFIG_FILE}"
+                )
+                raise ValueError(msg)
 
-            connection_manager.register_web3(w3)
+        if w3.eth.chain_id != chain_id:
+            msg = (
+                f"The chain ID ({w3.eth.chain_id}) at endpoint {endpoint} does not match "
+                f"the chain ID ({chain_id}) defined in the config file."
+            )
+            raise ValueError(msg)
 
-            # Stopping at a safe block mitigates corruption from re-orgs
-            end_blocks[chain_id] = w3.eth.get_block(block_identifier="safe")["number"]
-
-    for chain_id in active_chains:
         active_exchanges = db_session.scalars(
             select(ExchangeTable).where(
                 ExchangeTable.active,
@@ -2213,7 +2214,9 @@ def pool_update(chunk_size: int) -> None:
                 for exchange in active_exchanges
             ]
         )
-        safe_end_block = end_blocks[chain_id]
+
+        # Stop at a safe block to mitigate risk of re-org corruption
+        safe_end_block = w3.eth.get_block(block_identifier="safe")["number"]
 
         if initial_start_block >= safe_end_block:
             click.echo(f"Chain {chain_id} has not advanced since the last update.")
