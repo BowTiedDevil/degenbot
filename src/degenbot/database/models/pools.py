@@ -307,7 +307,7 @@ class AbstractUniswapV4Pool(ManagedLiquidityPoolTable):
 
     managed_pool_id: Mapped[PrimaryForeignKeyManagedPoolId]
 
-    pool_hash: Mapped[ManagedPoolHash] = mapped_column(index=True, unique=True)
+    pool_hash: Mapped[ManagedPoolHash] = mapped_column(index=True)
     hooks: Mapped[Address]
     currency0_id: Mapped[ForeignKeyTokenId]
     currency1_id: Mapped[ForeignKeyTokenId]

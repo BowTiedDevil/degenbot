@@ -21,7 +21,7 @@ ForeignKeyManagedPoolId = Annotated[
 ]
 ForeignKeyPoolId = Annotated[
     int,
-    mapped_column(ForeignKey("pools.id"), index=True),
+    mapped_column(ForeignKey("pools.id")),
 ]
 ForeignKeyPoolManagerId = Annotated[
     int,
