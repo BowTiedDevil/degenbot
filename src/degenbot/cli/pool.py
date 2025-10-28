@@ -720,8 +720,6 @@ def base_aerodrome_v3_pool_updater(
     """
     Fetch new Aerodrome V3 liquidity pools deployed on Base mainnet and add their metadata to the
     DB.
-
-    Then update the liquidity map for all pools.
     """
 
     database_type = AerodromeV3PoolTable
@@ -893,8 +891,6 @@ def base_pancakeswap_v3_pool_updater(
     """
     Fetch new Pancakeswap V3 liquidity pools deployed on Base mainnet and add their metadata to the
     DB.
-
-    Then update the liquidity map for all pools.
     """
 
     database_type = PancakeswapV3PoolTable
@@ -1058,8 +1054,6 @@ def base_sushiswap_v3_pool_updater(
     """
     Fetch new Sushiswap V3 liquidity pools deployed on Base mainnet and add their metadata to the
     DB.
-
-    Then update the liquidity map for all pools.
     """
 
     database_type = SushiswapV3PoolTable
@@ -1302,8 +1296,6 @@ def base_uniswap_v3_pool_updater(
     """
     Fetch new Uniswap V3 liquidity pools deployed on Base mainnet and add their metadata to the
     DB.
-
-    Then update the liquidity map for all pools.
     """
 
     database_type = UniswapV3PoolTable
