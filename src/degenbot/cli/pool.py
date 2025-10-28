@@ -47,7 +47,7 @@ from degenbot.database.models.pools import (
     UniswapV4PoolTable,
 )
 from degenbot.functions import encode_function_calldata, fetch_logs_retrying, raw_call
-from degenbot.types.aliases import BlockNumber, ChainId, Tick, Word
+from degenbot.types.aliases import ChainId, Tick, Word
 from degenbot.types.concrete import BoundedCache
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
