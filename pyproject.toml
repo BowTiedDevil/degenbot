@@ -198,6 +198,8 @@ asyncio_default_fixture_loop_scope = "function"
 pythonpath = "src"
 python_files = "test_*.py"
 testpaths = "tests"
+filterwarnings = ["ignore::DeprecationWarning:websockets.legacy"]
+
 
 [dependency-groups]
 dev = [
