@@ -503,11 +503,12 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             types=["uint256"], data=cast("HexBytes", liquidity_result)
         )
 
-        # Extract the two fees from the packed protocol fee
+        # Extract the two fees (uint12) from the close-packed uint24 protocol fee
         # ref: https://github.com/Uniswap/v4-core/blob/main/src/types/Slot0.sol
-        protocol_fee_as_bytes = (protocol_fee).to_bytes(length=6, byteorder="big")
-        protocol_fee_one_to_zero = int.from_bytes(protocol_fee_as_bytes[:3], byteorder="big")
-        protocol_fee_zero_to_one = int.from_bytes(protocol_fee_as_bytes[3:6], byteorder="big")
+        protocol_fee_one_to_zero, protocol_fee_zero_to_one = (
+            protocol_fee >> 12,  # discard the lower 12 bits by shifting
+            protocol_fee & 0xFFF,  # mask to keep only the lower 12 bits
+        )
 
         return (
             Slot0(
