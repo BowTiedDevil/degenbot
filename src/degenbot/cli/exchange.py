@@ -430,6 +430,7 @@ def activate_base_uniswap_v4(
                     chain=chain_id,
                     kind=exchange_kind,
                     exchange_id=exchange.id,
+                    state_view=get_checksum_address("0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71"),
                 )
             )
 
@@ -714,6 +715,7 @@ def activate_ethereum_uniswap_v4(
                     chain=chain_id,
                     kind=exchange_kind,
                     exchange_id=exchange.id,
+                    state_view=get_checksum_address("0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227"),
                 )
             )
 

@@ -270,6 +270,8 @@ class PoolManagerTable(Base):
     chain: Mapped[int]
     kind: Mapped[str]
 
+    state_view: Mapped[Address | None]
+
     exchange_id: Mapped[int] = mapped_column(ForeignKey("exchanges.id"))
     exchange: Mapped[ExchangeTable] = relationship("ExchangeTable")
 
