@@ -887,13 +887,13 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         assert swap_delta.amount_out <= token_out_quantity
 
         if conflicting_hooks := (
-            self.active_hooks
-            & {
+            {
                 Hooks.AFTER_SWAP,
                 Hooks.AFTER_SWAP_RETURNS_DELTA,
                 Hooks.BEFORE_SWAP,
                 Hooks.BEFORE_SWAP_RETURNS_DELTA,
             }
+            & self.active_hooks
         ):
             raise PossibleInaccurateResult(
                 amount_in=swap_delta.amount_in,
@@ -933,13 +933,13 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         assert swap_delta.amount_in <= token_in_quantity
 
         if conflicting_hooks := (
-            self.active_hooks
-            & {
+            {
                 Hooks.AFTER_SWAP,
                 Hooks.AFTER_SWAP_RETURNS_DELTA,
                 Hooks.BEFORE_SWAP,
                 Hooks.BEFORE_SWAP_RETURNS_DELTA,
             }
+            & self.active_hooks
         ):
             raise PossibleInaccurateResult(
                 amount_in=swap_delta.amount_in,
