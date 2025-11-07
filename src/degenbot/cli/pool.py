@@ -2135,7 +2135,7 @@ def pool_repair(chunk_size: int, pool_address: str, chain_id: int | None) -> Non
                 end_block=working_end_block,
                 address=pool_address,
             ).items(),
-            desc="Updating pool liquidity",
+            desc="Updating V3 pool liquidity",
             bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
             leave=False,
         ):
@@ -2260,7 +2260,7 @@ def pool_update(chunk_size: int) -> None:
                 pool_updater = POOL_UPDATER[chain_id, exchange.name]
                 pool_updater(w3, working_start_block, working_end_block, exchange)
 
-            # Fetch liquidity events if the working block range would affect an active V3 exchange
+            # Fetch and process V3 liquidity events
             if any("_v3" in exchange.name for exchange in exchanges_to_update):
                 for pool_address, liquidity_events in tqdm.tqdm(
                     get_v3_liquidity_events(
@@ -2268,10 +2268,17 @@ def pool_update(chunk_size: int) -> None:
                         start_block=working_start_block,
                         end_block=working_end_block,
                     ).items(),
-                    desc="Updating pool liquidity",
+                    desc="Updating V3 pool liquidity",
                     bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
                     leave=False,
                 ):
+                    # V3 events are emitted by individual pools, which cannot efficiently be
+                    # filtered by eth_getLogs to only include in-scope exchanges — some exchanges
+                    # may have millions of deployed pools, which quickly scales to violate most
+                    # JSON-RPC query limits.
+                    # Nevertheless filtering is required to avoid double-applying events during
+                    # backfills, so the updater function looks up the exchange for each pool,
+                    # checks if it is included in the in-scope set, and returns early if not.
                     apply_v3_liquidity_updates(
                         w3=w3,
                         pool_address=pool_address,
