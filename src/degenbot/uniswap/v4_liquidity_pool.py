@@ -204,7 +204,7 @@ def get_pool_from_database(
             UniswapV4PoolTable.pool_hash == pool_hash.to_0x_hex(),
             UniswapV4PoolTable.manager.has(id=pool_manager_in_db.id),
         )
-    )  # type: ignore[return-value]
+    )
 
 
 class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
