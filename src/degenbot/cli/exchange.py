@@ -421,7 +421,10 @@ def activate_base_uniswap_v4(
         db_session.flush()
 
         manager_in_db = db_session.scalar(
-            select(PoolManagerTable).where(PoolManagerTable.address == pool_manager_address)
+            select(PoolManagerTable).where(
+                PoolManagerTable.address == pool_manager_address,
+                PoolManagerTable.chain == chain_id,
+            )
         )
         if manager_in_db is None:
             db_session.add(
@@ -706,7 +709,10 @@ def activate_ethereum_uniswap_v4(
         db_session.flush()
 
         manager_in_db = db_session.scalar(
-            select(PoolManagerTable).where(PoolManagerTable.address == pool_manager_address)
+            select(PoolManagerTable).where(
+                PoolManagerTable.address == pool_manager_address,
+                PoolManagerTable.chain == chain_id,
+            )
         )
         if manager_in_db is None:
             db_session.add(
