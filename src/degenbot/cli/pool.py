@@ -370,10 +370,9 @@ def apply_v3_liquidity_updates(
 
 
 def apply_v4_liquidity_updates(
-    w3: Web3,
     pool_id: HexBytes,
     liquidity_events: deque[LogReceipt],
-    exchanges_in_scope: set[ExchangeTable],
+    pool_manager: PoolManagerTable,
 ) -> None:
     """
     Apply the liquidity updates to the provided pool.
@@ -393,12 +392,9 @@ def apply_v4_liquidity_updates(
     pool_in_db = db_session.scalar(
         select(UniswapV4PoolTable).where(
             UniswapV4PoolTable.pool_hash == pool_id.to_0x_hex(),
-            UniswapV4PoolTable.manager.has(chain=w3.eth.chain_id),
+            UniswapV4PoolTable.manager.has(id=pool_manager.id),
         )
     )
-
-    if (pool_in_db is None) or (pool_in_db.manager.exchange not in exchanges_in_scope):
-        return
 
     assert isinstance(pool_in_db, AbstractUniswapV4Pool)
 
@@ -2283,23 +2279,34 @@ def pool_update(chunk_size: int) -> None:
                         exchanges_in_scope=exchanges_to_update,
                     )
 
-            # Fetch liquidity events if the working block range would affect an active V4 exchange
-            if any("_v4" in exchange.name for exchange in exchanges_to_update):
+            # Fetch and process V4 liquidity events
+            for v4_exchange in (
+                exchange for exchange in exchanges_to_update if "_v4" in exchange.name
+            ):
+                pool_manager_in_db = db_session.scalar(
+                    select(PoolManagerTable).where(
+                        PoolManagerTable.address == v4_exchange.factory,
+                        PoolManagerTable.chain == chain_id,
+                    )
+                )
+                assert pool_manager_in_db is not None
+                pool_manager_address = get_checksum_address(pool_manager_in_db.address)
+
                 for pool_id, liquidity_events in tqdm.tqdm(
                     get_v4_liquidity_events(
                         w3=w3,
                         start_block=working_start_block,
                         end_block=working_end_block,
+                        address=pool_manager_address,
                     ).items(),
-                    desc="Updating pool liquidity",
+                    desc="Updating V4 pool liquidity",
                     bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
                     leave=False,
                 ):
                     apply_v4_liquidity_updates(
-                        w3=w3,
                         pool_id=pool_id,
                         liquidity_events=liquidity_events,
-                        exchanges_in_scope=exchanges_to_update,
+                        pool_manager=pool_manager_in_db,
                     )
 
             # At this point, all exchanges have been updated and the invariant checks have passed,
@@ -2366,6 +2373,7 @@ def get_v4_liquidity_events(
     w3: Web3,
     start_block: int,
     end_block: int,
+    address: ChecksumAddress | None = None,
 ) -> dict[HexBytes, deque[LogReceipt]]:
     """
     Fetch new ModifyLiquidity events for the given range.
@@ -2377,6 +2385,7 @@ def get_v4_liquidity_events(
         w3=w3,
         start_block=start_block,
         end_block=end_block,
+        address=None if address is None else [address],
         topic_signature=[
             # matches topic0 on `ModifyLiquidity`
             [UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH],
