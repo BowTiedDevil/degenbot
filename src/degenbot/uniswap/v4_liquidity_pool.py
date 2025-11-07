@@ -557,15 +557,19 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 )
             )
 
-            slot0_result, liquidity_result = batch.execute()
+            slot0_result, liquidity_result = cast(
+                "tuple[HexBytes, ...]",
+                batch.execute(),
+            )
 
-        protocol_fee: int
-        price, tick, protocol_fee, lp_fee = eth_abi.abi.decode(
-            types=self.SLOT0_STRUCT_TYPES, data=cast("HexBytes", slot0_result)
+        price, tick, protocol_fee, lp_fee = cast(
+            "tuple[int, ...]",
+            eth_abi.abi.decode(types=self.SLOT0_STRUCT_TYPES, data=slot0_result),
         )
-        liquidity: int
-        (liquidity,) = eth_abi.abi.decode(
-            types=["uint256"], data=cast("HexBytes", liquidity_result)
+
+        (liquidity,) = cast(
+            "tuple[int]",
+            eth_abi.abi.decode(types=["uint256"], data=liquidity_result),
         )
 
         # Extract the two fees (uint12) from the close-packed uint24 protocol fee
@@ -577,13 +581,13 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
         return (
             Slot0(
-                sqrt_price_x96=cast("int", price),
-                tick=cast("int", tick),
+                sqrt_price_x96=price,
+                tick=tick,
                 protocol_fee=ProtocolFee(
                     one_for_zero=protocol_fee_one_to_zero,
                     zero_for_one=protocol_fee_zero_to_one,
                 ),
-                lp_fee=cast("int", lp_fee),
+                lp_fee=lp_fee,
             ),
             liquidity,
         )
@@ -954,24 +958,27 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
     def get_tick_bitmap_at_word(
         self, w3: Web3, word_position: int, block_identifier: BlockIdentifier
     ) -> int:
-        (bitmap_at_word,) = raw_call(
-            w3=w3,
-            address=self._state_view_address,
-            calldata=encode_function_calldata(
-                function_prototype="getTickBitmap(bytes32,int16)",
-                function_arguments=[self.pool_id, word_position],
+        (bitmap_at_word,) = cast(
+            "tuple[int]",
+            raw_call(
+                w3=w3,
+                address=self._state_view_address,
+                calldata=encode_function_calldata(
+                    function_prototype="getTickBitmap(bytes32,int16)",
+                    function_arguments=[self.pool_id, word_position],
+                ),
+                return_types=["uint256"],
+                block_identifier=block_identifier,
             ),
-            return_types=["uint256"],
-            block_identifier=block_identifier,
         )
-        return cast("int", bitmap_at_word)
+        return bitmap_at_word
 
     def get_populated_ticks_in_word(
         self,
         w3: Web3,
         word_position: int,
         block_identifier: BlockIdentifier,
-    ) -> list[tuple[int, int, int]]:
+    ) -> list[tuple[Tick, LiquidityGross, LiquidityNet]]:
         bitmap_at_word = self.get_tick_bitmap_at_word(
             w3=w3, word_position=word_position, block_identifier=block_identifier
         )
@@ -996,13 +1003,16 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                         block_identifier=block_identifier,
                     )
                 )
-            results = batch.execute()
+            results = cast(
+                "list[HexBytes]",
+                batch.execute(),
+            )
 
-        populated_ticks = []
+        populated_ticks: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
         for tick, result in zip(active_ticks, results, strict=True):
             liquidity_gross, liquidity_net = eth_abi.abi.decode(
                 types=self.TICK_LIQUIDITY_STRUCT_TYPES,
-                data=cast("HexBytes", result),
+                data=result,
             )
             populated_ticks.append((tick, liquidity_gross, liquidity_net))
 
