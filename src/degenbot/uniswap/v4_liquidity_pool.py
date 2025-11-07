@@ -11,6 +11,8 @@ import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
+from sqlalchemy import select
+from sqlalchemy.orm import Session, scoped_session
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import BlockIdentifier, TxParams
@@ -18,6 +20,12 @@ from web3.types import BlockIdentifier, TxParams
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
 from degenbot.constants import MAX_INT256, MIN_INT256, ZERO_ADDRESS
+from degenbot.database import db_session
+from degenbot.database.models.pools import (
+    AbstractUniswapV4Pool,
+    PoolManagerTable,
+    UniswapV4PoolTable,
+)
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.evm import EVMRevertError
@@ -176,6 +184,29 @@ class Hooks(Enum):
     AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA = 1 << 0
 
 
+def get_pool_from_database(
+    pool_hash: HexBytes,
+    pool_manager_address: ChecksumAddress,
+    chain_id: int,
+    session: Session | scoped_session[Session] = db_session,
+) -> AbstractUniswapV4Pool | None:
+    pool_manager_in_db = session.scalar(
+        select(PoolManagerTable).where(
+            PoolManagerTable.address == pool_manager_address,
+            PoolManagerTable.chain == chain_id,
+        )
+    )
+    if pool_manager_in_db is None:
+        return None
+
+    return session.scalar(
+        select(UniswapV4PoolTable).where(
+            UniswapV4PoolTable.pool_hash == pool_hash.to_0x_hex(),
+            UniswapV4PoolTable.manager.has(id=pool_manager_in_db.id),
+        )
+    )  # type: ignore[return-value]
+
+
 class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
     _state_cache: BoundedCache[BlockNumber, UniswapV4PoolState]
 
@@ -214,12 +245,12 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
     def __init__(
         self,
         *,
-        pool_id: str,
+        pool_id: bytes | str,
         pool_manager_address: str,
-        state_view_address: str,
-        tokens: Sequence[str],
-        fee: Pip,
-        tick_spacing: int,
+        state_view_address: str | None = None,
+        tokens: Sequence[str] | None = None,
+        fee: Pip | None = None,
+        tick_spacing: int | None = None,
         hook_address: str | None = None,
         chain_id: ChainId | None = None,
         tick_data: dict[Tick, dict[str, Any] | UniswapV4LiquidityAtTick] | None = None,
@@ -234,27 +265,62 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         w3 = connection_manager.get_web3(self.chain_id)
         state_block = state_block if state_block is not None else w3.eth.block_number
         self._initial_state_block = state_block
+
+        self._pool_manager_address = get_checksum_address(pool_manager_address)
+
+        pool_id = HexBytes(pool_id)
+
+        pool_from_db = get_pool_from_database(
+            pool_hash=pool_id,
+            pool_manager_address=self._pool_manager_address,
+            chain_id=self.chain_id,
+        )
+        if pool_from_db is not None:
+            currency0_address = pool_from_db.currency0.address
+            currency1_address = pool_from_db.currency1.address
+            self.hook_address = get_checksum_address(pool_from_db.hooks)
+            tick_spacing = pool_from_db.tick_spacing
+            assert pool_from_db.fee_currency0 == pool_from_db.fee_currency1
+            fee = pool_from_db.fee_currency0
+            state_view_address = pool_from_db.manager.state_view
+        else:
+            if state_view_address is None:
+                msg = (
+                    "A state view contract address must be provided for a pool not in the database."
+                )
+                raise DegenbotValueError(msg)
+            if fee is None:
+                msg = "A fee must be provided for a pool not in the database."
+                raise DegenbotValueError(msg)
+            if tick_spacing is None:
+                msg = "A tick spacing must be provided for a pool not in the database."
+                raise DegenbotValueError(msg)
+            if tokens is None:
+                msg = "Token addresses must be provided for a pool not in the database."
+                raise DegenbotValueError(msg)
+
+            currency0_address, currency1_address = sorted([token.lower() for token in tokens])
+            assert currency0_address < currency1_address
+            assert currency0_address != currency1_address
+            self.hook_address = (
+                get_checksum_address(hook_address) if hook_address is not None else ZERO_ADDRESS
+            )
+
         self._state_view_address = get_checksum_address(state_view_address)
 
-        assert len(tokens) == 2  # noqa: PLR2004
-        tokens = [token.lower() for token in tokens]
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
         self.token0: Final[Erc20Token] = token_manager.get_erc20token(
-            address=min(tokens),
+            address=currency0_address,
             silent=silent,
         )
         self.token1: Final[Erc20Token] = token_manager.get_erc20token(
-            address=max(tokens),
+            address=currency1_address,
             silent=silent,
         )
 
-        self.hook_address = (
-            get_checksum_address(hook_address) if hook_address is not None else ZERO_ADDRESS
-        )
-
-        self.active_hooks: set[Hooks] = {
+        self.active_hooks: frozenset[Hooks] = frozenset(
             hook for hook in Hooks if int(self.hook_address, 16) & hook.value != 0
-        }
+        )
 
         # Construct the PoolKey
         self._pool_key = UniswapV4PoolKey(
@@ -265,8 +331,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             hooks=self.hook_address,
         )
 
-        self._pool_manager_address = get_checksum_address(pool_manager_address)
-        self._pool_id: Final[HexBytes] = HexBytes(pool_id)
+        self._pool_id: Final[HexBytes] = pool_id
         self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, id={self.pool_id.to_0x_hex()})"  # noqa:E501
 
         try:
