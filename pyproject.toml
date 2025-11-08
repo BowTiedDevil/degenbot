@@ -102,6 +102,7 @@ ignore_missing_imports = true
 [tool.ruff]
 line-length = 100
 indent-width = 4
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
