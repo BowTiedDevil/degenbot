@@ -2291,7 +2291,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             state_overrides = {}
 
         match self.swap_pools:
-            case UniswapV4Pool() as v4_pool_a, UniswapV4Pool() as v4_pool_b:
+            case (
+                UniswapV4Pool() as v4_pool_a,
+                UniswapV4Pool() as v4_pool_b,
+            ):
                 wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v4_pool_a.chain_id]
                 profit_tokens = {wrapped_currency_address, NATIVE_CURRENCY_ADDRESS}
 
@@ -2337,7 +2340,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     forward_token=forward_token,
                 )
 
-            case UniswapV3Pool() as v3_pool_a, UniswapV3Pool() as v3_pool_b:
+            case (
+                UniswapV3Pool() as v3_pool_a,
+                UniswapV3Pool() as v3_pool_b,
+            ):
                 pool_a_state_override = state_overrides.get(v3_pool_a)
                 pool_b_state_override = state_overrides.get(v3_pool_b)
                 if TYPE_CHECKING:
@@ -2452,11 +2458,22 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 raise ArbitrageError(message="No arbitrage possible.")
 
             case (
-                UniswapV4Pool() as v4_pool,
-                (AerodromeV2Pool() | UniswapV2Pool()) as v2_pool,
-            ) | (
-                (AerodromeV2Pool() | UniswapV2Pool()) as v2_pool,
-                UniswapV4Pool() as v4_pool,
+                (
+                    UniswapV4Pool() as v4_pool,
+                    AerodromeV2Pool() as v2_pool,
+                )
+                | (
+                    UniswapV4Pool() as v4_pool,
+                    UniswapV2Pool() as v2_pool,
+                )
+                | (
+                    AerodromeV2Pool() as v2_pool,
+                    UniswapV4Pool() as v4_pool,
+                )
+                | (
+                    UniswapV2Pool() as v2_pool,
+                    UniswapV4Pool() as v4_pool,
+                )
             ):
                 assert self.input_token in (
                     NATIVE_CURRENCY_ADDRESS,
@@ -2546,11 +2563,22 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 raise ArbitrageError(message="No arbitrage possible.")
 
             case (
-                (UniswapV2Pool() | AerodromeV2Pool()) as v2_pool,
-                UniswapV3Pool() as v3_pool,
-            ) | (
-                UniswapV3Pool() as v3_pool,
-                (UniswapV2Pool() | AerodromeV2Pool()) as v2_pool,
+                (
+                    AerodromeV2Pool() as v2_pool,
+                    UniswapV3Pool() as v3_pool,
+                )
+                | (
+                    UniswapV2Pool() as v2_pool,
+                    UniswapV3Pool() as v3_pool,
+                )
+                | (
+                    UniswapV3Pool() as v3_pool,
+                    AerodromeV2Pool() as v2_pool,
+                )
+                | (
+                    UniswapV3Pool() as v3_pool,
+                    UniswapV2Pool() as v2_pool,
+                )
             ):
                 v2_pool_state = state_overrides.get(v2_pool)
                 v3_pool_state = state_overrides.get(v3_pool)
