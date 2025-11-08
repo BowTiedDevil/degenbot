@@ -1706,8 +1706,8 @@ def ethereum_sushiswap_v3_pool_updater(
     exchange: ExchangeTable,
 ) -> None:
     """
-    Fetch new Sushiswap V3 liquidity pools deployed on Ethereum mainnet and add their metadata to the
-    DB.
+    Fetch new Sushiswap V3 liquidity pools deployed on Ethereum mainnet and add their metadata to
+    the DB.
     """
 
     database_type = SushiswapV3PoolTable
