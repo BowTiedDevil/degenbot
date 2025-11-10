@@ -213,7 +213,11 @@ dev = [
 ]
 
 [tool.uv]
-cache-keys = [{file = "pyproject.toml"}, {file = "rust/Cargo.toml"}, {file = "rust/src/*.rs"}]
+cache-keys = [
+    {file = "pyproject.toml"}, 
+    {file = "rust/Cargo.toml"}, 
+    {file = "rust/src/**/*.rs"},
+]
 
 [[tool.uv.index]]
 name = "testpypi"
