@@ -165,7 +165,7 @@ class FakeSubscriber:
     """
 
     def __init__(self) -> None:
-        self.inbox: list[dict[str, Any]] = list()
+        self.inbox: list[dict[str, Any]] = []
 
     def notify(self, publisher: Publisher, message: AbstractPublisherMessage) -> None:
         self.inbox.append(

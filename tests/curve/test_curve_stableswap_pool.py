@@ -355,7 +355,7 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
     with fork_mainnet_full.w3.batch_requests() as batch:
         batch.add_mapping(
             {
-                registry.functions.pool_list: [pool for pool in range(pool_count)],
+                registry.functions.pool_list: list(range(pool_count)),
             }
         )
         pool_addresses = batch.execute()

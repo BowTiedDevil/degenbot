@@ -532,7 +532,7 @@ def test_discard_before_finalized(wbtc_weth_v3_lp_at_historical_block: UniswapV3
 
     wbtc_weth_v3_lp_at_historical_block.discard_states_before_block(end_block)
     assert wbtc_weth_v3_lp_at_historical_block._state_cache is not None
-    assert wbtc_weth_v3_lp_at_historical_block._state_cache.keys() == set([end_block])
+    assert wbtc_weth_v3_lp_at_historical_block._state_cache.keys() == {end_block}
 
 
 def test_discard_earlier_than_created(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool) -> None:

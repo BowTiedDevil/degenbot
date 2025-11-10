@@ -201,7 +201,7 @@ def test_ipc_kwargs():
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
         storage_caching=False,
-        ipc_provider_kwargs=dict(timeout=None),
+        ipc_provider_kwargs={"timeout": None},
     )
     if TYPE_CHECKING:
         assert isinstance(fork.w3.provider, IPCProvider)

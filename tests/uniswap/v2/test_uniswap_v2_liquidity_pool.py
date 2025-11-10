@@ -598,7 +598,7 @@ def test_comparisons(
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block is not other_lp
 
     # sets depend on __hash__ dunder method
-    set([ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block, other_lp])
+    _ = {ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block, other_lp}
 
 
 @pytest.mark.parametrize(
@@ -725,10 +725,9 @@ def test_discard_before_finalized(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.discard_states_before_block(
         last_update_block
     )
-    assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache.keys()
-        == set([last_update_block])
-    )
+    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache.keys() == {
+        last_update_block
+    }
 
 
 @pytest.mark.parametrize(
