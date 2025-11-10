@@ -35,18 +35,19 @@ from degenbot.uniswap.v4_libraries.swap_math import (
 
 
 @hypothesis.given(
-    zero_for_one=hypothesis.strategies.booleans(),
     sqrt_price_next_x96=hypothesis.strategies.integers(
         min_value=MIN_UINT160, max_value=MAX_UINT160
     ),
     sqrt_price_limit_x96=hypothesis.strategies.integers(
         min_value=MIN_UINT160, max_value=MAX_UINT160
     ),
+    zero_for_one=hypothesis.strategies.booleans(),
 )
 def test_fuzz_get_sqrt_price_target(
-    zero_for_one: bool,
     sqrt_price_next_x96: int,
     sqrt_price_limit_x96: int,
+    *,
+    zero_for_one: bool,
 ):
     assert get_sqrt_price_target(
         zero_for_one=zero_for_one,
