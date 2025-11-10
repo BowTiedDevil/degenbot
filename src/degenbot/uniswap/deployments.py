@@ -17,6 +17,16 @@ class UniswapFactoryDeployment:
 
 
 @dataclass(slots=True, frozen=True)
+class UniswapPoolManagerDeployment:
+    address: ChecksumAddress
+
+
+@dataclass(slots=True, frozen=True)
+class UniswapStateViewDeployment:
+    address: ChecksumAddress
+
+
+@dataclass(slots=True, frozen=True)
 class UniswapV2ExchangeDeployment(AbstractExchangeDeployment):
     factory: UniswapFactoryDeployment
 
@@ -24,6 +34,12 @@ class UniswapV2ExchangeDeployment(AbstractExchangeDeployment):
 @dataclass(slots=True, frozen=True)
 class UniswapV3ExchangeDeployment(AbstractExchangeDeployment):
     factory: UniswapFactoryDeployment
+
+
+@dataclass(slots=True, frozen=True)
+class UniswapV4ExchangeDeployment(AbstractExchangeDeployment):
+    pool_manager: UniswapPoolManagerDeployment
+    state_view: UniswapStateViewDeployment
 
 
 @dataclass(slots=True, frozen=True)
@@ -55,13 +71,22 @@ def register_router(router: UniswapRouterDeployment) -> None:
 
 
 # Mainnet DEX --------------- START
-EthereumMainnetUniswapV2 = UniswapV2ExchangeDeployment(
-    name="Ethereum Mainnet Uniswap V2",
+EthereumMainnetPancakeswapV2 = UniswapV2ExchangeDeployment(
+    name="Ethereum Mainnet Pancakeswap V2",
     chain_id=eth_typing.ChainId.ETH,
     factory=UniswapFactoryDeployment(
-        address=get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
+        address=get_checksum_address("0x1097053Fd2ea711dad45caCcc45EfF7548fCB362"),
         deployer=None,
-        pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
+        pool_init_hash="0x57224589c67f3f30a6b0d7a1b54cf3153ab84563bc609ef41dfb34f8b2974d2d",
+    ),
+)
+EthereumMainnetPancakeswapV3 = UniswapV3ExchangeDeployment(
+    name="Ethereum Mainnet Pancakeswap V3",
+    chain_id=eth_typing.ChainId.ETH,
+    factory=UniswapFactoryDeployment(
+        address=get_checksum_address("0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"),
+        deployer=get_checksum_address("0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9"),
+        pool_init_hash="0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2",
     ),
 )
 EthereumMainnetSushiswapV2 = UniswapV2ExchangeDeployment(
@@ -73,6 +98,24 @@ EthereumMainnetSushiswapV2 = UniswapV2ExchangeDeployment(
         pool_init_hash="0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303",
     ),
 )
+EthereumMainnetSushiswapV3 = UniswapV3ExchangeDeployment(
+    name="Ethereum Mainnet Sushiswap V3",
+    chain_id=eth_typing.ChainId.ETH,
+    factory=UniswapFactoryDeployment(
+        address=get_checksum_address("0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F"),
+        deployer=None,
+        pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
+    ),
+)
+EthereumMainnetUniswapV2 = UniswapV2ExchangeDeployment(
+    name="Ethereum Mainnet Uniswap V2",
+    chain_id=eth_typing.ChainId.ETH,
+    factory=UniswapFactoryDeployment(
+        address=get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
+        deployer=None,
+        pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
+    ),
+)
 EthereumMainnetUniswapV3 = UniswapV3ExchangeDeployment(
     name="Ethereum Mainnet Uniswap V3",
     chain_id=eth_typing.ChainId.ETH,
@@ -82,13 +125,14 @@ EthereumMainnetUniswapV3 = UniswapV3ExchangeDeployment(
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
     ),
 )
-EthereumMainnetSushiswapV3 = UniswapV3ExchangeDeployment(
-    name="Ethereum Mainnet Sushiswap V3",
+EthereumMainnetUniswapV4 = UniswapV4ExchangeDeployment(
+    name="Ethereum Mainnet Uniswap V4",
     chain_id=eth_typing.ChainId.ETH,
-    factory=UniswapFactoryDeployment(
-        address=get_checksum_address("0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F"),
-        deployer=None,
-        pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
+    pool_manager=UniswapPoolManagerDeployment(
+        address=get_checksum_address("0x000000000004444c5dc75cB358380D2e3dE08A90"),
+    ),
+    state_view=UniswapStateViewDeployment(
+        address=get_checksum_address("0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227")
     ),
 )
 # Mainnet DEX --------------- END
@@ -174,6 +218,16 @@ BaseUniswapV3 = UniswapV3ExchangeDeployment(
         address=get_checksum_address("0x33128a8fC17869897dcE68Ed026d694621f6FDfD"),
         deployer=None,
         pool_init_hash="0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
+    ),
+)
+BaseUniswapV4 = UniswapV4ExchangeDeployment(
+    name="Uniswap V4",
+    chain_id=eth_typing.ChainId.BASE,
+    pool_manager=UniswapPoolManagerDeployment(
+        address=get_checksum_address("0x498581fF718922c3f8e6A244956aF099B2652b2b"),
+    ),
+    state_view=UniswapStateViewDeployment(
+        address=get_checksum_address("0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71")
     ),
 )
 # Base DEX -------------------- END
