@@ -978,8 +978,6 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             return (dy - fee) * self.PRECISION // rates[j]
 
         if self.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
-            # TODO: check if any functions (price_scale, gamma, D, fee_calc) can be calculated
-            # off-chain
 
             def _d(block_number: BlockNumber) -> int:
                 with contextlib.suppress(KeyError):
