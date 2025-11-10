@@ -1,5 +1,6 @@
 import itertools
 from collections.abc import Iterator, Sequence
+from typing import TYPE_CHECKING
 
 import sqlalchemy
 from eth_typing import ChecksumAddress
@@ -112,24 +113,32 @@ def find_paths(
                     .columns["forward_token_id"]
                 )
                 .group_by("forward_token_id")
-                .having(sqlalchemy.func.count() >= 2)
+                .having(sqlalchemy.func.count() > 1)
             ).all()
             assert len(set(paired_token_ids)) == len(paired_token_ids)
 
             print(f"Found {len(paired_token_ids)} candidate tokens")
 
-            for token_id in paired_token_ids:
-                candidate_pools = db_session.scalars(
-                    sqlalchemy.union_all(
-                        sqlalchemy.select(LiquidityPoolTable.address).where(
-                            LiquidityPoolTable.token0_id == token_id,
-                            LiquidityPoolTable.token1_id == start_token_in_db.id,
-                        ),
-                        sqlalchemy.select(LiquidityPoolTable.address).where(
-                            LiquidityPoolTable.token0_id == start_token_in_db.id,
-                            LiquidityPoolTable.token1_id == token_id,
-                        ),
+            for paired_token_id in paired_token_ids:
+                paired_token_address = db_session.scalar(
+                    sqlalchemy.select(Erc20TokenTable.address).where(
+                        Erc20TokenTable.id == paired_token_id,
                     )
+                )
+                if TYPE_CHECKING:
+                    assert paired_token_address is not None
+
+                token0_id, token1_id = (
+                    (paired_token_id, cycle_token.id)
+                    if paired_token_address.lower() < cycle_token.address.lower()
+                    else (cycle_token.id, paired_token_id)
+                )
+
+                candidate_pools = db_session.scalars(
+                    sqlalchemy.select(LiquidityPoolTable).where(
+                        LiquidityPoolTable.token0_id == token0_id,
+                        LiquidityPoolTable.token1_id == token1_id,
+                    ),
                 ).all()
 
                 yield from itertools.permutations(candidate_pools, 2)
