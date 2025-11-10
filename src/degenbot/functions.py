@@ -32,9 +32,6 @@ if TYPE_CHECKING:
     from eth_account.datastructures import SignedMessage
 
 
-# TODO: remove progress bar
-
-
 def create2_address(
     deployer: str | bytes,
     salt: bytes | str,

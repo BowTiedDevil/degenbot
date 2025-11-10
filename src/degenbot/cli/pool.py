@@ -120,9 +120,6 @@ class PoolLiquidityMap(pydantic.BaseModel):
     tick_data: dict[Tick, LiquidityAtTick]
 
 
-# TODO: take exchange specific info from deployments module instead of hard-coding
-
-
 AERODROME_V2_POOLCREATED_EVENT_HASH = HexBytes(
     "0x2128d88d14c80cb081c1252a5acff7a264671bf199ce226b53788fb26065005e"
 )
