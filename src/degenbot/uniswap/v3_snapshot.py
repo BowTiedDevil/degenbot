@@ -192,7 +192,7 @@ class DatabaseSnapshot:
             self.session = db_session
             self.database_path = settings.database.path
         else:
-            self.session = get_scoped_sqlite_session(database_path)
+            self.session = get_scoped_sqlite_session(database_path)()
             self.database_path = database_path
 
         self.chain_id = chain_id
