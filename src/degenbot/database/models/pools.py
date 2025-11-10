@@ -83,6 +83,12 @@ Index(
     unique=True,
 )
 
+Index(
+    "ix_liquidity_pools_token_ids",
+    LiquidityPoolTable.token0_id,
+    LiquidityPoolTable.token1_id,
+)
+
 
 class UniswapFeeMixin:
     """
@@ -360,3 +366,10 @@ class UniswapV4PoolTable(AbstractUniswapV4Pool):
         "polymorphic_on": "kind",
         "polymorphic_identity": "uniswap_v4",
     }
+
+
+Index(
+    "ix_uniswap_v4_pools_token_ids",
+    UniswapV4PoolTable.currency0_id,
+    UniswapV4PoolTable.currency1_id,
+)
