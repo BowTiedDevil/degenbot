@@ -107,8 +107,6 @@ target-version = "py312"
 select = [
 #    "DOC",      # pydoclint
 #    "D",        # pydocstyle
-#    "COM",      # flake8-commas
-#    "FIX",      # flake8-fixme
     "ERA",      # eradicate
     "ANN",      # flake8-annotations
     "ASYNC",    # flake8-async
@@ -117,8 +115,10 @@ select = [
     "FBT",      # flake8-boolean-trap
     "B",        # flake8-bugbear
     "A",        # flake8-builtins
+    "COM",      # flake8-commas
     "C4",       # flake8-comprehensions
     "EM",       # flake8-errmsg
+    "FIX",      # flake8-fixme
     "FA",       # flake8-future-annotations
     "ICN",      # flake8-import-conventions
     "LOG",      # flake8-logging
@@ -132,27 +132,27 @@ select = [
     "RSE",      # flake8-raise
     "RET",      # flake8-return
     "SLF",      # flake8-self
-#    "TD",       # flake8-todos
-    "PTH",      # flake8-use-pathlib
-    "FLY",      # flynt
-    "NPY",      # numpy-specific
     "SIM",      # flake8-simplify
     "TID",      # flake8-tidy-imports
     "TCH",      # flake8-type-checking
     "ARG",      # flake8-unused-arguments
+    "PTH",      # flake8-use-pathlib
+    "FLY",      # flynt
     "I",        # isort
     "C90",      # mccabe
+    "NPY",      # numpy-specific
     "N",        # pep8-naming
+    "PERF",     # perflint
     "E", "W",   # pycodestyle
     "F",        # pyflakes
     "PL",       # pylint
-    "PERF",     # perflint
     "UP",       # pyupgrade
     "FURB",     # refurb
     "RUF",      # ruff-specific rules
     "TRY",      # tryceratops
 ]
 ignore = [
+    "COM812",   # trailing commas are handled by the formatter
     "N818",     # error-suffix-on-exception-name
     "PLR0911",  # too-many-return-statements
     "PLR0912",  # too-many-branches
@@ -170,15 +170,12 @@ allow-star-arg-any = true
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
-    "ANN", # type annotations for tests are low priority
-    "C4",
-    "C90", # high complexity tests are acceptable
-    "ERA",
-    "FBT",
-    "PLR2004", # Many swap amount tests compare "magic" values — transforming to named constants is not worthwhile
-    "S", # asserts are expected for testing
-    "SLF",
-    "T20",
+    "ANN",      # type annotations for tests are low priority
+    "C90",      # high complexity tests are acceptable
+    "PLR2004",  # many tests compare results against arbitrary values — transforming to named constants is not worthwhile
+    "S",        # asserts are expected for testing
+    "SLF",      # tests may need to access private attributes to test implementation
+    "T20",      # many tests use print
 ]
 
 [tool.pytest.ini_options]
