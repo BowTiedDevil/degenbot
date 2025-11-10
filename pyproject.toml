@@ -197,7 +197,6 @@ python_files = "test_*.py"
 testpaths = "tests"
 filterwarnings = ["ignore::DeprecationWarning:websockets.legacy"]
 
-
 [dependency-groups]
 dev = [
     "hypothesis",
