@@ -77,14 +77,12 @@ def test_get_sqrt_price_at_tick_is_valid_max_tick_sub_one():
 
 
 def test_get_sqrt_price_at_tick_is_less_than_js_impl_min_tick():
-    # sqrt(1 / 2 ** 127) * 2 ** 96
     js_min_sqrt_price = 6085630636
     sol_min_sqrt_price = tick_math.get_sqrt_price_at_tick(tick_math.MIN_TICK)
     assert sol_min_sqrt_price < js_min_sqrt_price
 
 
 def test_get_sqrt_price_at_tick_is_greater_than_js_impl_max_tick():
-    # sqrt(2 ** 127) * 2 ** 96
     js_max_sqrt_price = 1033437718471923706666374484006904511252097097914
     sol_max_sqrt_price = tick_math.get_sqrt_price_at_tick(tick_math.MAX_TICK)
     assert sol_max_sqrt_price > js_max_sqrt_price

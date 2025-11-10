@@ -361,10 +361,6 @@ def test_arb_payload_encoding(fork_mainnet_full: AnvilFork, weth: Erc20Token):
     for swap_pools in [
         (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
         (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
-        # (uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_dai_lp),
-        # (uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
-        # (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_dai_lp),
-        # (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
     ]:
         arb = UniswapCurveCycle(
             input_token=weth,
@@ -439,10 +435,6 @@ async def test_process_pool_calculation(fork_mainnet_full: AnvilFork, weth: Erc2
         for swap_pools in [
             (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
             (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
-            # (uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_dai_lp),
-            # (uniswap_v2_weth_usdc_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
-            # (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_dai_lp),
-            # (uniswap_v2_weth_usdt_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
         ]:
             arb = UniswapCurveCycle(
                 input_token=weth,

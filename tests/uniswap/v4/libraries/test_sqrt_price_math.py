@@ -370,9 +370,7 @@ def test_get_amount0_delta_1_amount1_for_price_of1_to1_21():
 
 
 def test_get_amount0_delta_works_for_prices_that_overflow():
-    # sqrt_p_1 = encodesqrt_priceX96(2^90, 1)
     sqrt_p_1 = 2787593149816327892691964784081045188247552
-    # sqrt_p_2 = encodesqrt_priceX96(2^96, 1)
     sqrt_p_2 = 22300745198530623141535718272648361505980416
     amount0_up = get_amount0_delta(
         sqrt_price_a_x96=sqrt_p_1,
