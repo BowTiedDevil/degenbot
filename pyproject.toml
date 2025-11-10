@@ -93,7 +93,6 @@ disable_error_code = [
 
 [[tool.mypy.overrides]]
 module=[
-    "eth_abi.*",
     "scipy.*",
     "tqdm.*",
 ]
