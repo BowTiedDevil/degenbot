@@ -328,22 +328,22 @@ def test_2pool_uniswap_v2_decimal_corrected(
     print(f"uncompressed deposits    (pool_hi)    = {uncompressed_deposits[pool_hi_index].value}")
     print(f"uncompressed deposits    (pool_lo)    = {uncompressed_deposits[pool_lo_index].value}")
     print(
-        f"reserves_starting    (pool_hi)        = {[res for res in compressed_reserves_pre_swap[pool_hi_index].value]}"
+        f"reserves_starting    (pool_hi)        = {[compressed_reserves_pre_swap[pool_hi_index].value]}"
     )
     print(
-        f"reserves_ending      (pool_hi)        = {[res for res in compressed_reserves_post_swap[pool_hi_index].value]}"
+        f"reserves_ending      (pool_hi)        = {[compressed_reserves_post_swap[pool_hi_index].value]}"
     )
     print(
-        f"reserves_final       (pool_hi)        = {[res for res in compressed_reserves_post_swap[pool_hi_index].value]}"
+        f"reserves_final       (pool_hi)        = {[compressed_reserves_post_swap[pool_hi_index].value]}"
     )
     print(
-        f"reserves_pre_swap    (pool_lo)        = {[res for res in compressed_reserves_pre_swap[pool_lo_index].value]}"
+        f"reserves_pre_swap    (pool_lo)        = {[compressed_reserves_pre_swap[pool_lo_index].value]}"
     )
     print(
-        f"reserves_post_swap   (pool_lo)        = {[res for res in compressed_reserves_post_swap[pool_lo_index].value]}"
+        f"reserves_post_swap   (pool_lo)        = {[compressed_reserves_post_swap[pool_lo_index].value]}"
     )
     print(
-        f"reserves_final       (pool_lo)        = {[res for res in compressed_reserves_post_swap[pool_lo_index].value]}"
+        f"reserves_final       (pool_lo)        = {[compressed_reserves_post_swap[pool_lo_index].value]}"
     )
     print(f"pool_lo_pre_swap_k                    = {pool_lo_pre_swap_k.value}")
     print(f"pool_lo_post_swap_k                   = {pool_lo_post_swap_k.value}")
@@ -560,22 +560,22 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
     print(f"uncompressed deposits    (pool_hi)    = {uncompressed_deposits[pool_hi_index].value}")
     print(f"uncompressed deposits    (pool_lo)    = {uncompressed_deposits[pool_lo_index].value}")
     print(
-        f"reserves_starting    (pool_hi)        = {[res for res in compressed_reserves_pre_swap[pool_hi_index].value]}"
+        f"reserves_starting    (pool_hi)        = {[compressed_reserves_pre_swap[pool_hi_index].value]}"
     )
     print(
-        f"reserves_ending      (pool_hi)        = {[res for res in compressed_reserves_post_swap[pool_hi_index].value]}"
+        f"reserves_ending      (pool_hi)        = {[compressed_reserves_post_swap[pool_hi_index].value]}"
     )
     print(
-        f"reserves_final       (pool_hi)        = {[res for res in compressed_reserves_post_swap[pool_hi_index].value]}"
+        f"reserves_final       (pool_hi)        = {[compressed_reserves_post_swap[pool_hi_index].value]}"
     )
     print(
-        f"reserves_pre_swap    (pool_lo)        = {[res for res in compressed_reserves_pre_swap[pool_lo_index].value]}"
+        f"reserves_pre_swap    (pool_lo)        = {[compressed_reserves_pre_swap[pool_lo_index].value]}"
     )
     print(
-        f"reserves_post_swap   (pool_lo)        = {[res for res in compressed_reserves_post_swap[pool_lo_index].value]}"
+        f"reserves_post_swap   (pool_lo)        = {[compressed_reserves_post_swap[pool_lo_index].value]}"
     )
     print(
-        f"reserves_final       (pool_lo)        = {[res for res in compressed_reserves_post_swap[pool_lo_index].value]}"
+        f"reserves_final       (pool_lo)        = {[compressed_reserves_post_swap[pool_lo_index].value]}"
     )
     print(f"pool_lo_pre_swap_k                    = {pool_lo_pre_swap_k.value}")
     print(f"pool_lo_post_swap_k                   = {pool_lo_post_swap_k.value}")
@@ -807,12 +807,12 @@ def test_base_2pool(
     print(f"compressed withdrawals   (pool_lo)    = {withdrawals[pool_lo_index].value}")
     print(f"compressed deposits      (pool_hi)    = {deposits[pool_hi_index].value}")
     print(f"compressed deposits      (pool_lo)    = {deposits[pool_lo_index].value}")
-    print(f"reserves_pre_swap    (pool_hi)        = {[res for res in compressed_reserves_pre_swap[pool_hi_index].value]}")
-    print(f"reserves_ending      (pool_hi)        = {[res for res in compressed_reserves_post_swap[pool_hi_index].value]}")
-    print(f"reserves_final       (pool_hi)        = {[res for res in compressed_reserves_post_swap[pool_hi_index].value]}")
-    print(f"reserves_pre_swap    (pool_lo)        = {[res for res in compressed_reserves_pre_swap[pool_lo_index].value]}")
-    print(f"reserves_post_swap   (pool_lo)        = {[res for res in compressed_reserves_post_swap[pool_lo_index].value]}")
-    print(f"reserves_final       (pool_lo)        = {[res for res in compressed_reserves_post_swap[pool_lo_index].value]}")
+    print(f"reserves_pre_swap    (pool_hi)        = {[compressed_reserves_pre_swap[pool_hi_index].value]}")
+    print(f"reserves_ending      (pool_hi)        = {[compressed_reserves_post_swap[pool_hi_index].value]}")
+    print(f"reserves_final       (pool_hi)        = {[compressed_reserves_post_swap[pool_hi_index].value]}")
+    print(f"reserves_pre_swap    (pool_lo)        = {[compressed_reserves_pre_swap[pool_lo_index].value]}")
+    print(f"reserves_post_swap   (pool_lo)        = {[compressed_reserves_post_swap[pool_lo_index].value]}")
+    print(f"reserves_final       (pool_lo)        = {[compressed_reserves_post_swap[pool_lo_index].value]}")
     print(f"pool_lo_pre_swap_k                    = {pool_lo_pre_swap_k.value}")
     print(f"pool_lo_post_swap_k                   = {pool_lo_post_swap_k.value}")
     print(f"pool_lo_final_k                       = {pool_lo_final_k.value}")
