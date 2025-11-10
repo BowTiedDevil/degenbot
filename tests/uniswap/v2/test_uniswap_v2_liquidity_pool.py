@@ -109,7 +109,6 @@ def test_create_pool(fork_mainnet_full: AnvilFork):
     # Omitting init hash
     UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
-        # init_hash=UNISWAPV2_FACTORY_POOL_INIT_HASH,
     )
 
 

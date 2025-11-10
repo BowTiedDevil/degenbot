@@ -1062,7 +1062,7 @@ def test_external_update(
 
     # Update the liquidity and then submit a liquidity change for the previous block
     # which is valid, but the in-range liquidity should not have been changed
-    # NOTE: tick = 257907
+    assert wbtc_weth_v3_lp_at_historical_block.state.tick == 257907
     wbtc_weth_v3_lp_at_historical_block.external_update(
         update=UniswapV3PoolExternalUpdate(
             block_number=start_block + 1,
