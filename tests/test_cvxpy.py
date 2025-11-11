@@ -290,10 +290,7 @@ def test_2pool_uniswap_v2_decimal_corrected(
     ]
 
     problem = cvxpy.Problem(objective, constraints)
-    problem.solve(
-        solver=cvxpy.CLARABEL,
-        # verbose=True,
-    )
+    problem.solve(solver=cvxpy.CLARABEL)
 
     assert problem.status in cvxpy.settings.SOLUTION_PRESENT
 
@@ -351,9 +348,6 @@ def test_2pool_uniswap_v2_decimal_corrected(
     print(f"pool_hi_pre_swap_k                    = {pool_hi_pre_swap_k.value}")
     print(f"pool_hi_post_swap_k                   = {pool_hi_post_swap_k.value}")
     print(f"pool_hi_final_k                       = {pool_hi_final_k.value}")
-
-    # assert pool_hi_final_k.value >= pool_hi_start_k.value
-    # assert pool_lo_final_k.value >= pool_lo_start_k.value
 
     weth_out = pool_hi.calculate_tokens_out_from_tokens_in(
         token_in=forward_token,
@@ -516,10 +510,7 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
     ]
 
     problem = cvxpy.Problem(objective, constraints)
-    problem.solve(
-        solver=cvxpy.CLARABEL,
-        # verbose=True,
-    )
+    problem.solve(solver=cvxpy.CLARABEL)
 
     assert problem.status in cvxpy.settings.SOLUTION_PRESENT
 
@@ -542,8 +533,6 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
     uncompressed_withdrawals = cvxpy_multiply(
         withdrawals, np.array([compression_factor_token0, compression_factor_token1])
     )
-    # uncompressed_deposits = compression_factor * deposits
-    # uncompressed_withdrawals = compression_factor * withdrawals
 
     print()
     print("Solved")
@@ -584,9 +573,6 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
     print(f"pool_hi_post_swap_k                   = {pool_hi_post_swap_k.value}")
     print(f"pool_hi_final_k                       = {pool_hi_final_k.value}")
 
-    # assert pool_hi_final_k.value >= pool_hi_start_k.value
-    # assert pool_lo_final_k.value >= pool_lo_start_k.value
-
     weth_out = pool_hi.calculate_tokens_out_from_tokens_in(
         token_in=forward_token,
         token_in_quantity=uncompressed_forward_token_amount,
@@ -604,12 +590,8 @@ def test_base_2pool(
     test_pool_b: MockLiquidityPool,
     weth_base_token: Erc20Token,
 ):
-    # scipy forward amount: 4323768730401916416
-    # cvxpy forward amount: 4323770602979739649
-
     profit_token = weth_base_token
 
-    # profit_token = weth_base_token
     pool_a_roe = test_pool_a.get_absolute_exchange_rate(token=profit_token)
     pool_b_roe = test_pool_b.get_absolute_exchange_rate(token=profit_token)
 
@@ -753,24 +735,14 @@ def test_base_2pool(
         pool_hi_post_swap_k >= pool_hi_pre_swap_k,
         pool_lo_post_swap_k >= pool_lo_pre_swap_k,
         # Withdrawals can't exceed pool reserves
-        # pool_hi_profit_token_out <= compressed_reserves_pre_swap[pool_hi_index, profit_token_index],
-        # forward_token_amount <= compressed_reserves_pre_swap[pool_lo_index, forward_token_index],
+        pool_hi_profit_token_out <= compressed_reserves_pre_swap[pool_hi_index, profit_token_index],
+        forward_token_amount <= compressed_reserves_pre_swap[pool_lo_index, forward_token_index],
     ]
 
     problem = cvxpy.Problem(objective, constraints)
-    # clarabel_tols = 1e-8
     problem.solve(
         solver=cvxpy.CLARABEL,
         verbose=True,
-        # tol_gap_abs=clarabel_tols,  # absolute duality gap tolerance
-        # tol_gap_rel=clarabel_tols,  # relative duality gap tolerance
-        # tol_feas=clarabel_tols,  # feasibility check tolerance (primal and dual)
-        # tol_infeas_abs=clarabel_tols,  # absolute infeasibility tolerance (primal and dual)
-        # tol_infeas_rel=clarabel_tols,  # relative infeasibility tolerance (primal and dual)
-        # static_regularization_enable=False,
-        # dynamic_regularization_enable=False,
-        # iterative_refinement_enable=False,
-        # equilibrate_enable=False,
     )
 
     assert problem.status in cvxpy.settings.SOLUTION_PRESENT
@@ -820,9 +792,6 @@ def test_base_2pool(
     print(f"pool_hi_post_swap_k                   = {pool_hi_post_swap_k.value}")
     print(f"pool_hi_final_k                       = {pool_hi_final_k.value}")
     # fmt:on
-
-    # assert pool_hi_final_k.value >= pool_hi_start_k.value
-    # assert pool_lo_final_k.value >= pool_lo_start_k.value
 
     weth_out = pool_hi.calculate_tokens_out_from_tokens_in(
         token_in=forward_token,
@@ -882,7 +851,6 @@ def test_base_3pool(
     lp_2._state = UniswapV2PoolState(
         address=lp_2.address,
         block=None,
-        # reserves_token0=5 * 10**wbtc_token.decimals, # original balance
         reserves_token0=(
             # dislocate middle pool by decreasing the price of WBTC
             10 * 10**wbtc_token.decimals
@@ -908,16 +876,9 @@ def test_base_3pool(
 
     arb = _UniswapMultiPoolCycleTesting(
         input_token=weth_token,
-        # swap_pools=[wbtc_pool_b, wbtc_pool_a],
         swap_pools=[lp_1, lp_2, lp_3],  # profitable
-        # swap_pools=[lp_3, lp_2, lp_1], # unprofitable
         id="test",
     )
 
     result = arb.calculate()
     print(f"{result.profit_amount=}")
-    # print(f"{result=}")
-    # payloads = arb.generate_payloads(
-    #     from_address="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-    #     pool_swap_amounts=result.swap_amounts,
-    # )
