@@ -207,7 +207,7 @@ def apply_v3_liquidity_updates(
     lp_helper = MockV3LiquidityPool()
     lp_helper.address = pool_address
     lp_helper.tick_spacing = pool_in_db.tick_spacing
-    lp_helper._state = UniswapV3PoolState(
+    lp_helper._state = UniswapV3PoolState(  # noqa: SLF001
         address=pool_address,
         block=0,
         liquidity=MAX_UINT256,
@@ -412,14 +412,14 @@ def apply_v4_liquidity_updates(
     )
 
     lp_helper = MockV4LiquidityPool()
-    lp_helper._pool_manager_address = cast(
+    lp_helper._pool_manager_address = cast(  # noqa: SLF001
         # address is checksummed prior to DB commit
         "ChecksumAddress",
         pool_in_db.manager.exchange.factory,
     )
 
     # Construct the PoolKey
-    lp_helper._pool_key = UniswapV4PoolKey(
+    lp_helper._pool_key = UniswapV4PoolKey(  # noqa: SLF001
         currency0=cast(
             # address is checksummed prior to DB commit
             "ChecksumAddress",
@@ -455,7 +455,7 @@ def apply_v4_liquidity_updates(
         },
     )
 
-    lp_helper._state = UniswapV4PoolState(
+    lp_helper._state = UniswapV4PoolState(  # noqa: SLF001
         address=cast("ChecksumAddress", pool_in_db.manager.exchange.factory),
         block=0,
         liquidity=MAX_UINT256,
