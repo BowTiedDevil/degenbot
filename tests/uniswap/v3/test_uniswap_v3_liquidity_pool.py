@@ -706,12 +706,9 @@ def test_cached_calculations(
 def test_calculate_tokens_out_from_tokens_in_with_override(
     wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool,
 ) -> None:
-    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_historical_block
-    # Overridden reserve values for this test are taken at block height 17,650,000
-    # Liquidity: 1533143241938066251
-    # SqrtPrice: 31881290961944305252140777263703426
-    # Tick: 258116
+    # Overridden state values for this test are taken at block height 17,650,000
 
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_historical_block
     pool_state_override = UniswapV3PoolState(
         address=lp.address,
         block=None,
@@ -766,12 +763,9 @@ def test_calculate_tokens_in_from_tokens_out(
 def test_calculate_tokens_in_from_tokens_out_with_override(
     wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool,
 ) -> None:
-    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_historical_block
-    # Overridden reserve values for this test are taken at block height 17,650,000
-    # Liquidity: 1533143241938066251
-    # SqrtPrice: 31881290961944305252140777263703426
-    # Tick: 258116
+    # Overridden state values for this test are taken at block height 17,650,000
 
+    lp: UniswapV3Pool = wbtc_weth_v3_lp_at_historical_block
     pool_state_override = UniswapV3PoolState(
         address=lp.address,
         block=None,
@@ -888,10 +882,7 @@ def test_simulations_with_override(
     wbtc_weth_v3_lp: UniswapV3Pool,
     fork_mainnet_archive: AnvilFork,
 ) -> None:
-    # Overridden reserve values for this test are taken at block height 17,650,000
-    # Liquidity: 1533143241938066251
-    # SqrtPrice: 31881290961944305252140777263703426
-    # Tick: 258116
+    # Overridden state values for this test are taken at block height 17,650,000
 
     set_web3(fork_mainnet_archive.w3)
 
