@@ -10,7 +10,7 @@ import eth_typing
 import pydantic
 import tqdm
 from eth_abi.abi import decode as abi_decode
-from eth_typing import ChecksumAddress
+from eth_typing.evm import BlockParams, ChecksumAddress
 from hexbytes import HexBytes
 from pydantic import HttpUrl, WebsocketUrl
 from sqlalchemy import delete, select
@@ -46,7 +46,12 @@ from degenbot.database.models.pools import (
     UniswapV3PoolTable,
     UniswapV4PoolTable,
 )
-from degenbot.functions import encode_function_calldata, fetch_logs_retrying, raw_call
+from degenbot.functions import (
+    encode_function_calldata,
+    fetch_logs_retrying,
+    get_number_for_block_identifier,
+    raw_call,
+)
 from degenbot.types.aliases import ChainId, Tick, Word
 from degenbot.types.concrete import BoundedCache
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -2164,7 +2169,17 @@ def pool_repair(chunk_size: int, pool_address: str, chain_id: int | None) -> Non
     help="The maximum number of blocks to process before committing changes to the database "
     "(default 10,000).",
 )
-def pool_update(chunk_size: int) -> None:
+@click.option(
+    "--to-block",
+    "to_block",
+    metavar="INTEGER | TEXT",
+    default="finalized",
+    help=(
+        "The last block included in the update range. Can be a number or an identifier: "
+        "'earliest', 'finalized' (default), 'safe', 'latest', 'pending'"
+    ),
+)
+def pool_update(chunk_size: int, to_block: BlockParams) -> None:
     """
     Update liquidity pool information for activated exchanges.
     """
@@ -2208,16 +2223,21 @@ def pool_update(chunk_size: int) -> None:
             ]
         )
 
-        # Stop at a safe block to mitigate risk of re-org corruption
-        safe_end_block = w3.eth.get_block(block_identifier="safe")["number"]
+        last_block = w3.eth.get_block(
+            block_identifier=(
+                get_number_for_block_identifier(identifier=int(to_block), w3=w3)
+                if to_block.isdigit()
+                else get_number_for_block_identifier(identifier=to_block, w3=w3)
+            )
+        )["number"]
 
-        if initial_start_block >= safe_end_block:
+        if initial_start_block >= last_block:
             click.echo(f"Chain {chain_id} has not advanced since the last update.")
             continue
 
         block_pbar = tqdm.tqdm(
             desc="Processing new blocks",
-            total=safe_end_block - initial_start_block + 1,
+            total=last_block - initial_start_block + 1,
             bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
             leave=False,
         )
@@ -2233,7 +2253,7 @@ def pool_update(chunk_size: int) -> None:
             # - the end of the working chunk size
             # - all update blocks for active exchanges
             working_end_block = min(
-                [safe_end_block]
+                [last_block]
                 + [working_start_block + chunk_size - 1]
                 + [
                     exchange.last_update_block
@@ -2320,7 +2340,7 @@ def pool_update(chunk_size: int) -> None:
             exchanges_to_update.clear()
             db_session.commit()
 
-            if working_end_block == safe_end_block:
+            if working_end_block == last_block:
                 break
             working_start_block = working_end_block + 1
 
