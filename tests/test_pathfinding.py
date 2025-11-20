@@ -1,82 +1,193 @@
-from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
-from degenbot.database.models.pools import UniswapV2PoolTable, UniswapV3PoolTable
-from degenbot.pathfinding import find_paths
+from eth_typing import ChainId
 
-BASE_CHAIN_ID = 8453
+from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
+from degenbot.database.models.pools import (
+    AerodromeV2PoolTable,
+    LiquidityPoolTable,
+    PancakeswapV2PoolTable,
+    SushiswapV2PoolTable,
+    SwapbasedV2PoolTable,
+    UniswapV2PoolTable,
+    UniswapV3PoolTable,
+    UniswapV4PoolTable,
+)
+from degenbot.pathfinding import PathStep, find_paths
+
+BASE_CHAIN_ID = ChainId.BASE
 WETH_BASE_ADDRESS = WRAPPED_NATIVE_TOKENS[BASE_CHAIN_ID]
 
 
-def test_two_pool_pathfinding_cycling_weth():
-    paths = tuple(
+def path_step_identifiers(path: list[PathStep]) -> tuple[str, ...]:
+    return [(step.hash or step.address) for step in path]
+
+
+def test_generic_algo_multiple_tokens():
+    depth = 2
+
+    # UniswapV4 pools hold both native and WETH pairs, so paths to and from both can be found using
+    # it only
+    pool_types: list[type] = [UniswapV4PoolTable]
+
+    generic_paths_weth_to_weth = list(
         find_paths(
             chain_id=BASE_CHAIN_ID,
-            start_token=WETH_BASE_ADDRESS,
-            end_token=WETH_BASE_ADDRESS,
-            max_depth=2,
+            start_tokens=[WETH_BASE_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS],
+            max_depth=depth,
+            pool_types=pool_types,
         )
     )
-    assert paths
-    print(f"Found {len(paths)} paths (WETH)")
-
-
-def test_two_pool_pathfinding_cycling_weth_with_limited_types():
-    paths = tuple(
+    assert generic_paths_weth_to_weth
+    generic_paths_weth_to_native = list(
         find_paths(
             chain_id=BASE_CHAIN_ID,
-            start_token=WETH_BASE_ADDRESS,
-            end_token=WETH_BASE_ADDRESS,
-            pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
-            max_depth=2,
+            start_tokens=[WETH_BASE_ADDRESS],
+            end_tokens=[ZERO_ADDRESS],
+            max_depth=depth,
+            pool_types=pool_types,
         )
     )
-    assert paths
-    print(f"Found {len(paths)} paths (WETH, Uniswap V2 pools only)")
-
-
-def test_two_pool_pathfinding_cycling_native():
-    paths = tuple(
+    assert generic_paths_weth_to_native
+    generic_paths_weth_to_weth_or_native = list(
         find_paths(
             chain_id=BASE_CHAIN_ID,
-            start_token=ZERO_ADDRESS,
-            end_token=ZERO_ADDRESS,
-            max_depth=2,
+            start_tokens=[WETH_BASE_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
+            max_depth=depth,
+            pool_types=pool_types,
         )
     )
-    assert paths
-    print(f"Found {len(paths)} paths (Native Ether)")
+    assert generic_paths_weth_to_weth_or_native
 
+    assert len(generic_paths_weth_to_weth_or_native) == len(generic_paths_weth_to_weth) + len(
+        generic_paths_weth_to_native
+    )
+    assert sorted(
+        generic_paths_weth_to_weth_or_native,
+        key=path_step_identifiers,
+    ) == sorted(
+        generic_paths_weth_to_weth + generic_paths_weth_to_native,
+        key=path_step_identifiers,
+    )
 
-def test_two_pool_pathfinding_cycling_weth_native_equivalent():
-    paths = tuple(
+    generic_paths_native_to_weth = list(
         find_paths(
             chain_id=BASE_CHAIN_ID,
-            start_token=WETH_BASE_ADDRESS,
-            end_token=ZERO_ADDRESS,
-            max_depth=2,
-            equivalent_tokens=[
-                (
-                    WETH_BASE_ADDRESS,
-                    ZERO_ADDRESS,
-                )
+            start_tokens=[ZERO_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS],
+            max_depth=depth,
+            pool_types=pool_types,
+        )
+    )
+    assert generic_paths_native_to_weth
+    generic_paths_native_to_native = list(
+        find_paths(
+            chain_id=BASE_CHAIN_ID,
+            start_tokens=[ZERO_ADDRESS],
+            end_tokens=[ZERO_ADDRESS],
+            max_depth=depth,
+            pool_types=pool_types,
+        )
+    )
+    assert generic_paths_native_to_native
+    generic_paths_native_to_weth_or_native = list(
+        find_paths(
+            chain_id=BASE_CHAIN_ID,
+            start_tokens=[ZERO_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
+            max_depth=depth,
+            pool_types=pool_types,
+        )
+    )
+    assert generic_paths_native_to_weth_or_native
+
+    assert len(generic_paths_native_to_weth_or_native) == len(generic_paths_native_to_weth) + len(
+        generic_paths_native_to_native
+    )
+    assert sorted(
+        generic_paths_native_to_weth_or_native,
+        key=path_step_identifiers,
+    ) == sorted(
+        generic_paths_native_to_weth + generic_paths_native_to_native, key=path_step_identifiers
+    )
+
+    generic_paths_weth_or_native_to_weth_or_native = list(
+        find_paths(
+            chain_id=BASE_CHAIN_ID,
+            start_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
+            max_depth=depth,
+            pool_types=pool_types,
+        )
+    )
+    assert generic_paths_weth_or_native_to_weth_or_native
+
+    assert len(generic_paths_weth_or_native_to_weth_or_native) == len(
+        generic_paths_weth_to_weth_or_native
+    ) + len(generic_paths_native_to_weth_or_native)
+    assert sorted(
+        generic_paths_weth_or_native_to_weth_or_native,
+        key=path_step_identifiers,
+    ) == sorted(
+        generic_paths_weth_to_weth_or_native + generic_paths_native_to_weth_or_native,
+        key=path_step_identifiers,
+    )
+
+
+def test_three_pool_pathfinding_cycling_weth_generic_with_limited_types():
+    depth = 3
+
+    pools_found = 0
+    for i, _ in enumerate(
+        find_paths(
+            chain_id=BASE_CHAIN_ID,
+            start_tokens=[WETH_BASE_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS],
+            pool_types=[
+                # AerodromeV2PoolTable,
+                # SwapbasedV2PoolTable,
+                # SushiswapV2PoolTable,
+                UniswapV3PoolTable,
+                # UniswapV4PoolTable,
             ],
-        )
-    )
-    assert paths
-    print(f"Found {len(paths)} paths (WETH -> Ether) with equivalents")
+            min_depth=depth,
+            max_depth=depth,
+        ),
+        start=1,
+    ):
+        pools_found = i
+        if pools_found % 10_000 == 0:
+            print(f"Marker: {pools_found}")
 
-    paths = tuple(
+    print(f"Found {pools_found} {depth}-pool paths (WETH-X -> X-Y -> WETH-Y)")
+
+
+def test_three_pool_pathfinding_cycling_weth():
+    paths = list(
         find_paths(
             chain_id=BASE_CHAIN_ID,
-            start_token=ZERO_ADDRESS,
-            end_token=WETH_BASE_ADDRESS,
-            max_depth=2,
-            equivalent_tokens=[
-                (
-                    WETH_BASE_ADDRESS,
-                    ZERO_ADDRESS,
-                )
-            ],
+            start_tokens=[WETH_BASE_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS],
+            max_depth=3,
         )
     )
     assert paths
-    print(f"Found {len(paths)} paths (Ether -> WETH) with equivalents")
+    print(f"Found {len(paths)} 3-pool paths (WETH-X -> X-Y -> WETH-Y)")
+
+
+def test_four_pool_pathfinding_cycling_weth_with_limited_types():
+    paths = list(
+        find_paths(
+            chain_id=BASE_CHAIN_ID,
+            start_tokens=[WETH_BASE_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS],
+            pool_types=[
+                SwapbasedV2PoolTable,
+                # SushiswapV2PoolTable,
+                # UniswapV4PoolTable,
+            ],
+            max_depth=4,
+        )
+    )
+    assert paths
+    print(f"Found {len(paths)} 4-pool paths (WETH)")
