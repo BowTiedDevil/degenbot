@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
 import eth_account.messages
+import requests
 import tqdm
 from eth_typing import ChecksumAddress
 from eth_utils.conversions import to_hex
@@ -233,7 +234,7 @@ def fetch_logs_retrying(
                                 )
                             )
                         )
-                    except (Timeout, Web3Exception):
+                    except (Timeout, Web3Exception, requests.exceptions.ConnectionError):
                         working_span = _reduce_working_span(
                             working_span=working_span,
                             percent=25,
