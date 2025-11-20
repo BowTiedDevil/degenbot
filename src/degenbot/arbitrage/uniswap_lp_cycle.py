@@ -1,5 +1,6 @@
 import asyncio
 import math
+import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from weakref import WeakSet
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress, HexStr
+from hexbytes import HexBytes
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
@@ -74,7 +76,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         self,
         input_token: Erc20Token,
         swap_pools: Iterable[Pool],
-        id: str,  # noqa:A002
+        id: str | None,  # noqa:A002
         max_input: int | None = None,
     ) -> None:
         for swap_pool in swap_pools:
@@ -86,7 +88,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         if len(set(self.swap_pools)) != len(self.swap_pools):
             raise DegenbotValueError(message="Swap pools must not contain duplicates.")
 
-        self.id = id
+        self.id = HexBytes(uuid.uuid4().bytes).to_0x_hex() if id is None else id
         self.input_token = input_token
 
         if max_input is None:
