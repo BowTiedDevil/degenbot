@@ -299,8 +299,10 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 msg = "Token addresses must be provided for a pool not in the database."
                 raise DegenbotValueError(msg)
 
-            currency0_address, currency1_address = sorted([token.lower() for token in tokens])
-            assert currency0_address < currency1_address
+            currency0_address, currency1_address = sorted(
+                [get_checksum_address(token) for token in tokens],
+                key=lambda token: token.lower(),
+            )
             assert currency0_address != currency1_address
             self.hook_address = (
                 get_checksum_address(hook_address) if hook_address is not None else ZERO_ADDRESS
