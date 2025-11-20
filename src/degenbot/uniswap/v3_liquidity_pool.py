@@ -257,6 +257,10 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
         pool_from_db = get_pool_from_database(address=self.address, chain_id=self.chain_id)
 
+        token0_address: ChecksumAddress | str
+        token1_address: ChecksumAddress | str
+        factory_address: ChecksumAddress | str
+
         if pool_from_db is not None:
             token0_address = pool_from_db.token0.address
             token1_address = pool_from_db.token1.address
