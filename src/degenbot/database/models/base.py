@@ -1,5 +1,6 @@
 from typing import Annotated, ClassVar
 
+from eth_typing import ChecksumAddress
 from sqlalchemy import Dialect, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
@@ -40,7 +41,7 @@ class IntMappedToString(TypeDecorator[int]):
         return None if value is None else int(value)
 
 
-Address = Annotated[str, mapped_column(String(42))]
+Address = Annotated[ChecksumAddress, mapped_column(String(42))]
 BigInteger = Annotated[int, IntMappedToString]
 
 
