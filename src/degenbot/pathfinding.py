@@ -233,11 +233,12 @@ def find_paths(
             f"Built graph at +{time.perf_counter() - start:.1f}s: {graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools"
         )
 
-        while any(token for token, degree in graph.degree() if degree < 2):
-            # Prune dead ends
-            graph.remove_nodes_from(tuple(token for token, degree in graph.degree() if degree < 2))
+        # Prune dead end tokens
+        while tokens_to_prune := tuple(token for token, degree in graph.degree() if degree <= 1):
+            graph.remove_nodes_from(tokens_to_prune)
         logger.debug(
-            f"Pruned graph at +{time.perf_counter() - start:.1f}s: {graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools"
+            f"Pruned graph at +{time.perf_counter() - start:.1f}s: "
+            f"{graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools"
         )
 
     # Prepare an exhaustive traversal plan based on the Cartesian product of all start and end
