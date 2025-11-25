@@ -76,7 +76,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         self,
         input_token: Erc20Token,
         swap_pools: Iterable[Pool],
-        id: str | None,  # noqa:A002
+        id: str | None = None,  # noqa:A002
         max_input: int | None = None,
     ) -> None:
         for swap_pool in swap_pools:
