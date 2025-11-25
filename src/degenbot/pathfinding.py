@@ -1,3 +1,4 @@
+import enum
 import itertools
 import time
 from collections.abc import Iterable, Iterator, Sequence
@@ -23,6 +24,11 @@ class PathStep:
     address: ChecksumAddress
     type: type[LiquidityPoolTable | UniswapV4PoolTable]
     hash: str | None = None
+
+
+class Direction(enum.Enum):
+    FORWARD = enum.auto()
+    FORWARD_AND_REVERSE = enum.auto()
 
 
 def find_paths(
@@ -60,6 +66,8 @@ def find_paths(
         start_token_id: TokenId,
         end_token_id: TokenId,
         working_path: list[tuple[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]]],
+        *,
+        include_reverse: bool,
     ) -> Iterator[Sequence[PathStep]]:
         """
         Perform an iterative depth-first search from the start token to the end token. When a valid
@@ -105,6 +113,8 @@ def find_paths(
             if max_depth:
                 assert len(_path) <= max_depth
             yield _path
+            if include_reverse:
+                yield _path[::-1]
 
         # Stop recursion if the working path has reached the maximum depth
         if len(working_path) == max_depth:
@@ -123,6 +133,7 @@ def find_paths(
                         start_token_id=neighbor_token_id,
                         end_token_id=end_token_id,
                         working_path=working_path,
+                        include_reverse=include_reverse,
                     )
 
                     # Backtrack
@@ -229,10 +240,29 @@ def find_paths(
             f"Pruned graph at +{time.perf_counter() - start:.1f}s: {graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools"
         )
 
-    for start_token, end_token in itertools.product(start_tokens, end_tokens):
+    # Prepare an exhaustive traversal plan based on the Cartesian product of all start and end
+    # nodes: e.g. P(a|b -> a|b) == P(a->a) + P(a->b) + P(b->a) + P(b->b)
+    traversal_plan: dict[
+        tuple[ChecksumAddress, ChecksumAddress],
+        Direction,
+    ] = {
+        (get_checksum_address(start_token), get_checksum_address(end_token)): Direction.FORWARD
+        for start_token, end_token in itertools.product(start_tokens, end_tokens)
+    }
+
+    tokens_used_for_start_and_end = set(start_tokens) & set(end_tokens)
+    if len(tokens_used_for_start_and_end) > 1:
+        logger.debug("Optimizing traversal plan.")
+        # One traversal can be eliminated for every combination from tokens in the starting and
+        # ending sets. The plan is reduced by consolidating: P(a->b) + P(b->a) == P(a<->b)
+        for start_token, end_token in itertools.combinations(tokens_used_for_start_and_end, 2):
+            traversal_plan[(start_token, end_token)] = Direction.FORWARD_AND_REVERSE
+            del traversal_plan[(end_token, start_token)]
+
+    for (start_token, end_token), direction in traversal_plan.items():
         start_token_id = db_session.scalar(
             sqlalchemy.select(Erc20TokenTable.id).where(
-                Erc20TokenTable.address == get_checksum_address(start_token),
+                Erc20TokenTable.address == start_token,
                 Erc20TokenTable.chain == chain_id,
             )
         )
@@ -242,7 +272,7 @@ def find_paths(
 
         end_token_id = db_session.scalar(
             sqlalchemy.select(Erc20TokenTable.id).where(
-                Erc20TokenTable.address == get_checksum_address(end_token),
+                Erc20TokenTable.address == end_token,
                 Erc20TokenTable.chain == chain_id,
             )
         )
@@ -262,6 +292,7 @@ def find_paths(
             start_token_id=start_token_id,
             end_token_id=end_token_id,
             working_path=working_path,
+            include_reverse=direction == direction.FORWARD_AND_REVERSE,
         )
 
         logger.debug(
