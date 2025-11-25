@@ -2,12 +2,7 @@ from eth_typing import ChainId
 
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
 from degenbot.database.models.pools import (
-    AerodromeV2PoolTable,
-    LiquidityPoolTable,
-    PancakeswapV2PoolTable,
-    SushiswapV2PoolTable,
     SwapbasedV2PoolTable,
-    UniswapV2PoolTable,
     UniswapV3PoolTable,
     UniswapV4PoolTable,
 )
@@ -143,13 +138,7 @@ def test_three_pool_pathfinding_cycling_weth_generic_with_limited_types():
             chain_id=BASE_CHAIN_ID,
             start_tokens=[WETH_BASE_ADDRESS],
             end_tokens=[WETH_BASE_ADDRESS],
-            pool_types=[
-                # AerodromeV2PoolTable,
-                # SwapbasedV2PoolTable,
-                # SushiswapV2PoolTable,
-                UniswapV3PoolTable,
-                # UniswapV4PoolTable,
-            ],
+            pool_types=[UniswapV3PoolTable],
             min_depth=depth,
             max_depth=depth,
         ),
