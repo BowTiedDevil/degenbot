@@ -3,7 +3,7 @@ import itertools
 from collections import defaultdict, deque
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import click
 import eth_typing
