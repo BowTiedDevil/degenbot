@@ -4,6 +4,8 @@ from typing import Any
 
 import dotenv
 import pytest
+from _pytest.config import Config, Parser
+from _pytest.nodes import Item
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.connection import connection_manager
@@ -39,6 +41,43 @@ ETHEREUM_ARCHIVE_NODE_WS_URI = (
 )
 ETHEREUM_FULL_NODE_HTTP_URI = env_values["ETHEREUM_FULL_NODE_HTTP_URI"] or "http://localhost:8545/"
 ETHEREUM_FULL_NODE_WS_URI = env_values["ETHEREUM_FULL_NODE_WS_URI"] or "ws://localhost:8546/"
+
+
+def pytest_addoption(parser: Parser):
+    parser.addoption(
+        "--skip-fixture",
+        action="store",
+        default="",
+        help="Comma-separated list of fixture names to skip",
+    )
+
+
+def pytest_collection_modifyitems(config: Config, items: list[Item]):
+    """
+    Modify the
+    """
+    skip_fixtures: str = config.getoption("--skip-fixture")
+    if not skip_fixtures:
+        return  # nothing to skip
+
+    # Convert comma-separated string into a set of fixture names
+    ignore_fixtures = {name.strip() for name in skip_fixtures.split(",") if name.strip()}
+
+    if not ignore_fixtures:
+        return
+
+    remaining_items = []
+    deselected_items = []
+
+    for item in items:
+        if any(fix in ignore_fixtures for fix in item.fixturenames):
+            deselected_items.append(item)
+        else:
+            remaining_items.append(item)
+
+    if deselected_items:
+        items[:] = remaining_items
+        config.hook.pytest_deselected(items=deselected_items)
 
 
 @pytest.fixture(autouse=True)
