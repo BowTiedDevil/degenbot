@@ -3,18 +3,19 @@ from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
 import eth_account.messages
-import requests
 import tqdm
 from eth_typing import ChecksumAddress
 from eth_utils.conversions import to_hex
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
+from requests.exceptions import RequestException
 from tenacity import (
     AsyncRetrying,
     RetryError,
     Retrying,
     retry_if_exception_type,
     stop_after_attempt,
+    wait_exponential_jitter,
 )
 from web3 import AsyncBaseProvider, AsyncWeb3, Web3
 from web3._utils.threads import Timeout
@@ -206,8 +207,9 @@ def fetch_logs_retrying(
 
     retrier = Retrying(
         stop=stop_after_attempt(max_retries),
+        wait=wait_exponential_jitter(),
         retry=retry_if_exception_type(
-            (Timeout, Web3Exception),
+            (Timeout, Web3Exception, RequestException),
         ),
     )
 
@@ -234,7 +236,7 @@ def fetch_logs_retrying(
                                 )
                             )
                         )
-                    except (Timeout, Web3Exception, requests.exceptions.ConnectionError):
+                    except Exception:
                         working_span = _reduce_working_span(
                             working_span=working_span,
                             percent=25,
