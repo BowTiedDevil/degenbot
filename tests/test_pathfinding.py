@@ -132,7 +132,7 @@ def test_generic_algo_multiple_tokens():
 def test_three_pool_pathfinding_cycling_weth_generic_with_limited_types():
     depth = 3
 
-    pools_found = 0
+    paths_found = 0
     for i, _ in enumerate(
         find_paths(
             chain_id=BASE_CHAIN_ID,
@@ -144,11 +144,12 @@ def test_three_pool_pathfinding_cycling_weth_generic_with_limited_types():
         ),
         start=1,
     ):
-        pools_found = i
-        if pools_found % 10_000 == 0:
-            print(f"Marker: {pools_found}")
+        paths_found = i
+        if paths_found % 10_000 == 0:
+            print(f"Marker: {paths_found} paths found")
 
-    print(f"Found {pools_found} {depth}-pool paths (WETH-X -> X-Y -> WETH-Y)")
+    print(f"Found {paths_found} {depth}-pool paths (WETH-X -> X-Y -> WETH-Y)")
+
 
 
 def test_three_pool_pathfinding_cycling_weth():
