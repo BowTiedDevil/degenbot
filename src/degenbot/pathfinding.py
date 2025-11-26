@@ -228,9 +228,9 @@ def find_paths(
                 if (currency0_id in candidate_tokens and currency1_id in candidate_tokens)
             )
         logger.debug(f"Added edges for pool type {pool_type.__name__}")
-
         logger.debug(
-            f"Built graph at +{time.perf_counter() - start:.1f}s: {graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools"
+            f"Built graph at +{time.perf_counter() - start:.1f}s: "
+            f"{graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools"
         )
 
         # Prune dead end tokens
@@ -284,7 +284,8 @@ def find_paths(
         working_path: list[tuple[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]]] = []
 
         logger.debug(
-            f"Finding paths from {start_token} (id {start_token_id})  -> {end_token} (id {end_token_id})"
+            f"Finding paths from {start_token} "
+            f"(id {start_token_id}) -> {end_token} (id {end_token_id})"
         )
 
         logger.debug(f"Performing generic {max_depth}-pool path search")
@@ -297,5 +298,6 @@ def find_paths(
         )
 
         logger.debug(
-            f"Completed structured generic search (max depth {max_depth}) at +{time.perf_counter() - start:.1f}s"
+            f"Completed structured generic search (max depth {max_depth}) "
+            f"at +{time.perf_counter() - start:.1f}s"
         )

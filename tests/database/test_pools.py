@@ -53,7 +53,8 @@ def test_filter_by_token_id():
     )
 
     print(
-        f"Found {num_pools} WETH pairs (base table select with token_id filter) in {time.perf_counter() - start:.2f}s"
+        f"Found {num_pools} WETH pairs (base table select with token_id filter) in "
+        f"{time.perf_counter() - start:.2f}s"
     )
 
 
@@ -79,7 +80,8 @@ def test_filter_by_token_relationship():
     )
 
     print(
-        f"Found {num_pools} WETH pairs (base table select with token relationhip .has() filter) in {time.perf_counter() - start:.2f}s"
+        f"Found {num_pools} WETH pairs (base table select with token relationhip .has() filter) "
+        f"in {time.perf_counter() - start:.2f}s"
     )
 
 
@@ -118,7 +120,8 @@ def test_find_unique_tokens_paired_with_weth():
     ).all()
 
     print(
-        f"Found {len(paired_tokens)} tokens with at least {min_pairs} WETH pairs in {time.perf_counter() - start:.2f}s"
+        f"Found {len(paired_tokens)} tokens with at least {min_pairs} WETH pairs in "
+        f"{time.perf_counter() - start:.2f}s"
     )
 
 
