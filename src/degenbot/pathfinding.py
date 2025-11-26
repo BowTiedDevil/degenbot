@@ -33,8 +33,8 @@ class Direction(enum.Enum):
 
 def find_paths(
     chain_id: int,
-    start_tokens: Iterable[str],
-    end_tokens: Iterable[str],
+    start_tokens: Iterable[ChecksumAddress | str],
+    end_tokens: Iterable[ChecksumAddress | str],
     min_depth: int = 2,
     max_depth: int | None = None,
     pool_types: Sequence[type] = [LiquidityPoolTable, UniswapV4PoolTable],
@@ -241,17 +241,20 @@ def find_paths(
             f"{graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools"
         )
 
+    start_tokens_checksummed = {get_checksum_address(token) for token in start_tokens}
+    end_tokens_checksummed = {get_checksum_address(token) for token in end_tokens}
+
     # Prepare an exhaustive traversal plan based on the Cartesian product of all start and end
     # nodes: e.g. P(a|b -> a|b) == P(a->a) + P(a->b) + P(b->a) + P(b->b)
     traversal_plan: dict[
         tuple[ChecksumAddress, ChecksumAddress],
         Direction,
-    ] = {
-        (get_checksum_address(start_token), get_checksum_address(end_token)): Direction.FORWARD
-        for start_token, end_token in itertools.product(start_tokens, end_tokens)
-    }
+    ] = dict.fromkeys(
+        itertools.product(start_tokens_checksummed, end_tokens_checksummed),
+        Direction.FORWARD,
+    )
 
-    tokens_used_for_start_and_end = set(start_tokens) & set(end_tokens)
+    tokens_used_for_start_and_end = start_tokens_checksummed & end_tokens_checksummed
     if len(tokens_used_for_start_and_end) > 1:
         logger.debug("Optimizing traversal plan.")
         # One traversal can be eliminated for every combination from tokens in the starting and
