@@ -151,6 +151,25 @@ def test_three_pool_pathfinding_cycling_weth_generic_with_limited_types():
     print(f"Found {paths_found} {depth}-pool paths (WETH-X -> X-Y -> WETH-Y)")
 
 
+def test_three_pool_pathfinding_cycling_weth_native_with_limited_types():
+    depth = 3
+
+    paths_found = 0
+    for i, _ in enumerate(
+        find_paths(
+            chain_id=BASE_CHAIN_ID,
+            start_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
+            pool_types=[UniswapV4PoolTable],
+            min_depth=depth,
+            max_depth=depth,
+        ),
+        start=1,
+    ):
+        paths_found = i
+        if paths_found % 10_000 == 0:
+            print(f"Marker: {paths_found} paths found")
+
 
 def test_three_pool_pathfinding_cycling_weth():
     paths = list(
