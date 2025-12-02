@@ -463,7 +463,7 @@ def raw_call(
     block_identifier: BlockIdentifier | None = None,
 ) -> tuple[Any, ...]:
     """
-    Perform an eth_call at the given address and returns the decoded response.
+    Perform an eth_call at the given address and return the decoded response.
     """
 
     return eth_abi.abi.decode(
