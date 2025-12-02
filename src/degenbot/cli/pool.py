@@ -2209,7 +2209,7 @@ def pool_update(chunk_size: int, to_block: BlockParams) -> None:
 
         last_block = w3.eth.get_block(
             block_identifier=(
-                get_number_for_block_identifier(identifier=int(to_block), w3=w3)
+                int(to_block)
                 if to_block.isdigit()
                 else get_number_for_block_identifier(identifier=to_block, w3=w3)
             )

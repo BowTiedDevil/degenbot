@@ -34,7 +34,7 @@ from degenbot.exceptions.liquidity_pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
+from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
@@ -681,7 +681,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
                 function_arguments=None,
             ),
             return_types=["uint256", "uint256"],
-            block_identifier=get_number_for_block_identifier(block_identifier, w3),
+            block_identifier=block_identifier,
         )
         return reserves_token0, reserves_token1
 

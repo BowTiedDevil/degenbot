@@ -33,7 +33,7 @@ from degenbot.exceptions.liquidity_pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
+from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.registry import pool_registry
 from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
@@ -536,7 +536,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         reserves_token0, reserves_token1 = raw_call(
             w3=w3,
             address=self.address,
-            block_identifier=get_number_for_block_identifier(block_identifier, w3),
+            block_identifier=block_identifier,
             calldata=encode_function_calldata(
                 function_prototype="getReserves()",
                 function_arguments=None,

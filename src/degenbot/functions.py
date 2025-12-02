@@ -473,6 +473,6 @@ def raw_call(
                 to=address,
                 data=calldata,
             ),
-            block_identifier=get_number_for_block_identifier(block_identifier, w3),
+            block_identifier=block_identifier,
         ),
     )
