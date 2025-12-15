@@ -170,3 +170,6 @@ cython_debug/
 
 # uv
 uv.lock
+
+# Roo
+.roo
