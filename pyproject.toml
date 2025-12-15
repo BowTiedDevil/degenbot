@@ -184,8 +184,6 @@ allow-star-arg-any = true
 addopts = [
     "--numprocesses", "4",
     "--dist", "worksteal",
-    "--reruns", "5",
-    "--rerun-except", "AssertionError",
     "--import-mode", "importlib",
     "--cov", "src/degenbot",
     "--cov-branch",
@@ -208,7 +206,6 @@ dev = [
     "pytest-benchmark",
     "pytest-cov",
     "pytest-random-order",
-    "pytest-rerunfailures",
     "pytest-sugar",
     "pytest-xdist",
     "python-dotenv",
