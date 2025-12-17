@@ -238,6 +238,8 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                         swap_amounts.append(
                             UniswapV3PoolSwapAmounts(
                                 pool=pool.address,
+                                amount_in=_token_in_quantity,
+                                amount_out=_token_out_quantity,
                                 amount_specified=_token_in_quantity,
                                 zero_for_one=swap_vector.zero_for_one,
                                 sqrt_price_limit_x96=MIN_SQRT_RATIO + 1

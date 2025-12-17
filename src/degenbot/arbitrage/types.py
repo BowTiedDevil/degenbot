@@ -13,7 +13,7 @@ class AbstractSwapAmounts: ...
 @dataclasses.dataclass(slots=True, frozen=True)
 class ArbitrageCalculationResult[SwapAmountType]:
     """
-    The result of an arbitrage calculation.
+    The result of an arbitrage calculation containing profit details and swap amounts.
 
     This class is generic over the swap amount type. Calculations that build an
     instance should specify this type in the return annotation, e.g.:
@@ -71,6 +71,8 @@ class UniswapV2PoolSwapAmounts(AbstractSwapAmounts):
 @dataclasses.dataclass(slots=True)
 class UniswapV3PoolSwapAmounts(AbstractSwapAmounts):
     pool: ChecksumAddress
+    amount_in: int
+    amount_out: int
     amount_specified: int
     zero_for_one: bool
     sqrt_price_limit_x96: int
@@ -84,6 +86,8 @@ class UniswapV3PoolSwapAmounts(AbstractSwapAmounts):
 class UniswapV4PoolSwapAmounts(AbstractSwapAmounts):
     address: ChecksumAddress
     id: HexBytes
+    amount_in: int
+    amount_out: int
     amount_specified: int
     zero_for_one: bool
     sqrt_price_limit_x96: int

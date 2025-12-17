@@ -813,6 +813,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool_lo.address,
                     id=v4_pool_lo.pool_id,
+                    amount_in=weth_in,
+                    amount_out=forward_token_amount,
                     amount_specified=forward_token_amount,
                     zero_for_one=pool_lo_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -822,6 +824,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool_hi.address,
                     id=v4_pool_hi.pool_id,
+                    amount_in=forward_token_amount,
+                    amount_out=weth_out,
                     amount_specified=-forward_token_amount,
                     zero_for_one=pool_hi_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -867,7 +871,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             v3_pool_state_override: UniswapV3PoolState | None = None,
         ) -> ArbitrageCalculationResult[UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts]:
             # OPPORTUNITY:
-            # - V3 ROE < V3 ROE
+            # - V3 ROE < V4 ROE
             # STRATEGY:
             # - swap WETH_in -> X at V3 (exact output)
             # - transfer X from V3 -> V4
@@ -979,6 +983,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             amounts = (
                 UniswapV3PoolSwapAmounts(
                     pool=v3_pool.address,
+                    amount_in=weth_in,
+                    amount_out=forward_token_amount,
                     amount_specified=-forward_token_amount,  # exact output
                     zero_for_one=v3_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -988,6 +994,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool.address,
                     id=v4_pool.pool_id,
+                    amount_in=forward_token_amount,
+                    amount_out=weth_out,
                     amount_specified=-forward_token_amount,  # exact input swap
                     zero_for_one=v4_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -1147,6 +1155,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool.address,
                     id=v4_pool.pool_id,
+                    amount_in=weth_in,
+                    amount_out=forward_token_amount,
                     amount_specified=forward_token_amount,  # exact output swap
                     zero_for_one=v4_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -1308,6 +1318,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool.address,
                     id=v4_pool.pool_id,
+                    amount_in=weth_in,
+                    amount_out=forward_token_amount,
                     amount_specified=forward_token_amount,  # exact output swap
                     zero_for_one=v4_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -1316,6 +1328,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 ),
                 UniswapV3PoolSwapAmounts(
                     pool=v3_pool.address,
+                    amount_in=forward_token_amount,
+                    amount_out=weth_out,
                     amount_specified=forward_token_amount,  # exact input
                     zero_for_one=v3_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -1445,6 +1459,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             amounts = (
                 UniswapV3PoolSwapAmounts(
                     pool=v3_pool_lo.address,
+                    amount_in=weth_in,
+                    amount_out=forward_token_amount,
                     amount_specified=-forward_token_amount,
                     zero_for_one=pool_lo_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -1453,6 +1469,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 ),
                 UniswapV3PoolSwapAmounts(
                     pool=v3_pool_hi.address,
+                    amount_in=forward_token_amount,
+                    amount_out=weth_out,
                     amount_specified=forward_token_amount,  # input forward token
                     zero_for_one=pool_hi_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -1612,6 +1630,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 ),
                 UniswapV3PoolSwapAmounts(
                     pool=v3_pool.address,
+                    amount_in=forward_token_amount,
+                    amount_out=weth_out,
                     amount_specified=forward_token_amount,
                     zero_for_one=v3_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -1779,6 +1799,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool.address,
                     id=v4_pool.pool_id,
+                    amount_in=forward_token_amount,
+                    amount_out=weth_out,
                     amount_specified=-forward_token_amount,  # exact input swap
                     zero_for_one=v4_pool_zero_for_one,
                     sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -1921,6 +1943,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 (
                     UniswapV3PoolSwapAmounts(
                         pool=v3_pool.address,
+                        amount_in=weth_in,
+                        amount_out=forward_token_amount,
                         amount_specified=-forward_token_amount,
                         zero_for_one=pool_hi_zero_for_one,
                         sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
@@ -2690,14 +2714,14 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 err_msg = f"Cannot identify pools {self.swap_pools}"
                 raise TypeError(err_msg)
 
-    def generate_payloads(  # type: ignore[override]
+    def generate_payloads(
         self,
         from_address: ChecksumAddress | str,
         forward_token_amount: int,
         pool_swap_amounts: Sequence[
             UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
         ],
-    ) -> list[tuple[ChecksumAddress, bytes, bool]]:
+    ) -> Sequence[Any]:
         logger.debug(f"Generating payloads for {forward_token_amount} forward token amount")
         from_address = get_checksum_address(from_address)
 
@@ -2808,19 +2832,22 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 amount_out: uint256
             """
 
-            return V4Payload(
-                currency0=v4_pool.token0.address,
-                currency1=v4_pool.token1.address,
-                fee=v4_pool.fee,
-                tick_spacing=v4_pool.tick_spacing,
-                hooks=v4_pool.hook_address,
-                amount_specified=v4_swap_amounts.amount_specified,
-                zero_for_one=v4_swap_amounts.zero_for_one,
-            ), V2Payload(
-                pool_address=v2_pool.address,
-                zero_for_one=v2_swap_amounts.amounts_out[0] == 0,
-                amount_in=max(v2_swap_amounts.amounts_in),
-                amount_out=max(v2_swap_amounts.amounts_out),
+            return (
+                V4Payload(
+                    currency0=v4_pool.token0.address,
+                    currency1=v4_pool.token1.address,
+                    fee=v4_pool.fee,
+                    tick_spacing=v4_pool.tick_spacing,
+                    hooks=v4_pool.hook_address,
+                    amount_specified=v4_swap_amounts.amount_specified,
+                    zero_for_one=v4_swap_amounts.zero_for_one,
+                ),
+                V2Payload(
+                    pool_address=v2_pool.address,
+                    zero_for_one=v2_swap_amounts.amounts_out[0] == 0,
+                    amount_in=max(v2_swap_amounts.amounts_in),
+                    amount_out=max(v2_swap_amounts.amounts_out),
+                ),
             )
 
         def _generate_v4_v3_payloads() -> tuple[V4Payload, V3Payload]:
@@ -2862,28 +2889,33 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 zero_for_one: bool
             """
 
-            return V4Payload(
-                currency0=v4_pool.token0.address,
-                currency1=v4_pool.token1.address,
-                fee=v4_pool.fee,
-                tick_spacing=v4_pool.tick_spacing,
-                hooks=v4_pool.hook_address,
-                amount_specified=v4_swap_amounts.amount_specified,
-                zero_for_one=v4_swap_amounts.zero_for_one,
-            ), V3Payload(
-                pool_address=v3_pool.address,
-                zero_for_one=v3_swap_amounts.zero_for_one,
-                amount_specified=v3_swap_amounts.amount_specified,
+            return (
+                V4Payload(
+                    currency0=v4_pool.token0.address,
+                    currency1=v4_pool.token1.address,
+                    fee=v4_pool.fee,
+                    tick_spacing=v4_pool.tick_spacing,
+                    hooks=v4_pool.hook_address,
+                    amount_specified=v4_swap_amounts.amount_specified,
+                    zero_for_one=v4_swap_amounts.zero_for_one,
+                ),
+                V3Payload(
+                    pool_address=v3_pool.address,
+                    zero_for_one=v3_swap_amounts.zero_for_one,
+                    amount_specified=v3_swap_amounts.amount_specified,
+                ),
             )
 
-        def _generate_v3_v3_payloads() -> list[tuple[ChecksumAddress, bytes, bool]]:
+        def _generate_v3_v3_payloads() -> tuple[
+            tuple[ChecksumAddress, bytes, bool], tuple[ChecksumAddress, bytes, bool]
+        ]:
             pool_lo_swap_amount, pool_hi_swap_amount = pool_swap_amounts
 
             if TYPE_CHECKING:
                 assert isinstance(pool_hi_swap_amount, UniswapV3PoolSwapAmounts)
                 assert isinstance(pool_lo_swap_amount, UniswapV3PoolSwapAmounts)
 
-            return [
+            return (
                 (
                     # PAYLOAD 0: Initial swap at the high ROE pool, WETH out to contract
                     pool_hi_swap_amount.pool,
@@ -2929,9 +2961,9 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     ),
                     True,  # V3 swaps always execute a callback
                 ),
-            ]
+            )
 
-        def _generate_v3_v2_payloads() -> list[tuple[ChecksumAddress, bytes, bool]]:
+        def _generate_v3_v2_payloads() -> tuple[tuple[ChecksumAddress, bytes, bool], ...]:
             v2_pool = next(
                 pool
                 for pool in self.swap_pools
@@ -2960,7 +2992,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             v3_pool_rate = v3_pool.get_absolute_exchange_rate(self.input_token)
 
             if v3_pool_rate > v2_pool_rate:
-                return [
+                return (
                     (
                         # PAYLOAD 0: Call for a swap at the V3 pool, transferring cycled token
                         # to self
@@ -3020,9 +3052,9 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                         ),
                         False,
                     ),
-                ]
+                )
 
-            return [
+            return (
                 (
                     # PAYLOAD 0: V3 swap, forward token out, V2 recipient
                     v3_pool.address,
@@ -3065,9 +3097,9 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     ),
                     False,
                 ),
-            ]
+            )
 
-        def _generate_v2_v2_payloads() -> list[tuple[ChecksumAddress, bytes, bool]]:
+        def _generate_v2_v2_payloads() -> tuple[tuple[ChecksumAddress, bytes, bool], ...]:
             pool_lo_swap_amount, pool_hi_swap_amount = pool_swap_amounts
             if TYPE_CHECKING:
                 assert isinstance(pool_hi_swap_amount, UniswapV2PoolSwapAmounts)
@@ -3087,7 +3119,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 assert isinstance(pool_hi, UniswapV2Pool)
                 assert isinstance(pool_lo, UniswapV2Pool)
 
-            return [
+            return (
                 (
                     # PAYLOAD 0: Initial swap at the high ROE pool, WETH transfer to self with
                     # callback
@@ -3143,7 +3175,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     ),
                     False,
                 ),
-            ]
+            )
 
         match self.swap_pools:
             case UniswapV4Pool(), UniswapV4Pool():
