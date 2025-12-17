@@ -25,6 +25,34 @@ VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA960
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 
+def test_fork_captures_output():
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
+        preserve_capture=True,
+    )
+    capture_path = fork.capture_path
+    fork_port = fork.port
+    fork.close()
+
+    expected_stderr_path = capture_path / f"anvil-{fork_port}.stderr"
+    expected_stdout_path = capture_path / f"anvil-{fork_port}.stdout"
+
+    try:
+        assert expected_stderr_path.exists()
+        # stderr should be empty
+        assert not expected_stderr_path.read_text()
+    finally:
+        expected_stderr_path.unlink()
+
+    try:
+        assert expected_stdout_path.exists()
+        # stdout should have text from normal startup
+        assert expected_stdout_path.read_text()
+    finally:
+        expected_stdout_path.unlink()
+
+
 def test_web3_endpoints():
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
