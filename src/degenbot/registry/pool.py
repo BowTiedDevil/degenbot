@@ -162,7 +162,7 @@ class PoolRegistry(AbstractRegistry):
         pool_id: PoolId | None = None,
     ) -> None:
         if pool_id is not None:
-            self._v4_pool_registry.get(
+            self._v4_pool_registry.remove(
                 chain_id=chain_id,
                 pool_manager_address=get_checksum_address(pool_address),
                 pool_id=pool_id,
