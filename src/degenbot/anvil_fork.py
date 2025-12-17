@@ -15,7 +15,9 @@ from web3 import AsyncBaseProvider, AsyncIPCProvider, AsyncWeb3, IPCProvider, We
 from web3.middleware import Middleware
 from web3.types import RPCEndpoint
 
-from degenbot.exceptions import DegenbotError, DegenbotValueError
+from degenbot.exceptions.anvil import AnvilError
+from degenbot.exceptions.base import DegenbotValueError
+from degenbot.exceptions.connection import IPCSocketTimeout, Web3ConnectionTimeout
 from degenbot.logging import logger
 from degenbot.types.aliases import BlockNumber
 from degenbot.validation.evm_values import ValidatedUint256
@@ -210,7 +212,7 @@ class AnvilFork:
             )
             w3_connected_check_with_retry(fn=w3.is_connected)
         except tenacity.RetryError as exc:
-            raise DegenbotError(message="Timed out waiting for Web3 connection.") from exc
+            raise Web3ConnectionTimeout(timeout_seconds=timeout) from exc
 
         self.w3 = w3
 
@@ -268,7 +270,7 @@ class AnvilFork:
             params=[],
         )
         if "error" in resp:
-            raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
+            raise AnvilError(method=method, error=str(resp["error"]))
 
     async def mine_async(self) -> None:
         async with self.async_w3() as async_w3:
@@ -299,7 +301,7 @@ class AnvilFork:
                 params=[{"forking": {"blockNumber": block_number}}],
             )
             if "error" in resp:
-                raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
+                raise AnvilError(method=method, error=str(resp["error"]))
 
     def reset(
         self,
@@ -362,7 +364,7 @@ class AnvilFork:
                 params=[{"forking": fork_params}],
             )
             if "error" in resp:
-                raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
+                raise AnvilError(method=method, error=str(resp["error"]))
 
         else:
             raise DegenbotValueError(message="No options provided.")
@@ -418,7 +420,7 @@ class AnvilFork:
                 params=[fee],
             )
             if "error" in resp:
-                raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
+                raise AnvilError(method=method, error=str(resp["error"]))
 
     @validate_call
     def set_next_base_fee(
@@ -431,7 +433,7 @@ class AnvilFork:
             params=[fee],
         )
         if "error" in resp:
-            raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
+            raise AnvilError(method=method, error=str(resp["error"]))
 
     @validate_call
     async def set_next_block_timestamp_async(
@@ -445,7 +447,7 @@ class AnvilFork:
                 params=[timestamp],
             )
             if "error" in resp:
-                raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
+                raise AnvilError(method=method, error=str(resp["error"]))
 
     @validate_call
     def set_next_block_timestamp(
@@ -458,7 +460,7 @@ class AnvilFork:
             params=[timestamp],
         )
         if "error" in resp:
-            raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
+            raise AnvilError(method=method, error=str(resp["error"]))
 
     def set_nonce(self, address: str, nonce: int) -> None:
         method = "anvil_setNonce"
@@ -467,7 +469,7 @@ class AnvilFork:
             params=[address, nonce],
         )
         if "error" in resp:
-            raise DegenbotError(message=f"RPC call to {method} returned error: {resp}")
+            raise AnvilError(method=method, error=str(resp["error"]))
 
     def set_snapshot(self) -> int:
         return int(

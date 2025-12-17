@@ -25,8 +25,8 @@ from web3.types import BlockIdentifier, FilterParams, LogReceipt, TxParams
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.base import DegenbotError
 from degenbot.exceptions.evm import InvalidUint256
+from degenbot.exceptions.fetching import LogFetchingTimeout
 from degenbot.logging import logger
 from degenbot.types.aliases import BlockNumber
 
@@ -260,9 +260,7 @@ def fetch_logs_retrying(
             start_block = chunk_end + 1
 
         except RetryError:
-            raise DegenbotError(
-                message=f"Timed out fetching logs after {max_retries} tries."
-            ) from None
+            raise LogFetchingTimeout(max_retries=max_retries) from None
 
 
 async def fetch_logs_retrying_async(
@@ -352,9 +350,7 @@ async def fetch_logs_retrying_async(
             start_block = chunk_end + 1
 
         except RetryError:
-            raise DegenbotError(
-                message=f"Timed out fetching logs after {max_retries} tries."
-            ) from None
+            raise LogFetchingTimeout(max_retries=max_retries) from None
 
 
 def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3) -> BlockNumber:
