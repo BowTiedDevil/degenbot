@@ -2194,8 +2194,8 @@ def test_arbitrage_with_overrides(
     }
 
     result = wbtc_weth_arb.calculate(state_overrides=overrides)
-    assert result.profit_amount == 163028226755627520
     assert result.input_amount == 20454968409226055680
+    assert result.profit_amount == 163028226755627521
 
     # Irrelevant V2 and V3 mocked pools, only the address is changed.
     irrelevant_v2_pool = MockLiquidityPool()
@@ -2239,8 +2239,8 @@ def test_arbitrage_with_overrides(
 
     # This should equal the result from the test with the V3 override only
     result = wbtc_weth_arb.calculate(state_overrides=overrides)
-    assert result.profit_amount == 163028226755627520
     assert result.input_amount == 20454968409226055680
+    assert result.profit_amount == 163028226755627521
 
 
 async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum_full: AnvilFork):
@@ -2321,7 +2321,7 @@ async def test_process_pool_calculation(
             input_token=weth_token,
             profit_token=weth_token,
             input_amount=20454968409226055680,
-            profit_amount=163028226755627520,
+            profit_amount=163028226755627521,
             swap_amounts=(
                 UniswapV2PoolSwapAmounts(
                     pool=wbtc_weth_arb.swap_pools[0].address,
@@ -2330,6 +2330,8 @@ async def test_process_pool_calculation(
                 ),
                 UniswapV3PoolSwapAmounts(
                     pool=wbtc_weth_arb.swap_pools[1].address,
+                    amount_in=127718318,
+                    amount_out=20617996635981683201,
                     amount_specified=127718318,
                     zero_for_one=True,
                     sqrt_price_limit_x96=4295128740,
