@@ -2737,8 +2737,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
         """
 
         def _generate_v4_v4_payloads() -> tuple[V4Payload, V4Payload]:
-            # TODO: rewrite for generic delivery
-
             v4_pool_lo, v4_pool_hi = self.swap_pools
             assert isinstance(v4_pool_hi, UniswapV4Pool)
             assert isinstance(v4_pool_lo, UniswapV4Pool)
@@ -2790,8 +2788,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
 
         def _generate_v4_v2_payloads() -> tuple[V4Payload, V2Payload]:
-            # TODO: rewrite for generic delivery
-
             v2_pool = next(
                 pool
                 for pool in self.swap_pools
@@ -2851,8 +2847,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
 
         def _generate_v4_v3_payloads() -> tuple[V4Payload, V3Payload]:
-            # TODO: rewrite for generic delivery
-
             v3_pool = next(pool for pool in self.swap_pools if isinstance(pool, UniswapV3Pool))
             v4_pool = next(pool for pool in self.swap_pools if isinstance(pool, UniswapV4Pool))
 
