@@ -1,6 +1,6 @@
 from fractions import Fraction
 
-from degenbot.exceptions import DegenbotError
+from degenbot.exceptions.base import DegenbotError
 
 """
 Exceptions defined here are raised by classes and functions in the `arbitrage` module.

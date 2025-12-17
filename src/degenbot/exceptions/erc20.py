@@ -1,4 +1,4 @@
-from degenbot.exceptions import DegenbotError
+from degenbot.exceptions.base import DegenbotError
 
 
 class Erc20TokenError(DegenbotError):
