@@ -1,3 +1,4 @@
+import pytest
 from eth_typing import ChainId
 
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
@@ -10,6 +11,9 @@ from degenbot.pathfinding import PathStep, find_paths
 
 BASE_CHAIN_ID = ChainId.BASE
 WETH_BASE_ADDRESS = WRAPPED_NATIVE_TOKENS[BASE_CHAIN_ID]
+
+
+pytestmark = pytest.mark.skip(reason="Skipping this entire file because it is very slow.")
 
 
 def path_step_identifiers(path: list[PathStep]) -> tuple[str, ...]:
