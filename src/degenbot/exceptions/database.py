@@ -5,7 +5,7 @@ from degenbot.exceptions.base import DegenbotError
 
 class BackupExists(DegenbotError):
     """
-    The rate of exchange for the path is below the minimum.
+    Raised by `degenbot database backup` if a file exists at the target path.
     """
 
     def __init__(self, path: pathlib.Path) -> None:
