@@ -43,6 +43,10 @@ AERODROME_V3_QUOTER_ABI = pydantic_core.from_json(
 )
 
 
+# This mark will be applied to ALL tests in this file.
+pytestmark = pytest.mark.base
+
+
 @pytest.fixture
 def test_pools() -> Any:
     return pydantic_core.from_json(

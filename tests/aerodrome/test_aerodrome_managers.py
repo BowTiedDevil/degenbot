@@ -1,3 +1,5 @@
+import pytest
+
 from degenbot.aerodrome.managers import AerodromeV2PoolManager, AerodromeV3PoolManager
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
@@ -10,6 +12,10 @@ BASE_WETH_TOKEN = get_checksum_address("0x42000000000000000000000000000000000000
 BASE_AERO_WETH_V2_POOL = get_checksum_address("0x7f670f78B17dEC44d5Ef68a48740b6f8849cc2e6")
 BASE_AERO_WETH_V3_POOL = get_checksum_address("0x82321f3BEB69f503380D6B233857d5C43562e2D0")
 BASE_AERO_WETH_V3_POOL_TICK_SPACING = 200
+
+
+# This mark will be applied to ALL tests in this file.
+pytestmark = pytest.mark.base
 
 
 def test_create_base_chain_aerodrome_managers(fork_base_full: AnvilFork):
