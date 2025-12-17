@@ -368,15 +368,24 @@ class AnvilFork:
         else:
             raise DegenbotValueError(message="No options provided.")
 
-    def return_to_snapshot(self, snapshot_id: int) -> bool:
+    def return_to_snapshot(self, snapshot_id: int) -> None:
         if snapshot_id < 0:
             raise DegenbotValueError(message="ID cannot be negative")
-        return bool(
-            self.w3.provider.make_request(
-                method=RPCEndpoint("evm_revert"),
-                params=[snapshot_id],
-            )["result"]
+
+        method = "evm_revert"
+        resp = self.w3.provider.make_request(
+            method=RPCEndpoint(method),
+            params=[snapshot_id],
         )
+        if "error" in resp:
+            raise AnvilError(method=method, error=str(resp["error"]))
+
+        # Check if the revert was successful (Anvil returns False for invalid snapshots)
+        if resp.get("result") is False:
+            raise AnvilError(
+                method=method,
+                error=f"Failed to revert to snapshot {snapshot_id}",
+            )
 
     @validate_call
     def set_balance(
