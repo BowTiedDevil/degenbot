@@ -50,6 +50,7 @@ class AnvilFork:
         base_fee: int | None = None,
         ipc_path: pathlib.Path | None = None,
         capture_path: pathlib.Path | None = None,
+        preserve_capture: bool = False,
         mnemonic: str = (
             # Default mnemonic used by Brownie for Ganache forks
             "patient rude simple dog close planet oval animal hunt sketch suspect slim"
@@ -104,6 +105,7 @@ class AnvilFork:
         tmp_dir = pathlib.Path(tempfile.gettempdir())
         self.ipc_path = tmp_dir if ipc_path is None else ipc_path
         self.capture_path = tmp_dir if capture_path is None else capture_path
+        self.preserve_capture = preserve_capture
 
         if ipc_provider_kwargs is not None:
             self.ipc_provider_kwargs = ipc_provider_kwargs
@@ -249,17 +251,14 @@ class AnvilFork:
     def __del__(self) -> None:
         self.close()
 
-    def close(
-        self,
-        *,
-        preserve_capture: bool = False,
-    ) -> None:
+    def close(self) -> None:
         if getattr(self, "_process", None):
             self._process.terminate()
             self._process.wait(10)
             self.ipc_filename.unlink(missing_ok=True)
             del self._process
-        if not preserve_capture:
+
+        if not self.preserve_capture:
             self.stderr_capture_filename.unlink(missing_ok=True)
             self.stdout_capture_filename.unlink(missing_ok=True)
 
