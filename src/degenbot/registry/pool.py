@@ -28,7 +28,7 @@ class _UniswapV4PoolManagerRegistry(AbstractRegistry):
     def __init__(self) -> None:
         self._all_v4_pools: dict[
             tuple[
-                int,  # Chain ID
+                ChainId,
                 ChecksumAddress,  # PoolManager contract address
                 HexBytes,  # Pool id
             ],
@@ -106,7 +106,7 @@ class PoolRegistry(AbstractRegistry):
 
         self._all_pools: dict[
             tuple[
-                int,  # chain ID
+                ChainId,
                 ChecksumAddress,  # pool address
             ],
             AbstractLiquidityPool,
