@@ -7,9 +7,9 @@ from degenbot.exceptions.connection import (
     Web3ConnectionTimeout,
 )
 from degenbot.exceptions.fetching import (
-    BlockFetchingTimeoutError,
+    BlockFetchingTimeout,
     FetchingError,
-    LogFetchingTimeoutError,
+    LogFetchingTimeout,
 )
 
 from . import (
@@ -27,7 +27,7 @@ from . import (
 
 __all__ = (
     "AnvilError",
-    "BlockFetchingTimeoutError",
+    "BlockFetchingTimeout",
     "ConnectionTimeout",
     "DegenbotConnectionError",
     "DegenbotError",
@@ -35,7 +35,7 @@ __all__ = (
     "DegenbotValueError",
     "FetchingError",
     "IPCSocketTimeout",
-    "LogFetchingTimeoutError",
+    "LogFetchingTimeout",
     "Web3ConnectionTimeout",
     "anvil",
     "arbitrage",
