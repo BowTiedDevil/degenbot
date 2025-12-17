@@ -15,6 +15,25 @@ UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 
+class FakeUniswapV4Pool(AbstractLiquidityPool):
+    """
+    Minimal fake Uniswap V4 pool for testing.
+    """
+
+    def __init__(self, address: str, pool_id: str):
+        self.address = address
+        self.pool_id = pool_id
+        self.name = f"FakeUniswapV4Pool-{address}"
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, FakeUniswapV4Pool):
+            return self.address == other.address and self.pool_id == other.pool_id
+        return False
+
+    def __hash__(self) -> int:
+        return hash(self.address + self.pool_id)
+
+
 def test_singleton(fork_mainnet_full: AnvilFork):
     set_web3(fork_mainnet_full.w3)
 
