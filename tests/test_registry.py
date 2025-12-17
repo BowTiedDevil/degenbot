@@ -9,6 +9,7 @@ from degenbot.exceptions.registry import RegistryAlreadyInitialized
 from degenbot.registry import pool_registry, token_registry
 from degenbot.registry.pool import PoolRegistry
 from degenbot.registry.token import TokenRegistry
+from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
@@ -98,4 +99,76 @@ def test_deleting_token(fork_mainnet_full: AnvilFork):
     assert (
         token_registry.get(token_address=weth.address, chain_id=fork_mainnet_full.w3.eth.chain_id)
         is None
+    )
+
+
+def test_v4_pool_add_and_removal():
+    fake_pool_manager_address = "0x1234567890123456789012345678901234567890"
+    fake_pool_id = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+
+    # Create mock V4 pool
+    fake_pool = FakeUniswapV4Pool(
+        address=fake_pool_manager_address,
+        pool_id=fake_pool_id,
+    )
+
+    # Define V4 pool parameters
+    chain_id = 1
+    pool_id = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+
+    # Add the V4 pool to the registry
+    pool_registry.add(
+        pool=fake_pool,
+        chain_id=chain_id,
+        pool_address=fake_pool_manager_address,
+        pool_id=pool_id,
+    )
+
+    # Verify the pool was added
+    retrieved_pool = pool_registry.get(
+        chain_id=chain_id,
+        pool_address=fake_pool_manager_address,
+        pool_id=pool_id,
+    )
+    assert retrieved_pool is fake_pool, "V4 pool should be added to registry"
+
+    # Verify the pool exists in the V4 registry
+    v4_registry = pool_registry._v4_pool_registry
+    pool_in_v4_registry = v4_registry.get(
+        chain_id=chain_id,
+        pool_manager_address=fake_pool_manager_address,
+        pool_id=pool_id,
+    )
+    assert pool_in_v4_registry is fake_pool, "V4 pool should exist in V4 registry"
+
+    # Remove the V4 pool
+    pool_registry.remove(
+        chain_id=chain_id,
+        pool_address=fake_pool_manager_address,
+        pool_id=pool_id,
+    )
+
+    # Verify the pool is removed from V4 registry
+    pool_in_v4_registry_after_removal = v4_registry.get(
+        chain_id=chain_id,
+        pool_manager_address=fake_pool_manager_address,
+        pool_id=pool_id,
+    )
+    assert pool_in_v4_registry_after_removal is None, "V4 pool should be removed from V4 registry"
+
+    # Verify the pool is no longer accessible through the main registry
+    pool_in_main_registry_after_removal = pool_registry.get(
+        chain_id=chain_id,
+        pool_address=fake_pool_manager_address,
+        pool_id=pool_id,
+    )
+    assert pool_in_main_registry_after_removal is None, (
+        "V4 pool should no longer be accessible through main registry"
+    )
+
+    # Test that removing a non-existent V4 pool doesn't raise an exception
+    pool_registry.remove(
+        chain_id=chain_id,
+        pool_address="0x0000000000000000000000000000000000000000",
+        pool_id="0x0000000000000000000000000000000000000000000000000000000000000000",
     )
