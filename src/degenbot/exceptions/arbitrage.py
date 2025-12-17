@@ -1,4 +1,5 @@
 from fractions import Fraction
+from typing import Any
 
 from degenbot.exceptions.base import DegenbotError
 
@@ -39,3 +40,19 @@ class NoLiquidity(ArbitrageError):
     """
     Raised if a pool has no liquidity for the requested operation.
     """
+
+
+class InvalidForwardAmount(ArbitrageError): ...
+
+
+class Unprofitable(ArbitrageError): ...
+
+
+class NoSolverSolution(ArbitrageError):
+    def __init__(self, message: str = "Solver failed to converge on a solution.") -> None:
+        self.message = message
+        super().__init__(message=message)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Pickling will raise an exception if a reduction method is not defined
+        return self.__class__, (self.message,)

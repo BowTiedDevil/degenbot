@@ -31,7 +31,12 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT256, WRAPPED_NATIVE_TOKENS
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.arbitrage import ArbitrageError
+from degenbot.exceptions.arbitrage import (
+    ArbitrageError,
+    InvalidForwardAmount,
+    NoSolverSolution,
+    Unprofitable,
+)
 from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import (
     IncompleteSwap,
@@ -80,21 +85,6 @@ class V2Payload:
     zero_for_one: bool
     amount_in: int
     amount_out: int
-
-
-class InvalidForwardAmount(ArbitrageError): ...
-
-
-class Unprofitable(ArbitrageError): ...
-
-
-class NoSolverSolution(ArbitrageError):
-    def __init__(self, message: str = "Solver failed to converge on a solution.") -> None:
-        self.message = message
-        super().__init__(message=message)
-
-    def __reduce__(self) -> tuple[Any, ...]:
-        return self.__class__, (self.message,)
 
 
 def _build_convex_problem(num_pools: int) -> Problem:

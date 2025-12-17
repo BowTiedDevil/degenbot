@@ -1,7 +1,7 @@
 import warnings
 from collections.abc import Mapping, Sequence
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 import cvxpy.settings
 import eth_abi.abi
@@ -21,7 +21,7 @@ from degenbot.arbitrage.types import ArbitrageCalculationResult, UniswapV2PoolSw
 from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
-from degenbot.exceptions.arbitrage import ArbitrageError
+from degenbot.exceptions.arbitrage import ArbitrageError, NoSolverSolution, Unprofitable
 from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.logging import logger
@@ -29,22 +29,6 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 DEBUG_VERIFY_CACHED_PROBLEM = False
-
-
-class InvalidForwardAmount(ArbitrageError): ...
-
-
-class Unprofitable(ArbitrageError): ...
-
-
-class NoSolverSolution(ArbitrageError):
-    def __init__(self, message: str = "Solver failed to converge on a solution.") -> None:
-        self.message = message
-        super().__init__(message=message)
-
-    def __reduce__(self) -> tuple[Any, ...]:
-        # Pickling will raise an exception if a reduction method is not defined
-        return self.__class__, (self.message,)
 
 
 def _build_convex_problem(num_pools: int) -> Problem:
