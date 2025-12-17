@@ -9,7 +9,7 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.base import DegenbotError, DegenbotValueError
 
 from .conftest import (
     BASE_FULL_NODE_HTTP_URI,
@@ -119,9 +119,10 @@ def test_rpc_methods(fork_mainnet_full: AnvilFork):
     # Set several snapshot IDs and return to them
     snapshot_ids = [fork_mainnet_full.set_snapshot() for _ in range(10)]
     for snapshot_id in snapshot_ids:
-        assert fork_mainnet_full.return_to_snapshot(snapshot_id) is True
-    # No snapshot ID with this value
-    assert fork_mainnet_full.return_to_snapshot(100) is False
+        fork_mainnet_full.return_to_snapshot(snapshot_id)
+
+    with pytest.raises(DegenbotError, match="Anvil RPC call to evm_revert failed:"):
+        fork_mainnet_full.return_to_snapshot(100)
 
     # Negative IDs are not allowed
     with pytest.raises(DegenbotValueError, match="ID cannot be negative"):
