@@ -198,17 +198,12 @@ class AnvilFork:
             _, _port = sock.getsockname()
             return cast("int", _port)
 
-    def _setup_w3(self) -> None:
-        """
-        Create a Web3 connection to the IPC socket used by Anvil, waiting for the connection to be
-        established.
-        """
-
+    def _setup_w3(self, timeout: int = 10) -> None:
         try:
             # network I/O is less reliable, so wait with an exponential delay and jitter
             w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
             w3_connected_check_with_retry = tenacity.Retrying(
-                stop=tenacity.stop_after_delay(10),
+                stop=tenacity.stop_after_delay(timeout),
                 wait=tenacity.wait_exponential_jitter(),
                 retry=tenacity.retry_if_result(lambda result: result is False),
             )
@@ -218,7 +213,7 @@ class AnvilFork:
 
         self.w3 = w3
 
-    def _setup_process(self, anvil_command: AnvilOptions) -> None:
+    def _setup_process(self, anvil_command: AnvilOptions, timeout: int = 10) -> None:
         """
         Launch an Anvil subprocess, waiting for the IPC socket to be created.
         """
@@ -237,24 +232,24 @@ class AnvilFork:
         try:
             # Storage I/O should be fast, so use a low fixed wait time
             filename_check_with_retry = tenacity.Retrying(
-                stop=tenacity.stop_after_delay(10),
+                stop=tenacity.stop_after_delay(timeout),
                 wait=tenacity.wait_fixed(0.01),
                 retry=tenacity.retry_if_result(lambda result: result is False),
             )
             filename_check_with_retry(fn=self.ipc_filename.exists)
         except tenacity.RetryError as exc:
             process.terminate()
-            raise DegenbotError(message="Timed out waiting for IPC socket to be created.") from exc
+            raise IPCSocketTimeout(timeout_seconds=timeout) from exc
         else:
             self._process = process
 
     def __del__(self) -> None:
         self.close()
 
-    def close(self) -> None:
+    def close(self, timeout: int = 10) -> None:
         if getattr(self, "_process", None):
             self._process.terminate()
-            self._process.wait(10)
+            self._process.wait(timeout)
             self.ipc_filename.unlink(missing_ok=True)
             del self._process
 
