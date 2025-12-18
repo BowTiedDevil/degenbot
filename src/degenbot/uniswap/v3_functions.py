@@ -1,7 +1,6 @@
 from collections.abc import Callable, Iterable, Iterator
 from fractions import Fraction
 from itertools import cycle
-from typing import Final
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -20,8 +19,6 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | Pip]:
     Decode the `path` bytes used by the Uniswap V3 Router/Router2 contracts. `path` is a
     close-packed encoding of 20 byte pool addresses, interleaved with 3 byte fees.
     """
-    address_bytes: Final = 20
-    fee_bytes: Final = 3
 
     def _extract_address(chunk: bytes) -> ChecksumAddress:
         return get_checksum_address(chunk)
@@ -29,12 +26,13 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | Pip]:
     def _extract_fee(chunk: bytes) -> Pip:
         return int.from_bytes(chunk, byteorder="big")
 
-    if any(
-        [
-            len(path) < address_bytes + fee_bytes + address_bytes,
-            len(path) % (address_bytes + fee_bytes) != address_bytes,
-        ]
-    ):  # pragma: no cover
+    address_bytes = 20
+    fee_bytes = 3
+
+    if any([
+        len(path) < address_bytes + fee_bytes + address_bytes,
+        len(path) % (address_bytes + fee_bytes) != address_bytes,
+    ]):  # pragma: no cover
         raise DegenbotValueError(message="Invalid path.")
 
     chunk_length_and_decoder_function: Iterator[
@@ -45,12 +43,10 @@ def decode_v3_path(path: bytes) -> list[ChecksumAddress | Pip]:
                 ChecksumAddress | Pip,
             ],
         ]
-    ] = cycle(
-        [
-            (address_bytes, _extract_address),
-            (fee_bytes, _extract_fee),
-        ]
-    )
+    ] = cycle([
+        (address_bytes, _extract_address),
+        (fee_bytes, _extract_fee),
+    ])
 
     path_offset = 0
     decoded_path: list[ChecksumAddress | Pip] = []

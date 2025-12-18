@@ -43,10 +43,10 @@ class TokenRegistry:
         token_address = get_checksum_address(token_address)
         if self.get(token_address=token_address, chain_id=chain_id):
             raise degenbot.exceptions.DegenbotValueError(message="Token is already registered")
-        self._all_tokens[(chain_id, token_address)] = token
+        self._all_tokens[chain_id, token_address] = token
 
     def remove(self, token_address: str, chain_id: ChainId) -> None:
         token_address = get_checksum_address(token_address)
 
         with contextlib.suppress(KeyError):
-            del self._all_tokens[(chain_id, token_address)]
+            del self._all_tokens[chain_id, token_address]

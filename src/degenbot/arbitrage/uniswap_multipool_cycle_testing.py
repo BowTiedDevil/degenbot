@@ -126,14 +126,10 @@ def _build_convex_problem(num_pools: int) -> Problem:
         name="pool_ks_pre_swap",
         value=[
             geo_mean(
-                hstack(
-                    [
-                        compressed_reserves_pre_swap[
-                            global_pool_index[pool], global_token_index[token]
-                        ]
-                        for token in pool.tokens
-                    ]
-                )
+                hstack([
+                    compressed_reserves_pre_swap[global_pool_index[pool], global_token_index[token]]
+                    for token in pool.tokens
+                ])
             ).value
             for pool in ordered_pools
         ],
@@ -149,11 +145,12 @@ def _build_convex_problem(num_pools: int) -> Problem:
     }
 
     # SET UP PROBLEM
-    _deposits: list[list[Literal[0] | Variable]]
-    _deposits = [[0 for _ in ordered_tokens] for _ in ordered_pools]
-
-    _withdrawals: list[list[Literal[0] | Variable]]
-    _withdrawals = [[0 for _ in ordered_tokens] for _ in ordered_pools]
+    deposits: list[list[Literal[0] | Variable]] = [
+        [0 for _ in ordered_tokens] for _ in ordered_pools
+    ]
+    withdrawals: list[list[Literal[0] | Variable]] = [
+        [0 for _ in ordered_tokens] for _ in ordered_pools
+    ]
 
     for token, token_index in global_token_index.items():
         if token_index == 0:
@@ -170,11 +167,11 @@ def _build_convex_problem(num_pools: int) -> Problem:
             withdrawal_pool_index = token_index - 1
             deposit_variable = withdrawal_variable = forward_token_amount_variables[token]
 
-        _withdrawals[withdrawal_pool_index][token_index] = withdrawal_variable
-        _deposits[deposit_pool_index][token_index] = deposit_variable
+        withdrawals[withdrawal_pool_index][token_index] = withdrawal_variable
+        deposits[deposit_pool_index][token_index] = deposit_variable
 
-    deposits = bmat(_deposits)
-    withdrawals = bmat(_withdrawals)
+    deposits = bmat(deposits)
+    withdrawals = bmat(withdrawals)
 
     compressed_reserves_post_swap = (
         compressed_reserves_pre_swap + deposits - withdrawals - multiply(swap_fees, deposits)
@@ -182,14 +179,10 @@ def _build_convex_problem(num_pools: int) -> Problem:
 
     pool_ks_post_swap = [
         geo_mean(
-            hstack(
-                [
-                    compressed_reserves_post_swap[
-                        global_pool_index[pool], global_token_index[token]
-                    ]
-                    for token in pool.tokens
-                ]
-            )
+            hstack([
+                compressed_reserves_post_swap[global_pool_index[pool], global_token_index[token]]
+                for token in pool.tokens
+            ])
         )
         for pool in ordered_pools
     ]
@@ -197,12 +190,10 @@ def _build_convex_problem(num_pools: int) -> Problem:
     constraints = []
 
     # Pool invariants (x*y=k)
-    constraints.extend(
-        [
-            pool_ks_pre_swap[global_pool_index[pool]] <= pool_ks_post_swap[global_pool_index[pool]]
-            for pool in ordered_pools
-        ]
-    )
+    constraints.extend([
+        pool_ks_pre_swap[global_pool_index[pool]] <= pool_ks_post_swap[global_pool_index[pool]]
+        for pool in ordered_pools
+    ])
 
     problem = Problem(
         objective=Maximize(final_pool_withdrawal - initial_pool_deposit),
@@ -260,9 +251,9 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
                 if token not in pool.tokens:
                     return Fraction(0)
 
-                _state = state_override or pool.state
+                state = state_override or pool.state
                 return Fraction(
-                    _state.reserves_token0 if token == pool.token0 else _state.reserves_token1,
+                    state.reserves_token0 if token == pool.token0 else state.reserves_token1,
                     10**token.decimals,
                 )
 
@@ -339,21 +330,17 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
             compressed_reserves_pre_swap.save_value(
                 np.multiply(uncompressed_reserves, np.reciprocal(token_compression_factors))
             )
-            pool_ks_pre_swap.save_value(
-                [
-                    geo_mean(
-                        hstack(
-                            [
-                                compressed_reserves_pre_swap[
-                                    global_pool_index[pool], global_token_index[token]
-                                ]
-                                for token in pool.tokens
-                            ]
-                        )
-                    ).value
-                    for pool in ordered_pools
-                ]
-            )
+            pool_ks_pre_swap.save_value([
+                geo_mean(
+                    hstack([
+                        compressed_reserves_pre_swap[
+                            global_pool_index[pool], global_token_index[token]
+                        ]
+                        for token in pool.tokens
+                    ])
+                ).value
+                for pool in ordered_pools
+            ])
 
             try:
                 with warnings.catch_warnings():

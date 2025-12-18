@@ -1,5 +1,4 @@
 import degenbot_rs
-import hypothesis
 import hypothesis.strategies
 import pytest
 from eth_utils.address import to_checksum_address

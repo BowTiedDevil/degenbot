@@ -19,11 +19,10 @@ def get_y_camelot(
         k = f_camelot(x_0, y)
         if k < xy:
             dy = (xy - k) * 10**18 // general_calc_d(x_0, y)
-
-            y = y + dy
+            y += dy
         else:
             dy = (k - xy) * 10**18 // general_calc_d(x_0, y)
-            y = y - dy
+            y -= dy
 
         if y > y_prev:
             if y - y_prev <= 1:
@@ -39,9 +38,9 @@ def k_camelot(
     decimals_0: int,
     decimals_1: int,
 ) -> int:
-    _x = balance_0 * 10**18 // decimals_0
-    _y = balance_1 * 10**18 // decimals_1
-    _a = (_x * _y) // 10**18
-    _b = (_x * _x) // 10**18 + (_y * _y) // 10**18
-    raise_if_invalid_uint256(_a * _b)
-    return _a * _b // 10**18  # x^3*y + y^3*x >= k
+    x = balance_0 * 10**18 // decimals_0
+    y = balance_1 * 10**18 // decimals_1
+    a = (x * y) // 10**18
+    b = (x * x) // 10**18 + (y * y) // 10**18
+    raise_if_invalid_uint256(a * b)
+    return a * b // 10**18  # x^3*y + y^3*x >= k

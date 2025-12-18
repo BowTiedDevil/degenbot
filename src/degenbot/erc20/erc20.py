@@ -181,33 +181,31 @@ class Erc20Token(AbstractErc20Token):
 
     def get_name_symbol_decimals_batched(self, w3: Web3) -> tuple[str, str, int]:
         with w3.batch_requests() as batch:
-            batch.add_mapping(
-                {
-                    w3.eth.call: [
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="name()",
-                                function_arguments=None,
-                            ),
+            batch.add_mapping({
+                w3.eth.call: [
+                    TxParams(
+                        to=self.address,
+                        data=encode_function_calldata(
+                            function_prototype="name()",
+                            function_arguments=None,
                         ),
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="symbol()",
-                                function_arguments=None,
-                            ),
+                    ),
+                    TxParams(
+                        to=self.address,
+                        data=encode_function_calldata(
+                            function_prototype="symbol()",
+                            function_arguments=None,
                         ),
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="decimals()",
-                                function_arguments=None,
-                            ),
+                    ),
+                    TxParams(
+                        to=self.address,
+                        data=encode_function_calldata(
+                            function_prototype="decimals()",
+                            function_arguments=None,
                         ),
-                    ]
-                }
-            )
+                    ),
+                ]
+            })
 
             name, symbol, decimals = batch.execute()
 

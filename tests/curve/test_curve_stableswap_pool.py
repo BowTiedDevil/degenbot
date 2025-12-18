@@ -146,13 +146,13 @@ def test_auto_update(fork_mainnet_archive: AnvilFork):
     set_web3(fork_mainnet_archive.w3)
     block_number = fork_mainnet_archive.w3.eth.block_number
 
-    _tripool = CurveStableswapPool(TRIPOOL_ADDRESS)
+    tripool = CurveStableswapPool(TRIPOOL_ADDRESS)
 
     assert fork_mainnet_archive.w3.eth.get_block_number() == block_number
-    assert _tripool.update_block == block_number
+    assert tripool.update_block == block_number
 
     expected_balances = (75010632422398781503259123, 76382820384826, 34653521595900)
-    assert _tripool.balances == expected_balances
+    assert tripool.balances == expected_balances
 
     fork = AnvilFork(
         fork_url=fork_mainnet_archive.fork_url,
@@ -161,9 +161,9 @@ def test_auto_update(fork_mainnet_archive: AnvilFork):
     set_web3(fork.w3)
     assert fork.w3.eth.get_block_number() == block_number + 1
 
-    _tripool.auto_update()
-    assert _tripool.update_block == block_number + 1
-    assert _tripool.balances == (75010632422398781503259123, 76437030384826, 34599346168546)
+    tripool.auto_update()
+    assert tripool.update_block == block_number + 1
+    assert tripool.balances == (75010632422398781503259123, 76437030384826, 34599346168546)
 
 
 @pytest.mark.parametrize(
@@ -320,11 +320,9 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
     pool_count = stableswap_factory.functions.pool_count().call()
 
     with fork_mainnet_full.w3.batch_requests() as batch:
-        batch.add_mapping(
-            {
-                stableswap_factory.functions.pool_list: list(range(pool_count)),
-            }
-        )
+        batch.add_mapping({
+            stableswap_factory.functions.pool_list: list(range(pool_count)),
+        })
         pool_addresses = batch.execute()
 
     for i, pool_address in enumerate(pool_addresses, start=1):
@@ -353,11 +351,9 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
     pool_count = registry.functions.pool_count().call()
 
     with fork_mainnet_full.w3.batch_requests() as batch:
-        batch.add_mapping(
-            {
-                registry.functions.pool_list: list(range(pool_count)),
-            }
-        )
+        batch.add_mapping({
+            registry.functions.pool_list: list(range(pool_count)),
+        })
         pool_addresses = batch.execute()
 
     for i, pool_address in enumerate(pool_addresses, start=1):

@@ -46,7 +46,7 @@ class AbstractUniswapV2PoolManager[Pool: UniswapV2Pool](AbstractPoolManager[Pool
             raise ManagerAlreadyInitialized(
                 message="A manager has already been initialized for this address. Access it using the get_instance() class method"  # noqa:E501
             )
-        self.instances[(chain_id, factory_address)] = self
+        self.instances[chain_id, factory_address] = self
 
         try:
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
@@ -199,7 +199,7 @@ class AbstractUniswapV3PoolManager[Pool: UniswapV3Pool](AbstractPoolManager[Pool
             raise ManagerAlreadyInitialized(
                 message="A manager has already been initialized for this address. Access it using the get_instance() class method"  # noqa:E501
             )
-        self.instances[(chain_id, factory_address)] = self
+        self.instances[chain_id, factory_address] = self
 
         try:
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]

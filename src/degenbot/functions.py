@@ -18,7 +18,7 @@ from tenacity import (
     wait_exponential_jitter,
 )
 from web3 import AsyncBaseProvider, AsyncWeb3, Web3
-from web3._utils.threads import Timeout
+from web3._utils.threads import Timeout  # noqa: PLC2701
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier, FilterParams, LogReceipt, TxParams
 
@@ -170,6 +170,7 @@ def _reduce_working_span(
 
 
 def fetch_logs_retrying(
+    *,
     w3: Web3,
     start_block: BlockNumber,
     end_block: BlockNumber,
@@ -264,6 +265,7 @@ def fetch_logs_retrying(
 
 
 async def fetch_logs_retrying_async(
+    *,
     w3: AsyncWeb3[AsyncBaseProvider],
     start_block: BlockNumber,
     end_block: BlockNumber,
@@ -407,6 +409,7 @@ async def get_number_for_block_identifier_async(
 
 
 def next_base_fee(
+    *,
     parent_base_fee: int,
     parent_gas_used: int,
     parent_gas_limit: int,
@@ -428,22 +431,22 @@ def next_base_fee(
     last_gas_target = parent_gas_limit // elasticity_multiplier
 
     if parent_gas_used == last_gas_target:
-        _next_base_fee = parent_base_fee
+        working_base_fee = parent_base_fee
     elif parent_gas_used > last_gas_target:
         gas_used_delta = parent_gas_used - last_gas_target
         base_fee_delta = max(
             parent_base_fee * gas_used_delta // last_gas_target // base_fee_max_change_denominator,
             1,
         )
-        _next_base_fee = parent_base_fee + base_fee_delta
+        working_base_fee = parent_base_fee + base_fee_delta
     else:
         gas_used_delta = last_gas_target - parent_gas_used
         base_fee_delta = (
             parent_base_fee * gas_used_delta // last_gas_target // base_fee_max_change_denominator
         )
-        _next_base_fee = parent_base_fee - base_fee_delta
+        working_base_fee = parent_base_fee - base_fee_delta
 
-    return max(min_base_fee, _next_base_fee) if min_base_fee else _next_base_fee
+    return max(min_base_fee, working_base_fee) if min_base_fee else working_base_fee
 
 
 def raise_if_invalid_uint256(number: int) -> None:

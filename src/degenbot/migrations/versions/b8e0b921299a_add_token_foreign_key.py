@@ -83,8 +83,8 @@ def upgrade() -> None:
                 ),
                 {
                     "pool_id": pool_id,
-                    "token0_value": token_ids[(pool_chain, token0)],
-                    "token1_value": token_ids[(pool_chain, token1)],
+                    "token0_value": token_ids[pool_chain, token0],
+                    "token1_value": token_ids[pool_chain, token1],
                 },
             )
 

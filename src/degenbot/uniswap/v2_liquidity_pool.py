@@ -1,3 +1,6 @@
+# ruff: noqa: PLR0904
+
+
 import contextlib
 import dataclasses
 from bisect import bisect_left
@@ -317,35 +320,33 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         tuple[str, str],  # tokens
     ]:
         with w3.batch_requests() as batch:
-            batch.add_mapping(
-                {
-                    # These calls default to use 'latest' for block number, which is OK since the
-                    # values are immutable
-                    w3.eth.call: [
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="factory()",
-                                function_arguments=None,
-                            ),
+            batch.add_mapping({
+                # These calls default to use 'latest' for block number, which is OK since the
+                # values are immutable
+                w3.eth.call: [
+                    TxParams(
+                        to=self.address,
+                        data=encode_function_calldata(
+                            function_prototype="factory()",
+                            function_arguments=None,
                         ),
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="token0()",
-                                function_arguments=None,
-                            ),
+                    ),
+                    TxParams(
+                        to=self.address,
+                        data=encode_function_calldata(
+                            function_prototype="token0()",
+                            function_arguments=None,
                         ),
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="token1()",
-                                function_arguments=None,
-                            ),
+                    ),
+                    TxParams(
+                        to=self.address,
+                        data=encode_function_calldata(
+                            function_prototype="token1()",
+                            function_arguments=None,
                         ),
-                    ],
-                }
-            )
+                    ),
+                ],
+            })
 
             factory, token0, token1 = batch.execute()
 
@@ -384,8 +385,8 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
     def w3(self) -> Web3:
         return connection_manager.get_web3(self.chain_id)
 
+    @staticmethod
     def swap_is_viable(
-        self,
         state: PoolState,
         vector: UniswapPoolSwapVector,
     ) -> bool:

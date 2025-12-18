@@ -120,7 +120,7 @@ class MonolithicJsonFileSnapshot:
         return {
             get_checksum_address(key)
             for key in self._file_snapshot
-            if key not in ("chain_id", "snapshot_block")
+            if key not in {"chain_id", "snapshot_block"}
         }
 
 

@@ -129,7 +129,7 @@ class MonolithicJsonFileSnapshot:
         return {
             get_checksum_address(key)
             for key in self._file_snapshot
-            if key not in ("chain_id", "snapshot_block")
+            if key not in {"chain_id", "snapshot_block"}
         }
 
 
@@ -247,8 +247,8 @@ class UniswapV4LiquiditySnapshot:
     def pools(self) -> set[ManagedPoolIdentifier]:
         return {(pool_manager, pool_id) for pool_manager, pool_id in self._liquidity_snapshot}
 
+    @staticmethod
     def _process_liquidity_event_log(
-        self,
         log: LogReceipt,
     ) -> tuple[ChecksumAddress, PoolId, UniswapV4LiquidityEvent]:
         """
@@ -320,7 +320,7 @@ class UniswapV4LiquiditySnapshot:
             pool_manager_address, pool_id, liquidity_event = self._process_liquidity_event_log(
                 event_log
             )
-            self._liquidity_events[(pool_manager_address, pool_id)].append(liquidity_event)
+            self._liquidity_events[pool_manager_address, pool_id].append(liquidity_event)
 
         self.newest_block = to_block
 
@@ -362,7 +362,7 @@ class UniswapV4LiquiditySnapshot:
             pool_manager_address, pool_id, liquidity_event = self._process_liquidity_event_log(
                 event_log
             )
-            self._liquidity_events[(pool_manager_address, pool_id)].append(liquidity_event)
+            self._liquidity_events[pool_manager_address, pool_id].append(liquidity_event)
 
         self.newest_block = to_block
 

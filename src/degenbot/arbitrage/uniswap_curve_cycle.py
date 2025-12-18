@@ -92,14 +92,14 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
 
         # Set up pre-determined "swap vectors", which allows the helper
         # to identify the tokens and direction of each swap along the path
-        _swap_vectors: list[CurveStableSwapPoolVector | UniswapPoolSwapVector] = []
+        swap_vectors: list[CurveStableSwapPoolVector | UniswapPoolSwapVector] = []
         for i, pool in enumerate(self.swap_pools):
             match pool:
                 case UniswapV2Pool() | UniswapV3Pool():
                     if i == 0:
                         match self.input_token:
                             case pool.token0:
-                                _swap_vectors.append(
+                                swap_vectors.append(
                                     UniswapPoolSwapVector(
                                         token_in=pool.token0,
                                         token_out=pool.token1,
@@ -107,7 +107,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                                     )
                                 )
                             case pool.token1:
-                                _swap_vectors.append(
+                                swap_vectors.append(
                                     UniswapPoolSwapVector(
                                         token_in=pool.token1,
                                         token_out=pool.token0,
@@ -119,9 +119,9 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                                     message="Input token could not be identified!"
                                 )
                     else:
-                        match _swap_vectors[-1].token_out:
+                        match swap_vectors[-1].token_out:
                             case pool.token0:
-                                _swap_vectors.append(
+                                swap_vectors.append(
                                     UniswapPoolSwapVector(
                                         token_in=pool.token0,
                                         token_out=pool.token1,
@@ -129,7 +129,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                                     )
                                 )
                             case pool.token1:
-                                _swap_vectors.append(
+                                swap_vectors.append(
                                     UniswapPoolSwapVector(
                                         token_in=pool.token1,
                                         token_out=pool.token0,
@@ -149,7 +149,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                             message="Not implemented for Curve pools at position != 1."
                         )
 
-                    token_in = _swap_vectors[-1].token_out
+                    token_in = swap_vectors[-1].token_out
                     next_pool = self.swap_pools[i + 1]
                     shared_tokens = list(
                         set(pool.tokens).intersection(next_pool.tokens),
@@ -159,12 +159,12 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                     # @dev this assumes the first shared token is the correct one to continue
                     token_out = shared_tokens[0]
 
-                    _swap_vectors.append(
+                    swap_vectors.append(
                         CurveStableSwapPoolVector(token_in=token_in, token_out=token_out)
                     )
                 case _:  # pragma: no cover
                     raise DegenbotValueError(message="Pool type could not be identified")
-        self._swap_vectors = tuple(_swap_vectors)
+        self._swap_vectors = tuple(swap_vectors)
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()
         for pool in self.swap_pools:
@@ -191,56 +191,56 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
         of the input token defined in the constructor.
         """
 
-        _token_out_quantity = 0
+        working_token_out_quantity = 0
         swap_amounts: list[CurveOrUniswapSwapAmount] = []
         for i, (pool, swap_vector) in enumerate(
             zip(self.swap_pools, self._swap_vectors, strict=True)
         ):
             pool_state_override = state_overrides.get(pool.address)
-            _token_in_quantity = token_in_quantity if i == 0 else _token_out_quantity
+            working_token_in_quantity = token_in_quantity if i == 0 else working_token_out_quantity
 
-            if _token_in_quantity == 0:
+            if working_token_in_quantity == 0:
                 raise ArbitrageError(message="Zero amount swap")
 
             try:
                 match pool, pool_state_override, swap_vector:
                     case UniswapV2Pool(), UniswapV2PoolState() | None, UniswapPoolSwapVector():
-                        _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
+                        working_token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=swap_vector.token_in,
-                            token_in_quantity=_token_in_quantity,
+                            token_in_quantity=working_token_in_quantity,
                             override_state=pool_state_override,
                         )
-                        if _token_out_quantity == 0:  # pragma: no cover
+                        if working_token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
                                 message=f"Zero-output swap through pool {pool} @ {pool.address}"
                             )
                         swap_amounts.append(
                             UniswapV2PoolSwapAmounts(
                                 pool=pool.address,
-                                amounts_in=(_token_in_quantity, 0)
+                                amounts_in=(working_token_in_quantity, 0)
                                 if swap_vector.zero_for_one
-                                else (0, _token_in_quantity),
-                                amounts_out=(0, _token_out_quantity)
+                                else (0, working_token_in_quantity),
+                                amounts_out=(0, working_token_out_quantity)
                                 if swap_vector.zero_for_one
-                                else (_token_out_quantity, 0),
+                                else (working_token_out_quantity, 0),
                             )
                         )
                     case UniswapV3Pool(), UniswapV3PoolState() | None, UniswapPoolSwapVector():
-                        _token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
+                        working_token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=swap_vector.token_in,
-                            token_in_quantity=_token_in_quantity,
+                            token_in_quantity=working_token_in_quantity,
                             override_state=pool_state_override,
                         )
-                        if _token_out_quantity == 0:  # pragma: no cover
+                        if working_token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
                                 message=f"Zero-output swap through pool {pool} @ {pool.address}"
                             )
                         swap_amounts.append(
                             UniswapV3PoolSwapAmounts(
                                 pool=pool.address,
-                                amount_in=_token_in_quantity,
-                                amount_out=_token_out_quantity,
-                                amount_specified=_token_in_quantity,
+                                amount_in=working_token_in_quantity,
+                                amount_out=working_token_out_quantity,
+                                amount_specified=working_token_in_quantity,
                                 zero_for_one=swap_vector.zero_for_one,
                                 sqrt_price_limit_x96=MIN_SQRT_RATIO + 1
                                 if swap_vector.zero_for_one
@@ -252,17 +252,17 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                         CurveStableswapPoolState() | None,
                         CurveStableSwapPoolVector(),
                     ):
-                        _token_out_quantity = int(
+                        working_token_out_quantity = int(
                             self.curve_discount_factor
                             * pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_out=swap_vector.token_out,
-                                token_in_quantity=_token_in_quantity,
+                                token_in_quantity=working_token_in_quantity,
                                 override_state=pool_state_override,
                                 block_identifier=block_number,
                             )
                         )
-                        if _token_out_quantity == 0:  # pragma: no cover
+                        if working_token_out_quantity == 0:  # pragma: no cover
                             raise ArbitrageError(
                                 message=f"Zero-output swap through pool {pool} @ {pool.address}"
                             )
@@ -272,8 +272,8 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                                 token_in_index=pool.tokens.index(swap_vector.token_in),
                                 token_out=swap_vector.token_out,
                                 token_out_index=pool.tokens.index(swap_vector.token_out),
-                                amount_in=_token_in_quantity,
-                                min_amount_out=_token_out_quantity,
+                                amount_in=working_token_in_quantity,
+                                min_amount_out=working_token_out_quantity,
                                 underlying=(
                                     pool.base_pool is not None
                                     and (
@@ -629,7 +629,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
         msg_value = 0  # This arbitrage does not require a `msg.value` payment
         payloads = []
 
-        for i, (swap_pool, _swap_amounts) in enumerate(
+        for i, (swap_pool, amounts) in enumerate(
             zip(self.swap_pools, pool_swap_amounts, strict=True)
         ):
             try:
@@ -653,17 +653,179 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                 case _:
                     raise DegenbotValueError(message=f"Unknown pool type {next_pool}")
 
-            match i, swap_pool, _swap_amounts:
+            match i, swap_pool, amounts:
                 case 0, UniswapV2Pool() as first_pool, _:
                     # Special case: If first pool is type V2, input token must be transferred prior
                     # to the swap
                     logger.debug(
                         f"PAYLOAD: transferring {swap_amount} WETH to V2 pool {first_pool}"
                     )
-                    payloads.append(
-                        (
+                    payloads.append((
+                        # address
+                        self.input_token.address,
+                        # bytes calldata
+                        Web3.keccak(text="transfer(address,uint256)")[:4]
+                        + eth_abi.abi.encode(
+                            types=(
+                                "address",
+                                "uint256",
+                            ),
+                            args=(
+                                first_pool.address,
+                                swap_amount,
+                            ),
+                        ),
+                        msg_value,
+                    ))
+                case _, UniswapV2Pool(), UniswapV2PoolSwapAmounts():
+                    if amounts.amounts_out[0] == 0:
+                        token_in = swap_pool.token0
+                        token_out = swap_pool.token1
+                        amount_out = amounts.amounts_out[1]
+                    else:
+                        token_in = swap_pool.token1
+                        token_out = swap_pool.token0
+                        amount_out = amounts.amounts_out[0]
+                    logger.debug(f"PAYLOAD: building V2 swap at pool {i}")
+                    logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
+                    logger.debug(f"PAYLOAD: swap {token_in} -> {amount_out} {token_out} ")
+                    logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
+                    payloads.append((
+                        # address
+                        swap_pool.address,
+                        # bytes calldata
+                        Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
+                        + eth_abi.abi.encode(
+                            types=(
+                                "uint256",
+                                "uint256",
+                                "address",
+                                "bytes",
+                            ),
+                            args=(
+                                *amounts.amounts_out,
+                                swap_destination_address,
+                                b"",
+                            ),
+                        ),
+                        msg_value,
+                    ))
+                case _, UniswapV3Pool(), UniswapV3PoolSwapAmounts():
+                    if amounts.zero_for_one:
+                        token_in = swap_pool.token0
+                        token_out = swap_pool.token1
+                    else:
+                        token_in = swap_pool.token1
+                        token_out = swap_pool.token0
+                    logger.debug(f"PAYLOAD: building V3 swap at pool {i}")
+                    logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
+                    logger.debug(f"PAYLOAD: token in  = {token_in}")
+                    logger.debug(f"PAYLOAD: token out = {token_out}")
+                    logger.debug(f"PAYLOAD: swap amounts {amounts}")
+                    logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
+                    payloads.append((
+                        # address
+                        swap_pool.address,
+                        # bytes calldata
+                        Web3.keccak(text="swap(address,bool,int256,uint160,bytes)")[:4]
+                        + eth_abi.abi.encode(
+                            types=(
+                                "address",
+                                "bool",
+                                "int256",
+                                "uint160",
+                                "bytes",
+                            ),
+                            args=(
+                                swap_destination_address,
+                                amounts.zero_for_one,
+                                amounts.amount_specified,
+                                amounts.sqrt_price_limit_x96,
+                                b"",
+                            ),
+                        ),
+                        msg_value,
+                    ))
+                case _, CurveStableswapPool(), CurveStableSwapPoolSwapAmounts():
+                    logger.debug(f"PAYLOAD: building Curve swap at pool {i}")
+                    logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
+                    logger.debug(f"PAYLOAD: swap amounts {amounts}")
+                    logger.debug(f"PAYLOAD: token in  = {amounts.token_in}")
+                    logger.debug(f"PAYLOAD: token out = {amounts.token_out}")
+                    logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
+
+                    current_approval = amounts.token_in.get_approval(
+                        from_address, swap_pool.address
+                    )
+                    amount_to_approve: int | None = None
+                    if infinite_approval is True and current_approval != MAX_UINT256:
+                        amount_to_approve = MAX_UINT256
+                    elif infinite_approval is False and current_approval < amounts.amount_in:
+                        amount_to_approve = amounts.amount_in
+
+                    if amount_to_approve is not None:
+                        logger.debug(
+                            f"PAYLOAD: approve {amount_to_approve} {amounts.token_in} by "
+                            f"{swap_pool} {swap_destination_address}"
+                        )
+                        payloads.append((
                             # address
-                            self.input_token.address,
+                            amounts.token_in.address,
+                            # bytes calldata
+                            Web3.keccak(text="approve(address,uint256)")[:4]
+                            + eth_abi.abi.encode(
+                                types=["address", "uint256"],
+                                args=[swap_pool.address, amount_to_approve],
+                            ),
+                            msg_value,
+                        ))
+
+                    logger.debug(
+                        f"PAYLOAD: exchange {amounts.amount_in} {amounts.token_in_index}->{amounts.token_out_index}, min out = {amounts.min_amount_out}"  # noqa: E501
+                    )
+                    if amounts.underlying:
+                        payloads.append((
+                            # address
+                            swap_pool.address,
+                            # bytes calldata
+                            Web3.keccak(text="exchange_underlying(int128,int128,uint256,uint256)")[
+                                :4
+                            ]
+                            + eth_abi.abi.encode(
+                                types=["int128", "int128", "uint256", "uint256"],
+                                args=[
+                                    amounts.token_in_index,
+                                    amounts.token_out_index,
+                                    amounts.amount_in,
+                                    amounts.min_amount_out,
+                                ],
+                            ),
+                            msg_value,
+                        ))
+                    else:
+                        payloads.append((
+                            # address
+                            swap_pool.address,
+                            # bytes calldata
+                            Web3.keccak(text="exchange(int128,int128,uint256,uint256)")[:4]
+                            + eth_abi.abi.encode(
+                                types=["int128", "int128", "uint256", "uint256"],
+                                args=[
+                                    amounts.token_in_index,
+                                    amounts.token_out_index,
+                                    amounts.amount_in,
+                                    amounts.min_amount_out,
+                                ],
+                            ),
+                            msg_value,
+                        ))
+                    if isinstance(next_pool, UniswapV2Pool):
+                        logger.debug(
+                            f"PAYLOAD: transferring {amounts.min_amount_out} {amounts.token_out} to V2 pool {next_pool}"  # noqa: E501
+                        )
+                        payloads.append((
+                            # address
+                            amounts.token_out.address,
                             # bytes calldata
                             Web3.keccak(text="transfer(address,uint256)")[:4]
                             + eth_abi.abi.encode(
@@ -672,191 +834,15 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                                     "uint256",
                                 ),
                                 args=(
-                                    first_pool.address,
-                                    swap_amount,
+                                    next_pool.address,
+                                    amounts.min_amount_out,
                                 ),
                             ),
                             msg_value,
-                        )
-                    )
-                case _, UniswapV2Pool(), UniswapV2PoolSwapAmounts():
-                    if _swap_amounts.amounts_out[0] == 0:
-                        _token_in = swap_pool.token0
-                        _token_out = swap_pool.token1
-                        _amount_out = _swap_amounts.amounts_out[1]
-                    else:
-                        _token_in = swap_pool.token1
-                        _token_out = swap_pool.token0
-                        _amount_out = _swap_amounts.amounts_out[0]
-                    logger.debug(f"PAYLOAD: building V2 swap at pool {i}")
-                    logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
-                    logger.debug(f"PAYLOAD: swap {_token_in} -> {_amount_out} {_token_out} ")
-                    logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
-                    payloads.append(
-                        (
-                            # address
-                            swap_pool.address,
-                            # bytes calldata
-                            Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
-                            + eth_abi.abi.encode(
-                                types=(
-                                    "uint256",
-                                    "uint256",
-                                    "address",
-                                    "bytes",
-                                ),
-                                args=(
-                                    *_swap_amounts.amounts_out,
-                                    swap_destination_address,
-                                    b"",
-                                ),
-                            ),
-                            msg_value,
-                        )
-                    )
-                case _, UniswapV3Pool(), UniswapV3PoolSwapAmounts():
-                    if _swap_amounts.zero_for_one:
-                        _token_in = swap_pool.token0
-                        _token_out = swap_pool.token1
-                    else:
-                        _token_in = swap_pool.token1
-                        _token_out = swap_pool.token0
-                    logger.debug(f"PAYLOAD: building V3 swap at pool {i}")
-                    logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
-                    logger.debug(f"PAYLOAD: token in  = {_token_in}")
-                    logger.debug(f"PAYLOAD: token out = {_token_out}")
-                    logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
-                    logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
-                    payloads.append(
-                        (
-                            # address
-                            swap_pool.address,
-                            # bytes calldata
-                            Web3.keccak(text="swap(address,bool,int256,uint160,bytes)")[:4]
-                            + eth_abi.abi.encode(
-                                types=(
-                                    "address",
-                                    "bool",
-                                    "int256",
-                                    "uint160",
-                                    "bytes",
-                                ),
-                                args=(
-                                    swap_destination_address,
-                                    _swap_amounts.zero_for_one,
-                                    _swap_amounts.amount_specified,
-                                    _swap_amounts.sqrt_price_limit_x96,
-                                    b"",
-                                ),
-                            ),
-                            msg_value,
-                        )
-                    )
-                case _, CurveStableswapPool(), CurveStableSwapPoolSwapAmounts():
-                    logger.debug(f"PAYLOAD: building Curve swap at pool {i}")
-                    logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
-                    logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
-                    logger.debug(f"PAYLOAD: token in  = {_swap_amounts.token_in}")
-                    logger.debug(f"PAYLOAD: token out = {_swap_amounts.token_out}")
-                    logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
-
-                    current_approval = _swap_amounts.token_in.get_approval(
-                        from_address, swap_pool.address
-                    )
-                    amount_to_approve: int | None = None
-                    if infinite_approval is True and current_approval != MAX_UINT256:
-                        amount_to_approve = MAX_UINT256
-                    elif infinite_approval is False and current_approval < _swap_amounts.amount_in:
-                        amount_to_approve = _swap_amounts.amount_in
-
-                    if amount_to_approve is not None:
-                        logger.debug(
-                            f"PAYLOAD: approve {amount_to_approve} {_swap_amounts.token_in} by "
-                            f"{swap_pool} {swap_destination_address}"
-                        )
-                        payloads.append(
-                            (
-                                # address
-                                _swap_amounts.token_in.address,
-                                # bytes calldata
-                                Web3.keccak(text="approve(address,uint256)")[:4]
-                                + eth_abi.abi.encode(
-                                    types=["address", "uint256"],
-                                    args=[swap_pool.address, amount_to_approve],
-                                ),
-                                msg_value,
-                            )
-                        )
-
-                    logger.debug(
-                        f"PAYLOAD: exchange {_swap_amounts.amount_in} {_swap_amounts.token_in_index}->{_swap_amounts.token_out_index}, min out = {_swap_amounts.min_amount_out}"  # noqa: E501
-                    )
-                    if _swap_amounts.underlying:
-                        payloads.append(
-                            (
-                                # address
-                                swap_pool.address,
-                                # bytes calldata
-                                Web3.keccak(
-                                    text="exchange_underlying(int128,int128,uint256,uint256)"
-                                )[:4]
-                                + eth_abi.abi.encode(
-                                    types=["int128", "int128", "uint256", "uint256"],
-                                    args=[
-                                        _swap_amounts.token_in_index,
-                                        _swap_amounts.token_out_index,
-                                        _swap_amounts.amount_in,
-                                        _swap_amounts.min_amount_out,
-                                    ],
-                                ),
-                                msg_value,
-                            )
-                        )
-                    else:
-                        payloads.append(
-                            (
-                                # address
-                                swap_pool.address,
-                                # bytes calldata
-                                Web3.keccak(text="exchange(int128,int128,uint256,uint256)")[:4]
-                                + eth_abi.abi.encode(
-                                    types=["int128", "int128", "uint256", "uint256"],
-                                    args=[
-                                        _swap_amounts.token_in_index,
-                                        _swap_amounts.token_out_index,
-                                        _swap_amounts.amount_in,
-                                        _swap_amounts.min_amount_out,
-                                    ],
-                                ),
-                                msg_value,
-                            )
-                        )
-                    if isinstance(next_pool, UniswapV2Pool):
-                        logger.debug(
-                            f"PAYLOAD: transferring {_swap_amounts.min_amount_out} {_swap_amounts.token_out} to V2 pool {next_pool}"  # noqa: E501
-                        )
-                        payloads.append(
-                            (
-                                # address
-                                _swap_amounts.token_out.address,
-                                # bytes calldata
-                                Web3.keccak(text="transfer(address,uint256)")[:4]
-                                + eth_abi.abi.encode(
-                                    types=(
-                                        "address",
-                                        "uint256",
-                                    ),
-                                    args=(
-                                        next_pool.address,
-                                        _swap_amounts.min_amount_out,
-                                    ),
-                                ),
-                                msg_value,
-                            )
-                        )
+                        ))
                 case _:  # pragma: no cover
                     raise DegenbotValueError(
-                        message=f"Could not identify pool {swap_pool} and amounts {_swap_amounts}"
+                        message=f"Could not identify pool {swap_pool} and amounts {amounts}"
                     )
 
         return payloads

@@ -51,7 +51,7 @@ class Settings(BaseSettings):
 def load_config_from_file(config_path: Path) -> Settings:
     return Settings.model_validate(
         tomllib.loads(
-            config_path.read_text(),
+            config_path.read_text(encoding="utf-8"),
         ),
     )
 

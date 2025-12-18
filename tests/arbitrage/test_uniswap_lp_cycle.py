@@ -2252,14 +2252,13 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum_full: Anv
 
     set_web3(fork_arbitrum_full.w3)
 
-    _weth = Erc20Token(weth_address)
-
+    weth = Erc20Token(weth_address)
     camelot_lp = CamelotLiquidityPool(address=camelot_weth_wbtc_pool_address)
     sushi_lp = UniswapV2Pool(address=sushi_v2_weth_wbtc_pool_address)
 
     arb = UniswapLpCycle(
         id="test_arb",
-        input_token=_weth,
+        input_token=weth,
         swap_pools=[camelot_lp, sushi_lp],
         max_input=100 * 10**18,
     )
@@ -2270,7 +2269,7 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum_full: Anv
     with concurrent.futures.ProcessPoolExecutor(
         mp_context=multiprocessing.get_context("spawn"),
     ) as executor:
-        _tasks = [
+        tasks = [
             loop.run_in_executor(
                 executor,
                 arb.calculate,
@@ -2278,7 +2277,7 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum_full: Anv
             for _ in range(8)
         ]
 
-        for task in asyncio.as_completed(_tasks):
+        for task in asyncio.as_completed(tasks):
             with contextlib.suppress(RateOfExchangeBelowMinimum):
                 await task
 

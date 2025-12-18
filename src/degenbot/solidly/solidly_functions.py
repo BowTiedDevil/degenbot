@@ -20,15 +20,16 @@ def general_calc_k(
     decimals_0: int,
     decimals_1: int,
 ) -> int:
-    _x = balance_0 * 10**18 // decimals_0
-    _y = balance_1 * 10**18 // decimals_1
-    _a = (_x * _y) // 10**18
-    _b = (_x * _x) // 10**18 + (_y * _y) // 10**18
-    raise_if_invalid_uint256(_a * _b)
-    return _a * _b // 10**18  # x^3*y + y^3*x >= k
+    x = balance_0 * 10**18 // decimals_0
+    y = balance_1 * 10**18 // decimals_1
+    a = (x * y) // 10**18
+    b = (x * x) // 10**18 + (y * y) // 10**18
+    raise_if_invalid_uint256(a * b)
+    return a * b // 10**18  # x^3*y + y^3*x >= k
 
 
 def general_calc_exact_in_stable(
+    *,
     amount_in: int,
     token_in: Literal[0, 1],
     reserves0: int,
@@ -52,7 +53,7 @@ def general_calc_exact_in_stable(
     This function is generic and requires a callable k() and get_y()
     """
 
-    if token_in not in (0, 1):  # pragma: no cover
+    if token_in not in {0, 1}:  # pragma: no cover
         raise DegenbotValueError(message="Invalid token_in identifier")
 
     try:
@@ -90,7 +91,7 @@ def general_calc_exact_in_volatile(
     Calculate the amount out for an exact input to a Solidly volatile pool (invariant x*y>=k).
     """
 
-    if token_in not in (0, 1):  # pragma: no cover
+    if token_in not in {0, 1}:  # pragma: no cover
         raise DegenbotValueError(message="Invalid token_in identifier")
 
     amount_in_after_fee = amount_in - amount_in * fee.numerator // fee.denominator

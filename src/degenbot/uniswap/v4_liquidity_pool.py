@@ -1,3 +1,6 @@
+# ruff: noqa: PLR0904
+
+
 import dataclasses
 from bisect import bisect_left
 from collections.abc import Sequence
@@ -207,6 +210,27 @@ def get_pool_from_database(
     )
 
 
+@dataclasses.dataclass(slots=True)
+class SwapState:
+    amount_specified_remaining: int
+    amount_calculated: int
+    sqrt_price_x96: int
+    tick: int
+    liquidity: int
+
+
+@dataclasses.dataclass(slots=True)
+class StepComputations:
+    sqrt_price_start_x96: int = 0
+    sqrt_price_next_x96: int = 0
+    tick_next: int = 0
+    initialized: bool = False
+    amount_in: int = 0
+    amount_out: int = 0
+    fee_amount: int = 0
+    fee_growth_global_x128: int | None = None  # unused
+
+
 class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
     _state_cache: BoundedCache[BlockNumber, UniswapV4PoolState]
 
@@ -222,25 +246,6 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
     )
 
     FEE_DENOMINATOR = 1_000_000
-
-    @dataclasses.dataclass(slots=True)
-    class SwapState:
-        amount_specified_remaining: int
-        amount_calculated: int
-        sqrt_price_x96: int
-        tick: int
-        liquidity: int
-
-    @dataclasses.dataclass(slots=True)
-    class StepComputations:
-        sqrt_price_start_x96: int = 0
-        sqrt_price_next_x96: int = 0
-        tick_next: int = 0
-        initialized: bool = False
-        amount_in: int = 0
-        amount_out: int = 0
-        fee_amount: int = 0
-        fee_growth_global_x128: int | None = None  # unused
 
     def __init__(
         self,
@@ -337,11 +342,13 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, id={self.pool_id.to_0x_hex()})"  # noqa:E501
 
         try:
-            _slot0, _liquidity = self._get_state_values(w3=w3, state_block=state_block)
-            _sqrt_price_x96 = _slot0.sqrt_price_x96
-            _tick = _slot0.tick
-            self.lp_fee = _slot0.lp_fee
-            self.protocol_fee = _slot0.protocol_fee
+            working_slot0, working_liquidity = self._get_state_values(
+                w3=w3, state_block=state_block
+            )
+            working_sqrt_price_x96 = working_slot0.sqrt_price_x96
+            working_tick = working_slot0.tick
+            self.lp_fee = working_slot0.lp_fee
+            self.protocol_fee = working_slot0.protocol_fee
         except (ContractLogicError, DecodingError) as exc:
             # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
             # here and raise as a pool-specific exception
@@ -367,58 +374,56 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         # If liquidity info was not provided, treat the mapping as sparse
         self.sparse_liquidity_map = tick_bitmap is None or tick_data is None
 
-        _tick_bitmap = {}
-        _tick_data = {}
+        working_tick_bitmap = {}
+        working_tick_data = {}
 
         if tick_bitmap is not None:
             # transform dict to UniswapV4BitmapAtWord
-            _tick_bitmap.update(
-                {
-                    int(word): (
-                        UniswapV4BitmapAtWord(**bitmap_at_word)
-                        if not isinstance(
-                            bitmap_at_word,
-                            UniswapV4BitmapAtWord,
-                        )
-                        else bitmap_at_word
+            working_tick_bitmap.update({
+                int(word): (
+                    UniswapV4BitmapAtWord(**bitmap_at_word)
+                    if not isinstance(
+                        bitmap_at_word,
+                        UniswapV4BitmapAtWord,
                     )
-                    for word, bitmap_at_word in tick_bitmap.items()
-                }
-            )
+                    else bitmap_at_word
+                )
+                for word, bitmap_at_word in tick_bitmap.items()
+            })
 
         if tick_data is not None:
-            _tick_data.update(
-                {
-                    int(tick): (
-                        # transform dict to UniswapV4LiquidityAtTick
-                        UniswapV4LiquidityAtTick(**liquidity_at_tick)
-                        if not isinstance(
-                            liquidity_at_tick,
-                            UniswapV4LiquidityAtTick,
-                        )
-                        else liquidity_at_tick
+            working_tick_data.update({
+                int(tick): (
+                    # transform dict to UniswapV4LiquidityAtTick
+                    UniswapV4LiquidityAtTick(**liquidity_at_tick)
+                    if not isinstance(
+                        liquidity_at_tick,
+                        UniswapV4LiquidityAtTick,
                     )
-                    for tick, liquidity_at_tick in tick_data.items()
-                }
-            )
+                    else liquidity_at_tick
+                )
+                for tick, liquidity_at_tick in tick_data.items()
+            })
 
         if tick_bitmap is None and tick_data is None:
-            word, _ = get_tick_word_and_bit_position(tick=_tick, tick_spacing=self.tick_spacing)
+            word, _ = get_tick_word_and_bit_position(
+                tick=working_tick, tick_spacing=self.tick_spacing
+            )
             self._fetch_and_populate_initialized_ticks(
                 word_position=word,
-                tick_bitmap=_tick_bitmap,
-                tick_data=_tick_data,
+                tick_bitmap=working_tick_bitmap,
+                tick_data=working_tick_data,
                 block_number=state_block,
             )
 
         self._state = UniswapV4PoolState(
             id=self.pool_id,
             address=self._pool_manager_address,
-            liquidity=_liquidity,
-            sqrt_price_x96=_sqrt_price_x96,
-            tick=_tick,
-            tick_bitmap=_tick_bitmap,
-            tick_data=_tick_data,
+            liquidity=working_liquidity,
+            sqrt_price_x96=working_sqrt_price_x96,
+            tick=working_tick,
+            tick_bitmap=working_tick_bitmap,
+            tick_data=working_tick_data,
             block=state_block,
         )
         self._state_cache = BoundedCache(max_items=state_cache_depth)
@@ -501,25 +506,25 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         if block_number is None:
             block_number = w3.eth.get_block_number()
 
-        _tick_bitmap: int = 0
-        _tick_data: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
-        _tick_bitmap = self.get_tick_bitmap_at_word(
+        working_tick_bitmap = 0
+        working_tick_data: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
+        working_tick_bitmap = self.get_tick_bitmap_at_word(
             w3=w3,
             word_position=word_position,
             block_identifier=block_number,
         )
-        if _tick_bitmap != 0:
-            _tick_data = self.get_populated_ticks_in_word(
+        if working_tick_bitmap != 0:
+            working_tick_data = self.get_populated_ticks_in_word(
                 w3=w3,
                 word_position=word_position,
                 block_identifier=block_number,
             )
 
         tick_bitmap[word_position] = UniswapV4BitmapAtWord(
-            bitmap=_tick_bitmap,
+            bitmap=working_tick_bitmap,
             block=block_number,
         )
-        for tick, liquidity_gross, liquidity_net in _tick_data:
+        for tick, liquidity_gross, liquidity_net in working_tick_data:
             tick_data[tick] = UniswapV4LiquidityAtTick(
                 liquidity_net=liquidity_net,
                 liquidity_gross=liquidity_gross,
@@ -594,8 +599,8 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             liquidity,
         )
 
+    @staticmethod
     def _calculate_swap_fee(
-        self,
         protocol_fee: int,
         lp_fee: int,
     ) -> SwapFee:
@@ -688,7 +693,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             if sqrt_price_x96_limit >= MAX_SQRT_PRICE:
                 raise EVMRevertError(error="PriceLimitOutOfBounds")
 
-        step = self.StepComputations()
+        step = StepComputations()
 
         if not self.sparse_liquidity_map:
             # The liquidity mapping is complete. Optimize loop by building a generator that yields
@@ -1140,17 +1145,17 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             w3 = connection_manager.get_web3(self.chain_id)
             block_number = block_number if block_number is not None else w3.eth.get_block_number()
 
-            _slot0, _liquidity = self._get_state_values(w3=w3, state_block=block_number)
-            _sqrt_price_x96 = _slot0.sqrt_price_x96
-            _tick = _slot0.tick
-            self.lp_fee = _slot0.lp_fee
-            self.protocol_fee = _slot0.protocol_fee
+            new_slot0, new_liquidity = self._get_state_values(w3=w3, state_block=block_number)
+            new_sqrt_price_x96 = new_slot0.sqrt_price_x96
+            new_tick = new_slot0.tick
+            self.lp_fee = new_slot0.lp_fee
+            self.protocol_fee = new_slot0.protocol_fee
 
             state = dataclasses.replace(
                 self.state,
-                liquidity=_liquidity,
-                sqrt_price_x96=_sqrt_price_x96,
-                tick=_tick,
+                liquidity=new_liquidity,
+                sqrt_price_x96=new_sqrt_price_x96,
+                tick=new_tick,
                 block=block_number,
             )
 
@@ -1236,14 +1241,14 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
             state_block = update.block_number
 
-            # The tick bitmap and tick data dictionaries are copies, so they can be freely modified
-            # without corrupting states for previous blocks
-            _tick_bitmap = self.tick_bitmap
-            _tick_data = self.tick_data
+            # The tick bitmap and tick data dictionaries accessed from the property are copies, so
+            # they can be freely modified without corrupting states for previous blocks
+            working_tick_bitmap = self.tick_bitmap
+            working_tick_data = self.tick_data
 
-            _liquidity = self.liquidity
+            working_liquidity = self.liquidity
 
-            assert _liquidity >= 0, (
+            assert working_liquidity >= 0, (
                 f"Starting liquidity violates invariant: pool {self.address} {self.tick=} {self.liquidity=}"  # noqa: E501
             )
 
@@ -1257,21 +1262,21 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 update.tick_lower <= self.tick < update.tick_upper
                 and state_block > self._initial_state_block
             ):
-                _liquidity += update.liquidity
-                assert _liquidity >= 0, (
+                working_liquidity += update.liquidity
+                assert working_liquidity >= 0, (
                     f"In-range liquidity adjustment violated invariant: pool {self.address} {self.tick=} {self.liquidity=} {self.update_block=} {update=}"  # noqa: E501
                 )
 
             for tick in (update.tick_lower, update.tick_upper):
                 tick_word, _ = get_tick_word_and_bit_position(tick, self.tick_spacing)
 
-                if self.sparse_liquidity_map and tick_word not in _tick_bitmap:
+                if self.sparse_liquidity_map and tick_word not in working_tick_bitmap:
                     # The liquidity map at the affected word must be complete prior to changing the
                     # status of any tick
                     self._fetch_and_populate_initialized_ticks(
                         word_position=tick_word,
-                        tick_bitmap=_tick_bitmap,
-                        tick_data=_tick_data,
+                        tick_bitmap=working_tick_bitmap,
+                        tick_data=working_tick_data,
                         block_number=(
                             # Populate the liquidity data from the previous block
                             state_block - 1
@@ -1281,22 +1286,22 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 # Get the liquidity info for this tick. If the mapping is empty at this tick, it is
                 # uninitialized and must be flipped in the bitmap and initialized as empty in the
                 # mapping
-                if tick not in _tick_data:
-                    _tick_data[tick] = UniswapV4LiquidityAtTick(
+                if tick not in working_tick_data:
+                    working_tick_data[tick] = UniswapV4LiquidityAtTick(
                         liquidity_net=0,
                         liquidity_gross=0,
                         block=state_block,
                     )
                     flip_tick(
-                        tick_bitmap=_tick_bitmap,
+                        tick_bitmap=working_tick_bitmap,
                         sparse=self.sparse_liquidity_map,
                         tick=tick,
                         tick_spacing=self.tick_spacing,
                         update_block=state_block,
                     )
 
-                current_liquidity_net = _tick_data[tick].liquidity_net
-                current_liquidity_gross = _tick_data[tick].liquidity_gross
+                current_liquidity_net = working_tick_data[tick].liquidity_net
+                current_liquidity_gross = working_tick_data[tick].liquidity_gross
 
                 new_liquidity_gross = current_liquidity_gross + update.liquidity
                 assert new_liquidity_gross >= 0, (
@@ -1306,9 +1311,9 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 if new_liquidity_gross == 0:
                     # Delete tick from the map if there is no remaining liquidity referencing it,
                     # and flip it in the bitmap
-                    del _tick_data[tick]
+                    del working_tick_data[tick]
                     flip_tick(
-                        tick_bitmap=_tick_bitmap,
+                        tick_bitmap=working_tick_bitmap,
                         sparse=self.sparse_liquidity_map,
                         tick=tick,
                         tick_spacing=self.tick_spacing,
@@ -1322,7 +1327,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 else:
                     new_liquidity_net = current_liquidity_net - update.liquidity
 
-                _tick_data[tick] = UniswapV4LiquidityAtTick(
+                working_tick_data[tick] = UniswapV4LiquidityAtTick(
                     liquidity_net=new_liquidity_net,
                     liquidity_gross=new_liquidity_gross,
                     block=state_block,
@@ -1330,9 +1335,9 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
             state = dataclasses.replace(
                 self.state,
-                liquidity=_liquidity,
-                tick_data=_tick_data,
-                tick_bitmap=_tick_bitmap,
+                liquidity=working_liquidity,
+                tick_data=working_tick_data,
+                tick_bitmap=working_tick_bitmap,
                 block=max(self.update_block, state_block),
             )
             self._state = state

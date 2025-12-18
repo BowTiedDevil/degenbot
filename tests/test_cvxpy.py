@@ -15,7 +15,9 @@ from cvxpy.atoms.affine.sum import sum as cvxpy_sum
 from cvxpy.atoms.geo_mean import geo_mean
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.arbitrage.uniswap_multipool_cycle_testing import _UniswapMultiPoolCycleTesting
+from degenbot.arbitrage.uniswap_multipool_cycle_testing import (
+    _UniswapMultiPoolCycleTesting,  # noqa: PLC2701
+)
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import set_web3
 from degenbot.constants import ZERO_ADDRESS
@@ -181,12 +183,10 @@ def test_2pool_uniswap_v2_decimal_corrected(
 
     pool_hi_fees = [pool_hi.fee_token0, pool_hi.fee_token1]
     pool_lo_fees = [pool_lo.fee_token0, pool_lo.fee_token1]
-    fee_multiplier = cvxpy_bmat(
-        (
-            pool_hi_fees,
-            pool_lo_fees,
-        )
-    )
+    fee_multiplier = cvxpy_bmat((
+        pool_hi_fees,
+        pool_lo_fees,
+    ))
 
     # Identify the largest value to use as a common divisor.
     compression_factor = max(
@@ -197,11 +197,11 @@ def test_2pool_uniswap_v2_decimal_corrected(
     )
 
     # Compress all pool reserves into a 0.0 - 1.0 value range
-    _compressed_starting_reserves_pool_hi = (
+    compressed_starting_reserves_pool_hi = (
         Fraction(pool_hi.state.reserves_token0, 10**token0_decimals) / compression_factor,
         Fraction(pool_hi.state.reserves_token1, 10**token1_decimals) / compression_factor,
     )
-    _compressed_starting_reserves_pool_lo = (
+    compressed_starting_reserves_pool_lo = (
         Fraction(pool_lo.state.reserves_token0, 10**token0_decimals) / compression_factor,
         Fraction(pool_lo.state.reserves_token1, 10**token1_decimals) / compression_factor,
     )
@@ -210,8 +210,8 @@ def test_2pool_uniswap_v2_decimal_corrected(
         shape=(num_pools, num_tokens),
         value=np.array(
             (
-                _compressed_starting_reserves_pool_hi,
-                _compressed_starting_reserves_pool_lo,
+                compressed_starting_reserves_pool_hi,
+                compressed_starting_reserves_pool_lo,
             ),
             dtype=np.float64,
         ),
@@ -245,12 +245,10 @@ def test_2pool_uniswap_v2_decimal_corrected(
     pool_lo_deposits = (
         (0, pool_lo_profit_token_in) if forward_token_index == 0 else (pool_lo_profit_token_in, 0)
     )
-    deposits = cvxpy_bmat(
-        (
-            pool_hi_deposits,
-            pool_lo_deposits,
-        )
-    )
+    deposits = cvxpy_bmat((
+        pool_hi_deposits,
+        pool_lo_deposits,
+    ))
 
     pool_hi_withdrawals = (
         (0, pool_hi_profit_token_out) if forward_token_index == 0 else (pool_hi_profit_token_out, 0)
@@ -258,12 +256,10 @@ def test_2pool_uniswap_v2_decimal_corrected(
     pool_lo_withdrawals = (
         (forward_token_amount, 0) if forward_token_index == 0 else (0, forward_token_amount)
     )
-    withdrawals = cvxpy_bmat(
-        (
-            pool_hi_withdrawals,
-            pool_lo_withdrawals,
-        )
-    )
+    withdrawals = cvxpy_bmat((
+        pool_hi_withdrawals,
+        pool_lo_withdrawals,
+    ))
 
     fees_removed = cvxpy_multiply(fee_multiplier, deposits)
 
@@ -394,12 +390,10 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
 
     pool_hi_fees = [pool_hi.fee_token0, pool_hi.fee_token1]
     pool_lo_fees = [pool_lo.fee_token0, pool_lo.fee_token1]
-    fee_multiplier = cvxpy_bmat(
-        (
-            pool_hi_fees,
-            pool_lo_fees,
-        )
-    )
+    fee_multiplier = cvxpy_bmat((
+        pool_hi_fees,
+        pool_lo_fees,
+    ))
 
     # Identify the largest value to use as a common divisor for each token.
     compression_factor_token0 = max(
@@ -417,11 +411,11 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
     print(f"compression factor (token1): {float(compression_factor_token1)}")
 
     # Compress all pool reserves into a 0.0 - 1.0 value range
-    _compressed_starting_reserves_pool_hi = (
+    compressed_starting_reserves_pool_hi = (
         Fraction(pool_hi.state.reserves_token0, 10**token0_decimals) / compression_factor_token0,
         Fraction(pool_hi.state.reserves_token1, 10**token1_decimals) / compression_factor_token1,
     )
-    _compressed_starting_reserves_pool_lo = (
+    compressed_starting_reserves_pool_lo = (
         Fraction(pool_lo.state.reserves_token0, 10**token0_decimals) / compression_factor_token0,
         Fraction(pool_lo.state.reserves_token1, 10**token1_decimals) / compression_factor_token1,
     )
@@ -430,8 +424,8 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
         shape=(num_pools, num_tokens),
         value=np.array(
             (
-                _compressed_starting_reserves_pool_hi,
-                _compressed_starting_reserves_pool_lo,
+                compressed_starting_reserves_pool_hi,
+                compressed_starting_reserves_pool_lo,
             ),
             dtype=np.float64,
         ),
@@ -465,12 +459,10 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
     pool_lo_deposits = (
         (0, pool_lo_profit_token_in) if forward_token_index == 0 else (pool_lo_profit_token_in, 0)
     )
-    deposits = cvxpy_bmat(
-        (
-            pool_hi_deposits,
-            pool_lo_deposits,
-        )
-    )
+    deposits = cvxpy_bmat((
+        pool_hi_deposits,
+        pool_lo_deposits,
+    ))
 
     pool_hi_withdrawals = (
         (0, pool_hi_profit_token_out) if forward_token_index == 0 else (pool_hi_profit_token_out, 0)
@@ -478,12 +470,10 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
     pool_lo_withdrawals = (
         (forward_token_amount, 0) if forward_token_index == 0 else (0, forward_token_amount)
     )
-    withdrawals = cvxpy_bmat(
-        (
-            pool_hi_withdrawals,
-            pool_lo_withdrawals,
-        )
-    )
+    withdrawals = cvxpy_bmat((
+        pool_hi_withdrawals,
+        pool_lo_withdrawals,
+    ))
 
     fees_removed = cvxpy_multiply(fee_multiplier, deposits)
 
@@ -624,12 +614,10 @@ def test_base_2pool(
 
     pool_hi_fees = [pool_hi.fee_token0, pool_hi.fee_token1]
     pool_lo_fees = [pool_lo.fee_token0, pool_lo.fee_token1]
-    fee_multiplier = cvxpy_bmat(
-        (
-            pool_hi_fees,
-            pool_lo_fees,
-        )
-    )
+    fee_multiplier = cvxpy_bmat((
+        pool_hi_fees,
+        pool_lo_fees,
+    ))
 
     compression_factor_token0 = max(
         Fraction(pool_hi.state.reserves_token0, 10**token0_decimals),
@@ -647,11 +635,11 @@ def test_base_2pool(
     )
 
     # Compress all pool reserves into a 0.0 - 1.0 value range
-    _compressed_starting_reserves_pool_hi = (
+    compressed_starting_reserves_pool_hi = (
         Fraction(pool_hi.state.reserves_token0, 10**token0_decimals) / compression_factor_token0,
         Fraction(pool_hi.state.reserves_token1, 10**token1_decimals) / compression_factor_token1,
     )
-    _compressed_starting_reserves_pool_lo = (
+    compressed_starting_reserves_pool_lo = (
         Fraction(pool_lo.state.reserves_token0, 10**token0_decimals) / compression_factor_token0,
         Fraction(pool_lo.state.reserves_token1, 10**token1_decimals) / compression_factor_token1,
     )
@@ -660,8 +648,8 @@ def test_base_2pool(
         shape=(num_pools, num_tokens),
         value=np.array(
             (
-                _compressed_starting_reserves_pool_hi,
-                _compressed_starting_reserves_pool_lo,
+                compressed_starting_reserves_pool_hi,
+                compressed_starting_reserves_pool_lo,
             ),
             dtype=np.float64,
         ),
@@ -695,12 +683,10 @@ def test_base_2pool(
     pool_lo_deposits = (
         (0, pool_lo_profit_token_in) if forward_token_index == 0 else (pool_lo_profit_token_in, 0)
     )
-    deposits = cvxpy_bmat(
-        (
-            pool_hi_deposits,
-            pool_lo_deposits,
-        )
-    )
+    deposits = cvxpy_bmat((
+        pool_hi_deposits,
+        pool_lo_deposits,
+    ))
 
     pool_hi_withdrawals = (
         (0, pool_hi_profit_token_out) if forward_token_index == 0 else (pool_hi_profit_token_out, 0)
@@ -708,12 +694,10 @@ def test_base_2pool(
     pool_lo_withdrawals = (
         (forward_token_amount, 0) if forward_token_index == 0 else (0, forward_token_amount)
     )
-    withdrawals = cvxpy_bmat(
-        (
-            pool_hi_withdrawals,
-            pool_lo_withdrawals,
-        )
-    )
+    withdrawals = cvxpy_bmat((
+        pool_hi_withdrawals,
+        pool_lo_withdrawals,
+    ))
 
     fees_removed = cvxpy_multiply(fee_multiplier, deposits)
 

@@ -64,8 +64,8 @@ async_connection_manager = AsyncConnectionManager()
 __all__ = (
     "async_connection_manager",
     "connection_manager",
+    "get_async_web3",
     "get_web3",
-    "get_web3_async",
+    "set_async_web3",
     "set_web3",
-    "set_web3_async",
 )

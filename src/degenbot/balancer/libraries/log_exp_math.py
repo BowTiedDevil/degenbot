@@ -282,18 +282,18 @@ def _ln(a: int) -> int:
     # term is present in the decomposition (if a is larger than it), and if so divide by it and
     # compute the accumulated sum.
 
-    _sum = 0
+    working_sum = 0
     if a >= a0 * ONE_18:
         a //= a0  # Integer, not fixed point division
-        _sum += x0
+        working_sum += x0
 
     if a >= a1 * ONE_18:
         a //= a1  # Integer, not fixed point division
-        _sum += x1
+        working_sum += x1
 
     # All other a_n and x_n are stored as 20 digit fixed point numbers, so we convert the sum and a
     # to this format.
-    _sum *= 100
+    working_sum *= 100
     a *= 100
 
     # Because further a_n are  20 digit fixed point numbers, we multiply by ONE_20 when dividing by
@@ -301,34 +301,34 @@ def _ln(a: int) -> int:
 
     if a >= a2:
         a = (a * ONE_20) // a2
-        _sum += x2
+        working_sum += x2
     if a >= a3:
         a = (a * ONE_20) // a3
-        _sum += x3
+        working_sum += x3
     if a >= a4:
         a = (a * ONE_20) // a4
-        _sum += x4
+        working_sum += x4
     if a >= a5:
         a = (a * ONE_20) // a5
-        _sum += x5
+        working_sum += x5
     if a >= a6:
         a = (a * ONE_20) // a6
-        _sum += x6
+        working_sum += x6
     if a >= a7:
         a = (a * ONE_20) // a7
-        _sum += x7
+        working_sum += x7
     if a >= a8:
         a = (a * ONE_20) // a8
-        _sum += x8
+        working_sum += x8
     if a >= a9:
         a = (a * ONE_20) // a9
-        _sum += x9
+        working_sum += x9
     if a >= a10:
         a = (a * ONE_20) // a10
-        _sum += x10
+        working_sum += x10
     if a >= a11:
         a = (a * ONE_20) // a11
-        _sum += x11
+        working_sum += x11
 
     # a is now a small number (smaller than a_11, which roughly equals 1.06). This means we can use
     # a Taylor series that converges rapidly for values of `a` close to one - the same one used in
@@ -372,7 +372,7 @@ def _ln(a: int) -> int:
     # remainder (both with 20 decimals). All that remains is to sum these two, and then drop two
     # digits to return a 18 decimal value.
 
-    return (_sum + series_sum) // 100
+    return (working_sum + series_sum) // 100
 
 
 def _ln_36(x: int) -> int:

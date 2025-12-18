@@ -32,6 +32,7 @@ class Direction(enum.Enum):
 
 
 def find_paths(
+    *,
     chain_id: int,
     start_tokens: Iterable[ChecksumAddress | str],
     end_tokens: Iterable[ChecksumAddress | str],
@@ -79,11 +80,11 @@ def find_paths(
             return
 
         if start_token_id == end_token_id and len(working_path) >= min_depth:
-            _path: list[PathStep] = []
+            path_steps: list[PathStep] = []
 
             for pool_id, pool_type in working_path:
                 if issubclass(pool_type, LiquidityPoolTable):
-                    _path.append(
+                    path_steps.append(
                         PathStep(
                             address=db_session.scalars(
                                 sqlalchemy.select(pool_type.address).where(pool_type.id == pool_id)
@@ -93,7 +94,8 @@ def find_paths(
                     )
                 elif issubclass(pool_type, UniswapV4PoolTable):
                     pool_address, pool_hash = db_session.execute(
-                        sqlalchemy.select(
+                        sqlalchemy
+                        .select(
                             PoolManagerTable.address,
                             pool_type.pool_hash,
                         )
@@ -101,7 +103,7 @@ def find_paths(
                         .where(pool_type.id == pool_id)
                     ).one()
 
-                    _path.append(
+                    path_steps.append(
                         PathStep(
                             address=pool_address,
                             hash=pool_hash,
@@ -109,12 +111,12 @@ def find_paths(
                         )
                     )
 
-            assert min_depth <= len(_path)
+            assert min_depth <= len(path_steps)
             if max_depth:
-                assert len(_path) <= max_depth
-            yield _path
+                assert len(path_steps) <= max_depth
+            yield path_steps
             if include_reverse:
-                yield _path[::-1]
+                yield path_steps[::-1]
 
         # Stop recursion if the working path has reached the maximum depth
         if len(working_path) == max_depth:
@@ -143,30 +145,27 @@ def find_paths(
         token_count_selects: list[sqlalchemy.Select[tuple[TokenId]]] = []
         for pool_type in pool_types:
             if issubclass(pool_type, LiquidityPoolTable):
-                token_count_selects.append(
+                token_count_selects.extend((
                     sqlalchemy.select(pool_type.token0_id.label("token_id")).where(
                         pool_type.chain == chain_id
-                    )
-                )
-                token_count_selects.append(
+                    ),
                     sqlalchemy.select(pool_type.token1_id.label("token_id")).where(
                         pool_type.chain == chain_id
-                    )
-                )
+                    ),
+                ))
             if issubclass(pool_type, UniswapV4PoolTable):
-                token_count_selects.append(
+                token_count_selects.extend((
                     sqlalchemy.select(pool_type.currency0_id.label("token_id")).where(
                         pool_type.manager.has(chain=chain_id)
-                    )
-                )
-                token_count_selects.append(
+                    ),
                     sqlalchemy.select(pool_type.currency1_id.label("token_id")).where(
                         pool_type.manager.has(chain=chain_id)
-                    )
-                )
+                    ),
+                ))
         token_count_subq = sqlalchemy.union_all(*token_count_selects).subquery()
         token_counts_greater_than_two_subq = (
-            sqlalchemy.select(
+            sqlalchemy
+            .select(
                 token_count_subq.columns["token_id"],
                 sqlalchemy.func.count().label("pool_count"),
             )
@@ -260,8 +259,8 @@ def find_paths(
         # One traversal can be eliminated for every combination from tokens in the starting and
         # ending sets. The plan is reduced by consolidating: P(a->b) + P(b->a) == P(a<->b)
         for start_token, end_token in itertools.combinations(tokens_used_for_start_and_end, 2):
-            traversal_plan[(start_token, end_token)] = Direction.FORWARD_AND_REVERSE
-            del traversal_plan[(end_token, start_token)]
+            traversal_plan[start_token, end_token] = Direction.FORWARD_AND_REVERSE
+            del traversal_plan[end_token, start_token]
 
     for (start_token, end_token), direction in traversal_plan.items():
         start_token_id = db_session.scalar(

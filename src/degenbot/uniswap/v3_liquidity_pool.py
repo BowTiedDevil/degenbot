@@ -1,3 +1,6 @@
+# ruff: noqa: PLR0904
+
+
 # TODO: add event prototype exporter method and handler for callbacks
 import dataclasses
 from bisect import bisect_left
@@ -336,7 +339,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         # If liquidity info was not provided, treat the mapping as sparse
         self.sparse_liquidity_map = tick_bitmap is None or tick_data is None
 
-        _tick_bitmap = (
+        working_tick_bitmap = (
             {}
             if tick_bitmap is None
             else {
@@ -348,8 +351,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 for word, bitmap_at_word in tick_bitmap.items()
             }
         )
-
-        _tick_data = (
+        working_tick_data = (
             {}
             if tick_data is None
             else {
@@ -366,8 +368,8 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             word, _ = get_tick_word_and_bit_position(tick=tick, tick_spacing=self.tick_spacing)
             self._fetch_and_populate_initialized_ticks(
                 word_position=word,
-                tick_bitmap=_tick_bitmap,
-                tick_data=_tick_data,
+                tick_bitmap=working_tick_bitmap,
+                tick_data=working_tick_data,
                 block_number=state_block,
             )
 
@@ -376,8 +378,8 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             liquidity=liquidity,
             sqrt_price_x96=sqrt_price_x96,
             tick=tick,
-            tick_bitmap=_tick_bitmap,
-            tick_data=_tick_data,
+            tick_bitmap=working_tick_bitmap,
+            tick_data=working_tick_data,
             block=state_block,
         )
         self._state_cache = BoundedCache(max_items=state_cache_depth)
@@ -724,6 +726,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
     def _fetch_and_populate_initialized_ticks(
         self,
+        *,
         word_position: int,
         tick_bitmap: InitializedTickMap,
         tick_data: LiquidityMap,
@@ -739,25 +742,24 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         if block_number is None:
             block_number = w3.eth.get_block_number()
 
-        _tick_bitmap: int = 0
-        _tick_data: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
-        _tick_bitmap = self.get_tick_bitmap_at_word(
+        working_tick_data: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
+        working_tick_bitmap = self.get_tick_bitmap_at_word(
             w3=w3,
             word_position=word_position,
             block_identifier=block_number,
         )
-        if _tick_bitmap != 0:
-            _tick_data = self.get_populated_ticks_in_word(
+        if working_tick_bitmap != 0:
+            working_tick_data = self.get_populated_ticks_in_word(
                 w3=w3,
                 word_position=word_position,
                 block_identifier=block_number,
             )
 
         tick_bitmap[word_position] = UniswapV3BitmapAtWord(
-            bitmap=_tick_bitmap,
+            bitmap=working_tick_bitmap,
             block=block_number,
         )
-        for tick, liquidity_gross, liquidity_net in _tick_data:
+        for tick, liquidity_gross, liquidity_net in working_tick_data:
             tick_data[tick] = UniswapV3LiquidityAtTick(
                 liquidity_net=liquidity_net,
                 liquidity_gross=liquidity_gross,
@@ -841,47 +843,45 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
     ]:
         try:
             with w3.batch_requests() as batch:
-                batch.add_mapping(
-                    {
-                        w3.eth.call: [
-                            TxParams(
-                                to=self.address,
-                                data=encode_function_calldata(
-                                    function_prototype="factory()",
-                                    function_arguments=None,
-                                ),
+                batch.add_mapping({
+                    w3.eth.call: [
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
+                                function_prototype="factory()",
+                                function_arguments=None,
                             ),
-                            TxParams(
-                                to=self.address,
-                                data=encode_function_calldata(
-                                    function_prototype="token0()",
-                                    function_arguments=None,
-                                ),
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
+                                function_prototype="token0()",
+                                function_arguments=None,
                             ),
-                            TxParams(
-                                to=self.address,
-                                data=encode_function_calldata(
-                                    function_prototype="token1()",
-                                    function_arguments=None,
-                                ),
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
+                                function_prototype="token1()",
+                                function_arguments=None,
                             ),
-                            TxParams(
-                                to=self.address,
-                                data=encode_function_calldata(
-                                    function_prototype="fee()",
-                                    function_arguments=None,
-                                ),
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
+                                function_prototype="fee()",
+                                function_arguments=None,
                             ),
-                            TxParams(
-                                to=self.address,
-                                data=encode_function_calldata(
-                                    function_prototype="tickSpacing()",
-                                    function_arguments=None,
-                                ),
+                        ),
+                        TxParams(
+                            to=self.address,
+                            data=encode_function_calldata(
+                                function_prototype="tickSpacing()",
+                                function_arguments=None,
                             ),
-                        ],
-                    }
-                )
+                        ),
+                    ],
+                })
 
                 factory, token0, token1, fee, tick_spacing = batch.execute()
 
@@ -1087,22 +1087,24 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                     )
                 )
 
-                slot0, liquidity = batch.execute()
+                slot0_result, liquidity_result = batch.execute()
 
-            _sqrt_price_x96: int
-            _tick: int
-            _sqrt_price_x96, _tick, *_ = eth_abi.abi.decode(
-                types=self.SLOT0_STRUCT_TYPES, data=cast("HexBytes", slot0)
+            sqrt_price_x96: int
+            tick: int
+            liquidity: int
+
+            sqrt_price_x96, tick, *_ = eth_abi.abi.decode(
+                types=self.SLOT0_STRUCT_TYPES, data=cast("HexBytes", slot0_result)
             )
-
-            _liquidity: int
-            (_liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", liquidity))
+            (liquidity,) = eth_abi.abi.decode(
+                types=["uint256"], data=cast("HexBytes", liquidity_result)
+            )
 
             state = dataclasses.replace(
                 self.state,
-                liquidity=_liquidity,
-                sqrt_price_x96=_sqrt_price_x96,
-                tick=_tick,
+                liquidity=liquidity,
+                sqrt_price_x96=sqrt_price_x96,
+                tick=tick,
                 block=block_number,
             )
 
@@ -1199,26 +1201,26 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         if token_out not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_out not found!")
 
-        _is_zero_for_one = token_out == self.token1
+        is_zero_for_one = token_out == self.token1
 
         try:
             amount0_delta, amount1_delta, *_ = self._calculate_swap(
-                zero_for_one=_is_zero_for_one,
+                zero_for_one=is_zero_for_one,
                 amount_specified=-token_out_quantity,
                 sqrt_price_limit_x96=(
-                    MIN_SQRT_RATIO + 1 if _is_zero_for_one else MAX_SQRT_RATIO - 1
+                    MIN_SQRT_RATIO + 1 if is_zero_for_one else MAX_SQRT_RATIO - 1
                 ),
                 override_state=override_state,
             )
         except EVMRevertError as e:  # pragma: no cover
             raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
         else:
-            if _is_zero_for_one is True and -amount1_delta < token_out_quantity:
+            if is_zero_for_one is True and -amount1_delta < token_out_quantity:
                 raise IncompleteSwap(amount_in=amount0_delta, amount_out=-amount1_delta)
-            if _is_zero_for_one is False and -amount0_delta < token_out_quantity:
+            if is_zero_for_one is False and -amount0_delta < token_out_quantity:
                 raise IncompleteSwap(amount_in=amount1_delta, amount_out=-amount0_delta)
 
-            return amount0_delta if _is_zero_for_one else amount1_delta
+            return amount0_delta if is_zero_for_one else amount1_delta
 
     def external_update(
         self,
@@ -1288,12 +1290,12 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
             # The tick bitmap and tick data dictionaries accessed through the attribute are copies,
             # so they can be freely modified without corrupting the state
-            _tick_bitmap = self.tick_bitmap
-            _tick_data = self.tick_data
+            working_tick_bitmap = self.tick_bitmap
+            working_tick_data = self.tick_data
 
-            _liquidity = self.liquidity
+            working_liquidity = self.liquidity
 
-            assert _liquidity >= 0, (
+            assert working_liquidity >= 0, (
                 f"Starting liquidity violates invariant: pool {self.address} {self.tick=} {self.liquidity=}"  # noqa: E501
             )
 
@@ -1307,21 +1309,21 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 update.tick_lower <= self.tick < update.tick_upper
                 and state_block > self._initial_state_block
             ):
-                _liquidity += update.liquidity
-                assert _liquidity >= 0, (
+                working_liquidity += update.liquidity
+                assert working_liquidity >= 0, (
                     f"In-range liquidity adjustment violated invariant: pool {self.address} {self.tick=} {self.liquidity=} {self.update_block=} {update=}"  # noqa: E501
                 )
 
             for tick in (update.tick_lower, update.tick_upper):
                 tick_word, _ = get_tick_word_and_bit_position(tick, self.tick_spacing)
 
-                if self.sparse_liquidity_map and tick_word not in _tick_bitmap:
+                if self.sparse_liquidity_map and tick_word not in working_tick_bitmap:
                     # The liquidity map at the affected word must be complete prior to changing the
                     # status of any tick
                     self._fetch_and_populate_initialized_ticks(
                         word_position=tick_word,
-                        tick_bitmap=_tick_bitmap,
-                        tick_data=_tick_data,
+                        tick_bitmap=working_tick_bitmap,
+                        tick_data=working_tick_data,
                         block_number=(
                             # Populate the liquidity data from the previous block
                             state_block - 1
@@ -1331,22 +1333,22 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 # Get the liquidity info for this tick. If the mapping is empty at this tick, it is
                 # uninitialized and must be flipped in the bitmap and initialized as empty in the
                 # mapping
-                if tick not in _tick_data:
-                    _tick_data[tick] = UniswapV3LiquidityAtTick(
+                if tick not in working_tick_data:
+                    working_tick_data[tick] = UniswapV3LiquidityAtTick(
                         liquidity_net=0,
                         liquidity_gross=0,
                         block=state_block,
                     )
                     flip_tick(
-                        tick_bitmap=_tick_bitmap,
+                        tick_bitmap=working_tick_bitmap,
                         sparse=self.sparse_liquidity_map,
                         tick=tick,
                         tick_spacing=self.tick_spacing,
                         update_block=state_block,
                     )
 
-                current_liquidity_net = _tick_data[tick].liquidity_net
-                current_liquidity_gross = _tick_data[tick].liquidity_gross
+                current_liquidity_net = working_tick_data[tick].liquidity_net
+                current_liquidity_gross = working_tick_data[tick].liquidity_gross
 
                 new_liquidity_gross = current_liquidity_gross + update.liquidity
                 assert new_liquidity_gross >= 0, (
@@ -1356,9 +1358,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 if new_liquidity_gross == 0:
                     # Delete tick from the map if there is no remaining liquidity referencing it,
                     # and flip it in the bitmap
-                    del _tick_data[tick]
+                    del working_tick_data[tick]
                     flip_tick(
-                        tick_bitmap=_tick_bitmap,
+                        tick_bitmap=working_tick_bitmap,
                         sparse=self.sparse_liquidity_map,
                         tick=tick,
                         tick_spacing=self.tick_spacing,
@@ -1372,7 +1374,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 else:
                     new_liquidity_net = current_liquidity_net - update.liquidity
 
-                _tick_data[tick] = UniswapV3LiquidityAtTick(
+                working_tick_data[tick] = UniswapV3LiquidityAtTick(
                     liquidity_net=new_liquidity_net,
                     liquidity_gross=new_liquidity_gross,
                     block=state_block,
@@ -1380,9 +1382,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
             state = dataclasses.replace(
                 self.state,
-                liquidity=_liquidity,
-                tick_data=_tick_data,
-                tick_bitmap=_tick_bitmap,
+                liquidity=working_liquidity,
+                tick_data=working_tick_data,
+                tick_bitmap=working_tick_bitmap,
                 block=max(self.update_block, state_block),
             )
             self._state = state

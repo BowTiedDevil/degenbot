@@ -1,8 +1,10 @@
+# ruff: noqa: PLR0904
+
 import contextlib
 import pathlib
 import shutil
 import socket
-import subprocess
+import subprocess  # noqa: S404
 import tempfile
 from collections.abc import AsyncIterator, Iterable
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -97,10 +99,9 @@ class AnvilFork:
             if fork_transaction_hash:
                 command.append(f"--fork-transaction-hash={fork_transaction_hash}")
 
-        _path_to_anvil = shutil.which("anvil")
-        if _path_to_anvil is None:  # pragma: no cover
+        if (which_path := shutil.which("anvil")) is None:  # pragma: no cover
             raise AnvilNotFound
-        path_to_anvil = pathlib.Path(_path_to_anvil)
+        anvil_path = pathlib.Path(which_path).absolute()
 
         tmp_dir = pathlib.Path(tempfile.gettempdir())
         self.ipc_path = tmp_dir if ipc_path is None else ipc_path
@@ -115,7 +116,7 @@ class AnvilFork:
         self.port = self._get_free_port_number()
 
         command: AnvilOptions = [
-            str(path_to_anvil),
+            str(anvil_path),
             "--auto-impersonate",
             "--no-rate-limit",
             f"--fork-url={fork_url}",
@@ -195,8 +196,8 @@ class AnvilFork:
     def _get_free_port_number() -> int:
         with socket.socket() as sock:
             sock.bind(("", 0))
-            _, _port = sock.getsockname()
-            return cast("int", _port)
+            _, port = sock.getsockname()
+            return cast("int", port)
 
     def _setup_w3(self, timeout: int = 10) -> None:
         try:
@@ -323,13 +324,11 @@ class AnvilFork:
             self._anvil_command = [
                 option
                 for option in self._anvil_command.copy()
-                if all(
-                    (
-                        "--fork-url" not in option,
-                        "--fork-block-number" not in option,
-                        "--fork-transaction-hash" not in option,
-                    )
-                )
+                if all((
+                    "--fork-url" not in option,
+                    "--fork-block-number" not in option,
+                    "--fork-transaction-hash" not in option,
+                ))
             ]
 
             # Fork URL must be provided since a new process is being launched

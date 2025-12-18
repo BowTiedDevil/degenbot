@@ -87,14 +87,13 @@ def get_amount1_delta(
 
     numerator = abs(sqrt_price_a_x96 - sqrt_price_b_x96)
     denominator = Q96
-    _liquidity = liquidity
     # Equivalent to:
     # ... amount1 = roundUp
     #       ? FullMath.mulDivRoundingUp(liquidity, sqrtPriceBX96 - sqrtPriceAX96, FixedPoint96.Q96)
     #       : FullMath.mulDiv(liquidity, sqrtPriceBX96 - sqrtPriceAX96, FixedPoint96.Q96);
     # Cannot overflow because `type(uint128).max * type(uint160).max >> 96 < (1 << 192)`.
-    return muldiv(_liquidity, numerator, denominator) + (
-        int(mulmod(_liquidity, numerator, denominator) > 0) & round_up
+    return muldiv(liquidity, numerator, denominator) + (
+        int(mulmod(liquidity, numerator, denominator) > 0) & round_up
     )
 
 

@@ -111,23 +111,17 @@ def _calc_in_given_out(
     # The multiplication rounds up, and the power rounds up (so the base rounds up too).
     # Because b0 / (b0 - a0) >= 1, the exponent rounds up.
 
-    _balance_in = balance_in
-    _weight_in = weight_in
-    _balance_out = balance_out
-    _weight_out = weight_out
-    _amount_out = amount_out
-
     # Cannot exceed maximum out ratio
-    if not (_amount_out <= mul_down(_balance_out, _MAX_OUT_RATIO)):
+    if not (amount_out <= mul_down(balance_out, _MAX_OUT_RATIO)):
         raise EVMRevertError(error="MAX_OUT_RATIO")
 
-    _base = div_up(_balance_out, _balance_out - _amount_out)
-    _exponent = div_up(_weight_out, _weight_in)
-    _power = pow_up(_base, _exponent)
+    base = div_up(balance_out, balance_out - amount_out)
+    exponent = div_up(weight_out, weight_in)
+    power = pow_up(base, exponent)
     # Because the base is larger than one (and the power rounds up), the power should always be
     # larger than one, so the following subtraction should never revert.
-    _ratio = _power - ONE
-    return mul_up(_balance_in, _ratio)
+    ratio = power - ONE
+    return mul_up(balance_in, ratio)
 
 
 def _subtract_swap_fee_amount(amount: int, fee_percentage: int) -> int:

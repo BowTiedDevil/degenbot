@@ -57,7 +57,9 @@ def test_incomplete_swap_pickling() -> None:
     # Create an instance with custom amount_in and amount_out values
     original_amount_in = 1000
     original_amount_out = 500
-    original_exception = IncompleteSwap(amount_in=original_amount_in, amount_out=original_amount_out)
+    original_exception = IncompleteSwap(
+        amount_in=original_amount_in, amount_out=original_amount_out
+    )
 
     # Pickle the exception
     pickled_data = pickle.dumps(original_exception)
@@ -76,17 +78,15 @@ def test_incomplete_swap_pickling() -> None:
 
 def test_possible_inaccurate_result_pickling() -> None:
     """
-    Test that the `PossibleInaccurateResult` exception's `__reduce__` method allows the exception to be
-    pickled and unpickled correctly.
+    Test that the `PossibleInaccurateResult` exception's `__reduce__` method allows the exception to
+    be pickled and unpickled correctly.
     """
     # Create an instance with custom amount_in, amount_out, and hooks values
     original_amount_in = 2000
     original_amount_out = 1000
     original_hooks = {"hook1", "hook2", "hook3"}  # Using a set of strings as mock hooks
     original_exception = PossibleInaccurateResult(
-        amount_in=original_amount_in,
-        amount_out=original_amount_out,
-        hooks=original_hooks
+        amount_in=original_amount_in, amount_out=original_amount_out, hooks=original_hooks
     )
 
     # Pickle the exception
@@ -102,4 +102,6 @@ def test_possible_inaccurate_result_pickling() -> None:
     assert unpickled_exception.amount_in == original_amount_in
     assert unpickled_exception.amount_out == original_amount_out
     assert unpickled_exception.hooks == original_hooks
-    assert unpickled_exception.message == "The pool has one or more hooks that might invalidate the calculated result."
+    assert unpickled_exception.message == (
+        "The pool has one or more hooks that might invalidate the calculated result."
+    )

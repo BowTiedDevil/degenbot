@@ -101,7 +101,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
             )
             for token in tokens
         )
-        self.scaling_factors = tuple([_compute_scaling_factor(token) for token in self.tokens])
+        self.scaling_factors = tuple(_compute_scaling_factor(token) for token in self.tokens)
 
         self._state_lock = Lock()
         self._state = BalancerV2PoolState(

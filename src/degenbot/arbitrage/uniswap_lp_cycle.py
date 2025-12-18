@@ -73,7 +73,8 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         for subscriber in self._subscribers:
             subscriber.notify(publisher=self, message=message)
 
-    def _validate_pools(self, pools: Sequence[Pool]) -> None:
+    @staticmethod
+    def _validate_pools(pools: Sequence[Pool]) -> None:
         if len(set(pools)) != len(pools):
             raise DegenbotValueError(message="Swap pools must not contain duplicates.")
 
@@ -84,7 +85,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
     def _get_calculation_state_block(
         self,
         state_overrides: Mapping[Pool, PoolState],
-    ) -> None | BlockNumber:
+    ) -> BlockNumber | None:
         if state_overrides:
             return None
         pool_state_blocks = tuple(
@@ -112,13 +113,13 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
             raise DegenbotValueError(message="Maximum input must be positive.")
         self.max_input = max_input
 
-        _swap_vectors: list[UniswapPoolSwapVector] = []
+        swap_vectors: list[UniswapPoolSwapVector] = []
         for i, pool in enumerate(self.swap_pools):
-            input_token = self.input_token if i == 0 else _swap_vectors[-1].token_out
+            input_token = self.input_token if i == 0 else swap_vectors[-1].token_out
 
             match input_token:
                 case pool.token0:
-                    _swap_vectors.append(
+                    swap_vectors.append(
                         UniswapPoolSwapVector(
                             token_in=pool.token0,
                             token_out=pool.token1,
@@ -126,7 +127,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                         )
                     )
                 case pool.token1:
-                    _swap_vectors.append(
+                    swap_vectors.append(
                         UniswapPoolSwapVector(
                             token_in=pool.token1,
                             token_out=pool.token0,
@@ -137,7 +138,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     wrapped_native_token := WRAPPED_NATIVE_TOKENS[pool.chain_id]
                 ) in pool.tokens:
                     # Handle case where input token is Ether and pool holds wrapped native
-                    _swap_vectors.append(
+                    swap_vectors.append(
                         UniswapPoolSwapVector(
                             token_in=pool.token0
                             if pool.token0 == wrapped_native_token
@@ -153,7 +154,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     and ZERO_ADDRESS in pool.tokens
                 ):
                     # Handle case where input token is wrapped native and pool holds Ether
-                    _swap_vectors.append(
+                    swap_vectors.append(
                         UniswapPoolSwapVector(
                             token_in=pool.token0 if pool.token0 == ZERO_ADDRESS else pool.token1,
                             token_out=pool.token1 if pool.token0 == ZERO_ADDRESS else pool.token0,
@@ -165,7 +166,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                         message=f"Token {input_token} could not be matched. Pool holds {pool.token0} & {pool.token1}"  # noqa: E501
                     )
 
-        self._swap_vectors = tuple(_swap_vectors)
+        self._swap_vectors = tuple(swap_vectors)
 
         self.name = " → ".join([pool.name for pool in self.swap_pools])
 
@@ -296,8 +297,8 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         return tuple(swap_amounts)
 
+    @staticmethod
     def _pool_is_viable(
-        self,
         pool: Pool,
         state: PoolState,
         vector: UniswapPoolSwapVector,
@@ -388,8 +389,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     fee = Fraction(pool.fee, pool.FEE_DENOMINATOR)
                     fee_multiplier = Fraction(fee.denominator - fee.numerator, fee.denominator)
 
-            exchange_rate_multipliers.append(swap_multiplier)
-            exchange_rate_multipliers.append(fee_multiplier)
+            exchange_rate_multipliers.extend((swap_multiplier, fee_multiplier))
 
         net_rate_of_exchange = Fraction(
             math.prod(multiplier.numerator for multiplier in exchange_rate_multipliers),
@@ -600,14 +600,14 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         Arguments
         ---------
-        from_address: str
+        from_address:
             The address that will execute the calldata. Must be a smart
             contract implementing the required callbacks specific to the pool.
 
-        swap_amount: int
+        swap_amount:
             The initial amount of `token_in` to swap through the first pool.
 
-        pool_swap_amounts: Iterable[UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts]
+        pool_swap_amounts:
             An iterable of swap amounts to be encoded.
 
         Returns
@@ -619,7 +619,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
 
         msg_value = 0  # This arbitrage does not require a `msg.value` payment
         payloads: list[Any] = []
-        for i, (swap_pool, _swap_amounts) in enumerate(
+        for i, (swap_pool, swap_amounts) in enumerate(
             zip(self.swap_pools, pool_swap_amounts, strict=True)
         ):
             # Special case when a Uniswap V2 pool is the next step in the path
@@ -630,93 +630,87 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
             else:
                 swap_destination_address = from_address
 
-            match swap_pool, _swap_amounts:
+            match swap_pool, swap_amounts:
                 case AerodromeV2Pool() | UniswapV2Pool(), UniswapV2PoolSwapAmounts():
                     # Special case: If first pool is type V2, input token must be transferred prior
                     # to the swap
                     if i == 0:
-                        payloads.append(
-                            (
-                                # address
-                                self.input_token.address,
-                                # bytes calldata
-                                ERC20_TOKEN_TRANSFER_FUNCTION_SELECTOR
-                                + eth_abi.abi.encode(
-                                    types=(
-                                        "address",
-                                        "uint256",
-                                    ),
-                                    args=(
-                                        swap_pool.address,
-                                        swap_amount,
-                                    ),
+                        payloads.append((
+                            # address
+                            self.input_token.address,
+                            # bytes calldata
+                            ERC20_TOKEN_TRANSFER_FUNCTION_SELECTOR
+                            + eth_abi.abi.encode(
+                                types=(
+                                    "address",
+                                    "uint256",
                                 ),
-                                msg_value,
-                            )
-                        )
+                                args=(
+                                    swap_pool.address,
+                                    swap_amount,
+                                ),
+                            ),
+                            msg_value,
+                        ))
 
                     logger.debug(f"PAYLOAD: building V2 swap at pool {i}")
                     logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
-                    logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
+                    logger.debug(f"PAYLOAD: swap amounts {swap_amounts}")
                     logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
 
-                    payloads.append(
-                        (
-                            # address
-                            swap_pool.address,
-                            # bytes calldata
-                            UNISWAP_V2_SWAP_FUNCTION_SELECTOR
-                            + eth_abi.abi.encode(
-                                types=(
-                                    "uint256",
-                                    "uint256",
-                                    "address",
-                                    "bytes",
-                                ),
-                                args=(
-                                    *_swap_amounts.amounts_out,
-                                    swap_destination_address,
-                                    b"",
-                                ),
+                    payloads.append((
+                        # address
+                        swap_pool.address,
+                        # bytes calldata
+                        UNISWAP_V2_SWAP_FUNCTION_SELECTOR
+                        + eth_abi.abi.encode(
+                            types=(
+                                "uint256",
+                                "uint256",
+                                "address",
+                                "bytes",
                             ),
-                            msg_value,
-                        )
-                    )
+                            args=(
+                                *swap_amounts.amounts_out,
+                                swap_destination_address,
+                                b"",
+                            ),
+                        ),
+                        msg_value,
+                    ))
                 case UniswapV3Pool(), UniswapV3PoolSwapAmounts():
                     logger.debug(f"PAYLOAD: building V3 swap at pool {i}")
                     logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
-                    logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
+                    logger.debug(f"PAYLOAD: swap amounts {swap_amounts}")
                     logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
 
-                    payloads.append(
-                        (
-                            # address
-                            swap_pool.address,
-                            # bytes calldata
-                            UNISWAP_V3_SWAP_FUNCTION_SELECTOR
-                            + eth_abi.abi.encode(
-                                types=(
-                                    "address",
-                                    "bool",
-                                    "int256",
-                                    "uint160",
-                                    "bytes",
-                                ),
-                                args=(
-                                    swap_destination_address,
-                                    _swap_amounts.zero_for_one,
-                                    _swap_amounts.amount_specified,
-                                    _swap_amounts.sqrt_price_limit_x96,
-                                    b"",
-                                ),
+                    payloads.append((
+                        # address
+                        swap_pool.address,
+                        # bytes calldata
+                        UNISWAP_V3_SWAP_FUNCTION_SELECTOR
+                        + eth_abi.abi.encode(
+                            types=(
+                                "address",
+                                "bool",
+                                "int256",
+                                "uint160",
+                                "bytes",
                             ),
-                            msg_value,
-                        )
-                    )
+                            args=(
+                                swap_destination_address,
+                                swap_amounts.zero_for_one,
+                                swap_amounts.amount_specified,
+                                swap_amounts.sqrt_price_limit_x96,
+                                b"",
+                            ),
+                        ),
+                        msg_value,
+                    ))
                 case UniswapV4Pool(), UniswapV4PoolSwapAmounts():
                     logger.debug(f"PAYLOAD: building V4 swap at pool {i}")
                     logger.debug(f"PAYLOAD: pool address {swap_pool.address}")
-                    logger.debug(f"PAYLOAD: swap amounts {_swap_amounts}")
+                    logger.debug(f"PAYLOAD: swap amounts {swap_amounts}")
                     logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
 
                     payloads.append(

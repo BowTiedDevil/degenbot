@@ -313,7 +313,7 @@ def test_fetching_tick_data(wbtc_weth_v3_lp: UniswapV3Pool):
         tick_spacing=wbtc_weth_v3_lp.tick_spacing,
     )
     wbtc_weth_v3_lp._fetch_and_populate_initialized_ticks(
-        word_position + 5,
+        word_position=word_position + 5,
         tick_bitmap=wbtc_weth_v3_lp.tick_bitmap,
         tick_data=wbtc_weth_v3_lp.tick_data,
     )
@@ -407,15 +407,15 @@ def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
     assert lp.sparse_liquidity_map is True
     assert current_word + 1 not in lp.tick_bitmap
 
-    _tick_bitmap = lp.tick_bitmap
-    _tick_data = lp.tick_data
+    tick_bitmap = lp.tick_bitmap
+    tick_data = lp.tick_data
 
     lp._fetch_and_populate_initialized_ticks(
-        current_word + 1, tick_bitmap=_tick_bitmap, tick_data=_tick_data
+        word_position=current_word + 1, tick_bitmap=tick_bitmap, tick_data=tick_data
     )
     assert lp.sparse_liquidity_map is True
-    assert current_word + 1 in _tick_bitmap
-    assert set(_tick_bitmap.keys()) == known_words.union([current_word + 1])
+    assert current_word + 1 in tick_bitmap
+    assert set(tick_bitmap.keys()) == known_words.union([current_word + 1])
 
     lp.calculate_tokens_out_from_tokens_in(
         token_in=lp.token0, token_in_quantity=100000 * 10**lp.token0.decimals

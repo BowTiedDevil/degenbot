@@ -298,17 +298,15 @@ def apply_v3_liquidity_updates(
         chunk_size = 30_000 // keys_per_row
 
         for tick_chunk in itertools.batched(helper_ticks, chunk_size):
-            stmt = sqlite_upsert(LiquidityPositionTable).values(
-                [
-                    {
-                        "pool_id": pool_in_db.id,
-                        "tick": tick,
-                        "liquidity_net": lp_helper.tick_data[tick].liquidity_net,
-                        "liquidity_gross": lp_helper.tick_data[tick].liquidity_gross,
-                    }
-                    for tick in tick_chunk
-                ]
-            )
+            stmt = sqlite_upsert(LiquidityPositionTable).values([
+                {
+                    "pool_id": pool_in_db.id,
+                    "tick": tick,
+                    "liquidity_net": lp_helper.tick_data[tick].liquidity_net,
+                    "liquidity_gross": lp_helper.tick_data[tick].liquidity_gross,
+                }
+                for tick in tick_chunk
+            ])
             stmt = stmt.on_conflict_do_update(
                 index_elements=[
                     LiquidityPositionTable.pool_id,
@@ -347,17 +345,15 @@ def apply_v3_liquidity_updates(
         chunk_size = 30_000 // keys_per_row
 
         for word_chunk in itertools.batched(helper_words, chunk_size):
-            stmt = sqlite_upsert(InitializationMapTable).values(
-                [
-                    {
-                        "pool_id": pool_in_db.id,
-                        "word": word,
-                        "bitmap": lp_helper.tick_bitmap[word].bitmap,
-                    }
-                    for word in word_chunk
-                    if lp_helper.tick_bitmap[word].bitmap != 0
-                ]
-            )
+            stmt = sqlite_upsert(InitializationMapTable).values([
+                {
+                    "pool_id": pool_in_db.id,
+                    "word": word,
+                    "bitmap": lp_helper.tick_bitmap[word].bitmap,
+                }
+                for word in word_chunk
+                if lp_helper.tick_bitmap[word].bitmap != 0
+            ])
             stmt = stmt.on_conflict_do_update(
                 index_elements=[
                     InitializationMapTable.pool_id,
@@ -522,17 +518,15 @@ def apply_v4_liquidity_updates(
         chunk_size = 30_000 // keys_per_row
 
         for tick_chunk in itertools.batched(helper_ticks, chunk_size):
-            stmt = sqlite_upsert(ManagedPoolLiquidityPositionTable).values(
-                [
-                    {
-                        "managed_pool_id": pool_in_db.id,
-                        "tick": tick,
-                        "liquidity_net": lp_helper.tick_data[tick].liquidity_net,
-                        "liquidity_gross": lp_helper.tick_data[tick].liquidity_gross,
-                    }
-                    for tick in tick_chunk
-                ]
-            )
+            stmt = sqlite_upsert(ManagedPoolLiquidityPositionTable).values([
+                {
+                    "managed_pool_id": pool_in_db.id,
+                    "tick": tick,
+                    "liquidity_net": lp_helper.tick_data[tick].liquidity_net,
+                    "liquidity_gross": lp_helper.tick_data[tick].liquidity_gross,
+                }
+                for tick in tick_chunk
+            ])
             stmt = stmt.on_conflict_do_update(
                 index_elements=[
                     ManagedPoolLiquidityPositionTable.managed_pool_id,
@@ -576,17 +570,15 @@ def apply_v4_liquidity_updates(
         chunk_size = 30_000 // keys_per_row
 
         for word_chunk in itertools.batched(helper_words, chunk_size):
-            stmt = sqlite_upsert(ManagedPoolInitializationMapTable).values(
-                [
-                    {
-                        "managed_pool_id": pool_in_db.id,
-                        "word": word,
-                        "bitmap": lp_helper.tick_bitmap[word].bitmap,
-                    }
-                    for word in word_chunk
-                    if lp_helper.tick_bitmap[word].bitmap != 0
-                ]
-            )
+            stmt = sqlite_upsert(ManagedPoolInitializationMapTable).values([
+                {
+                    "managed_pool_id": pool_in_db.id,
+                    "word": word,
+                    "bitmap": lp_helper.tick_bitmap[word].bitmap,
+                }
+                for word in word_chunk
+                if lp_helper.tick_bitmap[word].bitmap != 0
+            ])
             stmt = stmt.on_conflict_do_update(
                 index_elements=[
                     ManagedPoolInitializationMapTable.managed_pool_id,
@@ -2114,7 +2106,7 @@ def pool_repair(chunk_size: int, pool_address: str, chain_id: int | None) -> Non
         )
         assert working_end_block >= working_start_block
 
-        for _address, _events in tqdm.tqdm(
+        for address, events in tqdm.tqdm(
             get_v3_liquidity_events(
                 w3=w3,
                 start_block=working_start_block,
@@ -2125,11 +2117,11 @@ def pool_repair(chunk_size: int, pool_address: str, chain_id: int | None) -> Non
             bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
             leave=False,
         ):
-            assert _address == pool_address
+            assert address == pool_address
             apply_v3_liquidity_updates(
                 w3=w3,
-                pool_address=_address,
-                liquidity_events=_events,
+                pool_address=address,
+                liquidity_events=events,
                 exchanges_in_scope=exchanges_to_update,
             )
 
@@ -2201,10 +2193,8 @@ def pool_update(chunk_size: int, to_block: BlockParams) -> None:
         ).all()
 
         initial_start_block = working_start_block = min(
-            [
-                0 if exchange.last_update_block is None else exchange.last_update_block + 1
-                for exchange in active_exchanges
-            ]
+            0 if exchange.last_update_block is None else exchange.last_update_block + 1
+            for exchange in active_exchanges
         )
 
         last_block = w3.eth.get_block(

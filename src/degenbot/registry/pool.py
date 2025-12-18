@@ -41,13 +41,11 @@ class _UniswapV4PoolManagerRegistry(AbstractRegistry):
         pool_manager_address: Address,
         pool_id: PoolId,
     ) -> "AbstractLiquidityPool | None":
-        return self._all_v4_pools.get(
-            (
-                chain_id,
-                get_checksum_address(pool_manager_address),
-                HexBytes(pool_id),
-            )
-        )
+        return self._all_v4_pools.get((
+            chain_id,
+            get_checksum_address(pool_manager_address),
+            HexBytes(pool_id),
+        ))
 
     def add(
         self,
@@ -56,22 +54,20 @@ class _UniswapV4PoolManagerRegistry(AbstractRegistry):
         pool_manager_address: Address,
         pool_id: PoolId,
     ) -> None:
-        _pool_manager_address = get_checksum_address(pool_manager_address)
-        _pool_id = HexBytes(pool_id)
+        pool_manager_address = get_checksum_address(pool_manager_address)
+        pool_id = HexBytes(pool_id)
 
         if self.get(
             chain_id=chain_id,
-            pool_manager_address=_pool_manager_address,
-            pool_id=_pool_id,
+            pool_manager_address=pool_manager_address,
+            pool_id=pool_id,
         ):
             raise degenbot.exceptions.DegenbotValueError(message="Pool is already registered")
 
         self._all_v4_pools[
-            (
-                chain_id,
-                _pool_manager_address,
-                _pool_id,
-            )
+            chain_id,
+            pool_manager_address,
+            pool_id,
         ] = pool
 
     def remove(
@@ -153,7 +149,7 @@ class PoolRegistry(AbstractRegistry):
         ):
             raise degenbot.exceptions.DegenbotValueError(message="Pool is already registered")
 
-        self._all_pools[(chain_id, get_checksum_address(pool_address))] = pool
+        self._all_pools[chain_id, get_checksum_address(pool_address)] = pool
 
     def remove(
         self,

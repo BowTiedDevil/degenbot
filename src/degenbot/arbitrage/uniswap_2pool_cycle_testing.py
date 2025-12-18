@@ -120,11 +120,11 @@ def _build_convex_problem(num_pools: int) -> Problem:
     )
 
     # Compress all pool reserves into a 0.0 - 1.0 value range
-    _compressed_starting_reserves_pool_hi = (
+    compressed_starting_reserves_pool_hi = (
         Fraction(1, 10**token0_decimals) / compression_factor_token0,
         Fraction(1, 10**token1_decimals) / compression_factor_token1,
     )
-    _compressed_starting_reserves_pool_lo = (
+    compressed_starting_reserves_pool_lo = (
         Fraction(1, 10**token0_decimals) / compression_factor_token0,
         Fraction(1, 10**token1_decimals) / compression_factor_token1,
     )
@@ -146,8 +146,8 @@ def _build_convex_problem(num_pools: int) -> Problem:
         shape=(num_pools, num_tokens),
         value=np.array(
             (
-                _compressed_starting_reserves_pool_hi,
-                _compressed_starting_reserves_pool_lo,
+                compressed_starting_reserves_pool_hi,
+                compressed_starting_reserves_pool_lo,
             ),
             dtype=np.float64,
         ),
@@ -173,12 +173,10 @@ def _build_convex_problem(num_pools: int) -> Problem:
     pool_lo_deposits = (
         (0, pool_lo_profit_token_in) if forward_token_index == 0 else (pool_lo_profit_token_in, 0)
     )
-    deposits = bmat(
-        (
-            pool_hi_deposits,
-            pool_lo_deposits,
-        )
-    )
+    deposits = bmat((
+        pool_hi_deposits,
+        pool_lo_deposits,
+    ))
 
     pool_hi_withdrawals = (
         (0, pool_hi_profit_token_out) if forward_token_index == 0 else (pool_hi_profit_token_out, 0)
@@ -186,12 +184,10 @@ def _build_convex_problem(num_pools: int) -> Problem:
     pool_lo_withdrawals = (
         (forward_token_amount, 0) if forward_token_index == 0 else (0, forward_token_amount)
     )
-    withdrawals = bmat(
-        (
-            pool_hi_withdrawals,
-            pool_lo_withdrawals,
-        )
-    )
+    withdrawals = bmat((
+        pool_hi_withdrawals,
+        pool_lo_withdrawals,
+    ))
     swap_fees = multiply(fee_multiplier, deposits)
     compressed_reserves_post_swap = (
         compressed_reserves_pre_swap + deposits - withdrawals - swap_fees
@@ -237,6 +233,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
         # TODO: check strategy comments for all arbs
 
         def _arb_profit_high_roe_v4_low_roe_v3(
+            *,
             v4_pool: UniswapV4Pool,
             v3_pool: UniswapV3Pool,
             forward_token: Erc20Token,
@@ -285,6 +282,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             return float(weth_out - weth_in)
 
         def _arb_profit_high_roe_v4_low_roe_v2(
+            *,
             v4_pool: UniswapV4Pool,
             v2_pool: AerodromeV2Pool | UniswapV2Pool,
             forward_token: Erc20Token,
@@ -347,6 +345,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             return float(weth_out - weth_in)
 
         def _arb_profit_high_roe_v3_low_roe_v4(
+            *,
             v4_pool: UniswapV4Pool,
             v3_pool: UniswapV3Pool,
             forward_token: Erc20Token,
@@ -395,6 +394,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             return float(weth_out - weth_in)
 
         def _arb_profit_high_roe_v3_low_roe_v2(
+            *,
             v3_pool: UniswapV3Pool,
             v2_pool: AerodromeV2Pool | UniswapV2Pool,
             forward_token: Erc20Token,
@@ -456,6 +456,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             return float(weth_out - weth_in)
 
         def _arb_profit_high_roe_v2_low_roe_v4(
+            *,
             v4_pool: UniswapV4Pool,
             v2_pool: AerodromeV2Pool | UniswapV2Pool,
             forward_token: Erc20Token,
@@ -517,6 +518,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             return float(weth_out - weth_in)
 
         def _arb_profit_high_roe_v2_low_roe_v3(
+            *,
             v3_pool: UniswapV3Pool,
             v2_pool: AerodromeV2Pool | UniswapV2Pool,
             forward_token: Erc20Token,
@@ -578,6 +580,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             return float(weth_out - weth_in)
 
         def _arb_profit_v4_v4(
+            *,
             pool_hi: UniswapV4Pool,
             pool_lo: UniswapV4Pool,
             forward_token: Erc20Token,
@@ -642,6 +645,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             return float(weth_out - weth_in)
 
         def _arb_profit_v3_v3(
+            *,
             pool_hi: UniswapV3Pool,
             pool_lo: UniswapV3Pool,
             forward_token: Erc20Token,
@@ -746,6 +750,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             assert v4_pool_hi_max_input > 0
             assert v4_pool_lo_max_output > 0
 
+            # TODO: account for price when determining forward token bounds
+
             forward_token_bounds = (
                 1.0,
                 float(min(v4_pool_hi_max_input, v4_pool_lo_max_output)),
@@ -753,13 +759,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
             opt: OptimizeResult = minimize_scalar(
-                fun=lambda x: -_arb_profit_v4_v4(
-                    pool_hi=v4_pool_hi,
-                    pool_lo=v4_pool_lo,
-                    pool_hi_state_override=v4_pool_hi_state_override,
-                    pool_lo_state_override=v4_pool_lo_state_override,
-                    forward_token=forward_token,
-                    forward_token_amount=x,
+                fun=lambda x: (
+                    -_arb_profit_v4_v4(
+                        pool_hi=v4_pool_hi,
+                        pool_lo=v4_pool_lo,
+                        pool_hi_state_override=v4_pool_hi_state_override,
+                        pool_lo_state_override=v4_pool_lo_state_override,
+                        forward_token=forward_token,
+                        forward_token_amount=x,
+                    )
                 ),
                 method="bounded",
                 bounds=forward_token_bounds,
@@ -868,10 +876,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             # - swap X -> WETH_out at V4 (exact input)
             # - profit = WETH_out - WETH_in
 
-            assert forward_token not in (
+            assert forward_token not in {
                 NATIVE_CURRENCY_ADDRESS,
                 WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
-            )
+            }
 
             start = time.perf_counter()
 
@@ -910,13 +918,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 forward_token_amount = 1
             else:
                 opt: OptimizeResult = minimize_scalar(
-                    fun=lambda x: -_arb_profit_high_roe_v4_low_roe_v3(
-                        v4_pool=v4_pool,
-                        v3_pool=v3_pool,
-                        v4_pool_state_override=v4_pool_state_override,
-                        v3_pool_state_override=v3_pool_state_override,
-                        forward_token=forward_token,
-                        forward_token_amount=x,
+                    fun=lambda x: (
+                        -_arb_profit_high_roe_v4_low_roe_v3(
+                            v4_pool=v4_pool,
+                            v3_pool=v3_pool,
+                            v4_pool_state_override=v4_pool_state_override,
+                            v3_pool_state_override=v3_pool_state_override,
+                            forward_token=forward_token,
+                            forward_token_amount=x,
+                        )
                     ),
                     method="bounded",
                     bounds=forward_token_bounds,
@@ -1037,10 +1047,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             # - swap X -> WETH_out at V2 (exact input)
             # - profit = WETH_out - WETH_in
 
-            assert forward_token not in (
+            assert forward_token not in {
                 NATIVE_CURRENCY_ADDRESS,
                 WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
-            )
+            }
 
             start = time.perf_counter()
 
@@ -1071,13 +1081,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 forward_token_amount = 1
             else:
                 opt: OptimizeResult = minimize_scalar(
-                    fun=lambda x: -_arb_profit_high_roe_v2_low_roe_v4(
-                        v4_pool=v4_pool,
-                        v2_pool=v2_pool,
-                        v4_pool_state_override=v4_pool_state_override,
-                        v2_pool_state_override=v2_pool_state_override,
-                        forward_token=forward_token,
-                        forward_token_amount=x,
+                    fun=lambda x: (
+                        -_arb_profit_high_roe_v2_low_roe_v4(
+                            v4_pool=v4_pool,
+                            v2_pool=v2_pool,
+                            v4_pool_state_override=v4_pool_state_override,
+                            v2_pool_state_override=v2_pool_state_override,
+                            forward_token=forward_token,
+                            forward_token_amount=x,
+                        )
                     ),
                     method="bounded",
                     bounds=forward_token_bounds,
@@ -1201,10 +1213,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             # - swap X -> WETH_out at V3 (exact input)
             # - profit = WETH_out - WETH_in
 
-            assert forward_token not in (
+            assert forward_token not in {
                 NATIVE_CURRENCY_ADDRESS,
                 WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
-            )
+            }
 
             start = time.perf_counter()
 
@@ -1244,13 +1256,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 forward_token_amount = 1
             else:
                 opt: OptimizeResult = minimize_scalar(
-                    fun=lambda x: -_arb_profit_high_roe_v3_low_roe_v4(
-                        v4_pool=v4_pool,
-                        v3_pool=v3_pool,
-                        v4_pool_state_override=v4_pool_state_override,
-                        v3_pool_state_override=v3_pool_state_override,
-                        forward_token=forward_token,
-                        forward_token_amount=x,
+                    fun=lambda x: (
+                        -_arb_profit_high_roe_v3_low_roe_v4(
+                            v4_pool=v4_pool,
+                            v3_pool=v3_pool,
+                            v4_pool_state_override=v4_pool_state_override,
+                            v3_pool_state_override=v3_pool_state_override,
+                            forward_token=forward_token,
+                            forward_token_amount=x,
+                        )
                     ),
                     method="bounded",
                     bounds=forward_token_bounds,
@@ -1547,13 +1561,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 forward_token_amount = 1
             else:
                 opt: OptimizeResult = minimize_scalar(
-                    fun=lambda x: -_arb_profit_high_roe_v3_low_roe_v2(
-                        v3_pool=v3_pool,
-                        v2_pool=v2_pool,
-                        forward_token=forward_token,
-                        forward_token_amount=x,
-                        v3_pool_state_override=v3_pool_state_override,
-                        v2_pool_state_override=v2_pool_state_override,
+                    fun=lambda x: (
+                        -_arb_profit_high_roe_v3_low_roe_v2(
+                            v3_pool=v3_pool,
+                            v2_pool=v2_pool,
+                            forward_token=forward_token,
+                            forward_token_amount=x,
+                            v3_pool_state_override=v3_pool_state_override,
+                            v2_pool_state_override=v2_pool_state_override,
+                        )
                     ),
                     method="bounded",
                     bounds=forward_token_bounds,
@@ -1674,10 +1690,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             # - swap X -> WETH_out at V4 (exact input)
             # - profit = WETH_out - WETH_in
 
-            assert forward_token not in (
+            assert forward_token not in {
                 NATIVE_CURRENCY_ADDRESS,
                 WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
-            )
+            }
 
             start = time.perf_counter()
 
@@ -1708,13 +1724,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 forward_token_amount = 1
             else:
                 opt: OptimizeResult = minimize_scalar(
-                    fun=lambda x: -_arb_profit_high_roe_v4_low_roe_v2(
-                        v4_pool=v4_pool,
-                        v2_pool=v2_pool,
-                        forward_token=forward_token,
-                        forward_token_amount=x,
-                        v4_pool_state_override=v4_pool_state_override,
-                        v2_pool_state_override=v2_pool_state_override,
+                    fun=lambda x: (
+                        -_arb_profit_high_roe_v4_low_roe_v2(
+                            v4_pool=v4_pool,
+                            v2_pool=v2_pool,
+                            forward_token=forward_token,
+                            forward_token_amount=x,
+                            v4_pool_state_override=v4_pool_state_override,
+                            v2_pool_state_override=v2_pool_state_override,
+                        )
                     ),
                     method="bounded",
                     bounds=forward_token_bounds,
@@ -1865,13 +1883,15 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
             opt: OptimizeResult = minimize_scalar(
-                fun=lambda x: -_arb_profit_high_roe_v2_low_roe_v3(
-                    v3_pool=v3_pool,
-                    v2_pool=v2_pool,
-                    v3_pool_state_override=v3_pool_state_override,
-                    v2_pool_state_override=v2_pool_state_override,
-                    forward_token=forward_token,
-                    forward_token_amount=x,
+                fun=lambda x: (
+                    -_arb_profit_high_roe_v2_low_roe_v3(
+                        v3_pool=v3_pool,
+                        v2_pool=v2_pool,
+                        v3_pool_state_override=v3_pool_state_override,
+                        v2_pool_state_override=v2_pool_state_override,
+                        forward_token=forward_token,
+                        forward_token_amount=x,
+                    )
                 ),
                 method="bounded",
                 bounds=forward_token_bounds,
@@ -2021,13 +2041,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
 
             # Compress all pool reserves into a 0.0 - 1.0 value range
-            _compressed_starting_reserves_pool_hi = (
+            compressed_starting_reserves_pool_hi = (
                 Fraction(v2_pool_hi.state.reserves_token0, 10**token0_decimals)
                 / compression_factor_token0,
                 Fraction(v2_pool_hi.state.reserves_token1, 10**token1_decimals)
                 / compression_factor_token1,
             )
-            _compressed_starting_reserves_pool_lo = (
+            compressed_starting_reserves_pool_lo = (
                 Fraction(v2_pool_lo.state.reserves_token0, 10**token0_decimals)
                 / compression_factor_token0,
                 Fraction(v2_pool_lo.state.reserves_token1, 10**token1_decimals)
@@ -2058,8 +2078,8 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             compressed_reserves_pre_swap.save_value(
                 np.array(
                     (
-                        _compressed_starting_reserves_pool_hi,
-                        _compressed_starting_reserves_pool_lo,
+                        compressed_starting_reserves_pool_hi,
+                        compressed_starting_reserves_pool_lo,
                     ),
                     dtype=np.float64,
                 )
@@ -2140,12 +2160,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     if forward_token_index == 0
                     else (0, forward_token_amount)
                 )
-                withdrawals = bmat(
-                    (
-                        pool_hi_withdrawals,
-                        pool_lo_withdrawals,
-                    )
-                )
+                withdrawals = bmat((
+                    pool_hi_withdrawals,
+                    pool_lo_withdrawals,
+                ))
                 pool_hi_deposits = (
                     (forward_token_amount, 0)
                     if forward_token_index == 0
@@ -2156,12 +2174,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     if forward_token_index == 0
                     else (pool_lo_profit_token_in, 0)
                 )
-                deposits = bmat(
-                    (
-                        pool_hi_deposits,
-                        pool_lo_deposits,
-                    )
-                )
+                deposits = bmat((
+                    pool_hi_deposits,
+                    pool_lo_deposits,
+                ))
                 swap_fees = multiply(fee_multiplier, deposits)
                 compressed_reserves_post_swap = (
                     compressed_reserves_pre_swap + deposits - withdrawals - swap_fees
@@ -2396,10 +2412,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 UniswapV3Pool() as v3_pool,
                 UniswapV4Pool() as v4_pool,
             ):
-                assert self.input_token in (
+                assert self.input_token in {
                     NATIVE_CURRENCY_ADDRESS,
                     WRAPPED_NATIVE_TOKENS[v3_pool.chain_id],
-                )
+                }
 
                 wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v3_pool.chain_id]
 
@@ -2416,7 +2432,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 elif self.input_token == wrapped_currency_address:
                     v4_input_token = (
                         v4_pool.token0
-                        if v4_pool.token0 in (wrapped_currency_address, NATIVE_CURRENCY_ADDRESS)
+                        if v4_pool.token0 in {wrapped_currency_address, NATIVE_CURRENCY_ADDRESS}
                         else v4_pool.token1
                     )
                     v3_input_token = self.input_token
@@ -2441,7 +2457,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     override_state=v4_pool_state_override,
                 )
 
-                assert forward_token not in (wrapped_currency_address, NATIVE_CURRENCY_ADDRESS)
+                assert forward_token not in {wrapped_currency_address, NATIVE_CURRENCY_ADDRESS}
 
                 # Arb helper vectors are built based on assumed swap direction, so verify that the
                 # pool states are profitable in this direction
@@ -2489,10 +2505,10 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     UniswapV4Pool() as v4_pool,
                 )
             ):
-                assert self.input_token in (
+                assert self.input_token in {
                     NATIVE_CURRENCY_ADDRESS,
                     WRAPPED_NATIVE_TOKENS[v2_pool.chain_id],
-                )
+                }
 
                 wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v2_pool.chain_id]
 
@@ -2509,7 +2525,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 elif self.input_token == wrapped_currency_address:
                     v4_input_token = (
                         v4_pool.token0
-                        if v4_pool.token0 in (wrapped_currency_address, NATIVE_CURRENCY_ADDRESS)
+                        if v4_pool.token0 in {wrapped_currency_address, NATIVE_CURRENCY_ADDRESS}
                         else v4_pool.token1
                     )
                     v2_input_token = self.input_token
@@ -2546,7 +2562,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     override_state=v4_pool_state,
                 )
 
-                assert forward_token not in (wrapped_currency_address, NATIVE_CURRENCY_ADDRESS)
+                assert forward_token not in {wrapped_currency_address, NATIVE_CURRENCY_ADDRESS}
 
                 # Arb helper vectors are built based on assumed swap direction, so verify that the
                 # pool states are profitable in this direction

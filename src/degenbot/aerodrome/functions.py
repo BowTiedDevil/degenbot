@@ -21,12 +21,13 @@ def _f_aerodrome(
     x0: int,
     y: int,
 ) -> int:
-    _a = (x0 * y) // 10**18
-    _b = (x0 * x0) // 10**18 + (y * y) // 10**18
-    return (_a * _b) // 10**18
+    a = (x0 * y) // 10**18
+    b = (x0 * x0) // 10**18 + (y * y) // 10**18
+    return (a * b) // 10**18
 
 
 def calc_exact_in_stable(
+    *,
     amount_in: int,
     token_in: Literal[0, 1],
     reserves0: int,
@@ -76,14 +77,14 @@ def _get_y_aerodrome(
                 ):
                     return y + 1
                 dy = 1
-            y = y + dy
+            y += dy
         else:
             dy = ((k - xy) * 10**18) // general_calc_d(x0, y)
             if dy == 0:
                 if k == xy or _f_aerodrome(x0, y - 1) < xy:
                     return y
                 dy = 1
-            y = y - dy
+            y -= dy
     raise EVMRevertError(error="Failed to converge on a value for y")
 
 
@@ -93,12 +94,12 @@ def _k_aerodrome(
     decimals_0: int,
     decimals_1: int,
 ) -> int:
-    _x = balance_0 * 10**18 // decimals_0
-    _y = balance_1 * 10**18 // decimals_1
-    _a = (_x * _y) // 10**18
-    _b = (_x * _x) // 10**18 + (_y * _y) // 10**18
-    raise_if_invalid_uint256(_a * _b)
-    return _a * _b // 10**18  # x^3*y + y^3*x >= k
+    x = balance_0 * 10**18 // decimals_0
+    y = balance_1 * 10**18 // decimals_1
+    a = (x * y) // 10**18
+    b = (x * x) // 10**18 + (y * y) // 10**18
+    raise_if_invalid_uint256(a * b)
+    return a * b // 10**18  # x^3*y + y^3*x >= k
 
 
 def generate_aerodrome_v2_pool_address(

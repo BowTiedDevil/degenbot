@@ -285,44 +285,44 @@ def test_create_nonstandard_pools(
     )
 
     # Create with non-standard fee
-    _lp = UniswapV2Pool(
+    lp = UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
         fee=Fraction(2, 1000),
     )
-    assert _lp.fee_token0 == Fraction(2, 1000)
-    assert _lp.fee_token1 == Fraction(2, 1000)
+    assert lp.fee_token0 == Fraction(2, 1000)
+    assert lp.fee_token1 == Fraction(2, 1000)
     pool_registry.remove(
-        pool_address=_lp.address,
+        pool_address=lp.address,
         chain_id=fork_mainnet_full.w3.eth.chain_id,
     )
 
     # Create split-fee pool of differing values
-    _lp = UniswapV2Pool(
+    lp = UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         fee=(Fraction(3, 1000), Fraction(5, 1000)),
     )
-    assert _lp.fee_token0 == Fraction(3, 1000)
-    assert _lp.fee_token1 == Fraction(5, 1000)
+    assert lp.fee_token0 == Fraction(3, 1000)
+    assert lp.fee_token1 == Fraction(5, 1000)
     pool_registry.remove(
-        pool_address=_lp.address,
+        pool_address=lp.address,
         chain_id=fork_mainnet_full.w3.eth.chain_id,
     )
 
     # Create split-fee pool of equal values
-    _lp = UniswapV2Pool(
+    lp = UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         fee=(Fraction(6, 1000), Fraction(6, 1000)),
     )
-    assert _lp.fee_token0 == Fraction(6, 1000)
-    assert _lp.fee_token1 == Fraction(6, 1000)
+    assert lp.fee_token0 == Fraction(6, 1000)
+    assert lp.fee_token1 == Fraction(6, 1000)
 
 
 def test_dunder_methods(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool: UniswapV2Pool,
 ):
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool.__str__()
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool.__hash__()
+    str(ethereum_uniswap_v2_wbtc_weth_liquiditypool)
+    hash(ethereum_uniswap_v2_wbtc_weth_liquiditypool)
 
     with pytest.raises(AssertionError):
         assert ethereum_uniswap_v2_wbtc_weth_liquiditypool == 69
