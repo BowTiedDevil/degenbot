@@ -20,6 +20,19 @@ def path_step_identifiers(path: list[PathStep]) -> tuple[str, ...]:
     return [(step.hash or step.address) for step in path]
 
 
+def test_two_pool_pathfinding_cycling_weth():
+    paths = list(
+        find_paths(
+            chain_id=BASE_CHAIN_ID,
+            start_tokens=[WETH_BASE_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS],
+            max_depth=2,
+        )
+    )
+    assert paths
+    print(f"Found {len(paths)} 2-pool paths")
+
+
 def test_generic_algo_multiple_tokens():
     depth = 2
 
