@@ -159,6 +159,51 @@ WBTC-WETH (V3, 0.30%)
 }
 ```
 
+## Uniswap V4 Liquidity Pools
+Uniswap V4 introduces hooks and a new pool manager architecture. The `UniswapV4Pool` class provides access to V4 pools with support for the new features.
+
+```
+>>> lp = degenbot.UniswapV4Pool(
+...     pool_id='0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a',
+...     pool_manager_address='0x498581fF718922c3f8e6A244956aF099B2652b2b',
+...     state_view_address='0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71',
+...     tokens=[
+...         '0x0000000000000000000000000000000000000000', 
+...         '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+...     ],
+...     fee=500,
+...     tick_spacing=10
+... )
+ETH-USDC (UniswapV4Pool, id=0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a)
+• ID: 0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a
+• Token 0: ETH
+• Token 1: USDC
+• Liquidity: 60429069420043934
+• SqrtPrice: 4220772448119892035402666
+• Tick: -196812
+
+# Calculate output for a 1 ETH swap
+>>> lp.calculate_tokens_out_from_tokens_in(
+...     token_in=lp.token0, 
+...     token_in_quantity=1*10**18,
+... )
+2834164215
+
+# Inspect active hooks
+>>> lp.active_hooks
+frozenset()
+
+# Get pool key information
+>>> lp.pool_key
+UniswapV4PoolKey(
+    currency0='0x0000000000000000000000000000000000000000',
+    currency1='0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    fee=500,
+    tick_spacing=10,
+    hooks='0x0000000000000000000000000000000000000000'
+)
+```
+
 ## Forking With Anvil
 The `AnvilFork` class is used to launch a fork with `anvil` from the [Foundry](https://github.com/foundry-rs/foundry) toolkit. The object provides a `w3` attribute, connected to an IPC socket, which can be used to communicate with the fork like a typical RPC.
 
@@ -233,7 +278,8 @@ Users wanting fine-grained control over **all** client options may pass them thr
     anvil_opts=['--optimism']
 )
 
-# Launch with a non-default hardfork, which may be necessary for accurate simulation on a historical block.
+# Launch with a non-default hardfork, which may be necessary for accurate simulation on a 
+# historical block.
 >>> fork = degenbot.AnvilFork(
     fork_url='http://localhost:8545',
     fork_block=12_980_000,
@@ -324,4 +370,31 @@ ArbitrageCalculationResult(
     ), 
     state_block=22676748
 )
+```
+
+## Chainlink Price Feeds
+Chainlink price feeds provide reliable oracle data for various assets. The `ChainlinkPriceContract` class simplifies access to these feeds.
+
+```
+# Load the price feed for ETH/USD 
+>>> price_feed = degenbot.ChainlinkPriceContract(
+...     '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419'
+... )
+
+>>> price_feed.price
+2836.68731709
+
+# Check the decimals used by the price feed
+>>> price_feed.decimals
+8
+
+# Call an arbitrary function `latestRoundData` on the underlying contract
+>>> price_feed.w3_contract.functions.latestRoundData().call()
+[
+    129127208515966883788, 
+    283668731709, 
+    1766031970, 
+    1766031983, 
+    129127208515966883788
+]
 ```
