@@ -3,7 +3,7 @@ import itertools
 from collections import defaultdict, deque
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 import eth_typing
@@ -2025,20 +2025,22 @@ def pool() -> None:
     "--chunk",
     "chunk_size",
     default=10_000,
-    help="The maximum number of blocks to process before committing changes to the database "
-    "(default 10,000).",
+    show_default=True,
+    help="The maximum number of blocks to process before committing changes to the database.",
 )
 @click.option(
     "--to-block",
     "to_block",
-    metavar="INTEGER | TEXT",
-    default="finalized",
+    default="latest:-64",
+    show_default=True,
     help=(
-        "The last block included in the update range. Can be a number or an identifier: "
-        "'earliest', 'finalized' (default), 'safe', 'latest', 'pending'"
+        "The last block in the update range. Must be a valid block identifier: "
+        "'earliest', 'finalized', 'safe', 'latest', 'pending'. An identifier can be given with an "
+        "optional offset, e.g. 'latest:-64' stops 64 blocks before the chain tip, "
+        "'safe:128' stops 128 blocks after the last 'safe' block."
     ),
 )
-def pool_update(chunk_size: int, to_block: BlockParams) -> None:
+def pool_update(chunk_size: int, to_block: str) -> None:
     """
     Update liquidity pool information for activated exchanges.
     """
@@ -2080,13 +2082,26 @@ def pool_update(chunk_size: int, to_block: BlockParams) -> None:
             for exchange in active_exchanges
         )
 
-        last_block = w3.eth.get_block(
-            block_identifier=(
-                int(to_block)
-                if to_block.isdigit()
-                else get_number_for_block_identifier(identifier=to_block, w3=w3)
-            )
-        )["number"]
+        if to_block.isdigit():
+            last_block = int(to_block)
+        else:
+            if ":" in to_block:
+                parts = to_block.split(":", 1)
+                block_tag, offset = cast("tuple[BlockParams,str]", parts)
+                block_offset = int(offset.strip())
+            else:
+                block_tag = cast("BlockParams", to_block)
+                block_offset = 0
+
+            if block_tag not in {"latest", "earliest", "pending", "safe", "finalized"}:
+                msg = f"Invalid block tag: {block_tag}"
+                raise ValueError(msg)
+
+            last_block = get_number_for_block_identifier(identifier=block_tag, w3=w3) + block_offset
+
+        if last_block > w3.eth.get_block("latest")["number"]:
+            msg = f"{to_block} is ahead of the current chain tip."
+            raise ValueError(msg)
 
         if initial_start_block >= last_block:
             click.echo(f"Chain {chain_id} has not advanced since the last update.")
