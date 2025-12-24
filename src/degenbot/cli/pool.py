@@ -1,6 +1,6 @@
 import contextlib
 import itertools
-from collections import defaultdict, deque
+from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -163,7 +163,7 @@ UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH = HexBytes(
 def apply_v3_liquidity_updates(
     w3: Web3,
     pool_address: ChecksumAddress,
-    liquidity_events: deque[LogReceipt],
+    liquidity_events: list[LogReceipt],
     exchanges_in_scope: set[ExchangeTable],
 ) -> None:
     """
@@ -233,9 +233,7 @@ def apply_v3_liquidity_updates(
         },
     )
 
-    while liquidity_events:
-        liquidity_event = liquidity_events.popleft()
-
+    for liquidity_event in liquidity_events:
         # Guard against applying a liquidity event that occured in the past
         if (
             pool_in_db.liquidity_update_block is not None
@@ -369,7 +367,7 @@ def apply_v3_liquidity_updates(
 
 def apply_v4_liquidity_updates(
     pool_id: HexBytes,
-    liquidity_events: deque[LogReceipt],
+    liquidity_events: list[LogReceipt],
     pool_manager: PoolManagerTable,
 ) -> None:
     """
@@ -462,9 +460,7 @@ def apply_v4_liquidity_updates(
         id=HexBytes(pool_in_db.pool_hash),
     )
 
-    while liquidity_events:
-        liquidity_event = liquidity_events.popleft()
-
+    for liquidity_event in liquidity_events:
         # Guard against applying a liquidity event that occured in the past
         if (
             pool_in_db.liquidity_update_block is not None
@@ -2243,12 +2239,12 @@ def get_v3_liquidity_events(
     start_block: int,
     end_block: int,
     address: ChecksumAddress | None = None,
-) -> dict[ChecksumAddress, deque[LogReceipt]]:
+) -> dict[ChecksumAddress, list[LogReceipt]]:
     """
     Fetch new Mint & Burn events for the given range.
     """
 
-    pool_updates: dict[ChecksumAddress, deque[LogReceipt]] = defaultdict(deque)
+    pool_updates: dict[ChecksumAddress, list[LogReceipt]] = defaultdict(list)
 
     for liquidity_event in fetch_logs_retrying(
         w3=w3,
@@ -2270,12 +2266,12 @@ def get_v4_liquidity_events(
     start_block: int,
     end_block: int,
     address: ChecksumAddress | None = None,
-) -> dict[HexBytes, deque[LogReceipt]]:
+) -> dict[HexBytes, list[LogReceipt]]:
     """
     Fetch new ModifyLiquidity events for the given range.
     """
 
-    pool_updates: dict[HexBytes, deque[LogReceipt]] = defaultdict(deque)
+    pool_updates: dict[HexBytes, list[LogReceipt]] = defaultdict(list)
 
     for liquidity_event in fetch_logs_retrying(
         w3=w3,
