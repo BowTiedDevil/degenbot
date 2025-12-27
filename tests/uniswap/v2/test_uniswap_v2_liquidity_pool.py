@@ -22,7 +22,6 @@ from degenbot.exceptions.liquidity_pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.pancakeswap.pools import PancakeV2Pool
 from degenbot.registry import pool_registry
 from degenbot.uniswap.abi import UNISWAP_V2_ROUTER_ABI
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
@@ -110,11 +109,6 @@ def test_create_pool(fork_mainnet_full: AnvilFork):
     UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
     )
-
-
-def test_create_pancake_v2_pool(fork_base_full: AnvilFork):
-    set_web3(fork_base_full.w3)
-    PancakeV2Pool("0x92363F9817f92a7ae0592A4cb29959A88d885cc8")
 
 
 def test_from_exchange_deployment(fork_mainnet_full: AnvilFork):

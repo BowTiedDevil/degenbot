@@ -32,7 +32,12 @@ from .curve import (
 )
 from .erc20 import Erc20Token, Erc20TokenManager, EtherPlaceholder
 from .logging import logger
-from .pancakeswap import PancakeV2Pool, PancakeV2PoolManager, PancakeV3Pool, PancakeV3PoolManager
+from .pancakeswap import (
+    PancakeswapV2Pool,
+    PancakeswapV2PoolManager,
+    PancakeswapV3Pool,
+    PancakeswapV3PoolManager,
+)
 from .registry import pool_registry, token_registry
 from .sushiswap import (
     SushiswapV2Pool,
@@ -77,10 +82,10 @@ __all__ = (
     "Erc20Token",
     "Erc20TokenManager",
     "EtherPlaceholder",
-    "PancakeV2Pool",
-    "PancakeV2PoolManager",
-    "PancakeV3Pool",
-    "PancakeV3PoolManager",
+    "PancakeswapV2Pool",
+    "PancakeswapV2PoolManager",
+    "PancakeswapV3Pool",
+    "PancakeswapV3PoolManager",
     "SushiswapV2Pool",
     "SushiswapV2PoolManager",
     "SushiswapV3Pool",

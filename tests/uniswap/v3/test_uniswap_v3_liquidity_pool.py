@@ -25,7 +25,7 @@ from degenbot.exceptions.liquidity_pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.pancakeswap.pools import PancakeV3Pool
+from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.uniswap.deployments import (
     FACTORY_DEPLOYMENTS,
     UniswapFactoryDeployment,
@@ -395,7 +395,7 @@ def test_creation_with_wrong_pool_type(fork_base_full: AnvilFork) -> None:
 
 def test_pancake_v3_pool_creation(fork_base_full: AnvilFork) -> None:
     set_web3(fork_base_full.w3)
-    PancakeV3Pool("0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E")
+    PancakeswapV3Pool("0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E")
 
 
 def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
@@ -1324,7 +1324,7 @@ def test_base_pancakeswap_v3(fork_base_full: AnvilFork):
     set_web3(fork_base_full.w3)
 
     # Exchange provided explicitly
-    PancakeV3Pool.from_exchange(
+    PancakeswapV3Pool.from_exchange(
         address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
         exchange=BASE_PANCAKESWAP_V3_EXCHANGE,
     )
@@ -1334,6 +1334,6 @@ def test_base_pancakeswap_v3_with_builtin_exchange(fork_base_full: AnvilFork):
     set_web3(fork_base_full.w3)
 
     # Exchange looked up implicitly from degenbot deployment module
-    PancakeV3Pool(
+    PancakeswapV3Pool(
         address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
     )

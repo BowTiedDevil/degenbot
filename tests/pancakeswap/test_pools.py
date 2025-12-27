@@ -7,7 +7,7 @@ import pytest
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import set_web3
-from degenbot.pancakeswap.pools import PancakeV2Pool
+from degenbot.pancakeswap.pools import PancakeswapV2Pool
 
 PANCAKE_V2_ROUTER = get_checksum_address("0x8cFe327CEc66d1C090Dd72bd0FF11d690C33a2Eb")
 PANCAKE_V2_ROUTER_ABI = pydantic_core.from_json(
@@ -22,6 +22,11 @@ def test_pools() -> Any:
     return pydantic_core.from_json(
         pathlib.Path("tests/pancakeswap/first_200_pancakeswap_v2_pools.json").read_bytes()
     )
+
+
+def test_create_pool(fork_base_full: AnvilFork):
+    set_web3(fork_base_full.w3)
+    PancakeswapV2Pool("0x92363F9817f92a7ae0592A4cb29959A88d885cc8")
 
 
 def test_pancakeswap_calculations(fork_base_full: AnvilFork, test_pools: list[Any]):
@@ -48,7 +53,7 @@ def test_pancakeswap_calculations(fork_base_full: AnvilFork, test_pools: list[An
     )
     for pool in test_pools:
         pool_address = pool["pool_address"]
-        lp = PancakeV2Pool(address=pool_address)
+        lp = PancakeswapV2Pool(address=pool_address)
 
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1

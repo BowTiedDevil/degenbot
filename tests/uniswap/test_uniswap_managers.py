@@ -5,7 +5,7 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import set_web3
 from degenbot.exceptions.manager import ManagerAlreadyInitialized, ManagerError, PoolNotAssociated
-from degenbot.pancakeswap.managers import PancakeV3PoolManager
+from degenbot.pancakeswap.managers import PancakeswapV3PoolManager
 from degenbot.registry import pool_registry
 from degenbot.sushiswap.managers import SushiswapV2PoolManager, SushiswapV3PoolManager
 from degenbot.uniswap.deployments import (
@@ -103,7 +103,7 @@ def test_create_base_chain_managers(fork_base_full: AnvilFork):
 
 def test_base_pancake_v3_pool_manager(fork_base_full: AnvilFork):
     set_web3(fork_base_full.w3)
-    pancakev3_lp_manager = PancakeV3PoolManager(
+    pancakev3_lp_manager = PancakeswapV3PoolManager(
         factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
         deployer_address=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
     )
@@ -121,7 +121,7 @@ def test_base_pancake_v3_pool_manager(fork_base_full: AnvilFork):
 
 def test_base_pancake_v3_pool_manager_from_exchange(fork_base_full: AnvilFork):
     set_web3(fork_base_full.w3)
-    PancakeV3PoolManager.from_exchange(BASE_PANCAKESWAP_V3_EXCHANGE)
+    PancakeswapV3PoolManager.from_exchange(BASE_PANCAKESWAP_V3_EXCHANGE)
 
 
 def test_create_mainnet_managers_from_exchange(fork_mainnet_full: AnvilFork):
