@@ -6,7 +6,6 @@ from eth_typing import ChecksumAddress
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.abstract import AbstractExchangeDeployment
-from degenbot.types.aliases import ChainId
 
 
 @dataclass(slots=True, frozen=True)
@@ -42,14 +41,6 @@ class UniswapV4ExchangeDeployment(AbstractExchangeDeployment):
     state_view: UniswapStateViewDeployment
 
 
-@dataclass(slots=True, frozen=True)
-class UniswapRouterDeployment:
-    address: ChecksumAddress
-    chain_id: ChainId
-    name: str
-    exchanges: list[UniswapV2ExchangeDeployment | UniswapV3ExchangeDeployment]
-
-
 def register_exchange(exchange: UniswapV2ExchangeDeployment | UniswapV3ExchangeDeployment) -> None:
     if exchange.chain_id not in FACTORY_DEPLOYMENTS:
         FACTORY_DEPLOYMENTS[exchange.chain_id] = {}
@@ -58,16 +49,6 @@ def register_exchange(exchange: UniswapV2ExchangeDeployment | UniswapV3ExchangeD
         raise DegenbotValueError(message="Exchange is already registered.")
 
     FACTORY_DEPLOYMENTS[exchange.chain_id][exchange.factory.address] = exchange.factory
-
-
-def register_router(router: UniswapRouterDeployment) -> None:
-    if router.chain_id not in ROUTER_DEPLOYMENTS:
-        ROUTER_DEPLOYMENTS[router.chain_id] = {}
-
-    if router.address in ROUTER_DEPLOYMENTS[router.chain_id]:
-        raise DegenbotValueError(message="Router is already registered.")
-
-    ROUTER_DEPLOYMENTS[router.chain_id][router.address] = router
 
 
 # Mainnet DEX --------------- START
@@ -264,114 +245,6 @@ ArbitrumSushiswapV3 = UniswapV3ExchangeDeployment(
 # ----------------------------- END
 
 
-# Mainnet Routers ----------- START
-EthereumMainnetUniswapV2Router = UniswapRouterDeployment(
-    address=get_checksum_address("0xf164fC0Ec4E93095b804a4795bBe1e041497b92a"),
-    chain_id=eth_typing.ChainId.ETH,
-    name="Ethereum Mainnet UniswapV2 Router",
-    exchanges=[EthereumMainnetUniswapV2],
-)
-EthereumMainnetUniswapV2Router2 = UniswapRouterDeployment(
-    address=get_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"),
-    chain_id=eth_typing.ChainId.ETH,
-    name="Ethereum Mainnet UniswapV2 Router 2",
-    exchanges=[EthereumMainnetUniswapV2],
-)
-EthereumMainnetSushiswapV2Router = UniswapRouterDeployment(
-    address=get_checksum_address("0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"),
-    chain_id=eth_typing.ChainId.ETH,
-    name="Ethereum Mainnet Sushiswap Router",
-    exchanges=[EthereumMainnetSushiswapV2],
-)
-EthereumMainnetUniswapV3Router = UniswapRouterDeployment(
-    address=get_checksum_address("0xE592427A0AEce92De3Edee1F18E0157C05861564"),
-    chain_id=eth_typing.ChainId.ETH,
-    name="Ethereum Mainnet Uniswap V3 Router",
-    exchanges=[EthereumMainnetUniswapV3],
-)
-EthereumMainnetUniswapV3Router2 = UniswapRouterDeployment(
-    address=get_checksum_address("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
-    chain_id=eth_typing.ChainId.ETH,
-    name="Ethereum Mainnet Uniswap V3 Router2",
-    exchanges=[EthereumMainnetUniswapV2, EthereumMainnetUniswapV3],
-)
-EthereumMainnetUniswapUniversalRouter = UniswapRouterDeployment(
-    address=get_checksum_address("0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B"),
-    chain_id=eth_typing.ChainId.ETH,
-    name="Ethereum Mainnet Uniswap Universal Router",
-    exchanges=[EthereumMainnetUniswapV2, EthereumMainnetUniswapV3],
-)
-EthereumMainnetUniswapUniversalRouterV1_2 = UniswapRouterDeployment(
-    address=get_checksum_address("0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"),
-    chain_id=eth_typing.ChainId.ETH,
-    name="Ethereum Mainnet Uniswap Universal Router V1_2",
-    exchanges=[EthereumMainnetUniswapV2, EthereumMainnetUniswapV3],
-)
-EthereumMainnetUniswapUniversalRouterV1_3 = UniswapRouterDeployment(
-    address=get_checksum_address("0x3F6328669a86bef431Dc6F9201A5B90F7975a023"),
-    chain_id=eth_typing.ChainId.ETH,
-    name="Ethereum Mainnet Uniswap Universal Router V1_3",
-    exchanges=[EthereumMainnetUniswapV2, EthereumMainnetUniswapV3],
-)
-# Mainnet Routers ------------- END
-
-
-# Base Routers -------------- START
-BaseSushiswapRouter = UniswapRouterDeployment(
-    address=get_checksum_address("0xFB7eF66a7e61224DD6FcD0D7d9C3be5C8B049b9f"),
-    chain_id=eth_typing.ChainId.BASE,
-    name="Sushiswap V3 SwapRouter",
-    exchanges=[BaseSushiswapV3],
-)
-# Base Routers ---------------- END
-
-
-# Arbitrum Routers ---------- START
-ArbitrumSushiswapV2Router = UniswapRouterDeployment(
-    address=get_checksum_address("0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"),
-    chain_id=eth_typing.ChainId.ARB1,
-    name="Arbitrum Sushiswap Router",
-    exchanges=[ArbitrumSushiswapV2],
-)
-ArbitrumUniswapV3Router = UniswapRouterDeployment(
-    address=get_checksum_address("0xE592427A0AEce92De3Edee1F18E0157C05861564"),
-    chain_id=eth_typing.ChainId.ARB1,
-    name="Arbitrum Uniswap V3 Router",
-    exchanges=[ArbitrumUniswapV3],
-)
-ArbitrumUniswapV3Router2 = UniswapRouterDeployment(
-    address=get_checksum_address("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
-    chain_id=eth_typing.ChainId.ARB1,
-    name="Arbitrum Uniswap V3 Router2",
-    exchanges=[ArbitrumUniswapV3],
-)
-ArbitrumUniswapUniversalRouter = UniswapRouterDeployment(
-    address=get_checksum_address("0x4C60051384bd2d3C01bfc845Cf5F4b44bcbE9de5"),
-    chain_id=eth_typing.ChainId.ARB1,
-    name="Arbitrum Uniswap Universal Router",
-    exchanges=[ArbitrumUniswapV3],
-)
-ArbitrumUniswapUniversalRouter2 = UniswapRouterDeployment(
-    address=get_checksum_address("0xeC8B0F7Ffe3ae75d7FfAb09429e3675bb63503e4"),
-    chain_id=eth_typing.ChainId.ARB1,
-    name="Arbitrum Uniswap Universal Router V1_2",
-    exchanges=[ArbitrumUniswapV3],
-)
-ArbitrumUniswapUniversalRouter3 = UniswapRouterDeployment(
-    address=get_checksum_address("0x5E325eDA8064b456f4781070C0738d849c824258"),
-    chain_id=eth_typing.ChainId.ARB1,
-    name="Arbitrum Uniswap Universal Router 4",
-    exchanges=[ArbitrumUniswapV3],
-)
-ArbitrumSushiswapV3Router = UniswapRouterDeployment(
-    address=get_checksum_address("0x8A21F6768C1f8075791D08546Dadf6daA0bE820c"),
-    chain_id=eth_typing.ChainId.ARB1,
-    name="Arbitrum Sushiswap V3 Router",
-    exchanges=[ArbitrumSushiswapV3],
-)
-# ----------------------------- END
-
-
 FACTORY_DEPLOYMENTS: dict[
     int,  # chain ID
     dict[ChecksumAddress, UniswapFactoryDeployment],
@@ -397,33 +270,5 @@ FACTORY_DEPLOYMENTS: dict[
         ArbitrumSushiswapV2.factory.address: ArbitrumSushiswapV2.factory,
         ArbitrumSushiswapV3.factory.address: ArbitrumSushiswapV3.factory,
         ArbitrumUniswapV3.factory.address: ArbitrumUniswapV3.factory,
-    },
-}
-
-
-ROUTER_DEPLOYMENTS: dict[
-    int,  # chain ID
-    dict[
-        ChecksumAddress,  # Router Address
-        UniswapRouterDeployment,
-    ],
-] = {
-    eth_typing.ChainId.ETH: {
-        EthereumMainnetSushiswapV2Router.address: EthereumMainnetSushiswapV2Router,
-        EthereumMainnetUniswapV2Router.address: EthereumMainnetUniswapV2Router,
-        EthereumMainnetUniswapV2Router2.address: EthereumMainnetUniswapV2Router2,
-        EthereumMainnetUniswapV3Router.address: EthereumMainnetUniswapV3Router,
-        EthereumMainnetUniswapV3Router2.address: EthereumMainnetUniswapV3Router2,
-        EthereumMainnetUniswapUniversalRouter.address: EthereumMainnetUniswapUniversalRouter,
-        EthereumMainnetUniswapUniversalRouterV1_2.address: EthereumMainnetUniswapUniversalRouterV1_2,  # noqa: E501
-        EthereumMainnetUniswapUniversalRouterV1_3.address: EthereumMainnetUniswapUniversalRouterV1_3,  # noqa: E501
-    },
-    eth_typing.ChainId.BASE: {
-        BaseSushiswapRouter.address: BaseSushiswapRouter,
-    },
-    eth_typing.ChainId.ARB1: {
-        ArbitrumUniswapUniversalRouter.address: ArbitrumUniswapUniversalRouter,
-        ArbitrumUniswapUniversalRouter2.address: ArbitrumUniswapUniversalRouter2,
-        ArbitrumUniswapUniversalRouter3.address: ArbitrumUniswapUniversalRouter3,
     },
 }
