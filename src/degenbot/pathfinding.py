@@ -1,12 +1,14 @@
+import asyncio
 import enum
 import itertools
 import time
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 
 import sqlalchemy
 from eth_typing import ChecksumAddress
 from networkx import MultiGraph
+from sqlalchemy.orm import Session
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database import db_session
@@ -31,6 +33,330 @@ class Direction(enum.Enum):
     FORWARD_AND_REVERSE = enum.auto()
 
 
+def _dfs(
+    *,
+    start_token_id: TokenId,
+    end_token_id: TokenId,
+    working_path: list[tuple[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]]],
+    session: Session,
+    include_reverse: bool,
+    graph: MultiGraph,
+    min_depth: int,
+    max_depth: int | None,
+) -> Iterator[Sequence[PathStep]]:
+    """
+    Perform an iterative depth-first search from the start token to the end token. When a valid
+    path is found, yield the result and backtrack one step to discover additional paths.
+    """
+
+    if start_token_id not in graph:
+        logger.debug("returning early, token not in graph")
+        return
+
+    if start_token_id == end_token_id and len(working_path) >= min_depth:
+        path_steps: list[PathStep] = []
+
+        for pool_id, pool_type in working_path:
+            if issubclass(pool_type, LiquidityPoolTable):
+                path_steps.append(
+                    PathStep(
+                        address=session.scalars(
+                            sqlalchemy.select(pool_type.address).where(pool_type.id == pool_id)
+                        ).one(),
+                        type=pool_type,
+                    )
+                )
+            elif issubclass(pool_type, UniswapV4PoolTable):
+                pool_address, pool_hash = session.execute(
+                    sqlalchemy
+                    .select(
+                        PoolManagerTable.address,
+                        pool_type.pool_hash,
+                    )
+                    .join(pool_type.manager)
+                    .where(pool_type.id == pool_id)
+                ).one()
+
+                path_steps.append(
+                    PathStep(
+                        address=pool_address,
+                        hash=pool_hash,
+                        type=pool_type,
+                    )
+                )
+
+        assert min_depth <= len(path_steps)
+        if max_depth:
+            assert len(path_steps) <= max_depth
+        yield path_steps
+        if include_reverse:
+            yield path_steps[::-1]
+
+    # Stop recursion if the working path has reached the maximum depth
+    if len(working_path) == max_depth:
+        return
+
+    for neighbor_token_id, edges_dict in graph[start_token_id].items():
+        for attr in edges_dict.values():
+            pool_id = attr["pool_id"]
+            pool_type = attr["pool_type"]
+
+            if (pool_id, pool_type) not in working_path:
+                # Extend path
+                working_path.append((pool_id, pool_type))
+
+                yield from _dfs(
+                    start_token_id=neighbor_token_id,
+                    end_token_id=end_token_id,
+                    working_path=working_path,
+                    include_reverse=include_reverse,
+                    session=session,
+                    graph=graph,
+                    min_depth=min_depth,
+                    max_depth=max_depth,
+                )
+
+                # Backtrack
+                working_path.pop()
+
+
+async def _dfs_async(
+    *,
+    start_token_id: TokenId,
+    end_token_id: TokenId,
+    working_path: list[tuple[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]]],
+    session: Session,
+    include_reverse: bool,
+    graph: MultiGraph,
+    min_depth: int,
+    max_depth: int | None,
+) -> AsyncIterator[Sequence[PathStep]]:
+    """
+    Perform an iterative depth-first search from the start token to the end token. When a valid
+    path is found, yield the result and backtrack one step to discover additional paths.
+    """
+
+    await asyncio.sleep(0)
+
+    if start_token_id not in graph:
+        logger.debug("returning early, token not in graph")
+        return
+
+    if start_token_id == end_token_id and len(working_path) >= min_depth:
+        path_steps: list[PathStep] = []
+
+        for pool_id, pool_type in working_path:
+            if issubclass(pool_type, LiquidityPoolTable):
+                path_steps.append(
+                    PathStep(
+                        address=session.scalars(
+                            sqlalchemy.select(pool_type.address).where(pool_type.id == pool_id)
+                        ).one(),
+                        type=pool_type,
+                    )
+                )
+            elif issubclass(pool_type, UniswapV4PoolTable):
+                pool_address, pool_hash = session.execute(
+                    sqlalchemy
+                    .select(
+                        PoolManagerTable.address,
+                        pool_type.pool_hash,
+                    )
+                    .join(pool_type.manager)
+                    .where(pool_type.id == pool_id)
+                ).one()
+
+                path_steps.append(
+                    PathStep(
+                        address=pool_address,
+                        hash=pool_hash,
+                        type=pool_type,
+                    )
+                )
+
+        assert min_depth <= len(path_steps)
+        if max_depth:
+            assert len(path_steps) <= max_depth
+        yield path_steps
+        if include_reverse:
+            yield path_steps[::-1]
+
+    # Stop recursion if the working path has reached the maximum depth
+    if len(working_path) == max_depth:
+        return
+
+    for neighbor_token_id, edges_dict in graph[start_token_id].items():
+        for attr in edges_dict.values():
+            pool_id = attr["pool_id"]
+            pool_type = attr["pool_type"]
+
+            if (pool_id, pool_type) not in working_path:
+                # Extend path
+                working_path.append((pool_id, pool_type))
+
+                async for step in _dfs_async(
+                    start_token_id=neighbor_token_id,
+                    end_token_id=end_token_id,
+                    working_path=working_path,
+                    include_reverse=include_reverse,
+                    session=session,
+                    graph=graph,
+                    min_depth=min_depth,
+                    max_depth=max_depth,
+                ):
+                    yield step
+
+                # Backtrack
+                working_path.pop()
+
+
+def _get_tokens_with_min_degree(
+    degree: int,
+    session: Session,
+    chain_id: int,
+    pool_types: Sequence[type],
+) -> set[TokenId]:
+    token_count_selects: list[sqlalchemy.Select[tuple[TokenId]]] = []
+    for pool_type in pool_types:
+        if issubclass(pool_type, LiquidityPoolTable):
+            token_count_selects.extend((
+                sqlalchemy.select(pool_type.token0_id.label("token_id")).where(
+                    pool_type.chain == chain_id
+                ),
+                sqlalchemy.select(pool_type.token1_id.label("token_id")).where(
+                    pool_type.chain == chain_id
+                ),
+            ))
+        if issubclass(pool_type, UniswapV4PoolTable):
+            token_count_selects.extend((
+                sqlalchemy.select(pool_type.currency0_id.label("token_id")).where(
+                    pool_type.manager.has(chain=chain_id)
+                ),
+                sqlalchemy.select(pool_type.currency1_id.label("token_id")).where(
+                    pool_type.manager.has(chain=chain_id)
+                ),
+            ))
+    token_count_subq = sqlalchemy.union_all(*token_count_selects).subquery()
+    token_counts_greater_than_two_subq = (
+        sqlalchemy
+        .select(
+            token_count_subq.columns["token_id"],
+            sqlalchemy.func.count().label("pool_count"),
+        )
+        .group_by(token_count_subq.columns["token_id"])
+        .having(sqlalchemy.func.count() >= degree)
+        .subquery()
+    )
+    return set(
+        session.scalars(
+            sqlalchemy.select(token_counts_greater_than_two_subq.columns["token_id"])
+        ).all()
+    )
+
+
+def _prepare_graph(
+    chain_id: int,
+    pool_types: Sequence[type],
+    session: Session,
+) -> MultiGraph:
+
+    start = time.perf_counter()
+
+    candidate_tokens = _get_tokens_with_min_degree(
+        degree=2,
+        session=session,
+        chain_id=chain_id,
+        pool_types=pool_types,
+    )
+    logger.debug(f"Found {len(candidate_tokens)} candidate tokens held by 2 or more pools")
+
+    # Build the graph by creating edges (pools) connecting nodes (tokens) in the
+    # candidate set
+    graph = MultiGraph()
+    for pool_type in pool_types:
+        if issubclass(pool_type, LiquidityPoolTable):
+            graph.add_edges_from(
+                (
+                    token0_id,
+                    token1_id,
+                    {"pool_id": pool_id, "pool_type": pool_type},
+                )
+                for pool_id, token0_id, token1_id in session.execute(
+                    sqlalchemy.select(
+                        pool_type.id,
+                        pool_type.token0_id,
+                        pool_type.token1_id,
+                    ).where(pool_type.chain == chain_id)
+                ).all()
+                if (token0_id in candidate_tokens and token1_id in candidate_tokens)
+            )
+        elif issubclass(pool_type, UniswapV4PoolTable):
+            graph.add_edges_from(
+                (
+                    currency0_id,
+                    currency1_id,
+                    {"pool_id": pool_id, "pool_type": pool_type},
+                )
+                for pool_id, currency0_id, currency1_id in session.execute(
+                    sqlalchemy.select(
+                        pool_type.id,
+                        pool_type.currency0_id,
+                        pool_type.currency1_id,
+                    ).where(pool_type.manager.has(chain=chain_id))
+                )
+                if (currency0_id in candidate_tokens and currency1_id in candidate_tokens)
+            )
+        logger.debug(f"Added edges for pool type {pool_type.__name__}")
+
+    logger.debug(
+        f"Built graph at +{time.perf_counter() - start:.1f}s: "
+        f"{graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools"
+    )
+
+    # Prune dead end tokens
+    while tokens_to_prune := tuple(token for token, degree in graph.degree() if degree <= 1):
+        graph.remove_nodes_from(tokens_to_prune)
+    logger.debug(
+        f"Pruned graph at +{time.perf_counter() - start:.1f}s: "
+        f"{graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools"
+    )
+
+    return graph
+
+
+def _prepare_traversal_plan(
+    start_tokens: set[ChecksumAddress],
+    end_tokens: set[ChecksumAddress],
+) -> dict[tuple[ChecksumAddress, ChecksumAddress], Direction]:
+    """
+    Prepare a traversal plan that will cover all combinations from the given starting and ending
+    sets.
+    """
+
+    # Assemble an exhaustive plan based on the Cartesian product of all start and end nodes:
+    # e.g. P(a|b -> a|b) == P(a->a) + P(a->b) + P(b->a) + P(b->b)
+    traversal_plan: dict[
+        tuple[ChecksumAddress, ChecksumAddress],
+        Direction,
+    ] = dict.fromkeys(
+        itertools.product(start_tokens, end_tokens),
+        Direction.FORWARD,
+    )
+
+    # Optimize traversal plan by consolidating parallel forward paths for token pairs found in the
+    # starting and ending sets. If a forward path is known, the parallel reverse path can be
+    # efficiently included without performing another traversal of the graph:
+    # e.g. P(a->b) + P(b->a) == P(a<->b)
+    tokens_used_for_start_and_end = start_tokens & end_tokens
+    if len(tokens_used_for_start_and_end) > 1:
+        logger.debug("Optimizing traversal plan.")
+        for start_token, end_token in itertools.combinations(tokens_used_for_start_and_end, 2):
+            traversal_plan[start_token, end_token] = Direction.FORWARD_AND_REVERSE
+            del traversal_plan[end_token, start_token]
+
+    return traversal_plan
+
+
 def find_paths(
     *,
     chain_id: int,
@@ -38,7 +364,7 @@ def find_paths(
     end_tokens: Iterable[ChecksumAddress | str],
     min_depth: int = 2,
     max_depth: int | None = None,
-    pool_types: Sequence[type] = [LiquidityPoolTable, UniswapV4PoolTable],
+    pool_types: Sequence[type] = (LiquidityPoolTable, UniswapV4PoolTable),
 ) -> Iterator[Sequence[PathStep]]:
     """
     Find paths from each of the given start tokens to each of the given end tokens using a
@@ -63,243 +389,140 @@ def find_paths(
         3       T_f2 - T_e
     """
 
-    def dfs(
-        start_token_id: TokenId,
-        end_token_id: TokenId,
-        working_path: list[tuple[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]]],
-        *,
-        include_reverse: bool,
-    ) -> Iterator[Sequence[PathStep]]:
-        """
-        Perform an iterative depth-first search from the start token to the end token. When a valid
-        path is found, yield the result and backtrack one step to discover additional paths.
-        """
-
-        if start_token_id not in graph:
-            logger.debug("returning early, token not in graph")
-            return
-
-        if start_token_id == end_token_id and len(working_path) >= min_depth:
-            path_steps: list[PathStep] = []
-
-            for pool_id, pool_type in working_path:
-                if issubclass(pool_type, LiquidityPoolTable):
-                    path_steps.append(
-                        PathStep(
-                            address=db_session.scalars(
-                                sqlalchemy.select(pool_type.address).where(pool_type.id == pool_id)
-                            ).one(),
-                            type=pool_type,
-                        )
-                    )
-                elif issubclass(pool_type, UniswapV4PoolTable):
-                    pool_address, pool_hash = db_session.execute(
-                        sqlalchemy
-                        .select(
-                            PoolManagerTable.address,
-                            pool_type.pool_hash,
-                        )
-                        .join(pool_type.manager)
-                        .where(pool_type.id == pool_id)
-                    ).one()
-
-                    path_steps.append(
-                        PathStep(
-                            address=pool_address,
-                            hash=pool_hash,
-                            type=pool_type,
-                        )
-                    )
-
-            assert min_depth <= len(path_steps)
-            if max_depth:
-                assert len(path_steps) <= max_depth
-            yield path_steps
-            if include_reverse:
-                yield path_steps[::-1]
-
-        # Stop recursion if the working path has reached the maximum depth
-        if len(working_path) == max_depth:
-            return
-
-        for neighbor_token_id, edges_dict in graph[start_token_id].items():
-            for attr in edges_dict.values():
-                pool_id = attr["pool_id"]
-                pool_type = attr["pool_type"]
-
-                if (pool_id, pool_type) not in working_path:
-                    # Extend path
-                    working_path.append((pool_id, pool_type))
-
-                    yield from dfs(
-                        start_token_id=neighbor_token_id,
-                        end_token_id=end_token_id,
-                        working_path=working_path,
-                        include_reverse=include_reverse,
-                    )
-
-                    # Backtrack
-                    working_path.pop()
-
-    def get_tokens_with_min_degree(degree: int) -> set[TokenId]:
-        token_count_selects: list[sqlalchemy.Select[tuple[TokenId]]] = []
-        for pool_type in pool_types:
-            if issubclass(pool_type, LiquidityPoolTable):
-                token_count_selects.extend((
-                    sqlalchemy.select(pool_type.token0_id.label("token_id")).where(
-                        pool_type.chain == chain_id
-                    ),
-                    sqlalchemy.select(pool_type.token1_id.label("token_id")).where(
-                        pool_type.chain == chain_id
-                    ),
-                ))
-            if issubclass(pool_type, UniswapV4PoolTable):
-                token_count_selects.extend((
-                    sqlalchemy.select(pool_type.currency0_id.label("token_id")).where(
-                        pool_type.manager.has(chain=chain_id)
-                    ),
-                    sqlalchemy.select(pool_type.currency1_id.label("token_id")).where(
-                        pool_type.manager.has(chain=chain_id)
-                    ),
-                ))
-        token_count_subq = sqlalchemy.union_all(*token_count_selects).subquery()
-        token_counts_greater_than_two_subq = (
-            sqlalchemy
-            .select(
-                token_count_subq.columns["token_id"],
-                sqlalchemy.func.count().label("pool_count"),
-            )
-            .group_by(token_count_subq.columns["token_id"])
-            .having(sqlalchemy.func.count() >= degree)
-            .subquery()
-        )
-        return set(
-            db_session.scalars(
-                sqlalchemy.select(token_counts_greater_than_two_subq.columns["token_id"])
-            ).all()
-        )
-
     # @dev Liquidity pool lookups using a token ID are implicitly filtered for the chain ID, since
     # token addresses are unique to the chain. WHERE clauses can therefore be omitted from SELECTs.
 
     start = time.perf_counter()
 
-    if pool_types is None:
-        pool_types = [LiquidityPoolTable, UniswapV4PoolTable]
+    with db_session() as session:
+        graph = _prepare_graph(
+            chain_id=chain_id,
+            pool_types=pool_types,
+            session=session,
+        )
 
-    candidate_tokens = get_tokens_with_min_degree(2)
-    logger.debug(f"Found {len(candidate_tokens)} candidate tokens held by 2 or more pools")
+        traversal_plan = _prepare_traversal_plan(
+            start_tokens={get_checksum_address(token) for token in start_tokens},
+            end_tokens={get_checksum_address(token) for token in end_tokens},
+        )
 
-    # Build the graph by creating edges (pools) connecting nodes (tokens) in the
-    # candidate set
-    graph = MultiGraph()
-    for pool_type in pool_types:
-        if issubclass(pool_type, LiquidityPoolTable):
-            graph.add_edges_from(
-                (
-                    token0_id,
-                    token1_id,
-                    {"pool_id": pool_id, "pool_type": pool_type},
+        for (start_token, end_token), direction in traversal_plan.items():
+            start_token_id = session.scalar(
+                sqlalchemy.select(Erc20TokenTable.id).where(
+                    Erc20TokenTable.address == start_token,
+                    Erc20TokenTable.chain == chain_id,
                 )
-                for pool_id, token0_id, token1_id in db_session.execute(
-                    sqlalchemy.select(
-                        pool_type.id,
-                        pool_type.token0_id,
-                        pool_type.token1_id,
-                    ).where(pool_type.chain == chain_id)
-                ).all()
-                if (token0_id in candidate_tokens and token1_id in candidate_tokens)
             )
-        elif issubclass(pool_type, UniswapV4PoolTable):
-            graph.add_edges_from(
-                (
-                    currency0_id,
-                    currency1_id,
-                    {"pool_id": pool_id, "pool_type": pool_type},
+            if start_token_id is None:
+                msg = f"Start token {start_token} was not found in the database."
+                raise DegenbotValueError(msg)
+
+            end_token_id = session.scalar(
+                sqlalchemy.select(Erc20TokenTable.id).where(
+                    Erc20TokenTable.address == end_token,
+                    Erc20TokenTable.chain == chain_id,
                 )
-                for pool_id, currency0_id, currency1_id in db_session.execute(
-                    sqlalchemy.select(
-                        pool_type.id,
-                        pool_type.currency0_id,
-                        pool_type.currency1_id,
-                    ).where(pool_type.manager.has(chain=chain_id))
+            )
+            if end_token_id is None:
+                msg = f"End token {end_token} was not found in the database."
+                raise DegenbotValueError(msg)
+
+            working_path: list[tuple[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]]] = []
+
+            logger.debug(
+                f"Finding paths from {start_token} "
+                f"(id {start_token_id}) -> {end_token} (id {end_token_id})"
+            )
+
+            logger.debug(f"Performing generic {max_depth}-pool path search")
+
+            yield from _dfs(
+                start_token_id=start_token_id,
+                end_token_id=end_token_id,
+                working_path=working_path,
+                include_reverse=(direction == direction.FORWARD_AND_REVERSE),
+                session=session,
+                graph=graph,
+                min_depth=min_depth,
+                max_depth=max_depth,
+            )
+
+            logger.debug(
+                f"Completed structured generic search (max depth {max_depth}) "
+                f"at +{time.perf_counter() - start:.1f}s"
+            )
+
+
+async def find_paths_async(
+    *,
+    chain_id: int,
+    start_tokens: Iterable[ChecksumAddress | str],
+    end_tokens: Iterable[ChecksumAddress | str],
+    min_depth: int = 2,
+    max_depth: int | None = None,
+    pool_types: Sequence[type] = [LiquidityPoolTable, UniswapV4PoolTable],
+) -> AsyncIterator[Sequence[PathStep]]:
+    """
+    An async version of `find_paths`.
+    """
+
+    start = time.perf_counter()
+
+    with db_session() as session:
+        graph = _prepare_graph(
+            chain_id=chain_id,
+            pool_types=pool_types,
+            session=session,
+        )
+
+        traversal_plan = _prepare_traversal_plan(
+            start_tokens={get_checksum_address(token) for token in start_tokens},
+            end_tokens={get_checksum_address(token) for token in end_tokens},
+        )
+
+        for (start_token, end_token), direction in traversal_plan.items():
+            start_token_id = session.scalar(
+                sqlalchemy.select(Erc20TokenTable.id).where(
+                    Erc20TokenTable.address == start_token,
+                    Erc20TokenTable.chain == chain_id,
                 )
-                if (currency0_id in candidate_tokens and currency1_id in candidate_tokens)
             )
-        logger.debug(f"Added edges for pool type {pool_type.__name__}")
-        logger.debug(
-            f"Built graph at +{time.perf_counter() - start:.1f}s: "
-            f"{graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools"
-        )
+            if start_token_id is None:
+                msg = f"Start token {start_token} was not found in the database."
+                raise DegenbotValueError(msg)
 
-        # Prune dead end tokens
-        while tokens_to_prune := tuple(token for token, degree in graph.degree() if degree <= 1):
-            graph.remove_nodes_from(tokens_to_prune)
-        logger.debug(
-            f"Pruned graph at +{time.perf_counter() - start:.1f}s: "
-            f"{graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools"
-        )
-
-    start_tokens_checksummed = {get_checksum_address(token) for token in start_tokens}
-    end_tokens_checksummed = {get_checksum_address(token) for token in end_tokens}
-
-    # Prepare an exhaustive traversal plan based on the Cartesian product of all start and end
-    # nodes: e.g. P(a|b -> a|b) == P(a->a) + P(a->b) + P(b->a) + P(b->b)
-    traversal_plan: dict[
-        tuple[ChecksumAddress, ChecksumAddress],
-        Direction,
-    ] = dict.fromkeys(
-        itertools.product(start_tokens_checksummed, end_tokens_checksummed),
-        Direction.FORWARD,
-    )
-
-    tokens_used_for_start_and_end = start_tokens_checksummed & end_tokens_checksummed
-    if len(tokens_used_for_start_and_end) > 1:
-        logger.debug("Optimizing traversal plan.")
-        # One traversal can be eliminated for every combination from tokens in the starting and
-        # ending sets. The plan is reduced by consolidating: P(a->b) + P(b->a) == P(a<->b)
-        for start_token, end_token in itertools.combinations(tokens_used_for_start_and_end, 2):
-            traversal_plan[start_token, end_token] = Direction.FORWARD_AND_REVERSE
-            del traversal_plan[end_token, start_token]
-
-    for (start_token, end_token), direction in traversal_plan.items():
-        start_token_id = db_session.scalar(
-            sqlalchemy.select(Erc20TokenTable.id).where(
-                Erc20TokenTable.address == start_token,
-                Erc20TokenTable.chain == chain_id,
+            end_token_id = session.scalar(
+                sqlalchemy.select(Erc20TokenTable.id).where(
+                    Erc20TokenTable.address == end_token,
+                    Erc20TokenTable.chain == chain_id,
+                )
             )
-        )
-        if start_token_id is None:
-            msg = f"Start token {start_token} was not found in the database."
-            raise DegenbotValueError(msg)
+            if end_token_id is None:
+                msg = f"End token {end_token} was not found in the database."
+                raise DegenbotValueError(msg)
 
-        end_token_id = db_session.scalar(
-            sqlalchemy.select(Erc20TokenTable.id).where(
-                Erc20TokenTable.address == end_token,
-                Erc20TokenTable.chain == chain_id,
+            working_path: list[tuple[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]]] = []
+
+            logger.debug(
+                f"Finding paths from {start_token} "
+                f"(id {start_token_id}) -> {end_token} (id {end_token_id})"
             )
-        )
-        if end_token_id is None:
-            msg = f"End token {end_token} was not found in the database."
-            raise DegenbotValueError(msg)
 
-        working_path: list[tuple[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]]] = []
+            logger.debug(f"Performing generic {max_depth}-pool path search")
 
-        logger.debug(
-            f"Finding paths from {start_token} "
-            f"(id {start_token_id}) -> {end_token} (id {end_token_id})"
-        )
+            async for path in _dfs_async(
+                start_token_id=start_token_id,
+                end_token_id=end_token_id,
+                working_path=working_path,
+                include_reverse=(direction == direction.FORWARD_AND_REVERSE),
+                session=session,
+                graph=graph,
+                min_depth=min_depth,
+                max_depth=max_depth,
+            ):
+                yield path
 
-        logger.debug(f"Performing generic {max_depth}-pool path search")
-
-        yield from dfs(
-            start_token_id=start_token_id,
-            end_token_id=end_token_id,
-            working_path=working_path,
-            include_reverse=direction == direction.FORWARD_AND_REVERSE,
-        )
-
-        logger.debug(
-            f"Completed structured generic search (max depth {max_depth}) "
-            f"at +{time.perf_counter() - start:.1f}s"
-        )
+            logger.debug(
+                f"Completed structured generic search (max depth {max_depth}) "
+                f"at +{time.perf_counter() - start:.1f}s"
+            )

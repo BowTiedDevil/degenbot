@@ -4,10 +4,11 @@ from eth_typing import ChainId
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
 from degenbot.database.models.pools import (
     SwapbasedV2PoolTable,
+    UniswapV2PoolTable,
     UniswapV3PoolTable,
     UniswapV4PoolTable,
 )
-from degenbot.pathfinding import PathStep, find_paths
+from degenbot.pathfinding import PathStep, find_paths, find_paths_async
 
 BASE_CHAIN_ID = ChainId.BASE
 WETH_BASE_ADDRESS = WRAPPED_NATIVE_TOKENS[BASE_CHAIN_ID]
@@ -27,8 +28,30 @@ def test_two_pool_pathfinding_cycling_weth():
             start_tokens=[WETH_BASE_ADDRESS],
             end_tokens=[WETH_BASE_ADDRESS],
             max_depth=2,
+            pool_types=[
+                UniswapV2PoolTable,
+                UniswapV3PoolTable,
+            ],
         )
     )
+    assert paths
+    print(f"Found {len(paths)} 2-pool paths")
+
+
+async def test_two_pool_pathfinding_cycling_weth_async():
+    paths = [
+        path
+        async for path in find_paths_async(
+            chain_id=BASE_CHAIN_ID,
+            start_tokens=[WETH_BASE_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS],
+            max_depth=2,
+            pool_types=[
+                UniswapV2PoolTable,
+                UniswapV3PoolTable,
+            ],
+        )
+    ]
     assert paths
     print(f"Found {len(paths)} 2-pool paths")
 
