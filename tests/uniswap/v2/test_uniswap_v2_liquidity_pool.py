@@ -26,10 +26,7 @@ from degenbot.exceptions.liquidity_pool import (
 from degenbot.registry import pool_registry
 from degenbot.uniswap.abi import UNISWAP_V2_ROUTER_ABI
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
-from degenbot.uniswap.v2_liquidity_pool import (
-    UniswapV2Pool,
-    UnregisteredLiquidityPool,
-)
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,

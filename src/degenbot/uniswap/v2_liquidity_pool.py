@@ -880,36 +880,3 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             for subscriber in self._subscribers
             if isinstance(subscriber, AbstractArbitrage)
         )
-
-
-class UnregisteredLiquidityPool(UniswapV2Pool):
-    """
-    A disconnected version of `UniswapV2Pool` for use where a pool helper is expected, but no
-    chain data available to read the necessary values.
-
-    The pool helper is not added to the pool registry and no reserve values are set.
-    """
-
-    def __init__(
-        self,
-        address: ChecksumAddress | str,
-        tokens: list[Erc20Token],
-        fee: Fraction | Iterable[Fraction] = Fraction(3, 1000),
-    ) -> None:
-        self.address = get_checksum_address(address)
-        self._state_lock = Lock()
-        self._state = UniswapV2PoolState(
-            address=self.address,
-            reserves_token0=0,
-            reserves_token1=0,
-            block=None,
-        )
-        self.token0 = min(tokens)
-        self.token1 = max(tokens)
-
-        if isinstance(fee, Iterable):
-            self.fee_token0, self.fee_token1 = fee
-        else:
-            self.fee_token0 = self.fee_token1 = fee
-
-        self._subscribers = WeakSet()
