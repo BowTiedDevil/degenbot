@@ -149,7 +149,7 @@ class DatabaseSnapshot:
             self.session = db_session
             self.database_path = settings.database.path
         else:
-            self.session = get_scoped_sqlite_session(database_path)()
+            self.session = get_scoped_sqlite_session(database_path)
             self.database_path = database_path
 
         self.chain_id = chain_id
@@ -184,14 +184,15 @@ class DatabaseSnapshot:
         )
 
     def get_newest_block(self) -> BlockNumber | None:
-        last_update_blocks = set(
-            db_session.scalars(
-                select(ExchangeTable.last_update_block).where(
-                    ExchangeTable.chain_id == self.chain_id,
-                    ExchangeTable.name.like("%!_v4", escape="!"),
-                )
-            ).all()
-        )
+        with self.session() as session:
+            last_update_blocks = set(
+                session.scalars(
+                    select(ExchangeTable.last_update_block).where(
+                        ExchangeTable.chain_id == self.chain_id,
+                        ExchangeTable.name.like("%!_v4", escape="!"),
+                    )
+                ).all()
+            )
 
         if not last_update_blocks or None in last_update_blocks:
             return None
@@ -317,10 +318,12 @@ class UniswapV4LiquiditySnapshot:
             bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
             leave=False,
         ):
-            pool_manager_address, pool_id, liquidity_event = self._process_liquidity_event_log(
-                event_log
-            )
-            self._liquidity_events[pool_manager_address, pool_id].append(liquidity_event)
+            # Ignores zero-amount events
+            if any(event_log["data"][64:96]):
+                pool_manager_address, pool_id, liquidity_event = self._process_liquidity_event_log(
+                    event_log
+                )
+                self._liquidity_events[pool_manager_address, pool_id].append(liquidity_event)
 
         self.newest_block = to_block
 
@@ -359,10 +362,13 @@ class UniswapV4LiquiditySnapshot:
             leave=False,
         ):
             await asyncio.sleep(0)
-            pool_manager_address, pool_id, liquidity_event = self._process_liquidity_event_log(
-                event_log
-            )
-            self._liquidity_events[pool_manager_address, pool_id].append(liquidity_event)
+
+            # Ignores zero-amount events
+            if any(event_log["data"][64:96]):
+                pool_manager_address, pool_id, liquidity_event = self._process_liquidity_event_log(
+                    event_log
+                )
+                self._liquidity_events[pool_manager_address, pool_id].append(liquidity_event)
 
         self.newest_block = to_block
 

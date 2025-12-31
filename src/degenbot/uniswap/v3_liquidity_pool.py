@@ -3,7 +3,7 @@
 
 # TODO: add event prototype exporter method and handler for callbacks
 import dataclasses
-from bisect import bisect_left
+from collections import deque
 from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Self, TypedDict, cast
@@ -39,13 +39,7 @@ from degenbot.logging import logger
 from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
-from degenbot.types.concrete import (
-    AbstractPublisherMessage,
-    BoundedCache,
-    Publisher,
-    PublisherMixin,
-    Subscriber,
-)
+from degenbot.types.concrete import AbstractPublisherMessage, Publisher, PublisherMixin, Subscriber
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV3ExchangeDeployment
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import (
@@ -146,7 +140,7 @@ def get_pool_from_database(
 class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
     type PoolState = UniswapV3PoolState
     _state: PoolState
-    _state_cache: BoundedCache[BlockNumber, PoolState]
+    _state_cache: deque[PoolState]
 
     UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
         "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
@@ -373,7 +367,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 block_number=state_block,
             )
 
-        self._state = self.PoolState.__value__(
+        initial_state = self.PoolState.__value__(
             address=self.address,
             liquidity=liquidity,
             sqrt_price_x96=sqrt_price_x96,
@@ -382,8 +376,8 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             tick_data=working_tick_data,
             block=state_block,
         )
-        self._state_cache = BoundedCache(max_items=state_cache_depth)
-        self._state_cache[self.update_block] = self.state
+        self._state_cache = deque(maxlen=max(1, state_cache_depth))
+        self._state_cache.append(initial_state)
         self._state_lock = Lock()
 
         # Liquidity range consumption cache
@@ -391,9 +385,9 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         self._swap_step_cache_lock = Lock()
 
         pool_registry.add(
-            pool_address=self.address,
-            chain_id=self.chain_id,
             pool=self,
+            chain_id=self.chain_id,
+            pool_address=self.address,
         )
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()
@@ -414,7 +408,6 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         # after pickling/unpickling
         copied_attributes: set[str] = set()
         dropped_attributes = {
-            "_state_cache",
             "_state_lock",
             "_subscribers",
             "_swap_step_cache_lock",
@@ -972,7 +965,7 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
 
     @property
     def state(self) -> PoolState:
-        return self._state
+        return self._state_cache[-1]
 
     @property
     def tick(self) -> int:
@@ -1054,8 +1047,6 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
             if block_number is not None and block_number < self.update_block:
                 raise LateUpdateError
 
-            state_updated = False
-
             w3 = connection_manager.get_web3(self.chain_id)
             block_number = block_number if block_number is not None else w3.eth.get_block_number()
 
@@ -1100,7 +1091,14 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 types=["uint256"], data=cast("HexBytes", liquidity_result)
             )
 
-            state = dataclasses.replace(
+            if (
+                sqrt_price_x96 == self.sqrt_price_x96
+                and liquidity == self.liquidity
+                and self.tick == tick
+            ):
+                return
+
+            working_state = dataclasses.replace(
                 self.state,
                 liquidity=liquidity,
                 sqrt_price_x96=sqrt_price_x96,
@@ -1108,14 +1106,13 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 block=block_number,
             )
 
-            state_updated = state != self.state
-            self._state = state
-            self._state_cache[block_number] = state
+            if self.state.block == block_number:
+                self._state_cache.pop()
+            self._state_cache.append(working_state)
 
-            if state_updated:
-                self._notify_subscribers(
-                    message=UniswapV3PoolStateUpdated(state),
-                )
+            self._notify_subscribers(
+                message=UniswapV3PoolStateUpdated(working_state),
+            )
 
             if not silent:  # pragma: no cover
                 logger.info(f"Liquidity: {self.liquidity}")
@@ -1248,10 +1245,17 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         ):
             raise ExternalUpdateError(message=f"Rejected update for block {update.block_number}")
 
+        if (
+            update.liquidity == self.liquidity
+            and update.sqrt_price_x96 == self.sqrt_price_x96
+            and update.tick == self.tick
+        ):
+            return False
+
         with self._state_lock:
             state_block = update.block_number
 
-            state = dataclasses.replace(
+            working_state = dataclasses.replace(
                 self.state,
                 liquidity=update.liquidity,
                 sqrt_price_x96=update.sqrt_price_x96,
@@ -1259,17 +1263,15 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                 block=state_block,
             )
 
-            updated_state = state != self.state
+            if self.state.block == update.block_number:
+                self._state_cache.pop()
+            self._state_cache.append(working_state)
 
-            self._state = state
-            self._state_cache[state_block] = state
+            self._notify_subscribers(
+                message=UniswapV3PoolStateUpdated(working_state),
+            )
 
-            if updated_state:
-                self._notify_subscribers(
-                    message=UniswapV3PoolStateUpdated(state),
-                )
-
-            return updated_state
+            return True
 
     def update_liquidity_map(
         self,
@@ -1380,17 +1382,20 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
                     block=state_block,
                 )
 
-            state = dataclasses.replace(
+            working_state = dataclasses.replace(
                 self.state,
                 liquidity=working_liquidity,
                 tick_data=working_tick_data,
                 tick_bitmap=working_tick_bitmap,
                 block=max(self.update_block, state_block),
             )
-            self._state = state
-            self._state_cache[state_block] = state
+
+            if self.state.block == update.block_number:
+                self._state_cache.pop()
+            self._state_cache.append(working_state)
+
             self._notify_subscribers(
-                message=UniswapV3PoolStateUpdated(state),
+                message=UniswapV3PoolStateUpdated(working_state),
             )
 
     def get_arbitrage_helpers(
@@ -1478,24 +1483,24 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         block: BlockNumber,
     ) -> None:
         """
-        Discard states recorded prior to a target block.
+        Discard cached states earlier than the given block.
         """
 
         with self._state_lock:
-            known_blocks = sorted(self._state_cache.keys())
-
-            # Finds the index prior to the requested block number
-            block_index = bisect_left(known_blocks, block)
-
-            # The earliest known state already meets the criterion, so return early
-            if block_index == 0:
+            # The oldest state already satisfies the request
+            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
                 return
 
-            if block_index == len(known_blocks):
-                raise NoPoolStateAvailable(block)
+            # The newest state is older than the target block, so there is no state to return to
+            if (newest_block := self._state_cache[-1].block) and newest_block < block:
+                raise NoPoolStateAvailable(block=block)
 
-            for known_block in known_blocks[:block_index]:
-                del self._state_cache[known_block]
+            # Discard older states until the earliest block is crossed
+            while (earliest_block := self._state_cache[0].block) is None or earliest_block < block:
+                self._state_cache.popleft()
+
+            assert self.state.block is not None
+            assert self.state.block >= block
 
     def restore_state_before_block(
         self,
@@ -1505,36 +1510,25 @@ class UniswapV3Pool(PublisherMixin, AbstractLiquidityPool):
         Restore the last pool state recorded prior to a target block.
 
         Use this method to maintain consistent state data following a chain re-organization.
+
+        The pool will notify all subscribers of the new state with a `UniswapV3PoolStateUpdated`
+        event.
         """
 
-        # Find the index for the most recent pool state PRIOR to the requested
-        # block number.
-        #
-        # e.g. Calling restore_state_before_block(block=104) for a pool with
-        # states at blocks 100, 101, 102, 103, 104. `bisect_left()` returns
-        # block_index=3, since block 104 is at index=4. The state held at
-        # index=3 is for block 103.
-
         with self._state_lock:
-            known_blocks = sorted(self._state_cache.keys())
-            block_index = bisect_left(known_blocks, block)
-
-            if block_index == 0:
-                raise NoPoolStateAvailable(block)
-
-            # The last known state already meets the criterion, so return early
-            if block_index == len(known_blocks):
+            # The newest state already satisfies the request
+            if (newest_block := self._state_cache[-1].block) and newest_block < block:
                 return
 
-            # Remove states at and after the specified block
-            for known_block in known_blocks[block_index:]:
-                del self._state_cache[known_block]
+            # No earlier state is available
+            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
+                raise NoPoolStateAvailable(block=block)
 
-            self._update_block, self._state = list(self._state_cache.items())[-1]
+            # Discard blocks until the last block is older than the target
+            while self._state_cache[-1].block is None or self._state_cache[-1].block >= block:
+                self._state_cache.pop()
 
-        self._notify_subscribers(
-            message=UniswapV3PoolStateUpdated(self.state),
-        )
+            self._notify_subscribers(message=UniswapV3PoolStateUpdated(self.state))
 
     def simulate_exact_input_swap(
         self,

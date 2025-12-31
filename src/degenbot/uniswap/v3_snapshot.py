@@ -192,7 +192,7 @@ class DatabaseSnapshot:
             self.session = db_session
             self.database_path = settings.database.path
         else:
-            self.session = get_scoped_sqlite_session(database_path)()
+            self.session = get_scoped_sqlite_session(database_path)
             self.database_path = database_path
 
         self.chain_id = chain_id
@@ -224,12 +224,13 @@ class DatabaseSnapshot:
         )
 
     def get_newest_block(self) -> BlockNumber | None:
-        last_update_blocks: Sequence[int | None] = db_session.scalars(
-            select(ExchangeTable.last_update_block).where(
-                ExchangeTable.chain_id == self.chain_id,
-                ExchangeTable.name.like("%!_v3", escape="!"),
-            )
-        ).all()
+        with db_session() as session:
+            last_update_blocks: Sequence[int | None] = session.scalars(
+                select(ExchangeTable.last_update_block).where(
+                    ExchangeTable.chain_id == self.chain_id,
+                    ExchangeTable.name.like("%!_v3", escape="!"),
+                )
+            ).all()
 
         if not last_update_blocks or None in last_update_blocks:
             return None
@@ -374,8 +375,10 @@ class UniswapV3LiquiditySnapshot:
             bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
             leave=False,
         ):
-            pool_address, liquidity_event = self._process_liquidity_event_log(event_log)
-            self._liquidity_events[pool_address].append(liquidity_event)
+            # Ignore zero-amount events
+            if any(event_log["data"][:32]):
+                pool_address, liquidity_event = self._process_liquidity_event_log(event_log)
+                self._liquidity_events[pool_address].append(liquidity_event)
 
         self.newest_block = to_block
 
@@ -415,8 +418,11 @@ class UniswapV3LiquiditySnapshot:
             leave=False,
         ):
             await asyncio.sleep(0)
-            pool_address, liquidity_event = self._process_liquidity_event_log(event_log)
-            self._liquidity_events[pool_address].append(liquidity_event)
+
+            # Ignore zero-amount events
+            if any(event_log["data"][:32]):
+                pool_address, liquidity_event = self._process_liquidity_event_log(event_log)
+                self._liquidity_events[pool_address].append(liquidity_event)
 
         self.newest_block = to_block
 

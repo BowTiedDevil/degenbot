@@ -3,7 +3,7 @@
 
 import contextlib
 import dataclasses
-from bisect import bisect_left
+from collections import deque
 from collections.abc import Iterable
 from fractions import Fraction
 from threading import Lock
@@ -42,13 +42,7 @@ from degenbot.logging import logger
 from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
-from degenbot.types.concrete import (
-    AbstractPublisherMessage,
-    BoundedCache,
-    Publisher,
-    PublisherMixin,
-    Subscriber,
-)
+from degenbot.types.concrete import AbstractPublisherMessage, Publisher, PublisherMixin, Subscriber
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_functions import (
@@ -89,7 +83,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
     type DatabasePoolType = UniswapV2PoolTable
 
     _state: PoolState
-    _state_cache: BoundedCache[BlockNumber, PoolState]
+    _state_cache: deque[PoolState]
 
     FEE = Fraction(3, 1000)
     RESERVES_STRUCT_TYPES = ("uint112", "uint112")
@@ -172,24 +166,68 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
         )
 
-        pool_from_db: AbstractUniswapV2Pool = db_session.scalar(
-            select(LiquidityPoolTable).where(
-                LiquidityPoolTable.address == self.address,
-                LiquidityPoolTable.chain == self._chain_id,
+        with db_session() as session:
+            pool_from_db: AbstractUniswapV2Pool = session.scalar(
+                select(LiquidityPoolTable).where(
+                    LiquidityPoolTable.address == self.address,
+                    LiquidityPoolTable.chain == self._chain_id,
+                )
             )
-        )
 
-        # Get the tokens held by the pool
-        if pool_from_db is not None:
-            token0_address = pool_from_db.token0.address
-            token1_address = pool_from_db.token1.address
-        else:
-            try:
-                _, (token0_address, token1_address) = self.get_immutable_pool_values(w3=w3)
-            except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
-                # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
-                # Catch this here and raise as a pool-specific exception
-                raise LiquidityPoolError(message="Could not decode contract data") from exc
+            # Get the tokens held by the pool
+            if pool_from_db is not None:
+                token0_address = pool_from_db.token0.address
+                token1_address = pool_from_db.token1.address
+            else:
+                try:
+                    _, (token0_address, token1_address) = self.get_immutable_pool_values(w3=w3)
+                except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
+                    # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
+                    # Catch this here and raise as a pool-specific exception
+                    raise LiquidityPoolError(message="Could not decode contract data") from exc
+
+            # Get the factory & deployer info
+            if pool_from_db is not None:
+                self.factory = get_checksum_address(pool_from_db.exchange.factory)
+                self.deployer = (
+                    get_checksum_address(pool_from_db.exchange.deployer)
+                    if pool_from_db.exchange.deployer is not None
+                    else self.factory
+                )
+            else:
+                try:
+                    factory, _ = self.get_immutable_pool_values(w3=w3)
+                    self.factory = get_checksum_address(factory)
+                except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
+                    # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
+                    # Catch this here and raise as a pool-specific exception
+                    raise LiquidityPoolError(message="Could not decode contract data") from exc
+
+                # The deployer address is not typically available via getter, so assume the factory
+                # deployed the pool unless an address was explicitly provided
+                self.deployer = get_checksum_address(deployer_address or self.factory)
+
+            # Use registered deployment values if available
+            with contextlib.suppress(KeyError):
+                factory_deployment = FACTORY_DEPLOYMENTS[self.chain_id][self.factory]
+                self.init_hash = factory_deployment.pool_init_hash
+                if factory_deployment.deployer is not None:  # pragma: no cover
+                    self.deployer = factory_deployment.deployer
+
+            # Set the fees taken on swaps for both tokens
+            if pool_from_db is not None:
+                self.fee_token0 = Fraction(pool_from_db.fee_token0, pool_from_db.fee_denominator)
+                self.fee_token1 = Fraction(pool_from_db.fee_token1, pool_from_db.fee_denominator)
+            elif fee is not None:
+                match fee:
+                    case Iterable():
+                        self.fee_token0, self.fee_token1 = fee
+                    case Fraction():
+                        self.fee_token0 = self.fee_token1 = fee
+                    case _:
+                        raise DegenbotValueError(message="Fees not passed correctly.")
+            else:
+                self.fee_token0 = self.fee_token1 = self.FEE
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
         try:
@@ -203,49 +241,6 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             )
         except DegenbotValueError as e:
             raise LiquidityPoolError(message="Could not build one or more tokens.") from e
-
-        # Get the factory & deployer info
-        if pool_from_db is not None:
-            self.factory = get_checksum_address(pool_from_db.exchange.factory)
-            self.deployer = (
-                get_checksum_address(pool_from_db.exchange.deployer)
-                if pool_from_db.exchange.deployer is not None
-                else self.factory
-            )
-        else:
-            try:
-                factory, _ = self.get_immutable_pool_values(w3=w3)
-                self.factory = get_checksum_address(factory)
-            except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
-                # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
-                # Catch this here and raise as a pool-specific exception
-                raise LiquidityPoolError(message="Could not decode contract data") from exc
-
-            # The deployer address is not typically available via getter, so assume the factory
-            # deployed the pool unless an address was explicitly provided
-            self.deployer = get_checksum_address(deployer_address or self.factory)
-
-        # Use registered deployment values if available
-        with contextlib.suppress(KeyError):
-            factory_deployment = FACTORY_DEPLOYMENTS[self.chain_id][self.factory]
-            self.init_hash = factory_deployment.pool_init_hash
-            if factory_deployment.deployer is not None:  # pragma: no cover
-                self.deployer = factory_deployment.deployer
-
-        # Set the fees taken on swaps for both tokens
-        if fee is not None:
-            match fee:
-                case Iterable():
-                    self.fee_token0, self.fee_token1 = fee
-                case Fraction():
-                    self.fee_token0 = self.fee_token1 = fee
-                case _:
-                    raise DegenbotValueError(message="Fees not passed correctly.")
-        elif pool_from_db is not None:
-            self.fee_token0 = Fraction(pool_from_db.fee_token0, pool_from_db.fee_denominator)
-            self.fee_token1 = Fraction(pool_from_db.fee_token1, pool_from_db.fee_denominator)
-        else:
-            self.fee_token0 = self.fee_token1 = self.FEE
 
         if verify_address and self.address != self._verified_address():  # pragma: no branch
             raise AddressMismatch
@@ -263,16 +258,15 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=state_block)
 
-        self._state_lock = Lock()
-        self._state = self.PoolState.__value__(
+        initial_state = self.PoolState.__value__(
             address=self.address,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
             block=state_block,
         )
-        self._state_cache = BoundedCache(max_items=state_cache_depth)
-        self._state_cache[self.update_block] = self.state
-        self._subscribers: WeakSet[Subscriber] = WeakSet()
+        self._state_cache = deque(maxlen=max(1, state_cache_depth))
+        self._state_cache.append(initial_state)
+        self._state_lock = Lock()
 
         if not silent:  # pragma: no cover
             logger.info(self.name)
@@ -280,6 +274,8 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
+
+        self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     @property
     def chain_id(self) -> int:
@@ -289,8 +285,6 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         # Remove objects that either cannot be pickled or are unnecessary to perform the calculation
         copied_attributes = ()
         dropped_attributes = (
-            "_contract",
-            "_state_cache",
             "_state_lock",
             "_subscribers",
         )
@@ -375,7 +369,7 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
 
     @property
     def state(self) -> PoolState:
-        return self._state
+        return self._state_cache[-1]
 
     @property
     def tokens(self) -> tuple[Erc20Token, Erc20Token]:
@@ -412,30 +406,37 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             if block_number is not None and block_number < self.update_block:
                 raise LateUpdateError
 
-            state_updated = False
             w3 = self.w3
             block_number = block_number if block_number is not None else w3.eth.get_block_number()
             reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
 
-            if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
-                state_updated = True
+            if (
+                self.reserves_token0,
+                self.reserves_token1,
+            ) == (
+                reserves0,
+                reserves1,
+            ):
+                return
 
-            self._state = dataclasses.replace(
+            working_state = dataclasses.replace(
                 self.state,
                 reserves_token0=reserves0,
                 reserves_token1=reserves1,
                 block=block_number,
             )
-            self._state_cache[block_number] = self.state
 
-            if state_updated:
-                if not silent:  # pragma: no cover
-                    logger.info(f"[{self.name}]")
-                    logger.info(f"{self.token0}: {self.reserves_token0}")
-                    logger.info(f"{self.token1}: {self.reserves_token1}")
-                self._notify_subscribers(
-                    message=UniswapV2PoolStateUpdated(self.state),
-                )
+            if self.update_block == block_number:
+                self._state_cache.pop()
+            self._state_cache.append(working_state)
+
+            if not silent:  # pragma: no cover
+                logger.info(f"[{self.name}]")
+                logger.info(f"{self.token0}: {self.reserves_token0}")
+                logger.info(f"{self.token1}: {self.reserves_token1}")
+            self._notify_subscribers(
+                message=UniswapV2PoolStateUpdated(self.state),
+            )
 
     def calculate_tokens_in_from_ratio_out(
         self,
@@ -595,13 +596,26 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
             )
 
         with self._state_lock:
-            self._state = dataclasses.replace(
+            if (
+                update.reserves_token0,
+                update.reserves_token1,
+            ) == (
+                self.reserves_token0,
+                self.reserves_token1,
+            ):
+                return
+
+            working_state = dataclasses.replace(
                 self.state,
                 reserves_token0=update.reserves_token0,
                 reserves_token1=update.reserves_token1,
                 block=update.block_number,
             )
-            self._state_cache[update.block_number] = self.state
+
+            if self.state.block == update.block_number:
+                self._state_cache.pop()
+            self._state_cache.append(working_state)
+
             self._notify_subscribers(
                 message=UniswapV2PoolStateUpdated(self.state),
             )
@@ -686,26 +700,29 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
         return reserves_token0, reserves_token1
 
-    def discard_states_before_block(self, block: BlockNumber) -> None:
+    def discard_states_before_block(
+        self,
+        block: BlockNumber,
+    ) -> None:
         """
-        Discard states recorded prior to a target block.
+        Discard cached states earlier than the given block.
         """
 
         with self._state_lock:
-            known_blocks = sorted(self._state_cache.keys())
-
-            # Finds the index prior to the requested block number
-            block_index = bisect_left(known_blocks, block)
-
-            # The earliest known state already meets the criterion, so return early
-            if block_index == 0:
+            # The oldest state already satisfies the request
+            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
                 return
 
-            if block_index == len(known_blocks):
+            # The newest state is older than the target block, so there is no state to return to
+            if (newest_block := self._state_cache[-1].block) and newest_block < block:
                 raise NoPoolStateAvailable(block=block)
 
-            for known_block in known_blocks[:block_index]:
-                del self._state_cache[known_block]
+            # Discard older states until the earliest block meets or crosses the target
+            while (earliest_block := self._state_cache[0].block) is None or earliest_block < block:
+                self._state_cache.popleft()
+
+            assert self.state.block is not None
+            assert self.state.block >= block
 
     def restore_state_before_block(
         self,
@@ -715,27 +732,24 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         Restore the last pool state recorded prior to a target block.
 
         Use this method to maintain consistent state data following a chain re-organization.
+
+        The pool will notify all subscribers of the new state with a `UniswapV2PoolStateUpdated`
+        event.
         """
 
         with self._state_lock:
-            known_blocks = sorted(self._state_cache.keys())
-
-            # Finds the index prior to the requested block number
-            block_index = bisect_left(known_blocks, block)
-
-            if block_index == 0:
-                raise NoPoolStateAvailable(block=block)
-
-            # The last known state already meets the criterion, so return early
-            if block_index == len(known_blocks):
+            # The newest state already satisfies the request
+            if (newest_block := self._state_cache[-1].block) and newest_block < block:
                 return
 
-            # Remove states at and after the specified block
-            for known_block in known_blocks[block_index:]:
-                del self._state_cache[known_block]
+            # No earlier state is available
+            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
+                raise NoPoolStateAvailable(block=block)
 
-            # Restore previous state and block
-            self._state = list(self._state_cache.values())[-1]
+            # Discard blocks until the last block is older than the target
+            while self._state_cache[-1].block is None or self._state_cache[-1].block >= block:
+                self._state_cache.pop()
+
             self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
 
     def simulate_add_liquidity(

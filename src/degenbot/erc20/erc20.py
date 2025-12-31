@@ -2,6 +2,7 @@ import contextlib
 from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
+import sqlalchemy.exc
 from eth_abi.exceptions import DecodingError
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
@@ -44,33 +45,6 @@ def get_token_from_database(
             Erc20TokenTable.chain == chain_id,
         )
     )
-
-
-def set_token_decimals(
-    token: Erc20TokenTable,
-    decimals: int,
-    session: Session | scoped_session[Session] = db_session,
-) -> None:
-    token.decimals = decimals
-    session.commit()
-
-
-def set_token_name(
-    token: Erc20TokenTable,
-    name: str,
-    session: Session | scoped_session[Session] = db_session,
-) -> None:
-    token.name = name
-    session.commit()
-
-
-def set_token_symbol(
-    token: Erc20TokenTable,
-    symbol: str,
-    session: Session | scoped_session[Session] = db_session,
-) -> None:
-    token.symbol = symbol
-    session.commit()
 
 
 class Erc20Token(AbstractErc20Token):
@@ -150,13 +124,17 @@ class Erc20Token(AbstractErc20Token):
                     else:
                         break
 
-            if token_from_db is not None:
-                if self.decimals != self.UNKNOWN_DECIMALS:
-                    set_token_decimals(token=token_from_db, decimals=self.decimals)
-                if self.name != self.UNKNOWN_NAME:
-                    set_token_name(token=token_from_db, name=self.name)
-                if self.symbol != self.UNKNOWN_SYMBOL:
-                    set_token_symbol(token=token_from_db, symbol=self.symbol)
+            if (
+                token_from_db is not None
+                and token_from_db.name is None
+                and token_from_db.symbol is None
+                and token_from_db.decimals is None
+            ):
+                with contextlib.suppress(sqlalchemy.exc.SQLAlchemyError), db_session() as session:
+                    token_from_db.decimals = self.decimals
+                    token_from_db.name = self.name
+                    token_from_db.symbol = self.symbol
+                    session.commit()
 
         self._price_oracle = (
             ChainlinkPriceContract(address=oracle_address, chain_id=self.chain_id)

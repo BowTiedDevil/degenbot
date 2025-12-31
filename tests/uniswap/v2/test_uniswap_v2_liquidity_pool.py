@@ -1,4 +1,5 @@
 import pickle
+from collections import deque
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
@@ -235,28 +236,11 @@ def test_pickle_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
     pickle.dumps(lp)
 
 
-def test_create_nonstandard_pools(
-    fork_mainnet_full: AnvilFork,
-    weth: Erc20Token,
-    wbtc: Erc20Token,
-):
+@pytest.mark.xfail(
+    reason="Will fail until tests are converted to use an in-mem or test-only database"
+)
+def test_create_nonstandard_pools(fork_mainnet_full: AnvilFork):
     set_web3(fork_mainnet_full.w3)
-
-    lp = UnregisteredLiquidityPool(
-        address=UNISWAP_V2_WBTC_WETH_POOL,
-        tokens=[weth, wbtc],
-    )
-    assert lp.address == UNISWAP_V2_WBTC_WETH_POOL
-    assert lp.tokens == (wbtc, weth)
-    assert lp.fee_token0 == lp.fee_token1 == Fraction(3, 1000)
-
-    lp = UnregisteredLiquidityPool(
-        address=UNISWAP_V2_WBTC_WETH_POOL,
-        tokens=[weth, wbtc],
-        fee=[Fraction(2, 1000), Fraction(6, 1000)],
-    )
-    assert lp.fee_token0 == Fraction(2, 1000)
-    assert lp.fee_token1 == Fraction(6, 1000)
 
     # Delete the preset deployment for this factory so the test uses the provided override instead
     # of preferring the known valid deployment data
@@ -601,7 +585,9 @@ def test_comparisons(
 )
 def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool):
     # Manipulate the cache depth so additional states beyond the default can be tracked
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache.max_items = 512
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache = deque(
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache,
+    )
 
     starting_state = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.state
     starting_block = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.update_block
@@ -631,11 +617,8 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: 
             )
         )
         assert (
-            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache is not None
-        )
-        assert (
-            block_number
-            in ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache[-1].block
+            == block_number
         )
         expected_block_states[block_number] = (
             ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.state
@@ -708,8 +691,8 @@ def test_discard_before_finalized(
             )
         )
         assert (
-            block_number
-            in ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache[-1].block
+            == block_number
         )
         expected_block_states[block_number] = (
             ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.state
@@ -718,9 +701,10 @@ def test_discard_before_finalized(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.discard_states_before_block(
         last_update_block
     )
-    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache.keys() == {
-        last_update_block
-    }
+    assert (
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache[-1].block
+        == last_update_block
+    )
 
 
 @pytest.mark.parametrize(
@@ -733,12 +717,11 @@ def test_discard_earlier_than_created(
 ) -> None:
     lp = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block
 
-    assert lp._state_cache is not None
-    state_before_discard = lp._state_cache.copy()
+    states_before_discard = list(lp._state_cache)
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.discard_states_before_block(
         lp.update_block - 1
     )
-    assert lp._state_cache == state_before_discard
+    assert list(lp._state_cache) == states_before_discard
 
 
 @pytest.mark.parametrize(

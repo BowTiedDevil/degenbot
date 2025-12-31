@@ -2,7 +2,7 @@
 
 
 import dataclasses
-from bisect import bisect_left
+from collections import deque
 from collections.abc import Sequence
 from enum import Enum
 from fractions import Fraction
@@ -48,7 +48,6 @@ from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import (
     AbstractPublisherMessage,
-    BoundedCache,
     Publisher,
     PublisherMixin,
     Subscriber,
@@ -232,7 +231,7 @@ class StepComputations:
 
 
 class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
-    _state_cache: BoundedCache[BlockNumber, UniswapV4PoolState]
+    _state_cache: deque[UniswapV4PoolState]
 
     SLOT0_STRUCT_TYPES = (
         "uint160",  # sqrtPriceX96
@@ -416,7 +415,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 block_number=state_block,
             )
 
-        self._state = UniswapV4PoolState(
+        initial_state = UniswapV4PoolState(
             id=self.pool_id,
             address=self._pool_manager_address,
             liquidity=working_liquidity,
@@ -426,8 +425,8 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             tick_data=working_tick_data,
             block=state_block,
         )
-        self._state_cache = BoundedCache(max_items=state_cache_depth)
-        self._state_cache[self.update_block] = self.state
+        self._state_cache = deque(maxlen=max(1, state_cache_depth))
+        self._state_cache.append(initial_state)
         self._state_lock = Lock()
 
         # Liquidity range consumption cache
@@ -465,7 +464,6 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         # the calculation
         copied_attributes: set[str] = set()
         dropped_attributes = (
-            "_state_cache",
             "_state_lock",
             "_subscribers",
             "_swap_step_cache_lock",
@@ -1051,7 +1049,7 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
 
     @property
     def state(self) -> UniswapV4PoolState:
-        return self._state
+        return self._state_cache[-1]
 
     @property
     def tick(self) -> int:
@@ -1140,8 +1138,6 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             if block_number is not None and block_number < self.update_block:
                 raise LateUpdateError
 
-            state_updated = False
-
             w3 = connection_manager.get_web3(self.chain_id)
             block_number = block_number if block_number is not None else w3.eth.get_block_number()
 
@@ -1151,7 +1147,14 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             self.lp_fee = new_slot0.lp_fee
             self.protocol_fee = new_slot0.protocol_fee
 
-            state = dataclasses.replace(
+            if (
+                new_sqrt_price_x96 == self.sqrt_price_x96
+                and new_liquidity == self.liquidity
+                and self.tick == new_tick
+            ):
+                return
+
+            working_state = dataclasses.replace(
                 self.state,
                 liquidity=new_liquidity,
                 sqrt_price_x96=new_sqrt_price_x96,
@@ -1159,14 +1162,13 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 block=block_number,
             )
 
-            state_updated = state != self.state
-            self._state = state
-            self._state_cache[block_number] = state
+            if self.state.block == block_number:
+                self._state_cache.pop()
+            self._state_cache.append(working_state)
 
-            if state_updated:
-                self._notify_subscribers(
-                    message=UniswapV4PoolStateUpdated(state),
-                )
+            self._notify_subscribers(
+                message=UniswapV4PoolStateUpdated(working_state),
+            )
 
             if not silent:  # pragma: no cover
                 logger.info(f"Liquidity: {self.liquidity}")
@@ -1198,10 +1200,17 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
             )
 
+        if (
+            update.liquidity == self.liquidity
+            and update.sqrt_price_x96 == self.sqrt_price_x96
+            and update.tick == self.tick
+        ):
+            return False
+
         with self._state_lock:
             state_block = update.block_number
 
-            state = dataclasses.replace(
+            working_state = dataclasses.replace(
                 self.state,
                 liquidity=update.liquidity,
                 sqrt_price_x96=update.sqrt_price_x96,
@@ -1209,17 +1218,15 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                 block=state_block,
             )
 
-            updated_state = state != self.state
+            if self.state.block == update.block_number:
+                self._state_cache.pop()
+            self._state_cache.append(working_state)
 
-            self._state = state
-            self._state_cache[state_block] = state
+            self._notify_subscribers(
+                message=UniswapV4PoolStateUpdated(working_state),
+            )
 
-            if updated_state:
-                self._notify_subscribers(
-                    message=UniswapV4PoolStateUpdated(state),
-                )
-
-            return updated_state
+            return True
 
     def update_liquidity_map(
         self,
@@ -1333,17 +1340,19 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                     block=state_block,
                 )
 
-            state = dataclasses.replace(
+            working_state = dataclasses.replace(
                 self.state,
                 liquidity=working_liquidity,
                 tick_data=working_tick_data,
                 tick_bitmap=working_tick_bitmap,
                 block=max(self.update_block, state_block),
             )
-            self._state = state
-            self._state_cache[state_block] = state
+            if self.state.block == update.block_number:
+                self._state_cache.pop()
+            self._state_cache.append(working_state)
+
             self._notify_subscribers(
-                message=UniswapV4PoolStateUpdated(state),
+                message=UniswapV4PoolStateUpdated(working_state),
             )
 
     def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
@@ -1425,24 +1434,24 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         block: BlockNumber,
     ) -> None:
         """
-        Discard states recorded prior to a target block.
+        Discard cached states earlier than the given block.
         """
 
         with self._state_lock:
-            known_blocks = sorted(self._state_cache.keys())
-
-            # Finds the index prior to the requested block number
-            block_index = bisect_left(known_blocks, block)
-
-            # The earliest known state already meets the criterion, so return early
-            if block_index == 0:
+            # The oldest state already satisfies the request
+            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
                 return
 
-            if block_index == len(known_blocks):
-                raise NoPoolStateAvailable(block)
+            # The newest state is older than the target block, so there is no state to return to
+            if (newest_block := self._state_cache[-1].block) and newest_block < block:
+                raise NoPoolStateAvailable(block=block)
 
-            for known_block in known_blocks[:block_index]:
-                del self._state_cache[known_block]
+            # Discard older states until the earliest block meets or crosses the target
+            while (earliest_block := self._state_cache[0].block) is None or earliest_block < block:
+                self._state_cache.popleft()
+
+            assert self.state.block is not None
+            assert self.state.block >= block
 
     def restore_state_before_block(
         self,
@@ -1452,36 +1461,25 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         Restore the last pool state recorded prior to a target block.
 
         Use this method to maintain consistent state data following a chain re-organization.
+
+        The pool will notify all subscribers of the new state with a `UniswapV4PoolStateUpdated`
+        event.
         """
 
-        # Find the index for the most recent pool state PRIOR to the requested
-        # block number.
-        #
-        # e.g. Calling restore_state_before_block(block=104) for a pool with
-        # states at blocks 100, 101, 102, 103, 104. `bisect_left()` returns
-        # block_index=3, since block 104 is at index=4. The state held at
-        # index=3 is for block 103.
-
         with self._state_lock:
-            known_blocks = sorted(self._state_cache.keys())
-            block_index = bisect_left(known_blocks, block)
-
-            if block_index == 0:
-                raise NoPoolStateAvailable(block)
-
-            # The last known state already meets the criterion, so return early
-            if block_index == len(known_blocks):
+            # The newest state already satisfies the request
+            if (newest_block := self._state_cache[-1].block) and newest_block < block:
                 return
 
-            # Remove states at and after the specified block
-            for known_block in known_blocks[block_index:]:
-                del self._state_cache[known_block]
+            # No earlier state is available
+            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
+                raise NoPoolStateAvailable(block=block)
 
-            self._update_block, self._state = list(self._state_cache.items())[-1]
+            # Discard blocks until the last block is older than the target
+            while self._state_cache[-1].block is None or self._state_cache[-1].block >= block:
+                self._state_cache.pop()
 
-        self._notify_subscribers(
-            message=UniswapV4PoolStateUpdated(self.state),
-        )
+            self._notify_subscribers(message=UniswapV4PoolStateUpdated(self.state))
 
     def _cache_swap_step(
         self,

@@ -239,48 +239,36 @@ def test_v2_v4_calculation(
 
     assert v2_pool.token0 == WBTC_ADDRESS
     wbtc_donation_amount = 10 * 10**v2_pool.token0.decimals
-    starting_state = v2_pool.state
-    v2_pool._state = dataclasses.replace(
+    v2_pool_state = dataclasses.replace(
         v2_pool.state,
         reserves_token0=v2_pool.reserves_token0 + wbtc_donation_amount,
     )
-    assert v2_pool.state.reserves_token0 == starting_state.reserves_token0 + wbtc_donation_amount
 
-    v2_exchange_rate = v2_pool.get_absolute_exchange_rate(token=weth)
+    v2_exchange_rate = v2_pool.get_absolute_exchange_rate(token=weth, override_state=v2_pool_state)
     v4_exchange_rate = v4_pool.get_absolute_exchange_rate(token=ether_placeholder)
     assert v4_exchange_rate > v2_exchange_rate
 
-    arb.calculate()
-
-    v2_pool._state = starting_state
+    arb.calculate(state_overrides={v2_pool: v2_pool_state})
 
 
-def test_v2_v4_calculation_rejects_unprofitable_opportunity(
-    arb_v2_v4: _UniswapTwoPoolCycleTesting,
-):
+def test_v2_v4_calculation_rejects_unprofitable_opportunity(arb_v2_v4: _UniswapTwoPoolCycleTesting):
     arb = arb_v2_v4
 
     v2_pool, _ = arb.swap_pools
     assert isinstance(v2_pool, UniswapV2Pool)
 
-    starting_state = v2_pool.state
-
     # Manipulate the V2 reserves by donating 100 WETH, which creates a V2 ROE > V4 ROE opportunity
     assert v2_pool.token1 == WETH_ADDRESS
-    starting_weth_reserves = v2_pool.reserves_token1
     donation_amount = 10 * 10**v2_pool.token1.decimals
-    v2_pool._state = dataclasses.replace(
+    v2_pool_state = dataclasses.replace(
         v2_pool.state,
         reserves_token1=v2_pool.reserves_token1 + donation_amount,
     )
-    assert v2_pool.reserves_token1 == starting_weth_reserves + donation_amount
 
     # The arbitrage path flow is opposite of the opportunity, so the calculation should raise an
     # exception
     with pytest.raises(RateOfExchangeBelowMinimum):
-        arb.calculate()
-
-    v2_pool._state = starting_state
+        arb.calculate(state_overrides={v2_pool: v2_pool_state})
 
 
 def test_v4_v2_calculation(
@@ -303,20 +291,16 @@ def test_v4_v2_calculation(
 
     assert v2_pool.token1 == WETH_ADDRESS
     weth_donation_amount = 100 * 10**v2_pool.token1.decimals
-    starting_state = v2_pool.state
-    v2_pool._state = dataclasses.replace(
+    v2_pool_state = dataclasses.replace(
         v2_pool.state,
         reserves_token1=v2_pool.reserves_token1 + weth_donation_amount,
     )
-    assert v2_pool.state.reserves_token1 == starting_state.reserves_token1 + weth_donation_amount
 
-    v2_exchange_rate = v2_pool.get_absolute_exchange_rate(token=weth)
+    v2_exchange_rate = v2_pool.get_absolute_exchange_rate(token=weth, override_state=v2_pool_state)
     v4_exchange_rate = v4_pool.get_absolute_exchange_rate(token=ether_placeholder)
     assert v2_exchange_rate > v4_exchange_rate
 
-    arb.calculate()
-
-    v2_pool._state = starting_state
+    arb.calculate(state_overrides={v2_pool: v2_pool_state})
 
 
 def test_v4_v2_calculation_rejects_unprofitable_opportunity(arb_v4_v2: _UniswapTwoPoolCycleTesting):
@@ -326,12 +310,10 @@ def test_v4_v2_calculation_rejects_unprofitable_opportunity(arb_v4_v2: _UniswapT
 
     assert isinstance(v2_pool, UniswapV2Pool)
 
-    starting_state = v2_pool.state
-
     # Manipulate the V2 reserves by donating WBTC, which creates a V4 ROE > V2 ROE opportunity
     assert v2_pool.token0 == WBTC_ADDRESS
     wbtc_donation_amount = 10 * 10**v2_pool.token0.decimals
-    v2_pool._state = dataclasses.replace(
+    v2_pool_state = dataclasses.replace(
         v2_pool.state,
         reserves_token0=v2_pool.reserves_token0 + wbtc_donation_amount,
     )
@@ -339,9 +321,7 @@ def test_v4_v2_calculation_rejects_unprofitable_opportunity(arb_v4_v2: _UniswapT
     # The arbitrage path flow is opposite of the opportunity, so the calculation should raise an
     # exception
     with pytest.raises(RateOfExchangeBelowMinimum):
-        arb.calculate()
-
-    v2_pool._state = starting_state
+        arb.calculate(state_overrides={v2_pool: v2_pool_state})
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,6 @@
 import contextlib
 import itertools
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -15,13 +15,13 @@ from hexbytes import HexBytes
 from pydantic import HttpUrl, WebsocketUrl
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
+from sqlalchemy.orm import Session
 from web3 import HTTPProvider, IPCProvider, LegacyWebSocketProvider, Web3
 from web3.types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.config import CONFIG_FILE, settings
-from degenbot.connection import connection_manager
 from degenbot.constants import MAX_UINT256
 from degenbot.database import db_session
 from degenbot.database.models.base import ExchangeTable
@@ -53,7 +53,6 @@ from degenbot.functions import (
     raw_call,
 )
 from degenbot.types.aliases import ChainId, Tick, Word
-from degenbot.types.concrete import BoundedCache
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
@@ -65,6 +64,7 @@ from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.uniswap.v4_types import (
     UniswapV4BitmapAtWord,
     UniswapV4LiquidityAtTick,
+    UniswapV4PoolExternalUpdate,
     UniswapV4PoolKey,
     UniswapV4PoolLiquidityMappingUpdate,
     UniswapV4PoolState,
@@ -77,13 +77,29 @@ class MockV3LiquidityPool(UniswapV3Pool):
     validated mappings.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        address: ChecksumAddress,
+        tick_bitmap: dict[int, UniswapV3BitmapAtWord] | None = None,
+        tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
+    ) -> None:
         self.sparse_liquidity_map = False
         self._initial_state_block = MAX_UINT256  # Skip the the in-range liquidity modification step
 
+        initial_state = UniswapV3PoolState(
+            address=address,
+            block=0,
+            liquidity=0,
+            sqrt_price_x96=0,
+            tick=0,
+            tick_bitmap=tick_bitmap or {},
+            tick_data=tick_data or {},
+        )
+
         # No-op context manager to avoid locking overhead
         self._state_lock = contextlib.nullcontext()  # type:ignore[assignment]
-        self._state_cache = BoundedCache(max_items=8)
+        self._state_cache = deque(maxlen=1)
+        self._state_cache.append(initial_state)
         self.name = "V3 POOL"
 
     def _invalidate_range_cache_for_ticks(self, *args: Any, **kwargs: Any) -> None: ...
@@ -97,13 +113,31 @@ class MockV4LiquidityPool(UniswapV4Pool):
     validated mappings.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        address: ChecksumAddress,
+        pool_id: HexBytes,
+        tick_bitmap: dict[int, UniswapV4BitmapAtWord] | None = None,
+        tick_data: dict[int, UniswapV4LiquidityAtTick] | None = None,
+    ) -> None:
         self.sparse_liquidity_map = False
         self._initial_state_block = MAX_UINT256  # Skip the the in-range liquidity modification step
 
+        initial_state = UniswapV4PoolState(
+            address=address,
+            block=0,
+            liquidity=0,
+            sqrt_price_x96=0,
+            tick=0,
+            tick_bitmap=tick_bitmap or {},
+            tick_data=tick_data or {},
+            id=pool_id,
+        )
+
         # No-op context manager to avoid locking overhead
         self._state_lock = contextlib.nullcontext()  # type:ignore[assignment]
-        self._state_cache = BoundedCache(max_items=8)
+        self._state_cache = deque(maxlen=1)
+        self._state_cache.append(initial_state)
         self.name = "V4 POOL"
 
     def _invalidate_range_cache_for_ticks(self, *args: Any, **kwargs: Any) -> None: ...
@@ -165,6 +199,7 @@ def apply_v3_liquidity_updates(
     pool_address: ChecksumAddress,
     liquidity_events: list[LogReceipt],
     exchanges_in_scope: set[ExchangeTable],
+    session: Session,
 ) -> None:
     """
     Apply the liquidity updates to the provided pool.
@@ -181,7 +216,7 @@ def apply_v3_liquidity_updates(
     Omitting updates will corrupt the liquidity map!
     """
 
-    pool_in_db = db_session.scalar(
+    pool_in_db = session.scalar(
         select(LiquidityPoolTable).where(
             LiquidityPoolTable.address == pool_address,
             LiquidityPoolTable.chain == w3.eth.chain_id,
@@ -209,15 +244,8 @@ def apply_v3_liquidity_updates(
         },
     )
 
-    lp_helper = MockV3LiquidityPool()
-    lp_helper.address = pool_address
-    lp_helper.tick_spacing = pool_in_db.tick_spacing
-    lp_helper._state = UniswapV3PoolState(  # noqa: SLF001
+    lp_helper = MockV3LiquidityPool(
         address=pool_address,
-        block=0,
-        liquidity=MAX_UINT256,
-        sqrt_price_x96=0,
-        tick=0,
         tick_bitmap={
             k: UniswapV3BitmapAtWord.model_construct(
                 bitmap=v.bitmap,
@@ -232,6 +260,7 @@ def apply_v3_liquidity_updates(
             for k, v in pool_liquidity_map.tick_data.items()
         },
     )
+    lp_helper.tick_spacing = pool_in_db.tick_spacing
 
     for liquidity_event in liquidity_events:
         # Guard against applying a liquidity event that occured in the past
@@ -281,7 +310,7 @@ def apply_v3_liquidity_updates(
 
     # Drop any positions found in the DB but not the helper
     if ticks_to_drop := db_ticks - helper_ticks:
-        db_session.execute(
+        session.execute(
             delete(LiquidityPositionTable).where(
                 LiquidityPositionTable.pool_id == pool_in_db.id,
                 LiquidityPositionTable.tick.in_(ticks_to_drop),
@@ -317,7 +346,7 @@ def apply_v3_liquidity_updates(
                 where=(LiquidityPositionTable.liquidity_net != stmt.excluded.liquidity_net)
                 | (LiquidityPositionTable.liquidity_gross != stmt.excluded.liquidity_gross),
             )
-            db_session.execute(stmt)
+            session.execute(stmt)
 
     db_words = {map_.word for map_ in pool_in_db.initialization_maps}
     helper_words = {
@@ -328,7 +357,7 @@ def apply_v3_liquidity_updates(
 
     # Drop any initialization map found in the DB but not the helper
     if words_to_drop := db_words - helper_words:
-        db_session.execute(
+        session.execute(
             delete(InitializationMapTable).where(
                 InitializationMapTable.pool_id == pool_in_db.id,
                 InitializationMapTable.word.in_(words_to_drop),
@@ -362,13 +391,14 @@ def apply_v3_liquidity_updates(
                 },
                 where=InitializationMapTable.bitmap != stmt.excluded.bitmap,
             )
-            db_session.execute(stmt)
+            session.execute(stmt)
 
 
 def apply_v4_liquidity_updates(
     pool_id: HexBytes,
     liquidity_events: list[LogReceipt],
     pool_manager: PoolManagerTable,
+    session: Session,
 ) -> None:
     """
     Apply the liquidity updates to the provided pool.
@@ -385,7 +415,7 @@ def apply_v4_liquidity_updates(
     Omitting updates will corrupt the liquidity map!
     """
 
-    pool_in_db = db_session.scalar(
+    pool_in_db = session.scalar(
         select(UniswapV4PoolTable).where(
             UniswapV4PoolTable.pool_hash == pool_id.to_0x_hex(),
             UniswapV4PoolTable.manager.has(id=pool_manager.id),
@@ -410,40 +440,9 @@ def apply_v4_liquidity_updates(
         },
     )
 
-    lp_helper = MockV4LiquidityPool()
-    lp_helper._pool_manager_address = pool_in_db.manager.exchange.factory  # noqa: SLF001
-
-    # Construct the PoolKey
-    lp_helper._pool_key = UniswapV4PoolKey(  # noqa: SLF001
-        currency0=pool_in_db.currency0.address,
-        currency1=pool_in_db.currency1.address,
-        fee=pool_in_db.fee_currency0,
-        tick_spacing=pool_in_db.tick_spacing,
-        hooks=pool_in_db.hooks,
-    )
-
-    pool_liquidity_map = PoolLiquidityMap.model_construct(
-        tick_bitmap={
-            map_.word: TicksAtWord.model_construct(
-                bitmap=map_.bitmap,
-            )
-            for map_ in pool_in_db.initialization_maps
-        },
-        tick_data={
-            position.tick: LiquidityAtTick.model_construct(
-                liquidity_gross=position.liquidity_gross,
-                liquidity_net=position.liquidity_net,
-            )
-            for position in pool_in_db.liquidity_positions
-        },
-    )
-
-    lp_helper._state = UniswapV4PoolState(  # noqa: SLF001
+    lp_helper = MockV4LiquidityPool(
         address=pool_in_db.manager.exchange.factory,
-        block=0,
-        liquidity=MAX_UINT256,
-        sqrt_price_x96=0,
-        tick=0,
+        pool_id=HexBytes(pool_in_db.pool_hash),
         tick_bitmap={
             k: UniswapV4BitmapAtWord.model_construct(
                 bitmap=v.bitmap,
@@ -457,7 +456,24 @@ def apply_v4_liquidity_updates(
             )
             for k, v in pool_liquidity_map.tick_data.items()
         },
-        id=HexBytes(pool_in_db.pool_hash),
+    )
+
+    # Construct the PoolKey
+    lp_helper._pool_key = UniswapV4PoolKey(  # noqa: SLF001
+        currency0=pool_in_db.currency0.address,
+        currency1=pool_in_db.currency1.address,
+        fee=pool_in_db.fee_currency0,
+        tick_spacing=pool_in_db.tick_spacing,
+        hooks=pool_in_db.hooks,
+    )
+
+    lp_helper.external_update(
+        update=UniswapV4PoolExternalUpdate(
+            block_number=0,
+            liquidity=MAX_UINT256,
+            sqrt_price_x96=0,
+            tick=0,
+        )
     )
 
     for liquidity_event in liquidity_events:
@@ -499,7 +515,7 @@ def apply_v4_liquidity_updates(
 
     # Drop any positions found in the DB but not the helper
     if ticks_to_drop := db_ticks - helper_ticks:
-        db_session.execute(
+        session.execute(
             delete(ManagedPoolLiquidityPositionTable).where(
                 ManagedPoolLiquidityPositionTable.managed_pool_id == pool_in_db.id,
                 ManagedPoolLiquidityPositionTable.tick.in_(ticks_to_drop),
@@ -540,7 +556,7 @@ def apply_v4_liquidity_updates(
                     != stmt.excluded.liquidity_gross
                 ),
             )
-            db_session.execute(stmt)
+            session.execute(stmt)
 
     db_words = {map_.word for map_ in pool_in_db.initialization_maps}
     helper_words = {
@@ -551,7 +567,7 @@ def apply_v4_liquidity_updates(
 
     # Drop any initialization map found in the DB but not the helper
     if words_to_drop := db_words - helper_words:
-        db_session.execute(
+        session.execute(
             delete(ManagedPoolInitializationMapTable).where(
                 ManagedPoolInitializationMapTable.managed_pool_id == pool_in_db.id,
                 ManagedPoolInitializationMapTable.word.in_(words_to_drop),
@@ -585,7 +601,7 @@ def apply_v4_liquidity_updates(
                 },
                 where=ManagedPoolInitializationMapTable.bitmap != stmt.excluded.bitmap,
             )
-            db_session.execute(stmt)
+            session.execute(stmt)
 
 
 def base_aerodrome_v2_pool_updater(
@@ -593,6 +609,7 @@ def base_aerodrome_v2_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Aerodrome V2 liquidity pools deployed on Base mainnet and add their metadata to the
@@ -623,13 +640,13 @@ def base_aerodrome_v2_pool_updater(
 
             (stable,) = abi_decode(["bool"], new_pool_event["topics"][3])
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -641,15 +658,15 @@ def base_aerodrome_v2_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
@@ -666,7 +683,7 @@ def base_aerodrome_v2_pool_updater(
                 return_types=["uint256"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -686,6 +703,7 @@ def base_aerodrome_v3_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Aerodrome V3 liquidity pools deployed on Base mainnet and add their metadata to the
@@ -719,13 +737,13 @@ def base_aerodrome_v3_pool_updater(
             (pool_address,) = abi_decode(types=["address"], data=new_pool_event["data"])
             pool_address = get_checksum_address(pool_address)
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -737,15 +755,15 @@ def base_aerodrome_v3_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             (fee,) = raw_call(
                 w3=w3,
@@ -757,7 +775,7 @@ def base_aerodrome_v3_pool_updater(
                 return_types=["uint24"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=pool_address,
@@ -777,6 +795,7 @@ def base_pancakeswap_v2_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Pancakeswap V2 liquidity pools deployed on Base mainnet and add their metadata to the
@@ -805,13 +824,13 @@ def base_pancakeswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -823,22 +842,22 @@ def base_pancakeswap_v2_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
                 data=new_pool_event["data"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -857,6 +876,7 @@ def base_pancakeswap_v3_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Pancakeswap V3 liquidity pools deployed on Base mainnet and add their metadata to the
@@ -887,13 +907,13 @@ def base_pancakeswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -905,22 +925,22 @@ def base_pancakeswap_v3_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
                 data=new_pool_event["data"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -940,6 +960,7 @@ def base_sushiswap_v2_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Sushiswap V2 liquidity pools deployed on Base mainnet and add their metadata to the
@@ -968,13 +989,13 @@ def base_sushiswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -986,22 +1007,22 @@ def base_sushiswap_v2_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
                 data=new_pool_event["data"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1020,6 +1041,7 @@ def base_sushiswap_v3_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Sushiswap V3 liquidity pools deployed on Base mainnet and add their metadata to the
@@ -1050,13 +1072,13 @@ def base_sushiswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1068,22 +1090,22 @@ def base_sushiswap_v3_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
                 data=new_pool_event["data"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1103,6 +1125,7 @@ def base_swapbased_v2_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Swapbased V2 liquidity pools deployed on Base mainnet and add their metadata to the
@@ -1131,13 +1154,13 @@ def base_swapbased_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1149,22 +1172,22 @@ def base_swapbased_v2_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
                 data=new_pool_event["data"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1183,6 +1206,7 @@ def base_uniswap_v2_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Uniswap V2 liquidity pools deployed on Base mainnet and add their metadata to the DB.
@@ -1210,13 +1234,13 @@ def base_uniswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1228,22 +1252,22 @@ def base_uniswap_v2_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
                 data=new_pool_event["data"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1262,6 +1286,7 @@ def base_uniswap_v3_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Uniswap V3 liquidity pools deployed on Base mainnet and add their metadata to the
@@ -1292,13 +1317,13 @@ def base_uniswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1310,22 +1335,22 @@ def base_uniswap_v3_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
                 data=new_pool_event["data"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1345,6 +1370,7 @@ def base_uniswap_v4_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Uniswap V4 liquidity pools deployed on Base mainnet and add their metadata to the
@@ -1353,7 +1379,7 @@ def base_uniswap_v4_pool_updater(
 
     database_type = UniswapV4PoolTable
 
-    manager_in_db = db_session.scalar(
+    manager_in_db = session.scalar(
         select(PoolManagerTable).where(PoolManagerTable.address == exchange.factory)
     )
     assert manager_in_db is not None
@@ -1381,13 +1407,13 @@ def base_uniswap_v4_pool_updater(
             currency0 = get_checksum_address(currency0)
             currency1 = get_checksum_address(currency1)
 
-            currency0_in_db = db_session.scalar(
+            currency0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == currency0,
                 )
             )
-            currency1_in_db = db_session.scalar(
+            currency1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == currency1,
@@ -1399,15 +1425,15 @@ def base_uniswap_v4_pool_updater(
                     chain=exchange.chain_id,
                     address=currency0,
                 )
-                db_session.add(currency0_in_db)
-                db_session.flush()
+                session.add(currency0_in_db)
+                session.flush()
             if currency1_in_db is None:
                 currency1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=currency1,
                 )
-                db_session.add(currency1_in_db)
-                db_session.flush()
+                session.add(currency1_in_db)
+                session.flush()
 
             fee, tick_spacing, hooks = abi_decode(
                 ["uint24", "int24", "address"],
@@ -1415,7 +1441,7 @@ def base_uniswap_v4_pool_updater(
             )
             hooks = get_checksum_address(hooks)
 
-            db_session.add(
+            session.add(
                 database_type(
                     manager_id=manager_in_db.id,
                     pool_hash=pool_hash,
@@ -1435,6 +1461,7 @@ def ethereum_pancakeswap_v2_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Pancakeswap V2 liquidity pools deployed on Ethereum mainnet and add their metadata to
@@ -1463,13 +1490,13 @@ def ethereum_pancakeswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1481,22 +1508,22 @@ def ethereum_pancakeswap_v2_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
                 data=new_pool_event["data"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1515,6 +1542,7 @@ def ethereum_pancakeswap_v3_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Pancakeswap V3 liquidity pools deployed on Ethereum mainnet and add their metadata to
@@ -1545,13 +1573,13 @@ def ethereum_pancakeswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1563,22 +1591,22 @@ def ethereum_pancakeswap_v3_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
                 data=new_pool_event["data"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1598,6 +1626,7 @@ def ethereum_sushiswap_v2_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Sushiswap V2 liquidity pools deployed on Ethereum mainnet and add their metadata to
@@ -1626,13 +1655,13 @@ def ethereum_sushiswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1644,22 +1673,22 @@ def ethereum_sushiswap_v2_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
                 data=new_pool_event["data"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1678,6 +1707,7 @@ def ethereum_sushiswap_v3_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Sushiswap V3 liquidity pools deployed on Ethereum mainnet and add their metadata to
@@ -1708,13 +1738,13 @@ def ethereum_sushiswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1726,22 +1756,22 @@ def ethereum_sushiswap_v3_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
                 data=new_pool_event["data"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1761,6 +1791,7 @@ def ethereum_uniswap_v2_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Uniswap V2 liquidity pools deployed on Ethereum mainnet and add their metadata to the
@@ -1789,13 +1820,13 @@ def ethereum_uniswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1807,22 +1838,22 @@ def ethereum_uniswap_v2_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
                 data=new_pool_event["data"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1841,6 +1872,7 @@ def ethereum_uniswap_v3_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Uniswap V3 liquidity pools deployed on Ethereum mainnet and add their metadata to the
@@ -1871,13 +1903,13 @@ def ethereum_uniswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = db_session.scalar(
+            token0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token0,
                 )
             )
-            token1_in_db = db_session.scalar(
+            token1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == token1,
@@ -1889,22 +1921,22 @@ def ethereum_uniswap_v3_pool_updater(
                     chain=exchange.chain_id,
                     address=token0,
                 )
-                db_session.add(token0_in_db)
-                db_session.flush()
+                session.add(token0_in_db)
+                session.flush()
             if token1_in_db is None:
                 token1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=token1,
                 )
-                db_session.add(token1_in_db)
-                db_session.flush()
+                session.add(token1_in_db)
+                session.flush()
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
                 data=new_pool_event["data"],
             )
 
-            db_session.add(
+            session.add(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
@@ -1924,6 +1956,7 @@ def ethereum_uniswap_v4_pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
+    session: Session,
 ) -> None:
     """
     Fetch new Uniswap V4 liquidity pools deployed on Ethereum mainnet and add their metadata to the
@@ -1932,7 +1965,7 @@ def ethereum_uniswap_v4_pool_updater(
 
     database_type = UniswapV4PoolTable
 
-    manager_in_db = db_session.scalar(
+    manager_in_db = session.scalar(
         select(PoolManagerTable).where(PoolManagerTable.address == exchange.factory)
     )
     assert manager_in_db is not None
@@ -1960,13 +1993,13 @@ def ethereum_uniswap_v4_pool_updater(
             currency0 = get_checksum_address(currency0)
             currency1 = get_checksum_address(currency1)
 
-            currency0_in_db = db_session.scalar(
+            currency0_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == currency0,
                 )
             )
-            currency1_in_db = db_session.scalar(
+            currency1_in_db = session.scalar(
                 select(Erc20TokenTable).where(
                     Erc20TokenTable.chain == exchange.chain_id,
                     Erc20TokenTable.address == currency1,
@@ -1978,15 +2011,15 @@ def ethereum_uniswap_v4_pool_updater(
                     chain=exchange.chain_id,
                     address=currency0,
                 )
-                db_session.add(currency0_in_db)
-                db_session.flush()
+                session.add(currency0_in_db)
+                session.flush()
             if currency1_in_db is None:
                 currency1_in_db = Erc20TokenTable(
                     chain=exchange.chain_id,
                     address=currency1,
                 )
-                db_session.add(currency1_in_db)
-                db_session.flush()
+                session.add(currency1_in_db)
+                session.flush()
 
             fee, tick_spacing, hooks = abi_decode(
                 ["uint24", "int24", "address"],
@@ -1994,7 +2027,7 @@ def ethereum_uniswap_v4_pool_updater(
             )
             hooks = get_checksum_address(hooks)
 
-            db_session.add(
+            session.add(
                 database_type(
                     manager_id=manager_in_db.id,
                     pool_hash=pool_hash,
@@ -2041,181 +2074,184 @@ def pool_update(chunk_size: int, to_block: str) -> None:
     Update liquidity pool information for activated exchanges.
     """
 
-    active_chains = set(
-        db_session.scalars(select(ExchangeTable.chain_id).where(ExchangeTable.active)).all()
-    )
+    with db_session() as session:
+        active_chains = set(
+            session.scalars(select(ExchangeTable.chain_id).where(ExchangeTable.active)).all()
+        )
 
-    for chain_id in active_chains:
-        match endpoint := settings.rpc.get(chain_id):
-            case HttpUrl():
-                w3 = Web3(HTTPProvider(str(endpoint)))
-            case WebsocketUrl():
-                w3 = Web3(LegacyWebSocketProvider(str(endpoint)))
-            case Path():
-                w3 = Web3(IPCProvider(str(endpoint)))
-            case None:
+        for chain_id in active_chains:
+            match endpoint := settings.rpc.get(chain_id):
+                case HttpUrl():
+                    w3 = Web3(HTTPProvider(str(endpoint)))
+                case WebsocketUrl():
+                    w3 = Web3(LegacyWebSocketProvider(str(endpoint)))
+                case Path():
+                    w3 = Web3(IPCProvider(str(endpoint)))
+                case None:
+                    msg = f"Chain ID {chain_id} does not have an RPC defined in config file {CONFIG_FILE}"
+                    raise ValueError(msg)
+
+            if w3.eth.chain_id != chain_id:
                 msg = (
-                    f"Chain ID {chain_id} does not have an RPC defined in config file {CONFIG_FILE}"
+                    f"The chain ID ({w3.eth.chain_id}) at endpoint {endpoint} does not match "
+                    f"the chain ID ({chain_id}) defined in the config file."
                 )
                 raise ValueError(msg)
 
-        if w3.eth.chain_id != chain_id:
-            msg = (
-                f"The chain ID ({w3.eth.chain_id}) at endpoint {endpoint} does not match "
-                f"the chain ID ({chain_id}) defined in the config file."
-            )
-            raise ValueError(msg)
+            active_exchanges = session.scalars(
+                select(ExchangeTable).where(
+                    ExchangeTable.active,
+                    ExchangeTable.chain_id == chain_id,
+                )
+            ).all()
 
-        active_exchanges = db_session.scalars(
-            select(ExchangeTable).where(
-                ExchangeTable.active,
-                ExchangeTable.chain_id == chain_id,
-            )
-        ).all()
-
-        initial_start_block = working_start_block = min(
-            0 if exchange.last_update_block is None else exchange.last_update_block + 1
-            for exchange in active_exchanges
-        )
-
-        if to_block.isdigit():
-            last_block = int(to_block)
-        else:
-            if ":" in to_block:
-                parts = to_block.split(":", 1)
-                block_tag, offset = cast("tuple[BlockParams,str]", parts)
-                block_offset = int(offset.strip())
-            else:
-                block_tag = cast("BlockParams", to_block)
-                block_offset = 0
-
-            if block_tag not in {"latest", "earliest", "pending", "safe", "finalized"}:
-                msg = f"Invalid block tag: {block_tag}"
-                raise ValueError(msg)
-
-            last_block = get_number_for_block_identifier(identifier=block_tag, w3=w3) + block_offset
-
-        if last_block > w3.eth.get_block("latest")["number"]:
-            msg = f"{to_block} is ahead of the current chain tip."
-            raise ValueError(msg)
-
-        if initial_start_block >= last_block:
-            click.echo(f"Chain {chain_id} has not advanced since the last update.")
-            continue
-
-        block_pbar = tqdm.tqdm(
-            desc="Processing new blocks",
-            total=last_block - initial_start_block + 1,
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        )
-
-        block_pbar.n = working_start_block - initial_start_block
-        block_pbar.refresh()
-
-        exchanges_to_update: set[ExchangeTable] = set()
-
-        while True:
-            # Cap the working end block at the lowest of:
-            # - the safe block for the chain
-            # - the end of the working chunk size
-            # - all update blocks for active exchanges
-            working_end_block = min(
-                [last_block]
-                + [working_start_block + chunk_size - 1]
-                + [
-                    exchange.last_update_block
-                    for exchange in active_exchanges
-                    if exchange.last_update_block is not None
-                    if exchange.last_update_block > working_start_block
-                ],
-            )
-            assert working_end_block >= working_start_block
-
-            exchanges_to_update = {
-                exchange
+            initial_start_block = working_start_block = min(
+                0 if exchange.last_update_block is None else exchange.last_update_block + 1
                 for exchange in active_exchanges
-                if (
-                    exchange.last_update_block is None
-                    or exchange.last_update_block + 1 == working_start_block
+            )
+
+            if to_block.isdigit():
+                last_block = int(to_block)
+            else:
+                if ":" in to_block:
+                    parts = to_block.split(":", 1)
+                    block_tag, offset = cast("tuple[BlockParams,str]", parts)
+                    block_offset = int(offset.strip())
+                else:
+                    block_tag = cast("BlockParams", to_block)
+                    block_offset = 0
+
+                if block_tag not in {"latest", "earliest", "pending", "safe", "finalized"}:
+                    msg = f"Invalid block tag: {block_tag}"
+                    raise ValueError(msg)
+
+                last_block = (
+                    get_number_for_block_identifier(identifier=block_tag, w3=w3) + block_offset
                 )
-            }
 
-            for exchange in exchanges_to_update:
-                pool_updater = POOL_UPDATER[chain_id, exchange.name]
-                pool_updater(w3, working_start_block, working_end_block, exchange)
+            if last_block > w3.eth.get_block("latest")["number"]:
+                msg = f"{to_block} is ahead of the current chain tip."
+                raise ValueError(msg)
 
-            # Fetch and process V3 liquidity events
-            if any("_v3" in exchange.name for exchange in exchanges_to_update):
-                for pool_address, liquidity_events in tqdm.tqdm(
-                    get_v3_liquidity_events(
-                        w3=w3,
-                        start_block=working_start_block,
-                        end_block=working_end_block,
-                    ).items(),
-                    desc="Updating V3 pool liquidity",
-                    bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-                    leave=False,
-                ):
-                    # V3 events are emitted by individual pools, which cannot efficiently be
-                    # filtered by eth_getLogs to only include in-scope exchanges — some exchanges
-                    # may have millions of deployed pools, which quickly scales to violate most
-                    # JSON-RPC query limits.
-                    # Nevertheless filtering is required to avoid double-applying events during
-                    # backfills, so the updater function looks up the exchange for each pool,
-                    # checks if it is included in the in-scope set, and returns early if not.
-                    apply_v3_liquidity_updates(
-                        w3=w3,
-                        pool_address=pool_address,
-                        liquidity_events=liquidity_events,
-                        exchanges_in_scope=exchanges_to_update,
-                    )
+            if initial_start_block >= last_block:
+                click.echo(f"Chain {chain_id} has not advanced since the last update.")
+                continue
 
-            # Fetch and process V4 liquidity events
-            for v4_exchange in (
-                exchange for exchange in exchanges_to_update if "_v4" in exchange.name
-            ):
-                pool_manager_in_db = db_session.scalar(
-                    select(PoolManagerTable).where(
-                        PoolManagerTable.address == v4_exchange.factory,
-                        PoolManagerTable.chain == chain_id,
-                    )
-                )
-                assert pool_manager_in_db is not None
-                pool_manager_address = get_checksum_address(pool_manager_in_db.address)
+            block_pbar = tqdm.tqdm(
+                desc="Processing new blocks",
+                total=last_block - initial_start_block + 1,
+                bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
+                leave=False,
+            )
 
-                for pool_id, liquidity_events in tqdm.tqdm(
-                    get_v4_liquidity_events(
-                        w3=w3,
-                        start_block=working_start_block,
-                        end_block=working_end_block,
-                        address=pool_manager_address,
-                    ).items(),
-                    desc="Updating V4 pool liquidity",
-                    bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-                    leave=False,
-                ):
-                    apply_v4_liquidity_updates(
-                        pool_id=pool_id,
-                        liquidity_events=liquidity_events,
-                        pool_manager=pool_manager_in_db,
-                    )
-
-            # At this point, all exchanges have been updated and the invariant checks have passed,
-            # so stamp the update block and commit to the DB
-            for exchange in exchanges_to_update:
-                exchange.last_update_block = working_end_block
-            exchanges_to_update.clear()
-            db_session.commit()
-
-            if working_end_block == last_block:
-                break
-            working_start_block = working_end_block + 1
-
-            block_pbar.n = working_end_block - initial_start_block
+            block_pbar.n = working_start_block - initial_start_block
             block_pbar.refresh()
 
-        block_pbar.close()
+            exchanges_to_update: set[ExchangeTable] = set()
+
+            while True:
+                # Cap the working end block at the lowest of:
+                # - the safe block for the chain
+                # - the end of the working chunk size
+                # - all update blocks for active exchanges
+                working_end_block = min(
+                    [last_block]
+                    + [working_start_block + chunk_size - 1]
+                    + [
+                        exchange.last_update_block
+                        for exchange in active_exchanges
+                        if exchange.last_update_block is not None
+                        if exchange.last_update_block > working_start_block
+                    ],
+                )
+                assert working_end_block >= working_start_block
+
+                exchanges_to_update = {
+                    exchange
+                    for exchange in active_exchanges
+                    if (
+                        exchange.last_update_block is None
+                        or exchange.last_update_block + 1 == working_start_block
+                    )
+                }
+
+                for exchange in exchanges_to_update:
+                    pool_updater = POOL_UPDATER[chain_id, exchange.name]
+                    pool_updater(w3, working_start_block, working_end_block, exchange, session)
+
+                # Fetch and process V3 liquidity events
+                if any("_v3" in exchange.name for exchange in exchanges_to_update):
+                    for pool_address, liquidity_events in tqdm.tqdm(
+                        get_v3_liquidity_events(
+                            w3=w3,
+                            start_block=working_start_block,
+                            end_block=working_end_block,
+                        ).items(),
+                        desc="Updating V3 pool liquidity",
+                        bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
+                        leave=False,
+                    ):
+                        # V3 events are emitted by individual pools, which cannot efficiently be
+                        # filtered by eth_getLogs to only include in-scope exchanges — some may have
+                        # millions of deployed pools, which quickly scales beyond JSON-RPC query
+                        # limits.
+                        # Nevertheless filtering is required to avoid double-applying events during
+                        # backfills, so the updater function looks up the exchange for each pool,
+                        # checks if it is included in the in-scope set, and returns early if not.
+                        apply_v3_liquidity_updates(
+                            w3=w3,
+                            pool_address=pool_address,
+                            liquidity_events=liquidity_events,
+                            exchanges_in_scope=exchanges_to_update,
+                            session=session,
+                        )
+
+                # Fetch and process V4 liquidity events
+                for v4_exchange in (
+                    exchange for exchange in exchanges_to_update if "_v4" in exchange.name
+                ):
+                    pool_manager_in_db = session.scalar(
+                        select(PoolManagerTable).where(
+                            PoolManagerTable.address == v4_exchange.factory,
+                            PoolManagerTable.chain == chain_id,
+                        )
+                    )
+                    assert pool_manager_in_db is not None
+                    pool_manager_address = get_checksum_address(pool_manager_in_db.address)
+
+                    for pool_id, liquidity_events in tqdm.tqdm(
+                        get_v4_liquidity_events(
+                            w3=w3,
+                            start_block=working_start_block,
+                            end_block=working_end_block,
+                            address=pool_manager_address,
+                        ).items(),
+                        desc="Updating V4 pool liquidity",
+                        bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
+                        leave=False,
+                    ):
+                        apply_v4_liquidity_updates(
+                            pool_id=pool_id,
+                            liquidity_events=liquidity_events,
+                            pool_manager=pool_manager_in_db,
+                            session=session,
+                        )
+
+                # At this point, all exchanges have been updated and the invariant checks have passed,
+                # so stamp the update block and commit to the DB
+                for exchange in exchanges_to_update:
+                    exchange.last_update_block = working_end_block
+                exchanges_to_update.clear()
+                session.commit()
+
+                if working_end_block == last_block:
+                    break
+                working_start_block = working_end_block + 1
+
+                block_pbar.n = working_end_block - initial_start_block
+                block_pbar.refresh()
+
+            block_pbar.close()
 
 
 def get_events_from_contract(
@@ -2256,7 +2292,9 @@ def get_v3_liquidity_events(
             [UNISWAP_V3_MINT_EVENT_HASH, UNISWAP_V3_BURN_EVENT_HASH],
         ],
     ):
-        pool_updates[liquidity_event["address"]].append(liquidity_event)
+        # Ignore zero-amount events
+        if any(liquidity_event["data"][:32]):
+            pool_updates[liquidity_event["address"]].append(liquidity_event)
 
     return pool_updates
 
@@ -2283,12 +2321,16 @@ def get_v4_liquidity_events(
             [UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH],
         ],
     ):
-        pool_updates[liquidity_event["topics"][1]].append(liquidity_event)
+        # Ignores zero-amount events
+        if any(liquidity_event["data"][64:96]):
+            pool_updates[liquidity_event["topics"][1]].append(liquidity_event)
 
     return pool_updates
 
 
-POOL_UPDATER: dict[tuple[ChainId, str], Callable[[Web3, int, int, ExchangeTable], None]] = {
+POOL_UPDATER: dict[
+    tuple[ChainId, str], Callable[[Web3, int, int, ExchangeTable, Session], None]
+] = {
     (eth_typing.ChainId.BASE, "aerodrome_v2"): base_aerodrome_v2_pool_updater,
     (eth_typing.ChainId.BASE, "aerodrome_v3"): base_aerodrome_v3_pool_updater,
     (eth_typing.ChainId.BASE, "pancakeswap_v2"): base_pancakeswap_v2_pool_updater,

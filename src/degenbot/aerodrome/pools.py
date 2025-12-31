@@ -1,7 +1,7 @@
 # ruff: noqa: PLR0904
 
 import dataclasses
-from bisect import bisect_left
+from collections import deque
 from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
@@ -41,13 +41,7 @@ from degenbot.registry import pool_registry
 from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
-from degenbot.types.concrete import (
-    AbstractPublisherMessage,
-    BoundedCache,
-    Publisher,
-    PublisherMixin,
-    Subscriber,
-)
+from degenbot.types.concrete import AbstractPublisherMessage, Publisher, PublisherMixin, Subscriber
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_functions import constant_product_calc_exact_out
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -58,8 +52,9 @@ if TYPE_CHECKING:
 
 class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
     type PoolState = AerodromeV2PoolState
-    _state_cache: BoundedCache[BlockNumber, PoolState]
+
     _state: PoolState
+    _state_cache: deque[PoolState]
 
     FEE_DENOMINATOR = 10_000
 
@@ -88,7 +83,8 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
         self._state_lock = Lock()
-        self._state = self.PoolState.__value__(
+
+        initial_state = self.PoolState.__value__(
             address=self.address,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
@@ -114,8 +110,8 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {100 * self.fee.numerator / self.fee.denominator:.2f}%)"  # noqa:E501
 
-        self._state_cache = BoundedCache(max_items=state_cache_depth)
-        self._state_cache[self.update_block] = self.state
+        self._state_cache = deque(maxlen=max(1, state_cache_depth))
+        self._state_cache.append(initial_state)
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
@@ -131,7 +127,6 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         copied_attributes = ()
         dropped_attributes = (
             "_state_lock",
-            "_state_cache",
             "_subscribers",
         )
 
@@ -176,7 +171,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
     @property
     def state(self) -> PoolState:
-        return self._state
+        return self._state_cache[-1]
 
     @property
     def tokens(self) -> tuple[Erc20Token, Erc20Token]:
@@ -218,31 +213,38 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
             if block_number is not None and block_number < self.update_block:
                 raise LateUpdateError
 
-            state_updated = False
             w3 = self.w3
             block_number = block_number if block_number is not None else w3.eth.get_block_number()
-
             reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
 
-            if (self.reserves_token0, self.reserves_token1) != (reserves0, reserves1):
-                state_updated = True
-                self._state = dataclasses.replace(
-                    self.state,
-                    reserves_token0=reserves0,
-                    reserves_token1=reserves1,
-                    block=block_number,
-                )
+            if (
+                self.reserves_token0,
+                self.reserves_token1,
+            ) == (
+                reserves0,
+                reserves1,
+            ):
+                return
 
-            if state_updated:
-                self._state_cache[block_number] = self.state
-                self._notify_subscribers(
-                    message=AerodromeV2PoolStateUpdated(self.state),
-                )
+            working_state = dataclasses.replace(
+                self.state,
+                reserves_token0=reserves0,
+                reserves_token1=reserves1,
+                block=block_number,
+            )
 
-                if not silent:  # pragma: no cover
-                    logger.info(f"[{self.name}]")
-                    logger.info(f"{self.token0}: {self.reserves_token0}")
-                    logger.info(f"{self.token1}: {self.reserves_token1}")
+            if self.state.block == block_number:
+                self._state_cache.pop()
+            self._state_cache.append(working_state)
+
+            if not silent:  # pragma: no cover
+                logger.info(f"[{self.name}]")
+                logger.info(f"{self.token0}: {self.reserves_token0}")
+                logger.info(f"{self.token1}: {self.reserves_token1}")
+
+            self._notify_subscribers(
+                message=AerodromeV2PoolStateUpdated(self.state),
+            )
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -363,13 +365,17 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
             )
 
         with self._state_lock:
-            self._state = dataclasses.replace(
+            working_state = dataclasses.replace(
                 self.state,
                 reserves_token0=update.reserves_token0,
                 reserves_token1=update.reserves_token1,
                 block=update.block_number,
             )
-            self._state_cache[update.block_number] = self.state
+
+            if self.state.block == update.block_number:
+                self._state_cache.pop()
+            self._state_cache.append(working_state)
+
             self._notify_subscribers(
                 message=AerodromeV2PoolStateUpdated(self.state),
             )
@@ -546,26 +552,29 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         return cast("int", reserves_token0), cast("int", reserves_token1)
 
-    def discard_states_before_block(self, block: BlockNumber) -> None:
+    def discard_states_before_block(
+        self,
+        block: BlockNumber,
+    ) -> None:
         """
-        Discard states recorded prior to a target block.
+        Discard cached states earlier than the given block.
         """
 
         with self._state_lock:
-            known_blocks = sorted(self._state_cache.keys())
-
-            # Finds the index prior to the requested block number
-            block_index = bisect_left(known_blocks, block)
-
-            # The earliest known state already meets the criterion, so return early
-            if block_index == 0:
+            # The oldest state already satisfies the request
+            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
                 return
 
-            if block_index == len(known_blocks):
+            # The newest state is older than the target block, so there is no state to return to
+            if (newest_block := self._state_cache[-1].block) and newest_block < block:
                 raise NoPoolStateAvailable(block=block)
 
-            for known_block in known_blocks[:block_index]:
-                del self._state_cache[known_block]
+            # Discard older states until the earliest block is crossed
+            while (earliest_block := self._state_cache[0].block) is None or earliest_block < block:
+                self._state_cache.popleft()
+
+            assert self.state.block is not None
+            assert self.state.block >= block
 
     def restore_state_before_block(
         self,
@@ -575,28 +584,24 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         Restore the last pool state recorded prior to a target block.
 
         Use this method to maintain consistent state data following a chain re-organization.
+
+        The pool will notify all subscribers of the new state with a `UniswapV3PoolStateUpdated`
+        event.
         """
-
         with self._state_lock:
-            known_blocks = sorted(self._state_cache.keys())
-
-            # Finds the index prior to the requested block number
-            block_index = bisect_left(known_blocks, block)
-
-            if block_index == 0:
-                raise NoPoolStateAvailable(block=block)
-
-            # The last known state already meets the criterion, so return early
-            if block_index == len(known_blocks):
+            # The newest state already satisfies the request
+            if (newest_block := self._state_cache[-1].block) and newest_block < block:
                 return
 
-            # Remove states at and after the specified block
-            for known_block in known_blocks[block_index:]:
-                del self._state_cache[known_block]
+            # No earlier state is available
+            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
+                raise NoPoolStateAvailable(block=block)
 
-            # Restore previous state and block
-            self._state = list(self._state_cache.values())[-1]
-            self._notify_subscribers(message=AerodromeV2PoolStateUpdated(self.state))
+            # Discard blocks until the last block is older than the target
+            while self._state_cache[-1].block is None or self._state_cache[-1].block >= block:
+                self._state_cache.pop()
+
+        self._notify_subscribers(message=AerodromeV2PoolStateUpdated(self.state))
 
 
 class AerodromeV3Pool(UniswapV3Pool):

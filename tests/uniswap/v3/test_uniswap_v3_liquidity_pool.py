@@ -1,5 +1,6 @@
 import pathlib
 import pickle
+from collections import deque
 from typing import Any
 
 import hypothesis
@@ -458,7 +459,9 @@ def test_reorg(
     """
 
     # Manipulate the cache depth so additional states beyond the default can be tracked
-    wbtc_weth_v3_lp_at_historical_block._state_cache.max_items = 512
+    wbtc_weth_v3_lp_at_historical_block._state_cache = deque(
+        wbtc_weth_v3_lp_at_historical_block._state_cache
+    )
 
     starting_block = fork_mainnet_archive.w3.eth.block_number
 
@@ -531,8 +534,7 @@ def test_discard_before_finalized(wbtc_weth_v3_lp_at_historical_block: UniswapV3
         block_states[block_number] = lp.state
 
     wbtc_weth_v3_lp_at_historical_block.discard_states_before_block(end_block)
-    assert wbtc_weth_v3_lp_at_historical_block._state_cache is not None
-    assert wbtc_weth_v3_lp_at_historical_block._state_cache.keys() == {end_block}
+    assert wbtc_weth_v3_lp_at_historical_block._state_cache[-1].block == end_block
 
 
 def test_discard_earlier_than_created(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool) -> None:

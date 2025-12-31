@@ -69,29 +69,30 @@ def activate_base_aerodrome_v2(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=BaseAerodromeV2.factory.address,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=BaseAerodromeV2.factory.address,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Aerodrome V2 on Base (chain ID {chain_id}).")
 
@@ -107,29 +108,30 @@ def activate_base_aerodrome_v3(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=BaseAerodromeV3.factory.address,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=BaseAerodromeV3.factory.address,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Aerodrome V3 on Base (chain ID {chain_id}).")
 
@@ -145,29 +147,30 @@ def activate_base_pancakeswap_v2(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=BasePancakeswapV2.factory.address,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=BasePancakeswapV2.factory.address,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Pancakeswap V2 on Base (chain ID {chain_id}).")
 
@@ -183,30 +186,31 @@ def activate_base_pancakeswap_v3(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=BasePancakeswapV3.factory.address,
-                deployer=BasePancakeswapV3.factory.deployer,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=BasePancakeswapV3.factory.address,
+                    deployer=BasePancakeswapV3.factory.deployer,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Pancakeswap V3 on Base (chain ID {chain_id}).")
 
@@ -222,29 +226,30 @@ def activate_base_swapbased_v2(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=BaseSwapbasedV2.factory.address,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=BaseSwapbasedV2.factory.address,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated SwapBased V2 on Base (chain ID {chain_id}).")
 
@@ -260,29 +265,30 @@ def activate_base_sushiswap_v2(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=BaseSushiswapV2.factory.address,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=BaseSushiswapV2.factory.address,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Sushiswap V2 on Base (chain ID {chain_id}).")
 
@@ -298,29 +304,30 @@ def activate_base_sushiswap_v3(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=BaseSushiswapV3.factory.address,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=BaseSushiswapV3.factory.address,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Sushiswap V3 on Base (chain ID {chain_id}).")
 
@@ -336,29 +343,30 @@ def activate_base_uniswap_v2(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=BaseUniswapV2.factory.address,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=BaseUniswapV2.factory.address,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Uniswap V2 on Base (chain ID {chain_id}).")
 
@@ -374,29 +382,30 @@ def activate_base_uniswap_v3(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=BaseUniswapV3.factory.address,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=BaseUniswapV3.factory.address,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Uniswap V3 on Base (chain ID {chain_id}).")
 
@@ -414,47 +423,48 @@ def activate_base_uniswap_v4(
 
     exchange_kind = "uniswap_v4"
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        exchange = ExchangeTable(
-            chain_id=chain_id,
-            name=exchange_name,
-            active=True,
-            factory=BaseUniswapV4.pool_manager.address,
-        )
-        db_session.add(exchange)
-        db_session.flush()
-
-        manager_in_db = db_session.scalar(
-            select(PoolManagerTable).where(
-                PoolManagerTable.address == BaseUniswapV4.pool_manager.address,
-                PoolManagerTable.chain == chain_id,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        if manager_in_db is None:
-            db_session.add(
-                PoolManagerTable(
-                    address=BaseUniswapV4.pool_manager.address,
-                    chain=chain_id,
-                    kind=exchange_kind,
-                    exchange_id=exchange.id,
-                    state_view=BaseUniswapV4.state_view.address,
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            exchange = ExchangeTable(
+                chain_id=chain_id,
+                name=exchange_name,
+                active=True,
+                factory=BaseUniswapV4.pool_manager.address,
+            )
+            session.add(exchange)
+            session.flush()
+
+            manager_in_db = session.scalar(
+                select(PoolManagerTable).where(
+                    PoolManagerTable.address == BaseUniswapV4.pool_manager.address,
+                    PoolManagerTable.chain == chain_id,
                 )
             )
+            if manager_in_db is None:
+                session.add(
+                    PoolManagerTable(
+                        address=BaseUniswapV4.pool_manager.address,
+                        chain=chain_id,
+                        kind=exchange_kind,
+                        exchange_id=exchange.id,
+                        state_view=BaseUniswapV4.state_view.address,
+                    )
+                )
 
-        db_session.commit()
+            session.commit()
 
     click.echo(f"Activated Uniswap V4 on Base (chain ID {chain_id}).")
 
@@ -470,29 +480,30 @@ def activate_ethereum_pancakeswap_v2(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=EthereumMainnetPancakeswapV2.factory.address,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=EthereumMainnetPancakeswapV2.factory.address,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Pancakeswap V2 on Ethereum (chain ID {chain_id}).")
 
@@ -508,30 +519,31 @@ def activate_ethereum_pancakeswap_v3(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=EthereumMainnetPancakeswapV3.factory.address,
-                deployer=EthereumMainnetPancakeswapV3.factory.deployer,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=EthereumMainnetPancakeswapV3.factory.address,
+                    deployer=EthereumMainnetPancakeswapV3.factory.deployer,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Pancakeswap V3 on Ethereum (chain ID {chain_id}).")
 
@@ -547,29 +559,30 @@ def activate_ethereum_sushiswap_v2(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=EthereumMainnetSushiswapV2.factory.address,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=EthereumMainnetSushiswapV2.factory.address,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Sushiswap V2 on Ethereum (chain ID {chain_id}).")
 
@@ -585,29 +598,30 @@ def activate_ethereum_sushiswap_v3(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=EthereumMainnetSushiswapV3.factory.address,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=EthereumMainnetSushiswapV3.factory.address,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Sushiswap V3 on Ethereum (chain ID {chain_id}).")
 
@@ -623,29 +637,30 @@ def activate_ethereum_uniswap_v2(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=EthereumMainnetUniswapV2.factory.address,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=EthereumMainnetUniswapV2.factory.address,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Uniswap V2 on Ethereum (chain ID {chain_id}).")
 
@@ -661,29 +676,30 @@ def activate_ethereum_uniswap_v3(
 
     _check_configured_rpc(chain_id)
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        db_session.add(
-            ExchangeTable(
-                chain_id=chain_id,
-                name=exchange_name,
-                active=True,
-                factory=EthereumMainnetUniswapV3.factory.address,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        db_session.commit()
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            session.add(
+                ExchangeTable(
+                    chain_id=chain_id,
+                    name=exchange_name,
+                    active=True,
+                    factory=EthereumMainnetUniswapV3.factory.address,
+                )
+            )
+            session.commit()
 
     click.echo(f"Activated Uniswap V3 on Ethereum (chain ID {chain_id}).")
 
@@ -701,47 +717,48 @@ def activate_ethereum_uniswap_v4(
 
     exchange_kind = "uniswap_v4"
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
-        )
-    )
-    if exchange is not None:
-        if exchange.active:
-            click.echo("Exchange is already activated.")
-            return
-        exchange.active = True
-        db_session.commit()
-
-    if exchange is None:
-        exchange = ExchangeTable(
-            chain_id=chain_id,
-            name=exchange_name,
-            active=True,
-            factory=EthereumMainnetUniswapV4.pool_manager.address,
-        )
-        db_session.add(exchange)
-        db_session.flush()
-
-        manager_in_db = db_session.scalar(
-            select(PoolManagerTable).where(
-                PoolManagerTable.address == EthereumMainnetUniswapV4.pool_manager.address,
-                PoolManagerTable.chain == chain_id,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
             )
         )
-        if manager_in_db is None:
-            db_session.add(
-                PoolManagerTable(
-                    address=EthereumMainnetUniswapV4.pool_manager.address,
-                    chain=chain_id,
-                    kind=exchange_kind,
-                    exchange_id=exchange.id,
-                    state_view=EthereumMainnetUniswapV4.state_view.address,
+        if exchange is not None:
+            if exchange.active:
+                click.echo("Exchange is already activated.")
+                return
+            exchange.active = True
+            session.commit()
+
+        if exchange is None:
+            exchange = ExchangeTable(
+                chain_id=chain_id,
+                name=exchange_name,
+                active=True,
+                factory=EthereumMainnetUniswapV4.pool_manager.address,
+            )
+            session.add(exchange)
+            session.flush()
+
+            manager_in_db = session.scalar(
+                select(PoolManagerTable).where(
+                    PoolManagerTable.address == EthereumMainnetUniswapV4.pool_manager.address,
+                    PoolManagerTable.chain == chain_id,
                 )
             )
+            if manager_in_db is None:
+                session.add(
+                    PoolManagerTable(
+                        address=EthereumMainnetUniswapV4.pool_manager.address,
+                        chain=chain_id,
+                        kind=exchange_kind,
+                        exchange_id=exchange.id,
+                        state_view=EthereumMainnetUniswapV4.state_view.address,
+                    )
+                )
 
-        db_session.commit()
+            session.commit()
 
     click.echo(f"Activated Uniswap V4 on Ethereum (chain ID {chain_id}).")
 
@@ -755,22 +772,23 @@ def deactivate_base_aerodrome_v2(
     Deactivate Aerodrome V2 on Base mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Aerodrome V2 on Base (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(f"The database has no entry for Aerodrome V2 on Base (chain ID {chain_id}).")
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Aerodrome V2 on Base (chain ID {chain_id}).")
 
@@ -784,22 +802,23 @@ def deactivate_base_aerodrome_v3(
     Deactivate Aerodrome V3 on Base mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Aerodrome V3 on Base (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(f"The database has no entry for Aerodrome V3 on Base (chain ID {chain_id}).")
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Aerodrome V3 on Base (chain ID {chain_id}).")
 
@@ -813,22 +832,25 @@ def deactivate_base_pancakeswap_v2(
     Deactivate Pancakeswap V2 on Base mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Pancakeswap V2 on Base (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(
+                f"The database has no entry for Pancakeswap V2 on Base (chain ID {chain_id})."
+            )
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Pancakeswap V2 on Base (chain ID {chain_id}).")
 
@@ -842,22 +864,25 @@ def deactivate_base_pancakeswap_v3(
     Deactivate Pancakeswap V3 on Base mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Pancakeswap V3 on Base (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(
+                f"The database has no entry for Pancakeswap V3 on Base (chain ID {chain_id})."
+            )
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Pancakeswap V3 on Base (chain ID {chain_id}).")
 
@@ -871,22 +896,23 @@ def deactivate_base_sushiswap_v2(
     Deactivate Sushiswap V2 on Base mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Sushiswap V2 on Base (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(f"The database has no entry for Sushiswap V2 on Base (chain ID {chain_id}).")
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Sushiswap V2 on Base (chain ID {chain_id}).")
 
@@ -900,22 +926,23 @@ def deactivate_base_sushiswap_v3(
     Deactivate Sushiswap V3 on Base mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Sushiswap V3 on Base (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(f"The database has no entry for Sushiswap V3 on Base (chain ID {chain_id}).")
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Sushiswap V3 on Base (chain ID {chain_id}).")
 
@@ -929,22 +956,23 @@ def deactivate_base_swapbased_v2(
     Deactivate SwapBased V2 on Base mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for SwapBased V2 on Base (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(f"The database has no entry for SwapBased V2 on Base (chain ID {chain_id}).")
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated SwapBased V2 on Base (chain ID {chain_id}).")
 
@@ -958,22 +986,23 @@ def deactivate_base_uniswap_v2(
     Deactivate Uniswap V2 on Base mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Uniswap V2 on Base (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(f"The database has no entry for Uniswap V2 on Base (chain ID {chain_id}).")
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Uniswap V2 on Base (chain ID {chain_id}).")
 
@@ -987,22 +1016,23 @@ def deactivate_base_uniswap_v3(
     Deactivate Uniswap V3 on Base mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Uniswap V3 on Base (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(f"The database has no entry for Uniswap V3 on Base (chain ID {chain_id}).")
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Uniswap V3 on Base (chain ID {chain_id}).")
 
@@ -1016,22 +1046,23 @@ def deactivate_base_uniswap_v4(
     Deactivate Uniswap V4 on Base mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Uniswap V4 on Base (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(f"The database has no entry for Uniswap V4 on Base (chain ID {chain_id}).")
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Uniswap V4 on Base (chain ID {chain_id}).")
 
@@ -1045,24 +1076,25 @@ def deactivate_ethereum_pancakeswap_v2(
     Deactivate Pancakeswap V2 on Ethereum mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(
-            f"The database has no entry for Pancakeswap V2 on Ethereum (chain ID {chain_id})."
-        )
-        return
+        if exchange is None:
+            click.echo(
+                f"The database has no entry for Pancakeswap V2 on Ethereum (chain ID {chain_id})."
+            )
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Pancakeswap V2 on Ethereum (chain ID {chain_id}).")
 
@@ -1076,24 +1108,25 @@ def deactivate_ethereum_pancakeswap_v3(
     Deactivate Pancakeswap V3 on Ethereum mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(
-            f"The database has no entry for Pancakeswap V3 on Ethereum (chain ID {chain_id})."
-        )
-        return
+        if exchange is None:
+            click.echo(
+                f"The database has no entry for Pancakeswap V3 on Ethereum (chain ID {chain_id})."
+            )
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Pancakeswap V3 on Ethereum (chain ID {chain_id}).")
 
@@ -1107,22 +1140,25 @@ def deactivate_ethereum_sushiswap_v2(
     Deactivate Sushiswap V2 on Ethereum mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Sushiswap V2 on Ethereum (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(
+                f"The database has no entry for Sushiswap V2 on Ethereum (chain ID {chain_id})."
+            )
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Sushiswap V2 on Ethereum (chain ID {chain_id}).")
 
@@ -1136,22 +1172,23 @@ def deactivate_ethereum_sushiswap_v3(
     Deactivate Sushiswap V3 on Ethereum mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Sushiswap V3 on Base (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(f"The database has no entry for Sushiswap V3 on Base (chain ID {chain_id}).")
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Sushiswap V3 on Ethereum (chain ID {chain_id}).")
 
@@ -1165,22 +1202,25 @@ def deactivate_ethereum_uniswap_v2(
     Deactivate Uniswap V2 on Ethereum mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Uniswap V2 on Ethereum (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(
+                f"The database has no entry for Uniswap V2 on Ethereum (chain ID {chain_id})."
+            )
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Uniswap V2 on Ethereum (chain ID {chain_id}).")
 
@@ -1194,22 +1234,25 @@ def deactivate_ethereum_uniswap_v3(
     Deactivate Uniswap V3 on Ethereum mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Uniswap V3 on Ethereum (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(
+                f"The database has no entry for Uniswap V3 on Ethereum (chain ID {chain_id})."
+            )
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Uniswap V3 on Ethereum (chain ID {chain_id}).")
 
@@ -1223,21 +1266,24 @@ def deactivate_ethereum_uniswap_v4(
     Deactivate Uniswap V4 on Ethereum mainnet.
     """
 
-    exchange = db_session.scalar(
-        select(ExchangeTable).where(
-            ExchangeTable.chain_id == chain_id,
-            ExchangeTable.name == exchange_name,
+    with db_session() as session:
+        exchange = session.scalar(
+            select(ExchangeTable).where(
+                ExchangeTable.chain_id == chain_id,
+                ExchangeTable.name == exchange_name,
+            )
         )
-    )
 
-    if exchange is None:
-        click.echo(f"The database has no entry for Uniswap V4 on Ethereum (chain ID {chain_id}).")
-        return
+        if exchange is None:
+            click.echo(
+                f"The database has no entry for Uniswap V4 on Ethereum (chain ID {chain_id})."
+            )
+            return
 
-    if not exchange.active:
-        click.echo("Exchange is already deactivated.")
-        return
-    exchange.active = False
-    db_session.commit()
+        if not exchange.active:
+            click.echo("Exchange is already deactivated.")
+            return
+        exchange.active = False
+        session.commit()
 
     click.echo(f"Deactivated Uniswap V4 on Ethereum (chain ID {chain_id}).")

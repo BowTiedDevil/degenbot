@@ -4,6 +4,7 @@ import contextlib
 import multiprocessing
 import pickle
 import time
+from collections import deque
 from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING
@@ -65,16 +66,17 @@ def weth_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
 @pytest.fixture
 def wbtc_weth_v2_lp(
     fork_mainnet_full: AnvilFork,
-    wbtc_token,  # noqa:ARG001
-    weth_token,  # noqa:ARG001
+    _wbtc_token,
+    _weth_token,
 ) -> UniswapV2Pool:
     set_web3(fork_mainnet_full.w3)
     pool = UniswapV2Pool(WBTC_WETH_V2_POOL_ADDRESS)
-    pool._state = UniswapV2PoolState(
-        address=pool.address,
-        reserves_token0=16231137593,
-        reserves_token1=2571336301536722443178,
-        block=pool.update_block,
+    pool.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=pool.update_block,
+            reserves_token0=16231137593,
+            reserves_token1=2571336301536722443178,
+        )
     )
 
     return pool
@@ -2079,16 +2081,15 @@ def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
         },
     )
 
-    pool._state = UniswapV3PoolState(
-        address=pool.address,
-        liquidity=1612978974357835825,
-        sqrt_price_x96=31549217861118002279483878013792428,
-        tick=257907,
-        tick_bitmap=pool.tick_bitmap,
-        tick_data=pool.tick_data,
-        block=pool.update_block,
-    )
     pool._initial_state_block = 0
+    pool.external_update(
+        UniswapV3PoolExternalUpdate(
+            block_number=pool.update_block,
+            liquidity=1612978974357835825,
+            sqrt_price_x96=31549217861118002279483878013792428,
+            tick=257907,
+        )
+    )
 
     return pool
 
@@ -2109,11 +2110,14 @@ def wbtc_weth_arb(
 
 class MockLiquidityPool(UniswapV2Pool):
     def __init__(self) -> None:
-        self._state = UniswapV2PoolState(
-            address=ZERO_ADDRESS,
-            reserves_token0=0,
-            reserves_token1=0,
-            block=None,
+        self._state_cache = deque()
+        self._state_cache.append(
+            UniswapV2PoolState(
+                address=ZERO_ADDRESS,
+                reserves_token0=0,
+                reserves_token1=0,
+                block=0,
+            )
         )
         self._state_lock = Lock()
         self._subscribers = WeakSet()
@@ -2121,6 +2125,18 @@ class MockLiquidityPool(UniswapV2Pool):
 
 class MockV3LiquidityPool(UniswapV3Pool):
     def __init__(self) -> None:
+        self._state_cache = deque()
+        self._state_cache.append(
+            UniswapV3PoolState(
+                address=ZERO_ADDRESS,
+                block=0,
+                liquidity=0,
+                sqrt_price_x96=0,
+                tick=0,
+                tick_bitmap={},
+                tick_data={},
+            )
+        )
         self._state_lock = Lock()
         self._subscribers = WeakSet()
 
@@ -2204,25 +2220,26 @@ def test_arbitrage_with_overrides(
     irrelevant_v2_pool.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     irrelevant_v2_pool.fee_token0 = Fraction(3, 1000)
     irrelevant_v2_pool.fee_token1 = Fraction(3, 1000)
-    irrelevant_v2_pool._state = UniswapV2PoolState(
-        address=irrelevant_v2_pool.address,
-        reserves_token0=16231137593,
-        reserves_token1=2571336301536722443178,
-        block=None,
+    irrelevant_v2_pool.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=16231137593,
+            reserves_token1=2571336301536722443178,
+        )
     )
     irrelevant_v2_pool.token0 = wbtc_token
     irrelevant_v2_pool.token1 = weth_token
 
     irrelevant_v3_pool = MockV3LiquidityPool()
+    irrelevant_v3_pool._initial_state_block = 0
     irrelevant_v3_pool.address = get_checksum_address("0x0000000000000000000000000000000000000420")
-    irrelevant_v3_pool._state = UniswapV3PoolState(
-        address=irrelevant_v3_pool.address,
-        block=None,
-        liquidity=1612978974357835825,
-        sqrt_price_x96=31549217861118002279483878013792428,
-        tick=257907,
-        tick_bitmap={},
-        tick_data={},
+    irrelevant_v3_pool.external_update(
+        UniswapV3PoolExternalUpdate(
+            block_number=1,
+            liquidity=1612978974357835825,
+            sqrt_price_x96=31549217861118002279483878013792428,
+            tick=257907,
+        )
     )
     irrelevant_v3_pool.name = "WBTC-WETH (V3, 0.30%)"
     irrelevant_v3_pool.factory = get_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
@@ -2286,7 +2303,9 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum_full: Anv
 
 
 async def test_process_pool_calculation(
-    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
+    wbtc_weth_arb: UniswapLpCycle,
+    wbtc_weth_v3_lp: UniswapV3Pool,
+    weth_token: Erc20Token,
 ):
     start = time.perf_counter()
 
@@ -2374,11 +2393,12 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
     lp_1.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp_1.fee_token0 = Fraction(3, 1000)
     lp_1.fee_token1 = Fraction(3, 1000)
-    lp_1._state = UniswapV2PoolState(
-        address=lp_1.address,
-        reserves_token0=16000000000,
-        reserves_token1=2500000000000000000000,
-        block=None,
+    lp_1.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=16000000000,
+            reserves_token1=2500000000000000000000,
+        )
     )
     lp_1.token0 = wbtc_token
     lp_1.token1 = weth_token
@@ -2389,11 +2409,12 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
     lp_2.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp_2.fee_token0 = Fraction(3, 1000)
     lp_2.fee_token1 = Fraction(3, 1000)
-    lp_2._state = UniswapV2PoolState(
-        address=lp_2.address,
-        reserves_token0=15000000000,
-        reserves_token1=2500000000000000000000,
-        block=None,
+    lp_2.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=15000000000,
+            reserves_token1=2500000000000000000000,
+        )
     )
     lp_2.token0 = wbtc_token
     lp_2.token1 = weth_token
