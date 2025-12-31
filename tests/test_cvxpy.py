@@ -1,5 +1,6 @@
 # ruff: noqa: E501
 
+from collections import deque
 from fractions import Fraction
 from threading import Lock
 from typing import cast
@@ -23,23 +24,26 @@ from degenbot.connection import set_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v2_types import UniswapV2PoolState
+from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate, UniswapV2PoolState
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 LINK_ADDRESS = "0x514910771AF9Ca656af840dff83E8264EcF986CA"
+USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 WBTC_WETH_V2_POOL_ADDRESS = "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
 WBTC_WETH_V3_POOL_ADDRESS = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 
 
 class MockLiquidityPool(UniswapV2Pool):
     def __init__(self) -> None:
-        self._state = UniswapV2PoolState(
-            address=ZERO_ADDRESS,
-            reserves_token0=0,
-            reserves_token1=0,
-            block=None,
-        )
+        self._state_cache = deque([
+            UniswapV2PoolState(
+                address=ZERO_ADDRESS,
+                reserves_token0=0,
+                reserves_token1=0,
+                block=0,
+            )
+        ])
         self._state_lock = Lock()
         self._subscribers = WeakSet()
 
@@ -63,6 +67,12 @@ def link_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
 
 
 @pytest.fixture
+def usdc_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
+    set_web3(fork_mainnet_full.w3)
+    return Erc20Token(USDC_ADDRESS)
+
+
+@pytest.fixture
 def weth_base_token(fork_base_full: AnvilFork) -> Erc20Token:
     set_web3(fork_base_full.w3)
     return Erc20Token("0x4200000000000000000000000000000000000006")
@@ -82,11 +92,12 @@ def wbtc_pool_a(wbtc_token, weth_token) -> MockLiquidityPool:
     lp.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp.fee_token0 = Fraction(3, 1000)
     lp.fee_token1 = Fraction(3, 1000)
-    lp._state = UniswapV2PoolState(
-        address=lp.address,
-        block=None,
-        reserves_token0=9000000000,
-        reserves_token1=2100000000000000000000,
+    lp.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=9000000000,
+            reserves_token1=2100000000000000000000,
+        )
     )
     lp.token0 = wbtc_token
     lp.token1 = weth_token
@@ -101,11 +112,12 @@ def wbtc_pool_b(wbtc_token, weth_token) -> MockLiquidityPool:
     lp.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     lp.fee_token0 = Fraction(3, 1000)
     lp.fee_token1 = Fraction(3, 1000)
-    lp._state = UniswapV2PoolState(
-        address=lp.address,
-        block=None,
-        reserves_token0=9250000000,
-        reserves_token1=2100000000000000000000,
+    lp.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=9250000000,
+            reserves_token1=2100000000000000000000,
+        )
     )
     lp.token0 = wbtc_token
     lp.token1 = weth_token
@@ -120,11 +132,12 @@ def test_pool_a(xxx_token, weth_base_token) -> MockLiquidityPool:
     lp.factory = get_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da")
     lp.fee_token0 = Fraction(3, 1000)
     lp.fee_token1 = Fraction(3, 1000)
-    lp._state = UniswapV2PoolState(
-        address=lp.address,
-        block=None,
-        reserves_token0=19643270033194347,
-        reserves_token1=406789256841523130269,
+    lp.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=19643270033194347,
+            reserves_token1=406789256841523130269,
+        )
     )
     lp.token0 = weth_base_token
     lp.token1 = xxx_token
@@ -139,11 +152,12 @@ def test_pool_b(xxx_token, weth_base_token) -> MockLiquidityPool:
     lp.factory = get_checksum_address("0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6")
     lp.fee_token0 = Fraction(3, 1000)
     lp.fee_token1 = Fraction(3, 1000)
-    lp._state = UniswapV2PoolState(
-        address=lp.address,
-        block=None,
-        reserves_token0=880450452482804609420,
-        reserves_token1=18733831498401825763565574,
+    lp.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=880450452482804609420,
+            reserves_token1=18733831498401825763565574,
+        )
     )
     lp.token0 = weth_base_token
     lp.token1 = xxx_token
@@ -816,12 +830,13 @@ def test_base_3pool(
     lp_1.fee_token1 = Fraction(3, 1000)
     lp_1.token0 = link_token
     lp_1.token1 = weth_token
-    lp_1._state = UniswapV2PoolState(
-        address=lp_1.address,
-        block=None,
-        reserves_token0=20_000 * 10**link_token.decimals,
-        reserves_token1=100 * 10**weth_token.decimals,
-        # total liquidity 10_000 WETH
+    lp_1.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=20_000 * 10**link_token.decimals,
+            reserves_token1=100 * 10**weth_token.decimals,
+            # total liquidity 10_000 WETH
+        )
     )
 
     lp_2 = MockLiquidityPool()
@@ -832,14 +847,15 @@ def test_base_3pool(
     lp_2.fee_token1 = Fraction(3, 1000)
     lp_2.token0 = wbtc_token
     lp_2.token1 = link_token
-    lp_2._state = UniswapV2PoolState(
-        address=lp_2.address,
-        block=None,
-        reserves_token0=(
-            # dislocate middle pool by decreasing the price of WBTC
-            10 * 10**wbtc_token.decimals
-        ),
-        reserves_token1=20_000 * 10**link_token.decimals,
+    lp_2.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=(
+                # dislocate middle pool by decreasing the price of WBTC
+                10 * 10**wbtc_token.decimals
+            ),
+            reserves_token1=20_000 * 10**link_token.decimals,
+        )
     )
 
     lp_3 = MockLiquidityPool()
@@ -850,18 +866,243 @@ def test_base_3pool(
     lp_3.fee_token1 = Fraction(3, 1000)
     lp_3.token0 = wbtc_token
     lp_3.token1 = weth_token
-    lp_3._state = UniswapV2PoolState(
-        address=lp_3.address,
-        block=None,
-        reserves_token0=5 * 10**wbtc_token.decimals,
-        reserves_token1=100 * 10**weth_token.decimals,
-        # total liquidity 10_000 WETH
+    lp_3.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=5 * 10**wbtc_token.decimals,
+            reserves_token1=100 * 10**weth_token.decimals,
+            # total liquidity 10_000 WETH
+        )
     )
 
     arb = _UniswapMultiPoolCycleTesting(
         input_token=weth_token,
         swap_pools=[lp_1, lp_2, lp_3],  # profitable
-        id="test",
+    )
+
+    result = arb.calculate()
+    print(f"{result.profit_amount=}")
+
+
+def test_base_4pool(
+    link_token: Erc20Token,
+    wbtc_token: Erc20Token,
+    usdc_token: Erc20Token,
+    weth_token: Erc20Token,
+):
+    # fake prices:
+    # 1 WBTC = 100,000 USDC
+    # 1 WTBC = 20 WETH      (WETH = $5000)
+    # 1 WETH = 200 LINK     (LINK = $25)
+    # 1 WBTC = 4000 LINK
+
+    weth_link = MockLiquidityPool()
+    weth_link.name = "Fake V2 Pool: WETH-LINK (0%)"
+    weth_link.address = get_checksum_address("0x0000000000000000000000000000000000000001")
+    weth_link.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    weth_link.fee_token0 = Fraction(0)
+    weth_link.fee_token1 = Fraction(0)
+    weth_link.token0 = weth_token
+    weth_link.token1 = link_token
+    weth_link.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=1 * 10**weth_token.decimals,
+            reserves_token1=(
+                # skew the ratio of this pool to create the arbitrage opportunity
+                250 * 10**link_token.decimals
+            ),
+        )
+    )
+
+    link_usdc = MockLiquidityPool()
+    link_usdc.name = "Fake V2 Pool: LINK-USDC (0%)"
+    link_usdc.address = get_checksum_address("0x0000000000000000000000000000000000000002")
+    link_usdc.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    link_usdc.fee_token0 = Fraction(0)
+    link_usdc.fee_token1 = Fraction(0)
+    link_usdc.token0 = usdc_token
+    link_usdc.token1 = link_token
+    link_usdc.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=25 * 10**usdc_token.decimals,
+            reserves_token1=1 * 10**link_token.decimals,
+        )
+    )
+
+    usdc_wbtc = MockLiquidityPool()
+    usdc_wbtc.name = "Fake V2 Pool: USDC-WBTC (0%)"
+    usdc_wbtc.address = get_checksum_address("0x0000000000000000000000000000000000000003")
+    usdc_wbtc.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    usdc_wbtc.fee_token0 = Fraction(0)
+    usdc_wbtc.fee_token1 = Fraction(0)
+    usdc_wbtc.token0 = usdc_token
+    usdc_wbtc.token1 = wbtc_token
+    usdc_wbtc.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=100_000 * 10**usdc_token.decimals,
+            reserves_token1=1 * 10**wbtc_token.decimals,
+        )
+    )
+
+    weth_wbtc = MockLiquidityPool()
+    weth_wbtc.name = "Fake V2 Pool: WETH-WBTC (0%)"
+    weth_wbtc.address = get_checksum_address("0x0000000000000000000000000000000000000004")
+    weth_wbtc.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    weth_wbtc.fee_token0 = Fraction(0)
+    weth_wbtc.fee_token1 = Fraction(0)
+    weth_wbtc.token0 = weth_token
+    weth_wbtc.token1 = wbtc_token
+    weth_wbtc.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=20 * 10**weth_token.decimals,
+            reserves_token1=1 * 10**wbtc_token.decimals,
+        )
+    )
+
+    arb = _UniswapMultiPoolCycleTesting(
+        input_token=weth_token,
+        swap_pools=[weth_link, link_usdc, usdc_wbtc, weth_wbtc],  # profitable
+    )
+
+    result = arb.calculate()
+    print(f"{result.profit_amount=}")
+
+
+def test_multipool_two_pools(
+    wbtc_token: Erc20Token,
+    weth_token: Erc20Token,
+):
+    # fake prices:
+    # 1 WTBC = 20 WETH      (WETH = $5000)
+
+    weth_wbtc_1 = MockLiquidityPool()
+    weth_wbtc_1.name = "Fake V2 Pool: WETH-WBTC (0%)"
+    weth_wbtc_1.address = get_checksum_address("0x0000000000000000000000000000000000000001")
+    weth_wbtc_1.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    weth_wbtc_1.fee_token0 = Fraction(0)
+    weth_wbtc_1.fee_token1 = Fraction(0)
+    weth_wbtc_1.token0 = weth_token
+    weth_wbtc_1.token1 = wbtc_token
+    weth_wbtc_1.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=20 * 10**weth_token.decimals,
+            reserves_token1=2 * 10**wbtc_token.decimals,
+        )
+    )
+
+    weth_wbtc_2 = MockLiquidityPool()
+    weth_wbtc_2.name = "Fake V2 Pool: WETH-WBTC (0%)"
+    weth_wbtc_2.address = get_checksum_address("0x0000000000000000000000000000000000000002")
+    weth_wbtc_2.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    weth_wbtc_2.fee_token0 = Fraction(0)
+    weth_wbtc_2.fee_token1 = Fraction(0)
+    weth_wbtc_2.token0 = weth_token
+    weth_wbtc_2.token1 = wbtc_token
+    weth_wbtc_2.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=20 * 10**weth_token.decimals,
+            reserves_token1=1 * 10**wbtc_token.decimals,
+        )
+    )
+
+    arb = _UniswapMultiPoolCycleTesting(
+        input_token=weth_token,
+        swap_pools=[
+            weth_wbtc_1,
+            weth_wbtc_2,
+        ],
+    )
+
+    result = arb.calculate()
+    print(f"{result.profit_amount=}")
+
+
+@pytest.mark.xfail(reason="Multi-pool with shared token pairs are WIP", strict=True)
+def test_base_4pool_repeated_pair(
+    wbtc_token: Erc20Token,
+    weth_token: Erc20Token,
+):
+    # fake prices:
+    # 1 WTBC = 20 WETH      (WETH = $5000)
+
+    weth_wbtc_1 = MockLiquidityPool()
+    weth_wbtc_1.name = "Fake V2 Pool: WETH-WBTC (0%)"
+    weth_wbtc_1.address = get_checksum_address("0x0000000000000000000000000000000000000001")
+    weth_wbtc_1.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    weth_wbtc_1.fee_token0 = Fraction(0)
+    weth_wbtc_1.fee_token1 = Fraction(0)
+    weth_wbtc_1.token0 = weth_token
+    weth_wbtc_1.token1 = wbtc_token
+    weth_wbtc_1.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=20 * 10**weth_token.decimals,
+            reserves_token1=2 * 10**wbtc_token.decimals,
+        )
+    )
+
+    weth_wbtc_2 = MockLiquidityPool()
+    weth_wbtc_2.name = "Fake V2 Pool: WETH-WBTC (0%)"
+    weth_wbtc_2.address = get_checksum_address("0x0000000000000000000000000000000000000002")
+    weth_wbtc_2.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    weth_wbtc_2.fee_token0 = Fraction(0)
+    weth_wbtc_2.fee_token1 = Fraction(0)
+    weth_wbtc_2.token0 = weth_token
+    weth_wbtc_2.token1 = wbtc_token
+    weth_wbtc_2.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=20 * 10**weth_token.decimals,
+            reserves_token1=1 * 10**wbtc_token.decimals,
+        )
+    )
+
+    weth_wbtc_3 = MockLiquidityPool()
+    weth_wbtc_3.name = "Fake V2 Pool: WETH-WBTC (0%)"
+    weth_wbtc_3.address = get_checksum_address("0x0000000000000000000000000000000000000003")
+    weth_wbtc_3.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    weth_wbtc_3.fee_token0 = Fraction(0)
+    weth_wbtc_3.fee_token1 = Fraction(0)
+    weth_wbtc_3.token0 = weth_token
+    weth_wbtc_3.token1 = wbtc_token
+    weth_wbtc_3.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=20 * 10**weth_token.decimals,
+            reserves_token1=1 * 10**wbtc_token.decimals,
+        )
+    )
+
+    weth_wbtc_4 = MockLiquidityPool()
+    weth_wbtc_4.name = "Fake V2 Pool: WETH-WBTC (0%)"
+    weth_wbtc_4.address = get_checksum_address("0x0000000000000000000000000000000000000004")
+    weth_wbtc_4.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+    weth_wbtc_4.fee_token0 = Fraction(0)
+    weth_wbtc_4.fee_token1 = Fraction(0)
+    weth_wbtc_4.token0 = weth_token
+    weth_wbtc_4.token1 = wbtc_token
+    weth_wbtc_4.external_update(
+        UniswapV2PoolExternalUpdate(
+            block_number=1,
+            reserves_token0=20 * 10**weth_token.decimals,
+            reserves_token1=1 * 10**wbtc_token.decimals,
+        )
+    )
+
+    arb = _UniswapMultiPoolCycleTesting(
+        input_token=weth_token,
+        swap_pools=[
+            weth_wbtc_1,
+            weth_wbtc_2,
+            weth_wbtc_3,
+            weth_wbtc_4,
+        ],
     )
 
     result = arb.calculate()
