@@ -112,6 +112,10 @@ def test_create_pool(fork_mainnet_full: AnvilFork):
     )
 
 
+def test_pickle_uniswap_v2_pool(ethereum_uniswap_v2_wbtc_weth_liquiditypool: UniswapV2Pool):
+    pickle.dumps(ethereum_uniswap_v2_wbtc_weth_liquiditypool)
+
+
 def test_from_exchange_deployment(fork_mainnet_full: AnvilFork):
     set_web3(fork_mainnet_full.w3)
 
