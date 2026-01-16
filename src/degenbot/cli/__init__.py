@@ -6,4 +6,4 @@ import click
 def cli() -> None: ...
 
 
-from . import database, exchange, pool  # noqa: F401, E402
+from . import aave, database, exchange, pool  # noqa: F401, E402
