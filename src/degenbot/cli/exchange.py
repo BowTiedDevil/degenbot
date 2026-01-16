@@ -3,7 +3,6 @@ import eth_typing
 from sqlalchemy import select
 
 from degenbot.cli import cli
-from degenbot.config import CONFIG_FILE, settings
 from degenbot.database import db_session
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.pools import PoolManagerTable
@@ -51,13 +50,6 @@ def deactivate() -> None:
     """
 
 
-def _check_configured_rpc(chain_id: int) -> None:
-    if chain_id not in settings.rpc:
-        click.echo(
-            f"An RPC for chain ID {chain_id} is not defined. Add one to {CONFIG_FILE} so that updates can be performed from the console."  # noqa: E501
-        )
-
-
 @activate.command("base_aerodrome_v2")
 def activate_base_aerodrome_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
@@ -66,8 +58,6 @@ def activate_base_aerodrome_v2(
     """
     Activate Aerodrome V2 on Base mainnet.
     """
-
-    _check_configured_rpc(chain_id)
 
     with db_session() as session:
         exchange = session.scalar(
@@ -106,8 +96,6 @@ def activate_base_aerodrome_v3(
     Activate Aerodrome V2 on Base mainnet.
     """
 
-    _check_configured_rpc(chain_id)
-
     with db_session() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -145,8 +133,6 @@ def activate_base_pancakeswap_v2(
     Activate Pancakeswap V2 on Base mainnet.
     """
 
-    _check_configured_rpc(chain_id)
-
     with db_session() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -183,8 +169,6 @@ def activate_base_pancakeswap_v3(
     """
     Activate Pancakeswap V3 on Base mainnet.
     """
-
-    _check_configured_rpc(chain_id)
 
     with db_session() as session:
         exchange = session.scalar(
@@ -224,8 +208,6 @@ def activate_base_swapbased_v2(
     Activate SwapBased V2 on Base mainnet.
     """
 
-    _check_configured_rpc(chain_id)
-
     with db_session() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -262,8 +244,6 @@ def activate_base_sushiswap_v2(
     """
     Activate Sushiswap V2 on Base mainnet.
     """
-
-    _check_configured_rpc(chain_id)
 
     with db_session() as session:
         exchange = session.scalar(
@@ -302,8 +282,6 @@ def activate_base_sushiswap_v3(
     Activate Sushiswap V3 on Base mainnet.
     """
 
-    _check_configured_rpc(chain_id)
-
     with db_session() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -340,8 +318,6 @@ def activate_base_uniswap_v2(
     """
     Activate Uniswap V2 on Base mainnet.
     """
-
-    _check_configured_rpc(chain_id)
 
     with db_session() as session:
         exchange = session.scalar(
@@ -380,8 +356,6 @@ def activate_base_uniswap_v3(
     Activate Uniswap V3 on Base mainnet.
     """
 
-    _check_configured_rpc(chain_id)
-
     with db_session() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -418,8 +392,6 @@ def activate_base_uniswap_v4(
     """
     Activate Uniswap V4 on Base mainnet.
     """
-
-    _check_configured_rpc(chain_id)
 
     exchange_kind = "uniswap_v4"
 
@@ -478,8 +450,6 @@ def activate_ethereum_pancakeswap_v2(
     Activate Pancakeswap V2 on Ethereum mainnet.
     """
 
-    _check_configured_rpc(chain_id)
-
     with db_session() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -516,8 +486,6 @@ def activate_ethereum_pancakeswap_v3(
     """
     Activate Pancakeswap V3 on Ethereum mainnet.
     """
-
-    _check_configured_rpc(chain_id)
 
     with db_session() as session:
         exchange = session.scalar(
@@ -557,8 +525,6 @@ def activate_ethereum_sushiswap_v2(
     Activate Sushiswap V2 on Ethereum mainnet.
     """
 
-    _check_configured_rpc(chain_id)
-
     with db_session() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -595,8 +561,6 @@ def activate_ethereum_sushiswap_v3(
     """
     Activate Sushiswap V3 on Ethereum mainnet.
     """
-
-    _check_configured_rpc(chain_id)
 
     with db_session() as session:
         exchange = session.scalar(
@@ -635,8 +599,6 @@ def activate_ethereum_uniswap_v2(
     Activate Uniswap V2 on Ethereum mainnet.
     """
 
-    _check_configured_rpc(chain_id)
-
     with db_session() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -674,8 +636,6 @@ def activate_ethereum_uniswap_v3(
     Activate Uniswap V3 on Ethereum mainnet.
     """
 
-    _check_configured_rpc(chain_id)
-
     with db_session() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -712,8 +672,6 @@ def activate_ethereum_uniswap_v4(
     """
     Activate Uniswap V4 on Ethereum mainnet.
     """
-
-    _check_configured_rpc(chain_id)
 
     exchange_kind = "uniswap_v4"
 

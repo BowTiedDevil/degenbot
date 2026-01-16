@@ -2,7 +2,6 @@ import contextlib
 import itertools
 from collections import defaultdict, deque
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, cast
 
 import click
@@ -12,16 +11,15 @@ import tqdm
 from eth_abi.abi import decode as abi_decode
 from eth_typing.evm import BlockParams, ChecksumAddress
 from hexbytes import HexBytes
-from pydantic import HttpUrl, WebsocketUrl
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
 from sqlalchemy.orm import Session
-from web3 import HTTPProvider, IPCProvider, LegacyWebSocketProvider, Web3
+from web3 import Web3
 from web3.types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
-from degenbot.config import CONFIG_FILE, settings
+from degenbot.cli.utils import get_web3_from_config
 from degenbot.constants import MAX_UINT256
 from degenbot.database import db_session
 from degenbot.database.models.base import ExchangeTable
@@ -2080,23 +2078,7 @@ def pool_update(chunk_size: int, to_block: str) -> None:
         )
 
         for chain_id in active_chains:
-            match endpoint := settings.rpc.get(chain_id):
-                case HttpUrl():
-                    w3 = Web3(HTTPProvider(str(endpoint)))
-                case WebsocketUrl():
-                    w3 = Web3(LegacyWebSocketProvider(str(endpoint)))
-                case Path():
-                    w3 = Web3(IPCProvider(str(endpoint)))
-                case None:
-                    msg = f"Chain ID {chain_id} does not have an RPC defined in config file {CONFIG_FILE}"
-                    raise ValueError(msg)
-
-            if w3.eth.chain_id != chain_id:
-                msg = (
-                    f"The chain ID ({w3.eth.chain_id}) at endpoint {endpoint} does not match "
-                    f"the chain ID ({chain_id}) defined in the config file."
-                )
-                raise ValueError(msg)
+            w3 = get_web3_from_config(chain_id)
 
             active_exchanges = session.scalars(
                 select(ExchangeTable).where(
