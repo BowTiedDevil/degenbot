@@ -79,7 +79,7 @@ def weth_base_token(fork_base_full: AnvilFork) -> Erc20Token:
 
 
 @pytest.fixture
-def xxx_token(fork_base_full: AnvilFork) -> Erc20Token:
+def xxx_base_token(fork_base_full: AnvilFork) -> Erc20Token:
     set_web3(fork_base_full.w3)
     return Erc20Token("0x09C07E80bFeEd81130498516F5C07aA0715794Bb")
 
@@ -125,7 +125,7 @@ def wbtc_pool_b(wbtc_token, weth_token) -> MockLiquidityPool:
 
 
 @pytest.fixture
-def test_pool_a(xxx_token, weth_base_token) -> MockLiquidityPool:
+def test_pool_base_a(xxx_base_token, weth_base_token) -> MockLiquidityPool:
     lp = MockLiquidityPool()
     lp.name = ""
     lp.address = get_checksum_address("0x214356Cc4aAb907244A791CA9735292860490D5A")
@@ -140,12 +140,12 @@ def test_pool_a(xxx_token, weth_base_token) -> MockLiquidityPool:
         )
     )
     lp.token0 = weth_base_token
-    lp.token1 = xxx_token
+    lp.token1 = xxx_base_token
     return lp
 
 
 @pytest.fixture
-def test_pool_b(xxx_token, weth_base_token) -> MockLiquidityPool:
+def test_pool_base_b(xxx_base_token, weth_base_token) -> MockLiquidityPool:
     lp = MockLiquidityPool()
     lp.name = ""
     lp.address = get_checksum_address("0x404E927b203375779a6aBD52A2049cE0ADf6609B")
@@ -160,7 +160,7 @@ def test_pool_b(xxx_token, weth_base_token) -> MockLiquidityPool:
         )
     )
     lp.token0 = weth_base_token
-    lp.token1 = xxx_token
+    lp.token1 = xxx_base_token
     return lp
 
 
@@ -589,25 +589,26 @@ def test_2pool_uniswap_v2_double_decimal_corrected(
     print(f"Actual profit                         = {weth_out - weth_in}")
 
 
+@pytest.mark.base
 def test_base_2pool(
-    test_pool_a: MockLiquidityPool,
-    test_pool_b: MockLiquidityPool,
+    test_pool_base_a: MockLiquidityPool,
+    test_pool_base_b: MockLiquidityPool,
     weth_base_token: Erc20Token,
 ):
     profit_token = weth_base_token
 
-    pool_a_roe = test_pool_a.get_absolute_exchange_rate(token=profit_token)
-    pool_b_roe = test_pool_b.get_absolute_exchange_rate(token=profit_token)
+    pool_a_roe = test_pool_base_a.get_absolute_exchange_rate(token=profit_token)
+    pool_b_roe = test_pool_base_b.get_absolute_exchange_rate(token=profit_token)
 
     if pool_a_roe > pool_b_roe:
-        pool_hi = test_pool_a
-        pool_lo = test_pool_b
+        pool_hi = test_pool_base_a
+        pool_lo = test_pool_base_b
     else:
-        pool_hi = test_pool_b
-        pool_lo = test_pool_a
+        pool_hi = test_pool_base_b
+        pool_lo = test_pool_base_a
 
-    assert pool_hi == test_pool_a
-    assert pool_lo == test_pool_b
+    assert pool_hi == test_pool_base_a
+    assert pool_lo == test_pool_base_b
 
     num_pools = 2
     num_tokens = 2

@@ -16,6 +16,8 @@ PANCAKE_V2_ROUTER_ABI = pydantic_core.from_json(
     """
 )
 
+pytestmark = pytest.mark.base
+
 
 @pytest.fixture
 def test_pools() -> Any:

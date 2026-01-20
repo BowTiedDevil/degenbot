@@ -384,6 +384,7 @@ def test_creation_with_invalid_hash(fork_mainnet_full: AnvilFork) -> None:
     )
 
 
+@pytest.mark.base
 def test_creation_with_wrong_pool_type(fork_base_full: AnvilFork) -> None:
     set_web3(fork_base_full.w3)
 
@@ -394,6 +395,7 @@ def test_creation_with_wrong_pool_type(fork_base_full: AnvilFork) -> None:
         UniswapV3Pool(pancake_pool_address)
 
 
+@pytest.mark.base
 def test_pancake_v3_pool_creation(fork_base_full: AnvilFork) -> None:
     set_web3(fork_base_full.w3)
     PancakeswapV3Pool("0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E")
@@ -1322,6 +1324,7 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
     )
 
 
+@pytest.mark.base
 def test_base_pancakeswap_v3(fork_base_full: AnvilFork):
     set_web3(fork_base_full.w3)
 
@@ -1332,6 +1335,7 @@ def test_base_pancakeswap_v3(fork_base_full: AnvilFork):
     )
 
 
+@pytest.mark.base
 def test_base_pancakeswap_v3_with_builtin_exchange(fork_base_full: AnvilFork):
     set_web3(fork_base_full.w3)
 

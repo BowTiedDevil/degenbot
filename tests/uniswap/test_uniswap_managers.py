@@ -74,6 +74,7 @@ BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
 )
 
 
+@pytest.mark.base
 def test_create_base_chain_managers(fork_base_full: AnvilFork):
     set_web3(fork_base_full.w3)
 
@@ -101,6 +102,7 @@ def test_create_base_chain_managers(fork_base_full: AnvilFork):
         UniswapV3PoolManager(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS)
 
 
+@pytest.mark.base
 def test_base_pancake_v3_pool_manager(fork_base_full: AnvilFork):
     set_web3(fork_base_full.w3)
     pancakev3_lp_manager = PancakeswapV3PoolManager(
@@ -119,6 +121,7 @@ def test_base_pancake_v3_pool_manager(fork_base_full: AnvilFork):
     )
 
 
+@pytest.mark.base
 def test_base_pancake_v3_pool_manager_from_exchange(fork_base_full: AnvilFork):
     set_web3(fork_base_full.w3)
     PancakeswapV3PoolManager.from_exchange(BASE_PANCAKESWAP_V3_EXCHANGE)

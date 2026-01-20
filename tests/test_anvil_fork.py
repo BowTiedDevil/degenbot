@@ -205,6 +205,7 @@ def test_reset_and_set_next_block_base_fee():
     assert fork.w3.eth.get_block(starting_block - 9)["baseFeePerGas"] == base_fee_override
 
 
+@pytest.mark.base
 def test_reset_to_new_endpoint():
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,

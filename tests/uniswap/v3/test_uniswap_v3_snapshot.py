@@ -83,6 +83,7 @@ def base_snapshot_from_database(
     )
 
 
+@pytest.mark.base
 def test_snapshot_fixtures(
     empty_mainnet_snapshot_from_file: UniswapV3LiquiditySnapshot,
     empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
@@ -92,6 +93,7 @@ def test_snapshot_fixtures(
 ): ...
 
 
+@pytest.mark.base
 def test_fetch_pool_from_database_snapshot(
     base_snapshot_from_database: UniswapV3LiquiditySnapshot,
     fork_base_full: AnvilFork,
