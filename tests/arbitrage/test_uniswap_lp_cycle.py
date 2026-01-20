@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from weakref import WeakSet
 
 import pytest
+from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage import UniswapLpCycle
@@ -24,6 +25,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import set_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
+from degenbot.erc20.manager import Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import ArbitrageError, RateOfExchangeBelowMinimum
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -54,20 +56,18 @@ WBTC_WETH_V3_POOL_ADDRESS = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 @pytest.fixture
 def wbtc_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
     set_web3(fork_mainnet_full.w3)
-    return Erc20Token(WBTC_ADDRESS)
+    return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WBTC_ADDRESS)
 
 
 @pytest.fixture
 def weth_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
     set_web3(fork_mainnet_full.w3)
-    return Erc20Token(WETH_ADDRESS)
+    return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WETH_ADDRESS)
 
 
 @pytest.fixture
 def wbtc_weth_v2_lp(
     fork_mainnet_full: AnvilFork,
-    _wbtc_token,
-    _weth_token,
 ) -> UniswapV2Pool:
     set_web3(fork_mainnet_full.w3)
     pool = UniswapV2Pool(WBTC_WETH_V2_POOL_ADDRESS)
