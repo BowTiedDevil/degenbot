@@ -197,6 +197,11 @@ pythonpath = "src"
 python_files = "test_*.py"
 testpaths = "tests"
 filterwarnings = ["ignore::DeprecationWarning:websockets.legacy"]
+markers = [
+    "arbitrum: tests requiring an Arbitrum One mainnet RPC",
+    "base: tests requiring a Base mainnet RPC",
+    "ethereum: tests requiring an Ethereum mainnet RPC",
+]
 
 [dependency-groups]
 dev = [
