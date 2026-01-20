@@ -3,13 +3,16 @@ authors = ["BowTiedDevil <devil@bowtieddevil.com>"]
 name = "degenbot_rs"
 description = "Rust implementations used by the degenbot Python package."
 edition = "2024"
+publish = false
+repository = "https://github.com/BowTiedDevil/degenbot"
+license = "MIT"
 
 [lib]
 name = "degenbot_rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-alloy-primitives = { version = "*" }
-num-bigint = { version = "*" }
-pyo3 = { version = "0.26", features = [ "extension-module", "num-bigint"] }
-rayon = { version = "*" }
+alloy-primitives = { version = "1.5" }
+num-bigint = { version = "0.4" }
+pyo3 = { version = "0.27", features = [ "extension-module", "num-bigint"] }
+rayon = { version = "1.11" }
