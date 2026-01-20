@@ -2,20 +2,20 @@ import pytest
 from hypothesis import given, settings
 from hypothesis.strategies import integers
 
-from degenbot.aave.libraries.v3_4 import (
-    ray_div,
-    ray_mul,
-    ray_to_wad,
-    wad_div,
-    wad_mul,
-    wad_to_ray,
-)
 from degenbot.aave.libraries.v3_4.constants import (
     HALF_RAY,
     HALF_WAD,
     RAY,
     WAD,
     WAD_RAY_RATIO,
+)
+from degenbot.aave.libraries.v3_4.wad_ray_math import (
+    ray_div,
+    ray_mul,
+    ray_to_wad,
+    wad_div,
+    wad_mul,
+    wad_to_ray,
 )
 from degenbot.constants import MAX_UINT256
 from degenbot.exceptions.evm import EVMRevertError
