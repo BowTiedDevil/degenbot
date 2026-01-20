@@ -5,6 +5,7 @@ use alloy_primitives::{
 };
 use num_bigint::BigUint;
 use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
     types::{PyBytes, PyString},
 };
@@ -163,8 +164,11 @@ pub fn get_tick_at_sqrt_ratio_alloy(sqrt_price_x96: U160) -> I24 {
     }
 }
 
-pub fn to_checksum_address_alloy(address: &str) -> String {
-    address.parse::<Address>().unwrap().to_string()
+pub fn to_checksum_address_alloy(address: &str) -> Result<String, String> {
+    address
+        .parse::<Address>()
+        .map(|addr| addr.to_string())
+        .map_err(|e| e.to_string())
 }
 
 pub fn to_checksum_address_native(address: &str) -> String {
@@ -188,72 +192,80 @@ pub fn to_checksum_address_native(address: &str) -> String {
 }
 
 #[pyfunction]
-pub fn to_checksum_address(address: Bound<'_, PyAny>) -> String {
-    let mut _address: String = String::with_capacity(40);
-
+pub fn to_checksum_address(address: Bound<'_, PyAny>) -> PyResult<String> {
     if address.is_instance_of::<PyString>() {
-        to_checksum_address_alloy(address.extract().unwrap())
+        let address_str: String = address.extract()?;
+        to_checksum_address_alloy(&address_str).map_err(|e| PyErr::new::<PyValueError, _>(e))
     } else if address.is_instance_of::<PyBytes>() {
-        let address_bytes: [u8; 20] = address.extract().unwrap();
-        let address_hex: String = address_bytes
+        let address_bytes: Vec<u8> = address.extract()?;
+        if address_bytes.len() != 20 {
+            return Err(PyErr::new::<PyValueError, _>("Address must be 20 bytes"));
+        }
+        let address_array: [u8; 20] = address_bytes
+            .try_into()
+            .map_err(|_| PyErr::new::<PyValueError, _>("Address must be 20 bytes"))?;
+        let address_hex: String = address_array
             .iter()
             .map(|b: &u8| format!("{:02x}", b))
             .collect();
-        to_checksum_address_alloy(&address_hex)
+        to_checksum_address_alloy(&address_hex).map_err(|e| PyErr::new::<PyValueError, _>(e))
     } else {
-        panic!("Address must be string or bytes")
+        Err(PyErr::new::<PyTypeError, _>(
+            "Address must be string or bytes",
+        ))
     }
 }
 
 #[pyfunction]
-pub fn to_checksum_addresses_parallel(addresses: Bound<'_, PyAny>) -> Vec<String> {
-    let _addresses = addresses.extract::<Vec<[u8; 20]>>().unwrap();
+pub fn to_checksum_addresses_parallel(addresses: Bound<'_, PyAny>) -> PyResult<Vec<String>> {
+    let _addresses = addresses.extract::<Vec<[u8; 20]>>()?;
 
     let checksummed: Vec<String> = _addresses
         .par_iter()
         .map(|address| {
             let address_hex: String = address.iter().map(|b: &u8| format!("{:02x}", b)).collect();
-            to_checksum_address_alloy(&address_hex)
+            to_checksum_address_alloy(&address_hex).map_err(|e| PyErr::new::<PyValueError, _>(e))
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
-    checksummed
+    Ok(checksummed)
 }
 
 #[pyfunction]
-pub fn to_checksum_addresses_sequential(addresses: Bound<'_, PyAny>) -> Vec<String> {
-    let _addresses = addresses.extract::<Vec<[u8; 20]>>().unwrap();
+pub fn to_checksum_addresses_sequential(addresses: Bound<'_, PyAny>) -> PyResult<Vec<String>> {
+    let _addresses = addresses.extract::<Vec<[u8; 20]>>()?;
 
     let checksummed: Vec<String> = _addresses
         .iter()
         .map(|addr| {
             let address_hex: String = addr.iter().map(|b: &u8| format!("{:02x}", b)).collect();
-            to_checksum_address_alloy(&address_hex)
+            to_checksum_address_alloy(&address_hex).map_err(|e| PyErr::new::<PyValueError, _>(e))
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
-    checksummed
+    Ok(checksummed)
 }
 
 #[pymodule]
 fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(get_sqrt_ratio_at_tick_alloy_translator, m).unwrap())
-        .unwrap();
-    m.add_function(wrap_pyfunction!(get_tick_at_sqrt_ratio_alloy_translator, m).unwrap())
-        .unwrap();
+    m.add_function(wrap_pyfunction!(
+        get_sqrt_ratio_at_tick_alloy_translator,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        get_tick_at_sqrt_ratio_alloy_translator,
+        m
+    )?)?;
 
-    m.add_function(wrap_pyfunction!(to_checksum_address, m).unwrap())
-        .unwrap();
-    m.add_function(wrap_pyfunction!(to_checksum_addresses_parallel, m).unwrap())
-        .unwrap();
-    m.add_function(wrap_pyfunction!(to_checksum_addresses_sequential, m).unwrap())
-        .unwrap();
+    m.add_function(wrap_pyfunction!(to_checksum_address, m)?)?;
+    m.add_function(wrap_pyfunction!(to_checksum_addresses_parallel, m)?)?;
+    m.add_function(wrap_pyfunction!(to_checksum_addresses_sequential, m)?)?;
 
     Ok(())
 }
 
 #[test]
-fn test_tickmath() -> () {
+fn test_tickmath() {
     use std::str::FromStr;
 
     const MIN_TICK: i32 = -887272;
@@ -274,5 +286,138 @@ fn test_tickmath() -> () {
     assert_eq!(
         get_sqrt_ratio_at_tick_alloy(MAX_TICK),
         U160::from_str("1461446703485210103287273052203988822378723970342").unwrap(),
+    );
+}
+
+#[test]
+fn test_tickmath_mid_values() {
+    use std::str::FromStr;
+
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(0),
+        U160::from_str("79228162514264337593543950336").unwrap()
+    );
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(1),
+        U160::from_str("79232123823359799118286999568").unwrap()
+    );
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(-1),
+        U160::from_str("79224201403219477170569942574").unwrap()
+    );
+}
+
+#[test]
+fn test_tickmath_negative_values() {
+    use std::str::FromStr;
+
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(-100000),
+        U160::from_str("533968626430936354154228408").unwrap()
+    );
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(-500000),
+        U160::from_str("1101692437043807371").unwrap()
+    );
+}
+
+#[test]
+fn test_tickmath_positive_values() {
+    use std::str::FromStr;
+
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(100000),
+        U160::from_str("11755562826496067164730007768450").unwrap()
+    );
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(500000),
+        U160::from_str("5697689776495288729098254600827762987878").unwrap()
+    );
+}
+
+#[test]
+fn test_tickmath_additional_values() {
+    use std::str::FromStr;
+
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(10000),
+        U160::from_str("130621891405341611593710811006").unwrap()
+    );
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(-10000),
+        U160::from_str("48055510970269007215549348797").unwrap()
+    );
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(1000),
+        U160::from_str("83290069058676223003182343270").unwrap()
+    );
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(-1000),
+        U160::from_str("75364347830767020784054125655").unwrap()
+    );
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(100),
+        U160::from_str("79625275426524748796330556128").unwrap()
+    );
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(-100),
+        U160::from_str("78833030112140176575862854579").unwrap()
+    );
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(10),
+        U160::from_str("79267784519130042428790663799").unwrap()
+    );
+    assert_eq!(
+        get_sqrt_ratio_at_tick_alloy(-10),
+        U160::from_str("79188560314459151373725315960").unwrap()
+    );
+}
+
+#[test]
+fn test_tickmath_roundtrip() {
+    let ticks = [
+        -500000, -100000, -10000, -1000, -100, -10, -1, 0, 1, 10, 100, 1000, 10000, 100000, 500000,
+    ];
+
+    for tick in ticks {
+        let ratio = get_sqrt_ratio_at_tick_alloy(tick);
+        let tick_back = get_tick_at_sqrt_ratio_alloy(ratio);
+        assert_eq!(tick_back.as_i32(), tick);
+    }
+}
+
+#[test]
+fn test_tickmath_boundary_roundtrip() {
+    let min_ratio = get_sqrt_ratio_at_tick_alloy(-887272);
+    assert_eq!(
+        get_tick_at_sqrt_ratio_alloy(min_ratio),
+        I24::unchecked_from(-887272)
+    );
+
+    let max_ratio = get_sqrt_ratio_at_tick_alloy(887272);
+    let max_ratio_minus_one = U256::from(max_ratio) - U256::ONE;
+    assert_eq!(
+        get_tick_at_sqrt_ratio_alloy(U160::from(max_ratio_minus_one)),
+        I24::unchecked_from(887271)
+    );
+}
+
+#[test]
+fn test_to_checksum_address_edge_cases() {
+    assert_eq!(
+        to_checksum_address_alloy("0x0000000000000000000000000000000000000000").unwrap(),
+        "0x0000000000000000000000000000000000000000"
+    );
+    assert_eq!(
+        to_checksum_address_alloy("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+        "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa"
+    );
+    assert_eq!(
+        to_checksum_address_alloy("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF").unwrap(),
+        "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF"
+    );
+    assert_eq!(
+        to_checksum_address_alloy("0xfb6916095ca1df60bb79ce92ce3ea74c37c5d359").unwrap(),
+        "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359"
     );
 }
