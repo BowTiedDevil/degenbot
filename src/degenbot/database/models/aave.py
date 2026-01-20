@@ -65,7 +65,9 @@ class AaveV3AssetsTable(Base):
     market_id: Mapped[ForeignKeyAaveMarketId]
     underlying_asset_id: Mapped[ForeignKeyTokenId]
     a_token_id: Mapped[ForeignKeyTokenId]
+    a_token_revision: Mapped[int]
     v_token_id: Mapped[ForeignKeyTokenId]
+    v_token_revision: Mapped[int]
 
     last_update_block: Mapped[int | None]
     liquidity_index: Mapped[BigInteger]
