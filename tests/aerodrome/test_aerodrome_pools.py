@@ -346,15 +346,13 @@ def test_aerodrome_v3_pool_calculation(fork_base_full: AnvilFork) -> None:
             token_in=lp.token0,
             token_in_quantity=token_in_amount,
         )
-        quoter_amount_out, *_ = quoter.functions.quoteExactInputSingle(
-            [
-                lp.token0.address,  # tokenIn
-                lp.token1.address,  # tokenOut
-                token_in_amount,  # amountIn
-                lp.tick_spacing,  # tickSpacing
-                MIN_SQRT_RATIO + 1,  # sqrtPriceLimitX96
-            ]
-        ).call()
+        quoter_amount_out, *_ = quoter.functions.quoteExactInputSingle([
+            lp.token0.address,  # tokenIn
+            lp.token1.address,  # tokenOut
+            token_in_amount,  # amountIn
+            lp.tick_spacing,  # tickSpacing
+            MIN_SQRT_RATIO + 1,  # sqrtPriceLimitX96
+        ]).call()
 
         assert helper_amount_out == quoter_amount_out
 
@@ -366,14 +364,12 @@ def test_aerodrome_v3_pool_calculation(fork_base_full: AnvilFork) -> None:
             token_in=lp.token1,
             token_in_quantity=token_in_amount,
         )
-        quoter_amount_out, *_ = quoter.functions.quoteExactInputSingle(
-            [
-                lp.token1.address,  # tokenIn
-                lp.token0.address,  # tokenOut
-                token_in_amount,  # amountIn
-                lp.tick_spacing,  # tickSpacing
-                MAX_SQRT_RATIO - 1,  # sqrtPriceLimitX96
-            ]
-        ).call()
+        quoter_amount_out, *_ = quoter.functions.quoteExactInputSingle([
+            lp.token1.address,  # tokenIn
+            lp.token0.address,  # tokenOut
+            token_in_amount,  # amountIn
+            lp.tick_spacing,  # tickSpacing
+            MAX_SQRT_RATIO - 1,  # sqrtPriceLimitX96
+        ]).call()
 
         assert helper_amount_out == quoter_amount_out

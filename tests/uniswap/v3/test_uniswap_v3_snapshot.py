@@ -143,94 +143,82 @@ def test_fetch_liquidity_events_first_250_blocks(
     assert (
         empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870._liquidity_events
         == {
-            "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801": deque(
-                [
-                    UniswapV3LiquidityEvent(
-                        block_number=12369739,
-                        liquidity=383995753785830744,
-                        tick_lower=-50580,
-                        tick_upper=-36720,
-                        tx_index=33,
-                        log_index=29,
-                    )
-                ]
-            ),
-            "0x6c6Bc977E13Df9b0de53b251522280BB72383700": deque(
-                [
-                    UniswapV3LiquidityEvent(
-                        block_number=12369760,
-                        liquidity=3964498619038659,
-                        tick_lower=-276330,
-                        tick_upper=-276320,
-                        tx_index=82,
-                        log_index=84,
-                    ),
-                    UniswapV3LiquidityEvent(
-                        block_number=12369823,
-                        liquidity=2698389804940873511,
-                        tick_lower=-276400,
-                        tick_upper=-276250,
-                        tx_index=19,
-                        log_index=27,
-                    ),
-                ]
-            ),
-            "0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387": deque(
-                [
-                    UniswapV3LiquidityEvent(
-                        block_number=12369811,
-                        liquidity=123809464957093,
-                        tick_lower=192200,
-                        tick_upper=198000,
-                        tx_index=255,
-                        log_index=152,
-                    )
-                ]
-            ),
-            "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD": deque(
-                [
-                    UniswapV3LiquidityEvent(
-                        block_number=12369821,
-                        liquidity=34399999543676,
-                        tick_lower=253320,
-                        tick_upper=264600,
-                        tx_index=17,
-                        log_index=48,
-                    ),
-                    UniswapV3LiquidityEvent(
-                        block_number=12369846,
-                        liquidity=2154941425,
-                        tick_lower=255540,
-                        tick_upper=262440,
-                        tx_index=119,
-                        log_index=236,
-                    ),
-                ]
-            ),
-            "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8": deque(
-                [
-                    UniswapV3LiquidityEvent(
-                        block_number=12369854,
-                        liquidity=80059851033970806503,
-                        tick_lower=-84120,
-                        tick_upper=-78240,
-                        tx_index=85,
-                        log_index=67,
-                    )
-                ]
-            ),
-            "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf": deque(
-                [
-                    UniswapV3LiquidityEvent(
-                        block_number=12369863,
-                        liquidity=21206360421978,
-                        tick_lower=-10,
-                        tick_upper=10,
-                        tx_index=43,
-                        log_index=11,
-                    )
-                ]
-            ),
+            "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801": deque([
+                UniswapV3LiquidityEvent(
+                    block_number=12369739,
+                    liquidity=383995753785830744,
+                    tick_lower=-50580,
+                    tick_upper=-36720,
+                    tx_index=33,
+                    log_index=29,
+                )
+            ]),
+            "0x6c6Bc977E13Df9b0de53b251522280BB72383700": deque([
+                UniswapV3LiquidityEvent(
+                    block_number=12369760,
+                    liquidity=3964498619038659,
+                    tick_lower=-276330,
+                    tick_upper=-276320,
+                    tx_index=82,
+                    log_index=84,
+                ),
+                UniswapV3LiquidityEvent(
+                    block_number=12369823,
+                    liquidity=2698389804940873511,
+                    tick_lower=-276400,
+                    tick_upper=-276250,
+                    tx_index=19,
+                    log_index=27,
+                ),
+            ]),
+            "0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387": deque([
+                UniswapV3LiquidityEvent(
+                    block_number=12369811,
+                    liquidity=123809464957093,
+                    tick_lower=192200,
+                    tick_upper=198000,
+                    tx_index=255,
+                    log_index=152,
+                )
+            ]),
+            "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD": deque([
+                UniswapV3LiquidityEvent(
+                    block_number=12369821,
+                    liquidity=34399999543676,
+                    tick_lower=253320,
+                    tick_upper=264600,
+                    tx_index=17,
+                    log_index=48,
+                ),
+                UniswapV3LiquidityEvent(
+                    block_number=12369846,
+                    liquidity=2154941425,
+                    tick_lower=255540,
+                    tick_upper=262440,
+                    tx_index=119,
+                    log_index=236,
+                ),
+            ]),
+            "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8": deque([
+                UniswapV3LiquidityEvent(
+                    block_number=12369854,
+                    liquidity=80059851033970806503,
+                    tick_lower=-84120,
+                    tick_upper=-78240,
+                    tx_index=85,
+                    log_index=67,
+                )
+            ]),
+            "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf": deque([
+                UniswapV3LiquidityEvent(
+                    block_number=12369863,
+                    liquidity=21206360421978,
+                    tick_lower=-10,
+                    tick_upper=10,
+                    tx_index=43,
+                    log_index=11,
+                )
+            ]),
         }
     )
 

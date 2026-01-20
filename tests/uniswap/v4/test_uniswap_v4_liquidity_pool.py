@@ -147,14 +147,12 @@ def _test_pool_exact_input(
         token0_in_amount = max(1, int(token_mult * max_reserves_token0))
 
         try:
-            quoter_amount_out, _ = quoter.functions.quoteExactInputSingle(
-                (
-                    dataclasses.astuple(lp.pool_key),  # poolKey
-                    True,  # zeroForOne
-                    token0_in_amount,  # exactAmount
-                    b"",  # hookData
-                )
-            ).call()
+            quoter_amount_out, _ = quoter.functions.quoteExactInputSingle((
+                dataclasses.astuple(lp.pool_key),  # poolKey
+                True,  # zeroForOne
+                token0_in_amount,  # exactAmount
+                b"",  # hookData
+            )).call()
         except ContractLogicError:
             continue
 
@@ -186,14 +184,12 @@ def _test_pool_exact_input(
         token1_in_amount = max(1, int(token_mult * max_reserves_token1))
 
         try:
-            quoter_amount_out, _ = quoter.functions.quoteExactInputSingle(
-                (
-                    dataclasses.astuple(lp.pool_key),  # poolKey
-                    False,  # zeroForOne
-                    token1_in_amount,  # exactAmount
-                    b"",  # hookData
-                )
-            ).call()
+            quoter_amount_out, _ = quoter.functions.quoteExactInputSingle((
+                dataclasses.astuple(lp.pool_key),  # poolKey
+                False,  # zeroForOne
+                token1_in_amount,  # exactAmount
+                b"",  # hookData
+            )).call()
         except ContractLogicError:
             continue
 
@@ -271,14 +267,12 @@ def _test_pool_exact_output(
         token0_out_amount = int(token_mult * max_reserves_token0)
 
         try:
-            quoter_amount_in, _ = quoter.functions.quoteExactOutputSingle(
-                (
-                    dataclasses.astuple(lp.pool_key),  # poolKey
-                    False,  # zeroForOne
-                    token0_out_amount,  # exactAmount
-                    b"",  # hookData
-                )
-            ).call()
+            quoter_amount_in, _ = quoter.functions.quoteExactOutputSingle((
+                dataclasses.astuple(lp.pool_key),  # poolKey
+                False,  # zeroForOne
+                token0_out_amount,  # exactAmount
+                b"",  # hookData
+            )).call()
         except ContractLogicError:
             continue
 
@@ -310,14 +304,12 @@ def _test_pool_exact_output(
         token1_out_amount = int(token_mult * max_reserves_token1)
 
         try:
-            quoter_amount_in, _ = quoter.functions.quoteExactOutputSingle(
-                (
-                    dataclasses.astuple(lp.pool_key),  # poolKey
-                    True,  # zeroForOne
-                    token1_out_amount,  # exactAmount
-                    b"",  # hookData
-                )
-            ).call()
+            quoter_amount_in, _ = quoter.functions.quoteExactOutputSingle((
+                dataclasses.astuple(lp.pool_key),  # poolKey
+                True,  # zeroForOne
+                token1_out_amount,  # exactAmount
+                b"",  # hookData
+            )).call()
         except ContractLogicError:
             continue
 
@@ -388,26 +380,22 @@ def test_cached_calculations(
         (eth_usdc_v4.token1, eth_usdc_v4.token0),
     ]:
         try:
-            quoter_amount_in, _ = quoter.functions.quoteExactOutputSingle(
-                (
-                    dataclasses.astuple(eth_usdc_v4.pool_key),  # poolKey
-                    token_in is eth_usdc_v4.token0,  # zeroForOne
-                    amount,  # exactAmount
-                    b"",  # hookData
-                )
-            ).call()
+            quoter_amount_in, _ = quoter.functions.quoteExactOutputSingle((
+                dataclasses.astuple(eth_usdc_v4.pool_key),  # poolKey
+                token_in is eth_usdc_v4.token0,  # zeroForOne
+                amount,  # exactAmount
+                b"",  # hookData
+            )).call()
         except ContractLogicError:
             continue
 
         try:
-            quoter_amount_out, _ = quoter.functions.quoteExactInputSingle(
-                (
-                    dataclasses.astuple(eth_usdc_v4.pool_key),  # poolKey
-                    token_in is eth_usdc_v4.token0,  # zeroForOne
-                    amount,  # exactAmount
-                    b"",  # hookData
-                )
-            ).call()
+            quoter_amount_out, _ = quoter.functions.quoteExactInputSingle((
+                dataclasses.astuple(eth_usdc_v4.pool_key),  # poolKey
+                token_in is eth_usdc_v4.token0,  # zeroForOne
+                amount,  # exactAmount
+                b"",  # hookData
+            )).call()
         except ContractLogicError:
             continue
 
