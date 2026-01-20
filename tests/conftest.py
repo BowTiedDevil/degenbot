@@ -211,12 +211,10 @@ class FakeSubscriber:
         self.inbox: list[dict[str, Any]] = []
 
     def notify(self, publisher: Publisher, message: AbstractPublisherMessage) -> None:
-        self.inbox.append(
-            {
-                "from": publisher,
-                "message": message,
-            }
-        )
+        self.inbox.append({
+            "from": publisher,
+            "message": message,
+        })
 
     def subscribe(self, publisher: Publisher) -> None:
         publisher.subscribe(self)
