@@ -204,7 +204,6 @@ dev = [
     "maturin",
     "pytest",
     "pytest-asyncio",
-    "pytest-benchmark",
     "pytest-cov",
     "pytest-random-order",
     "pytest-sugar",
