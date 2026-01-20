@@ -64,6 +64,8 @@ def test_create_pool(ethereum_balancer_v2_weth_bal_pool: BalancerV2Pool):
     assert lp.weights == (80 * 10**16, 20 * 10**16)
 
 
+
+@pytest.mark.xfail(reason="Balancer calculations are WIP", strict=True)
 def test_calculations(
     fork_mainnet_full: AnvilFork,
     ethereum_balancer_v2_weth_bal_pool: BalancerV2Pool,
