@@ -106,7 +106,7 @@ def _set_degenbot_logging():
     logger.setLevel(logging.DEBUG)
 
 
-@pytest.fixture  # (scope="session")
+@pytest.fixture
 def fork_arbitrum_full() -> Generator[AnvilFork, None, None]:
     fork = AnvilFork(
         fork_url=ARBITRUM_FULL_NODE_HTTP_URI,
@@ -118,7 +118,7 @@ def fork_arbitrum_full() -> Generator[AnvilFork, None, None]:
     fork.close()
 
 
-@pytest.fixture  # (scope="session")
+@pytest.fixture
 def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, None, None]:
     """
     An AnvilFork using the default mainnet archive node. To fork from a specific block, parametrize
@@ -148,7 +148,7 @@ def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, No
     fork.close()
 
 
-@pytest.fixture  # (scope="session")
+@pytest.fixture
 def fork_base_full() -> Generator[AnvilFork, None, None]:
     fork = AnvilFork(
         fork_url=BASE_FULL_NODE_HTTP_URI,
@@ -159,7 +159,7 @@ def fork_base_full() -> Generator[AnvilFork, None, None]:
     fork.close()
 
 
-@pytest.fixture  # (scope="session")
+@pytest.fixture
 def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, None, None]:
     """
     An AnvilFork using the default mainnet archive node. To fork from a specific block, parametrize
@@ -189,8 +189,8 @@ def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork,
     fork.close()
 
 
-@pytest.fixture  # (scope="session")
-def fork_mainnet_full():  # -> Generator[AnvilFork, None, None]:
+@pytest.fixture
+def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
         ipc_provider_kwargs={"timeout": None},
