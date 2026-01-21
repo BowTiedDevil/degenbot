@@ -2,8 +2,9 @@
 # TODO: add scraper for collateral usage enabled events
 
 import operator
+from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import click
 import eth_abi.abi
@@ -17,6 +18,7 @@ from web3.types import LogReceipt
 
 import degenbot.aave.libraries.v3_1 as aave_library_v3_1
 import degenbot.aave.libraries.v3_2 as aave_library_v3_2
+import degenbot.aave.libraries.v3_3 as aave_library_v3_3
 from degenbot.aave.deployments import EthereumMainnetAaveV3
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
@@ -699,6 +701,143 @@ def _process_scaled_token_upgrade_event(
 users_to_check: dict[ChecksumAddress, int] = {}
 
 
+class WadRayMathLibrary(Protocol):
+    def ray_div(self, a: int, b: int) -> int: ...
+
+
+def _get_wad_ray_math_library(token_revision: int) -> WadRayMathLibrary:
+    if token_revision == 1:
+        return aave_library_v3_1.wad_ray_math
+    if token_revision == 2:  # noqa: PLR2004
+        return aave_library_v3_2.wad_ray_math
+    if token_revision == 3:  # noqa: PLR2004
+        return aave_library_v3_3.wad_ray_math
+    msg = f"Unsupported revision: {token_revision}"
+    raise ValueError(msg)
+
+
+type BalanceDelta = int
+type UserOperation = str
+
+
+@dataclass(frozen=True, slots=True)
+class CollateralMintEvent:
+    value: int
+    balance_increase: int
+    liquidity_index: int
+
+    def __post_init__(self) -> None:
+        if self.value == self.balance_increase:
+            msg = f"CollateralMintEvent cannot have equal value and balance_increase: {self.value}"
+            raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True)
+class CollateralBurnEvent:
+    value: int
+    balance_increase: int
+    liquidity_index: int
+
+    def __post_init__(self) -> None:
+        if self.value == self.balance_increase:
+            msg = f"CollateralBurnEvent cannot have equal value and balance_increase: {self.value}"
+            raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True)
+class DebtMintEvent:
+    value: int
+    balance_increase: int
+    liquidity_index: int
+
+    def __post_init__(self) -> None:
+        if self.value == self.balance_increase:
+            msg = f"DebtMintEvent cannot have equal value and balance_increase: {self.value}"
+            raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True)
+class DebtBurnEvent:
+    value: int
+    balance_increase: int
+    liquidity_index: int
+
+    def __post_init__(self) -> None:
+        if self.value == self.balance_increase:
+            msg = f"DebtBurnEvent cannot have equal value and balance_increase: {self.value}"
+            raise ValueError(msg)
+
+
+def _process_collateral_mint(
+    event_data: CollateralMintEvent,
+    scaled_token_revision: int,
+) -> tuple[BalanceDelta, UserOperation]:
+    ray_math_module = _get_wad_ray_math_library(scaled_token_revision)
+
+    if event_data.balance_increase > event_data.value:
+        requested_amount = event_data.balance_increase - event_data.value
+        delta = -ray_math_module.ray_div(
+            a=requested_amount,
+            b=event_data.liquidity_index,
+        )
+        operation = "WITHDRAW"
+    else:
+        requested_amount = event_data.value - event_data.balance_increase
+        delta = ray_math_module.ray_div(
+            a=requested_amount,
+            b=event_data.liquidity_index,
+        )
+        operation = "DEPOSIT"
+
+    assert requested_amount > 0
+    return delta, operation
+
+
+def _process_collateral_burn(
+    event_data: CollateralBurnEvent,
+    scaled_token_revision: int,
+) -> tuple[BalanceDelta, UserOperation]:
+    ray_math = _get_wad_ray_math_library(scaled_token_revision)
+    requested_amount = event_data.value + event_data.balance_increase
+    balance_delta = -ray_math.ray_div(
+        a=requested_amount,
+        b=event_data.liquidity_index,
+    )
+
+    assert requested_amount > 0
+    return balance_delta, "WITHDRAW"
+
+
+def _process_debt_mint(
+    event_data: DebtMintEvent,
+    scaled_token_revision: int,
+) -> tuple[BalanceDelta, UserOperation]:
+    ray_math = _get_wad_ray_math_library(scaled_token_revision)
+    requested_amount = abs(event_data.value - event_data.balance_increase)
+    balance_delta = ray_math.ray_div(
+        a=requested_amount,
+        b=event_data.liquidity_index,
+    )
+
+    assert requested_amount > 0
+    return balance_delta, "BORROW"
+
+
+def _process_debt_burn(
+    event_data: DebtBurnEvent,
+    scaled_token_revision: int,
+) -> tuple[BalanceDelta, UserOperation]:
+    ray_math = _get_wad_ray_math_library(scaled_token_revision)
+    requested_amount = event_data.value + event_data.balance_increase
+    balance_delta = -ray_math.ray_div(
+        a=requested_amount,
+        b=event_data.liquidity_index,
+    )
+
+    assert requested_amount > 0
+    return balance_delta, "REPAY"
+
+
 def _process_scaled_token_mint_event(
     event: LogReceipt,
     market: AaveV3MarketTable,
@@ -748,6 +887,9 @@ def _process_scaled_token_mint_event(
         types=["uint256", "uint256", "uint256"], data=event["data"]
     )
 
+    if event_amount == balance_increase:
+        return
+
     if (
         aave_collateral_asset := session.scalar(
             select(AaveV3AssetsTable)
@@ -761,7 +903,6 @@ def _process_scaled_token_mint_event(
             )
         )
     ) is not None:
-        # Process the event as a collateral deposit
         if (
             collateral_position := session.scalar(
                 select(AaveV3CollateralPositionsTable).where(
@@ -777,118 +918,33 @@ def _process_scaled_token_mint_event(
             )
             session.add(collateral_position)
 
-        scaled_balance = collateral_position.balance
-        assert scaled_balance >= 0
+        collateral_position_starting_amount = collateral_position.balance
+        assert collateral_position_starting_amount >= 0
 
-        if aave_collateral_asset.a_token_revision == 1:
-            # Handle the operation differently depending on the source (_burnScaled or _mintScaled)
-            # _burnScaled:
-            #       uint256 amountToMint = balanceIncrease - amount;
-            #       if (balanceIncrease > amount) {
-            #           emit Mint(user, user, amountToMint, balanceIncrease, index);
-            #       ...
-            #       }
-            # _mintScaled:
-            #       uint256 amountToMint = amount + balanceIncrease;
-            #       emit Mint(caller, onBehalfOf, amountToMint, balanceIncrease, index);
+        balance_delta, user_operation = _process_collateral_mint(
+            event_data=CollateralMintEvent(
+                value=event_amount,
+                balance_increase=balance_increase,
+                liquidity_index=liquidity_index,
+            ),
+            scaled_token_revision=aave_collateral_asset.a_token_revision,
+        )
 
-            if event_amount == balance_increase:
-                # This condition occurs during a balance transfer, which is handled separately
-                return
-
-            # We know amountToMint and balanceIncrease, and that amount must be > 0,
-            # so the origin of the Mint event can be determined by identifying the greater value
-            if balance_increase > event_amount:
-                # event was emitted in _burnScaled
-                is_from_burn_scaled = True
-                is_from_mint_scaled = False
-                requested_amount = balance_increase - event_amount
-                scaled_amount = aave_library_v3_1.wad_ray_math.ray_div(
-                    a=requested_amount,
-                    b=liquidity_index,
-                )
-                user_starting_amount = collateral_position.balance
-                collateral_position.balance -= scaled_amount
-            elif event_amount > balance_increase:
-                # event was emitted in _mintScaled
-                is_from_burn_scaled = False
-                is_from_mint_scaled = True
-                requested_amount = event_amount - balance_increase
-                scaled_amount = aave_library_v3_1.wad_ray_math.ray_div(
-                    a=requested_amount,
-                    b=liquidity_index,
-                )
-                user_starting_amount = collateral_position.balance
-                collateral_position.balance += scaled_amount
-
-        elif aave_collateral_asset.a_token_revision == 2:
-            # Handle the operation differently depending on the source (_burnScaled or _mintScaled)
-            # _burnScaled:
-            #       uint256 amountToMint = balanceIncrease - amount;
-            #       if (balanceIncrease > amount) {
-            #           emit Mint(user, user, amountToMint, balanceIncrease, index);
-            #       ...
-            #       }
-            # _mintScaled:
-            #       uint256 amountToMint = amount + balanceIncrease;
-            #       emit Mint(caller, onBehalfOf, amountToMint, balanceIncrease, index);
-
-            if event_amount == balance_increase:
-                # This condition occurs during a balance transfer, which is handled separately
-                return
-
-            # We know amountToMint and balanceIncrease, and that amount must be > 0,
-            # so the origin of the Mint event can be determined by identifying the greater value
-            if balance_increase > event_amount:
-                # event was emitted in _burnScaled
-                is_from_burn_scaled = True
-                is_from_mint_scaled = False
-                requested_amount = balance_increase - event_amount
-                scaled_amount = aave_library_v3_2.wad_ray_math.ray_div(
-                    a=requested_amount,
-                    b=liquidity_index,
-                )
-                user_starting_amount = collateral_position.balance
-                collateral_position.balance -= scaled_amount
-            elif event_amount > balance_increase:
-                # event was emitted in _mintScaled
-                is_from_burn_scaled = False
-                is_from_mint_scaled = True
-                requested_amount = event_amount - balance_increase
-                scaled_amount = aave_library_v3_1.wad_ray_math.ray_div(
-                    a=requested_amount,
-                    b=liquidity_index,
-                )
-                user_starting_amount = collateral_position.balance
-                collateral_position.balance += scaled_amount
-        else:
-            msg = f"aToken revision {aave_collateral_asset.a_token_revision} is not supported! TX: {event['transactionHash'].to_0x_hex()}"
-            raise ValueError(msg)
+        collateral_position.balance += balance_delta
 
         if VERBOSE_ALL or on_behalf_of_address in VERBOSE_USERS:
-            if is_from_mint_scaled:
-                logger.info("SUPPLY")
-            elif is_from_burn_scaled:
-                logger.info("WITHDRAW")
-            else:
-                raise ValueError
+            logger.info(user_operation)
             logger.info(f"aToken            : {get_checksum_address(event['address'])}")
-            logger.info(f"Caller            : {caller_address}")
-            logger.info(f"onBehalfOf        : {on_behalf_of_address}")
             logger.info(f"Index             : {liquidity_index} ")
-            logger.info(f"Amount (requested): {requested_amount}")
-            logger.info(f"Amount (scaled   ): {scaled_amount}")
-            logger.info(f"Amount (event    ): {event_amount}")
             logger.info(
-                f"Balance           : {user_starting_amount} -> {collateral_position.balance} (+{collateral_position.balance - user_starting_amount})"
+                f"Balance           : {collateral_position_starting_amount} -> {collateral_position.balance}"
             )
             logger.info(f"Increase (event)  : {balance_increase}")
             logger.info(
-                f"TX                : {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}-{event['logIndex']})"
+                f"TX                : {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}.{event['logIndex']})"
             )
             logger.info("")
 
-        assert requested_amount >= 0
         assert collateral_position.balance >= 0, f"{on_behalf_of_address}"
 
     elif (
@@ -920,54 +976,32 @@ def _process_scaled_token_mint_event(
             )
             session.add(debt_position)
 
-        scaled_balance = debt_position.balance
-        assert scaled_balance >= 0
+        debt_position_starting_amount = debt_position.balance
+        assert debt_position_starting_amount >= 0
 
-        if aave_debt_asset.v_token_revision == 1:
-            # TODO: check if abs is needed now
-            requested_amount = abs(event_amount - balance_increase)
-
-            scaled_amount = aave_library_v3_1.wad_ray_math.ray_div(
-                a=requested_amount,
-                b=liquidity_index,
-            )
-
-            user_starting_amount = debt_position.balance
-            debt_position.balance += scaled_amount
-        elif aave_debt_asset.v_token_revision == 2:
-            requested_amount = abs(event_amount - balance_increase)
-
-            scaled_amount = aave_library_v3_2.wad_ray_math.ray_div(
-                a=requested_amount,
-                b=liquidity_index,
-            )
-
-            user_starting_amount = debt_position.balance
-            debt_position.balance += scaled_amount
-        else:
-            msg = f"vToken revision {aave_debt_asset.v_token_revision} is not supported! TX: {event['transactionHash'].to_0x_hex()}"
-            raise ValueError(msg)
+        balance_delta, user_operation = _process_debt_mint(
+            event_data=DebtMintEvent(
+                value=event_amount,
+                balance_increase=balance_increase,
+                liquidity_index=liquidity_index,
+            ),
+            scaled_token_revision=aave_debt_asset.v_token_revision,
+        )
+        debt_position.balance += balance_delta
 
         if VERBOSE_ALL or on_behalf_of_address in VERBOSE_USERS:
-            logger.info("BORROW")
+            logger.info(user_operation)
             logger.info(f"vToken            : {get_checksum_address(event['address'])}")
-            logger.info(f"Caller            : {caller_address}")
-            logger.info(f"onBehalfOf        : {on_behalf_of_address}")
             logger.info(f"Index             : {liquidity_index} ")
-            logger.info(f"Minted            : {event_amount}")
-            logger.info(f"Amount (requested): {requested_amount}")
-            logger.info(f"Amount (scaled)   : {scaled_amount}")
-            logger.info(f"Amount (scaled)   : {scaled_amount}")
             logger.info(
-                f"Balance           : {user_starting_amount} -> {debt_position.balance} (+{debt_position.balance - user_starting_amount})"
+                f"Balance           : {debt_position_starting_amount} -> {debt_position.balance}"
             )
             logger.info(f"Increase (event)  : {balance_increase}")
             logger.info(
-                f"TX                : {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}-{event['logIndex']})"
+                f"TX                : {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}.{event['logIndex']})"
             )
             logger.info("")
 
-        assert requested_amount >= 0
         assert debt_position.balance >= 0
 
     else:
@@ -1044,46 +1078,31 @@ def _process_scaled_token_burn_event(
         scaled_balance = collateral_position.balance
         assert scaled_balance >= 0
 
-        if aave_collateral_asset.a_token_revision == 1:
-            amount = amount_burned + balance_increase
-            scaled_amount = aave_library_v3_1.wad_ray_math.ray_div(
-                a=amount,
-                b=liquidity_index,
-            )
-            user_starting_amount = collateral_position.balance
-            collateral_position.balance -= scaled_amount
-        elif aave_collateral_asset.a_token_revision == 2:
-            amount = amount_burned + balance_increase
-            scaled_amount = aave_library_v3_2.wad_ray_math.ray_div(
-                a=amount,
-                b=liquidity_index,
-            )
-            user_starting_amount = collateral_position.balance
-            collateral_position.balance -= scaled_amount
-        else:
-            msg = f"aToken revision {aave_collateral_asset.a_token_revision} is not supported! TX: {event['transactionHash'].to_0x_hex()}"
-            raise ValueError(msg)
+        balance_delta, user_operation = _process_collateral_burn(
+            event_data=CollateralBurnEvent(
+                value=amount_burned,
+                balance_increase=balance_increase,
+                liquidity_index=liquidity_index,
+            ),
+            scaled_token_revision=aave_collateral_asset.a_token_revision,
+        )
+        user_starting_amount = collateral_position.balance
+        collateral_position.balance += balance_delta
 
         if VERBOSE_ALL or from_address in VERBOSE_USERS:
-            logger.info("WITHDRAW")
+            logger.info(user_operation)
             logger.info(f"aToken            : {get_checksum_address(event['address'])}")
-            logger.info(f"Caller            : {from_address}")
-            logger.info(f"To address        : {target_address}")
             logger.info(f"Index             : {liquidity_index}")
-            logger.info(f"Amount (requested): {amount}")
-            logger.info(f"Amount (scaled)   : {scaled_amount}")
-            logger.info(f"Amount (burned)   : {amount_burned}")
             logger.info(
-                f"Balance           : {user_starting_amount} -> {collateral_position.balance} ({collateral_position.balance - user_starting_amount})"
+                f"Balance           : {user_starting_amount} -> {collateral_position.balance}"
             )
             logger.info(f"Increase (event)  : {balance_increase}")
             logger.info(
-                f"TX                : {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}-{event['logIndex']})"
+                f"TX                : {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}.{event['logIndex']})"
             )
             logger.info("")
 
         assert collateral_position.balance >= 0, f"{from_address}"
-        assert amount >= 0
         if collateral_position.balance == 0:
             session.delete(collateral_position)
 
@@ -1112,45 +1131,30 @@ def _process_scaled_token_burn_event(
         scaled_balance = debt_position.balance
         assert scaled_balance >= 0
 
-        if aave_debt_asset.v_token_revision == 1:
-            amount = amount_burned + balance_increase
-            scaled_amount = aave_library_v3_1.wad_ray_math.ray_div(
-                a=amount,
-                b=liquidity_index,
-            )
-            user_starting_amount = debt_position.balance
-            debt_position.balance -= scaled_amount
-        elif aave_debt_asset.v_token_revision == 2:
-            amount = amount_burned + balance_increase
-            scaled_amount = aave_library_v3_2.wad_ray_math.ray_div(
-                a=amount,
-                b=liquidity_index,
-            )
-            user_starting_amount = debt_position.balance
-            debt_position.balance -= scaled_amount
-        else:
-            msg = f"vToken revision {aave_debt_asset.v_token_revision} is not supported! TX: {event['transactionHash'].to_0x_hex()}"
-            raise ValueError(msg)
+        balance_delta, user_operation = _process_debt_burn(
+            event_data=DebtBurnEvent(
+                value=amount_burned,
+                balance_increase=balance_increase,
+                liquidity_index=liquidity_index,
+            ),
+            scaled_token_revision=aave_debt_asset.v_token_revision,
+        )
+
+        user_starting_amount = debt_position.balance
+        debt_position.balance += balance_delta
 
         if VERBOSE_ALL or from_address in VERBOSE_USERS:
-            logger.info("REPAY")
+            logger.info(user_operation)
             logger.info(f"vToken            : {get_checksum_address(event['address'])}")
-            logger.info(f"User              : {from_address}")
             logger.info(f"Index             : {liquidity_index}")
-            logger.info(f"Amount (requested): {amount}")
-            logger.info(f"Amount (scaled)   : {scaled_amount}")
-            logger.info(f"Amount (event)    : {amount_burned}")
-            logger.info(
-                f"Balance           : {user_starting_amount} -> {debt_position.balance} (+{debt_position.balance - user_starting_amount})"
-            )
+            logger.info(f"Balance           : {user_starting_amount} -> {debt_position.balance}")
             logger.info(f"Increase (event)  : {balance_increase}")
             logger.info(
-                f"TX                : {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}-{event['logIndex']})"
+                f"TX                : {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}.{event['logIndex']})"
             )
             logger.info("")
 
         assert debt_position.balance >= 0, f"{from_address}"
-        assert amount >= 0
         if debt_position.balance == 0:
             session.delete(debt_position)
     else:
@@ -1288,7 +1292,7 @@ def _process_a_token_balance_transfer_event(
         logger.info(f"\tAmounts: {to_user_starting_amount} -> {to_user_position.balance}")
         logger.info(f"\tIndex: {liquidity_index}")
         logger.info(
-            f"TX: {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}-{event['logIndex']})"
+            f"TX: {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}.{event['logIndex']})"
         )
         logger.info("")
 
