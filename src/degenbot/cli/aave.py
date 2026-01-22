@@ -139,16 +139,6 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
             )
             session.add(market)
 
-            (market_name,) = raw_call(
-                w3=w3,
-                address=pool_address_provider,
-                calldata=encode_function_calldata(
-                    function_prototype="getMarketId()",
-                    function_arguments=None,
-                ),
-                return_types=["string"],
-            )
-
         session.commit()
 
     click.echo(f"Activated Aave V3 on Ethereum (chain ID {chain_id}).")
@@ -695,10 +685,9 @@ def _process_scaled_token_upgrade_event(
         aave_debt_asset.v_token_revision = vtoken_revision
         logger.info(f"Upgraded vToken revision to {vtoken_revision}")
     else:
-        raise ValueError
-
-
-users_to_check: dict[ChecksumAddress, int] = {}
+        token_address = get_checksum_address(event["address"])
+        msg = f"Unknown token type for address {token_address}. Expected aToken or vToken."
+        raise ValueError(msg)
 
 
 class WadRayMathLibrary(Protocol):
@@ -842,6 +831,7 @@ def _process_scaled_token_mint_event(
     event: LogReceipt,
     market: AaveV3MarketTable,
     session: Session,
+    users_to_check: dict[ChecksumAddress, int],
 ) -> None:
     """
     Process a scaled token Mint event as a collateral deposit or debt borrow.
@@ -934,15 +924,13 @@ def _process_scaled_token_mint_event(
 
         if VERBOSE_ALL or on_behalf_of_address in VERBOSE_USERS:
             logger.info(user_operation)
-            logger.info(f"aToken            : {get_checksum_address(event['address'])}")
-            logger.info(f"Index             : {liquidity_index} ")
+            logger.info(f"aToken  : {get_checksum_address(event['address'])}")
+            logger.info(f"Index   : {liquidity_index} ")
             logger.info(
-                f"Balance           : {collateral_position_starting_amount} -> {collateral_position.balance}"
+                f"Balance : {collateral_position_starting_amount} -> {collateral_position.balance}"
             )
-            logger.info(f"Increase (event)  : {balance_increase}")
-            logger.info(
-                f"TX                : {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}.{event['logIndex']})"
-            )
+            logger.info(f"TX      : {event['transactionHash'].to_0x_hex()}")
+            logger.info(f"Block   : {event['blockNumber']}.{event['logIndex']}")
             logger.info("")
 
         assert collateral_position.balance >= 0, f"{on_behalf_of_address}"
@@ -960,7 +948,6 @@ def _process_scaled_token_mint_event(
             )
         )
     ) is not None:
-        # Process the event as a debt borrow
         if (
             debt_position := session.scalar(
                 select(AaveV3DebtPositionsTable).where(
@@ -991,15 +978,11 @@ def _process_scaled_token_mint_event(
 
         if VERBOSE_ALL or on_behalf_of_address in VERBOSE_USERS:
             logger.info(user_operation)
-            logger.info(f"vToken            : {get_checksum_address(event['address'])}")
-            logger.info(f"Index             : {liquidity_index} ")
-            logger.info(
-                f"Balance           : {debt_position_starting_amount} -> {debt_position.balance}"
-            )
-            logger.info(f"Increase (event)  : {balance_increase}")
-            logger.info(
-                f"TX                : {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}.{event['logIndex']})"
-            )
+            logger.info(f"vToken  : {get_checksum_address(event['address'])}")
+            logger.info(f"Index   : {liquidity_index} ")
+            logger.info(f"Balance : {debt_position_starting_amount} -> {debt_position.balance}")
+            logger.info(f"TX      : {event['transactionHash'].to_0x_hex()}")
+            logger.info(f"Block   : {event['blockNumber']}.{event['logIndex']}")
             logger.info("")
 
         assert debt_position.balance >= 0
@@ -1016,6 +999,7 @@ def _process_scaled_token_burn_event(
     event: LogReceipt,
     market: AaveV3MarketTable,
     session: Session,
+    users_to_check: dict[ChecksumAddress, int],
 ) -> None:
     """
     Process a scaled token Burn as a collateral withdrawal or debt repayment.
@@ -1035,11 +1019,7 @@ def _process_scaled_token_burn_event(
     (from_address,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
     from_address = get_checksum_address(from_address)
 
-    (target_address,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
-    target_address = get_checksum_address(target_address)
-
     users_to_check[from_address] = event["blockNumber"]
-    users_to_check[target_address] = event["blockNumber"]
 
     amount_burned, balance_increase, liquidity_index = eth_abi.abi.decode(
         types=["uint256", "uint256", "uint256"], data=event["data"]
@@ -1066,7 +1046,6 @@ def _process_scaled_token_burn_event(
             )
         )
     ) is not None:
-        # Process the event as a collateral withdrawal
         collateral_position = session.scalar(
             select(AaveV3CollateralPositionsTable).where(
                 AaveV3CollateralPositionsTable.user_id == user.id,
@@ -1074,9 +1053,6 @@ def _process_scaled_token_burn_event(
             )
         )
         assert collateral_position is not None
-
-        scaled_balance = collateral_position.balance
-        assert scaled_balance >= 0
 
         balance_delta, user_operation = _process_collateral_burn(
             event_data=CollateralBurnEvent(
@@ -1091,15 +1067,11 @@ def _process_scaled_token_burn_event(
 
         if VERBOSE_ALL or from_address in VERBOSE_USERS:
             logger.info(user_operation)
-            logger.info(f"aToken            : {get_checksum_address(event['address'])}")
-            logger.info(f"Index             : {liquidity_index}")
-            logger.info(
-                f"Balance           : {user_starting_amount} -> {collateral_position.balance}"
-            )
-            logger.info(f"Increase (event)  : {balance_increase}")
-            logger.info(
-                f"TX                : {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}.{event['logIndex']})"
-            )
+            logger.info(f"aToken  : {get_checksum_address(event['address'])}")
+            logger.info(f"Index   : {liquidity_index}")
+            logger.info(f"Balance : {user_starting_amount} -> {collateral_position.balance}")
+            logger.info(f"TX      : {event['transactionHash'].to_0x_hex()}")
+            logger.info(f"Block   : {event['blockNumber']}.{event['logIndex']}")
             logger.info("")
 
         assert collateral_position.balance >= 0, f"{from_address}"
@@ -1119,7 +1091,6 @@ def _process_scaled_token_burn_event(
             )
         )
     ) is not None:
-        # Process the event as a debt repayment
         debt_position = session.scalar(
             select(AaveV3DebtPositionsTable).where(
                 AaveV3DebtPositionsTable.user_id == user.id,
@@ -1127,9 +1098,6 @@ def _process_scaled_token_burn_event(
             )
         )
         assert debt_position is not None
-
-        scaled_balance = debt_position.balance
-        assert scaled_balance >= 0
 
         balance_delta, user_operation = _process_debt_burn(
             event_data=DebtBurnEvent(
@@ -1145,13 +1113,11 @@ def _process_scaled_token_burn_event(
 
         if VERBOSE_ALL or from_address in VERBOSE_USERS:
             logger.info(user_operation)
-            logger.info(f"vToken            : {get_checksum_address(event['address'])}")
-            logger.info(f"Index             : {liquidity_index}")
-            logger.info(f"Balance           : {user_starting_amount} -> {debt_position.balance}")
-            logger.info(f"Increase (event)  : {balance_increase}")
-            logger.info(
-                f"TX                : {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}.{event['logIndex']})"
-            )
+            logger.info(f"vToken  : {get_checksum_address(event['address'])}")
+            logger.info(f"Index   : {liquidity_index}")
+            logger.info(f"Balance : {user_starting_amount} -> {debt_position.balance}")
+            logger.info(f"TX      : {event['transactionHash'].to_0x_hex()}")
+            logger.info(f"Block   : {event['blockNumber']}.{event['logIndex']}")
             logger.info("")
 
         assert debt_position.balance >= 0, f"{from_address}"
@@ -1170,8 +1136,6 @@ def _process_a_token_balance_transfer_event(
     market: AaveV3MarketTable,
     session: Session,
 ) -> None:
-    assert len(event["topics"]) == 3  # noqa: PLR2004
-
     """
     Process a scaled token balance transfer.
     """
@@ -1184,15 +1148,15 @@ def _process_a_token_balance_transfer_event(
     #     uint256 index
     # );
 
+    assert len(event["topics"]) == 3  # noqa: PLR2004
+
     (from_address,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
     from_address = get_checksum_address(from_address)
 
     (to_address,) = eth_abi.abi.decode(types=["address"], data=event["topics"][2])
     to_address = get_checksum_address(to_address)
 
-    event_amount, liquidity_index = eth_abi.abi.decode(
-        types=["uint256", "uint256"], data=event["data"]
-    )
+    event_amount, _ = eth_abi.abi.decode(types=["uint256", "uint256"], data=event["data"])
 
     # Special case for zero-amount transfers such as
     # TX 0x5fd783a51ae534a7d720ca8f1ce77657df5cc2564d1d81476be16078578d4142
@@ -1284,16 +1248,13 @@ def _process_a_token_balance_transfer_event(
 
     if VERBOSE_ALL or VERBOSE_USERS & {from_address, to_address}:
         logger.info("BALANCE TRANSFER")
-        logger.info(f"aToken: {get_checksum_address(event['address'])}")
-        logger.info(f"User: {from_address} (from)")
-        logger.info(f"\tAmounts: {from_user_starting_amount} -> {from_user_position.balance}")
-        logger.info(f"\tIndex: {liquidity_index} ")
-        logger.info(f"User: {to_address} (to)")
-        logger.info(f"\tAmounts: {to_user_starting_amount} -> {to_user_position.balance}")
-        logger.info(f"\tIndex: {liquidity_index}")
-        logger.info(
-            f"TX: {event['transactionHash'].to_0x_hex()} ({event['blockNumber']}.{event['logIndex']})"
-        )
+        logger.info(f"aToken  : {get_checksum_address(event['address'])}")
+        logger.info(f"User    : {from_address}")
+        logger.info(f"Balance : {from_user_starting_amount} -> {from_user_position.balance}")
+        logger.info(f"User    : {to_address}")
+        logger.info(f"Balance : {to_user_starting_amount} -> {to_user_position.balance}")
+        logger.info(f"TX      : {event['transactionHash'].to_0x_hex()}")
+        logger.info(f"Block   : {event['blockNumber']}.{event['logIndex']}")
         logger.info("")
 
     assert from_user_position.balance >= 0
@@ -1313,6 +1274,8 @@ def update_aave_v3_market(
     """
     Update the Aave V3 market.
     """
+
+    users_to_check: dict[ChecksumAddress, int] = {}
 
     # Get the contract addresses for this market
     pool_address_provider = EthereumMainnetAaveV3.pool_address_provider
@@ -1587,60 +1550,119 @@ def update_aave_v3_market(
 
     last_check = 0
 
+    def verify_updated_collateral_positions() -> None:
+        for user_address, last_update_block in users_to_check.items():
+            user = session.scalar(
+                select(AaveV3UsersTable).where(
+                    AaveV3UsersTable.address == user_address,
+                    AaveV3UsersTable.market_id == market.id,
+                )
+            )
+            if user is None:
+                continue
+
+            # Get collateral positions for the user
+            for collateral_position in session.scalars(
+                select(AaveV3CollateralPositionsTable).where(
+                    AaveV3CollateralPositionsTable.user_id == user.id,
+                )
+            ):
+                collateral_asset = session.scalar(
+                    select(AaveV3AssetsTable).where(
+                        AaveV3AssetsTable.market_id == market.id,
+                        AaveV3AssetsTable.id == collateral_position.asset_id,
+                    )
+                )
+                assert collateral_asset is not None
+                scaled_token_address = session.scalar(
+                    select(Erc20TokenTable.address).where(
+                        Erc20TokenTable.chain == market.chain_id,
+                        Erc20TokenTable.id == collateral_asset.a_token_id,
+                    )
+                )
+                scaled_token_address = get_checksum_address(scaled_token_address)
+                (actual_scaled_balance,) = raw_call(
+                    w3=w3,
+                    address=scaled_token_address,
+                    calldata=encode_function_calldata(
+                        function_prototype="scaledBalanceOf(address)",
+                        function_arguments=[user_address],
+                    ),
+                    return_types=["uint256"],
+                    block_identifier=last_update_block,
+                )
+                assert actual_scaled_balance == collateral_position.balance, (
+                    f"User {user_address}: balance ({collateral_position.balance}) "
+                    f"does not match contract ({actual_scaled_balance}) "
+                    f"@ {
+                        session.scalar(
+                            select(Erc20TokenTable.address).where(
+                                Erc20TokenTable.chain == market.chain_id,
+                                Erc20TokenTable.id == collateral_asset.a_token_id,
+                            )
+                        )
+                    }"
+                )
+        users_to_check.clear()
+
+    def verify_updated_debt_positions() -> None:
+        for user_address, last_update_block in users_to_check.items():
+            user = session.scalar(
+                select(AaveV3UsersTable).where(
+                    AaveV3UsersTable.address == user_address,
+                    AaveV3UsersTable.market_id == market.id,
+                )
+            )
+            if user is None:
+                continue
+
+            for debt_position in session.scalars(
+                select(AaveV3DebtPositionsTable).where(
+                    AaveV3DebtPositionsTable.user_id == user.id,
+                )
+            ):
+                debt_asset = session.scalar(
+                    select(AaveV3AssetsTable).where(
+                        AaveV3AssetsTable.market_id == market.id,
+                        AaveV3AssetsTable.id == debt_position.asset_id,
+                    )
+                )
+                assert debt_asset is not None
+                v_token_address = session.scalar(
+                    select(Erc20TokenTable.address).where(
+                        Erc20TokenTable.chain == market.chain_id,
+                        Erc20TokenTable.id == debt_asset.v_token_id,
+                    )
+                )
+                v_token_address = get_checksum_address(v_token_address)
+                (actual_scaled_balance,) = raw_call(
+                    w3=w3,
+                    address=v_token_address,
+                    calldata=encode_function_calldata(
+                        function_prototype="scaledBalanceOf(address)",
+                        function_arguments=[user_address],
+                    ),
+                    return_types=["uint256"],
+                    block_identifier=last_update_block,
+                )
+                assert actual_scaled_balance == debt_position.balance, (
+                    f"User {user_address}: debt balance ({debt_position.balance}) "
+                    f"does not match contract ({actual_scaled_balance}) "
+                    f"@ {
+                        session.scalar(
+                            select(Erc20TokenTable.address).where(
+                                Erc20TokenTable.chain == market.chain_id,
+                                Erc20TokenTable.id == debt_asset.v_token_id,
+                            )
+                        )
+                    }"
+                )
+
     for event in sorted(all_events, key=operator.itemgetter("blockNumber", "logIndex")):
         if event["blockNumber"] > last_check:
-            for user_address, last_update_block in users_to_check.items():
-                user = session.scalar(
-                    select(AaveV3UsersTable).where(AaveV3UsersTable.address == user_address)
-                )
-                if user is None:
-                    continue
-
-                # Get collateral positions for the user
-                for collateral_position in session.scalars(
-                    select(AaveV3CollateralPositionsTable).where(
-                        AaveV3CollateralPositionsTable.user_id == user.id,
-                    )
-                ):
-                    collateral_asset = session.scalar(
-                        select(AaveV3AssetsTable).where(
-                            AaveV3AssetsTable.market_id == market.id,
-                            AaveV3AssetsTable.id == collateral_position.asset_id,
-                        )
-                    )
-                    assert collateral_asset is not None
-                    scaled_token_address = session.scalar(
-                        select(Erc20TokenTable.address).where(
-                            Erc20TokenTable.chain == market.chain_id,
-                            Erc20TokenTable.id == collateral_asset.a_token_id,
-                        )
-                    )
-                    scaled_token_address = get_checksum_address(scaled_token_address)
-                    (actual_scaled_balance,) = raw_call(
-                        w3=w3,
-                        address=scaled_token_address,
-                        calldata=encode_function_calldata(
-                            function_prototype="scaledBalanceOf(address)",
-                            function_arguments=[user_address],
-                        ),
-                        return_types=["uint256"],
-                        block_identifier=last_update_block,
-                    )
-                    assert actual_scaled_balance == collateral_position.balance, (
-                        f"User {user_address}: balance ({collateral_position.balance}) "
-                        f"does not match contract ({actual_scaled_balance}) "
-                        f"@ {
-                            session.scalar(
-                                select(Erc20TokenTable.address).where(
-                                    Erc20TokenTable.chain == market.chain_id,
-                                    Erc20TokenTable.id == collateral_asset.a_token_id,
-                                )
-                            )
-                        }"
-                    )
-
+            verify_updated_collateral_positions()
+            verify_updated_debt_positions()
             last_check = event["blockNumber"]
-            users_to_check.clear()
 
         match event["topics"][0]:
             case AaveV3Event.USER_E_MODE_SET.value:
@@ -1660,12 +1682,14 @@ def update_aave_v3_market(
                     event=event,
                     market=market,
                     session=session,
+                    users_to_check=users_to_check,
                 )
             case AaveV3Event.SCALED_TOKEN_MINT.value:
                 _process_scaled_token_mint_event(
                     event=event,
                     market=market,
                     session=session,
+                    users_to_check=users_to_check,
                 )
             case AaveV3Event.UPGRADED.value:
                 _process_scaled_token_upgrade_event(
@@ -1685,3 +1709,6 @@ def update_aave_v3_market(
                     f"Could not identify event with topic {event['topics'][0].to_0x_hex()}: {event}"
                 )
                 raise ValueError(msg)
+
+    verify_updated_collateral_positions()
+    verify_updated_debt_positions()
