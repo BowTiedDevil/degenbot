@@ -1568,15 +1568,8 @@ def update_aave_v3_market(
                 )
                 assert actual_scaled_balance == collateral_position.balance, (
                     f"User {user_address}: balance ({collateral_position.balance}) "
-                    f"does not match contract ({actual_scaled_balance}) "
-                    f"@ {
-                        session.scalar(
-                            select(Erc20TokenTable.address).where(
-                                Erc20TokenTable.chain == market.chain_id,
-                                Erc20TokenTable.id == collateral_asset.a_token_id,
-                            )
-                        )
-                    }"
+                    f"does not match aToken contract ({actual_scaled_balance}) "
+                    f"@ {scaled_token_address} at block {last_update_block}"
                 )
         users_to_check.clear()
 
@@ -1621,15 +1614,8 @@ def update_aave_v3_market(
                 )
                 assert actual_scaled_balance == debt_position.balance, (
                     f"User {user_address}: debt balance ({debt_position.balance}) "
-                    f"does not match contract ({actual_scaled_balance}) "
-                    f"@ {
-                        session.scalar(
-                            select(Erc20TokenTable.address).where(
-                                Erc20TokenTable.chain == market.chain_id,
-                                Erc20TokenTable.id == debt_asset.v_token_id,
-                            )
-                        )
-                    }"
+                    f"does not match vToken contract ({actual_scaled_balance}) "
+                    f"@ {v_token_address} at block {last_update_block}"
                 )
 
     for event in sorted(all_events, key=operator.itemgetter("blockNumber", "logIndex")):
