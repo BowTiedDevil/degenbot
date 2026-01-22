@@ -201,8 +201,6 @@ def _process_asset_initialization_event(
     #     address interestRateStrategyAddress
     # );
 
-    assert len(event["topics"]) == 3  # noqa: PLR2004
-
     (asset_address,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
     asset_address = get_checksum_address(asset_address)
 
@@ -533,8 +531,6 @@ def _process_user_e_mode_set_event(
     #     uint8 categoryId
     # );
 
-    assert len(event["topics"]) == 2  # noqa: PLR2004
-
     (user_address,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
     user_address = get_checksum_address(user_address)
 
@@ -566,7 +562,6 @@ def _process_reserve_data_update_event(
     """
     Process a ReserveDataUpdated event to update asset rates and indices.
     """
-    assert len(event["topics"]) == 2  # noqa: PLR2004
 
     # EVENT DEFINITION
     # event ReserveDataUpdated(
@@ -630,8 +625,6 @@ def _process_scaled_token_upgrade_event(
     # event Upgraded(
     #     address indexed implementation
     # );
-
-    assert len(event["topics"]) == 2  # noqa: PLR2004
 
     (new_implementation_address,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
     new_implementation_address = get_checksum_address(new_implementation_address)
@@ -826,8 +819,6 @@ def _process_scaled_token_mint_event(
     #     uint256 index
     # );
 
-    assert len(event["topics"]) == 3  # noqa: PLR2004
-
     (on_behalf_of_address,) = eth_abi.abi.decode(types=["address"], data=event["topics"][2])
     on_behalf_of_address = get_checksum_address(on_behalf_of_address)
 
@@ -990,8 +981,6 @@ def _process_scaled_token_burn_event(
     #     uint256 index
     # );
 
-    assert len(event["topics"]) == 3  # noqa: PLR2004
-
     (from_address,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
     from_address = get_checksum_address(from_address)
 
@@ -1123,8 +1112,6 @@ def _process_a_token_balance_transfer_event(
     #     uint256 value,
     #     uint256 index
     # );
-
-    assert len(event["topics"]) == 3  # noqa: PLR2004
 
     (from_address,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
     from_address = get_checksum_address(from_address)
