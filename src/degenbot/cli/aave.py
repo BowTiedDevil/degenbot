@@ -828,13 +828,9 @@ def _process_scaled_token_mint_event(
 
     assert len(event["topics"]) == 3  # noqa: PLR2004
 
-    (caller_address,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
-    caller_address = get_checksum_address(caller_address)
-
     (on_behalf_of_address,) = eth_abi.abi.decode(types=["address"], data=event["topics"][2])
     on_behalf_of_address = get_checksum_address(on_behalf_of_address)
 
-    users_to_check[caller_address] = event["blockNumber"]
     users_to_check[on_behalf_of_address] = event["blockNumber"]
 
     if (
@@ -1538,8 +1534,7 @@ def update_aave_v3_market(
                     AaveV3UsersTable.market_id == market.id,
                 )
             )
-            if user is None:
-                continue
+            assert user is not None
 
             # Get collateral positions for the user
             for collateral_position in session.scalars(
@@ -1593,8 +1588,7 @@ def update_aave_v3_market(
                     AaveV3UsersTable.market_id == market.id,
                 )
             )
-            if user is None:
-                continue
+            assert user is not None
 
             for debt_position in session.scalars(
                 select(AaveV3DebtPositionsTable).where(
