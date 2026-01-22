@@ -715,22 +715,12 @@ class CollateralMintEvent:
     balance_increase: int
     liquidity_index: int
 
-    def __post_init__(self) -> None:
-        if self.value == self.balance_increase:
-            msg = f"CollateralMintEvent cannot have equal value and balance_increase: {self.value}"
-            raise ValueError(msg)
-
 
 @dataclass(frozen=True, slots=True)
 class CollateralBurnEvent:
     value: int
     balance_increase: int
     liquidity_index: int
-
-    def __post_init__(self) -> None:
-        if self.value == self.balance_increase:
-            msg = f"CollateralBurnEvent cannot have equal value and balance_increase: {self.value}"
-            raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -739,22 +729,12 @@ class DebtMintEvent:
     balance_increase: int
     liquidity_index: int
 
-    def __post_init__(self) -> None:
-        if self.value == self.balance_increase:
-            msg = f"DebtMintEvent cannot have equal value and balance_increase: {self.value}"
-            raise ValueError(msg)
-
 
 @dataclass(frozen=True, slots=True)
 class DebtBurnEvent:
     value: int
     balance_increase: int
     liquidity_index: int
-
-    def __post_init__(self) -> None:
-        if self.value == self.balance_increase:
-            msg = f"DebtBurnEvent cannot have equal value and balance_increase: {self.value}"
-            raise ValueError(msg)
 
 
 def _process_collateral_mint(
