@@ -2,7 +2,12 @@ import hypothesis
 import hypothesis.strategies
 import pytest
 
-from degenbot.aave.libraries.v3_5 import (
+from degenbot.aave.libraries.v3_5.wad_ray_math import (
+    HALF_RAY,
+    HALF_WAD,
+    RAY,
+    WAD,
+    WAD_RAY_RATIO,
     Rounding,
     ray_div,
     ray_div_ceil,
@@ -14,13 +19,6 @@ from degenbot.aave.libraries.v3_5 import (
     wad_div,
     wad_mul,
     wad_to_ray,
-)
-from degenbot.aave.libraries.v3_5.constants import (
-    HALF_RAY,
-    HALF_WAD,
-    RAY,
-    WAD,
-    WAD_RAY_RATIO,
 )
 from degenbot.constants import MAX_UINT256
 from degenbot.exceptions.evm import EVMRevertError

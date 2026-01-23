@@ -2,14 +2,12 @@ import pytest
 from hypothesis import given, settings
 from hypothesis.strategies import integers
 
-from degenbot.aave.libraries.v3_4.constants import (
+from degenbot.aave.libraries.v3_4.wad_ray_math import (
     HALF_RAY,
     HALF_WAD,
     RAY,
     WAD,
     WAD_RAY_RATIO,
-)
-from degenbot.aave.libraries.v3_4.wad_ray_math import (
     ray_div,
     ray_mul,
     ray_to_wad,
