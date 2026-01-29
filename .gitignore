@@ -173,3 +173,7 @@ uv.lock
 
 # Roo
 .roo
+
+# Opencode
+.opencode
+.ignore
