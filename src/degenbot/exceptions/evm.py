@@ -6,9 +6,12 @@ class EVMRevertError(DegenbotError):
     Raised when a simulated EVM contract operation would revert.
     """
 
-    def __init__(self, error: str) -> None:
+    def __init__(self, error: str | None = None) -> None:
         self.error = error
-        super().__init__(message=f"EVM Revert: {error}")
+        if error:
+            super().__init__(message=f"EVM Revert: {error}")
+        else:
+            super().__init__(message="EVM Revert")
 
 
 class InvalidUint256(EVMRevertError):
