@@ -6,7 +6,7 @@ This directory contains CLI command implementations for the degenbot tool, inclu
 
 ## Focused Documentation
 
-See **[aave.md](../../../docs/cli/aave.md)** for comprehensive documentation on Aave CLI commands, including:
+See [aave.md](../../../docs/cli/aave.md) for comprehensive documentation on Aave CLI commands, including:
 
 - `degenbot aave update` - Update positions by processing blockchain events
 - `degenbot aave activate` - Activate a market for tracking
@@ -20,7 +20,7 @@ The aave.md file contains detailed information on:
 - Solidity contract references
 - Error handling and validation
 
-See **[pool.md](../../../docs/cli/pool.md)** for comprehensive documentation on liquidity pool CLI commands, including:
+See [pool.md](../../../docs/cli/pool.md) for comprehensive documentation on liquidity pool CLI commands, including:
 
 - `degenbot pool update` - Update liquidity pool metadata and liquidity positions
 - `degenbot exchange activate` - Activate an exchange for liquidity pool tracking
@@ -34,7 +34,7 @@ The pool.md file contains detailed information on:
 - Data model updates
 - Solidity contract references
 
-See **[database.md](../../../docs/cli/database.md)** for comprehensive documentation on database CLI commands, including:
+See [database.md](../../../docs/cli/database.md) for comprehensive documentation on database CLI commands, including:
 
 - `degenbot database backup` - Back up the database
 - `degenbot database reset` - Remove and recreate the database
