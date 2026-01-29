@@ -65,11 +65,11 @@ GHO_VARIABLE_DEBT_TOKEN_ADDRESS = get_checksum_address("0x786dBff3f1292ae8F92ea6
 last_event_processed: LogReceipt | None = None
 
 # Remove before using in production
-VERBOSE_ALL = True
+VERBOSE_ALL = False
 
 # User addresses that trigger verbose logging
 VERBOSE_USERS: set[ChecksumAddress] = {
-    get_checksum_address("0xA988afe23CD41Ca490f5cA239E0d1852B3e47c25"),
+    # get_checksum_address("0xA988afe23CD41Ca490f5cA239E0d1852B3e47c25"),
 }
 
 
@@ -1349,23 +1349,26 @@ def _process_gho_debt_burn(
 
     elif scaled_token_revision == 2:
 
-        def _get_discounted_balance() -> int:
+        def _get_discounted_balance(scaled_balance: int) -> int:
             """
             Get the discounted balance for the user.
 
-            Ref:
-                Mainnet GhoVariableDebtToken version 2
-                Address 0x7aa606b1B341fFEeAfAdbbE4A2992EFB35972775
+            This effectively replicates the `super.BalanceOf(user);` call used in the `_burnScaled`
+            and `_mintScaled` function calls in GhoVariableDebtToken.sol (version 2).
+
+            Ref: 0x7aa606b1B341fFEeAfAdbbE4A2992EFB35972775 (mainnet)
             """
 
-            # TODO: extract to standalone function
+            # TODO: extract as standalone function
 
-            scaled_balance = previous_scaled_balance
+            if (
+                last_event_processed["transactionHash"].to_0x_hex()
+                == "0x6c69776b8fabe1c3c1626255ed9e7701fbf679f96a1c76ce39f79180f8c4b3f8"
+            ):
+                logger.info(f"{scaled_balance=}")  # OK
+
             if scaled_balance == 0:
                 return 0
-
-            # index = 1002061322521461323686960054
-            # previousIndex = 1000297527129060066010642736
 
             # index = POOL.getReserveNormalizedVariableDebt(_underlyingAsset)
             index = event_data.index
@@ -1373,6 +1376,7 @@ def _process_gho_debt_burn(
             # previousIndex = _userState[user].additionalData
             previous_index = debt_position.last_index
 
+            # uint256 balance = scaledBalance.rayMul(index);
             balance = ray_math_module.ray_mul(
                 a=scaled_balance,
                 b=index,
@@ -1381,23 +1385,54 @@ def _process_gho_debt_burn(
                 logger.info(f"{index=}")
                 logger.info(f"{previous_index=}")
 
+            if (
+                last_event_processed["transactionHash"].to_0x_hex()
+                == "0x6c69776b8fabe1c3c1626255ed9e7701fbf679f96a1c76ce39f79180f8c4b3f8"
+            ):
+                logger.info(f"{index=}")  # OK
+                logger.info(f"{previous_index=}")  # OK
+                logger.info(f"{balance=}")  # OK
+
             if index == previous_index:
                 return balance
 
-            discount_percent_ = user.gho_discount
-            if discount_percent_ != 0:
+            disc_pct = user.gho_discount
+
+            if (
+                last_event_processed["transactionHash"].to_0x_hex()
+                == "0x6c69776b8fabe1c3c1626255ed9e7701fbf679f96a1c76ce39f79180f8c4b3f8"
+            ):
+                logger.info(f"{disc_pct=}")  # OK
+
+            if VERBOSE_ALL or user.address in VERBOSE_USERS:
+                logger.info(f"{disc_pct=}")
+
+            if disc_pct != 0:
+                if (
+                    last_event_processed["transactionHash"].to_0x_hex()
+                    == "0x6c69776b8fabe1c3c1626255ed9e7701fbf679f96a1c76ce39f79180f8c4b3f8"
+                ):
+                    logger.info(f"{balance=} (before reduction)")
+                # uint256 balanceIncrease = balance - scaledBalance.rayMul(previousIndex);
                 balance_increase = balance - ray_math_module.ray_mul(
                     a=scaled_balance,
                     b=previous_index,
                 )
-                balance -= ray_math_module.ray_mul(
-                    a=balance_increase,
-                    b=discount_percent_,
-                )
 
-            if VERBOSE_ALL or user.address in VERBOSE_USERS:
-                logger.info(f"{balance_increase=}")
-                logger.info(f"{discount_percent_=}")
+                # balance -= balanceIncrease.percentMul(discountPercent);
+                balance -= percentage_math.percent_mul(
+                    value=balance_increase,
+                    percentage=disc_pct,
+                )
+                if (
+                    last_event_processed["transactionHash"].to_0x_hex()
+                    == "0x6c69776b8fabe1c3c1626255ed9e7701fbf679f96a1c76ce39f79180f8c4b3f8"
+                ):
+                    logger.info(f"{balance_increase=}")
+                    logger.info(f"{balance=} (after reduction)")
+
+                if VERBOSE_ALL or user.address in VERBOSE_USERS:
+                    logger.info(f"{balance_increase=}")
 
             return balance
 
@@ -1414,7 +1449,9 @@ def _process_gho_debt_burn(
         previous_scaled_balance = debt_position.balance
 
         # uint256 balanceBeforeBurn = balanceOf(user);
-        balance_before_burn = _get_discounted_balance()
+        balance_before_burn = _get_discounted_balance(
+            scaled_balance=previous_scaled_balance,
+        )
 
         # uint256 discountPercent = _ghoUserState[user].discountPercent;
         discount_percent = user.gho_discount
@@ -1439,6 +1476,13 @@ def _process_gho_debt_burn(
         )
 
         if VERBOSE_ALL or user.address in VERBOSE_USERS:
+            logger.info(f"{requested_amount=}")
+            logger.info(f"{balance_before_burn=}")
+
+        if (
+            last_event_processed["transactionHash"].to_0x_hex()
+            == "0x6c69776b8fabe1c3c1626255ed9e7701fbf679f96a1c76ce39f79180f8c4b3f8"
+        ):
             logger.info(f"{requested_amount=}")
             logger.info(f"{balance_before_burn=}")
 
