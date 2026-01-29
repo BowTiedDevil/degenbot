@@ -42,6 +42,7 @@ class AaveV3UsersTable(Base):
 
     address: Mapped[Address]
     e_mode: Mapped[int]
+    gho_discount: Mapped[int]
 
 
 ForeignKeyAaveUserId = Annotated[
@@ -97,6 +98,7 @@ class AaveV3CollateralPositionsTable(Base):
     asset_id: Mapped[ForeignKeyAaveAssetId]
 
     balance: Mapped[BigInteger]
+    last_index: Mapped[BigInteger | None]
 
 
 Index(
@@ -115,6 +117,7 @@ class AaveV3DebtPositionsTable(Base):
     asset_id: Mapped[ForeignKeyAaveAssetId]
 
     balance: Mapped[BigInteger]
+    last_index: Mapped[BigInteger | None]
 
 
 Index(
@@ -123,3 +126,13 @@ Index(
     AaveV3DebtPositionsTable.asset_id,
     unique=True,
 )
+
+
+class AaveGhoTokenTable(Base):
+    __tablename__ = "aave_gho_tokens"
+
+    id: Mapped[PrimaryKeyInt]
+    token_id: Mapped[ForeignKeyTokenId]
+
+    v_gho_discount_rate_strategy: Mapped[Address | None]
+    v_gho_discount_token: Mapped[Address | None]
