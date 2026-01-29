@@ -7,6 +7,10 @@ tags:
 related_files:
   - ../../src/degenbot/cli/aave.py
   - ../../src/degenbot/database/models/aave.py
+  - ../../src/degenbot/aave/libraries/v3_1/wad_ray_math.py
+  - ../../src/degenbot/aave/libraries/v3_2/wad_ray_math.py
+  - ../../src/degenbot/aave/libraries/v3_3/wad_ray_math.py
+  - ../../src/degenbot/aave/libraries/v3_4/wad_ray_math.py
   - ../../src/degenbot/aave/libraries/v3_5/wad_ray_math.py
   - ../../src/degenbot/aave/libraries/v3_5/types.py
   - ../../src/degenbot/aave/libraries/v3_5/rounding.py
@@ -37,6 +41,46 @@ The system tracks events from:
 - **Pool contract**: Reserve configuration, E-Mode changes
 - **aToken contracts**: Collateral operations (Mint/Burn/Transfer)
 - **vToken contracts**: Borrow/repay operations (Mint/Burn)
+- **GHO vToken**: Special debt token with discount mechanism for GHO borrowing
+
+## GHO Token Support
+
+GHO is Aave's stablecoin with a special borrowing mechanism that provides discounts based on user's holdings of the discount token (stkAAVE on Ethereum mainnet). The CLI includes dedicated support for GHO:
+
+### GHO-Specific Tables
+
+- **`AaveGhoTokenTable`**: Tracks GHO token attributes
+  - `v_gho_discount_token`: Address of the discount token (e.g., stkAAVE)
+  - `v_gho_discount_rate_strategy`: Address of the strategy contract that calculates discount rates
+
+- **`AaveV3UsersTable.gho_discount`**: Stores the discount percentage for each GHO borrower
+
+### GHO vToken Revisions
+
+The CLI supports GHO vToken revisions 1 and 2, each with different discount calculation logic:
+
+- **Revision 1**: Simple discount accounting with `_accrueDebtOnAction()`
+- **Revision 2**: Enhanced discount balance calculation using `_get_discounted_balance()` which accounts for the discount in the total balance
+
+### GHO Event Processing
+
+GHO debt events (`Mint` and `Burn` from `GHO_VARIABLE_DEBT_TOKEN_ADDRESS`) use dedicated processors:
+
+- `_process_gho_debt_mint()`: Handles GHO borrow operations, accounting for discount scaling
+- `_process_gho_debt_burn()`: Handles GHO repay operations, including partial and full repayments
+
+These processors:
+1. Calculate the discount-scaled balance
+2. Determine the actual balance delta (amount scaled ± discount scaled)
+3. Update the user's GHO discount rate based on the new balances
+4. Fetch the discount token balance from the contract to calculate the new rate
+
+### Verification
+
+After each block, the CLI verifies GHO discount amounts:
+- Calls `getDiscountPercent(address)` on the GHO vToken contract
+- Compares against stored `gho_discount` value
+- Raises assertion error on mismatch
 
 ## Offline Position Calculation
 
@@ -149,21 +193,40 @@ graph TD
 
             subgraph Scaled_Token_Events
                 J3 --> K[Mint events]
-                K --> K1[Detect source, update balance accordingly]
+                K --> K1{Token Type?}
 
-                K1 --> K2{_transfer}
-                K2 -->|Skip| K2a[BalanceTransfer already handled]
+                K1 -->|aToken| K2[Collateral: Detect source]
+                K1 -->|vToken| K3{Is GHO vToken?}
 
-                K1 --> K3{_burnScaled}
-                K3 -->|Add excess interest| K3a[Add event_value directly to balance]
+                K2 --> K2a[Detect _transfer / _burnScaled / _mintScaled]
+                K2a --> K2b[Update collateral balance accordingly]
 
-                K1 --> K4{_mintScaled}
-                K4 -->|Add user requested amount| K4a[Calculate user request = value - balanceIncrease]
-                K4a --> K4b[Convert to scaled = ray_div amount, index]
-                K4b --> K4c[Add to position balance]
+                K3 -->|Yes| K4[Process GHO-specific logic]
+                K4 --> K4a[_process_gho_debt_mint]
+                K4a --> K4b[Calculate discount-scaled balance]
+                K4b --> K4c[Update GHO discount rate]
+                K4c --> K4d[Update debt position]
+
+                K3 -->|No| K5[Standard vToken logic]
+                K5 --> K5a[Detect _burnScaled / _mintScaled]
+                K5a --> K5b[Update debt balance accordingly]
 
                 J3 --> L[Burn events]
-                L --> L1[Subtract scaled amount from user position]
+                L --> L1{Token Type?}
+
+                L1 -->|aToken| L2[Collateral: Calculate burn amount]
+                L2 --> L3[Convert to scaled and subtract]
+
+                L1 -->|vToken| L4{Is GHO vToken?}
+
+                L4 -->|Yes| L5[Process GHO-specific logic]
+                L5 --> L5a[_process_gho_debt_burn]
+                L5a --> L5b[Calculate discount-scaled balance]
+                L5b --> L5c[Update GHO discount rate]
+                L5c --> L5d[Update debt position]
+
+                L4 -->|No| L6[Standard vToken logic]
+                L6 --> L7[Convert to scaled and subtract]
 
                 J3 --> M[BalanceTransfer]
                 M --> M1[Move scaled amount between users]
@@ -171,9 +234,21 @@ graph TD
                 J3 --> N[Upgraded]
                 N --> N1[Update aToken or vToken revision]
             end
+
+            J --> O[Fetch GHO discount events]
+
+            subgraph GHO_Discount_Events
+                O --> P[DiscountTokenUpdated]
+                P --> P1[Update v_gho_discount_token]
+
+                O --> Q[DiscountRateStrategyUpdated]
+                Q --> Q1[Update v_gho_discount_rate_strategy]
+            end
         end
 
         G --> O[Validate user balances against contracts]
+        O --> O1[Verify scaled balances for collateral/debt]
+        O1 --> O2[Verify GHO discount percentages]
         G --> P[Commit transaction]
         G --> Q[Update market.last_update_block]
     end
@@ -228,6 +303,19 @@ elif value > balanceIncrease:
 2. **`_burnScaled`**: Withdrawal where accrued interest exceeds withdrawal amount
 3. **`_mintScaled`**: User supplies collateral or borrows debt
 
+**User Operations:**
+
+The CLI tracks the following user operations through the `UserOperation` type:
+
+| Operation | Description |
+|-----------|-------------|
+| `DEPOSIT` | User supplies collateral |
+| `WITHDRAW` | User withdraws collateral |
+| `BORROW` | User borrows debt (standard) |
+| `REPAY` | User repays debt (standard) |
+| `GHO BORROW` | User borrows GHO (with discount) |
+| `GHO REPAY` | User repays GHO (with discount) |
+
 **Storage Effects:**
 - `_mintScaled`: Storage increased by `_mint(amountScaled)`
 - `_burnScaled`: Storage decreased by `_burn(amountScaled)`, interest portion emitted as Mint
@@ -248,9 +336,16 @@ elif value > balanceIncrease:
 - `_burnScaled`: Add `event_value` to `AaveV3DebtPositionsTable.balance`
 - `_mintScaled`: Add `amountScaled` to `AaveV3DebtPositionsTable.balance`
 
+**GHO vToken** (special handling):
+- Uses dedicated functions `_process_gho_debt_mint()` and `_process_gho_debt_burn()`
+- Tracks user's discount percentage for GHO borrowing
+- Accounts for discount-scaled balance when calculating delta
+- Updates user's GHO discount rate based on new balances
+- Supports GHO vToken revisions 1 and 2
+
 All sources create user entry and position if not exists.
 
-**Data models updated**: `AaveV3UsersTable`, `AaveV3CollateralPositionsTable` or `AaveV3DebtPositionsTable`
+**Data models updated**: `AaveV3UsersTable`, `AaveV3CollateralPositionsTable` or `AaveV3DebtPositionsTable`, `AaveGhoTokenTable` (for GHO)
 
 ### Scaled Token Burn (`Burn`)
 
@@ -272,7 +367,14 @@ Burn events always originate from `_burnScaled` after the storage is reduced by 
 - Subtract from `AaveV3DebtPositionsTable.balance` (matches `_burn()` call)
 - Deletes position if balance reaches zero
 
-**Data models updated**: `AaveV3CollateralPositionsTable` or `AaveV3DebtPositionsTable`
+**GHO vToken** (special handling):
+- Uses `_process_gho_debt_burn()` for revision-specific logic
+- Supports revision 1: Simple discount accounting
+- Supports revision 2: Enhanced discount balance calculation with `_get_discounted_balance()`
+- Updates user's GHO discount rate based on remaining balance
+- Accounts for discount-scaled balance when calculating delta
+
+**Data models updated**: `AaveV3CollateralPositionsTable` or `AaveV3DebtPositionsTable`, `AaveV3UsersTable.gho_discount` (for GHO)
 
 ### Balance Transfer (`BalanceTransfer`)
 
@@ -292,6 +394,18 @@ When aToken or vToken implementation changes:
 
 **Data model updated**: `AaveV3AssetsTable.a_token_revision` or `AaveV3AssetsTable.v_token_revision`
 
+### GHO Discount Token Updated (`DiscountTokenUpdated`)
+
+Emitted when the discount token for GHO vToken changes.
+
+**Data model updated**: `AaveGhoTokenTable.v_gho_discount_token`
+
+### GHO Discount Rate Strategy Updated (`DiscountRateStrategyUpdated`)
+
+Emitted when the discount rate strategy for GHO vToken changes. The strategy calculates discount percentages based on user's GHO debt and discount token balances.
+
+**Data model updated**: `AaveGhoTokenTable.v_gho_discount_rate_strategy`
+
 ## Data Model Updates
 
 All database models are defined in [`src/degenbot/database/models/aave.py`](../../src/degenbot/database/models/aave.py):
@@ -302,9 +416,10 @@ All database models are defined in [`src/degenbot/database/models/aave.py`](../.
 | `AaveV3ContractsTable` | `address`, `revision` | New proxy contracts or implementation changes |
 | `AaveV3AssetsTable` | `liquidity_rate`, `borrow_rate`, `liquidity_index`, `borrow_index`, `last_update_block` | From ReserveDataUpdated events |
 | `AaveV3AssetsTable` | `a_token_revision`, `v_token_revision` | From Upgraded events |
-| `AaveV3UsersTable` | `e_mode` | From UserEModeSet events |
-| `AaveV3CollateralPositionsTable` | `balance` | From Mint (3 sources), Burn, BalanceTransfer events |
-| `AaveV3DebtPositionsTable` | `balance` | From Mint (2 sources), Burn events |
+| `AaveV3UsersTable` | `e_mode`, `gho_discount` | From UserEModeSet and GHO events |
+| `AaveV3CollateralPositionsTable` | `balance`, `last_index` | From Mint (3 sources), Burn, BalanceTransfer events |
+| `AaveV3DebtPositionsTable` | `balance`, `last_index` | From Mint (2 sources), Burn events |
+| `AaveGhoTokenTable` | `v_gho_discount_token`, `v_gho_discount_rate_strategy` | From GHO discount events |
 | `Erc20TokenTable` | New rows created | For underlying assets, aTokens, vTokens |
 
 ## Error Handling & Validation
@@ -328,6 +443,11 @@ All database models are defined in [`src/degenbot/database/models/aave.py`](../.
 After each block, performs **balance checks** on modified users:
 - Calls `scaledBalanceOf(address)` on contract
 - Compares against stored `balance` value
+- Raises assertion error on mismatch with detailed context
+
+**GHO Discount Verification**:
+- Calls `getDiscountPercent(address)` on GHO vToken contract
+- Compares against stored `gho_discount` value in `AaveV3UsersTable`
 - Raises assertion error on mismatch with detailed context
 
 ## Algorithm Details
@@ -375,13 +495,30 @@ sorted(all_events, key=operator.itemgetter("blockNumber", "logIndex"))
 
 This ensures chronological processing within each block.
 
+## Token Revision Libraries
+
+The code supports multiple Aave V3 token revisions through the `SCALED_TOKEN_REVISION_LIBRARIES` dictionary. Each revision provides specific math libraries for calculating scaled balances:
+
+| Revision | Library Path | WadRayMath Features |
+|----------|--------------|---------------------|
+| 1 | `v3_1/wad_ray_math.py` | Initial implementation |
+| 2 | `v3_2/wad_ray_math.py` | Enhanced operations |
+| 3 | `v3_3/wad_ray_math.py` | Enhanced operations |
+| 4 | `v3_4/wad_ray_math.py` | Enhanced operations |
+
+Revision-specific functions:
+- `_get_math_libraries(token_revision)` - Returns WadRayMath and PercentageMath libraries for a given revision
+- Used in `_process_scaled_token_operation()`, `_accrue_debt_on_action()`, and GHO-specific functions
+
+**Note**: The `v3_5` directory contains Python ports with explicit rounding control but is not currently mapped in the revision libraries.
+
 ## Related Functions
 
-### `update_aave_v3_market(w3, start_block, end_block, market, session)`
+### `update_aave_market(w3, start_block, end_block, market, session)`
 
 Core update logic for a single market. Fetches and processes all events in the block range.
 
-**Location**: [`src/degenbot/cli/aave.py:1239`](../../src/degenbot/cli/aave.py#L1239)
+**Location**: [`src/degenbot/cli/aave.py:2090`](../../src/degenbot/cli/aave.py#L2090)
 
 ### Event Processors
 
@@ -392,13 +529,31 @@ All event processors are located in [`src/degenbot/cli/aave.py`](../../src/degen
 - `_process_user_e_mode_set_event()` - User E-Mode changes
 - `_process_scaled_token_mint_event()` - Collateral supply/borrow, interest accrual, or transfer (detects source)
 - `_process_scaled_token_burn_event()` - Collateral withdraw or debt repay
-- `_process_a_token_balance_transfer_event()` - Collateral transfers
+- `_process_scaled_token_balance_transfer_event()` - Collateral transfers
 - `_process_scaled_token_upgrade_event()` - Token implementation changes
+- `_process_discount_token_updated_event()` - GHO discount token updates
+- `_process_discount_rate_strategy_updated_event()` - GHO discount rate strategy updates
+
+### GHO-Specific Functions
+
+- `_process_gho_debt_mint()` - GHO debt mint events (borrow/repay with discount)
+- `_process_gho_debt_burn()` - GHO debt burn events (repay with discount)
+- `_accrue_debt_on_action()` - Calculate balance increase and discount for GHO debt
+- `_get_discount_rate()` - Retrieve discount percentage from strategy contract
+- `_verify_gho_discount_amounts()` - Verify GHO discount values match contract
 
 ### Helper Functions
 
-- `get_aave_v3_contract_update_events()` - Fetch contract configuration events
-- `get_aave_v3_reserve_initialized_events()` - Fetch new asset events
+- `_get_contract_update_events()` - Fetch contract configuration events
+- `_get_reserve_initialized_events()` - Fetch new asset events
+- `_get_all_scaled_token_addresses()` - Get all aToken and vToken addresses for a chain
+- `_get_scaled_token_asset_by_address()` - Get collateral and debt assets by token address
+- `_update_contract_revision()` - Update contract revision in database
+- `_get_or_create_user()` - Get existing user or create new one
+- `_get_or_create_erc20_token()` - Get existing ERC20 token or create new one
+- `_get_or_create_collateral_position()` - Get existing collateral position or create new one
+- `_get_or_create_debt_position()` - Get existing debt position or create new one
+- `_process_scaled_token_operation()` - Determine balance delta and user operation for scaled token events
 
 ## Configuration
 
@@ -416,8 +571,9 @@ rpc:
 
 - **Database**: SQLAlchemy ORM (see [`src/degenbot/database/models/aave.py`](../../src/degenbot/database/models/aave.py))
 - **Blockchain**: Web3.py for RPC calls
-- **Math**: Aave ray_div for scaled balance calculations
+- **Math**: Aave WadRayMath libraries for scaled balance calculations (v3_1 through v3_4)
 - **Logging**: Click for CLI output, tqdm for progress bars
+- **Token Revisions**: Protocol-based library selection for different Aave V3 token implementations
 
 ## Solidity Smart Contract Source Code
 
@@ -455,17 +611,21 @@ Contains the initial Aave V3 token implementations:
   - Integrates with Aave incentives controller for reward distribution
   - **Note**: File exists as `ncentivizedERC20.sol` (missing leading "I" due to filesystem issue)
 
+#### `v3_2/` - Aave V3 v3.2 Implementation
+
+- **[WadRayMath.sol](../../src/degenbot/aave/libraries/v3_2/WadRayMath.sol)**: Enhanced version with additional operations
+
+#### `v3_3/` - Aave V3 v3.3 Implementation
+
+- **[WadRayMath.sol](../../src/degenbot/aave/libraries/v3_3/WadRayMath.sol)**: Enhanced version with additional operations
+
 #### `v3_4/` - Aave V3 v3.4 Implementation
 
 - **[WadRayMath.sol](../../src/degenbot/aave/libraries/v3_4/WadRayMath.sol)**: Enhanced version with expanded math operations
 - **[WadRayMath.t.sol](../../src/degenbot/aave/libraries/v3_4/WadRayMath.t.sol)**: Unit tests for the WadRayMath library
 
-#### `v3_5/` - Aave V3 v3.5 Implementation
+#### `v3_5/` - Aave V3 v3.5 Implementation (Python ports only)
 
-- **[WadRayMath.sol](../../src/degenbot/aave/libraries/v3_5/WadRayMath.sol)**: Latest version with additional rounding options
-  - `rayMulCeil/rayMulFloor`: Explicit ceiling/floor operations
-  - `rayDivCeil/rayDivFloor`: Explicit division rounding control
-- **[WadRayMath.t.sol](../../src/degenbot/aave/libraries/v3_5/WadRayMath.t.sol)**: Updated test suite
 - **[wad_ray_math.py](../../src/degenbot/aave/libraries/v3_5/wad_ray_math.py)**: Python port with explicit rounding control
   - `@overload` decorators for optional `Rounding` parameter
   - Matches Solidity rounding behavior exactly
@@ -592,3 +752,4 @@ When processing events that modify positions (Mint, Burn, BalanceTransfer), care
 
 TODO comments in source indicate planned features:
 - Scraper for collateral usage enabled events
+- Progress bars for update operations (already partially implemented with tqdm)
