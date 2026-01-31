@@ -1,10 +1,53 @@
-# TODO: add progress bars
-# TODO: add scraper for collateral usage enabled events
+"""
+Aave V3 market position tracking via blockchain event processing.
+
+This module provides CLI commands to synchronize Aave V3 market data with a local database
+by processing blockchain events. It tracks user collateral (aTokens) and debt (vTokens)
+using scaled balances for efficient offline calculation.
+
+Debug Controls:
+    VERBOSE_USERS: Set of user addresses to trace individually during event processing.
+        Example: {get_checksum_address("0x123...")}
+    VERBOSE_ALL: Global flag to log all operations for debugging.
+    VERBOSE_TX: Set of transaction hashes to trace.
+
+Position Lifecycle:
+    Events are processed chronologically by (blockNumber, logIndex). Special handling
+    is required when a BalanceTransfer reduces a user's balance to zero, followed by
+    a Mint event (e.g., interest accrual) in the same block. In this case, the position
+    must be recreated before applying the balance change.
+
+Scaled Balance Tracking:
+    The database stores scaled balances, where actual_balance = scaled * index.
+    Event processing derives the amountScaled passed to _mint()/_burn() calls:
+
+    - Mint: amountScaled = ray_div(user_amount, index)
+        Storage increases by amountScaled. Interest accrual may emit Mint with
+        balanceIncrease > value, indicating the user withdrew less than accrued interest.
+
+    - Burn: amountScaled = ray_div(user_amount + interest, index)
+        Storage decreases by amountScaled. The event value = amount - balanceIncrease,
+        where balanceIncrease is interest accrued since last action.
+
+Mint Source Detection:
+    Mint events originate from three sources, identified by comparing value and
+    balanceIncrease parameters:
+
+    - value == balanceIncrease: _transfer (collateral transfer between users)
+    - balanceIncrease > value: _burnScaled (withdrawal where interest > withdrawal)
+    - value > balanceIncrease: _mintScaled (user supply/borrow action)
+
+    The _transfer events are skipped since BalanceTransfer events handle the balance
+    movement directly.
+
+See documentation in docs/cli/aave.md for detailed command reference and data flow.
+"""
 
 import operator
+import os
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, TypedDict, cast
 
 import click
 import eth_abi.abi
@@ -20,7 +63,6 @@ import degenbot.aave.libraries.v3_1 as aave_library_v3_1
 import degenbot.aave.libraries.v3_2 as aave_library_v3_2
 import degenbot.aave.libraries.v3_3 as aave_library_v3_3
 import degenbot.aave.libraries.v3_4 as aave_library_v3_4
-import degenbot.aave.libraries.v3_5 as aave_library_v3_5
 from degenbot.aave.deployments import EthereumMainnetAaveV3
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
@@ -48,13 +90,23 @@ from degenbot.logging import logger
 if TYPE_CHECKING:
     from eth_typing.evm import BlockParams
 
-type BalanceDelta = int
 type TokenRevision = int
-type UserOperation = Literal["DEPOSIT", "WITHDRAW", "BORROW", "REPAY", "GHO BORROW", "GHO REPAY"]
+type UserOperation = Literal[
+    "DEPOSIT",
+    "WITHDRAW",
+    "BORROW",
+    "REPAY",
+    "GHO BORROW",
+    "GHO REPAY",
+    "AAVE STAKED",
+    "AAVE REDEEM",
+    "stkAAVE TRANSFER",
+]
 
 # GhoVariableDebtToken
 # Rev 1: 0x3FEaB6F8510C73E05b8C0Fdf96Df012E3A144319
 # Rev 2: 0x7aa606b1B341fFEeAfAdbbE4A2992EFB35972775
+#        0x4da27a545c0c5B758a6BA100e3a049001de870f5 (discount token stkAAVE)
 
 # GhoDiscountRateStrategy
 # 0x4C38Ec4D1D2068540DfC11DFa4de41F733DDF812
@@ -62,15 +114,99 @@ type UserOperation = Literal["DEPOSIT", "WITHDRAW", "BORROW", "REPAY", "GHO BORR
 GHO_VARIABLE_DEBT_TOKEN_ADDRESS = get_checksum_address("0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B")
 
 # TODO: debug variable, remove this after testing is complete
-last_event_processed: LogReceipt | None = None
+event_in_process: LogReceipt
 
-# Remove before using in production
-VERBOSE_ALL = False
 
-# User addresses that trigger verbose logging
-VERBOSE_USERS: set[ChecksumAddress] = {
-    # get_checksum_address("0xA988afe23CD41Ca490f5cA239E0d1852B3e47c25"),
-}
+class VerboseConfig:
+    """Runtime configurable verbose logging settings for Aave event processing."""
+
+    all_enabled: ClassVar[bool] = False
+    users: ClassVar[set[ChecksumAddress]] = set()
+    transactions: ClassVar[set[HexBytes]] = set()
+
+    @classmethod
+    def toggle_all(cls, *, enabled: bool | None = None) -> bool:
+        """Toggle or set VERBOSE_ALL. Returns the new state."""
+        if enabled is None:
+            cls.all_enabled = not cls.all_enabled
+        else:
+            cls.all_enabled = enabled
+        return cls.all_enabled
+
+    @classmethod
+    def add_user(cls, user_address: ChecksumAddress) -> None:
+        """Add a user address to VERBOSE_USERS."""
+        cls.users.add(user_address)
+
+    @classmethod
+    def remove_user(cls, user_address: ChecksumAddress) -> None:
+        """Remove a user address from VERBOSE_USERS."""
+        cls.users.discard(user_address)
+
+    @classmethod
+    def clear_users(cls) -> None:
+        """Clear all users from VERBOSE_USERS."""
+        cls.users.clear()
+
+    @classmethod
+    def add_transaction(cls, tx_hash: HexBytes | str) -> None:
+        """Add a transaction hash to VERBOSE_TX."""
+        if isinstance(tx_hash, str):
+            tx_hash = HexBytes(tx_hash)
+        cls.transactions.add(tx_hash)
+
+    @classmethod
+    def remove_transaction(cls, tx_hash: HexBytes | str) -> None:
+        """Remove a transaction hash from VERBOSE_TX."""
+        if isinstance(tx_hash, str):
+            tx_hash = HexBytes(tx_hash)
+        cls.transactions.discard(tx_hash)
+
+    @classmethod
+    def clear_transactions(cls) -> None:
+        """Clear all transactions from VERBOSE_TX."""
+        cls.transactions.clear()
+
+    @classmethod
+    def is_verbose(
+        cls,
+        user_address: ChecksumAddress | None = None,
+        tx_hash: HexBytes | None = None,
+    ) -> bool:
+        """Check if verbose logging should be enabled for the given context."""
+        return (
+            cls.all_enabled
+            or (user_address is not None and user_address in cls.users)
+            or (tx_hash is not None and tx_hash in cls.transactions)
+        )
+
+
+def _init_verbose_config_from_env() -> None:
+    """Initialize VerboseConfig from environment variables."""
+    # DEGENBOT_VERBOSE_ALL: Set to "1", "true", or "yes" to enable
+    verbose_all = os.environ.get("DEGENBOT_VERBOSE_ALL", "").lower()
+    if verbose_all in {"1", "true", "yes"}:
+        VerboseConfig.toggle_all(enabled=True)
+
+    # DEGENBOT_VERBOSE_USERS: Comma-separated list of addresses
+    verbose_users = os.environ.get("DEGENBOT_VERBOSE_USERS", "")
+    if verbose_users:
+        for addr in verbose_users.split(","):
+            addr_ = addr.strip()
+            if addr_:
+                VerboseConfig.add_user(get_checksum_address(addr_))
+
+    # DEGENBOT_VERBOSE_TX: Comma-separated list of transaction hashes
+    verbose_tx = os.environ.get("DEGENBOT_VERBOSE_TX", "")
+    if verbose_tx:
+        for tx_hash in verbose_tx.split(","):
+            tx_hash_ = tx_hash.strip()
+            if tx_hash_:
+                VerboseConfig.add_transaction(HexBytes(tx_hash_))
+
+
+# Initialize from environment on module load
+_init_verbose_config_from_env()
 
 
 class AaveV3Event(Enum):
@@ -104,6 +240,9 @@ class AaveV3Event(Enum):
     DISCOUNT_TOKEN_UPDATED = HexBytes(
         "0x6b489e1dbfbe36f55c511c098bcc9d92fec7f04f74ceb75018697ab68f7d3529"
     )
+    STAKED = HexBytes("0x6c86f3fd5118b3aa8bb4f389a617046de0a3d3d477de1a1673d227f802f616dc")
+    REDEEM = HexBytes("0x3f693fff038bb8a046aa76d9516190ac7444f7d69cf952c4cbdc086fdef2d6fc")
+    TRANSFER = HexBytes("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
 
 
 class PercentageMathLibrary(Protocol):
@@ -164,7 +303,7 @@ def _decode_uint_values(
     return eth_abi.abi.decode(types=types, data=event["data"])
 
 
-@cli.group()
+@cli.group
 def aave() -> None:
     """
     Aave commands
@@ -221,6 +360,8 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
             )
             session.add(market)
 
+            # Create GHO token entry if it doesn't exist. GHO tokens are chain-unique, so we create
+            # a single entry that all markets on this chain will share.
             if (
                 gho_token := session.scalar(
                     select(Erc20TokenTable).where(
@@ -418,7 +559,7 @@ def aave_update(chunk_size: int, to_block: str) -> None:
                             session=session,
                         )
                     except Exception as e:  # noqa: BLE001
-                        logger.info(f"Processing failed on event: {last_event_processed}")
+                        logger.info(f"Processing failed on event: {event_in_process}")
                         logger.info("")
                         logger.info("")
                         logger.info("")
@@ -655,9 +796,8 @@ def _process_discount_token_updated_event(
     old_discount_token_address = _decode_address(event["topics"][1])
     new_discount_token_address = _decode_address(event["topics"][2])
 
-    # TODO: Confirm that AaveGhoTokenTable correctly handles GHO tokens shared across
-    # multiple markets on the same chain. The current design assumes GHO is
-    # chain-unique, which may need validation.
+    # GHO tokens are chain-unique: multiple Aave markets on the same chain share a single GHO token.
+    # We query by chain_id to retrieve the shared GHO configuration.
 
     # Get Aave's GHO token asset, then look up the underlying ERC-20 token ID to identify the
     # special attributes
@@ -695,19 +835,11 @@ def _process_discount_rate_strategy_updated_event(
     #     address indexed newDiscountRateStrategy
     # );
 
-    (old_discount_rate_strategy_address,) = eth_abi.abi.decode(
-        types=["address"], data=event["topics"][1]
-    )
-    old_discount_rate_strategy_address = get_checksum_address(old_discount_rate_strategy_address)
+    old_discount_rate_strategy_address = _decode_address(event["topics"][1])
+    new_discount_rate_strategy_address = _decode_address(event["topics"][2])
 
-    (new_discount_rate_strategy_address,) = eth_abi.abi.decode(
-        types=["address"], data=event["topics"][2]
-    )
-    new_discount_rate_strategy_address = get_checksum_address(new_discount_rate_strategy_address)
-
-    # TODO: Confirm that AaveGhoTokenTable correctly handles GHO tokens shared
-    # across multiple markets on the same chain. The current design assumes GHO
-    # is chain-unique, which may need validation.
+    # GHO tokens are chain-unique: multiple Aave markets on the same chain share a single GHO token.
+    # We query by chain_id to retrieve the shared GHO configuration.
 
     # Get Aave's GHO token asset, then look up the underlying ERC-20 token ID to identify the
     # special attributes
@@ -726,7 +858,8 @@ def _process_discount_rate_strategy_updated_event(
     gho_asset.v_gho_discount_rate_strategy = new_discount_rate_strategy_address
 
     logger.info(
-        f"SET NEW DISCOUNT RATE STRATEGY: {old_discount_rate_strategy_address} -> {new_discount_rate_strategy_address}"
+        f"SET NEW DISCOUNT RATE STRATEGY: {old_discount_rate_strategy_address} -> "
+        f"{new_discount_rate_strategy_address}"
     )
 
 
@@ -1019,14 +1152,17 @@ def _verify_scaled_token_positions(
     """
 
     for user_address, last_update_block in users_to_check.items():
-        # logger.info(f"Verifying positions for {user_address} at block {last_update_block}")
+        if user_address == ZERO_ADDRESS:
+            logger.error("SKIPPED ZERO ADDRESS!")
+            continue
+
         user = session.scalar(
             select(AaveV3UsersTable).where(
                 AaveV3UsersTable.address == user_address,
                 AaveV3UsersTable.market_id == market.id,
             )
         )
-        assert user is not None
+        assert user is not None, f"Could not identify user {user_address}"
 
         for position in session.scalars(
             select(position_table).where(position_table.user_id == user.id)
@@ -1071,9 +1207,10 @@ def _verify_scaled_token_positions(
             )
 
             assert actual_scaled_balance == position.balance, (
-                f"User {user_address}: {'collateral' if position_table is AaveV3CollateralPositionsTable else 'debt'} balance ({position.balance}) "
-                f"does not match scaled token contract ({actual_scaled_balance}) "
-                f"@ {token_address} at block {last_update_block}"
+                f"User {user_address}: "
+                f"{'collateral' if position_table is AaveV3CollateralPositionsTable else 'debt'} "
+                f"balance ({position.balance}) does not match scaled token contract "
+                f"({actual_scaled_balance}) @ {token_address} at block {last_update_block}"
             )
 
 
@@ -1093,6 +1230,8 @@ class CollateralBurnEvent:
 
 @dataclass(frozen=True, slots=True)
 class DebtMintEvent:
+    caller: ChecksumAddress
+    on_behalf_of: ChecksumAddress
     value: int
     balance_increase: int
     index: int
@@ -1100,6 +1239,8 @@ class DebtMintEvent:
 
 @dataclass(frozen=True, slots=True)
 class DebtBurnEvent:
+    from_: ChecksumAddress
+    target: ChecksumAddress
     value: int
     balance_increase: int
     index: int
@@ -1159,9 +1300,10 @@ def _log_balance_transfer(
 def _process_scaled_token_operation(
     event: CollateralMintEvent | CollateralBurnEvent | DebtMintEvent | DebtBurnEvent,
     scaled_token_revision: int,
-) -> tuple[BalanceDelta, UserOperation]:
+    position: AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable,
+) -> UserOperation:
     """
-    Determine the balance delta and user operation for scaled token events.
+    Determine the user operation for scaled token events and apply balance delta to position.
     """
 
     ray_math, _ = _get_math_libraries(scaled_token_revision)
@@ -1171,40 +1313,42 @@ def _process_scaled_token_operation(
         case CollateralMintEvent():
             if event.balance_increase > event.value:
                 requested_amount = event.balance_increase - event.value
-                delta = -ray_math.ray_div(a=requested_amount, b=event.index)
+                balance_delta = -ray_math.ray_div(a=requested_amount, b=event.index)
                 operation = "WITHDRAW"
             else:
                 requested_amount = event.value - event.balance_increase
-                delta = ray_math.ray_div(a=requested_amount, b=event.index)
+                balance_delta = ray_math.ray_div(a=requested_amount, b=event.index)
                 operation = "DEPOSIT"
 
         case CollateralBurnEvent():
             requested_amount = event.value + event.balance_increase
-            delta = -ray_math.ray_div(a=requested_amount, b=event.index)
+            balance_delta = -ray_math.ray_div(a=requested_amount, b=event.index)
             operation = "WITHDRAW"
 
         case DebtMintEvent():
             if event.balance_increase > event.value:
                 requested_amount = event.balance_increase - event.value
-                delta = -ray_math.ray_div(a=requested_amount, b=event.index)
+                balance_delta = -ray_math.ray_div(a=requested_amount, b=event.index)
                 operation = "REPAY"
             else:
                 requested_amount = event.value - event.balance_increase
-                delta = ray_math.ray_div(a=requested_amount, b=event.index)
+                balance_delta = ray_math.ray_div(a=requested_amount, b=event.index)
                 operation = "BORROW"
 
         case DebtBurnEvent():
             requested_amount = event.value + event.balance_increase
-            delta = -ray_math.ray_div(a=requested_amount, b=event.index)
+            balance_delta = -ray_math.ray_div(a=requested_amount, b=event.index)
             operation = "REPAY"
 
     assert requested_amount >= 0
 
-    return delta, operation
+    position.balance += balance_delta
+    position.last_index = event.index
+
+    return operation
 
 
 def _accrue_debt_on_action(
-    *,
     debt_position: AaveV3DebtPositionsTable,
     percentage_math: PercentageMathLibrary,
     wad_ray_math: WadRayMathLibrary,
@@ -1235,7 +1379,8 @@ def _accrue_debt_on_action(
         debt_position.last_index = index
 
     else:
-        raise ValueError(f"Unsupported token revision {token_revision}")
+        msg = f"Unsupported token revision {token_revision}"
+        raise ValueError(msg)
 
     return balance_increase, discount_scaled
 
@@ -1247,7 +1392,13 @@ def _get_discount_rate(
     debt_token_balance: int,
     discount_token_balance: int,
 ) -> int:
+    if VerboseConfig.is_verbose(tx_hash=event_in_process["transactionHash"]):
+        logger.info("_get_discount_rate")
+        logger.info(f"\t{debt_token_balance=}")
+        logger.info(f"\t{discount_token_balance=}")
+
     # Get the discount percentage from the discount rate strategy contract
+    new_discount_percentage: int
     (new_discount_percentage,) = raw_call(
         w3=w3,
         address=discount_rate_strategy,
@@ -1258,34 +1409,114 @@ def _get_discount_rate(
         return_types=["uint256"],
         block_identifier=state_block,
     )
-    # logger.info(
-    #     f"Debt:{debt_token_balance}, Discount:{discount_token_balance} -> {new_discount_percentage}"
-    # )
 
     return new_discount_percentage
 
 
+def _get_discounted_balance(
+    scaled_balance: int,
+    previous_index: int,
+    current_index: int,
+    user: AaveV3UsersTable,
+    ray_math_module: WadRayMathLibrary,
+    percentage_math: PercentageMathLibrary,
+) -> int:
+    """
+    Get the discounted balance for the user.
+
+    This effectively replicates the `super.BalanceOf(user);` call used in the `_burnScaled`
+    and `_mintScaled` function calls in GhoVariableDebtToken.sol (version 2).
+
+    Ref: 0x7aa606b1B341fFEeAfAdbbE4A2992EFB35972775 (mainnet)
+    """
+
+    # TODO: extract as standalone function
+
+    if VerboseConfig.is_verbose(tx_hash=event_in_process["transactionHash"]):
+        logger.info(f"{scaled_balance=}")
+
+    if scaled_balance == 0:
+        return 0
+
+    # index = POOL.getReserveNormalizedVariableDebt(_underlyingAsset); #noqa:ERA001
+    # index = event_data.index
+    # replaced by `current_index` argument
+
+    # previousIndex = _userState[user].additionalData; #noqa:ERA001
+    # previous_index = debt_position.last_index
+    # replaced by `last_index` argument
+
+    # uint256 balance = scaledBalance.rayMul(index);
+    balance = ray_math_module.ray_mul(
+        a=scaled_balance,
+        b=current_index,
+    )
+
+    if VerboseConfig.is_verbose(
+        user_address=user.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        logger.info(f"{current_index=}")
+        logger.info(f"{previous_index=}")
+        logger.info(f"{balance=}")
+
+    if current_index == previous_index:
+        return balance
+
+    discount_percentage = user.gho_discount
+
+    if VerboseConfig.is_verbose(
+        user_address=user.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        logger.info(f"{discount_percentage=}")
+
+    if discount_percentage != 0:
+        if VerboseConfig.is_verbose(
+            user_address=user.address, tx_hash=event_in_process["transactionHash"]
+        ):
+            logger.info(f"{balance=} (before reduction)")
+
+        # uint256 balanceIncrease = balance - scaledBalance.rayMul(previousIndex);
+        balance_increase = balance - ray_math_module.ray_mul(
+            a=scaled_balance,
+            b=previous_index,
+        )
+
+        # balance -= balanceIncrease.percentMul(discountPercent);
+        balance -= percentage_math.percent_mul(
+            value=balance_increase,
+            percentage=discount_percentage,
+        )
+        if VerboseConfig.is_verbose(
+            user_address=user.address, tx_hash=event_in_process["transactionHash"]
+        ):
+            logger.info(f"{balance_increase=}")
+            logger.info(f"{balance=} (after reduction)")
+
+    return balance
+
+
 def _process_gho_debt_burn(
     w3: Web3,
-    gho_asset: AaveGhoTokenTable,
+    discount_token: ChecksumAddress,
+    discount_rate_strategy: ChecksumAddress,
     event_data: DebtBurnEvent,
     user: AaveV3UsersTable,
     scaled_token_revision: int,
     debt_position: AaveV3DebtPositionsTable,
     state_block: int,
-) -> tuple[BalanceDelta, UserOperation]:
+) -> UserOperation:
     """
-    Determine the balance delta and user operation that triggered a GHO vToken Burn event.
+    Determine the user operation that triggered a GHO vToken Burn event and apply balance delta.
     """
 
-    ray_math_module, percentage_math = _get_math_libraries(scaled_token_revision)
+    wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
 
     if scaled_token_revision == 1:
         # uint256 amountToBurn = amount - balanceIncrease;
         requested_amount = event_data.value + event_data.balance_increase
 
         # uint256 amountScaled = amount.rayDiv(index);
-        amount_scaled = ray_math_module.ray_div(
+        amount_scaled = wad_ray_math_library.ray_div(
             a=requested_amount,
             b=event_data.index,
         )
@@ -1304,31 +1535,25 @@ def _process_gho_debt_burn(
         # );
         balance_increase, discount_scaled = _accrue_debt_on_action(
             debt_position=debt_position,
-            percentage_math=percentage_math,
-            wad_ray_math=ray_math_module,
+            percentage_math=percentage_math_library,
+            wad_ray_math=wad_ray_math_library,
             previous_scaled_balance=previous_scaled_balance,
             discount_percent=discount_percent,
             index=event_data.index,
             token_revision=scaled_token_revision,
         )
-        # TODO: Re-enable this assertion after debugging is complete
         assert balance_increase == event_data.balance_increase, (
-            f"{balance_increase=} != {event_data.balance_increase=}, {last_event_processed=}"
+            f"{balance_increase=} != {event_data.balance_increase=}, {event_in_process=}"
         )
 
-        # _burn(user, (amountScaled + discountScaled).toUint128());
+        # _burn(user, (amountScaled + discountScaled).toUint128()); #noqa:ERA001
         balance_delta = -(amount_scaled + discount_scaled)
 
         # Update the discount percentage for the new balance
-        # _refreshDiscountPercent(
-        #     user,
-        #     super.balanceOf(user).rayMul(index), <--- new vToken balance (includes delta)
-        #     _discountToken.balanceOf(user), <--- fetched from contract
-        #     discountPercent, <--- previous discount percent, only used by contract to avoid duplicate events
-        # )
+        # _refreshDiscountPercent(...)
         (discount_token_balance,) = raw_call(
             w3=w3,
-            address=gho_asset.v_gho_discount_token,
+            address=discount_token,
             calldata=encode_function_calldata(
                 function_prototype="balanceOf(address)",
                 function_arguments=[user.address],
@@ -1338,8 +1563,8 @@ def _process_gho_debt_burn(
         )
         user.gho_discount = _get_discount_rate(
             w3=w3,
-            discount_rate_strategy=gho_asset.v_gho_discount_rate_strategy,
-            debt_token_balance=ray_math_module.ray_mul(
+            discount_rate_strategy=discount_rate_strategy,
+            debt_token_balance=wad_ray_math_library.ray_mul(
                 a=debt_position.balance + balance_delta,
                 b=event_data.index,
             ),
@@ -1348,109 +1573,27 @@ def _process_gho_debt_burn(
         )
 
     elif scaled_token_revision == 2:
-
-        def _get_discounted_balance(scaled_balance: int) -> int:
-            """
-            Get the discounted balance for the user.
-
-            This effectively replicates the `super.BalanceOf(user);` call used in the `_burnScaled`
-            and `_mintScaled` function calls in GhoVariableDebtToken.sol (version 2).
-
-            Ref: 0x7aa606b1B341fFEeAfAdbbE4A2992EFB35972775 (mainnet)
-            """
-
-            # TODO: extract as standalone function
-
-            if (
-                last_event_processed["transactionHash"].to_0x_hex()
-                == "0x6c69776b8fabe1c3c1626255ed9e7701fbf679f96a1c76ce39f79180f8c4b3f8"
-            ):
-                logger.info(f"{scaled_balance=}")  # OK
-
-            if scaled_balance == 0:
-                return 0
-
-            # index = POOL.getReserveNormalizedVariableDebt(_underlyingAsset)
-            index = event_data.index
-
-            # previousIndex = _userState[user].additionalData
-            previous_index = debt_position.last_index
-
-            # uint256 balance = scaledBalance.rayMul(index);
-            balance = ray_math_module.ray_mul(
-                a=scaled_balance,
-                b=index,
-            )
-            if VERBOSE_ALL or user.address in VERBOSE_USERS:
-                logger.info(f"{index=}")
-                logger.info(f"{previous_index=}")
-
-            if (
-                last_event_processed["transactionHash"].to_0x_hex()
-                == "0x6c69776b8fabe1c3c1626255ed9e7701fbf679f96a1c76ce39f79180f8c4b3f8"
-            ):
-                logger.info(f"{index=}")  # OK
-                logger.info(f"{previous_index=}")  # OK
-                logger.info(f"{balance=}")  # OK
-
-            if index == previous_index:
-                return balance
-
-            disc_pct = user.gho_discount
-
-            if (
-                last_event_processed["transactionHash"].to_0x_hex()
-                == "0x6c69776b8fabe1c3c1626255ed9e7701fbf679f96a1c76ce39f79180f8c4b3f8"
-            ):
-                logger.info(f"{disc_pct=}")  # OK
-
-            if VERBOSE_ALL or user.address in VERBOSE_USERS:
-                logger.info(f"{disc_pct=}")
-
-            if disc_pct != 0:
-                if (
-                    last_event_processed["transactionHash"].to_0x_hex()
-                    == "0x6c69776b8fabe1c3c1626255ed9e7701fbf679f96a1c76ce39f79180f8c4b3f8"
-                ):
-                    logger.info(f"{balance=} (before reduction)")
-                # uint256 balanceIncrease = balance - scaledBalance.rayMul(previousIndex);
-                balance_increase = balance - ray_math_module.ray_mul(
-                    a=scaled_balance,
-                    b=previous_index,
-                )
-
-                # balance -= balanceIncrease.percentMul(discountPercent);
-                balance -= percentage_math.percent_mul(
-                    value=balance_increase,
-                    percentage=disc_pct,
-                )
-                if (
-                    last_event_processed["transactionHash"].to_0x_hex()
-                    == "0x6c69776b8fabe1c3c1626255ed9e7701fbf679f96a1c76ce39f79180f8c4b3f8"
-                ):
-                    logger.info(f"{balance_increase=}")
-                    logger.info(f"{balance=} (after reduction)")
-
-                if VERBOSE_ALL or user.address in VERBOSE_USERS:
-                    logger.info(f"{balance_increase=}")
-
-            return balance
-
         # uint256 amountToBurn = amount - balanceIncrease;
         requested_amount = event_data.value + event_data.balance_increase
 
         # uint256 amountScaled = amount.rayDiv(index);
-        amount_scaled = ray_math_module.ray_div(
+        amount_scaled = wad_ray_math_library.ray_div(
             a=requested_amount,
             b=event_data.index,
         )
 
         # uint256 previousScaledBalance = super.balanceOf(user);
         previous_scaled_balance = debt_position.balance
+        previous_index = debt_position.last_index or 0
 
         # uint256 balanceBeforeBurn = balanceOf(user);
         balance_before_burn = _get_discounted_balance(
             scaled_balance=previous_scaled_balance,
+            previous_index=previous_index,
+            current_index=event_data.index,
+            user=user,
+            ray_math_module=wad_ray_math_library,
+            percentage_math=percentage_math_library,
         )
 
         # uint256 discountPercent = _ghoUserState[user].discountPercent;
@@ -1464,8 +1607,8 @@ def _process_gho_debt_burn(
         # );
         balance_increase, discount_scaled = _accrue_debt_on_action(
             debt_position=debt_position,
-            percentage_math=percentage_math,
-            wad_ray_math=ray_math_module,
+            percentage_math=percentage_math_library,
+            wad_ray_math=wad_ray_math_library,
             previous_scaled_balance=previous_scaled_balance,
             discount_percent=discount_percent,
             index=event_data.index,
@@ -1475,34 +1618,23 @@ def _process_gho_debt_burn(
             f"{balance_increase=} != {event_data.balance_increase=}"
         )
 
-        if VERBOSE_ALL or user.address in VERBOSE_USERS:
-            logger.info(f"{requested_amount=}")
-            logger.info(f"{balance_before_burn=}")
-
-        if (
-            last_event_processed["transactionHash"].to_0x_hex()
-            == "0x6c69776b8fabe1c3c1626255ed9e7701fbf679f96a1c76ce39f79180f8c4b3f8"
-        ):
-            logger.info(f"{requested_amount=}")
-            logger.info(f"{balance_before_burn=}")
-
         if requested_amount == balance_before_burn:
-            # _burn(user, previousScaledBalance.toUint128());
+            # _burn(user, previousScaledBalance.toUint128()); # noqa:ERA001
             balance_delta = -previous_scaled_balance
         else:
-            # _burn(user, (amountScaled + discountScaled).toUint128());
+            # _burn(user, (amountScaled + discountScaled).toUint128()); # noqa:ERA001
             balance_delta = -(amount_scaled + discount_scaled)
 
         # Update the discount percentage for the new balance
         # _refreshDiscountPercent(
         #     user,
-        #     super.balanceOf(user).rayMul(index), <--- new vToken balance (includes delta)
-        #     _discountToken.balanceOf(user), <--- fetched from contract
-        #     discountPercent, <--- previous discount percent, only used by contract to avoid duplicate events
+        #     super.balanceOf(user).rayMul(index),
+        #     _discountToken.balanceOf(user),
+        #     discountPercent,
         # )
         (discount_token_balance,) = raw_call(
             w3=w3,
-            address=gho_asset.v_gho_discount_token,
+            address=discount_token,
             calldata=encode_function_calldata(
                 function_prototype="balanceOf(address)",
                 function_arguments=[user.address],
@@ -1512,8 +1644,866 @@ def _process_gho_debt_burn(
         )
         user.gho_discount = _get_discount_rate(
             w3=w3,
-            discount_rate_strategy=gho_asset.v_gho_discount_rate_strategy,
-            debt_token_balance=ray_math_module.ray_mul(
+            discount_rate_strategy=discount_rate_strategy,
+            debt_token_balance=wad_ray_math_library.ray_mul(
+                a=debt_position.balance + balance_delta,
+                b=event_data.index,
+            ),
+            discount_token_balance=discount_token_balance,
+            state_block=state_block,
+        )
+
+        if VerboseConfig.is_verbose(
+            user_address=user.address, tx_hash=event_in_process["transactionHash"]
+        ):
+            logger.info("_burnScaled (vGHO version 2)")
+            logger.info(f"{amount_scaled=}")
+            logger.info(f"{requested_amount=}")
+            logger.info(f"{balance_before_burn=}")
+            logger.info(f"{balance_increase=}")
+            logger.info(f"{discount_scaled=}")
+            logger.info(f"{discount_token_balance=}")
+            logger.info(f"{user.gho_discount=}")
+
+    else:
+        msg = f"Unknown token revision: {scaled_token_revision}"
+        raise ValueError(msg)
+
+    if VerboseConfig.is_verbose(
+        user_address=user.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        logger.info(f"{debt_position.balance=}")
+        logger.info(f"{debt_position.balance + balance_delta=}")
+        logger.info(f"{event_in_process=}")
+        logger.info(f"{user.address=}")
+        logger.info(f"{user.gho_discount=}")
+        logger.info(f"{balance_increase=}")
+        logger.info(f"{discount_scaled=}")
+        logger.info(f"{balance_delta=}")
+        logger.info(f"{discount_token=}")
+        logger.info(f"{discount_rate_strategy=}")
+        logger.info(f"{discount_token_balance=}")
+        logger.info(f"{state_block=}")
+
+    assert requested_amount >= 0
+    assert debt_position.balance + balance_delta >= 0, (
+        f"{debt_position.balance} + {balance_delta} < 0!"
+    )
+
+    # Update the debt position
+    debt_position.balance += balance_delta
+    debt_position.last_index = event_data.index
+
+    return "GHO REPAY"
+
+
+def _process_staked_aave_event(
+    *,
+    w3: Web3,
+    market: AaveV3MarketTable,
+    session: Session,
+    discount_token: ChecksumAddress,
+    discount_rate_strategy: ChecksumAddress,
+    event_data: DebtMintEvent,
+    user: AaveV3UsersTable,
+    scaled_token_revision: int,
+    debt_position: AaveV3DebtPositionsTable,
+    state_block: int,
+    event: LogReceipt,
+) -> UserOperation:
+    """
+    Process a GHO vToken Mint event triggered by an AAVE staking event or stkAAVE transfer.
+
+    This occurs when updateDiscountDistribution is triggered externally, resulting in a Mint event
+    where value equals balanceIncrease.
+    """
+
+    # This condition occurs when updateDiscountDistribution is triggered by an AAVE staking
+    # event (Staked/Redeem), or when a stkAAVE token balance is transferred. The amount given to
+    # updateDiscountDistribution cannot be reversed from the GHO VariableDebtToken Mint
+    # event, so get it from the relevant accessory event.
+    accessory_events = [
+        e
+        for e in fetch_logs_retrying(
+            w3=w3,
+            start_block=state_block,
+            end_block=state_block,
+            address=[discount_token],
+            topic_signature=[
+                [
+                    AaveV3Event.STAKED.value,
+                    AaveV3Event.REDEEM.value,
+                    AaveV3Event.TRANSFER.value,
+                ],
+            ],
+        )
+        if e["transactionHash"] == event["transactionHash"]
+    ]
+    if len(accessory_events) > 1:
+        # Some transactions emit multiple trigger events, so place the useful ones first
+        # Ref: TX 0x818bc84e89fea83f4d53a8dda5c5b84691a6557d47153320021e0d0f9539de9a
+        event_priority = {
+            AaveV3Event.STAKED.value: 0,
+            AaveV3Event.REDEEM.value: 0,
+            AaveV3Event.TRANSFER.value: 1,
+        }
+        accessory_events.sort(key=lambda event: event_priority[event["topics"][0]])
+
+    discount_token_info_event, *_ = accessory_events
+
+    match discount_token_info_event["topics"][0]:
+        case AaveV3Event.STAKED.value:
+            return _process_aave_stake(
+                w3=w3,
+                discount_token=discount_token,
+                discount_rate_strategy=discount_rate_strategy,
+                event_data=event_data,
+                recipient=user,
+                scaled_token_revision=scaled_token_revision,
+                debt_position=debt_position,
+                state_block=state_block,
+                triggering_event=discount_token_info_event,
+            )
+        case AaveV3Event.REDEEM.value:
+            return _process_aave_redeem(
+                w3=w3,
+                discount_token=discount_token,
+                discount_rate_strategy=discount_rate_strategy,
+                event_data=event_data,
+                sender=user,
+                scaled_token_revision=scaled_token_revision,
+                debt_position=debt_position,
+                state_block=state_block,
+                triggering_event=discount_token_info_event,
+            )
+        case AaveV3Event.TRANSFER.value:
+            return _process_staked_aave_transfer(
+                w3=w3,
+                market=market,
+                session=session,
+                discount_token=discount_token,
+                discount_rate_strategy=discount_rate_strategy,
+                event_data=event_data,
+                scaled_token_revision=scaled_token_revision,
+                debt_position=debt_position,
+                state_block=state_block,
+                triggering_event=discount_token_info_event,
+            )
+        case _:
+            msg = "Should be unreachable"
+            raise ValueError(msg)
+
+
+def _process_aave_stake(
+    *,
+    w3: Web3,
+    discount_token: ChecksumAddress,
+    discount_rate_strategy: ChecksumAddress,
+    event_data: DebtMintEvent,
+    recipient: AaveV3UsersTable,
+    scaled_token_revision: int,
+    debt_position: AaveV3DebtPositionsTable,
+    state_block: int,
+    triggering_event: LogReceipt,
+) -> UserOperation:
+    """
+    Process a GHO vToken Mint event triggered by an AAVE staking or redemption event.
+
+    This handles the discount distribution update when a user stakes AAVE or redeems stkAAVE.
+    """
+
+    operation = "AAVE STAKED"
+
+    wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
+
+    # EVENT DEFINITION
+    # event Staked(address indexed from, address indexed to, uint256 assets, uint256 shares)
+    # event Redeem(address indexed from, address indexed to, uint256 assets, uint256 shares)
+    assets, shares = _decode_uint_values(
+        event=triggering_event,
+        num_values=2,
+    )
+    assert assets == shares
+    requested_amount = assets
+
+    from_address = event_data.caller
+    assert from_address == ZERO_ADDRESS
+    assert recipient.address == event_data.on_behalf_of
+
+    # For staking/redemption, the recipient is the user staking/redeeming
+    recipient_debt_position = debt_position
+
+    if VerboseConfig.is_verbose(
+        user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        logger.info(f"{event_data.caller=}")
+        logger.info(f"{event_data.on_behalf_of=}")
+
+    # uint256 recipientPreviousScaledBalance = super.balanceOf(recipient)
+    recipient_previous_scaled_balance = recipient_debt_position.balance
+
+    if recipient_previous_scaled_balance > 0:
+        if VerboseConfig.is_verbose(
+            user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
+        ):
+            logger.info(f"{recipient_previous_scaled_balance=}")
+            logger.info("Processing case: recipientPreviousScaledBalance > 0")
+
+        # (balanceIncrease, discountScaled) = _accrueDebtOnAction(...)
+        recipient_balance_increase, recipient_discount_scaled = _accrue_debt_on_action(
+            debt_position=recipient_debt_position,
+            percentage_math=percentage_math_library,
+            wad_ray_math=wad_ray_math_library,
+            previous_scaled_balance=recipient_previous_scaled_balance,
+            discount_percent=recipient.gho_discount,
+            index=event_data.index,
+            token_revision=scaled_token_revision,
+        )
+        assert recipient_balance_increase == event_data.balance_increase, (
+            f"{recipient_balance_increase=} != {event_data.balance_increase=}"
+        )
+
+        # _burn(recipient, discountScaled.toUint128())
+        recipient_debt_position.balance -= recipient_discount_scaled
+        recipient_new_scaled_balance = recipient_debt_position.balance
+        recipient_debt_position.last_index = event_data.index
+
+        # Update the discount percentage for the new balance
+        # _refreshDiscountPercent(...)
+        (recipient_new_discount_token_balance,) = raw_call(
+            w3=w3,
+            address=discount_token,
+            calldata=encode_function_calldata(
+                function_prototype="balanceOf(address)",
+                function_arguments=[recipient.address],
+            ),
+            return_types=["uint256"],
+            block_identifier=state_block,
+        )
+        recipient_previous_discount_percent = recipient.gho_discount
+        recipient.gho_discount = _get_discount_rate(
+            w3=w3,
+            discount_rate_strategy=discount_rate_strategy,
+            debt_token_balance=wad_ray_math_library.ray_mul(
+                a=recipient_previous_scaled_balance,
+                b=event_data.index,
+            ),
+            discount_token_balance=recipient_new_discount_token_balance,
+            state_block=state_block,
+        )
+        recipient_new_discount_percent = recipient.gho_discount
+
+        if VerboseConfig.is_verbose(
+            user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
+        ):
+            logger.info(f"{recipient.address=}")
+            logger.info(f"{requested_amount=}")
+            logger.info(f"{recipient_previous_scaled_balance=}")
+            logger.info(f"{recipient_new_scaled_balance=}")
+            logger.info(
+                f"Discount Percent: {recipient_previous_discount_percent} -> {recipient_new_discount_percent}"
+            )
+
+    return operation
+
+
+def _process_aave_redeem(
+    *,
+    w3: Web3,
+    discount_token: ChecksumAddress,
+    discount_rate_strategy: ChecksumAddress,
+    event_data: DebtMintEvent,
+    sender: AaveV3UsersTable,
+    scaled_token_revision: int,
+    debt_position: AaveV3DebtPositionsTable,
+    state_block: int,
+    triggering_event: LogReceipt,
+) -> UserOperation:
+    """
+    Process a GHO vToken Mint event triggered by an AAVE redemption event.
+
+    This handles the discount distribution update when a user stakes AAVE or redeems stkAAVE.
+    """
+
+    operation = "AAVE REDEEM"
+
+    wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
+
+    # EVENT DEFINITION
+    # event Staked(address indexed from, address indexed to, uint256 assets, uint256 shares)
+    # event Redeem(address indexed from, address indexed to, uint256 assets, uint256 shares)
+    assets, shares = _decode_uint_values(
+        event=triggering_event,
+        num_values=2,
+    )
+    assert assets == shares
+    requested_amount = assets
+
+    from_address = event_data.caller
+    assert from_address == ZERO_ADDRESS
+    assert sender.address == event_data.on_behalf_of
+
+    # For staking/redemption, the recipient is the user staking/redeeming
+    sender_debt_position = debt_position
+
+    # Get the discount token balance from the prior block
+    (sender_discount_token_balance,) = raw_call(
+        w3=w3,
+        address=discount_token,
+        calldata=encode_function_calldata(
+            function_prototype="balanceOf(address)",
+            function_arguments=[sender.address],
+        ),
+        return_types=["uint256"],
+        block_identifier=state_block - 1,
+    )
+
+    if VerboseConfig.is_verbose(
+        user_address=sender.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        logger.info(f"{event_data.caller=}")
+        logger.info(f"{event_data.on_behalf_of=}")
+
+    # uint256 recipientPreviousScaledBalance = super.balanceOf(recipient)
+    sender_previous_scaled_balance = sender_debt_position.balance
+    # from tenderly: 131879097492186474365915
+    # from degenbot: 131879097492186474365915 OK!
+
+    if sender_previous_scaled_balance > 0:
+        if VerboseConfig.is_verbose(
+            user_address=sender.address, tx_hash=event_in_process["transactionHash"]
+        ):
+            logger.info("Processing case: senderPreviousScaledBalance > 0")
+
+        # (balanceIncrease, discountScaled) = _accrueDebtOnAction(...)
+        sender_discount_percent = sender.gho_discount
+        sender_balance_increase, sender_discount_scaled = _accrue_debt_on_action(
+            debt_position=sender_debt_position,
+            percentage_math=percentage_math_library,
+            wad_ray_math=wad_ray_math_library,
+            previous_scaled_balance=sender_previous_scaled_balance,
+            discount_percent=sender_discount_percent,
+            index=event_data.index,
+            token_revision=scaled_token_revision,
+        )
+        assert sender_balance_increase == event_data.balance_increase, (
+            f"{sender_balance_increase=} != {event_data.balance_increase=}"
+        )
+
+        # _burn(recipient, discountScaled.toUint128())
+        sender_debt_position.balance -= sender_discount_scaled
+        sender_debt_position.last_index = event_data.index
+
+        # _refreshDiscountPercent(...)
+        sender_previous_discount_percent = sender.gho_discount
+        sender.gho_discount = _get_discount_rate(
+            w3=w3,
+            discount_rate_strategy=discount_rate_strategy,
+            debt_token_balance=wad_ray_math_library.ray_mul(
+                a=sender_debt_position.balance,
+                b=event_data.index,
+            ),
+            discount_token_balance=sender_discount_token_balance - requested_amount,
+            state_block=state_block,
+        )
+        sender_new_discount_percent = sender.gho_discount
+
+        if VerboseConfig.is_verbose(
+            user_address=sender.address, tx_hash=event_in_process["transactionHash"]
+        ):
+            logger.info(f"{sender.address=}")
+            logger.info(f"{sender_discount_token_balance=}")
+            logger.info(f"{requested_amount=}")
+            logger.info(f"{sender_previous_scaled_balance=}")
+            logger.info(
+                f"Discount Percent: {sender_previous_discount_percent} -> {sender_new_discount_percent}"
+            )
+
+    # if recipient_previous_scaled_balance > 0:
+    #     if VerboseConfig.is_verbose(
+    #         user_address=sender.address, tx_hash=event_in_process["transactionHash"]
+    #     ):
+    #         logger.info(f"{recipient_previous_scaled_balance=}")
+    #         logger.info("Processing case: recipientPreviousScaledBalance > 0")
+
+    #     # (balanceIncrease, discountScaled) = _accrueDebtOnAction(...)
+    #     recipient_balance_increase, recipient_discount_scaled = _accrue_debt_on_action(
+    #         debt_position=recipient_debt_position,
+    #         percentage_math=percentage_math_library,
+    #         wad_ray_math=wad_ray_math_library,
+    #         previous_scaled_balance=recipient_previous_scaled_balance,
+    #         discount_percent=sender.gho_discount,
+    #         index=event_data.index,
+    #         token_revision=scaled_token_revision,
+    #     )
+    #     assert recipient_balance_increase == event_data.balance_increase, (
+    #         f"{recipient_balance_increase=} != {event_data.balance_increase=}"
+    #     )
+
+    #     # _burn(recipient, discountScaled.toUint128())
+    #     recipient_debt_position.balance -= recipient_discount_scaled
+    #     recipient_new_scaled_balance = recipient_debt_position.balance
+    #     recipient_debt_position.last_index = event_data.index
+
+    #     # _refreshDiscountPercent(...)
+    #     recipient_previous_discount_percent = sender.gho_discount
+    #     sender.gho_discount = _get_discount_rate(
+    #         w3=w3,
+    #         discount_rate_strategy=discount_rate_strategy,
+    #         debt_token_balance=wad_ray_math_library.ray_mul(
+    #             a=recipient_previous_scaled_balance,
+    #             b=event_data.index,
+    #         ),
+    #         discount_token_balance=recipient_discount_token_balance + requested_amount,
+    #         state_block=state_block,
+    #     )
+    #     recipient_new_discount_percent = sender.gho_discount
+
+    #     if VerboseConfig.is_verbose(
+    #         user_address=sender.address, tx_hash=event_in_process["transactionHash"]
+    #     ):
+    #         logger.info(f"{sender.address=}")
+    #         logger.info(f"{recipient_discount_token_balance=}")
+    #         logger.info(f"{requested_amount=}")
+    #         logger.info(f"{recipient_previous_scaled_balance=}")
+    #         logger.info(f"{recipient_new_scaled_balance=}")
+    #         logger.info(
+    #             f"Discount Percent: {recipient_previous_discount_percent} -> {recipient_new_discount_percent}"
+    #         )
+
+    return operation
+
+
+def _process_staked_aave_transfer(
+    *,
+    w3: Web3,
+    market: AaveV3MarketTable,
+    session: Session,
+    discount_token: ChecksumAddress,
+    discount_rate_strategy: ChecksumAddress,
+    event_data: DebtMintEvent,
+    scaled_token_revision: int,
+    debt_position: AaveV3DebtPositionsTable,
+    state_block: int,
+    triggering_event: LogReceipt,
+) -> UserOperation:
+    """
+    Process a GHO vToken Mint event triggered by an stkAAVE transfer.
+
+    This handles the discount distribution update when stkAAVE is transferred between users.
+    Both sender and recipient's discount rates are updated.
+    """
+
+    wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
+
+    # EVENT DEFINITION
+    # event Transfer(address indexed from, address indexed to, uint256 value)
+    (amount_transferred,) = _decode_uint_values(
+        event=triggering_event,
+        num_values=1,
+    )
+    requested_amount = amount_transferred
+
+    from_address = _decode_address(triggering_event["topics"][1])
+    to_address = _decode_address(triggering_event["topics"][2])
+
+    # When a user sends or receives stkAAVE, their discount is updated.
+    # A sender reduces their stkAAVE balance, so their GHO vToken debt is increased
+    # A receiver increases their stkAAVE balance, so their GHO vToken debt is reduced
+    sender = _get_or_create_user(session=session, market=market, user_address=from_address)
+    recipient = _get_or_create_user(session=session, market=market, user_address=to_address)
+    assert sender is not recipient
+
+    sender_debt_position = _get_or_create_debt_position(
+        session=session,
+        user_id=sender.id,
+        asset_id=debt_position.asset_id,
+    )
+    recipient_debt_position = _get_or_create_debt_position(
+        session=session,
+        user_id=recipient.id,
+        asset_id=debt_position.asset_id,
+    )
+
+    # Get the discount token balances from the prior block
+    (sender_discount_token_balance,) = raw_call(
+        w3=w3,
+        address=discount_token,
+        calldata=encode_function_calldata(
+            function_prototype="balanceOf(address)",
+            function_arguments=[sender.address],
+        ),
+        return_types=["uint256"],
+        block_identifier=state_block - 1,
+    )
+    (recipient_discount_token_balance,) = raw_call(
+        w3=w3,
+        address=discount_token,
+        calldata=encode_function_calldata(
+            function_prototype="balanceOf(address)",
+            function_arguments=[recipient.address],
+        ),
+        return_types=["uint256"],
+        block_identifier=state_block - 1,
+    )
+
+    if VerboseConfig.is_verbose(
+        user_address=sender.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        logger.info(f"stkAAVE Transfer: {from_address} -> {to_address}")
+        logger.info(f"{sender.address}: {sender_discount_token_balance} stkAAVE")
+        logger.info(f"{recipient.address}: {recipient_discount_token_balance} stkAAVE")
+        logger.info(f"{event_data.caller=}")
+        logger.info(f"{event_data.on_behalf_of=}")
+
+    # uint256 senderPreviousScaledBalance = super.balanceOf(sender)
+    sender_previous_scaled_balance = sender_debt_position.balance
+    if VerboseConfig.is_verbose(
+        user_address=sender.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        logger.info(f"{sender_previous_scaled_balance=}")
+
+    # uint256 recipientPreviousScaledBalance = super.balanceOf(recipient)
+    recipient_previous_scaled_balance = recipient_debt_position.balance
+    if VerboseConfig.is_verbose(
+        user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        logger.info(f"{recipient_previous_scaled_balance=}")
+
+    # uint256 index = POOL.getReserveNormalizedVariableDebt(_underlyingAsset)
+    # (accessed through event_data.index)
+
+    # Multiple Mint events can be emitted by a single TX!
+    # Only update the position if the event corresponds to the sender or receiver.
+    # A sender->receiver Transfer where both users hold a balance should emit two events.
+    if sender_previous_scaled_balance > 0:
+        if VerboseConfig.is_verbose(
+            user_address=sender.address, tx_hash=event_in_process["transactionHash"]
+        ):
+            logger.info("Processing case: senderPreviousScaledBalance > 0")
+
+        # (balanceIncrease, discountScaled) = _accrueDebtOnAction(...)
+        sender_discount_percent = sender.gho_discount
+        sender_balance_increase, sender_discount_scaled = _accrue_debt_on_action(
+            debt_position=sender_debt_position,
+            percentage_math=percentage_math_library,
+            wad_ray_math=wad_ray_math_library,
+            previous_scaled_balance=sender_previous_scaled_balance,
+            discount_percent=sender_discount_percent,
+            index=event_data.index,
+            token_revision=scaled_token_revision,
+        )
+        assert sender_balance_increase == event_data.balance_increase, (
+            f"{sender_balance_increase=} != {event_data.balance_increase=}"
+        )
+
+        # _burn(sender, discountScaled.toUint128())
+        sender_debt_position.balance -= sender_discount_scaled
+        sender_debt_position.last_index = event_data.index
+
+        # _refreshDiscountPercent(...)
+        sender_previous_discount_percent = sender.gho_discount
+        sender.gho_discount = _get_discount_rate(
+            w3=w3,
+            discount_rate_strategy=discount_rate_strategy,
+            debt_token_balance=wad_ray_math_library.ray_mul(
+                a=sender_debt_position.balance,
+                b=event_data.index,
+            ),
+            discount_token_balance=sender_discount_token_balance - requested_amount,
+            state_block=state_block,
+        )
+        sender_new_discount_percent = sender.gho_discount
+
+        if VerboseConfig.is_verbose(
+            user_address=sender.address, tx_hash=event_in_process["transactionHash"]
+        ):
+            logger.info(f"{sender.address=}")
+            logger.info(f"{sender_discount_token_balance=}")
+            logger.info(f"{requested_amount=}")
+            logger.info(f"{recipient_previous_scaled_balance=}")
+            logger.info(
+                f"Discount Percent: {sender_previous_discount_percent} -> {sender_new_discount_percent}"
+            )
+
+    if recipient_previous_scaled_balance > 0:
+        if VerboseConfig.is_verbose(
+            user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
+        ):
+            logger.info("Processing case: recipientPreviousScaledBalance > 0")
+
+        # (balanceIncrease, discountScaled) = _accrueDebtOnAction(...)
+        recipient_discount_percent = recipient.gho_discount
+        recipient_balance_increase, recipient_discount_scaled = _accrue_debt_on_action(
+            debt_position=recipient_debt_position,
+            percentage_math=percentage_math_library,
+            wad_ray_math=wad_ray_math_library,
+            previous_scaled_balance=recipient_previous_scaled_balance,
+            discount_percent=recipient_discount_percent,
+            index=event_data.index,
+            token_revision=scaled_token_revision,
+        )
+        assert recipient_balance_increase == event_data.balance_increase, (
+            f"{recipient_balance_increase=} != {event_data.balance_increase=}"
+        )
+
+        # _burn(recipient, discountScaled.toUint128())
+        recipient_debt_position.balance -= recipient_discount_scaled
+        recipient_new_scaled_balance = recipient_debt_position.balance
+        recipient_debt_position.last_index = event_data.index
+
+        # _refreshDiscountPercent(...)
+        recipient_previous_discount_percent = recipient.gho_discount
+        recipient.gho_discount = _get_discount_rate(
+            w3=w3,
+            discount_rate_strategy=discount_rate_strategy,
+            debt_token_balance=wad_ray_math_library.ray_mul(
+                a=recipient_previous_scaled_balance,
+                b=event_data.index,
+            ),
+            discount_token_balance=recipient_discount_token_balance + requested_amount,
+            state_block=state_block,
+        )
+        recipient_new_discount_percent = recipient.gho_discount
+
+        if VerboseConfig.is_verbose(
+            user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
+        ):
+            logger.info(f"{recipient.address=}")
+            logger.info(f"{recipient_discount_token_balance=}")
+            logger.info(f"{requested_amount=}")
+            logger.info(f"{recipient_previous_scaled_balance=}")
+            logger.info(f"{recipient_new_scaled_balance=}")
+            logger.info(
+                f"Discount Percent: {recipient_previous_discount_percent} -> {recipient_new_discount_percent}"
+            )
+
+    return "stkAAVE TRANSFER"
+
+
+def _process_gho_debt_mint(
+    *,
+    w3: Web3,
+    market: AaveV3MarketTable,
+    session: Session,
+    discount_token: ChecksumAddress,
+    discount_rate_strategy: ChecksumAddress,
+    event_data: DebtMintEvent,
+    user: AaveV3UsersTable,
+    scaled_token_revision: int,
+    debt_position: AaveV3DebtPositionsTable,
+    state_block: int,
+    event: LogReceipt,  # TODO: consolidate and remove if needed
+) -> UserOperation:
+    """
+    Determine the user operation that triggered a GHO vToken Mint event and apply balance delta.
+    """
+
+    # TODO: determine if looking up balances on previous block negatively affects anything
+    # see TX 0x9fe48a0a6454cc7a83b1ac4d3fc412f40792e2359709db4c1959170052a1d5a5 which involves a
+    # combined stake/mint operation
+
+    wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
+
+    user_operation: UserOperation
+
+    if scaled_token_revision == 1:
+        (discount_token_balance,) = raw_call(
+            w3=w3,
+            address=discount_token,
+            calldata=encode_function_calldata(
+                function_prototype="balanceOf(address)",
+                function_arguments=[user.address],
+            ),
+            return_types=["uint256"],
+            block_identifier=state_block,
+        )
+
+        previous_scaled_balance = debt_position.balance
+
+        balance_increase, discount_scaled = _accrue_debt_on_action(
+            debt_position=debt_position,
+            percentage_math=percentage_math_library,
+            wad_ray_math=wad_ray_math_library,
+            previous_scaled_balance=previous_scaled_balance,
+            discount_percent=user.gho_discount,
+            index=event_data.index,
+            token_revision=scaled_token_revision,
+        )
+        # TODO: Re-enable this assertion after debugging is complete
+        assert balance_increase == event_data.balance_increase, (
+            f"{balance_increase=} != {event_data.balance_increase=}"
+        )
+
+        if event_data.value > event_data.balance_increase:
+            # emitted in _mintScaled
+            # uint256 amountToMint = amount + balanceIncrease;
+            requested_amount = event_data.value - event_data.balance_increase
+            user_operation = "GHO BORROW"
+        else:
+            # emitted in _burnScaled:
+            # uint256 amountToMint = balanceIncrease - amount;
+            requested_amount = event_data.balance_increase - event_data.value
+            user_operation = "GHO REPAY"
+
+        amount_scaled = wad_ray_math_library.ray_div(
+            a=requested_amount,
+            b=event_data.index,
+        )
+
+        if amount_scaled > discount_scaled:
+            balance_delta = amount_scaled - discount_scaled
+        else:
+            balance_delta = -(discount_scaled - amount_scaled)
+
+        # Update the discount percentage for the new balance
+        user.gho_discount = _get_discount_rate(
+            w3=w3,
+            discount_rate_strategy=discount_rate_strategy,
+            debt_token_balance=wad_ray_math_library.ray_mul(
+                a=debt_position.balance + balance_delta,
+                b=event_data.index,
+            ),
+            discount_token_balance=discount_token_balance,
+            state_block=state_block,
+        )
+
+    elif scaled_token_revision == 2:
+        # A user accruing GHO vToken debt is labeled the "recipient". A Mint event can be emitted
+        # through several paths, and the GHO discount accounting depends on the discount
+        # token balance. This variable tracks the role of the user holding the position.
+
+        # Check for accessory events (Staked/Redeem/Transfer) to detect staking-related mints
+        # These events may not have value == balance_increase, so check explicitly
+        accessory_events = [
+            e
+            for e in fetch_logs_retrying(
+                w3=w3,
+                start_block=state_block,
+                end_block=state_block,
+                address=[discount_token],
+                topic_signature=[
+                    [
+                        AaveV3Event.STAKED.value,
+                        AaveV3Event.REDEEM.value,
+                        AaveV3Event.TRANSFER.value,
+                    ],
+                ],
+            )
+            if e["transactionHash"] == event["transactionHash"]
+        ]
+
+        if accessory_events:
+            # This Mint was triggered by staking/transfer - use specialized handler
+            return _process_staked_aave_event(
+                w3=w3,
+                market=market,
+                session=session,
+                discount_token=discount_token,
+                discount_rate_strategy=discount_rate_strategy,
+                event_data=event_data,
+                user=user,
+                scaled_token_revision=scaled_token_revision,
+                debt_position=debt_position,
+                state_block=state_block,
+                event=event,
+            )
+
+        # A Mint event can be emitted from _mintScaled or _burnScaled.
+        # Determine the source by comparing the event values:
+        #   _mintScaled logic implies that amountToMint > balanceIncrease
+        #           uint256 amountToMint = amount + balanceIncrease;
+        #           emit Mint(caller, onBehalfOf, amountToMint, balanceIncrease, index);
+        #   _burnScaled logic implies that balanceIncrease > amountToMint:
+        #           uint256 amountToMint = balanceIncrease - amount;
+        #           emit Mint(user, user, amountToMint, balanceIncrease, index);
+        if event_data.value > event_data.balance_increase:
+            requested_amount = event_data.value - event_data.balance_increase
+            user_operation = "GHO BORROW"
+            if VerboseConfig.is_verbose(
+                user_address=user.address, tx_hash=event_in_process["transactionHash"]
+            ):
+                logger.info("_mintScaled (GHO vToken rev 2)")
+
+        elif event_data.balance_increase > event_data.value:
+            requested_amount = event_data.balance_increase - event_data.value
+            user_operation = "GHO REPAY"
+            if VerboseConfig.is_verbose(
+                user_address=user.address, tx_hash=event_in_process["transactionHash"]
+            ):
+                logger.info("_burnScaled (GHO vToken rev 2)")
+
+        else:
+            # Should not reach here since value == balance_increase case is handled
+            # by the accessory_events check above
+            msg = (
+                "Unexpected Mint event state: "
+                f"value={event_data.value}, balance_increase={event_data.balance_increase}"
+            )
+            raise ValueError(msg)
+
+        # uint256 amountScaled = amount.rayDiv(index);
+        amount_scaled = wad_ray_math_library.ray_div(
+            a=requested_amount,
+            b=event_data.index,
+        )
+
+        # uint256 previousScaledBalance = super.balanceOf(user);
+        previous_scaled_balance = debt_position.balance
+
+        # uint256 discountPercent = _ghoUserState[user].discountPercent;
+        discount_percent = user.gho_discount
+
+        # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(
+        #     user,
+        #     previousScaledBalance,
+        #     discountPercent,
+        #     index
+        # );
+        balance_increase, discount_scaled = _accrue_debt_on_action(
+            debt_position=debt_position,
+            percentage_math=percentage_math_library,
+            wad_ray_math=wad_ray_math_library,
+            previous_scaled_balance=previous_scaled_balance,
+            discount_percent=discount_percent,
+            index=event_data.index,
+            token_revision=scaled_token_revision,
+        )
+        assert balance_increase == event_data.balance_increase, (
+            f"{balance_increase=} != {event_data.balance_increase=}"
+        )
+
+        if amount_scaled > discount_scaled:
+            # _mint(onBehalfOf, (amountScaled - discountScaled).toUint128()); # noqa:ERA001
+            balance_delta = amount_scaled - discount_scaled
+        else:
+            # _burn(onBehalfOf, (discountScaled - amountScaled).toUint128()); # noqa:ERA001
+            balance_delta = discount_scaled - amount_scaled
+
+        if VerboseConfig.is_verbose(
+            user_address=user.address, tx_hash=event_in_process["transactionHash"]
+        ):
+            logger.info(f"{requested_amount=}")
+            logger.info(f"{amount_scaled=}")
+            logger.info(f"{discount_scaled=}")
+            logger.info(f"{balance_delta=}")
+
+        # Update the discount percentage for the new balance
+        # _refreshDiscountPercent(...)
+        (discount_token_balance,) = raw_call(
+            w3=w3,
+            address=discount_token,
+            calldata=encode_function_calldata(
+                function_prototype="balanceOf(address)",
+                function_arguments=[user.address],
+            ),
+            return_types=["uint256"],
+            block_identifier=state_block,
+        )
+        user.gho_discount = _get_discount_rate(
+            w3=w3,
+            discount_rate_strategy=discount_rate_strategy,
+            debt_token_balance=wad_ray_math_library.ray_mul(
                 a=debt_position.balance + balance_delta,
                 b=event_data.index,
             ),
@@ -1522,20 +2512,19 @@ def _process_gho_debt_burn(
         )
 
     else:
-        raise ValueError(f"Unknown token revision: {scaled_token_revision}")
+        msg = f"Unknown token revision: {scaled_token_revision}"
+        raise ValueError(msg)
 
-    if VERBOSE_ALL or user.address in VERBOSE_USERS:
-        logger.info(f"{debt_position.balance=}")
-        logger.info(f"{debt_position.balance + balance_delta=}")
-        logger.info(f"{last_event_processed=}")
+    if VerboseConfig.is_verbose(
+        user_address=user.address, tx_hash=event_in_process["transactionHash"]
+    ):
         logger.info(f"{user.address=}")
         logger.info(f"{user.gho_discount=}")
         logger.info(f"{balance_increase=}")
         logger.info(f"{discount_scaled=}")
         logger.info(f"{balance_delta=}")
-        logger.info(f"{gho_asset.v_gho_discount_token=}")
-        logger.info(f"{gho_asset.v_gho_discount_rate_strategy=}")
-        logger.info(f"{discount_token_balance=}")
+        logger.info(f"{discount_token=}")
+        logger.info(f"{discount_rate_strategy=}")
         logger.info(f"{state_block=}")
 
     assert requested_amount >= 0
@@ -1543,107 +2532,11 @@ def _process_gho_debt_burn(
         f"{debt_position.balance} + {balance_delta} < 0!"
     )
 
-    user_operation = "GHO REPAY"
-    return balance_delta, user_operation
+    # Update the debt position
+    debt_position.balance += balance_delta
+    debt_position.last_index = event_data.index
 
-    # TODO: apply balance delta directly, log within processing functions instead of higher level
-
-
-def _process_gho_debt_mint(
-    w3: Web3,
-    gho_asset: AaveGhoTokenTable,
-    event_data: DebtMintEvent,
-    user: AaveV3UsersTable,
-    scaled_token_revision: int,
-    debt_position: AaveV3DebtPositionsTable,
-    state_block: int,
-) -> tuple[BalanceDelta, UserOperation]:
-    """
-    Determine the balance delta and user operation that triggered a GHO vToken Mint event.
-    """
-
-    # TODO: determine if looking up the balance on previous block negatively affects anything - see TX 0x9fe48a0a6454cc7a83b1ac4d3fc412f40792e2359709db4c1959170052a1d5a5 which involves a combined stake/mint operation
-
-    (discount_token_balance,) = raw_call(
-        w3=w3,
-        address=gho_asset.v_gho_discount_token,
-        calldata=encode_function_calldata(
-            function_prototype="balanceOf(address)",
-            function_arguments=[user.address],
-        ),
-        return_types=["uint256"],
-        block_identifier=state_block,
-    )
-
-    ray_math_module, percentage_math = _get_math_libraries(scaled_token_revision)
-
-    previous_scaled_balance = debt_position.balance
-
-    balance_increase, discount_scaled = _accrue_debt_on_action(
-        debt_position=debt_position,
-        percentage_math=percentage_math,
-        wad_ray_math=ray_math_module,
-        previous_scaled_balance=previous_scaled_balance,
-        discount_percent=user.gho_discount,
-        index=event_data.index,
-        token_revision=scaled_token_revision,
-    )
-    # TODO: Re-enable this assertion after debugging is complete
-    assert balance_increase == event_data.balance_increase, (
-        f"{balance_increase=} != {event_data.balance_increase=}"
-    )
-
-    if event_data.value > event_data.balance_increase:
-        # emitted in _mintScaled
-        # uint256 amountToMint = amount + balanceIncrease;
-        requested_amount = event_data.value - event_data.balance_increase
-        user_operation = "GHO BORROW"
-    else:
-        # emitted in _burnScaled:
-        # uint256 amountToMint = balanceIncrease - amount;
-        requested_amount = event_data.balance_increase - event_data.value
-        user_operation = "GHO REPAY"
-
-    amount_scaled = ray_math_module.ray_div(
-        a=requested_amount,
-        b=event_data.index,
-    )
-
-    if amount_scaled > discount_scaled:
-        balance_delta = amount_scaled - discount_scaled
-    else:
-        balance_delta = -(discount_scaled - amount_scaled)
-
-    # Update the discount percentage for the new balance
-    user.gho_discount = _get_discount_rate(
-        w3=w3,
-        discount_rate_strategy=gho_asset.v_gho_discount_rate_strategy,
-        debt_token_balance=ray_math_module.ray_mul(
-            a=debt_position.balance + balance_delta,
-            b=event_data.index,
-        ),
-        discount_token_balance=discount_token_balance,
-        state_block=state_block,
-    )
-
-    if VERBOSE_ALL or user.address in VERBOSE_USERS:
-        logger.info(f"{user.address=}")
-        logger.info(f"{user.gho_discount=}")
-        logger.info(f"{balance_increase=}")
-        logger.info(f"{discount_scaled=}")
-        logger.info(f"{balance_delta=}")
-        logger.info(f"{gho_asset.v_gho_discount_token=}")
-        logger.info(f"{gho_asset.v_gho_discount_rate_strategy=}")
-        logger.info(f"{debt_position.balance=}")
-        logger.info(f"{discount_token_balance=}")
-        logger.info(f"{state_block=}")
-
-    assert requested_amount >= 0
-    assert debt_position.balance + balance_delta >= 0, (
-        f"{debt_position.balance} + {balance_delta} < 0!"
-    )
-
-    return balance_delta, user_operation
+    return user_operation
 
 
 def _get_scaled_token_asset_by_address(
@@ -1744,7 +2637,174 @@ def _update_contract_revision(
     contract.revision = revision
 
 
+def _process_collateral_mint_event(
+    session: Session,
+    user: AaveV3UsersTable,
+    collateral_asset: AaveV3AssetsTable,
+    token_address: ChecksumAddress,
+    event_amount: int,
+    balance_increase: int,
+    index: int,
+    event: LogReceipt,
+) -> None:
+    """Process a collateral (aToken) mint event."""
+    collateral_position = _get_or_create_collateral_position(
+        session=session, user_id=user.id, asset_id=collateral_asset.id
+    )
+
+    user_starting_amount = collateral_position.balance
+
+    user_operation = _process_scaled_token_operation(
+        event=CollateralMintEvent(
+            value=event_amount,
+            balance_increase=balance_increase,
+            index=index,
+        ),
+        scaled_token_revision=collateral_asset.a_token_revision,
+        position=collateral_position,
+    )
+
+    if VerboseConfig.is_verbose(
+        user_address=user.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        _log_token_operation(
+            user_operation=user_operation,
+            user_address=user.address,
+            token_type="aToken",  # noqa: S106
+            token_address=token_address,
+            index=index,
+            balance_info=f"{user_starting_amount} -> {collateral_position.balance}",
+            tx_hash=event["transactionHash"],
+            block_info=f"{event['blockNumber']}.{event['logIndex']}",
+            balance_delta=collateral_position.balance - user_starting_amount,
+        )
+
+    assert collateral_position.balance >= 0
+
+
+def _process_gho_debt_mint_event(
+    *,
+    w3: Web3,
+    session: Session,
+    market: AaveV3MarketTable,
+    user: AaveV3UsersTable,
+    debt_asset: AaveV3AssetsTable,
+    token_address: ChecksumAddress,
+    event_amount: int,
+    balance_increase: int,
+    index: int,
+    caller_address: ChecksumAddress,
+    event: LogReceipt,
+    gho_users_to_check: dict[ChecksumAddress, int],
+) -> None:
+    """Process a GHO debt (vToken) mint event."""
+    debt_position = _get_or_create_debt_position(
+        session=session, user_id=user.id, asset_id=debt_asset.id
+    )
+
+    gho_users_to_check[user.address] = event["blockNumber"]
+    gho_asset = session.scalar(
+        select(AaveGhoTokenTable)
+        .join(Erc20TokenTable)
+        .where(Erc20TokenTable.chain == market.chain_id)
+    )
+    assert gho_asset is not None
+    assert gho_asset.v_gho_discount_token is not None, "GHO discount token not initialized"
+    assert gho_asset.v_gho_discount_rate_strategy is not None, (
+        "GHO discount rate strategy not initialized"
+    )
+
+    user_starting_amount = debt_position.balance
+
+    user_operation = _process_gho_debt_mint(
+        w3=w3,
+        market=market,
+        session=session,
+        discount_token=gho_asset.v_gho_discount_token,
+        discount_rate_strategy=gho_asset.v_gho_discount_rate_strategy,
+        event_data=DebtMintEvent(
+            caller=caller_address,
+            on_behalf_of=user.address,
+            value=event_amount,
+            balance_increase=balance_increase,
+            index=index,
+        ),
+        user=user,
+        scaled_token_revision=debt_asset.v_token_revision,
+        debt_position=debt_position,
+        state_block=event["blockNumber"],
+        event=event,
+    )
+
+    if VerboseConfig.is_verbose(
+        user_address=user.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        _log_token_operation(
+            user_operation=user_operation,
+            user_address=user.address,
+            token_type="vToken",  # noqa: S106
+            token_address=token_address,
+            index=index,
+            balance_info=f"{user_starting_amount} -> {debt_position.balance}",
+            tx_hash=event["transactionHash"],
+            block_info=f"{event['blockNumber']}.{event['logIndex']}",
+            balance_delta=debt_position.balance - user_starting_amount,
+        )
+
+    assert debt_position.balance >= 0
+
+
+def _process_standard_debt_mint_event(
+    *,
+    session: Session,
+    user: AaveV3UsersTable,
+    debt_asset: AaveV3AssetsTable,
+    token_address: ChecksumAddress,
+    event_amount: int,
+    balance_increase: int,
+    index: int,
+    caller_address: ChecksumAddress,
+    event: LogReceipt,
+) -> None:
+    """Process a standard debt (vToken) mint event (non-GHO)."""
+    debt_position = _get_or_create_debt_position(
+        session=session, user_id=user.id, asset_id=debt_asset.id
+    )
+
+    user_starting_amount = debt_position.balance
+
+    user_operation = _process_scaled_token_operation(
+        event=DebtMintEvent(
+            caller=caller_address,
+            on_behalf_of=user.address,
+            value=event_amount,
+            balance_increase=balance_increase,
+            index=index,
+        ),
+        scaled_token_revision=debt_asset.v_token_revision,
+        position=debt_position,
+    )
+
+    if VerboseConfig.is_verbose(
+        user_address=user.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        _log_token_operation(
+            user_operation=user_operation,
+            user_address=user.address,
+            token_type="vToken",  # noqa: S106
+            token_address=token_address,
+            index=index,
+            balance_info=f"{user_starting_amount} -> {debt_position.balance}",
+            tx_hash=event["transactionHash"],
+            block_info=f"{event['blockNumber']}.{event['logIndex']}",
+            balance_delta=debt_position.balance - user_starting_amount,
+        )
+
+    assert debt_position.balance >= 0
+
+
 def _process_scaled_token_mint_event(
+    *,
     w3: Web3,
     event: LogReceipt,
     market: AaveV3MarketTable,
@@ -1753,7 +2813,23 @@ def _process_scaled_token_mint_event(
     gho_users_to_check: dict[ChecksumAddress, int],
 ) -> None:
     """
-    Process a scaled token Mint event as a collateral deposit or debt borrow.
+    Process a scaled token Mint event as collateral deposit or debt borrow.
+
+    Mint events have three possible sources, determined by comparing value and
+    balanceIncrease event parameters:
+
+    - value == balanceIncrease: _transfer (collateral transfer, skipped)
+    - balanceIncrease > value: _burnScaled (interest accrual during withdrawal)
+    - value > balanceIncrease: _mintScaled (user supply/borrow action)
+
+    For _mintScaled, the amount passed to _mint() is calculated as:
+        amount = value - balanceIncrease
+        amountScaled = ray_div(amount, index)
+
+    For _burnScaled, the event_value represents interest earned and is added
+    directly to the balance without conversion.
+
+    All sources create user and position entries if they don't exist.
     """
 
     # EVENT DEFINITION
@@ -1765,18 +2841,15 @@ def _process_scaled_token_mint_event(
     #     uint256 index
     # );
 
-    # TODO: Remove this debug variable after testing is complete
-    global last_event_processed
-    last_event_processed = event
-
+    caller_address = _decode_address(event["topics"][1])
     on_behalf_of_address = _decode_address(event["topics"][2])
+
+    # Ignore the caller - all relevant actions apply to on_behalf_of_address
     users_to_check[on_behalf_of_address] = event["blockNumber"]
+
     user = _get_or_create_user(session=session, market=market, user_address=on_behalf_of_address)
 
     event_amount, balance_increase, index = _decode_uint_values(event=event, num_values=3)
-
-    # if event_amount == balance_increase:
-    #     return
 
     token_address = get_checksum_address(event["address"])
     collateral_asset, debt_asset = _get_scaled_token_asset_by_address(
@@ -1784,96 +2857,45 @@ def _process_scaled_token_mint_event(
     )
 
     if collateral_asset is not None:
-        collateral_position = _get_or_create_collateral_position(
-            session=session, user_id=user.id, asset_id=collateral_asset.id
+        _process_collateral_mint_event(
+            session=session,
+            user=user,
+            collateral_asset=collateral_asset,
+            token_address=token_address,
+            event_amount=event_amount,
+            balance_increase=balance_increase,
+            index=index,
+            event=event,
         )
-
-        balance_delta, user_operation = _process_scaled_token_operation(
-            event=CollateralMintEvent(
-                value=event_amount,
-                balance_increase=balance_increase,
-                index=index,
-            ),
-            scaled_token_revision=collateral_asset.a_token_revision,
-        )
-
-        user_starting_amount = collateral_position.balance
-
-        collateral_position.balance += balance_delta
-        collateral_position.last_index = index
-
-        if VERBOSE_ALL or on_behalf_of_address in VERBOSE_USERS:
-            _log_token_operation(
-                user_operation=user_operation,
-                user_address=on_behalf_of_address,
-                token_type="aToken",  # noqa: S106
-                token_address=token_address,
-                index=index,
-                balance_info=f"{user_starting_amount} -> {collateral_position.balance}",
-                tx_hash=event["transactionHash"],
-                block_info=f"{event['blockNumber']}.{event['logIndex']}",
-                balance_delta=balance_delta,
-            )
-
-        assert collateral_position.balance >= 0
 
     elif debt_asset is not None:
-        debt_position = _get_or_create_debt_position(
-            session=session, user_id=user.id, asset_id=debt_asset.id
-        )
-
         if token_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
-            gho_users_to_check[on_behalf_of_address] = event["blockNumber"]
-            gho_asset = session.scalar(
-                select(AaveGhoTokenTable)
-                .join(Erc20TokenTable)
-                .where(Erc20TokenTable.chain == market.chain_id)
-            )
-            assert gho_asset is not None
-
-            balance_delta, user_operation = _process_gho_debt_mint(
+            _process_gho_debt_mint_event(
                 w3=w3,
-                gho_asset=gho_asset,
-                event_data=DebtMintEvent(
-                    value=event_amount,
-                    balance_increase=balance_increase,
-                    index=index,
-                ),
+                session=session,
+                market=market,
                 user=user,
-                scaled_token_revision=debt_asset.v_token_revision,
-                debt_position=debt_position,
-                state_block=event["blockNumber"],
-            )
-
-        else:
-            balance_delta, user_operation = _process_scaled_token_operation(
-                event=DebtMintEvent(
-                    value=event_amount,
-                    balance_increase=balance_increase,
-                    index=index,
-                ),
-                scaled_token_revision=debt_asset.v_token_revision,
-            )
-
-        user_starting_amount = debt_position.balance
-
-        debt_position.balance += balance_delta
-        debt_position.last_index = index
-
-        if VERBOSE_ALL or on_behalf_of_address in VERBOSE_USERS:
-            _log_token_operation(
-                user_operation=user_operation,
-                user_address=on_behalf_of_address,
-                token_type="vToken",  # noqa: S106
+                debt_asset=debt_asset,
                 token_address=token_address,
+                event_amount=event_amount,
+                balance_increase=balance_increase,
                 index=index,
-                balance_info=f"{user_starting_amount} -> {debt_position.balance}",
-                tx_hash=event["transactionHash"],
-                block_info=f"{event['blockNumber']}.{event['logIndex']}",
-                balance_delta=balance_delta,
+                caller_address=caller_address,
+                event=event,
+                gho_users_to_check=gho_users_to_check,
             )
-
-        assert debt_position.balance >= 0
+        else:
+            _process_standard_debt_mint_event(
+                session=session,
+                user=user,
+                debt_asset=debt_asset,
+                token_address=token_address,
+                event_amount=event_amount,
+                balance_increase=balance_increase,
+                index=index,
+                caller_address=caller_address,
+                event=event,
+            )
 
     else:
         msg = (
@@ -1881,6 +2903,188 @@ def _process_scaled_token_mint_event(
             "Expected aToken or vToken."
         )
         raise ValueError(msg)
+
+
+def _process_collateral_burn_event(
+    session: Session,
+    user: AaveV3UsersTable,
+    collateral_asset: AaveV3AssetsTable,
+    token_address: ChecksumAddress,
+    event_amount: int,
+    balance_increase: int,
+    index: int,
+    event: LogReceipt,
+) -> None:
+    """Process a collateral (aToken) burn event."""
+    collateral_position = session.scalar(
+        select(AaveV3CollateralPositionsTable).where(
+            AaveV3CollateralPositionsTable.user_id == user.id,
+            AaveV3CollateralPositionsTable.asset_id == collateral_asset.id,
+        )
+    )
+    assert collateral_position is not None
+
+    user_starting_amount = collateral_position.balance
+
+    user_operation = _process_scaled_token_operation(
+        event=CollateralBurnEvent(
+            value=event_amount,
+            balance_increase=balance_increase,
+            index=index,
+        ),
+        scaled_token_revision=collateral_asset.a_token_revision,
+        position=collateral_position,
+    )
+
+    if VerboseConfig.is_verbose(
+        user_address=user.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        _log_token_operation(
+            user_operation=user_operation,
+            user_address=user.address,
+            token_type="aToken",  # noqa: S106
+            token_address=token_address,
+            index=index,
+            balance_info=f"{user_starting_amount} -> {collateral_position.balance}",
+            tx_hash=event["transactionHash"],
+            block_info=f"{event['blockNumber']}.{event['logIndex']}",
+            balance_delta=collateral_position.balance - user_starting_amount,
+        )
+
+    assert collateral_position.balance >= 0
+
+
+def _process_gho_debt_burn_event(
+    w3: Web3,
+    session: Session,
+    market: AaveV3MarketTable,
+    user: AaveV3UsersTable,
+    debt_asset: AaveV3AssetsTable,
+    token_address: ChecksumAddress,
+    event_amount: int,
+    balance_increase: int,
+    index: int,
+    from_address: ChecksumAddress,
+    target_address: ChecksumAddress,
+    event: LogReceipt,
+    gho_users_to_check: dict[ChecksumAddress, int],
+) -> None:
+    """Process a GHO debt (vToken) burn event."""
+    debt_position = session.scalar(
+        select(AaveV3DebtPositionsTable).where(
+            AaveV3DebtPositionsTable.user_id == user.id,
+            AaveV3DebtPositionsTable.asset_id == debt_asset.id,
+        )
+    )
+    assert debt_position is not None
+
+    gho_users_to_check[from_address] = event["blockNumber"]
+    gho_asset = session.scalar(
+        select(AaveGhoTokenTable)
+        .join(Erc20TokenTable)
+        .where(Erc20TokenTable.chain == market.chain_id)
+    )
+    if gho_asset is None:
+        msg = (
+            f"GHO token not found for chain {market.chain_id}. "
+            "Ensure that market has been activated."
+        )
+        raise ValueError(msg)
+
+    assert gho_asset.v_gho_discount_token is not None, "GHO discount token not initialized"
+    assert gho_asset.v_gho_discount_rate_strategy is not None, (
+        "GHO discount rate strategy not initialized"
+    )
+
+    user_starting_amount = debt_position.balance
+
+    user_operation = _process_gho_debt_burn(
+        w3=w3,
+        discount_token=gho_asset.v_gho_discount_token,
+        discount_rate_strategy=gho_asset.v_gho_discount_rate_strategy,
+        event_data=DebtBurnEvent(
+            from_=from_address,
+            target=target_address,
+            value=event_amount,
+            balance_increase=balance_increase,
+            index=index,
+        ),
+        user=user,
+        scaled_token_revision=debt_asset.v_token_revision,
+        debt_position=debt_position,
+        state_block=event["blockNumber"],
+    )
+
+    if VerboseConfig.is_verbose(
+        user_address=user.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        _log_token_operation(
+            user_operation=user_operation,
+            user_address=from_address,
+            token_type="vToken",  # noqa: S106
+            token_address=token_address,
+            index=index,
+            balance_info=f"{user_starting_amount} -> {debt_position.balance}",
+            tx_hash=event["transactionHash"],
+            block_info=f"{event['blockNumber']}.{event['logIndex']}",
+            balance_delta=debt_position.balance - user_starting_amount,
+        )
+
+    assert debt_position.balance >= 0
+
+
+def _process_standard_debt_burn_event(
+    *,
+    session: Session,
+    user: AaveV3UsersTable,
+    debt_asset: AaveV3AssetsTable,
+    token_address: ChecksumAddress,
+    event_amount: int,
+    balance_increase: int,
+    index: int,
+    from_address: ChecksumAddress,
+    target_address: ChecksumAddress,
+    event: LogReceipt,
+) -> None:
+    """Process a standard debt (vToken) burn event (non-GHO)."""
+    debt_position = session.scalar(
+        select(AaveV3DebtPositionsTable).where(
+            AaveV3DebtPositionsTable.user_id == user.id,
+            AaveV3DebtPositionsTable.asset_id == debt_asset.id,
+        )
+    )
+    assert debt_position is not None
+
+    user_starting_amount = debt_position.balance
+
+    user_operation = _process_scaled_token_operation(
+        event=DebtBurnEvent(
+            from_=from_address,
+            target=target_address,
+            value=event_amount,
+            balance_increase=balance_increase,
+            index=index,
+        ),
+        scaled_token_revision=debt_asset.v_token_revision,
+        position=debt_position,
+    )
+
+    if VerboseConfig.is_verbose(
+        user_address=user.address, tx_hash=event_in_process["transactionHash"]
+    ):
+        _log_token_operation(
+            user_operation=user_operation,
+            user_address=from_address,
+            token_type="vToken",  # noqa: S106
+            token_address=token_address,
+            index=index,
+            balance_info=f"{user_starting_amount} -> {debt_position.balance}",
+            tx_hash=event["transactionHash"],
+            block_info=f"{event['blockNumber']}.{event['logIndex']}",
+            balance_delta=debt_position.balance - user_starting_amount,
+        )
+
+    assert debt_position.balance >= 0
 
 
 def _process_scaled_token_burn_event(
@@ -1904,11 +3108,8 @@ def _process_scaled_token_burn_event(
     #     uint256 index
     # );
 
-    # TODO: Remove this debug variable after testing is complete
-    global last_event_processed
-    last_event_processed = event
-
     from_address = _decode_address(event["topics"][1])
+    target_address = _decode_address(event["topics"][2])
     users_to_check[from_address] = event["blockNumber"]
 
     event_amount, balance_increase, index = _decode_uint_values(event=event, num_values=3)
@@ -1927,106 +3128,47 @@ def _process_scaled_token_burn_event(
     )
 
     if collateral_asset is not None:
-        collateral_position = session.scalar(
-            select(AaveV3CollateralPositionsTable).where(
-                AaveV3CollateralPositionsTable.user_id == user.id,
-                AaveV3CollateralPositionsTable.asset_id == collateral_asset.id,
-            )
+        _process_collateral_burn_event(
+            session=session,
+            user=user,
+            collateral_asset=collateral_asset,
+            token_address=token_address,
+            event_amount=event_amount,
+            balance_increase=balance_increase,
+            index=index,
+            event=event,
         )
-        assert collateral_position is not None
-
-        balance_delta, user_operation = _process_scaled_token_operation(
-            event=CollateralBurnEvent(
-                value=event_amount,
-                balance_increase=balance_increase,
-                index=index,
-            ),
-            scaled_token_revision=collateral_asset.a_token_revision,
-        )
-
-        user_starting_amount = collateral_position.balance
-
-        collateral_position.balance += balance_delta
-        collateral_position.last_index = index
-
-        if VERBOSE_ALL or from_address in VERBOSE_USERS:
-            _log_token_operation(
-                user_operation=user_operation,
-                user_address=from_address,
-                token_type="aToken",  # noqa: S106
-                token_address=token_address,
-                index=index,
-                balance_info=f"{user_starting_amount} -> {collateral_position.balance}",
-                tx_hash=event["transactionHash"],
-                block_info=f"{event['blockNumber']}.{event['logIndex']}",
-            )
-
-        assert collateral_position.balance >= 0
 
     elif debt_asset is not None:
-        debt_position = session.scalar(
-            select(AaveV3DebtPositionsTable).where(
-                AaveV3DebtPositionsTable.user_id == user.id,
-                AaveV3DebtPositionsTable.asset_id == debt_asset.id,
-            )
-        )
-        assert debt_position is not None
-
         if token_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
-            gho_users_to_check[from_address] = event["blockNumber"]
-            gho_asset = session.scalar(
-                select(AaveGhoTokenTable)
-                .join(Erc20TokenTable)
-                .where(Erc20TokenTable.chain == market.chain_id)
-            )
-            if gho_asset is None:
-                msg = (
-                    f"GHO token not found for chain {market.chain_id}. "
-                    "Ensure that market has been activated."
-                )
-                raise ValueError(msg)
-
-            balance_delta, user_operation = _process_gho_debt_burn(
+            _process_gho_debt_burn_event(
                 w3=w3,
-                gho_asset=gho_asset,
-                event_data=DebtBurnEvent(
-                    value=event_amount,
-                    balance_increase=balance_increase,
-                    index=index,
-                ),
+                session=session,
+                market=market,
                 user=user,
-                scaled_token_revision=debt_asset.v_token_revision,
-                debt_position=debt_position,
-                state_block=event["blockNumber"],
+                debt_asset=debt_asset,
+                token_address=token_address,
+                event_amount=event_amount,
+                balance_increase=balance_increase,
+                index=index,
+                from_address=from_address,
+                target_address=target_address,
+                event=event,
+                gho_users_to_check=gho_users_to_check,
             )
         else:
-            balance_delta, user_operation = _process_scaled_token_operation(
-                event=DebtBurnEvent(
-                    value=event_amount,
-                    balance_increase=balance_increase,
-                    index=index,
-                ),
-                scaled_token_revision=debt_asset.v_token_revision,
-            )
-
-        user_starting_amount = debt_position.balance
-
-        debt_position.balance += balance_delta
-        debt_position.last_index = index
-
-        if VERBOSE_ALL or from_address in VERBOSE_USERS:
-            _log_token_operation(
-                user_operation=user_operation,
-                user_address=from_address,
-                token_type="vToken",  # noqa: S106
+            _process_standard_debt_burn_event(
+                session=session,
+                user=user,
+                debt_asset=debt_asset,
                 token_address=token_address,
+                event_amount=event_amount,
+                balance_increase=balance_increase,
                 index=index,
-                balance_info=f"{user_starting_amount} -> {debt_position.balance}",
-                tx_hash=event["transactionHash"],
-                block_info=f"{event['blockNumber']}.{event['logIndex']}",
+                from_address=from_address,
+                target_address=target_address,
+                event=event,
             )
-
-        assert debt_position.balance >= 0
 
     else:
         msg = f"Unknown token type for address {token_address}. Expected aToken or vToken."
@@ -2057,15 +3199,10 @@ def _process_scaled_token_balance_transfer_event(
     from_address = _decode_address(event["topics"][1])
     to_address = _decode_address(event["topics"][2])
 
-    users_to_check[from_address] = event["blockNumber"]
-    users_to_check[to_address] = event["blockNumber"]
-
     event_amount, _ = _decode_uint_values(event=event, num_values=2)
 
-    # Special case for zero-amount transfers such as
-    # TX 0x5fd783a51ae534a7d720ca8f1ce77657df5cc2564d1d81476be16078578d4142
-    if event_amount == 0:
-        return
+    users_to_check[from_address] = event["blockNumber"]
+    users_to_check[to_address] = event["blockNumber"]
 
     aave_asset = session.scalar(
         select(AaveV3AssetsTable)
@@ -2112,7 +3249,13 @@ def _process_scaled_token_balance_transfer_event(
     to_user_starting_amount = to_user_position.balance
     to_user_position.balance += event_amount
 
-    if VERBOSE_ALL or any(addr in VERBOSE_USERS for addr in (from_address, to_address)):
+    if VerboseConfig.is_verbose(
+        user_address=from_address,
+        tx_hash=event_in_process["transactionHash"],
+    ) or VerboseConfig.is_verbose(
+        user_address=to_address,
+        tx_hash=event_in_process["transactionHash"],
+    ):
         _log_balance_transfer(
             token_address=get_checksum_address(event["address"]),
             from_address=from_address,
@@ -2151,6 +3294,7 @@ def update_aave_market(
         end_block=end_block,
         address=[pool_address_provider],
         topic_signature=[
+            # TODO: figure out what this event was, and add it to AaveV3Event enum
             [HexBytes("0x4a465a9bd819d9662563c1e11ae958f8109e437e7f4bf1c6ef0b9a7b3f35d478")],
         ],
     ):
@@ -2389,13 +3533,25 @@ def update_aave_market(
                     # Get DiscountRateStrategyUpdated events to set discount rate address for the
                     # GHO vToken
                     AaveV3Event.DISCOUNT_RATE_STRATEGY_UPDATED.value,
-                    # Get DiscountTokenUpdated events to set the discount token address for the
-                    # GHO vToken
-                    AaveV3Event.DISCOUNT_TOKEN_UPDATED.value,
                 ],
             ],
         )
     )
+
+    discount_token_update_events = fetch_logs_retrying(
+        w3=w3,
+        start_block=start_block,
+        end_block=end_block,
+        topic_signature=[
+            [
+                # Get DiscountTokenUpdated events to set the discount token address for the
+                # GHO vToken
+                AaveV3Event.DISCOUNT_TOKEN_UPDATED.value,
+            ],
+        ],
+    )
+
+    all_events.extend(discount_token_update_events)
 
     for event in sorted(all_events, key=operator.itemgetter("blockNumber", "logIndex")):
         if users_to_check and event["blockNumber"] > last_event_block:
@@ -2421,6 +3577,11 @@ def update_aave_market(
                 session=session,
                 users_to_check=gho_users_to_check,
             )
+            gho_users_to_check.clear()
+
+        # TODO: Remove debug variable after testing
+        global event_in_process  # noqa: PLW0603
+        event_in_process = event
 
         match event["topics"][0]:
             case AaveV3Event.USER_E_MODE_SET.value:
