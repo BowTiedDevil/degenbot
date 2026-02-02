@@ -45,9 +45,10 @@ See documentation in docs/cli/aave.md for detailed command reference and data fl
 
 import operator
 import os
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypedDict, cast
 
 import click
 import eth_abi.abi
@@ -102,6 +103,120 @@ type UserOperation = Literal[
     "AAVE REDEEM",
     "stkAAVE TRANSFER",
 ]
+
+
+@dataclass
+class BlockStateCache:
+    """Cache for blockchain state within a single block and its predecessor."""
+
+    w3: Web3
+    block_number: int
+    _cache: dict[tuple[str, ...], Any] = field(default_factory=dict)
+    _prev_block_cache: dict[tuple[str, ...], Any] = field(default_factory=dict)
+    _processed_transfer_log_indices: set[int] = field(default_factory=set)
+
+    def _get_or_fetch(
+        self,
+        key: tuple[str, ...],
+        fetch_fn: Callable[[], int],
+        cache_store: dict[tuple[str, ...], int] | None = None,
+    ) -> int:
+        """Get from cache or execute fetch function."""
+        store = cache_store if cache_store is not None else self._cache
+        if key not in store:
+            store[key] = fetch_fn()
+        return store[key]
+
+    def get_discount_token_balance(
+        self,
+        token: ChecksumAddress,
+        user: ChecksumAddress,
+    ) -> int:
+        """Fetch discount token (stkAAVE) balance for a user at current block."""
+        key = ("discount_token_balance", token, user)
+
+        def fetch() -> int:
+            result: tuple[int] = raw_call(
+                w3=self.w3,
+                address=token,
+                calldata=encode_function_calldata(
+                    function_prototype="balanceOf(address)",
+                    function_arguments=[user],
+                ),
+                return_types=["uint256"],
+                block_identifier=self.block_number,
+            )
+            return result[0]
+
+        return self._get_or_fetch(key, fetch)
+
+    def get_discount_token_balance_prev_block(
+        self,
+        token: ChecksumAddress,
+        user: ChecksumAddress,
+    ) -> int:
+        """Fetch discount token balance at previous block (block_number - 1)."""
+        key = ("discount_token_balance_prev", token, user)
+        prev_block = self.block_number - 1
+
+        def fetch() -> int:
+            result: tuple[int] = raw_call(
+                w3=self.w3,
+                address=token,
+                calldata=encode_function_calldata(
+                    function_prototype="balanceOf(address)",
+                    function_arguments=[user],
+                ),
+                return_types=["uint256"],
+                block_identifier=prev_block,
+            )
+            return result[0]
+
+        return self._get_or_fetch(key, fetch, self._prev_block_cache)
+
+    def get_discount_token_balance_for_transfer(
+        self,
+        token: ChecksumAddress,
+        user: ChecksumAddress,
+    ) -> int:
+        """
+        Fetch discount token balance, trying current block first.
+        Falls back to previous block if not cached, then stores in current block cache.
+
+        Used for transfers where a user's balance may have been updated earlier
+        in the same block by a previous transfer event.
+        """
+        key = ("discount_token_balance", token, user)
+
+        if key in self._cache:
+            return self._cache[key]
+
+        prev_balance = self.get_discount_token_balance_prev_block(token=token, user=user)
+
+        self._cache[key] = prev_balance
+        return prev_balance
+
+    def mark_transfer_processed(self, log_index: int) -> None:
+        """Mark a transfer event as processed to avoid reprocessing."""
+        self._processed_transfer_log_indices.add(log_index)
+
+    def is_transfer_processed(self, log_index: int) -> bool:
+        """Check if a transfer event has already been processed."""
+        return log_index in self._processed_transfer_log_indices
+
+    def increment_discount_token_balance(
+        self, token: ChecksumAddress, user: ChecksumAddress, amount: int
+    ) -> None:
+        """Increment the cached discount token balance after processing a transfer.
+
+        This is needed when a user receives multiple stkAAVE transfers in the same
+        block - the second transfer's discount calculation needs to include the
+        first transfer's amount.
+        """
+        key = ("discount_token_balance", token, user)
+        if key in self._cache:
+            self._cache[key] += amount
+
 
 # GhoVariableDebtToken
 # Rev 1: 0x3FEaB6F8510C73E05b8C0Fdf96Df012E3A144319
@@ -1358,7 +1473,7 @@ def _accrue_debt_on_action(
     token_revision: int,
 ) -> tuple[int, int]:
 
-    if token_revision in {1, 2}:
+    if token_revision in {1, 2, 3}:
         balance_increase = wad_ray_math.ray_mul(
             a=previous_scaled_balance,
             b=index,
@@ -1392,6 +1507,12 @@ def _get_discount_rate(
     debt_token_balance: int,
     discount_token_balance: int,
 ) -> int:
+    """
+    Get the discount percentage from the discount rate strategy contract.
+
+    TODO: Consider refactoring to use BlockStateCache for consistent
+    caching behavior across all contract calls.
+    """
     # Get the discount percentage from the discount rate strategy contract
     new_discount_percentage: int
     (new_discount_percentage,) = raw_call(
@@ -1499,6 +1620,7 @@ def _process_gho_debt_burn(
     scaled_token_revision: int,
     debt_position: AaveV3DebtPositionsTable,
     state_block: int,
+    cache: BlockStateCache,
 ) -> UserOperation:
     """
     Determine the user operation that triggered a GHO vToken Burn event and apply balance delta.
@@ -1546,15 +1668,9 @@ def _process_gho_debt_burn(
 
         # Update the discount percentage for the new balance
         # _refreshDiscountPercent(...)
-        (discount_token_balance,) = raw_call(
-            w3=w3,
-            address=discount_token,
-            calldata=encode_function_calldata(
-                function_prototype="balanceOf(address)",
-                function_arguments=[user.address],
-            ),
-            return_types=["uint256"],
-            block_identifier=state_block,
+        discount_token_balance = cache.get_discount_token_balance(
+            token=discount_token,
+            user=user.address,
         )
         user.gho_discount = _get_discount_rate(
             w3=w3,
@@ -1567,7 +1683,7 @@ def _process_gho_debt_burn(
             state_block=state_block,
         )
 
-    elif scaled_token_revision == 2:
+    elif scaled_token_revision in {2, 3}:
         # uint256 amountToBurn = amount - balanceIncrease;
         requested_amount = event_data.value + event_data.balance_increase
 
@@ -1627,15 +1743,9 @@ def _process_gho_debt_burn(
         #     _discountToken.balanceOf(user),
         #     discountPercent,
         # )
-        (discount_token_balance,) = raw_call(
-            w3=w3,
-            address=discount_token,
-            calldata=encode_function_calldata(
-                function_prototype="balanceOf(address)",
-                function_arguments=[user.address],
-            ),
-            return_types=["uint256"],
-            block_identifier=state_block,
+        discount_token_balance = cache.get_discount_token_balance(
+            token=discount_token,
+            user=user.address,
         )
         user.gho_discount = _get_discount_rate(
             w3=w3,
@@ -1709,6 +1819,7 @@ def _process_staked_aave_event(
     debt_position: AaveV3DebtPositionsTable,
     state_block: int,
     event: LogReceipt,
+    cache: BlockStateCache,
 ) -> UserOperation:
     """
     Process a GHO vToken Mint event triggered by an AAVE staking event or stkAAVE transfer.
@@ -1721,7 +1832,7 @@ def _process_staked_aave_event(
         user_address=user.address, tx_hash=event_in_process["transactionHash"]
     ):
         logger.info("_process_staked_aave_event")
-        logger.info(f"{event=}")
+        # logger.info(f"{event=}")
 
     # This condition occurs when updateDiscountDistribution is triggered by an AAVE staking
     # event (Staked/Redeem), or when a stkAAVE token balance is transferred. The amount given to
@@ -1743,6 +1854,15 @@ def _process_staked_aave_event(
             ],
         )
         if e["transactionHash"] == event["transactionHash"]
+        if e["topics"][0] in {AaveV3Event.STAKED.value, AaveV3Event.REDEEM.value}
+        or (
+            not cache.is_transfer_processed(e["logIndex"])
+            and (
+                # For transfers, only include if it involves the Mint event user
+                _decode_address(e["topics"][1]) == user.address  # from
+                or _decode_address(e["topics"][2]) == user.address  # to
+            )
+        )
     ]
     if len(accessory_events) > 1:
         # Some transactions emit multiple trigger events, so place the useful ones first
@@ -1768,6 +1888,7 @@ def _process_staked_aave_event(
                 debt_position=debt_position,
                 state_block=state_block,
                 triggering_event=discount_token_info_event,
+                cache=cache,
             )
         case AaveV3Event.REDEEM.value:
             return _process_aave_redeem(
@@ -1780,8 +1901,12 @@ def _process_staked_aave_event(
                 debt_position=debt_position,
                 state_block=state_block,
                 triggering_event=discount_token_info_event,
+                cache=cache,
             )
         case AaveV3Event.TRANSFER.value:
+            # Mark this transfer as processed so subsequent Mint events in the same
+            # transaction use the next unprocessed transfer
+            cache.mark_transfer_processed(discount_token_info_event["logIndex"])
             return _process_staked_aave_transfer(
                 w3=w3,
                 market=market,
@@ -1793,6 +1918,7 @@ def _process_staked_aave_event(
                 debt_position=debt_position,
                 state_block=state_block,
                 triggering_event=discount_token_info_event,
+                cache=cache,
             )
         case _:
             msg = "Should be unreachable"
@@ -1810,6 +1936,7 @@ def _process_aave_stake(
     debt_position: AaveV3DebtPositionsTable,
     state_block: int,
     triggering_event: LogReceipt,
+    cache: BlockStateCache,
 ) -> UserOperation:
     """
     Process a GHO vToken Mint event triggered by an AAVE staking or redemption event.
@@ -1875,15 +2002,9 @@ def _process_aave_stake(
 
         # Update the discount percentage for the new balance
         # _refreshDiscountPercent(...)
-        (recipient_new_discount_token_balance,) = raw_call(
-            w3=w3,
-            address=discount_token,
-            calldata=encode_function_calldata(
-                function_prototype="balanceOf(address)",
-                function_arguments=[recipient.address],
-            ),
-            return_types=["uint256"],
-            block_identifier=state_block,
+        recipient_new_discount_token_balance = cache.get_discount_token_balance(
+            token=discount_token,
+            user=recipient.address,
         )
         recipient_previous_discount_percent = recipient.gho_discount
         recipient.gho_discount = _get_discount_rate(
@@ -1923,6 +2044,7 @@ def _process_aave_redeem(
     debt_position: AaveV3DebtPositionsTable,
     state_block: int,
     triggering_event: LogReceipt,
+    cache: BlockStateCache,
 ) -> UserOperation:
     """
     Process a GHO vToken Mint event triggered by an AAVE redemption event.
@@ -1952,15 +2074,9 @@ def _process_aave_redeem(
     sender_debt_position = debt_position
 
     # Get the discount token balance from the prior block
-    (sender_discount_token_balance,) = raw_call(
-        w3=w3,
-        address=discount_token,
-        calldata=encode_function_calldata(
-            function_prototype="balanceOf(address)",
-            function_arguments=[sender.address],
-        ),
-        return_types=["uint256"],
-        block_identifier=state_block - 1,
+    sender_discount_token_balance = cache.get_discount_token_balance_prev_block(
+        token=discount_token,
+        user=sender.address,
     )
 
     if VerboseConfig.is_verbose(
@@ -2039,6 +2155,7 @@ def _process_staked_aave_transfer(
     debt_position: AaveV3DebtPositionsTable,
     state_block: int,
     triggering_event: LogReceipt,
+    cache: BlockStateCache,
 ) -> UserOperation:
     """
     Process a GHO vToken Mint event triggered by an stkAAVE transfer.
@@ -2078,26 +2195,15 @@ def _process_staked_aave_transfer(
         asset_id=debt_position.asset_id,
     )
 
-    # Get the discount token balances from the prior block
-    (sender_discount_token_balance,) = raw_call(
-        w3=w3,
-        address=discount_token,
-        calldata=encode_function_calldata(
-            function_prototype="balanceOf(address)",
-            function_arguments=[sender.address],
-        ),
-        return_types=["uint256"],
-        block_identifier=state_block - 1,
+    # Get the discount token balances, using the new method for recipient
+    # to handle cases where a user receives stkAAVE multiple times in same block
+    sender_discount_token_balance = cache.get_discount_token_balance_prev_block(
+        token=discount_token,
+        user=sender.address,
     )
-    (recipient_discount_token_balance,) = raw_call(
-        w3=w3,
-        address=discount_token,
-        calldata=encode_function_calldata(
-            function_prototype="balanceOf(address)",
-            function_arguments=[recipient.address],
-        ),
-        return_types=["uint256"],
-        block_identifier=state_block - 1,
+    recipient_discount_token_balance = cache.get_discount_token_balance_for_transfer(
+        token=discount_token,
+        user=recipient.address,
     )
 
     if VerboseConfig.is_verbose(
@@ -2219,6 +2325,14 @@ def _process_staked_aave_transfer(
         )
         recipient_new_discount_percent = recipient.gho_discount
 
+        # Update the cached discount token balance for the recipient so subsequent
+        # transfers in the same block use the correct balance
+        cache.increment_discount_token_balance(
+            token=discount_token,
+            user=recipient.address,
+            amount=requested_amount,
+        )
+
         if VerboseConfig.is_verbose(
             user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
         ):
@@ -2247,6 +2361,7 @@ def _process_gho_debt_mint(
     debt_position: AaveV3DebtPositionsTable,
     state_block: int,
     event: LogReceipt,  # TODO: consolidate and remove if needed
+    cache: BlockStateCache,
 ) -> UserOperation:
     """
     Determine the user operation that triggered a GHO vToken Mint event and apply balance delta.
@@ -2261,15 +2376,9 @@ def _process_gho_debt_mint(
     user_operation: UserOperation
 
     if scaled_token_revision == 1:
-        (discount_token_balance,) = raw_call(
-            w3=w3,
-            address=discount_token,
-            calldata=encode_function_calldata(
-                function_prototype="balanceOf(address)",
-                function_arguments=[user.address],
-            ),
-            return_types=["uint256"],
-            block_identifier=state_block,
+        discount_token_balance = cache.get_discount_token_balance(
+            token=discount_token,
+            user=user.address,
         )
 
         previous_scaled_balance = debt_position.balance
@@ -2321,7 +2430,7 @@ def _process_gho_debt_mint(
             state_block=state_block,
         )
 
-    elif scaled_token_revision == 2:
+    elif scaled_token_revision in {2, 3}:
         # A user accruing GHO vToken debt is labeled the "recipient". A Mint event can be emitted
         # through several paths, and the GHO discount accounting depends on the discount
         # token balance. This variable tracks the role of the user holding the position.
@@ -2344,6 +2453,12 @@ def _process_gho_debt_mint(
                 ],
             )
             if e["transactionHash"] == event["transactionHash"]
+            if e["topics"][0] in {AaveV3Event.STAKED.value, AaveV3Event.REDEEM.value}
+            or (
+                # For transfers, only include if it involves the Mint event user
+                _decode_address(e["topics"][1]) == user.address  # from
+                or _decode_address(e["topics"][2]) == user.address  # to
+            )
         ]
 
         if accessory_events and event_data.caller == ZERO_ADDRESS:
@@ -2360,6 +2475,7 @@ def _process_gho_debt_mint(
                 debt_position=debt_position,
                 state_block=state_block,
                 event=event,
+                cache=cache,
             )
 
         # A Mint event can be emitted from _mintScaled or _burnScaled.
@@ -2428,15 +2544,9 @@ def _process_gho_debt_mint(
 
             # Update the discount percentage for the new balance
             # _refreshDiscountPercent(...)
-            (discount_token_balance,) = raw_call(
-                w3=w3,
-                address=discount_token,
-                calldata=encode_function_calldata(
-                    function_prototype="balanceOf(address)",
-                    function_arguments=[user.address],
-                ),
-                return_types=["uint256"],
-                block_identifier=state_block,
+            discount_token_balance = cache.get_discount_token_balance(
+                token=discount_token,
+                user=user.address,
             )
             user.gho_discount = _get_discount_rate(
                 w3=w3,
@@ -2519,15 +2629,9 @@ def _process_gho_debt_mint(
 
             # Update the discount percentage for the new balance
             # _refreshDiscountPercent(...)
-            (discount_token_balance,) = raw_call(
-                w3=w3,
-                address=discount_token,
-                calldata=encode_function_calldata(
-                    function_prototype="balanceOf(address)",
-                    function_arguments=[user.address],
-                ),
-                return_types=["uint256"],
-                block_identifier=state_block,
+            discount_token_balance = cache.get_discount_token_balance(
+                token=discount_token,
+                user=user.address,
             )
             user.gho_discount = _get_discount_rate(
                 w3=w3,
@@ -2734,6 +2838,7 @@ def _process_gho_debt_mint_event(
     caller_address: ChecksumAddress,
     event: LogReceipt,
     gho_users_to_check: dict[ChecksumAddress, int],
+    cache: BlockStateCache,
 ) -> None:
     """Process a GHO debt (vToken) mint event."""
     debt_position = _get_or_create_debt_position(
@@ -2772,6 +2877,7 @@ def _process_gho_debt_mint_event(
         debt_position=debt_position,
         state_block=event["blockNumber"],
         event=event,
+        cache=cache,
     )
 
     if VerboseConfig.is_verbose(
@@ -2849,6 +2955,7 @@ def _process_scaled_token_mint_event(
     session: Session,
     users_to_check: dict[ChecksumAddress, int],
     gho_users_to_check: dict[ChecksumAddress, int],
+    cache: BlockStateCache,
 ) -> None:
     """
     Process a scaled token Mint event as collateral deposit or debt borrow.
@@ -2925,6 +3032,7 @@ def _process_scaled_token_mint_event(
                 caller_address=caller_address,
                 event=event,
                 gho_users_to_check=gho_users_to_check,
+                cache=cache,
             )
         else:
             _process_standard_debt_mint_event(
@@ -3010,6 +3118,7 @@ def _process_gho_debt_burn_event(
     target_address: ChecksumAddress,
     event: LogReceipt,
     gho_users_to_check: dict[ChecksumAddress, int],
+    cache: BlockStateCache,
 ) -> None:
     """Process a GHO debt (vToken) burn event."""
     debt_position = session.scalar(
@@ -3055,6 +3164,7 @@ def _process_gho_debt_burn_event(
         scaled_token_revision=debt_asset.v_token_revision,
         debt_position=debt_position,
         state_block=event["blockNumber"],
+        cache=cache,
     )
 
     if VerboseConfig.is_verbose(
@@ -3136,6 +3246,7 @@ def _process_scaled_token_burn_event(
     session: Session,
     users_to_check: dict[ChecksumAddress, int],
     gho_users_to_check: dict[ChecksumAddress, int],
+    cache: BlockStateCache,
 ) -> None:
     """
     Process a scaled token Burn as a collateral withdrawal or debt repayment.
@@ -3197,6 +3308,7 @@ def _process_scaled_token_burn_event(
                 target_address=target_address,
                 event=event,
                 gho_users_to_check=gho_users_to_check,
+                cache=cache,
             )
         else:
             _process_standard_debt_burn_event(
@@ -3242,6 +3354,11 @@ def _process_scaled_token_balance_transfer_event(
     to_address = _decode_address(event["topics"][2])
 
     event_amount, _ = _decode_uint_values(event=event, num_values=2)
+
+    # Zero-amount transfers modify have no effect, so return early instead of adding special cases
+    # ref: TX 0xd007ede5e5dcff5e30904db3d66a8e1926fd75742ca838636dd2d5730140dcc6
+    if event_amount == 0:
+        return
 
     users_to_check[from_address] = event["blockNumber"]
     users_to_check[to_address] = event["blockNumber"]
@@ -3326,6 +3443,9 @@ def update_aave_market(
     users_to_check: dict[ChecksumAddress, int] = {}
     gho_users_to_check: dict[ChecksumAddress, int] = {}
     last_event_block = 0
+
+    # Initialize block state cache (reset per block to cache values within a block)
+    block_cache = BlockStateCache(w3=w3, block_number=start_block)
 
     # Get the contract addresses for this market
     pool_address_provider = EthereumMainnetAaveV3.pool_address_provider
@@ -3621,6 +3741,10 @@ def update_aave_market(
             )
             gho_users_to_check.clear()
 
+        # Reset cache when moving to a new block
+        if event["blockNumber"] != block_cache.block_number:
+            block_cache = BlockStateCache(w3=w3, block_number=event["blockNumber"])
+
         # TODO: Remove debug variable after testing
         global event_in_process  # noqa: PLW0603
         event_in_process = event
@@ -3646,6 +3770,7 @@ def update_aave_market(
                     session=session,
                     users_to_check=users_to_check,
                     gho_users_to_check=gho_users_to_check,
+                    cache=block_cache,
                 )
             case AaveV3Event.SCALED_TOKEN_MINT.value:
                 _process_scaled_token_mint_event(
@@ -3655,6 +3780,7 @@ def update_aave_market(
                     session=session,
                     users_to_check=users_to_check,
                     gho_users_to_check=gho_users_to_check,
+                    cache=block_cache,
                 )
             case AaveV3Event.UPGRADED.value:
                 _process_scaled_token_upgrade_event(
