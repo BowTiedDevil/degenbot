@@ -3830,6 +3830,6 @@ def update_aave_market(
         )
         gho_users_to_check.clear()
 
-    # # Zero balance rows are not useful
-    # for table in (AaveV3CollateralPositionsTable, AaveV3DebtPositionsTable):
-    #     session.execute(delete(table).where(table.balance == 0))
+    # Zero balance rows are not useful
+    for table in (AaveV3CollateralPositionsTable, AaveV3DebtPositionsTable):
+        session.execute(delete(table).where(table.balance == 0))
