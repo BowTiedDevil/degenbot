@@ -1,14 +1,15 @@
 """
 Aave V3 CLI commands for market synchronization and position tracking.
 
-Provides commands to activate markets, process blockchain events, and maintain
-a synchronized view of user collateral (aTokens) and debt (vTokens) positions
-in a local SQLite database.
+Provides commands to activate and update Aave markets by fetching and processing related blockchain
+events. The goal is to maintain a synchronized view of all user positions in the database.
+Collateral (aTokens) and debt (vTokens) positions are tracked separately.
 
 CLI Commands:
-    aave activate ethereum_aave_v3  - Enable Ethereum mainnet market tracking
-    aave deactivate ethereum_aave_v3 - Disable market tracking
-    aave update - Sync positions
+    aave activate [market name] - Enable updates for this market
+    aave deactivate ethereum_aave_v3 - Disable updates for this market; existing data for the
+        market will be preserved, but the market will be excluded from subsequent updates
+    aave update - Synchronize positions for all active markets to the given block
 
 Event Processing:
     Processes blockchain events chronologically by (blockNumber, logIndex):
@@ -31,10 +32,18 @@ GHO Discount Mechanism:
     Discount rate is recalculated on each balance-changing action.
     Version-specific math libraries handle different GHO contract revisions.
 
+Transaction-Level Discount Tracking:
+    When DiscountPercentUpdated and Mint/Burn events occur in the same transaction, Mint/Burn
+    operations must use the OLD discount rate (pre-update), not the new rate. This mirrors the
+    contract's _accrueDebtOnAction behavior which uses the stored discount rate before any updates
+    in the current transaction. The tx_discount_overrides dictionary tracks these per-transaction,
+    per-user overrides and is cleared at transaction boundaries.
+
 Token Revisions:
-    Aave protocol upgrades produce multiple token versions (v3.1-v3.5).
-    Each revision uses specific math libraries for precise calculation.
-    Upgrades are tracked via EIP-1967 proxy events and revision calls.
+    Aave protocol upgrades produce multiple token versions (v3.1-v3.5). Each revision uses specific
+    math libraries and control flow, which can change. Upgrades are tracked via EIP-1967 proxy
+    events and contract calls to identify the current revision for a particular token. Functions
+    involving scaled tokens (aToken, vToken) contain version checks to take the correct actions.
 
 Debug Controls (Environment Variables):
     DEGENBOT_VERBOSE_ALL=1 - Enable all verbose logging
@@ -249,7 +258,7 @@ class BlockStateCache:
         key = ("discount_token_balance", token, user)
 
         if key in self._cache:
-            return self._cache[key]
+            return int(self._cache[key])
 
         prev_balance = self.get_discount_token_balance_prev_block(token=token, user=user)
 
@@ -1490,6 +1499,7 @@ def _log_token_operation(
 
 
 def _log_balance_transfer(
+    *,
     token_address: ChecksumAddress,
     from_address: ChecksumAddress,
     from_balance_info: str,
@@ -1565,6 +1575,7 @@ def _process_scaled_token_operation(
 
 
 def _accrue_debt_on_action(
+    *,
     debt_position: AaveV3DebtPositionsTable,
     percentage_math: PercentageMathLibrary,
     wad_ray_math: WadRayMathLibrary,
@@ -1637,7 +1648,7 @@ def _accrue_debt_on_action(
                 if VerboseConfig.is_verbose(
                     tx_hash=event_in_process.get("transactionHash") if event_in_process else None,
                 ):
-                    logger.info(f"_accrue_debt_on_action:")
+                    logger.info("_accrue_debt_on_action:")
                     logger.info(f"  previous_scaled_balance={previous_scaled_balance}")
                     logger.info(f"  last_index={debt_position.last_index}")
                     logger.info(f"  current_index={index}")
@@ -2080,7 +2091,7 @@ def _process_aave_stake(
     """
 
     with _time_call("_process_aave_stake"):
-        operation = "AAVE STAKED"
+        operation: UserOperation = "AAVE STAKED"
 
         wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
 
@@ -2194,7 +2205,7 @@ def _process_aave_redeem(
     """
 
     with _time_call("_process_aave_redeem"):
-        operation = "AAVE REDEEM"
+        operation: UserOperation = "AAVE REDEEM"
 
         wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
 
@@ -2835,7 +2846,7 @@ def _get_scaled_token_asset_by_address(
     token_address: ChecksumAddress,
 ) -> tuple[AaveV3AssetsTable | None, AaveV3AssetsTable | None]:
     """
-    Get collateralt and debt assets by token address.
+    Get collateral and debt assets by token address.
     """
     collateral_asset = session.scalar(
         select(AaveV3AssetsTable)
@@ -2965,7 +2976,7 @@ def _process_discount_percent_updated_event(
             # Store the old discount percent for this transaction so that subsequent
             # Mint/Burn events in the same transaction use the OLD discount value
             tx_hash = event["transactionHash"]
-            tx_discount_overrides[(tx_hash, user_address)] = old_discount_percent
+            tx_discount_overrides[tx_hash, user_address] = old_discount_percent
             user.gho_discount = new_discount_percent
 
             if VerboseConfig.is_verbose(
@@ -3576,7 +3587,7 @@ def _process_scaled_token_balance_transfer_event(
 
         event_amount, _ = _decode_uint_values(event=event, num_values=2)
 
-        # Zero-amount transfers modify have no effect, so return early instead of adding special cases
+        # Zero-amount transfers have no effect, so return early instead of adding special cases
         # ref: TX 0xd007ede5e5dcff5e30904db3d66a8e1926fd75742ca838636dd2d5730140dcc6
         if event_amount == 0:
             return
