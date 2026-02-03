@@ -2,58 +2,28 @@
 
 ## Overview
 
-This directory contains CLI command implementations for the degenbot tool, including Aave V3 market management and position tracking.
+CLI command implementations for Aave V3, liquidity pools, exchanges, and database operations.
 
-## Focused Documentation
+## Commands
 
-See [aave.md](../../../docs/cli/aave.md) for comprehensive documentation on Aave CLI commands, including:
+**Aave V3**
+- `aave.py` - Commands: `update`, `activate`, `deactivate`
+- See `../../../docs/cli/aave.md` for detailed docs
+- Environment variables for debug: `DEGENBOT_VERBOSE_ALL`, `DEGENBOT_VERBOSE_USERS`, `DEGENBOT_VERBOSE_TX`
 
-- `degenbot aave update` - Update positions by processing blockchain events
-- `degenbot aave activate` - Activate a market for tracking
-- `degenbot aave deactivate` - Deactivate a market
+**Liquidity Pools**
+- `pool.py` - Commands: `update`
+- `exchange.py` - Commands: `activate`, `deactivate`
+- See `../../../docs/cli/pool.md` for detailed docs
 
-The aave.md file contains detailed information on:
-- Aave V3 architecture and scaled balance mechanics
-- Event processing algorithms (Mint, Burn, BalanceTransfer, etc.)
-- Data flow diagrams
-- Data model updates
-- Solidity contract references
-- Error handling and validation
-
-See [pool.md](../../../docs/cli/pool.md) for comprehensive documentation on liquidity pool CLI commands, including:
-
-- `degenbot pool update` - Update liquidity pool metadata and liquidity positions
-- `degenbot exchange activate` - Activate an exchange for liquidity pool tracking
-- `degenbot exchange deactivate` - Deactivate an exchange
-
-The pool.md file contains detailed information on:
-- Liquidity pool architecture across DEX versions (Uniswap versions 2, 3, and 4)
-- Liquidity pool discovery events and liquidity updates
-- Mock liquidity pool helpers for efficient processing
-- Data flow diagrams
-- Data model updates
-- Solidity contract references
-
-See [database.md](../../../docs/cli/database.md) for comprehensive documentation on database CLI commands, including:
-
-- `degenbot database backup` - Back up the database
-- `degenbot database reset` - Remove and recreate the database
-- `degenbot database upgrade` - Upgrade the database schema to the latest version
-- `degenbot database compact` - Compact the database to reclaim free space
-
-The database.md file contains detailed information on:
-- SQLite with Write-Ahead Logging (WAL) configuration
-- Database schema organization and table relationships
-- Alembic migrations for schema versioning
-- Data flow diagrams for all database operations
-- Configuration and performance settings
-- Error handling and development notes
-- Example workflows for setup, maintenance, and upgrades
+**Database**
+- `database.py` - Commands: `backup`, `reset`, `upgrade`, `compact`
+- See `../../../docs/cli/database.md` for detailed docs
 
 ## Related Files
 
-- `aave.py` - Aave CLI command implementations
-- `database.py` - Database-related CLI commands
-- `exchange.py` - Exchange-related CLI commands
-- `pool.py` - Liquidity pool-related CLI commands
-- `utils.py` - Utility functions for CLI operations
+- `aave.py` - Aave CLI commands
+- `database.py` - Database commands
+- `exchange.py` - Exchange commands
+- `pool.py` - Liquidity pool commands
+- `utils.py` - CLI utilities
