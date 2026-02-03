@@ -1319,6 +1319,24 @@ def _get_gho_asset(
     return gho_asset
 
 
+def _get_contract(
+    session: Session,
+    market: AaveV3MarketTable,
+    contract_name: str,
+) -> AaveV3ContractsTable:
+    """
+    Get contract by name for a given market.
+    """
+    contract = session.scalar(
+        select(AaveV3ContractsTable).where(
+            AaveV3ContractsTable.name == contract_name,
+            AaveV3ContractsTable.market_id == market.id,
+        )
+    )
+    assert contract is not None, f"{contract_name} not found for market {market.id}"
+    return contract
+
+
 def _verify_gho_discount_amounts(
     w3: Web3,
     market: AaveV3MarketTable,
@@ -2922,13 +2940,7 @@ def _update_contract_revision(
         return_types=["uint256"],
     )
 
-    contract = session.scalar(
-        select(AaveV3ContractsTable).where(
-            AaveV3ContractsTable.name == contract_name,
-            AaveV3ContractsTable.market_id == market.id,
-        )
-    )
-    assert contract is not None, f"{contract_name} not found for market {market.id}"
+    contract = _get_contract(session=session, market=market, contract_name=contract_name)
     contract.revision = revision
 
 
@@ -3759,14 +3771,7 @@ def update_aave_market(
                 )
 
             case AaveV3Event.POOL_UPDATED.value:
-                pool = session.scalar(
-                    select(AaveV3ContractsTable).where(
-                        AaveV3ContractsTable.name == "POOL",
-                        AaveV3ContractsTable.market_id == market.id,
-                    )
-                )
-                assert pool is not None
-
+                pool = _get_contract(session=session, market=market, contract_name="POOL")
                 new_address = _decode_address(contract_update_event["topics"][2])
                 _update_contract_revision(
                     w3=w3,
@@ -3809,21 +3814,10 @@ def update_aave_market(
                     assert pool_data_provider is not None
                     pool_data_provider.address = new_pool_data_provider_address
 
-    pool = session.scalar(
-        select(AaveV3ContractsTable).where(
-            AaveV3ContractsTable.name == "POOL",
-            AaveV3ContractsTable.market_id == market.id,
-        )
+    pool = _get_contract(session=session, market=market, contract_name="POOL")
+    pool_configurator = _get_contract(
+        session=session, market=market, contract_name="POOL_CONFIGURATOR"
     )
-    assert pool is not None
-
-    pool_configurator = session.scalar(
-        select(AaveV3ContractsTable).where(
-            AaveV3ContractsTable.name == "POOL_CONFIGURATOR",
-            AaveV3ContractsTable.market_id == market.id,
-        )
-    )
-    assert pool_configurator is not None
 
     # Get all ReserveInitialized events. These are used to mark reserves for further tracking
     reserve_initialization_events = _get_reserve_initialized_events(
