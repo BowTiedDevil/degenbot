@@ -147,6 +147,9 @@ def _print_timing_summary() -> None:
 
     logger.info("-" * 80)
 
+    # Clear timing data after printing to avoid accumulation across calls
+    _timing_data.clear()
+
 
 type TokenRevision = int
 type UserOperation = Literal[
@@ -637,12 +640,21 @@ def deactivate_mainnet_aave_v3(
     show_default=True,
     help="Verify position and discount amounts only at the end of each chunk.",
 )
+@click.option(
+    "--show-timing",
+    "show_timing",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Display performance timing summary after processing.",
+)
 def aave_update(
     *,
     chunk_size: int,
     to_block: str,
     verify_strict: bool,
     verify_chunk: bool,
+    show_timing: bool,
 ) -> None:
     """
     Update positions for active Aave markets.
@@ -707,14 +719,12 @@ def aave_update(
                 continue
 
             block_pbar = tqdm.tqdm(
-                desc="Processing new blocks",
                 total=last_block - initial_start_block + 1,
-                bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
+                bar_format="{desc} {percentage:3.1f}% |{bar}|",
                 leave=False,
             )
 
             block_pbar.n = working_start_block - initial_start_block
-            block_pbar.refresh()
 
             markets_to_update: set[AaveV3MarketTable] = set()
 
@@ -735,6 +745,11 @@ def aave_update(
                 )
                 assert working_end_block >= working_start_block
 
+                block_pbar.set_description(
+                    f"Processing blocks: {working_start_block:,} -> {working_end_block:,}"
+                )
+                block_pbar.refresh()
+
                 markets_to_update = {
                     market
                     for market in active_markets
@@ -754,6 +769,7 @@ def aave_update(
                             session=session,
                             verify_strict=verify_strict,
                             verify_chunk=verify_chunk,
+                            show_timing=show_timing,
                         )
                     except Exception as e:  # noqa: BLE001
                         logger.info(f"Processing failed on event: {event_in_process}")
@@ -778,7 +794,6 @@ def aave_update(
                 working_start_block = working_end_block + 1
 
                 block_pbar.n = working_end_block - initial_start_block
-                block_pbar.refresh()
 
             block_pbar.close()
 
@@ -1630,13 +1645,7 @@ def _get_discount_rate(
     debt_token_balance: int,
     discount_token_balance: int,
 ) -> int:
-    """
-    Get the discount percentage from the discount rate strategy contract.
-
-    TODO: Consider refactoring to use BlockStateCache for consistent
-    caching behavior across all contract calls.
-    """
-    # Get the discount percentage from the discount rate strategy contract
+    """Get the discount percentage from the discount rate strategy contract."""
     new_discount_percentage: int
     (new_discount_percentage,) = raw_call(
         w3=w3,
@@ -3502,6 +3511,7 @@ def update_aave_market(
     session: Session,
     verify_strict: bool,
     verify_chunk: bool,
+    show_timing: bool,
 ) -> None:
     """
     Update the Aave V3 market.
@@ -3907,8 +3917,8 @@ def update_aave_market(
         )
         gho_users_to_check.clear()
 
-    # Print timing summary
-    _print_timing_summary()
+    if show_timing:
+        _print_timing_summary()
 
     # Zero balance rows are not useful
     for table in (AaveV3CollateralPositionsTable, AaveV3DebtPositionsTable):
