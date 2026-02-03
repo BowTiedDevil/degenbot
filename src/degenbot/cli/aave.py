@@ -57,7 +57,7 @@ import eth_abi.abi
 import tqdm
 from eth_typing import ChainId, ChecksumAddress
 from hexbytes import HexBytes
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 from web3 import Web3
 from web3.types import LogReceipt
@@ -566,7 +566,29 @@ def deactivate_mainnet_aave_v3(
         "'safe:128' stops 128 blocks after the last 'safe' block."
     ),
 )
-def aave_update(chunk_size: int, to_block: str) -> None:
+@click.option(
+    "--verify-strict",
+    "verify_strict",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Verify position and discount amounts on every block boundary.",
+)
+@click.option(
+    "--verify-chunk",
+    "verify_chunk",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Verify position and discount amounts only at the end of each chunk.",
+)
+def aave_update(
+    *,
+    chunk_size: int,
+    to_block: str,
+    verify_strict: bool,
+    verify_chunk: bool,
+) -> None:
     """
     Update positions for active Aave markets.
     """
@@ -675,6 +697,8 @@ def aave_update(chunk_size: int, to_block: str) -> None:
                             end_block=working_end_block,
                             market=market,
                             session=session,
+                            verify_strict=verify_strict,
+                            verify_chunk=verify_chunk,
                         )
                     except Exception as e:  # noqa: BLE001
                         logger.info(f"Processing failed on event: {event_in_process}")
@@ -1475,6 +1499,46 @@ def _accrue_debt_on_action(
     index: int,
     token_revision: int,
 ) -> tuple[int, int]:
+    """
+    Simulate the GhoVariableDebtToken (version 3) _accrueDebtOnAction function.
+
+    REFERENCE:
+    ```
+    /**
+    * @dev Accumulates debt of the user since last action.
+    * @dev It skips applying discount in case there is no balance increase or discount percent is zero.
+    * @param user The address of the user
+    * @param previousScaledBalance The previous scaled balance of the user
+    * @param discountPercent The discount percent
+    * @param index The variable debt index of the reserve
+    * @return The increase in scaled balance since the last action of `user`
+    * @return The discounted amount in scaled balance off the balance increase
+    */
+    function _accrueDebtOnAction(
+        address user,
+        uint256 previousScaledBalance,
+        uint256 discountPercent,
+        uint256 index
+    ) internal returns (uint256, uint256) {
+        uint256 balanceIncrease = previousScaledBalance.rayMul(index) -
+            previousScaledBalance.rayMul(_userState[user].additionalData);
+
+        uint256 discountScaled = 0;
+        if (balanceIncrease != 0 && discountPercent != 0) {
+            uint256 discount = balanceIncrease.percentMul(discountPercent);
+            discountScaled = discount.rayDiv(index);
+            balanceIncrease = balanceIncrease - discount;
+        }
+
+        _userState[user].additionalData = index.toUint128();
+
+        _ghoUserState[user].accumulatedDebtInterest = (balanceIncrease +
+            _ghoUserState[user].accumulatedDebtInterest).toUint128();
+
+        return (balanceIncrease, discountScaled);
+    }
+    ```
+    """
 
     if token_revision in {1, 2, 3}:
         balance_increase = wad_ray_math.ray_mul(
@@ -1499,38 +1563,6 @@ def _accrue_debt_on_action(
     else:
         msg = f"Unsupported token revision {token_revision}"
         raise ValueError(msg)
-
-    return balance_increase, discount_scaled
-
-
-def _accrue_debt_on_action_with_assertion(
-    debt_position: AaveV3DebtPositionsTable,
-    percentage_math: PercentageMathLibrary,
-    wad_ray_math: WadRayMathLibrary,
-    previous_scaled_balance: int,
-    discount_percent: int,
-    index: int,
-    token_revision: int,
-    expected_balance_increase: int,
-) -> int:
-    """
-    Accrue debt on action and assert the calculated balance increase matches expected value.
-
-    Wraps _accrue_debt_on_action with the common assertion pattern used across GHO processing.
-    """
-    balance_increase, discount_scaled = _accrue_debt_on_action(
-        debt_position=debt_position,
-        percentage_math=percentage_math,
-        wad_ray_math=wad_ray_math,
-        previous_scaled_balance=previous_scaled_balance,
-        discount_percent=discount_percent,
-        index=index,
-        token_revision=token_revision,
-    )
-
-    assert balance_increase == expected_balance_increase, (
-        f"{balance_increase=} != {expected_balance_increase=}"
-    )
 
     return discount_scaled
 
@@ -1678,7 +1710,7 @@ def _process_gho_debt_burn(
         # (available from `user`)
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
-        discount_scaled = _accrue_debt_on_action_with_assertion(
+        discount_scaled = _accrue_debt_on_action(
             debt_position=debt_position,
             percentage_math=percentage_math_library,
             wad_ray_math=wad_ray_math_library,
@@ -1686,7 +1718,6 @@ def _process_gho_debt_burn(
             discount_percent=user.gho_discount,
             index=event_data.index,
             token_revision=scaled_token_revision,
-            expected_balance_increase=event_data.balance_increase,
         )
 
         # _burn(user, (amountScaled + discountScaled).toUint128()); #noqa:ERA001
@@ -1735,7 +1766,7 @@ def _process_gho_debt_burn(
         # (available from `user`)
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
-        discount_scaled = _accrue_debt_on_action_with_assertion(
+        discount_scaled = _accrue_debt_on_action(
             debt_position=debt_position,
             percentage_math=percentage_math_library,
             wad_ray_math=wad_ray_math_library,
@@ -1743,7 +1774,6 @@ def _process_gho_debt_burn(
             discount_percent=user.gho_discount,
             index=event_data.index,
             token_revision=scaled_token_revision,
-            expected_balance_increase=event_data.balance_increase,
         )
 
         if requested_amount == balance_before_burn:
@@ -1983,7 +2013,7 @@ def _process_aave_stake(
             logger.info("Processing case: recipientPreviousScaledBalance > 0")
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
-        recipient_discount_scaled = _accrue_debt_on_action_with_assertion(
+        recipient_discount_scaled = _accrue_debt_on_action(
             debt_position=recipient_debt_position,
             percentage_math=percentage_math_library,
             wad_ray_math=wad_ray_math_library,
@@ -1991,7 +2021,6 @@ def _process_aave_stake(
             discount_percent=recipient.gho_discount,
             index=event_data.index,
             token_revision=scaled_token_revision,
-            expected_balance_increase=event_data.balance_increase,
         )
 
         # _burn(recipient, discountScaled.toUint128())
@@ -2093,7 +2122,7 @@ def _process_aave_redeem(
             logger.info("Processing case: senderPreviousScaledBalance > 0")
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
-        sender_discount_scaled = _accrue_debt_on_action_with_assertion(
+        sender_discount_scaled = _accrue_debt_on_action(
             debt_position=sender_debt_position,
             percentage_math=percentage_math_library,
             wad_ray_math=wad_ray_math_library,
@@ -2101,7 +2130,6 @@ def _process_aave_redeem(
             discount_percent=sender.gho_discount,
             index=event_data.index,
             token_revision=scaled_token_revision,
-            expected_balance_increase=event_data.balance_increase,
         )
 
         # _burn(recipient, discountScaled.toUint128())
@@ -2233,7 +2261,7 @@ def _process_staked_aave_transfer(
             logger.info("Processing case: senderPreviousScaledBalance > 0")
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
-        sender_discount_scaled = _accrue_debt_on_action_with_assertion(
+        sender_discount_scaled = _accrue_debt_on_action(
             debt_position=sender_debt_position,
             percentage_math=percentage_math_library,
             wad_ray_math=wad_ray_math_library,
@@ -2241,7 +2269,6 @@ def _process_staked_aave_transfer(
             discount_percent=sender.gho_discount,
             index=event_data.index,
             token_revision=scaled_token_revision,
-            expected_balance_increase=event_data.balance_increase,
         )
 
         # _burn(sender, discountScaled.toUint128())
@@ -2286,7 +2313,7 @@ def _process_staked_aave_transfer(
             logger.info("Processing case: recipientPreviousScaledBalance > 0")
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
-        recipient_discount_scaled = _accrue_debt_on_action_with_assertion(
+        recipient_discount_scaled = _accrue_debt_on_action(
             debt_position=recipient_debt_position,
             percentage_math=percentage_math_library,
             wad_ray_math=wad_ray_math_library,
@@ -2294,7 +2321,6 @@ def _process_staked_aave_transfer(
             discount_percent=recipient.gho_discount,
             index=event_data.index,
             token_revision=scaled_token_revision,
-            expected_balance_increase=event_data.balance_increase,
         )
 
         # _burn(recipient, discountScaled.toUint128())
@@ -2369,7 +2395,7 @@ def _process_gho_debt_mint(
         previous_scaled_balance = debt_position.balance
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
-        discount_scaled = _accrue_debt_on_action_with_assertion(
+        discount_scaled = _accrue_debt_on_action(
             debt_position=debt_position,
             percentage_math=percentage_math_library,
             wad_ray_math=wad_ray_math_library,
@@ -2377,7 +2403,6 @@ def _process_gho_debt_mint(
             discount_percent=user.gho_discount,
             index=event_data.index,
             token_revision=scaled_token_revision,
-            expected_balance_increase=event_data.balance_increase,
         )
 
         if event_data.value > event_data.balance_increase:
@@ -2490,7 +2515,7 @@ def _process_gho_debt_mint(
             # (available from `user`)
 
             # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
-            discount_scaled = _accrue_debt_on_action_with_assertion(
+            discount_scaled = _accrue_debt_on_action(
                 debt_position=debt_position,
                 percentage_math=percentage_math_library,
                 wad_ray_math=wad_ray_math_library,
@@ -2498,7 +2523,6 @@ def _process_gho_debt_mint(
                 discount_percent=user.gho_discount,
                 index=event_data.index,
                 token_revision=scaled_token_revision,
-                expected_balance_increase=event_data.balance_increase,
             )
 
             if amount_scaled > discount_scaled:
@@ -2564,7 +2588,7 @@ def _process_gho_debt_mint(
             # (available from `user`)
 
             # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
-            discount_scaled = _accrue_debt_on_action_with_assertion(
+            discount_scaled = _accrue_debt_on_action(
                 debt_position=debt_position,
                 percentage_math=percentage_math_library,
                 wad_ray_math=wad_ray_math_library,
@@ -2572,7 +2596,6 @@ def _process_gho_debt_mint(
                 discount_percent=user.gho_discount,
                 index=event_data.index,
                 token_revision=scaled_token_revision,
-                expected_balance_increase=event_data.balance_increase,
             )
 
             if requested_amount == balance_before_burn:
@@ -3400,6 +3423,8 @@ def update_aave_market(
     end_block: int,
     market: AaveV3MarketTable,
     session: Session,
+    verify_strict: bool,
+    verify_chunk: bool,
 ) -> None:
     """
     Update the Aave V3 market.
@@ -3680,7 +3705,7 @@ def update_aave_market(
     all_events.extend(discount_token_update_events)
 
     for event in sorted(all_events, key=operator.itemgetter("blockNumber", "logIndex")):
-        if users_to_check and event["blockNumber"] > last_event_block:
+        if verify_strict and users_to_check and event["blockNumber"] > last_event_block:
             _verify_scaled_token_positions(
                 w3=w3,
                 market=market,
@@ -3696,7 +3721,7 @@ def update_aave_market(
                 position_table=AaveV3DebtPositionsTable,
             )
             users_to_check.clear()
-        if gho_users_to_check and event["blockNumber"] > last_event_block:
+        if verify_strict and gho_users_to_check and event["blockNumber"] > last_event_block:
             _verify_gho_discount_amounts(
                 w3=w3,
                 market=market,
@@ -3780,29 +3805,30 @@ def update_aave_market(
 
         last_event_block = event["blockNumber"]
 
-    _verify_scaled_token_positions(
-        w3=w3,
-        market=market,
-        session=session,
-        users_to_check=users_to_check,
-        position_table=AaveV3CollateralPositionsTable,
-    )
-    _verify_scaled_token_positions(
-        w3=w3,
-        market=market,
-        session=session,
-        users_to_check=users_to_check,
-        position_table=AaveV3DebtPositionsTable,
-    )
-    users_to_check.clear()
+    if verify_strict or verify_chunk:
+        _verify_scaled_token_positions(
+            w3=w3,
+            market=market,
+            session=session,
+            users_to_check=users_to_check,
+            position_table=AaveV3CollateralPositionsTable,
+        )
+        _verify_scaled_token_positions(
+            w3=w3,
+            market=market,
+            session=session,
+            users_to_check=users_to_check,
+            position_table=AaveV3DebtPositionsTable,
+        )
+        users_to_check.clear()
 
-    _verify_gho_discount_amounts(
-        w3=w3,
-        market=market,
-        session=session,
-        users_to_check=gho_users_to_check,
-    )
-    gho_users_to_check.clear()
+        _verify_gho_discount_amounts(
+            w3=w3,
+            market=market,
+            session=session,
+            users_to_check=gho_users_to_check,
+        )
+        gho_users_to_check.clear()
 
     # # Zero balance rows are not useful
     # for table in (AaveV3CollateralPositionsTable, AaveV3DebtPositionsTable):
