@@ -1020,23 +1020,7 @@ def _process_discount_token_updated_event(
         old_discount_token_address = _decode_address(event["topics"][1])
         new_discount_token_address = _decode_address(event["topics"][2])
 
-        # GHO tokens are chain-unique: multiple Aave markets on the same chain share a single GHO token.
-        # We query by chain_id to retrieve the shared GHO configuration.
-
-        # Get Aave's GHO token asset, then look up the underlying ERC-20 token ID to identify the
-        # special attributes
-        gho_asset = session.scalar(
-            select(AaveGhoTokenTable)
-            .join(Erc20TokenTable)
-            .where(Erc20TokenTable.chain == market.chain_id)
-        )
-        if gho_asset is None:
-            msg = (
-                f"GHO token not found for chain {market.chain_id}. "
-                "Ensure that market has been activated."
-            )
-            raise ValueError(msg)
-
+        gho_asset = _get_gho_asset(session=session, market=market)
         gho_asset.v_gho_discount_token = new_discount_token_address
 
         logger.info(
@@ -1062,23 +1046,7 @@ def _process_discount_rate_strategy_updated_event(
         old_discount_rate_strategy_address = _decode_address(event["topics"][1])
         new_discount_rate_strategy_address = _decode_address(event["topics"][2])
 
-        # GHO tokens are chain-unique: multiple Aave markets on the same chain share a single GHO token.
-        # We query by chain_id to retrieve the shared GHO configuration.
-
-        # Get Aave's GHO token asset, then look up the underlying ERC-20 token ID to identify the
-        # special attributes
-        gho_asset = session.scalar(
-            select(AaveGhoTokenTable)
-            .join(Erc20TokenTable)
-            .where(Erc20TokenTable.chain == market.chain_id)
-        )
-        if gho_asset is None:
-            msg = (
-                f"GHO token not found for chain {market.chain_id}. "
-                "Ensure that market has been activated."
-            )
-            raise ValueError(msg)
-
+        gho_asset = _get_gho_asset(session=session, market=market)
         gho_asset.v_gho_discount_rate_strategy = new_discount_rate_strategy_address
 
         logger.info(
@@ -1325,6 +1293,30 @@ def _get_or_create_debt_position(
         position = AaveV3DebtPositionsTable(user_id=user_id, asset_id=asset_id, balance=0)
         session.add(position)
     return position
+
+
+def _get_gho_asset(
+    session: Session,
+    market: AaveV3MarketTable,
+) -> AaveGhoTokenTable:
+    """
+    Get GHO token asset for a given market.
+
+    GHO tokens are chain-unique: multiple Aave markets on the same chain share
+    a single GHO token. Query by chain_id to retrieve the shared configuration.
+    """
+    gho_asset = session.scalar(
+        select(AaveGhoTokenTable)
+        .join(Erc20TokenTable)
+        .where(Erc20TokenTable.chain == market.chain_id)
+    )
+    if gho_asset is None:
+        msg = (
+            f"GHO token not found for chain {market.chain_id}. "
+            "Ensure that market has been activated."
+        )
+        raise ValueError(msg)
+    return gho_asset
 
 
 def _verify_gho_discount_amounts(
@@ -3058,12 +3050,7 @@ def _process_gho_debt_mint_event(
         )
 
         gho_users_to_check[user.address] = event["blockNumber"]
-        gho_asset = session.scalar(
-            select(AaveGhoTokenTable)
-            .join(Erc20TokenTable)
-            .where(Erc20TokenTable.chain == market.chain_id)
-        )
-        assert gho_asset is not None
+        gho_asset = _get_gho_asset(session=session, market=market)
         assert gho_asset.v_gho_discount_token is not None, "GHO discount token not initialized"
         assert gho_asset.v_gho_discount_rate_strategy is not None, (
             "GHO discount rate strategy not initialized"
@@ -3354,18 +3341,7 @@ def _process_gho_debt_burn_event(
         assert debt_position is not None
 
         gho_users_to_check[from_address] = event["blockNumber"]
-        gho_asset = session.scalar(
-            select(AaveGhoTokenTable)
-            .join(Erc20TokenTable)
-            .where(Erc20TokenTable.chain == market.chain_id)
-        )
-        if gho_asset is None:
-            msg = (
-                f"GHO token not found for chain {market.chain_id}. "
-                "Ensure that market has been activated."
-            )
-            raise ValueError(msg)
-
+        gho_asset = _get_gho_asset(session=session, market=market)
         assert gho_asset.v_gho_discount_token is not None, "GHO discount token not initialized"
         assert gho_asset.v_gho_discount_rate_strategy is not None, (
             "GHO discount rate strategy not initialized"
