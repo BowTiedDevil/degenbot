@@ -1529,6 +1529,39 @@ def _get_discount_rate(
     return new_discount_percentage
 
 
+def _refresh_discount_rate(
+    w3: Web3,
+    user: AaveV3UsersTable,
+    discount_rate_strategy: ChecksumAddress,
+    discount_token_balance: int,
+    scaled_debt_balance: int,
+    debt_index: int,
+    state_block: int,
+    wad_ray_math: WadRayMathLibrary,
+) -> int:
+    """
+    Calculate and update the user's GHO discount rate.
+
+    Calculates the debt token balance from scaled balance and index, then
+    fetches and applies the new discount rate from the strategy contract.
+    """
+    debt_token_balance = wad_ray_math.ray_mul(
+        a=scaled_debt_balance,
+        b=debt_index,
+    )
+
+    new_discount_rate = _get_discount_rate(
+        w3=w3,
+        discount_rate_strategy=discount_rate_strategy,
+        debt_token_balance=debt_token_balance,
+        discount_token_balance=discount_token_balance,
+        state_block=state_block,
+    )
+
+    user.gho_discount = new_discount_rate
+    return new_discount_rate
+
+
 def _get_discounted_balance(
     scaled_balance: int,
     previous_index: int,
@@ -1667,20 +1700,19 @@ def _process_gho_debt_burn(
         balance_delta = -(amount_scaled + discount_scaled)
 
         # Update the discount percentage for the new balance
-        # _refreshDiscountPercent(...)
         discount_token_balance = cache.get_discount_token_balance(
             token=discount_token,
             user=user.address,
         )
-        user.gho_discount = _get_discount_rate(
+        _refresh_discount_rate(
             w3=w3,
+            user=user,
             discount_rate_strategy=discount_rate_strategy,
-            debt_token_balance=wad_ray_math_library.ray_mul(
-                a=debt_position.balance + balance_delta,
-                b=event_data.index,
-            ),
             discount_token_balance=discount_token_balance,
+            scaled_debt_balance=debt_position.balance + balance_delta,
+            debt_index=event_data.index,
             state_block=state_block,
+            wad_ray_math=wad_ray_math_library,
         )
 
     elif scaled_token_revision in {2, 3}:
@@ -1737,25 +1769,19 @@ def _process_gho_debt_burn(
             balance_delta = -(amount_scaled + discount_scaled)
 
         # Update the discount percentage for the new balance
-        # _refreshDiscountPercent(
-        #     user,
-        #     super.balanceOf(user).rayMul(index),
-        #     _discountToken.balanceOf(user),
-        #     discountPercent,
-        # )
         discount_token_balance = cache.get_discount_token_balance(
             token=discount_token,
             user=user.address,
         )
-        user.gho_discount = _get_discount_rate(
+        _refresh_discount_rate(
             w3=w3,
+            user=user,
             discount_rate_strategy=discount_rate_strategy,
-            debt_token_balance=wad_ray_math_library.ray_mul(
-                a=debt_position.balance + balance_delta,
-                b=event_data.index,
-            ),
             discount_token_balance=discount_token_balance,
+            scaled_debt_balance=debt_position.balance + balance_delta,
+            debt_index=event_data.index,
             state_block=state_block,
+            wad_ray_math=wad_ray_math_library,
         )
 
         if VerboseConfig.is_verbose(
@@ -2001,23 +2027,21 @@ def _process_aave_stake(
         recipient_debt_position.last_index = event_data.index
 
         # Update the discount percentage for the new balance
-        # _refreshDiscountPercent(...)
         recipient_new_discount_token_balance = cache.get_discount_token_balance(
             token=discount_token,
             user=recipient.address,
         )
         recipient_previous_discount_percent = recipient.gho_discount
-        recipient.gho_discount = _get_discount_rate(
+        recipient_new_discount_percent = _refresh_discount_rate(
             w3=w3,
+            user=recipient,
             discount_rate_strategy=discount_rate_strategy,
-            debt_token_balance=wad_ray_math_library.ray_mul(
-                a=recipient_debt_position.balance,
-                b=event_data.index,
-            ),
             discount_token_balance=recipient_new_discount_token_balance,
+            scaled_debt_balance=recipient_debt_position.balance,
+            debt_index=event_data.index,
             state_block=state_block,
+            wad_ray_math=wad_ray_math_library,
         )
-        recipient_new_discount_percent = recipient.gho_discount
 
         if VerboseConfig.is_verbose(
             user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
@@ -2115,19 +2139,17 @@ def _process_aave_redeem(
         sender_debt_position.balance -= sender_discount_scaled
         sender_debt_position.last_index = event_data.index
 
-        # _refreshDiscountPercent(...)
         sender_previous_discount_percent = sender.gho_discount
-        sender.gho_discount = _get_discount_rate(
+        sender_new_discount_percent = _refresh_discount_rate(
             w3=w3,
+            user=sender,
             discount_rate_strategy=discount_rate_strategy,
-            debt_token_balance=wad_ray_math_library.ray_mul(
-                a=sender_debt_position.balance,
-                b=event_data.index,
-            ),
             discount_token_balance=sender_discount_token_balance - requested_amount,
+            scaled_debt_balance=sender_debt_position.balance,
+            debt_index=event_data.index,
             state_block=state_block,
+            wad_ray_math=wad_ray_math_library,
         )
-        sender_new_discount_percent = sender.gho_discount
 
         if VerboseConfig.is_verbose(
             user_address=sender.address, tx_hash=event_in_process["transactionHash"]
@@ -2260,19 +2282,17 @@ def _process_staked_aave_transfer(
         sender_debt_position.balance -= sender_discount_scaled
         sender_debt_position.last_index = event_data.index
 
-        # _refreshDiscountPercent(...)
         sender_previous_discount_percent = sender.gho_discount
-        sender.gho_discount = _get_discount_rate(
+        sender_new_discount_percent = _refresh_discount_rate(
             w3=w3,
+            user=sender,
             discount_rate_strategy=discount_rate_strategy,
-            debt_token_balance=wad_ray_math_library.ray_mul(
-                a=sender_debt_position.balance,
-                b=event_data.index,
-            ),
             discount_token_balance=sender_discount_token_balance - requested_amount,
+            scaled_debt_balance=sender_debt_position.balance,
+            debt_index=event_data.index,
             state_block=state_block,
+            wad_ray_math=wad_ray_math_library,
         )
-        sender_new_discount_percent = sender.gho_discount
 
         if VerboseConfig.is_verbose(
             user_address=sender.address, tx_hash=event_in_process["transactionHash"]
@@ -2311,19 +2331,17 @@ def _process_staked_aave_transfer(
         recipient_new_scaled_balance = recipient_debt_position.balance
         recipient_debt_position.last_index = event_data.index
 
-        # _refreshDiscountPercent(...)
         recipient_previous_discount_percent = recipient.gho_discount
-        recipient.gho_discount = _get_discount_rate(
+        recipient_new_discount_percent = _refresh_discount_rate(
             w3=w3,
+            user=recipient,
             discount_rate_strategy=discount_rate_strategy,
-            debt_token_balance=wad_ray_math_library.ray_mul(
-                a=recipient_new_scaled_balance,
-                b=event_data.index,
-            ),
             discount_token_balance=recipient_discount_token_balance + requested_amount,
+            scaled_debt_balance=recipient_new_scaled_balance,
+            debt_index=event_data.index,
             state_block=state_block,
+            wad_ray_math=wad_ray_math_library,
         )
-        recipient_new_discount_percent = recipient.gho_discount
 
         # Update the cached discount token balance for the recipient so subsequent
         # transfers in the same block use the correct balance
@@ -2418,16 +2436,15 @@ def _process_gho_debt_mint(
         else:
             balance_delta = -(discount_scaled - amount_scaled)
 
-        # Update the discount percentage for the new balance
-        user.gho_discount = _get_discount_rate(
+        _refresh_discount_rate(
             w3=w3,
+            user=user,
             discount_rate_strategy=discount_rate_strategy,
-            debt_token_balance=wad_ray_math_library.ray_mul(
-                a=debt_position.balance + balance_delta,
-                b=event_data.index,
-            ),
             discount_token_balance=discount_token_balance,
+            scaled_debt_balance=debt_position.balance + balance_delta,
+            debt_index=event_data.index,
             state_block=state_block,
+            wad_ray_math=wad_ray_math_library,
         )
 
     elif scaled_token_revision in {2, 3}:
@@ -2542,21 +2559,19 @@ def _process_gho_debt_mint(
                 logger.info(f"{discount_scaled=}")
                 logger.info(f"{balance_delta=}")
 
-            # Update the discount percentage for the new balance
-            # _refreshDiscountPercent(...)
             discount_token_balance = cache.get_discount_token_balance(
                 token=discount_token,
                 user=user.address,
             )
-            user.gho_discount = _get_discount_rate(
+            _refresh_discount_rate(
                 w3=w3,
+                user=user,
                 discount_rate_strategy=discount_rate_strategy,
-                debt_token_balance=wad_ray_math_library.ray_mul(
-                    a=debt_position.balance + balance_delta,
-                    b=event_data.index,
-                ),
                 discount_token_balance=discount_token_balance,
+                scaled_debt_balance=debt_position.balance + balance_delta,
+                debt_index=event_data.index,
                 state_block=state_block,
+                wad_ray_math=wad_ray_math_library,
             )
 
         elif event_data.balance_increase > event_data.value:
@@ -2627,21 +2642,19 @@ def _process_gho_debt_mint(
                 logger.info(f"{amount_scaled=}")
                 logger.info(f"{balance_delta=}")
 
-            # Update the discount percentage for the new balance
-            # _refreshDiscountPercent(...)
             discount_token_balance = cache.get_discount_token_balance(
                 token=discount_token,
                 user=user.address,
             )
-            user.gho_discount = _get_discount_rate(
+            _refresh_discount_rate(
                 w3=w3,
+                user=user,
                 discount_rate_strategy=discount_rate_strategy,
-                debt_token_balance=wad_ray_math_library.ray_mul(
-                    a=debt_position.balance + balance_delta,
-                    b=event_data.index,
-                ),
                 discount_token_balance=discount_token_balance,
+                scaled_debt_balance=debt_position.balance + balance_delta,
+                debt_index=event_data.index,
                 state_block=state_block,
+                wad_ray_math=wad_ray_math_library,
             )
 
         else:
