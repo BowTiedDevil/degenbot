@@ -2932,6 +2932,55 @@ def _update_contract_revision(
     contract.revision = revision
 
 
+def _process_proxy_creation_event(
+    *,
+    w3: Web3,
+    session: Session,
+    market: AaveV3MarketTable,
+    event: LogReceipt,
+    proxy_name: str,
+    proxy_id: bytes,
+    revision_function_prototype: str,
+) -> None:
+    """
+    Process a proxy creation event (POOL or POOL_CONFIGURATOR).
+    """
+    (decoded_proxy_id,) = eth_abi.abi.decode(types=["bytes32"], data=event["topics"][1])
+
+    if decoded_proxy_id != proxy_id:
+        return
+
+    proxy_address = _decode_address(event["topics"][2])
+    implementation_address = _decode_address(event["topics"][3])
+
+    if (
+        session.scalar(
+            select(AaveV3ContractsTable).where(AaveV3ContractsTable.address == proxy_address)
+        )
+        is not None
+    ):
+        return
+
+    (revision,) = raw_call(
+        w3=w3,
+        address=implementation_address,
+        calldata=encode_function_calldata(
+            function_prototype=f"{revision_function_prototype}()",
+            function_arguments=None,
+        ),
+        return_types=["uint256"],
+    )
+
+    session.add(
+        AaveV3ContractsTable(
+            market_id=market.id,
+            name=proxy_name,
+            address=proxy_address,
+            revision=revision,
+        )
+    )
+
+
 def _process_discount_percent_updated_event(
     *,
     session: Session,
@@ -3671,86 +3720,25 @@ def update_aave_market(
             [AaveV3Event.PROXY_CREATED.value],
         ],
     ):
-        (proxy_id,) = eth_abi.abi.decode(types=["bytes32"], data=proxy_creation_event["topics"][1])
+        _process_proxy_creation_event(
+            w3=w3,
+            session=session,
+            market=market,
+            event=proxy_creation_event,
+            proxy_name="POOL",
+            proxy_id=eth_abi.abi.encode(["bytes32"], [b"POOL"]),
+            revision_function_prototype="POOL_REVISION",
+        )
 
-        if proxy_id == eth_abi.abi.encode(["bytes32"], [b"POOL"]):
-            (pool_proxy_address,) = eth_abi.abi.decode(
-                types=["address"], data=proxy_creation_event["topics"][2]
-            )
-            pool_proxy_address = get_checksum_address(pool_proxy_address)
-
-            (implementation_address,) = eth_abi.abi.decode(
-                types=["address"], data=proxy_creation_event["topics"][3]
-            )
-            implementation_address = get_checksum_address(implementation_address)
-
-            assert (
-                session.scalar(
-                    select(AaveV3ContractsTable).where(
-                        AaveV3ContractsTable.address == pool_proxy_address
-                    )
-                )
-                is None
-            )
-
-            # Get the revision from the specific implementation
-            (pool_revision,) = raw_call(
-                w3=w3,
-                address=implementation_address,
-                calldata=encode_function_calldata(
-                    function_prototype="POOL_REVISION()",
-                    function_arguments=None,
-                ),
-                return_types=["uint256"],
-            )
-
-            session.add(
-                AaveV3ContractsTable(
-                    market_id=market.id,
-                    name="POOL",
-                    address=pool_proxy_address,
-                    revision=pool_revision,
-                )
-            )
-
-        elif proxy_id == eth_abi.abi.encode(["bytes32"], [b"POOL_CONFIGURATOR"]):
-            (pool_configurator_proxy_address,) = eth_abi.abi.decode(
-                types=["address"], data=proxy_creation_event["topics"][2]
-            )
-            pool_configurator_proxy_address = get_checksum_address(pool_configurator_proxy_address)
-
-            (implementation_address,) = eth_abi.abi.decode(
-                types=["address"], data=proxy_creation_event["topics"][3]
-            )
-            implementation_address = get_checksum_address(implementation_address)
-
-            assert (
-                session.scalar(
-                    select(AaveV3ContractsTable).where(
-                        AaveV3ContractsTable.address == pool_configurator_proxy_address
-                    )
-                )
-                is None
-            )
-
-            (configurator_revision,) = raw_call(
-                w3=w3,
-                address=implementation_address,
-                calldata=encode_function_calldata(
-                    function_prototype="CONFIGURATOR_REVISION()",
-                    function_arguments=None,
-                ),
-                return_types=["uint256"],
-            )
-
-            session.add(
-                AaveV3ContractsTable(
-                    market_id=market.id,
-                    name="POOL_CONFIGURATOR",
-                    address=pool_configurator_proxy_address,
-                    revision=configurator_revision,
-                )
-            )
+        _process_proxy_creation_event(
+            w3=w3,
+            session=session,
+            market=market,
+            event=proxy_creation_event,
+            proxy_name="POOL_CONFIGURATOR",
+            proxy_id=eth_abi.abi.encode(["bytes32"], [b"POOL_CONFIGURATOR"]),
+            revision_function_prototype="CONFIGURATOR_REVISION",
+        )
 
     contract_update_events = _get_contract_update_events(
         w3=w3,
