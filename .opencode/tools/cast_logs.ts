@@ -1,7 +1,8 @@
 import { tool } from "@opencode-ai/plugin";
+import { getRpcUrl } from "./defaults";
 
 export default tool({
-  description: "Fetch event logs from the blockchain. Use this to query Swap, Mint, Burn, PoolCreated, or other contract events. Requires Foundry to be installed.",
+  description: "Fetch event logs from the blockchain. Use this to query Swap, Mint, Burn, PoolCreated, or other contract events. Requires Foundry to be installed. The default RPC URL is fetched from defaults.ts if not specified.",
   args: {
     address: tool.schema
       .string()
@@ -29,7 +30,7 @@ export default tool({
     rpc_url: tool.schema
       .string()
       .optional()
-      .describe("Custom RPC URL to use instead of the default for the chain"),
+      .describe("Custom RPC URL to use instead of the default from defaults.ts"),
   },
   async execute(params: any, context: any) {
     const cmd_parts = ["cast", "logs"];
@@ -38,9 +39,7 @@ export default tool({
       cmd_parts.push("--chain", params.chain);
     }
 
-    if (params.rpc_url) {
-      cmd_parts.push("--rpc-url", params.rpc_url);
-    }
+    cmd_parts.push("--rpc-url", getRpcUrl(params.chain, params.rpc_url));
 
     // Add from block (required)
     cmd_parts.push("--from-block", params.from_block);

@@ -1,7 +1,8 @@
 import { tool } from "@opencode-ai/plugin";
+import { getRpcUrl } from "./defaults";
 
 export default tool({
-  description: "Call a contract's view function without publishing a transaction. Use this to query contract state like slot0(), liquidity(), balanceOf(), or any read-only function. Requires Foundry to be installed.",
+  description: "Call a contract's view function without publishing a transaction. Use this to query contract state like slot0(), liquidity(), balanceOf(), or any read-only function. Requires Foundry to be installed. The default RPC URL is fetched from defaults.ts if not specified.",
   args: {
     address: tool.schema
       .string()
@@ -25,7 +26,7 @@ export default tool({
     rpc_url: tool.schema
       .string()
       .optional()
-      .describe("Custom RPC URL to use instead of the default for the chain"),
+      .describe("Custom RPC URL to use instead of the default from defaults.ts"),
   },
   async execute(params: any, context: any) {
     const cmd_parts = ["cast", "call"];
@@ -38,9 +39,7 @@ export default tool({
       cmd_parts.push("--block", params.block);
     }
 
-    if (params.rpc_url) {
-      cmd_parts.push("--rpc-url", params.rpc_url);
-    }
+    cmd_parts.push("--rpc-url", getRpcUrl(params.chain, params.rpc_url));
 
     // Add contract address
     cmd_parts.push(params.address);

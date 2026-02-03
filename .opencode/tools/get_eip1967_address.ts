@@ -1,4 +1,5 @@
 import { tool } from "@opencode-ai/plugin";
+import { getRpcUrl } from "./defaults";
 
 const EIP1967_SLOTS = {
   implementation: "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
@@ -7,7 +8,7 @@ const EIP1967_SLOTS = {
 };
 
 export default tool({
-  description: "Read the implementation, beacon, or admin address from EIP-1967 proxy upgradeable contracts. Use this when working with upgradeable proxy contracts (like OpenZeppelin proxies) to find the underlying implementation or admin addresses. Requires Foundry to be installed.",
+  description: "Read the implementation, beacon, or admin address from EIP-1967 proxy upgradeable contracts. Use this when working with upgradeable proxy contracts (like OpenZeppelin proxies) to find the underlying implementation or admin addresses. Requires Foundry to be installed. The default RPC URL is fetched from defaults.ts if not specified.",
   args: {
     proxy_address: tool.schema
       .string()
@@ -27,7 +28,7 @@ export default tool({
     rpc_url: tool.schema
       .string()
       .optional()
-      .describe("Custom RPC URL to use instead of the default for the chain"),
+      .describe("Custom RPC URL to use instead of the default from defaults.ts"),
   },
   async execute(args: any, context: any) {
     const cmd_parts = ["cast", "storage"];
@@ -40,9 +41,7 @@ export default tool({
       cmd_parts.push("--block", args.block);
     }
 
-    if (args.rpc_url) {
-      cmd_parts.push("--rpc-url", args.rpc_url);
-    }
+    cmd_parts.push("--rpc-url", getRpcUrl(args.chain, args.rpc_url));
 
     // Get the slot for the requested type
     // @ts-expect-error slot_type is validated by schema

@@ -1,7 +1,8 @@
 import { tool } from "@opencode-ai/plugin";
+import { getRpcUrl } from "./defaults";
 
 export default tool({
-  description: "Get the native token balance (ETH on Ethereum, or equivalent on other chains) of an account. Use this to check wallet or contract balances during debugging. Requires Foundry to be installed.",
+  description: "Get the native token balance (ETH on Ethereum, or equivalent on other chains) of an account. Use this to check wallet or contract balances during debugging. Requires Foundry to be installed. The default RPC URL is fetched from defaults.ts if not specified.",
   args: {
     address: tool.schema
       .string()
@@ -18,7 +19,7 @@ export default tool({
     rpc_url: tool.schema
       .string()
       .optional()
-      .describe("Custom RPC URL to use instead of the default for the chain"),
+      .describe("Custom RPC URL to use instead of the default from defaults.ts"),
   },
   async execute(params: any, context: any) {
     const cmd_parts = ["cast", "balance"];
@@ -31,9 +32,7 @@ export default tool({
       cmd_parts.push("--block", params.block);
     }
 
-    if (params.rpc_url) {
-      cmd_parts.push("--rpc-url", params.rpc_url);
-    }
+    cmd_parts.push("--rpc-url", getRpcUrl(params.chain, params.rpc_url));
 
     // Add the address
     cmd_parts.push(params.address);
