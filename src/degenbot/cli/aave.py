@@ -40,7 +40,7 @@ Transaction-Level Discount Tracking:
     per-user overrides and is cleared at transaction boundaries.
 
 Token Revisions:
-    Aave protocol upgrades produce multiple token versions (v3.1-v3.5). Each revision uses specific
+    Aave protocol upgrades produce multiple token versions (v3.1-v3.4). Each revision uses specific
     math libraries and control flow, which can change. Upgrades are tracked via EIP-1967 proxy
     events and contract calls to identify the current revision for a particular token. Functions
     involving scaled tokens (aToken, vToken) contain version checks to take the correct actions.
@@ -670,6 +670,16 @@ def aave_update(
 ) -> None:
     """
     Update positions for active Aave markets.
+
+    Processes blockchain events from the last updated block to the specified block,
+    updating all user positions, interest rates, and indices in the database.
+
+    Args:
+        chunk_size: Maximum number of blocks to process before committing changes.
+        to_block: Target block identifier (e.g., 'latest', 'latest:-64', 'finalized:128').
+        verify_strict: If True, verify position balances at every block boundary.
+        verify_chunk: If True, verify position balances only at chunk boundaries.
+        show_timing: If True, display performance timing summary after processing.
     """
 
     with db_session() as session:
@@ -1595,7 +1605,7 @@ def _accrue_debt_on_action(
     token_revision: int,
 ) -> int:
     """
-    Simulate the GhoVariableDebtToken (version 3) _accrueDebtOnAction function.
+    Simulate the GhoVariableDebtToken _accrueDebtOnAction function.
 
     REFERENCE:
     ```
@@ -1680,7 +1690,12 @@ def _get_discount_rate(
     debt_token_balance: int,
     discount_token_balance: int,
 ) -> int:
-    """Get the discount percentage from the discount rate strategy contract."""
+    """
+    Get the discount percentage from the discount rate strategy contract.
+
+    Calls calculateDiscountRate on the strategy contract with debt and discount token balances
+    to determine the user's interest discount percentage.
+    """
     new_discount_percentage: int
     (new_discount_percentage,) = raw_call(
         w3=w3,
@@ -2095,9 +2110,9 @@ def _process_aave_stake(
     tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int],
 ) -> UserOperation:
     """
-    Process a GHO vToken Mint event triggered by an AAVE staking or redemption event.
+    Process a GHO vToken Mint event triggered by an AAVE staking event.
 
-    This handles the discount distribution update when a user stakes AAVE or redeems stkAAVE.
+    This handles the discount distribution update when a user stakes AAVE tokens.
     """
 
     with _time_call("_process_aave_stake"):
@@ -2211,7 +2226,7 @@ def _process_aave_redeem(
     """
     Process a GHO vToken Mint event triggered by an AAVE redemption event.
 
-    This handles the discount distribution update when a user stakes AAVE or redeems stkAAVE.
+    This handles the discount distribution update when a user redeems stkAAVE tokens.
     """
 
     with _time_call("_process_aave_redeem"):
@@ -3226,9 +3241,9 @@ def _process_scaled_token_mint_event(
     Mint events have three possible sources, determined by comparing value and
     balanceIncrease event parameters:
 
-    - value == balanceIncrease: _transfer (collateral transfer, skipped)
-    - balanceIncrease > value: _burnScaled (interest accrual during withdrawal)
     - value > balanceIncrease: _mintScaled (user supply/borrow action)
+    - balanceIncrease > value: _burnScaled (interest accrual during repayment)
+    - value == balanceIncrease: _transfer (collateral transfer, skipped)
 
     For _mintScaled, the amount passed to _mint() is calculated as:
         amount = value - balanceIncrease
