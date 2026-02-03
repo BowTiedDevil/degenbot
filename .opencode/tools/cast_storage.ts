@@ -1,4 +1,3 @@
-// @ts-expect-error Module resolves correctly at runtime
 import { tool } from "@opencode-ai/plugin";
 
 export default tool({
@@ -26,22 +25,22 @@ export default tool({
   },
   async execute(args: any, context: any) {
     const cmd_parts = ["cast", "storage"];
-    
+
     if (args.chain) {
       cmd_parts.push("--chain", args.chain);
     }
-    
+
     if (args.block) {
       cmd_parts.push("--block", args.block);
     }
-    
+
     if (args.rpc_url) {
       cmd_parts.push("--rpc-url", args.rpc_url);
     }
-    
+
     // Add required arguments
     cmd_parts.push(args.address, args.slot);
-    
+
     try {
       // @ts-expect-error Bun runtime is available
       const result = await Bun.$`${cmd_parts}`.text();

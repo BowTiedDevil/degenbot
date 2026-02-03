@@ -1,4 +1,3 @@
-// @ts-expect-error Module resolves correctly at runtime
 import { tool } from "@opencode-ai/plugin";
 
 const EIP1967_SLOTS = {
@@ -32,26 +31,26 @@ export default tool({
   },
   async execute(args: any, context: any) {
     const cmd_parts = ["cast", "storage"];
-    
+
     if (args.chain) {
       cmd_parts.push("--chain", args.chain);
     }
-    
+
     if (args.block) {
       cmd_parts.push("--block", args.block);
     }
-    
+
     if (args.rpc_url) {
       cmd_parts.push("--rpc-url", args.rpc_url);
     }
-    
+
     // Get the slot for the requested type
     // @ts-expect-error slot_type is validated by schema
     const slot = EIP1967_SLOTS[args.slot_type];
-    
+
     // Add required arguments
     cmd_parts.push(args.proxy_address, slot);
-    
+
     try {
       // @ts-expect-error Bun runtime is available
       const result = await Bun.$`${cmd_parts}`.text();

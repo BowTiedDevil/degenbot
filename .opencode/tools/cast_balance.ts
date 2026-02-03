@@ -1,4 +1,3 @@
-// @ts-expect-error Module resolves correctly at runtime
 import { tool } from "@opencode-ai/plugin";
 
 export default tool({

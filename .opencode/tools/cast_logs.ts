@@ -1,4 +1,3 @@
-// @ts-expect-error Module resolves correctly at runtime
 import { tool } from "@opencode-ai/plugin";
 
 export default tool({
@@ -34,28 +33,28 @@ export default tool({
   },
   async execute(params: any, context: any) {
     const cmd_parts = ["cast", "logs"];
-    
+
     if (params.chain) {
       cmd_parts.push("--chain", params.chain);
     }
-    
+
     if (params.rpc_url) {
       cmd_parts.push("--rpc-url", params.rpc_url);
     }
-    
+
     // Add from block (required)
     cmd_parts.push("--from-block", params.from_block);
-    
+
     // Add to block if provided
     if (params.to_block) {
       cmd_parts.push("--to-block", params.to_block);
     }
-    
+
     // Add address filter if provided
     if (params.address) {
       cmd_parts.push("--address", params.address);
     }
-    
+
     // Add signature or topic0
     if (params.signature) {
       cmd_parts.push(params.signature);
@@ -64,7 +63,7 @@ export default tool({
     } else {
       throw new Error("Either 'signature' or 'topic0' must be provided");
     }
-    
+
     try {
       // @ts-expect-error Bun runtime is available
       const result = await Bun.$`${cmd_parts}`.text();

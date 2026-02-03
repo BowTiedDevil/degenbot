@@ -1,4 +1,3 @@
-// @ts-expect-error Module resolves correctly at runtime
 import { tool } from "@opencode-ai/plugin";
 
 export default tool({
@@ -31,31 +30,31 @@ export default tool({
   },
   async execute(args: any, context: any) {
     const cmd_parts = ["cast", "source"];
-    
+
     // Add optional flags
     if (args.flatten) {
       cmd_parts.push("--flatten");
     }
-    
+
     if (args.output_dir) {
       cmd_parts.push("-d", args.output_dir);
     }
-    
+
     if (args.chain) {
       cmd_parts.push("--chain", args.chain);
     }
-    
+
     if (args.etherscan_api_key) {
       cmd_parts.push("--etherscan-api-key", args.etherscan_api_key);
     }
-    
+
     if (args.explorer_api_url) {
       cmd_parts.push("--explorer-api-url", args.explorer_api_url);
     }
-    
+
     // Add the required address argument last
     cmd_parts.push(args.address);
-    
+
     try {
       // @ts-expect-error Bun runtime is available
       const result = await Bun.$`${cmd_parts}`.text();
