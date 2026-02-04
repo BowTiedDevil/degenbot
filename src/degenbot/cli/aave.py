@@ -1378,7 +1378,11 @@ def _verify_gho_discount_amounts(
     Verify that the GHO discount values match the contract.
     """
 
-    for user_address, last_update_block in users_to_check.items():
+    for user_address, last_update_block in tqdm.tqdm(
+        users_to_check.items(),
+        desc="Verifying GHO discount amounts",
+        leave=False,
+    ):
         user = None
         for u in market.users:
             if u.address == user_address:
@@ -1415,7 +1419,16 @@ def _verify_scaled_token_positions(
     Verify that the database position balances match the contract.
     """
 
-    for user_address, last_update_block in users_to_check.items():
+    desc = (
+        "Verifying collateral positions"
+        if position_table is AaveV3CollateralPositionsTable
+        else "Verifying debt positions"
+    )
+    for user_address, last_update_block in tqdm.tqdm(
+        users_to_check.items(),
+        desc=desc,
+        leave=False,
+    ):
         if user_address == ZERO_ADDRESS:
             logger.error("SKIPPED ZERO ADDRESS!")
             continue
@@ -3945,7 +3958,11 @@ def update_aave_market(
     tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int] = {}
     current_tx_hash: HexBytes | None = None
 
-    for event in sorted(all_events, key=operator.itemgetter("blockNumber", "logIndex")):
+    for event in tqdm.tqdm(
+        sorted(all_events, key=operator.itemgetter("blockNumber", "logIndex")),
+        desc="Processing events",
+        leave=False,
+    ):
         if verify_strict and users_to_check and event["blockNumber"] > last_event_block:
             _verify_scaled_token_positions(
                 w3=w3,
