@@ -638,7 +638,10 @@ def deactivate_mainnet_aave_v3(
     click.echo(f"Deactivated Aave V3 on {chain_id.name} (chain ID {chain_id}).")
 
 
-@aave.command("update")
+@aave.command(
+    "update",
+    help="Update positions for active Aave markets.",
+)
 @click.option(
     "--chunk",
     "chunk_size",
