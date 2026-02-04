@@ -1124,6 +1124,7 @@ def _process_stk_aave_redeem_event(context: EventHandlerContext) -> None:
 
         if from_user is not None and from_user.stk_aave_balance is not None:
             from_user.stk_aave_balance -= shares
+            assert from_user.stk_aave_balance >= 0
 
             if VerboseConfig.is_verbose(
                 user_address=from_address, tx_hash=context.event.get("transactionHash")
@@ -1159,6 +1160,7 @@ def _process_stk_aave_transfer_event(context: EventHandlerContext) -> None:
         )
         if from_user is not None and from_user.stk_aave_balance is not None:
             from_user.stk_aave_balance -= value
+            assert from_user.stk_aave_balance >= 0
 
         # Update recipient balance
         to_user = _get_or_create_user(
@@ -1205,6 +1207,7 @@ def _process_stk_aave_slashed_event(context: EventHandlerContext) -> None:
 
         if destination_user is not None and destination_user.stk_aave_balance is not None:
             destination_user.stk_aave_balance -= amount
+            assert destination_user.stk_aave_balance >= 0
 
             if VerboseConfig.is_verbose(
                 user_address=destination_address, tx_hash=context.event.get("transactionHash")
@@ -1524,6 +1527,57 @@ def _verify_gho_discount_amounts(
             f"User {user_address}: GHO discount {user.gho_discount} "
             f"does not match GHO vDebtToken token contract ({discount_percent}) "
             f"@ {GHO_VARIABLE_DEBT_TOKEN_ADDRESS} at block {last_update_block}"
+        )
+
+
+def _verify_stk_aave_balances(
+    w3: Web3,
+    session: Session,
+    market: AaveV3MarketTable,
+    gho_users_to_check: dict[ChecksumAddress, int],
+) -> None:
+    """
+    Verify that the tracked stkAAVE balances match the contract.
+    """
+
+    gho_asset = _get_gho_asset(session=session, market=market)
+    if gho_asset.v_gho_discount_token is None:
+        return
+
+    discount_token = gho_asset.v_gho_discount_token
+
+    for user_address, last_update_block in tqdm.tqdm(
+        gho_users_to_check.items(),
+        desc="Verifying stkAAVE balances",
+        leave=False,
+    ):
+        user = session.scalar(
+            select(AaveV3UsersTable).where(
+                AaveV3UsersTable.address == user_address,
+                AaveV3UsersTable.market_id == market.id,
+            )
+        )
+        assert user is not None
+
+        # Skip if balance hasn't been initialized yet (lazy loading)
+        if user.stk_aave_balance is None:
+            continue
+
+        (actual_balance,) = raw_call(
+            w3=w3,
+            address=discount_token,
+            calldata=encode_function_calldata(
+                function_prototype="balanceOf(address)",
+                function_arguments=[user_address],
+            ),
+            return_types=["uint256"],
+            block_identifier=last_update_block,
+        )
+
+        assert user.stk_aave_balance == actual_balance, (
+            f"User {user_address}: stkAAVE balance {user.stk_aave_balance} "
+            f"does not match contract ({actual_balance}) "
+            f"@ {discount_token} at block {last_update_block}"
         )
 
 
@@ -4188,6 +4242,12 @@ def update_aave_market(
                 market=market,
                 users_to_check=gho_users_to_check,
             )
+            _verify_stk_aave_balances(
+                w3=w3,
+                session=session,
+                market=market,
+                gho_users_to_check=gho_users_to_check,
+            )
             gho_users_to_check.clear()
 
         # Reset cache when moving to a new block
@@ -4246,6 +4306,12 @@ def update_aave_market(
             session=session,
             market=market,
             users_to_check=gho_users_to_check,
+        )
+        _verify_stk_aave_balances(
+            w3=w3,
+            session=session,
+            market=market,
+            gho_users_to_check=gho_users_to_check,
         )
         gho_users_to_check.clear()
 
