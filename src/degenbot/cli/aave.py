@@ -106,6 +106,13 @@ if TYPE_CHECKING:
     from eth_typing.evm import BlockParams
 
 
+class TokenType(Enum):
+    """Token type for Aave V3 asset lookups."""
+
+    COLLATERAL = "a_token_id"
+    DEBT = "v_token_id"
+
+
 # TODO: implement collateral enabled scraper
 
 
@@ -1147,16 +1154,11 @@ def _process_scaled_token_upgrade_event(
         new_implementation_address = _decode_address(context.event["topics"][1])
 
         if (
-            aave_collateral_asset := context.session.scalar(
-                select(AaveV3AssetsTable)
-                .join(
-                    Erc20TokenTable,
-                    AaveV3AssetsTable.a_token_id == Erc20TokenTable.id,
-                )
-                .where(
-                    Erc20TokenTable.chain == context.market.chain_id,
-                    Erc20TokenTable.address == get_checksum_address(context.event["address"]),
-                )
+            aave_collateral_asset := _get_asset_by_token_type(
+                session=context.session,
+                market=context.market,
+                token_address=get_checksum_address(context.event["address"]),
+                token_type=TokenType.COLLATERAL,
             )
         ) is not None:
             (atoken_revision,) = raw_call(
@@ -1171,16 +1173,11 @@ def _process_scaled_token_upgrade_event(
             aave_collateral_asset.a_token_revision = atoken_revision
             logger.info(f"Upgraded aToken revision to {atoken_revision}")
         elif (
-            aave_debt_asset := context.session.scalar(
-                select(AaveV3AssetsTable)
-                .join(
-                    Erc20TokenTable,
-                    AaveV3AssetsTable.v_token_id == Erc20TokenTable.id,
-                )
-                .where(
-                    Erc20TokenTable.chain == context.market.chain_id,
-                    Erc20TokenTable.address == get_checksum_address(context.event["address"]),
-                )
+            aave_debt_asset := _get_asset_by_token_type(
+                session=context.session,
+                market=context.market,
+                token_address=get_checksum_address(context.event["address"]),
+                token_type=TokenType.DEBT,
             )
         ) is not None:
             (vtoken_revision,) = raw_call(
@@ -1349,6 +1346,28 @@ def _get_contract(
     )
     assert contract is not None, f"{contract_name} not found for market {market.id}"
     return contract
+
+
+def _get_asset_by_token_type(
+    session: Session,
+    market: AaveV3MarketTable,
+    token_address: ChecksumAddress,
+    token_type: TokenType,
+) -> AaveV3AssetsTable | None:
+    """
+    Get AaveV3 asset by aToken (collateral) or vToken (debt) address.
+    """
+    return session.scalar(
+        select(AaveV3AssetsTable)
+        .join(
+            Erc20TokenTable,
+            getattr(AaveV3AssetsTable, token_type.value) == Erc20TokenTable.id,
+        )
+        .where(
+            Erc20TokenTable.chain == market.chain_id,
+            Erc20TokenTable.address == token_address,
+        )
+    )
 
 
 def _verify_gho_discount_amounts(
@@ -2939,28 +2958,18 @@ def _get_scaled_token_asset_by_address(
     """
     Get collateral and debt assets by token address.
     """
-    collateral_asset = session.scalar(
-        select(AaveV3AssetsTable)
-        .join(
-            Erc20TokenTable,
-            AaveV3AssetsTable.a_token_id == Erc20TokenTable.id,
-        )
-        .where(
-            Erc20TokenTable.chain == market.chain_id,
-            Erc20TokenTable.address == token_address,
-        )
+    collateral_asset = _get_asset_by_token_type(
+        session=session,
+        market=market,
+        token_address=token_address,
+        token_type=TokenType.COLLATERAL,
     )
 
-    debt_asset = session.scalar(
-        select(AaveV3AssetsTable)
-        .join(
-            Erc20TokenTable,
-            AaveV3AssetsTable.v_token_id == Erc20TokenTable.id,
-        )
-        .where(
-            Erc20TokenTable.chain == market.chain_id,
-            Erc20TokenTable.address == token_address,
-        )
+    debt_asset = _get_asset_by_token_type(
+        session=session,
+        market=market,
+        token_address=token_address,
+        token_type=TokenType.DEBT,
     )
 
     return collateral_asset, debt_asset
@@ -3694,16 +3703,11 @@ def _process_scaled_token_balance_transfer_event(
         context.users_to_check[from_address] = context.event["blockNumber"]
         context.users_to_check[to_address] = context.event["blockNumber"]
 
-        aave_asset = context.session.scalar(
-            select(AaveV3AssetsTable)
-            .join(
-                Erc20TokenTable,
-                AaveV3AssetsTable.a_token_id == Erc20TokenTable.id,
-            )
-            .where(
-                Erc20TokenTable.chain == context.market.chain_id,
-                Erc20TokenTable.address == get_checksum_address(context.event["address"]),
-            )
+        aave_asset = _get_asset_by_token_type(
+            session=context.session,
+            market=context.market,
+            token_address=get_checksum_address(context.event["address"]),
+            token_type=TokenType.COLLATERAL,
         )
         assert aave_asset is not None
 
