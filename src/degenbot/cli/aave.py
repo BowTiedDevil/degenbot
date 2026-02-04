@@ -1938,7 +1938,6 @@ def _process_gho_debt_burn(
     scaled_token_revision: int,
     debt_position: AaveV3DebtPositionsTable,
     state_block: int,
-    cache: BlockStateCache,
     event: LogReceipt,
     tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int],
     tx_discount_updated_users: set[ChecksumAddress],
@@ -2201,7 +2200,6 @@ def _process_staked_aave_event(
                 scaled_token_revision=scaled_token_revision,
                 debt_position=debt_position,
                 triggering_event=discount_token_info_event,
-                cache=cache,
                 tx_discount_overrides=tx_discount_overrides,
                 tx_discount_updated_users=tx_discount_updated_users,
             )
@@ -2215,7 +2213,6 @@ def _process_staked_aave_event(
                 scaled_token_revision=scaled_token_revision,
                 debt_position=debt_position,
                 triggering_event=discount_token_info_event,
-                cache=cache,
                 tx_discount_overrides=tx_discount_overrides,
                 tx_discount_updated_users=tx_discount_updated_users,
             )
@@ -2252,7 +2249,6 @@ def _process_aave_stake(
     scaled_token_revision: int,
     debt_position: AaveV3DebtPositionsTable,
     triggering_event: LogReceipt,
-    cache: BlockStateCache,
     tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int],
     tx_discount_updated_users: set[ChecksumAddress],
 ) -> UserOperation:
@@ -2370,7 +2366,6 @@ def _process_aave_redeem(
     scaled_token_revision: int,
     debt_position: AaveV3DebtPositionsTable,
     triggering_event: LogReceipt,
-    cache: BlockStateCache,
     tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int],
     tx_discount_updated_users: set[ChecksumAddress],
 ) -> UserOperation:
@@ -3538,7 +3533,6 @@ def _process_gho_debt_burn_event(
     target_address: ChecksumAddress,
     event: LogReceipt,
     gho_users_to_check: dict[ChecksumAddress, int],
-    cache: BlockStateCache,
     tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int],
     tx_discount_updated_users: set[ChecksumAddress],
 ) -> None:
@@ -3576,7 +3570,6 @@ def _process_gho_debt_burn_event(
         scaled_token_revision=debt_asset.v_token_revision,
         debt_position=debt_position,
         state_block=event["blockNumber"],
-        cache=cache,
         event=event,
         tx_discount_overrides=tx_discount_overrides,
         tx_discount_updated_users=tx_discount_updated_users,
@@ -3716,7 +3709,6 @@ def _process_scaled_token_burn_event(context: EventHandlerContext) -> None:
                 target_address=target_address,
                 event=context.event,
                 gho_users_to_check=context.gho_users_to_check,
-                cache=context.cache,
                 tx_discount_overrides=context.tx_discount_overrides,
                 tx_discount_updated_users=context.tx_discount_updated_users,
             )
