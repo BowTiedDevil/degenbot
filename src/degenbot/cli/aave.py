@@ -85,10 +85,7 @@ See docs/cli/aave.md for command reference.
 
 import operator
 import os
-import time
-from collections import defaultdict
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypedDict, cast
@@ -602,7 +599,6 @@ def aave_update(
         to_block: Target block identifier (e.g., 'latest', 'latest:-64', 'finalized:128').
         verify_strict: If True, verify position balances at every block boundary.
         verify_chunk: If True, verify position balances only at chunk boundaries.
-        show_timing: If True, display performance timing summary after processing.
         stop_after_one_chunk: If True, stop after processing the first chunk.
         no_progress: If True, disable progress bars.
     """
