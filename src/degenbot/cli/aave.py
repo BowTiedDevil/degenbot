@@ -4236,9 +4236,17 @@ def update_aave_market(
         )
         gho_users_to_check.clear()
 
-    # Zero balance rows are not useful
-    for table in (AaveV3CollateralPositionsTable, AaveV3DebtPositionsTable):
-        session.execute(delete(table).where(table.balance == 0))
+    # Clear all zero balance positions
+    session.execute(
+        delete(AaveV3CollateralPositionsTable).where(
+            AaveV3CollateralPositionsTable.balance == 0,
+        )
+    )
+    session.execute(
+        delete(AaveV3DebtPositionsTable).where(
+            AaveV3DebtPositionsTable.balance == 0,
+        )
+    )
 
 
 def _dispatch_event(context: EventHandlerContext) -> None:
