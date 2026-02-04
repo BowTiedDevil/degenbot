@@ -574,6 +574,14 @@ def deactivate_mainnet_aave_v3(
     show_default=True,
     help="Stop processing after the first chunk.",
 )
+@click.option(
+    "--no-progress",
+    "no_progress",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Disable progress bars.",
+)
 def aave_update(
     *,
     chunk_size: int,
@@ -581,6 +589,7 @@ def aave_update(
     verify_strict: bool,
     verify_chunk: bool,
     stop_after_one_chunk: bool,
+    no_progress: bool,
 ) -> None:
     """
     Update positions for active Aave markets.
@@ -595,6 +604,7 @@ def aave_update(
         verify_chunk: If True, verify position balances only at chunk boundaries.
         show_timing: If True, display performance timing summary after processing.
         stop_after_one_chunk: If True, stop after processing the first chunk.
+        no_progress: If True, disable progress bars.
     """
 
     with db_session() as session:
@@ -659,6 +669,7 @@ def aave_update(
                 total=last_block - initial_start_block + 1,
                 bar_format="{desc} {percentage:3.1f}% |{bar}|",
                 leave=False,
+                disable=no_progress,
             )
 
             block_pbar.n = working_start_block - initial_start_block
@@ -706,6 +717,7 @@ def aave_update(
                             session=session,
                             verify_strict=verify_strict,
                             verify_chunk=verify_chunk,
+                            no_progress=no_progress,
                         )
                     except Exception as e:  # noqa: BLE001
                         logger.info(f"Processing failed on event: {event_in_process}")
@@ -1424,10 +1436,12 @@ def _get_asset_by_token_type(
 
 
 def _verify_gho_discount_amounts(
+    *,
     w3: Web3,
     session: Session,
     market: AaveV3MarketTable,
     users_to_check: dict[ChecksumAddress, int],
+    no_progress: bool,
 ) -> None:
     """
     Verify that the GHO discount values match the contract.
@@ -1437,6 +1451,7 @@ def _verify_gho_discount_amounts(
         users_to_check.items(),
         desc="Verifying GHO discount amounts",
         leave=False,
+        disable=no_progress,
     ):
         user = session.scalar(
             select(AaveV3UsersTable).where(
@@ -1465,10 +1480,12 @@ def _verify_gho_discount_amounts(
 
 
 def _verify_stk_aave_balances(
+    *,
     w3: Web3,
     session: Session,
     market: AaveV3MarketTable,
     gho_users_to_check: dict[ChecksumAddress, int],
+    no_progress: bool,
 ) -> None:
     """
     Verify that the tracked stkAAVE balances match the contract.
@@ -1484,6 +1501,7 @@ def _verify_stk_aave_balances(
         gho_users_to_check.items(),
         desc="Verifying stkAAVE balances",
         leave=False,
+        disable=no_progress,
     ):
         user = session.scalar(
             select(AaveV3UsersTable).where(
@@ -1516,11 +1534,13 @@ def _verify_stk_aave_balances(
 
 
 def _verify_scaled_token_positions(
+    *,
     w3: Web3,
     market: AaveV3MarketTable,
     session: Session,
     users_to_check: dict[ChecksumAddress, int],
     position_table: type[AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable],
+    no_progress: bool,
 ) -> None:
     """
     Verify that the database position balances match the contract.
@@ -1535,6 +1555,7 @@ def _verify_scaled_token_positions(
         users_to_check.items(),
         desc=desc,
         leave=False,
+        disable=no_progress,
     ):
         if user_address == ZERO_ADDRESS:
             logger.error("SKIPPED ZERO ADDRESS!")
@@ -3877,6 +3898,7 @@ def update_aave_market(
     session: Session,
     verify_strict: bool,
     verify_chunk: bool,
+    no_progress: bool,
 ) -> None:
     """
     Update the Aave V3 market.
@@ -4125,6 +4147,7 @@ def update_aave_market(
         sorted(all_events, key=operator.itemgetter("blockNumber", "logIndex")),
         desc="Processing events",
         leave=False,
+        disable=no_progress,
     ):
         if verify_strict and users_to_check and event["blockNumber"] > last_event_block:
             _verify_scaled_token_positions(
@@ -4133,6 +4156,7 @@ def update_aave_market(
                 session=session,
                 users_to_check=users_to_check,
                 position_table=AaveV3CollateralPositionsTable,
+                no_progress=no_progress,
             )
             _verify_scaled_token_positions(
                 w3=w3,
@@ -4140,6 +4164,7 @@ def update_aave_market(
                 session=session,
                 users_to_check=users_to_check,
                 position_table=AaveV3DebtPositionsTable,
+                no_progress=no_progress,
             )
             users_to_check.clear()
         if verify_strict and gho_users_to_check and event["blockNumber"] > last_event_block:
@@ -4148,12 +4173,14 @@ def update_aave_market(
                 session=session,
                 market=market,
                 users_to_check=gho_users_to_check,
+                no_progress=no_progress,
             )
             _verify_stk_aave_balances(
                 w3=w3,
                 session=session,
                 market=market,
                 gho_users_to_check=gho_users_to_check,
+                no_progress=no_progress,
             )
             gho_users_to_check.clear()
 
@@ -4198,6 +4225,7 @@ def update_aave_market(
             session=session,
             users_to_check=users_to_check,
             position_table=AaveV3CollateralPositionsTable,
+            no_progress=no_progress,
         )
         _verify_scaled_token_positions(
             w3=w3,
@@ -4205,6 +4233,7 @@ def update_aave_market(
             session=session,
             users_to_check=users_to_check,
             position_table=AaveV3DebtPositionsTable,
+            no_progress=no_progress,
         )
         users_to_check.clear()
 
@@ -4213,12 +4242,14 @@ def update_aave_market(
             session=session,
             market=market,
             users_to_check=gho_users_to_check,
+            no_progress=no_progress,
         )
         _verify_stk_aave_balances(
             w3=w3,
             session=session,
             market=market,
             gho_users_to_check=gho_users_to_check,
+            no_progress=no_progress,
         )
         gho_users_to_check.clear()
 
