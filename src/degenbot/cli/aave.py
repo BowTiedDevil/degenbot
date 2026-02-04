@@ -301,6 +301,20 @@ GHO_VARIABLE_DEBT_TOKEN_ADDRESS = get_checksum_address("0x786dBff3f1292ae8F92ea6
 event_in_process: LogReceipt
 
 
+@dataclass
+class EventHandlerContext:
+    """Context object passed to event handlers containing all necessary state."""
+
+    w3: Web3
+    event: LogReceipt
+    market: AaveV3MarketTable
+    session: Session
+    users_to_check: dict[ChecksumAddress, int]
+    gho_users_to_check: dict[ChecksumAddress, int]
+    cache: BlockStateCache
+    tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int]
+
+
 class VerboseConfig:
     """Runtime configurable verbose logging settings for Aave event processing."""
 
@@ -986,9 +1000,7 @@ def _get_reserve_initialized_events(
 
 
 def _process_user_e_mode_set_event(
-    event: LogReceipt,
-    market: AaveV3MarketTable,
-    session: Session,
+    context: EventHandlerContext,
 ) -> None:
     """
     Process a UserEModeSet event to update a user's E-Mode category.
@@ -1000,22 +1012,20 @@ def _process_user_e_mode_set_event(
     #     uint8 categoryId
     # );
     with _time_call("_process_user_e_mode_set_event"):
-        user_address = _decode_address(event["topics"][1])
+        user_address = _decode_address(context.event["topics"][1])
 
-        (e_mode,) = eth_abi.abi.decode(types=["uint8"], data=event["data"])
+        (e_mode,) = eth_abi.abi.decode(types=["uint8"], data=context.event["data"])
 
         user = _get_or_create_user(
-            session=session,
-            market=market,
+            session=context.session,
+            market=context.market,
             user_address=user_address,
         )
         user.e_mode = e_mode
 
 
 def _process_discount_token_updated_event(
-    event: LogReceipt,
-    market: AaveV3MarketTable,
-    session: Session,
+    context: EventHandlerContext,
 ) -> None:
     """
     Process a DiscountTokenUpdated event to set the GHO vToken discount token
@@ -1027,10 +1037,10 @@ def _process_discount_token_updated_event(
     #     address indexed newDiscountToken
     # );
     with _time_call("_process_discount_token_updated_event"):
-        old_discount_token_address = _decode_address(event["topics"][1])
-        new_discount_token_address = _decode_address(event["topics"][2])
+        old_discount_token_address = _decode_address(context.event["topics"][1])
+        new_discount_token_address = _decode_address(context.event["topics"][2])
 
-        gho_asset = _get_gho_asset(session=session, market=market)
+        gho_asset = _get_gho_asset(session=context.session, market=context.market)
         gho_asset.v_gho_discount_token = new_discount_token_address
 
         logger.info(
@@ -1039,9 +1049,7 @@ def _process_discount_token_updated_event(
 
 
 def _process_discount_rate_strategy_updated_event(
-    event: LogReceipt,
-    market: AaveV3MarketTable,
-    session: Session,
+    context: EventHandlerContext,
 ) -> None:
     """
     Process a DiscountRateStrategyUpdated event to set the GHO vToken attribute
@@ -1053,10 +1061,10 @@ def _process_discount_rate_strategy_updated_event(
     #     address indexed newDiscountRateStrategy
     # );
     with _time_call("_process_discount_rate_strategy_updated_event"):
-        old_discount_rate_strategy_address = _decode_address(event["topics"][1])
-        new_discount_rate_strategy_address = _decode_address(event["topics"][2])
+        old_discount_rate_strategy_address = _decode_address(context.event["topics"][1])
+        new_discount_rate_strategy_address = _decode_address(context.event["topics"][2])
 
-        gho_asset = _get_gho_asset(session=session, market=market)
+        gho_asset = _get_gho_asset(session=context.session, market=context.market)
         gho_asset.v_gho_discount_rate_strategy = new_discount_rate_strategy_address
 
         logger.info(
@@ -1066,9 +1074,7 @@ def _process_discount_rate_strategy_updated_event(
 
 
 def _process_reserve_data_update_event(
-    event: LogReceipt,
-    market: AaveV3MarketTable,
-    session: Session,
+    context: EventHandlerContext,
 ) -> None:
     """
     Process a ReserveDataUpdated event to update asset rates and indices.
@@ -1084,23 +1090,23 @@ def _process_reserve_data_update_event(
     #     uint256 variableBorrowIndex
     # );
     with _time_call("_process_reserve_data_update_event"):
-        reserve_asset_address = _decode_address(event["topics"][1])
+        reserve_asset_address = _decode_address(context.event["topics"][1])
 
-        asset_in_db = session.scalar(
+        asset_in_db = context.session.scalar(
             select(AaveV3AssetsTable)
             .join(
                 Erc20TokenTable,
                 AaveV3AssetsTable.underlying_asset_id == Erc20TokenTable.id,
             )
             .where(
-                Erc20TokenTable.chain == market.chain_id,
+                Erc20TokenTable.chain == context.market.chain_id,
                 Erc20TokenTable.address == reserve_asset_address,
             )
         )
         assert asset_in_db is not None
 
         if asset_in_db.last_update_block is not None:
-            assert asset_in_db.last_update_block <= event["blockNumber"]
+            assert asset_in_db.last_update_block <= context.event["blockNumber"]
 
         liquidity_rate: int
 
@@ -1115,21 +1121,18 @@ def _process_reserve_data_update_event(
             variable_borrow_index,
         ) = eth_abi.abi.decode(
             types=["uint256", "uint256", "uint256", "uint256", "uint256"],
-            data=event["data"],
+            data=context.event["data"],
         )
 
         asset_in_db.liquidity_rate = liquidity_rate
         asset_in_db.borrow_rate = variable_borrow_rate
         asset_in_db.liquidity_index = liquidity_index
         asset_in_db.borrow_index = variable_borrow_index
-        asset_in_db.last_update_block = event["blockNumber"]
+        asset_in_db.last_update_block = context.event["blockNumber"]
 
 
 def _process_scaled_token_upgrade_event(
-    w3: Web3,
-    event: LogReceipt,
-    market: AaveV3MarketTable,
-    session: Session,
+    context: EventHandlerContext,
 ) -> None:
     """
     Process an Upgraded event to update the aToken or vToken revision.
@@ -1140,23 +1143,23 @@ def _process_scaled_token_upgrade_event(
     #     address indexed implementation
     # );
     with _time_call("_process_scaled_token_upgrade_event"):
-        new_implementation_address = _decode_address(event["topics"][1])
+        new_implementation_address = _decode_address(context.event["topics"][1])
 
         if (
-            aave_collateral_asset := session.scalar(
+            aave_collateral_asset := context.session.scalar(
                 select(AaveV3AssetsTable)
                 .join(
                     Erc20TokenTable,
                     AaveV3AssetsTable.a_token_id == Erc20TokenTable.id,
                 )
                 .where(
-                    Erc20TokenTable.chain == market.chain_id,
-                    Erc20TokenTable.address == get_checksum_address(event["address"]),
+                    Erc20TokenTable.chain == context.market.chain_id,
+                    Erc20TokenTable.address == get_checksum_address(context.event["address"]),
                 )
             )
         ) is not None:
             (atoken_revision,) = raw_call(
-                w3=w3,
+                w3=context.w3,
                 address=new_implementation_address,
                 calldata=encode_function_calldata(
                     function_prototype="ATOKEN_REVISION()",
@@ -1167,20 +1170,20 @@ def _process_scaled_token_upgrade_event(
             aave_collateral_asset.a_token_revision = atoken_revision
             logger.info(f"Upgraded aToken revision to {atoken_revision}")
         elif (
-            aave_debt_asset := session.scalar(
+            aave_debt_asset := context.session.scalar(
                 select(AaveV3AssetsTable)
                 .join(
                     Erc20TokenTable,
                     AaveV3AssetsTable.v_token_id == Erc20TokenTable.id,
                 )
                 .where(
-                    Erc20TokenTable.chain == market.chain_id,
-                    Erc20TokenTable.address == get_checksum_address(event["address"]),
+                    Erc20TokenTable.chain == context.market.chain_id,
+                    Erc20TokenTable.address == get_checksum_address(context.event["address"]),
                 )
             )
         ) is not None:
             (vtoken_revision,) = raw_call(
-                w3=w3,
+                w3=context.w3,
                 address=new_implementation_address,
                 calldata=encode_function_calldata(
                     function_prototype="DEBT_TOKEN_REVISION()",
@@ -1191,7 +1194,7 @@ def _process_scaled_token_upgrade_event(
             aave_debt_asset.v_token_revision = vtoken_revision
             logger.info(f"Upgraded vToken revision to {vtoken_revision}")
         else:
-            token_address = get_checksum_address(event["address"])
+            token_address = get_checksum_address(context.event["address"])
             msg = f"Unknown token type for address {token_address}. Expected aToken or vToken."
             raise ValueError(msg)
 
@@ -3224,17 +3227,7 @@ def _process_standard_debt_mint_event(
         assert debt_position.balance >= 0
 
 
-def _process_scaled_token_mint_event(
-    *,
-    w3: Web3,
-    event: LogReceipt,
-    market: AaveV3MarketTable,
-    session: Session,
-    users_to_check: dict[ChecksumAddress, int],
-    gho_users_to_check: dict[ChecksumAddress, int],
-    cache: BlockStateCache,
-    tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int],
-) -> None:
+def _process_scaled_token_mint_event(context: EventHandlerContext) -> None:
     """
     Process a scaled token Mint event as collateral deposit or debt borrow.
 
@@ -3265,45 +3258,47 @@ def _process_scaled_token_mint_event(
         #     uint256 index
         # );
 
-        caller_address = _decode_address(event["topics"][1])
-        on_behalf_of_address = _decode_address(event["topics"][2])
+        caller_address = _decode_address(context.event["topics"][1])
+        on_behalf_of_address = _decode_address(context.event["topics"][2])
 
         if VerboseConfig.is_verbose(tx_hash=event_in_process["transactionHash"]):
             logger.info(f"{caller_address=}")
             logger.info(f"{on_behalf_of_address=}")
 
         # Ignore the caller - all relevant actions apply to on_behalf_of_address
-        users_to_check[on_behalf_of_address] = event["blockNumber"]
+        context.users_to_check[on_behalf_of_address] = context.event["blockNumber"]
 
         user = _get_or_create_user(
-            session=session, market=market, user_address=on_behalf_of_address
+            session=context.session, market=context.market, user_address=on_behalf_of_address
         )
 
-        event_amount, balance_increase, index = _decode_uint_values(event=event, num_values=3)
+        event_amount, balance_increase, index = _decode_uint_values(
+            event=context.event, num_values=3
+        )
 
-        token_address = get_checksum_address(event["address"])
+        token_address = get_checksum_address(context.event["address"])
         collateral_asset, debt_asset = _get_scaled_token_asset_by_address(
-            session=session, market=market, token_address=token_address
+            session=context.session, market=context.market, token_address=token_address
         )
 
         if collateral_asset is not None:
             _process_collateral_mint_event(
-                session=session,
+                session=context.session,
                 user=user,
                 collateral_asset=collateral_asset,
                 token_address=token_address,
                 event_amount=event_amount,
                 balance_increase=balance_increase,
                 index=index,
-                event=event,
+                event=context.event,
             )
 
         elif debt_asset is not None:
             if token_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
                 _process_gho_debt_mint_event(
-                    w3=w3,
-                    session=session,
-                    market=market,
+                    w3=context.w3,
+                    session=context.session,
+                    market=context.market,
                     user=user,
                     debt_asset=debt_asset,
                     token_address=token_address,
@@ -3311,14 +3306,14 @@ def _process_scaled_token_mint_event(
                     balance_increase=balance_increase,
                     index=index,
                     caller_address=caller_address,
-                    event=event,
-                    gho_users_to_check=gho_users_to_check,
-                    cache=cache,
-                    tx_discount_overrides=tx_discount_overrides,
+                    event=context.event,
+                    gho_users_to_check=context.gho_users_to_check,
+                    cache=context.cache,
+                    tx_discount_overrides=context.tx_discount_overrides,
                 )
             else:
                 _process_standard_debt_mint_event(
-                    session=session,
+                    session=context.session,
                     user=user,
                     debt_asset=debt_asset,
                     token_address=token_address,
@@ -3326,12 +3321,12 @@ def _process_scaled_token_mint_event(
                     balance_increase=balance_increase,
                     index=index,
                     caller_address=caller_address,
-                    event=event,
+                    event=context.event,
                 )
 
         else:
             msg = (
-                f"Unknown token type for address {get_checksum_address(event['address'])}. "
+                f"Unknown token type for address {get_checksum_address(context.event['address'])}. "
                 "Expected aToken or vToken."
             )
             raise ValueError(msg)
@@ -3518,17 +3513,7 @@ def _process_standard_debt_burn_event(
         assert debt_position.balance >= 0
 
 
-def _process_scaled_token_burn_event(
-    *,
-    w3: Web3,
-    event: LogReceipt,
-    market: AaveV3MarketTable,
-    session: Session,
-    users_to_check: dict[ChecksumAddress, int],
-    gho_users_to_check: dict[ChecksumAddress, int],
-    cache: BlockStateCache,
-    tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int],
-) -> None:
+def _process_scaled_token_burn_event(context: EventHandlerContext) -> None:
     """
     Process a scaled token Burn as a collateral withdrawal or debt repayment.
     """
@@ -3543,43 +3528,45 @@ def _process_scaled_token_burn_event(
         #     uint256 index
         # );
 
-        from_address = _decode_address(event["topics"][1])
-        target_address = _decode_address(event["topics"][2])
-        users_to_check[from_address] = event["blockNumber"]
+        from_address = _decode_address(context.event["topics"][1])
+        target_address = _decode_address(context.event["topics"][2])
+        context.users_to_check[from_address] = context.event["blockNumber"]
 
-        event_amount, balance_increase, index = _decode_uint_values(event=event, num_values=3)
+        event_amount, balance_increase, index = _decode_uint_values(
+            event=context.event, num_values=3
+        )
 
-        user = session.scalar(
+        user = context.session.scalar(
             select(AaveV3UsersTable).where(
                 AaveV3UsersTable.address == from_address,
-                AaveV3UsersTable.market_id == market.id,
+                AaveV3UsersTable.market_id == context.market.id,
             )
         )
         assert user is not None
 
-        token_address = get_checksum_address(event["address"])
+        token_address = get_checksum_address(context.event["address"])
         collateral_asset, debt_asset = _get_scaled_token_asset_by_address(
-            session=session, market=market, token_address=token_address
+            session=context.session, market=context.market, token_address=token_address
         )
 
         if collateral_asset is not None:
             _process_collateral_burn_event(
-                session=session,
+                session=context.session,
                 user=user,
                 collateral_asset=collateral_asset,
                 token_address=token_address,
                 event_amount=event_amount,
                 balance_increase=balance_increase,
                 index=index,
-                event=event,
+                event=context.event,
             )
 
         elif debt_asset is not None:
             if token_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
                 _process_gho_debt_burn_event(
-                    w3=w3,
-                    session=session,
-                    market=market,
+                    w3=context.w3,
+                    session=context.session,
+                    market=context.market,
                     user=user,
                     debt_asset=debt_asset,
                     token_address=token_address,
@@ -3588,14 +3575,14 @@ def _process_scaled_token_burn_event(
                     index=index,
                     from_address=from_address,
                     target_address=target_address,
-                    event=event,
-                    gho_users_to_check=gho_users_to_check,
-                    cache=cache,
-                    tx_discount_overrides=tx_discount_overrides,
+                    event=context.event,
+                    gho_users_to_check=context.gho_users_to_check,
+                    cache=context.cache,
+                    tx_discount_overrides=context.tx_discount_overrides,
                 )
             else:
                 _process_standard_debt_burn_event(
-                    session=session,
+                    session=context.session,
                     user=user,
                     debt_asset=debt_asset,
                     token_address=token_address,
@@ -3604,7 +3591,7 @@ def _process_scaled_token_burn_event(
                     index=index,
                     from_address=from_address,
                     target_address=target_address,
-                    event=event,
+                    event=context.event,
                 )
 
         else:
@@ -3613,10 +3600,7 @@ def _process_scaled_token_burn_event(
 
 
 def _process_scaled_token_balance_transfer_event(
-    event: LogReceipt,
-    market: AaveV3MarketTable,
-    session: Session,
-    users_to_check: dict[ChecksumAddress, int],
+    context: EventHandlerContext,
 ) -> None:
     """
     Process a scaled token balance transfer.
@@ -3634,51 +3618,57 @@ def _process_scaled_token_balance_transfer_event(
         #     uint256 index
         # );
 
-        from_address = _decode_address(event["topics"][1])
-        to_address = _decode_address(event["topics"][2])
+        from_address = _decode_address(context.event["topics"][1])
+        to_address = _decode_address(context.event["topics"][2])
 
-        event_amount, _ = _decode_uint_values(event=event, num_values=2)
+        event_amount, _ = _decode_uint_values(event=context.event, num_values=2)
 
         # Zero-amount transfers have no effect, so return early instead of adding special cases
         # ref: TX 0xd007ede5e5dcff5e30904db3d66a8e1926fd75742ca838636dd2d5730140dcc6
         if event_amount == 0:
             return
 
-        users_to_check[from_address] = event["blockNumber"]
-        users_to_check[to_address] = event["blockNumber"]
+        context.users_to_check[from_address] = context.event["blockNumber"]
+        context.users_to_check[to_address] = context.event["blockNumber"]
 
-        aave_asset = session.scalar(
+        aave_asset = context.session.scalar(
             select(AaveV3AssetsTable)
             .join(
                 Erc20TokenTable,
                 AaveV3AssetsTable.a_token_id == Erc20TokenTable.id,
             )
             .where(
-                Erc20TokenTable.chain == market.chain_id,
-                Erc20TokenTable.address == get_checksum_address(event["address"]),
+                Erc20TokenTable.chain == context.market.chain_id,
+                Erc20TokenTable.address == get_checksum_address(context.event["address"]),
             )
         )
         assert aave_asset is not None
 
-        from_user = _get_or_create_user(session=session, market=market, user_address=from_address)
+        from_user = _get_or_create_user(
+            session=context.session, market=context.market, user_address=from_address
+        )
         assert from_user is not None
 
-        from_user_position = session.scalar(
+        from_user_position = context.session.scalar(
             select(AaveV3CollateralPositionsTable).where(
                 AaveV3CollateralPositionsTable.user_id == from_user.id,
                 AaveV3CollateralPositionsTable.asset_id == aave_asset.id,
             )
         )
-        assert from_user_position, f"{from_address}: TX {event['transactionHash'].to_0x_hex()}"
+        assert from_user_position, (
+            f"{from_address}: TX {context.event['transactionHash'].to_0x_hex()}"
+        )
 
         from_user_starting_amount = from_user_position.balance
         from_user_position.balance -= event_amount
 
-        to_user = _get_or_create_user(session=session, market=market, user_address=to_address)
+        to_user = _get_or_create_user(
+            session=context.session, market=context.market, user_address=to_address
+        )
         assert to_user is not None
 
         if (
-            to_user_position := session.scalar(
+            to_user_position := context.session.scalar(
                 select(AaveV3CollateralPositionsTable).where(
                     AaveV3CollateralPositionsTable.user_id == to_user.id,
                     AaveV3CollateralPositionsTable.asset_id == aave_asset.id,
@@ -3686,7 +3676,7 @@ def _process_scaled_token_balance_transfer_event(
             )
         ) is None:
             to_user_position = _get_or_create_collateral_position(
-                session=session, user_id=to_user.id, asset_id=aave_asset.id
+                session=context.session, user_id=to_user.id, asset_id=aave_asset.id
             )
 
         to_user_starting_amount = to_user_position.balance
@@ -3700,17 +3690,42 @@ def _process_scaled_token_balance_transfer_event(
             tx_hash=event_in_process["transactionHash"],
         ):
             _log_balance_transfer(
-                token_address=get_checksum_address(event["address"]),
+                token_address=get_checksum_address(context.event["address"]),
                 from_address=from_address,
                 from_balance_info=f"{from_user_starting_amount} -> {from_user_position.balance}",
                 to_address=to_address,
                 to_balance_info=f"{to_user_starting_amount} -> {to_user_position.balance}",
-                tx_hash=event["transactionHash"],
-                block_info=f"{event['blockNumber']}.{event['logIndex']}",
+                tx_hash=context.event["transactionHash"],
+                block_info=f"{context.event['blockNumber']}.{context.event['logIndex']}",
             )
 
         assert from_user_position.balance >= 0
         assert to_user_position.balance >= 0
+
+
+def _process_discount_percent_updated_event_wrapper(
+    context: EventHandlerContext,
+) -> None:
+    """Wrapper to adapt _process_discount_percent_updated_event to EventHandlerContext."""
+    _process_discount_percent_updated_event(
+        event=context.event,
+        market=context.market,
+        session=context.session,
+        tx_discount_overrides=context.tx_discount_overrides,
+    )
+
+
+EVENT_HANDLERS: dict[HexBytes, Callable[[EventHandlerContext], None]] = {
+    AaveV3Event.USER_E_MODE_SET.value: _process_user_e_mode_set_event,
+    AaveV3Event.RESERVE_DATA_UPDATED.value: _process_reserve_data_update_event,
+    AaveV3Event.SCALED_TOKEN_BURN.value: _process_scaled_token_burn_event,
+    AaveV3Event.SCALED_TOKEN_MINT.value: _process_scaled_token_mint_event,
+    AaveV3Event.UPGRADED.value: _process_scaled_token_upgrade_event,
+    AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value: _process_scaled_token_balance_transfer_event,
+    AaveV3Event.DISCOUNT_RATE_STRATEGY_UPDATED.value: _process_discount_rate_strategy_updated_event,
+    AaveV3Event.DISCOUNT_TOKEN_UPDATED.value: _process_discount_token_updated_event,
+    AaveV3Event.DISCOUNT_PERCENT_UPDATED.value: _process_discount_percent_updated_event_wrapper,
+}
 
 
 def update_aave_market(
@@ -3985,79 +4000,17 @@ def update_aave_market(
         global event_in_process  # noqa: PLW0603
         event_in_process = event
 
-        match event["topics"][0]:
-            case AaveV3Event.USER_E_MODE_SET.value:
-                _process_user_e_mode_set_event(
-                    event=event,
-                    market=market,
-                    session=session,
-                )
-            case AaveV3Event.RESERVE_DATA_UPDATED.value:
-                _process_reserve_data_update_event(
-                    event=event,
-                    market=market,
-                    session=session,
-                )
-            case AaveV3Event.SCALED_TOKEN_BURN.value:
-                _process_scaled_token_burn_event(
-                    w3=w3,
-                    event=event,
-                    market=market,
-                    session=session,
-                    users_to_check=users_to_check,
-                    gho_users_to_check=gho_users_to_check,
-                    cache=block_cache,
-                    tx_discount_overrides=tx_discount_overrides,
-                )
-            case AaveV3Event.SCALED_TOKEN_MINT.value:
-                _process_scaled_token_mint_event(
-                    w3=w3,
-                    event=event,
-                    market=market,
-                    session=session,
-                    users_to_check=users_to_check,
-                    gho_users_to_check=gho_users_to_check,
-                    cache=block_cache,
-                    tx_discount_overrides=tx_discount_overrides,
-                )
-            case AaveV3Event.UPGRADED.value:
-                _process_scaled_token_upgrade_event(
-                    w3=w3,
-                    event=event,
-                    market=market,
-                    session=session,
-                )
-            case AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value:
-                _process_scaled_token_balance_transfer_event(
-                    event=event,
-                    market=market,
-                    session=session,
-                    users_to_check=users_to_check,
-                )
-            case AaveV3Event.DISCOUNT_RATE_STRATEGY_UPDATED.value:
-                _process_discount_rate_strategy_updated_event(
-                    event=event,
-                    market=market,
-                    session=session,
-                )
-            case AaveV3Event.DISCOUNT_TOKEN_UPDATED.value:
-                _process_discount_token_updated_event(
-                    event=event,
-                    market=market,
-                    session=session,
-                )
-            case AaveV3Event.DISCOUNT_PERCENT_UPDATED.value:
-                _process_discount_percent_updated_event(
-                    event=event,
-                    market=market,
-                    session=session,
-                    tx_discount_overrides=tx_discount_overrides,
-                )
-            case _:
-                msg = (
-                    f"Could not identify event with topic {event['topics'][0].to_0x_hex()}: {event}"
-                )
-                raise ValueError(msg)
+        context = EventHandlerContext(
+            w3=w3,
+            event=event,
+            market=market,
+            session=session,
+            users_to_check=users_to_check,
+            gho_users_to_check=gho_users_to_check,
+            cache=block_cache,
+            tx_discount_overrides=tx_discount_overrides,
+        )
+        _dispatch_event(context)
 
         last_event_block = event["blockNumber"]
 
@@ -4092,3 +4045,16 @@ def update_aave_market(
     # Zero balance rows are not useful
     for table in (AaveV3CollateralPositionsTable, AaveV3DebtPositionsTable):
         session.execute(delete(table).where(table.balance == 0))
+
+
+def _dispatch_event(context: EventHandlerContext) -> None:
+    """
+    Dispatch event to appropriate handler based on event topic.
+    """
+    topic = context.event["topics"][0]
+    if topic not in EVENT_HANDLERS:
+        msg = f"Unknown event topic: {topic.to_0x_hex()}"
+        raise ValueError(msg)
+
+    handler = EVENT_HANDLERS[topic]
+    handler(context)
