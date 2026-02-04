@@ -66,7 +66,7 @@ class AaveV3UsersTable(Base):
     address: Mapped[Address]
     e_mode: Mapped[int]
     gho_discount: Mapped[int]
-    stk_aave_balance: Mapped[int | None]
+    stk_aave_balance: Mapped[BigInteger | None]
 
     # Relationships
     market: Mapped["AaveV3MarketTable"] = relationship(
