@@ -2577,7 +2577,6 @@ def _process_gho_debt_mint(
     Mint events can be triggered by different operations:
     - GHO BORROW: value > balanceIncrease (new debt issued)
     - GHO REPAY: balanceIncrease > value (debt partially repaid)
-    - GHO ACCRUE: value == balanceIncrease (interest accrual only, no principal change)
     - AAVE STAKED/REDEEM/STAKED TRANSFER: value == balanceIncrease with caller == ZERO_ADDRESS
       and accessory Staked/Redeem/Transfer events present
     """
@@ -2830,55 +2829,6 @@ def _process_gho_debt_mint(
                     logger.info(f"{discount_scaled=}")
                     logger.info(f"{requested_amount=}")
                     logger.info(f"{amount_scaled=}")
-                    logger.info(f"{balance_delta=}")
-
-                discount_token_balance = cache.get_discount_token_balance(
-                    token=discount_token,
-                    user=user.address,
-                )
-                _refresh_discount_rate(
-                    w3=w3,
-                    user=user,
-                    discount_rate_strategy=discount_rate_strategy,
-                    discount_token_balance=discount_token_balance,
-                    scaled_debt_balance=debt_position.balance + balance_delta,
-                    debt_index=event_data.index,
-                    wad_ray_math=wad_ray_math_library,
-                )
-
-            elif event_data.value == event_data.balance_increase:
-                # Interest accrual without principal change (value == balanceIncrease)
-                # This occurs when the debt accrues interest but no borrow/repay action occurs
-                user_operation = "GHO ACCRUE"
-                requested_amount = 0  # No explicit borrow/repay amount for interest accrual
-                if VerboseConfig.is_verbose(
-                    user_address=user.address, tx_hash=event_in_process["transactionHash"]
-                ):
-                    logger.info("Interest accrual (GHO vToken rev 2)")
-                    logger.info(f"{user_operation=}")
-
-                # uint256 previousScaledBalance = super.balanceOf(user);
-                previous_scaled_balance = debt_position.balance
-
-                # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
-                discount_scaled = _accrue_debt_on_action(
-                    debt_position=debt_position,
-                    percentage_math=percentage_math_library,
-                    wad_ray_math=wad_ray_math_library,
-                    previous_scaled_balance=previous_scaled_balance,
-                    discount_percent=effective_discount,
-                    index=event_data.index,
-                    token_revision=scaled_token_revision,
-                )
-
-                # Balance delta is just the discount (interest after discount applied)
-                balance_delta = discount_scaled
-
-                if VerboseConfig.is_verbose(
-                    user_address=user.address, tx_hash=event_in_process["transactionHash"]
-                ):
-                    logger.info(f"{previous_scaled_balance=}")
-                    logger.info(f"{discount_scaled=}")
                     logger.info(f"{balance_delta=}")
 
                 discount_token_balance = cache.get_discount_token_balance(
