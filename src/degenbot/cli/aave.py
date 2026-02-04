@@ -3271,10 +3271,6 @@ def _process_scaled_token_mint_event(context: EventHandlerContext) -> None:
         caller_address = _decode_address(context.event["topics"][1])
         on_behalf_of_address = _decode_address(context.event["topics"][2])
 
-        if VerboseConfig.is_verbose(tx_hash=event_in_process["transactionHash"]):
-            logger.info(f"{caller_address=}")
-            logger.info(f"{on_behalf_of_address=}")
-
         # Ignore the caller - all relevant actions apply to on_behalf_of_address
         context.users_to_check[on_behalf_of_address] = context.event["blockNumber"]
 
