@@ -108,7 +108,7 @@ from degenbot.aave.deployments import EthereumMainnetAaveV3
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.utils import get_web3_from_config
-from degenbot.constants import ZERO_ADDRESS
+from degenbot.constants import ERC_1967_IMPLEMENTATION_SLOT, ZERO_ADDRESS
 from degenbot.database import db_session
 from degenbot.database.models.aave import (
     AaveGhoTokenTable,
@@ -797,15 +797,12 @@ def _process_asset_initialization_event(
         token_address=v_token_address,
     )
 
-    # Per EIP-1967, the implementation address is found by retrieving the storage slot
-    # 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc
+    # Per EIP-1967, the implementation address is stored at a known storage slot
     (atoken_implementation_address,) = eth_abi.abi.decode(
         types=["address"],
         data=w3.eth.get_storage_at(
             account=get_checksum_address(a_token_address),
-            position=int.from_bytes(
-                HexBytes(0x360894A13BA1A3210667C828492DB98DCA3E2076CC3735A920A3CA505D382BBC)
-            ),
+            position=ERC_1967_IMPLEMENTATION_SLOT,
             block_identifier=event["blockNumber"],
         ),
     )
@@ -815,9 +812,7 @@ def _process_asset_initialization_event(
         types=["address"],
         data=w3.eth.get_storage_at(
             account=get_checksum_address(v_token_address),
-            position=int.from_bytes(
-                HexBytes(0x360894A13BA1A3210667C828492DB98DCA3E2076CC3735A920A3CA505D382BBC)
-            ),
+            position=ERC_1967_IMPLEMENTATION_SLOT,
             block_identifier=event["blockNumber"],
         ),
     )
