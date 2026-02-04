@@ -750,16 +750,18 @@ def _process_asset_initialization_event(
 ) -> None:
     """
     Process a ReserveInitialized event to add a new Aave asset to the database.
-    """
 
-    # EVENT DEFINITION
-    # event ReserveInitialized(
-    #     address indexed asset,
-    #     address indexed aToken,
-    #     address stableDebtToken,
-    #     address variableDebtToken,
-    #     address interestRateStrategyAddress
-    # );
+    Reference:
+    ```
+    event ReserveInitialized(
+        address indexed asset,
+        address indexed aToken,
+        address stableDebtToken,
+        address variableDebtToken,
+        address interestRateStrategyAddress
+    );
+    ```
+    """
 
     asset_address = _decode_address(event["topics"][1])
     a_token_address = _decode_address(event["topics"][2])
@@ -907,13 +909,15 @@ def _process_user_e_mode_set_event(
 ) -> None:
     """
     Process a UserEModeSet event to update a user's E-Mode category.
-    """
 
-    # EVENT DEFINITION
-    # event UserEModeSet(
-    #     address indexed user,
-    #     uint8 categoryId
-    # );
+    Reference:
+    ```
+    event UserEModeSet(
+        address indexed user,
+        uint8 categoryId
+    );
+    ```
+    """
 
     user_address = _decode_address(context.event["topics"][1])
 
@@ -931,14 +935,16 @@ def _process_discount_token_updated_event(
     context: EventHandlerContext,
 ) -> None:
     """
-    Process a DiscountTokenUpdated event to set the GHO vToken discount token
-    """
+    Process a DiscountTokenUpdated event to set the GHO vToken discount token.
 
-    # EVENT DEFINITION
-    # event DiscountTokenUpdated(
-    #     address indexed oldDiscountToken,
-    #     address indexed newDiscountToken
-    # );
+    Reference:
+    ```
+    event DiscountTokenUpdated(
+        address indexed oldDiscountToken,
+        address indexed newDiscountToken
+    );
+    ```
+    """
 
     old_discount_token_address = _decode_address(context.event["topics"][1])
     new_discount_token_address = _decode_address(context.event["topics"][2])
@@ -956,13 +962,16 @@ def _process_discount_rate_strategy_updated_event(
 ) -> None:
     """
     Process a DiscountRateStrategyUpdated event to set the GHO vToken attribute
+
+    Reference:
+    ```
+    event DiscountRateStrategyUpdated(
+        address indexed oldDiscountRateStrategy,
+        address indexed newDiscountRateStrategy
+    );
+    ```
     """
 
-    # EVENT DEFINITION
-    # event DiscountRateStrategyUpdated(
-    #     address indexed oldDiscountRateStrategy,
-    #     address indexed newDiscountRateStrategy
-    # );
     old_discount_rate_strategy_address = _decode_address(context.event["topics"][1])
     new_discount_rate_strategy_address = _decode_address(context.event["topics"][2])
 
@@ -1079,13 +1088,16 @@ def _process_stk_aave_transfer_event(context: EventHandlerContext) -> None:
     """
     Process a Transfer event on the stkAAVE token.
 
-    EVENT DEFINITION
-    # event Transfer(
-    #     address indexed from,
-    #     address indexed to,
-    #     uint256 value
-    # );
+    Reference:
+    ```
+    event Transfer(
+        address indexed from,
+        address indexed to,
+        uint256 value
+    );
+    ```
     """
+
     from_address = _decode_address(context.event["topics"][1])
     to_address = _decode_address(context.event["topics"][2])
     (value,) = _decode_uint_values(event=context.event, num_values=1)
@@ -1211,12 +1223,14 @@ def _process_scaled_token_upgrade_event(
 ) -> None:
     """
     Process an Upgraded event to update the aToken or vToken revision.
-    """
 
-    # EVENT DEFINITION
-    # event Upgraded(
-    #     address indexed implementation
-    # );
+    Reference:
+    ```
+    event Upgraded(
+        address indexed implementation
+    );
+    ```
+    """
 
     new_implementation_address = _decode_address(context.event["topics"][1])
 
@@ -2251,15 +2265,22 @@ def _process_aave_stake(
     Process a GHO vToken Mint event triggered by an AAVE staking event.
 
     This handles the discount distribution update when a user stakes AAVE tokens.
+
+    Reference:
+    ```
+    event Staked(
+        address indexed from,
+        address indexed to,
+        uint256 assets,
+        uint256 shares
+    );
+    ```
     """
 
     operation: UserOperation = UserOperation.AAVE_STAKED
 
     wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
 
-    # EVENT DEFINITION
-    # event Staked(address indexed from, address indexed to, uint256 assets, uint256 shares)
-    # event Redeem(address indexed from, address indexed to, uint256 assets, uint256 shares)
     assets, shares = _decode_uint_values(
         event=triggering_event,
         num_values=2,
@@ -2368,15 +2389,22 @@ def _process_aave_redeem(
     Process a GHO vToken Mint event triggered by an AAVE redemption event.
 
     This handles the discount distribution update when a user redeems stkAAVE tokens.
+
+    Reference:
+    ```
+    event Redeem(
+        address indexed from,
+        address indexed to,
+        uint256 assets,
+        uint256 shares
+    );
+    ```
     """
 
     operation: UserOperation = UserOperation.AAVE_REDEEM
 
     wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
 
-    # EVENT DEFINITION
-    # event Staked(address indexed from, address indexed to, uint256 assets, uint256 shares)
-    # event Redeem(address indexed from, address indexed to, uint256 assets, uint256 shares)
     assets, shares = _decode_uint_values(
         event=triggering_event,
         num_values=2,
@@ -2489,12 +2517,19 @@ def _process_staked_aave_transfer(
 
     This handles the discount distribution update when stkAAVE is transferred between users.
     Both sender and recipient's discount rates are updated.
+
+    Reference:
+    ```
+    event Transfer(
+        address indexed from,
+        address indexed to,
+        uint256 value
+    );
+    ```
     """
 
     wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
 
-    # EVENT DEFINITION
-    # event Transfer(address indexed from, address indexed to, uint256 value)
     (amount_transferred,) = _decode_uint_values(
         event=triggering_event,
         num_values=1,
@@ -3157,14 +3192,17 @@ def _process_discount_percent_updated_event(
     tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int],
     tx_discount_updated_users: set[ChecksumAddress],
 ) -> None:
-    """Process a GHO discount percent update event.
+    """
+    Process a GHO discount percent update event.
 
-    Event definition:
+    Reference:
+    ```
     event DiscountPercentUpdated(
         address indexed user,
         uint256 oldDiscountPercent,
         uint256 indexed newDiscountPercent
     );
+    ```
     """
 
     user_address = _decode_address(event["topics"][1])
@@ -3382,16 +3420,18 @@ def _process_scaled_token_mint_event(context: EventHandlerContext) -> None:
     directly to the balance without conversion.
 
     All sources create user and position entries if they don't exist.
-    """
 
-    # EVENT DEFINITION
-    # event Mint(
-    #     address indexed caller,
-    #     address indexed onBehalfOf,
-    #     uint256 value,
-    #     uint256 balanceIncrease,
-    #     uint256 index
-    # );
+    Reference:
+    ```
+    event Mint(
+        address indexed caller,
+        address indexed onBehalfOf,
+        uint256 value,
+        uint256 balanceIncrease,
+        uint256 index
+    );
+    ```
+    """
 
     caller_address = _decode_address(context.event["topics"][1])
     on_behalf_of_address = _decode_address(context.event["topics"][2])
@@ -3646,16 +3686,18 @@ def _process_standard_debt_burn_event(
 def _process_scaled_token_burn_event(context: EventHandlerContext) -> None:
     """
     Process a scaled token Burn as a collateral withdrawal or debt repayment.
-    """
 
-    # EVENT DEFINITION
-    # event Burn(
-    #     address indexed from,
-    #     address indexed target,
-    #     uint256 value,
-    #     uint256 balanceIncrease,
-    #     uint256 index
-    # );
+    Reference:
+    ```
+    event Burn(
+        address indexed from,
+        address indexed target,
+        uint256 value,
+        uint256 balanceIncrease,
+        uint256 index
+    );
+    ```
+    """
 
     from_address = _decode_address(context.event["topics"][1])
     target_address = _decode_address(context.event["topics"][2])
@@ -3734,15 +3776,17 @@ def _process_scaled_token_balance_transfer_event(
 
     This function assumes aToken collateral, since the transfer() function is disabled by vToken
     contracts to prohibit offloading debt
-    """
 
-    # EVENT DEFINITION
-    # event BalanceTransfer(
-    #     address indexed from,
-    #     address indexed to,
-    #     uint256 value,
-    #     uint256 index
-    # );
+    Reference:
+    ```
+    event BalanceTransfer(
+        address indexed from,
+        address indexed to,
+        uint256 value,
+        uint256 index
+    );
+    ```
+    """
 
     from_address = _decode_address(context.event["topics"][1])
     to_address = _decode_address(context.event["topics"][2])
