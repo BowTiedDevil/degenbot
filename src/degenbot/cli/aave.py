@@ -62,7 +62,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypedDict, cast
 
 import click
 import eth_abi.abi
@@ -168,18 +168,20 @@ def _print_timing_summary() -> None:
 
 
 type TokenRevision = int
-type UserOperation = Literal[
-    "DEPOSIT",
-    "WITHDRAW",
-    "BORROW",
-    "REPAY",
-    "GHO BORROW",
-    "GHO REPAY",
-    "GHO ACCRUE",
-    "AAVE STAKED",
-    "AAVE REDEEM",
-    "stkAAVE TRANSFER",
-]
+
+
+class UserOperation(Enum):
+    """User operation types for Aave V3 token events."""
+
+    DEPOSIT = "DEPOSIT"
+    WITHDRAW = "WITHDRAW"
+    BORROW = "BORROW"
+    REPAY = "REPAY"
+    GHO_BORROW = "GHO BORROW"
+    GHO_REPAY = "GHO REPAY"
+    AAVE_STAKED = "AAVE STAKED"
+    AAVE_REDEEM = "AAVE REDEEM"
+    STKAAVE_TRANSFER = "stkAAVE TRANSFER"
 
 
 @dataclass
@@ -1492,7 +1494,7 @@ class DebtBurnEvent:
 
 def _log_token_operation(
     *,
-    user_operation: str,
+    user_operation: UserOperation,
     user_address: ChecksumAddress,
     token_type: str,
     token_address: ChecksumAddress,
@@ -1506,7 +1508,7 @@ def _log_token_operation(
     Log token operation details for verbose output.
     """
 
-    logger.info(user_operation)
+    logger.info(user_operation.value)
     logger.info(f"{token_type}  : {token_address}")
     logger.info(f"User    : {user_address}")
     logger.info(f"Index   : {index}")
@@ -1560,31 +1562,31 @@ def _process_scaled_token_operation(
                 if event.balance_increase > event.value:
                     requested_amount = event.balance_increase - event.value
                     balance_delta = -ray_math.ray_div(a=requested_amount, b=event.index)
-                    operation = "WITHDRAW"
+                    operation = UserOperation.WITHDRAW
                 else:
                     requested_amount = event.value - event.balance_increase
                     balance_delta = ray_math.ray_div(a=requested_amount, b=event.index)
-                    operation = "DEPOSIT"
+                    operation = UserOperation.DEPOSIT
 
             case CollateralBurnEvent():
                 requested_amount = event.value + event.balance_increase
                 balance_delta = -ray_math.ray_div(a=requested_amount, b=event.index)
-                operation = "WITHDRAW"
+                operation = UserOperation.WITHDRAW
 
             case DebtMintEvent():
                 if event.balance_increase > event.value:
                     requested_amount = event.balance_increase - event.value
                     balance_delta = -ray_math.ray_div(a=requested_amount, b=event.index)
-                    operation = "REPAY"
+                    operation = UserOperation.REPAY
                 else:
                     requested_amount = event.value - event.balance_increase
                     balance_delta = ray_math.ray_div(a=requested_amount, b=event.index)
-                    operation = "BORROW"
+                    operation = UserOperation.BORROW
 
             case DebtBurnEvent():
                 requested_amount = event.value + event.balance_increase
                 balance_delta = -ray_math.ray_div(a=requested_amount, b=event.index)
-                operation = "REPAY"
+                operation = UserOperation.REPAY
 
         assert requested_amount >= 0
 
@@ -1972,7 +1974,7 @@ def _process_gho_debt_burn(
         debt_position.balance += balance_delta
         debt_position.last_index = event_data.index
 
-        return "GHO REPAY"
+        return UserOperation.GHO_REPAY
 
 
 def _process_staked_aave_event(
@@ -2121,7 +2123,7 @@ def _process_aave_stake(
     """
 
     with _time_call("_process_aave_stake"):
-        operation: UserOperation = "AAVE STAKED"
+        operation: UserOperation = UserOperation.AAVE_STAKED
 
         wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
 
@@ -2235,7 +2237,7 @@ def _process_aave_redeem(
     """
 
     with _time_call("_process_aave_redeem"):
-        operation: UserOperation = "AAVE REDEEM"
+        operation: UserOperation = UserOperation.AAVE_REDEEM
 
         wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
 
@@ -2550,7 +2552,7 @@ def _process_staked_aave_transfer(
                     f"Discount Percent: {recipient_previous_discount_percent} -> {recipient_new_discount_percent}"
                 )
 
-        return "stkAAVE TRANSFER"
+        return UserOperation.STKAAVE_TRANSFER
 
 
 def _process_gho_debt_mint(
@@ -2618,12 +2620,12 @@ def _process_gho_debt_mint(
                 # emitted in _mintScaled
                 # uint256 amountToMint = amount + balanceIncrease;
                 requested_amount = event_data.value - event_data.balance_increase
-                user_operation = "GHO BORROW"
+                user_operation = UserOperation.GHO_BORROW
             else:
                 # emitted in _burnScaled:
                 # uint256 amountToMint = balanceIncrease - amount;
                 requested_amount = event_data.balance_increase - event_data.value
-                user_operation = "GHO REPAY"
+                user_operation = UserOperation.GHO_REPAY
 
             amount_scaled = wad_ray_math_library.ray_div(
                 a=requested_amount,
@@ -2706,7 +2708,7 @@ def _process_gho_debt_mint(
             #           uint256 amountToMint = balanceIncrease - amount;
             #           emit Mint(user, user, amountToMint, balanceIncrease, index);
             if event_data.value > event_data.balance_increase:
-                user_operation = "GHO BORROW"
+                user_operation = UserOperation.GHO_BORROW
                 if VerboseConfig.is_verbose(
                     user_address=user.address, tx_hash=event_in_process["transactionHash"]
                 ):
@@ -2771,7 +2773,7 @@ def _process_gho_debt_mint(
                 )
 
             elif event_data.balance_increase > event_data.value:
-                user_operation = "GHO REPAY"
+                user_operation = UserOperation.GHO_REPAY
                 if VerboseConfig.is_verbose(
                     user_address=user.address, tx_hash=event_in_process["transactionHash"]
                 ):
