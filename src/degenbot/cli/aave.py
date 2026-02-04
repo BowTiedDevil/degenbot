@@ -682,6 +682,14 @@ def deactivate_mainnet_aave_v3(
     show_default=True,
     help="Display performance timing summary after processing.",
 )
+@click.option(
+    "--stop-after-one-chunk",
+    "stop_after_one_chunk",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Stop processing after the first chunk.",
+)
 def aave_update(
     *,
     chunk_size: int,
@@ -689,6 +697,7 @@ def aave_update(
     verify_strict: bool,
     verify_chunk: bool,
     show_timing: bool,
+    stop_after_one_chunk: bool,
 ) -> None:
     """
     Update positions for active Aave markets.
@@ -702,6 +711,7 @@ def aave_update(
         verify_strict: If True, verify position balances at every block boundary.
         verify_chunk: If True, verify position balances only at chunk boundaries.
         show_timing: If True, display performance timing summary after processing.
+        stop_after_one_chunk: If True, stop after processing the first chunk.
     """
 
     with db_session() as session:
@@ -833,7 +843,7 @@ def aave_update(
                 markets_to_update.clear()
                 session.commit()
 
-                if working_end_block == last_block:
+                if working_end_block == last_block or stop_after_one_chunk:
                     break
                 working_start_block = working_end_block + 1
 
