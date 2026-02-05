@@ -97,6 +97,7 @@ from eth_typing import ChainId, ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
+from tqdm.contrib.logging import logging_redirect_tqdm
 from web3 import Web3
 from web3.types import LogReceipt
 
@@ -595,7 +596,7 @@ def aave_update(
         no_progress: If True, disable progress bars.
     """
 
-    with db_session() as session:
+    with db_session() as session, logging_redirect_tqdm(loggers=[logger]):
         active_chains = set(
             session.scalars(
                 select(AaveV3MarketTable.chain_id).where(
