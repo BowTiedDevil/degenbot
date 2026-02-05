@@ -2030,7 +2030,6 @@ def _process_gho_debt_burn(
     ):
         logger.info(f"{debt_position.balance=}")
         logger.info(f"{debt_position.balance + balance_delta=}")
-        logger.info(f"{event_in_process=}")
         logger.info(f"{user.address=}")
         logger.info(f"{user.gho_discount=}")
         logger.info(f"{discount_scaled=}")
