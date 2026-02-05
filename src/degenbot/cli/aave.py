@@ -2676,14 +2676,6 @@ def _process_gho_debt_mint(
     user_operation: UserOperation
 
     if scaled_token_revision == 1:
-        discount_token_balance = _get_or_init_stk_aave_balance(
-            user=user,
-            discount_token=discount_token,
-            block_number=state_block,
-            w3=context.w3,
-            tx_hash=tx_hash,
-        )
-
         previous_scaled_balance = debt_position.balance
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
@@ -2720,6 +2712,13 @@ def _process_gho_debt_mint(
 
         # Skip if discount was already updated via DiscountPercentUpdated event in this tx
         if user.address not in context.tx_discount_updated_users:
+            discount_token_balance = _get_or_init_stk_aave_balance(
+                user=user,
+                discount_token=discount_token,
+                block_number=state_block,
+                w3=context.w3,
+                tx_hash=tx_hash,
+            )
             _refresh_discount_rate(
                 w3=context.w3,
                 user=user,
