@@ -6,7 +6,7 @@ events. The goal is to maintain a synchronized view of all user positions in the
 Collateral (aTokens) and debt (vTokens) positions are tracked separately.
 
 CLI Commands:
-    aave activate [market name] - Enable updates for this market
+    aave activate ethereum_aave_v3 - Enable updates for this market
     aave deactivate ethereum_aave_v3 - Disable updates for this market; existing data for the
         market will be preserved, but the market will be excluded from subsequent updates
     aave update - Synchronize positions for all active markets to the given block
@@ -50,7 +50,7 @@ stkAAVE Balance Tracking (Event-Based):
         - Once initialized, balances are updated immediately via events
 
     Event Processing Order:
-        - stkAAVE events update database balances immediately as processed
+        - stkAAVE events update database balances immediately when processed
         - GHO debt events read from database (which has current state)
         - No caching needed since DB is source of truth
 
@@ -79,8 +79,8 @@ Debug Controls (Environment Variables):
     DEGENBOT_VERBOSE_USERS=0x123...,0x456... - Trace specific addresses
     DEGENBOT_VERBOSE_TX=0xabc...,0xdef... - Trace specific transactions
 
-See src/degenbot/aave/AGENTS.md for architecture details.
-See docs/cli/aave.md for command reference.
+See src/degenbot/cli/AGENTS.md for architecture details.
+See ../../../docs/cli/aave.md for command reference.
 """
 
 import operator
@@ -188,7 +188,7 @@ class BlockStateCache:
 
 GHO_VARIABLE_DEBT_TOKEN_ADDRESS = get_checksum_address("0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B")
 
-# TODO: debug variable, remove this after testing is complete
+# TODO: remove after updater can sync to chain head without error
 event_in_process: LogReceipt
 
 
@@ -276,7 +276,7 @@ class VerboseConfig:
 
 def _init_verbose_config_from_env() -> None:
     """Initialize VerboseConfig from environment variables."""
-    # DEGENBOT_VERBOSE_ALL: Set to "1", "true", or "yes" to enable
+    # DEGENBOT_VERBOSE_ALL: Set to "1", "true", or "yes" to enable all verbose logging
     verbose_all = os.environ.get("DEGENBOT_VERBOSE_ALL", "").lower()
     if verbose_all in {"1", "true", "yes"}:
         VerboseConfig.toggle_all(enabled=True)
@@ -556,8 +556,8 @@ def deactivate_mainnet_aave_v3(
     default=True,  # TODO: make this default False after debugging
     show_default=True,
     help=(
-        "Verify collateral and debt position, staked AAVE balance, and GHO discount amounts on "
-        "every block boundary."
+        "Verify collateral and debt position balances, staked AAVE balances, and GHO discount "
+        "amounts at block boundaries."
     ),
 )
 @click.option(
@@ -760,7 +760,7 @@ def _process_asset_initialization_event(
     asset_address = _decode_address(event["topics"][1])
     a_token_address = _decode_address(event["topics"][2])
 
-    # Note: stableDebtToken is deprecated in Aave V3, so is ignored
+    # Note: stableDebtToken is deprecated in Aave V3 and no longer used, so is ignored
     (_, v_token_address, _) = eth_abi.abi.decode(
         types=["address", "address", "address"], data=event["data"]
     )
@@ -988,7 +988,7 @@ def _get_or_init_stk_aave_balance(
     Get user's last-known stkAAVE balance.
 
     If the balance is unknown, perform a contract call at the previous block to ensure
-    the balance check is done before any events in the current block are processed.
+    the balance check is performed before any events in the current block are processed.
     """
 
     if user.stk_aave_balance is None:
@@ -1047,7 +1047,7 @@ def _process_stk_aave_transfer_event(context: EventHandlerContext) -> None:
 
     # Skip mints (from ZERO_ADDRESS) and burns (to ZERO_ADDRESS) - these don't affect user balances
     if from_address != ZERO_ADDRESS:
-        # Update sender balance if user exists and has a balance
+        # Update sender balance if user exists
         from_user = context.session.scalar(
             select(AaveV3UsersTable).where(
                 AaveV3UsersTable.address == from_address,
@@ -1407,7 +1407,7 @@ def _verify_gho_discount_amounts(
 
         assert user.gho_discount == discount_percent, (
             f"User {user_address}: GHO discount {user.gho_discount} "
-            f"does not match GHO vDebtToken token contract ({discount_percent}) "
+            f"does not match GHO vDebtToken contract ({discount_percent}) "
             f"@ {GHO_VARIABLE_DEBT_TOKEN_ADDRESS} at block {last_update_block}"
         )
 
@@ -2353,8 +2353,6 @@ def _process_aave_redeem(
 
     # uint256 recipientPreviousScaledBalance = super.balanceOf(recipient)
     sender_previous_scaled_balance = sender_debt_position.balance
-    # from tenderly: 131879097492186474365915
-    # from degenbot: 131879097492186474365915 OK!
 
     if sender_previous_scaled_balance > 0:
         if VerboseConfig.is_verbose(
@@ -2733,8 +2731,8 @@ def _process_gho_debt_mint(
             )
 
     elif scaled_token_revision in {2, 3}:
-        # A user accruing GHO vToken debt is labeled the "recipient". A Mint event can be emitted
-        # through several paths, and the GHO discount accounting depends on the discount
+        # A user who is accruing GHO vToken debt is labeled the "recipient". A Mint event can be
+        # emitted through several paths, and the GHO discount accounting depends on the discount
         # token balance. This variable tracks the role of the user holding the position.
 
         # Check for accessory events (Staked/Redeem/Transfer) to detect staking-related mints
@@ -3342,7 +3340,7 @@ def _process_scaled_token_mint_event(context: EventHandlerContext) -> None:
     caller_address = _decode_address(context.event["topics"][1])
     on_behalf_of_address = _decode_address(context.event["topics"][2])
 
-    # Ignore the caller - all relevant actions apply to on_behalf_of_address
+    # Ignore the caller—all relevant actions apply to `on_behalf_of_address`
     context.users_to_check[on_behalf_of_address] = context.event["blockNumber"]
 
     user = _get_or_create_user(
@@ -3662,8 +3660,9 @@ def _process_scaled_token_balance_transfer_event(
     """
     Process a scaled token balance transfer.
 
-    This function assumes aToken collateral, since the transfer() function is disabled by vToken
-    contracts to prohibit offloading debt
+    The transfer() function is disabled by vToken (debt) contracts to prohibit offloading debt to
+    another user. Therefore BalanceTransfer events will only be emitted by aToken (collateral)
+    contracts.
 
     Reference:
     ```
@@ -4104,7 +4103,7 @@ def update_aave_market(
             # Clear the set of users with discount updates in this transaction
             tx_discount_updated_users.clear()
 
-        # TODO: Remove debug variable after testing
+        # TODO: remove after updater can sync to chain head without error
         global event_in_process  # noqa: PLW0603
         event_in_process = event
 
