@@ -17,17 +17,11 @@ For documentation read by humans and agents, see `docs/AGENTS.md`.
 - Resolve `mypy` warnings
 
 ## Type Hints
-Required for all function parameters, return values, and class attributes. Avoid `Any`, use `T | None` instead of `Optional[T]`. Use PEP 695 aliases where the base type is vague:
+Avoid `Any`, use `T | None` instead of `Optional[T]`. Use PEP 695 aliases where the base type is vague:
 ```python
 type BlockNumber = int
 type ChainId = int
 ```
-
-## Naming
-- Variables: snake_case; prefer long names
-- Constants: UPPER_SNAKE_CASE
-- Concrete Classes: PascalCase
-- Abstract Classes: PascalCase with "Abstract" prefix
 
 ## Architecture
 - Domain packages: `src/degenbot/uniswap/`, `src/degenbot/curve/`, `src/degenbot/aave/`
@@ -40,8 +34,6 @@ When working with code from a specific module, check for an `AGENTS.md` file in 
 ## Project Setup
 Virtual environment in `.venv/` contains an editable installation of the `degenbot` package
 
-Python Version: 3.12 or newer
-
 ## Docstrings
 Minimal PEP 257. Additional detail follows a blank line if needed. Type hints supersede parameter docs. No reST/Sphinx tags:
 ```python
@@ -51,7 +43,6 @@ class EVMRevertError(DegenbotError):
 
 ## Functions
 - Prefer calling with keyword arguments
-- No boolean mode flags, instead create two simple functions
 
 ## Error Handling
 - All exceptions inherit from `DegenbotError` in `src/degenbot/exceptions/base.py`
