@@ -1366,12 +1366,16 @@ def _verify_gho_discount_amounts(
     w3: Web3,
     session: Session,
     market: AaveV3MarketTable,
+    gho_asset: AaveGhoTokenTable,
     block_number: int,
     no_progress: bool,
 ) -> None:
     """
     Verify that all GHO discount values in the database match the contract.
     """
+
+    if gho_asset.v_gho_discount_token is None:
+        return
 
     all_users = session.scalars(
         select(AaveV3UsersTable).where(AaveV3UsersTable.market_id == market.id)
