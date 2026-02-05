@@ -272,6 +272,17 @@ class VerboseConfig:
         )
 
 
+def _log_if_verbose(
+    user_address: ChecksumAddress,
+    tx_hash: HexBytes | None,
+    *messages: str,
+) -> None:
+    """Log messages if verbose mode is enabled for the given context."""
+    if VerboseConfig.is_verbose(user_address=user_address, tx_hash=tx_hash):
+        for msg in messages:
+            logger.info(msg)
+
+
 def _init_verbose_config_from_env() -> None:
     """Initialize VerboseConfig from environment variables."""
     # DEGENBOT_VERBOSE_ALL: Set to "1", "true", or "yes" to enable all verbose logging
@@ -2197,21 +2208,23 @@ def _process_aave_stake(
     # For staking/redemption, the recipient is the user staking/redeeming
     recipient_debt_position = debt_position
 
-    if VerboseConfig.is_verbose(
-        user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
-    ):
-        logger.info(f"{event_data.caller=}")
-        logger.info(f"{event_data.on_behalf_of=}")
+    _log_if_verbose(
+        recipient.address,
+        event_in_process["transactionHash"],
+        f"{event_data.caller=}",
+        f"{event_data.on_behalf_of=}",
+    )
 
     # uint256 recipientPreviousScaledBalance = super.balanceOf(recipient)
     recipient_previous_scaled_balance = recipient_debt_position.balance
 
     if recipient_previous_scaled_balance > 0:
-        if VerboseConfig.is_verbose(
-            user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
-        ):
-            logger.info(f"{recipient_previous_scaled_balance=}")
-            logger.info("Processing case: recipientPreviousScaledBalance > 0")
+        _log_if_verbose(
+            recipient.address,
+            event_in_process["transactionHash"],
+            f"{recipient_previous_scaled_balance=}",
+            "Processing case: recipientPreviousScaledBalance > 0",
+        )
 
         # Get the effective discount percent for this transaction
         # Use the override if available (set by DiscountPercentUpdated event in same tx),
@@ -2262,15 +2275,14 @@ def _process_aave_stake(
             )
         recipient_new_discount_percent = recipient.gho_discount
 
-        if VerboseConfig.is_verbose(
-            user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
-        ):
-            logger.info(f"{recipient.address=}")
-            logger.info(f"{requested_amount=}")
-            logger.info(f"{recipient_previous_scaled_balance=}")
-            logger.info(f"{recipient_new_scaled_balance=}")
-            logger.info(
-                f"Discount Percent: {recipient_previous_discount_percent} -> {recipient_new_discount_percent}"
+        _log_if_verbose(
+            recipient.address,
+            event_in_process["transactionHash"],
+            f"{recipient.address=}",
+            f"{requested_amount=}",
+            f"{recipient_previous_scaled_balance=}",
+            f"{recipient_new_scaled_balance=}",
+            f"Discount Percent: {recipient_previous_discount_percent} -> {recipient_new_discount_percent}",
             )
 
     return operation
@@ -2332,20 +2344,22 @@ def _process_aave_redeem(
         tx_hash=redeem_tx_hash,
     )
 
-    if VerboseConfig.is_verbose(
-        user_address=sender.address, tx_hash=event_in_process["transactionHash"]
-    ):
-        logger.info(f"{event_data.caller=}")
-        logger.info(f"{event_data.on_behalf_of=}")
+    _log_if_verbose(
+        sender.address,
+        event_in_process["transactionHash"],
+        f"{event_data.caller=}",
+        f"{event_data.on_behalf_of=}",
+    )
 
     # uint256 recipientPreviousScaledBalance = super.balanceOf(recipient)
     sender_previous_scaled_balance = sender_debt_position.balance
 
     if sender_previous_scaled_balance > 0:
-        if VerboseConfig.is_verbose(
-            user_address=sender.address, tx_hash=event_in_process["transactionHash"]
-        ):
-            logger.info("Processing case: senderPreviousScaledBalance > 0")
+        _log_if_verbose(
+            sender.address,
+            event_in_process["transactionHash"],
+            "Processing case: senderPreviousScaledBalance > 0",
+        )
 
         # Get the effective discount percent for this transaction
         # Use the override if available (set by DiscountPercentUpdated event in same tx),
@@ -2386,15 +2400,14 @@ def _process_aave_redeem(
             )
         sender_new_discount_percent = sender.gho_discount
 
-        if VerboseConfig.is_verbose(
-            user_address=sender.address, tx_hash=event_in_process["transactionHash"]
-        ):
-            logger.info(f"{sender.address=}")
-            logger.info(f"{sender_discount_token_balance=}")
-            logger.info(f"{requested_amount=}")
-            logger.info(f"{sender_previous_scaled_balance=}")
-            logger.info(
-                f"Discount Percent: {sender_previous_discount_percent} -> {sender_new_discount_percent}"
+        _log_if_verbose(
+            sender.address,
+            event_in_process["transactionHash"],
+            f"{sender.address=}",
+            f"{sender_discount_token_balance=}",
+            f"{requested_amount=}",
+            f"{sender_previous_scaled_balance=}",
+            f"Discount Percent: {sender_previous_discount_percent} -> {sender_new_discount_percent}",
             )
 
     return operation
@@ -2478,28 +2491,31 @@ def _process_staked_aave_transfer(
         tx_hash=transfer_tx_hash,
     )
 
-    if VerboseConfig.is_verbose(
-        user_address=sender.address, tx_hash=event_in_process["transactionHash"]
-    ):
-        logger.info(f"stkAAVE Transfer: {from_address} -> {to_address}")
-        logger.info(f"{sender.address}: {sender_discount_token_balance} stkAAVE")
-        logger.info(f"{recipient.address}: {recipient_discount_token_balance} stkAAVE")
-        logger.info(f"{event_data.caller=}")
-        logger.info(f"{event_data.on_behalf_of=}")
+    _log_if_verbose(
+        sender.address,
+        event_in_process["transactionHash"],
+        f"stkAAVE Transfer: {from_address} -> {to_address}",
+        f"{sender.address}: {sender_discount_token_balance} stkAAVE",
+        f"{recipient.address}: {recipient_discount_token_balance} stkAAVE",
+        f"{event_data.caller=}",
+        f"{event_data.on_behalf_of=}",
+    )
 
     # uint256 senderPreviousScaledBalance = super.balanceOf(sender)
     sender_previous_scaled_balance = sender_debt_position.balance
-    if VerboseConfig.is_verbose(
-        user_address=sender.address, tx_hash=event_in_process["transactionHash"]
-    ):
-        logger.info(f"{sender_previous_scaled_balance=}")
+    _log_if_verbose(
+        sender.address,
+        event_in_process["transactionHash"],
+        f"{sender_previous_scaled_balance=}",
+    )
 
     # uint256 recipientPreviousScaledBalance = super.balanceOf(recipient)
     recipient_previous_scaled_balance = recipient_debt_position.balance
-    if VerboseConfig.is_verbose(
-        user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
-    ):
-        logger.info(f"{recipient_previous_scaled_balance=}")
+    _log_if_verbose(
+        recipient.address,
+        event_in_process["transactionHash"],
+        f"{recipient_previous_scaled_balance=}",
+    )
 
     # uint256 index = POOL.getReserveNormalizedVariableDebt(_underlyingAsset)
     # (accessed through event_data.index)
@@ -2508,10 +2524,11 @@ def _process_staked_aave_transfer(
     # Only update the position if the event corresponds to the sender or receiver.
     # A sender->receiver Transfer where both users hold a balance should emit two events.
     if sender_previous_scaled_balance > 0:
-        if VerboseConfig.is_verbose(
-            user_address=sender.address, tx_hash=event_in_process["transactionHash"]
-        ):
-            logger.info("Processing case: senderPreviousScaledBalance > 0")
+        _log_if_verbose(
+            sender.address,
+            event_in_process["transactionHash"],
+            "Processing case: senderPreviousScaledBalance > 0",
+        )
 
         # Get the effective discount percent for this transaction
         # Use the override if available (set by DiscountPercentUpdated event in same tx),
@@ -2552,22 +2569,22 @@ def _process_staked_aave_transfer(
             )
         sender_new_discount_percent = sender.gho_discount
 
-        if VerboseConfig.is_verbose(
-            user_address=sender.address, tx_hash=event_in_process["transactionHash"]
-        ):
-            logger.info(f"{sender.address=}")
-            logger.info(f"{sender_discount_token_balance=}")
-            logger.info(f"{requested_amount=}")
-            logger.info(f"{recipient_previous_scaled_balance=}")
-            logger.info(
-                f"Discount Percent: {sender_previous_discount_percent} -> {sender_new_discount_percent}"
+        _log_if_verbose(
+            sender.address,
+            event_in_process["transactionHash"],
+            f"{sender.address=}",
+            f"{sender_discount_token_balance=}",
+            f"{requested_amount=}",
+            f"{recipient_previous_scaled_balance=}",
+            f"Discount Percent: {sender_previous_discount_percent} -> {sender_new_discount_percent}",
             )
 
     if recipient_previous_scaled_balance > 0:
-        if VerboseConfig.is_verbose(
-            user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
-        ):
-            logger.info("Processing case: recipientPreviousScaledBalance > 0")
+        _log_if_verbose(
+            recipient.address,
+            event_in_process["transactionHash"],
+            "Processing case: recipientPreviousScaledBalance > 0",
+        )
 
         # Get the effective discount percent for this transaction
         # Use the override if available (set by DiscountPercentUpdated event in same tx),
@@ -2609,16 +2626,15 @@ def _process_staked_aave_transfer(
             )
         recipient_new_discount_percent = recipient.gho_discount
 
-        if VerboseConfig.is_verbose(
-            user_address=recipient.address, tx_hash=event_in_process["transactionHash"]
-        ):
-            logger.info(f"{recipient.address=}")
-            logger.info(f"{recipient_discount_token_balance=}")
-            logger.info(f"{requested_amount=}")
-            logger.info(f"{recipient_previous_scaled_balance=}")
-            logger.info(f"{recipient_new_scaled_balance=}")
-            logger.info(
-                f"Discount Percent: {recipient_previous_discount_percent} -> {recipient_new_discount_percent}"
+        _log_if_verbose(
+            recipient.address,
+            event_in_process["transactionHash"],
+            f"{recipient.address=}",
+            f"{recipient_discount_token_balance=}",
+            f"{requested_amount=}",
+            f"{recipient_previous_scaled_balance=}",
+            f"{recipient_new_scaled_balance=}",
+            f"Discount Percent: {recipient_previous_discount_percent} -> {recipient_new_discount_percent}",
             )
 
     return UserOperation.STKAAVE_TRANSFER
@@ -2771,11 +2787,12 @@ def _process_gho_debt_mint(
         #           emit Mint(user, user, amountToMint, balanceIncrease, index);
         if event_data.value > event_data.balance_increase:
             user_operation = UserOperation.GHO_BORROW
-            if VerboseConfig.is_verbose(
-                user_address=user.address, tx_hash=event_in_process["transactionHash"]
-            ):
-                logger.info("_mintScaled (GHO vToken rev 2)")
-                logger.info(f"{user_operation=}")
+            _log_if_verbose(
+                user.address,
+                event_in_process["transactionHash"],
+                "_mintScaled (GHO vToken rev 2)",
+                f"{user_operation=}",
+            )
 
             requested_amount = event_data.value - event_data.balance_increase
 
@@ -2809,16 +2826,17 @@ def _process_gho_debt_mint(
                 # _burn(onBehalfOf, (discountScaled - amountScaled).toUint128()); # noqa:ERA001
                 balance_delta = -(discount_scaled - amount_scaled)
 
-            if VerboseConfig.is_verbose(
-                user_address=user.address, tx_hash=event_in_process["transactionHash"]
-            ):
-                logger.info(f"{previous_scaled_balance=}")
-                logger.info(f"{debt_position.last_index=}")
-                logger.info(f"{event_data.index=}")
-                logger.info(f"{requested_amount=}")
-                logger.info(f"{amount_scaled=}")
-                logger.info(f"{discount_scaled=}")
-                logger.info(f"{balance_delta=}")
+            _log_if_verbose(
+                user.address,
+                event_in_process["transactionHash"],
+                f"{previous_scaled_balance=}",
+                f"{debt_position.last_index=}",
+                f"{event_data.index=}",
+                f"{requested_amount=}",
+                f"{amount_scaled=}",
+                f"{discount_scaled=}",
+                f"{balance_delta=}",
+            )
 
             # Skip if discount was already updated via DiscountPercentUpdated event in this tx
             if user.address not in context.tx_discount_updated_users:
@@ -2841,11 +2859,12 @@ def _process_gho_debt_mint(
 
         elif event_data.balance_increase > event_data.value:
             user_operation = UserOperation.GHO_REPAY
-            if VerboseConfig.is_verbose(
-                user_address=user.address, tx_hash=event_in_process["transactionHash"]
-            ):
-                logger.info("_burnScaled (GHO vToken rev 2)")
-                logger.info(f"{user_operation=}")
+            _log_if_verbose(
+                user.address,
+                event_in_process["transactionHash"],
+                "_burnScaled (GHO vToken rev 2)",
+                f"{user_operation=}",
+            )
 
             requested_amount = event_data.balance_increase - event_data.value
 
@@ -2891,13 +2910,14 @@ def _process_gho_debt_mint(
                 # _burn(user, (amountScaled + discountScaled).toUint128());
                 balance_delta = -(amount_scaled + discount_scaled)
 
-            if VerboseConfig.is_verbose(
-                user_address=user.address, tx_hash=event_in_process["transactionHash"]
-            ):
-                logger.info(f"{discount_scaled=}")
-                logger.info(f"{requested_amount=}")
-                logger.info(f"{amount_scaled=}")
-                logger.info(f"{balance_delta=}")
+            _log_if_verbose(
+                user.address,
+                event_in_process["transactionHash"],
+                f"{discount_scaled=}",
+                f"{requested_amount=}",
+                f"{amount_scaled=}",
+                f"{balance_delta=}",
+            )
 
             # Skip if discount was already updated via DiscountPercentUpdated event in this tx
             if user.address not in context.tx_discount_updated_users:
@@ -2929,16 +2949,17 @@ def _process_gho_debt_mint(
         msg = f"Unknown token revision: {scaled_token_revision}"
         raise ValueError(msg)
 
-    if VerboseConfig.is_verbose(
-        user_address=user.address, tx_hash=event_in_process["transactionHash"]
-    ):
-        logger.info(f"{user.address=}")
-        logger.info(f"{user.gho_discount=}")
-        logger.info(f"{discount_scaled=}")
-        logger.info(f"{balance_delta=}")
-        logger.info(f"{discount_token=}")
-        logger.info(f"{discount_rate_strategy=}")
-        logger.info(f"{state_block=}")
+    _log_if_verbose(
+        user.address,
+        event_in_process["transactionHash"],
+        f"{user.address=}",
+        f"{user.gho_discount=}",
+        f"{discount_scaled=}",
+        f"{balance_delta=}",
+        f"{discount_token=}",
+        f"{discount_rate_strategy=}",
+        f"{state_block=}",
+    )
 
     assert requested_amount >= 0
     assert debt_position.balance + balance_delta >= 0, (
