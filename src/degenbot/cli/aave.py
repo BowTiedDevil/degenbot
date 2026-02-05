@@ -570,7 +570,7 @@ def deactivate_mainnet_aave_v3(
     ),
 )
 @click.option(
-    "--stop-after-one-chunk",
+    "--one-chunk",
     "stop_after_one_chunk",
     is_flag=True,
     default=False,
