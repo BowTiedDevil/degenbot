@@ -4001,6 +4001,8 @@ def update_aave_market(
     tx_discount_updated_users: set[ChecksumAddress] = set()
     current_tx_hash: HexBytes | None = None
 
+    gho_asset = _get_gho_asset(session=session, market=market)
+
     for event in tqdm.tqdm(
         sorted(all_events, key=operator.itemgetter("blockNumber", "logIndex")),
         desc="Processing events",
@@ -4030,7 +4032,7 @@ def update_aave_market(
             event=event,
             market=market,
             session=session,
-            gho_asset=_get_gho_asset(session=session, market=market),
+            gho_asset=gho_asset,
             cache=block_cache,
             tx_discount_overrides=tx_discount_overrides,
             tx_discount_updated_users=tx_discount_updated_users,
@@ -4061,11 +4063,11 @@ def update_aave_market(
             w3=w3,
             session=session,
             market=market,
+            gho_asset=gho_asset,
             block_number=end_block,
             no_progress=no_progress,
         )
 
-        gho_asset = _get_gho_asset(session=session, market=market)
         _verify_stk_aave_balances(
             w3=w3,
             session=session,
