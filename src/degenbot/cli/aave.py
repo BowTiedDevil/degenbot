@@ -84,7 +84,7 @@ GHO_VARIABLE_DEBT_TOKEN_ADDRESS = get_checksum_address("0x786dBff3f1292ae8F92ea6
 
 @dataclass
 class TransactionContext:
-    """Context for processing all events within a single transaction."""
+    """Context for processing a single transaction as a sequence of events."""
 
     w3: Web3
     tx_hash: HexBytes
@@ -93,7 +93,6 @@ class TransactionContext:
     market: AaveV3MarketTable
     session: Session
     gho_asset: AaveGhoTokenTable
-    contract_address: ChecksumAddress  # Address of the contract that emitted the trigger event
 
     # Pre-categorized event lists for assertions and classification
     pool_events: list[LogReceipt] = field(default_factory=list)
@@ -292,7 +291,7 @@ TRIGGER_EVENTS: set[HexBytes] = {
     AaveV3Event.SCALED_TOKEN_MINT.value,
     AaveV3Event.SCALED_TOKEN_BURN.value,
     AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value,
-    AaveV3Event.TRANSFER.value,  # stkAAVE transfers
+    AaveV3Event.TRANSFER.value,
 }
 
 # Events that can be processed immediately (independent of other events)
@@ -420,6 +419,14 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
                 last_update_block=16_291_070,
             )
             session.add(market)
+            session.flush()
+            session.add(
+                AaveV3ContractsTable(
+                    market_id=market.id,
+                    name="POOL_ADDRESS_PROVIDER",
+                    address=EthereumMainnetAaveV3.pool_address_provider,
+                )
+            )
 
             # Create GHO token entry if it doesn't exist. GHO tokens are chain-unique, so we create
             # a single entry that all markets on this chain will share.
@@ -561,7 +568,7 @@ def aave_update(
         no_progress: If True, disable progress bars.
     """
 
-    with db_session() as session, logging_redirect_tqdm(loggers=[logger]):
+    with db_session() as session, logging_redirect_tqdm(loggers=[logger]):  # noqa:PLR1702
         active_chains = set(
             session.scalars(
                 select(AaveV3MarketTable.chain_id).where(
@@ -801,69 +808,21 @@ def _process_asset_initialization_event(
         return_types=["uint256"],
     )
 
-    session.add(
-        AaveV3AssetsTable(
-            market_id=market.id,
-            underlying_asset_id=erc20_token_in_db.id,
-            a_token_id=a_token.id,
-            a_token_revision=atoken_revision,
-            v_token_id=v_token.id,
-            v_token_revision=vtoken_revision,
-            liquidity_index=0,
-            liquidity_rate=0,
-            borrow_index=0,
-            borrow_rate=0,
-        )
+    new_asset = AaveV3AssetsTable(
+        market_id=market.id,
+        underlying_asset_id=erc20_token_in_db.id,
+        a_token_id=a_token.id,
+        a_token_revision=atoken_revision,
+        v_token_id=v_token.id,
+        v_token_revision=vtoken_revision,
+        liquidity_index=0,
+        liquidity_rate=0,
+        borrow_index=0,
+        borrow_rate=0,
     )
+    market.assets.append(new_asset)
+    session.flush()
     logger.info(f"Added new Aave V3 asset: {asset_address}")
-
-
-def _get_contract_update_events(
-    w3: Web3,
-    start_block: int,
-    end_block: int,
-    address: ChecksumAddress,
-) -> list[LogReceipt]:
-    """
-    Retrieve all `PoolConfiguratorUpdated`, `PoolUpdated`, and `PoolDataProviderUpdated` events for
-    the given range
-    """
-
-    return fetch_logs_retrying(
-        w3=w3,
-        start_block=start_block,
-        end_block=end_block,
-        address=[address],
-        topic_signature=[
-            [
-                AaveV3Event.POOL_CONFIGURATOR_UPDATED.value,
-                AaveV3Event.POOL_DATA_PROVIDER_UPDATED.value,
-                AaveV3Event.POOL_UPDATED.value,
-            ],
-        ],
-    )
-
-
-def _get_reserve_initialized_events(
-    w3: Web3,
-    start_block: int,
-    end_block: int,
-    address: ChecksumAddress,
-) -> list[LogReceipt]:
-    """
-    Retrieve all `ReserveInitialized` events for the given range.
-    """
-
-    return fetch_logs_retrying(
-        w3=w3,
-        start_block=start_block,
-        end_block=end_block,
-        address=[address],
-        topic_signature=[
-            # matches topic0 on `ReserveInitialized`
-            [AaveV3Event.RESERVE_INITIALIZED.value],
-        ],
-    )
 
 
 def _process_user_e_mode_set_event(
@@ -1371,7 +1330,7 @@ def _get_or_create_user(
             e_mode=0,
             gho_discount=0,
         )
-        session.add(user)
+        market.users.append(user)
         session.flush()
     return user
 
@@ -1399,21 +1358,24 @@ def _get_or_create_erc20_token(
     return token
 
 
-def _get_or_create_position(
+def _get_or_create_position[T: AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable](
     session: Session,
     user: AaveV3UsersTable,
     asset_id: int,
-    positions: list[AaveV3CollateralPositionsTable] | list[AaveV3DebtPositionsTable],
-    position_table: type[AaveV3CollateralPositionsTable] | type[AaveV3DebtPositionsTable],
-) -> AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable:
-    """Get existing position or create new one with zero balance."""
+    positions: list[T],
+    position_table: type[T],
+) -> T:
+    """
+    Get existing position or create new one with zero balance.
+    """
+
     for position in positions:
         if position.asset_id == asset_id:
             return position
 
-    new_position = position_table(user_id=user.id, asset_id=asset_id, balance=0)
+    new_position = cast("T", position_table(user_id=user.id, asset_id=asset_id, balance=0))
     session.add(new_position)
-    positions.append(new_position)  # type: ignore[arg-type]
+    positions.append(new_position)
     return new_position
 
 
@@ -1423,15 +1385,12 @@ def _get_or_create_collateral_position(
     asset_id: int,
 ) -> AaveV3CollateralPositionsTable:
     """Get existing collateral position or create new one with zero balance."""
-    return cast(
-        "AaveV3CollateralPositionsTable",
-        _get_or_create_position(
-            session=session,
-            user=user,
-            asset_id=asset_id,
-            positions=user.collateral_positions,
-            position_table=AaveV3CollateralPositionsTable,
-        ),
+    return _get_or_create_position(
+        session=session,
+        user=user,
+        asset_id=asset_id,
+        positions=user.collateral_positions,
+        position_table=AaveV3CollateralPositionsTable,
     )
 
 
@@ -1441,15 +1400,12 @@ def _get_or_create_debt_position(
     asset_id: int,
 ) -> AaveV3DebtPositionsTable:
     """Get existing debt position or create new one with zero balance."""
-    return cast(
-        "AaveV3DebtPositionsTable",
-        _get_or_create_position(
-            session=session,
-            user=user,
-            asset_id=asset_id,
-            positions=user.debt_positions,
-            position_table=AaveV3DebtPositionsTable,
-        ),
+    return _get_or_create_position(
+        session=session,
+        user=user,
+        asset_id=asset_id,
+        positions=user.debt_positions,
+        position_table=AaveV3DebtPositionsTable,
     )
 
 
@@ -2175,137 +2131,6 @@ def _process_gho_debt_burn(
     debt_position.last_index = event_data.index
 
     return UserOperation.GHO_REPAY
-
-
-def _process_transaction(
-    *,
-    w3: Web3,
-    tx_hash: HexBytes,
-    events: list[LogReceipt],
-    market: AaveV3MarketTable,
-    session: Session,
-    gho_asset: AaveGhoTokenTable,
-) -> None:
-    """
-    Process all events in a transaction holistically.
-
-    Events are processed in order:
-    1. stkAAVE Transfer events (update discount token balances first)
-    2. DiscountPercentUpdated events (update discount rates)
-    3. GHO Mint/Burn events (use updated balances and rates)
-    4. Other token operations (collateral mint/burn, transfers)
-    """
-
-    # Create transaction context
-    tx_context = TransactionContext(
-        w3=w3,
-        tx_hash=tx_hash,
-        block_number=events[0]["blockNumber"],
-        events=events,
-        market=market,
-        session=session,
-        gho_asset=gho_asset,
-        contract_address=get_checksum_address(events[0]["address"]),
-    )
-
-    # Categorize events
-    stk_aave_transfers: list[LogReceipt] = []
-    discount_updates: list[LogReceipt] = []
-    gho_mints: list[LogReceipt] = []
-    gho_burns: list[LogReceipt] = []
-    collateral_ops: list[LogReceipt] = []
-
-    for event in events:
-        topic = event["topics"][0]
-        event_address = get_checksum_address(event["address"])
-
-        if topic == AaveV3Event.TRANSFER.value and event_address == gho_asset.v_gho_discount_token:
-            stk_aave_transfers.append(event)
-        elif topic == AaveV3Event.DISCOUNT_PERCENT_UPDATED.value:
-            discount_updates.append(event)
-        elif topic == AaveV3Event.SCALED_TOKEN_MINT.value:
-            if event_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
-                gho_mints.append(event)
-            else:
-                collateral_ops.append(event)
-        elif topic == AaveV3Event.SCALED_TOKEN_BURN.value:
-            if event_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
-                gho_burns.append(event)
-            else:
-                collateral_ops.append(event)
-        elif topic == AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value:
-            collateral_ops.append(event)
-
-    # Process in dependency order
-    for event in stk_aave_transfers:
-        _process_stk_aave_transfer_event(
-            EventHandlerContext(
-                w3=w3,
-                event=event,
-                market=market,
-                session=session,
-                gho_asset=gho_asset,
-                contract_address=get_checksum_address(event["address"]),
-                tx_context=tx_context,
-            )
-        )
-
-    for event in discount_updates:
-        _process_discount_percent_updated_event_wrapper(
-            EventHandlerContext(
-                w3=w3,
-                event=event,
-                market=market,
-                session=session,
-                gho_asset=gho_asset,
-                contract_address=get_checksum_address(event["address"]),
-                tx_context=tx_context,
-            )
-        )
-
-    # Process GHO mints with transaction context
-    for event in gho_mints:
-        context = EventHandlerContext(
-            w3=w3,
-            event=event,
-            market=market,
-            session=session,
-            gho_asset=gho_asset,
-            contract_address=get_checksum_address(event["address"]),
-            tx_context=tx_context,
-        )
-        _process_scaled_token_mint_event(context)
-
-    # Process GHO burns with transaction context
-    for event in gho_burns:
-        context = EventHandlerContext(
-            w3=w3,
-            event=event,
-            market=market,
-            session=session,
-            gho_asset=gho_asset,
-            contract_address=get_checksum_address(event["address"]),
-            tx_context=tx_context,
-        )
-        _process_scaled_token_burn_event(context)
-
-    # Process collateral operations
-    for event in collateral_ops:
-        context = EventHandlerContext(
-            w3=w3,
-            event=event,
-            market=market,
-            session=session,
-            gho_asset=gho_asset,
-            contract_address=get_checksum_address(event["address"]),
-            tx_context=tx_context,
-        )
-        if event["topics"][0] == AaveV3Event.SCALED_TOKEN_MINT.value:
-            _process_scaled_token_mint_event(context)
-        elif event["topics"][0] == AaveV3Event.SCALED_TOKEN_BURN.value:
-            _process_scaled_token_burn_event(context)
-        elif event["topics"][0] == AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value:
-            _process_scaled_token_balance_transfer_event(context)
 
 
 def _process_transaction_with_context(
@@ -3297,7 +3122,7 @@ def _process_proxy_creation_event(
         return_types=["uint256"],
     )
 
-    session.add(
+    market.contracts.append(
         AaveV3ContractsTable(
             market_id=market.id,
             name=proxy_name,
@@ -4166,14 +3991,10 @@ def _process_discount_percent_updated_event_wrapper(
 EVENT_HANDLERS: dict[HexBytes, Callable[[EventHandlerContext], None]] = {
     AaveV3Event.USER_E_MODE_SET.value: _process_user_e_mode_set_event,
     AaveV3Event.RESERVE_DATA_UPDATED.value: _process_reserve_data_update_event,
-    AaveV3Event.SCALED_TOKEN_BURN.value: _process_scaled_token_burn_event,
-    AaveV3Event.SCALED_TOKEN_MINT.value: _process_scaled_token_mint_event,
     AaveV3Event.UPGRADED.value: _process_scaled_token_upgrade_event,
-    AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value: _process_scaled_token_balance_transfer_event,
     AaveV3Event.DISCOUNT_RATE_STRATEGY_UPDATED.value: _process_discount_rate_strategy_updated_event,
     AaveV3Event.DISCOUNT_TOKEN_UPDATED.value: _process_discount_token_updated_event,
     AaveV3Event.DISCOUNT_PERCENT_UPDATED.value: _process_discount_percent_updated_event_wrapper,
-    AaveV3Event.TRANSFER.value: _process_stk_aave_transfer_event,
 }
 
 
@@ -4233,6 +4054,7 @@ def _fetch_scaled_token_events(
     """Fetch events from all scaled tokens (aTokens, vTokens)."""
     if not token_addresses:
         return []
+
     return fetch_logs_retrying(
         w3=w3,
         start_block=start_block,
@@ -4244,6 +4066,7 @@ def _fetch_scaled_token_events(
                 AaveV3Event.SCALED_TOKEN_BURN.value,
                 AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value,
                 AaveV3Event.UPGRADED.value,
+                AaveV3Event.DISCOUNT_PERCENT_UPDATED.value,
             ]
         ],
     )
@@ -4273,35 +4096,16 @@ def _fetch_stk_aave_events(
     )
 
 
-def _fetch_gho_vtoken_events(
-    w3: Web3,
-    gho_vtoken_address: ChecksumAddress,
-    start_block: int,
-    end_block: int,
-) -> list[LogReceipt]:
-    """Fetch GHO VariableDebtToken events."""
-    return fetch_logs_retrying(
-        w3=w3,
-        start_block=start_block,
-        end_block=end_block,
-        address=[gho_vtoken_address],
-        topic_signature=[
-            [
-                AaveV3Event.SCALED_TOKEN_MINT.value,
-                AaveV3Event.SCALED_TOKEN_BURN.value,
-                AaveV3Event.DISCOUNT_PERCENT_UPDATED.value,
-            ]
-        ],
-    )
-
-
 def _fetch_address_provider_events(
     w3: Web3,
     provider_address: ChecksumAddress,
     start_block: int,
     end_block: int,
 ) -> list[LogReceipt]:
-    """Fetch Pool Address Provider events for contract updates."""
+    """
+    Fetch Pool Address Provider events for contract updates.
+    """
+
     return fetch_logs_retrying(
         w3=w3,
         start_block=start_block,
@@ -4338,7 +4142,7 @@ def _fetch_discount_config_events(
 
 
 def _build_transaction_contexts(
-    all_events: list[LogReceipt],
+    events: list[LogReceipt],
     market: AaveV3MarketTable,
     session: Session,
     w3: Web3,
@@ -4347,7 +4151,7 @@ def _build_transaction_contexts(
     """Group events by transaction with full categorization."""
     contexts: dict[HexBytes, TransactionContext] = {}
 
-    for event in sorted(all_events, key=_event_sort_key):
+    for event in sorted(events, key=_event_sort_key):
         tx_hash = event["transactionHash"]
 
         if tx_hash not in contexts:
@@ -4359,7 +4163,6 @@ def _build_transaction_contexts(
                 market=market,
                 session=session,
                 gho_asset=gho_asset,
-                contract_address=get_checksum_address(event["address"]),
             )
 
         ctx = contexts[tx_hash]
@@ -4405,70 +4208,11 @@ def _build_transaction_contexts(
             ctx.user_e_mode_sets.append(event)
         elif topic == AaveV3Event.UPGRADED.value:
             ctx.upgraded_events.append(event)
+        else:
+            msg = f"Could not identify topic: {topic}"
+            raise ValueError(msg)
 
     return contexts
-
-
-def _assert_pool_event_exists(
-    tx_context: TransactionContext,
-    expected_type: HexBytes,
-    user_address: ChecksumAddress,
-    reserve_address: ChecksumAddress,
-) -> LogReceipt:
-    """Assert that a matching Pool event exists in the transaction.
-
-    Raises:
-        AssertionError: If no matching Pool event is found.
-    """
-    for event in tx_context.pool_events:
-        if event["topics"][0] != expected_type:
-            continue
-
-        # Match based on event type
-        if expected_type == AaveV3Event.BORROW.value:
-            # Borrow(reserve, user, onBehalfOf, amount, interestRateMode, borrowRate, referralCode) # noqa: ERA001,E501
-            event_reserve = _decode_address(event["topics"][1])
-            event_on_behalf_of = _decode_address(event["topics"][2])
-            (_, _, interest_rate_mode, _) = eth_abi.abi.decode(
-                types=["address", "uint256", "uint8", "uint256"],
-                data=event["data"],
-            )
-            if (
-                event_on_behalf_of == user_address
-                and event_reserve == reserve_address
-                and interest_rate_mode == 2  # Variable rate # noqa: PLR2004
-            ):
-                return event
-
-        elif expected_type == AaveV3Event.REPAY.value:
-            # Repay(reserve, user, repayer, amount, useATokens) # noqa: ERA001
-            event_reserve = _decode_address(event["topics"][1])
-            event_user = _decode_address(event["topics"][2])
-            if event_user == user_address and event_reserve == reserve_address:
-                return event
-
-        elif expected_type == AaveV3Event.SUPPLY.value:
-            # Supply(reserve, user, onBehalfOf, amount, referralCode) # noqa: ERA001
-            event_reserve = _decode_address(event["topics"][1])
-            event_on_behalf_of = _decode_address(event["topics"][2])
-            if event_on_behalf_of == user_address and event_reserve == reserve_address:
-                return event
-
-        elif expected_type == AaveV3Event.WITHDRAW.value:
-            # Withdraw(reserve, user, to, amount) # noqa: ERA001
-            event_reserve = _decode_address(event["topics"][1])
-            event_user = _decode_address(event["topics"][2])
-            if event_user == user_address and event_reserve == reserve_address:
-                return event
-
-    # IMMEDIATE FAILURE
-    available = [e["topics"][0].hex()[:10] for e in tx_context.pool_events]
-    msg = (
-        f"No matching {expected_type.hex()} Pool event for user {user_address} "
-        f"and reserve {reserve_address} in tx {tx_context.tx_hash.hex()}. "
-        f"Available: {available}"
-    )
-    raise AssertionError(msg)
 
 
 def _get_stk_aave_classifying_events(
@@ -4525,24 +4269,19 @@ def update_aave_market(
     Update the Aave V3 market.
 
     Processes events in three phases:
-    1. Bootstrap: Fetch and process proxy/address provider events to discover contracts
-    2. Setup: Fetch all targeted events and build transaction contexts
-    3. Processing: Process transactions with assertions that classifying events exist
+    1. Bootstrap: Fetch and process proxy creation events to discover Pool and PoolConfigurator
+       contracts.
+    2. Asset Discovery: Fetch all targeted events and build transaction contexts
+    3. User Event Processing: Process transactions with assertions that classifying events exist
     """
 
-    # === PHASE 1: BOOTSTRAP ===
-    # Fetch and process address provider events to discover contract addresses
-    pool_address_provider = EthereumMainnetAaveV3.pool_address_provider
-
-    address_provider_events = _fetch_address_provider_events(
+    # Phase 1
+    for event in _fetch_address_provider_events(
         w3=w3,
-        provider_address=pool_address_provider,
+        provider_address=_get_contract(market=market, contract_name="POOL_ADDRESS_PROVIDER"),
         start_block=start_block,
         end_block=end_block,
-    )
-
-    # Process bootstrap events chronologically
-    for event in address_provider_events:
+    ):
         topic = event["topics"][0]
 
         if topic == AaveV3Event.PROXY_CREATED.value:
@@ -4564,33 +4303,22 @@ def update_aave_market(
                 proxy_id=eth_abi.abi.encode(["bytes32"], [b"POOL_CONFIGURATOR"]),
                 revision_function_prototype="CONFIGURATOR_REVISION",
             )
-
-        elif topic == AaveV3Event.POOL_CONFIGURATOR_UPDATED.value:
-            # Only update if contract exists (it might be created later by PROXY_CREATED)
-            with contextlib.suppress(ValueError):
-                _update_contract_revision(
-                    w3=w3,
-                    market=market,
-                    contract_name="POOL_CONFIGURATOR",
-                    new_address=_decode_address(event["topics"][2]),
-                    revision_function_prototype="CONFIGURATOR_REVISION",
-                )
-
         elif topic == AaveV3Event.POOL_UPDATED.value:
-            # Only update if contract exists (it might be created later by PROXY_CREATED)
-            try:
-                new_address = _decode_address(event["topics"][2])
-                _update_contract_revision(
-                    w3=w3,
-                    market=market,
-                    contract_name="POOL",
-                    new_address=new_address,
-                    revision_function_prototype="POOL_REVISION",
-                )
-            except ValueError:
-                # Contract doesn't exist yet, skip - it will be created by PROXY_CREATED
-                pass
-
+            _update_contract_revision(
+                w3=w3,
+                market=market,
+                contract_name="POOL",
+                new_address=_decode_address(event["topics"][2]),
+                revision_function_prototype="POOL_REVISION",
+            )
+        elif topic == AaveV3Event.POOL_CONFIGURATOR_UPDATED.value:
+            _update_contract_revision(
+                w3=w3,
+                market=market,
+                contract_name="POOL_CONFIGURATOR",
+                new_address=_decode_address(event["topics"][2]),
+                revision_function_prototype="CONFIGURATOR_REVISION",
+            )
         elif topic == AaveV3Event.POOL_DATA_PROVIDER_UPDATED.value:
             (old_pool_data_provider_address,) = eth_abi.abi.decode(
                 types=["address"], data=event["topics"][1]
@@ -4619,29 +4347,19 @@ def update_aave_market(
                 assert pool_data_provider is not None
                 pool_data_provider.address = new_pool_data_provider_address
 
-    # Refresh contracts after bootstrap processing
-    try:
-        pool = _get_contract(market=market, contract_name="POOL")
-    except ValueError:
-        # Pool not initialized yet, skip to next chunk
-        logger.warning(f"Pool not initialized for market {market.id}, skipping")
-        return
-
+    # Phase 2
     try:
         pool_configurator = _get_contract(market=market, contract_name="POOL_CONFIGURATOR")
     except ValueError:
         # Configurator not initialized yet, skip reserve initialization
         pool_configurator = None
-
-    # Process reserve initialization events if configurator exists
     if pool_configurator is not None:
-        reserve_init_events = _fetch_pool_configurator_events(
+        for event in _fetch_pool_configurator_events(
             w3=w3,
             configurator_address=pool_configurator.address,
             start_block=start_block,
             end_block=end_block,
-        )
-        for event in sorted(reserve_init_events, key=_event_sort_key):
+        ):
             _process_asset_initialization_event(
                 w3=w3,
                 event=event,
@@ -4649,10 +4367,16 @@ def update_aave_market(
                 session=session,
             )
 
-    # === PHASE 2: FETCH ALL TARGETED EVENTS ===
+    # Phase 3
     all_events: list[LogReceipt] = []
 
-    # Fetch Pool events (for assertions)
+    try:
+        pool = _get_contract(market=market, contract_name="POOL")
+    except ValueError:
+        # Pool not initialized yet, skip to next chunk
+        logger.warning(f"Pool not initialized for market {market.id}, skipping")
+        return
+
     pool_events = _fetch_pool_events(
         w3=w3,
         pool_address=pool.address,
@@ -4661,21 +4385,18 @@ def update_aave_market(
     )
     all_events.extend(pool_events)
 
-    # Fetch scaled token events
     known_scaled_token_addresses = _get_all_scaled_token_addresses(
         session=session,
         chain_id=w3.eth.chain_id,
     )
-    if known_scaled_token_addresses:
-        scaled_token_events = _fetch_scaled_token_events(
-            w3=w3,
-            token_addresses=known_scaled_token_addresses,
-            start_block=start_block,
-            end_block=end_block,
-        )
-        all_events.extend(scaled_token_events)
+    scaled_token_events = _fetch_scaled_token_events(
+        w3=w3,
+        token_addresses=known_scaled_token_addresses,
+        start_block=start_block,
+        end_block=end_block,
+    )
+    all_events.extend(scaled_token_events)
 
-    # Fetch discount config events (from any contract)
     discount_config_events = _fetch_discount_config_events(
         w3=w3,
         start_block=start_block,
@@ -4683,11 +4404,8 @@ def update_aave_market(
     )
     all_events.extend(discount_config_events)
 
-    # Fetch GHO asset and related events
     gho_asset = _get_gho_asset(session=session, market=market)
-
     if gho_asset is not None:
-        # Fetch stkAAVE events (includes STAKED and REDEEM - now uncommented!)
         all_events.extend(
             _fetch_stk_aave_events(
                 w3=w3,
@@ -4697,20 +4415,9 @@ def update_aave_market(
             )
         )
 
-        # Fetch GHO vToken events
-        all_events.extend(
-            _fetch_gho_vtoken_events(
-                w3=w3,
-                gho_vtoken_address=GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
-                start_block=start_block,
-                end_block=end_block,
-            )
-        )
-
-    # === PHASE 3: BUILD CONTEXTS AND PROCESS ===
-    # Build transaction contexts with pre-categorized events
+    # Group the events into transaction bundles with a shared context
     tx_contexts = _build_transaction_contexts(
-        all_events=all_events,
+        events=all_events,
         market=market,
         session=session,
         w3=w3,
