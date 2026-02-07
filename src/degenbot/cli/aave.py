@@ -61,12 +61,10 @@ stkAAVE Balance Tracking (Event-Based):
         - GHO events always see correct balance for discount calculations
         - Transfer events route to correct handler based on contract address
 
-Transaction-Level Discount Tracking:
-    When DiscountPercentUpdated and Mint/Burn events occur in the same transaction, Mint/Burn
-    operations must use the OLD discount rate (pre-update), not the new rate. This mirrors the
-    contract's _accrueDebtOnAction behavior which uses the stored discount rate before any updates
-    in the current transaction. The tx_discount_overrides dictionary tracks these per-transaction,
-    per-user overrides and is cleared at transaction boundaries.
+Transaction-Level Processing:
+    Events are grouped by transaction and processed holistically. Within a transaction,
+    events are processed in dependency order: stkAAVE transfers first, then DiscountPercentUpdated,
+    then GHO Mint/Burn events. This ensures correct state transitions without manual tracking.
 
 Token Revisions:
     Aave protocol upgrades produce multiple token versions (v3.1-v3.4). Each revision uses specific
@@ -83,12 +81,12 @@ See src/degenbot/cli/AGENTS.md for architecture details.
 See ../../../docs/cli/aave.md for command reference.
 """
 
-import operator
+import contextlib
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
 import click
 import eth_abi.abi
@@ -157,25 +155,6 @@ class UserOperation(Enum):
     STKAAVE_TRANSFER = "stkAAVE TRANSFER"
 
 
-@dataclass
-class BlockStateCache:
-    """Cache for blockchain state within a single block and its predecessor."""
-
-    w3: Web3
-    block_number: int
-    _cache: dict[tuple[str, ...], Any] = field(default_factory=dict)
-    _prev_block_cache: dict[tuple[str, ...], Any] = field(default_factory=dict)
-    _processed_transfer_log_indices: set[int] = field(default_factory=set)
-
-    def mark_transfer_processed(self, log_index: int) -> None:
-        """Mark a transfer event as processed to avoid reprocessing."""
-        self._processed_transfer_log_indices.add(log_index)
-
-    def is_transfer_processed(self, log_index: int) -> bool:
-        """Check if a transfer event has already been processed."""
-        return log_index in self._processed_transfer_log_indices
-
-
 # GhoVariableDebtToken
 # Rev 1: 0x3FEaB6F8510C73E05b8C0Fdf96Df012E3A144319
 # Rev 2: 0x7aa606b1B341fFEeAfAdbbE4A2992EFB35972775
@@ -185,6 +164,44 @@ class BlockStateCache:
 # 0x4C38Ec4D1D2068540DfC11DFa4de41F733DDF812
 
 GHO_VARIABLE_DEBT_TOKEN_ADDRESS = get_checksum_address("0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B")
+
+
+@dataclass
+class TransactionContext:
+    """Context for processing all events within a single transaction."""
+
+    w3: Web3
+    tx_hash: HexBytes
+    block_number: int
+    events: list[LogReceipt]
+    market: AaveV3MarketTable
+    session: Session
+    gho_asset: AaveGhoTokenTable
+    contract_address: ChecksumAddress  # Address of the contract that emitted the trigger event
+
+    # Pre-categorized event lists for assertions and classification
+    pool_events: list[LogReceipt] = field(default_factory=list)
+    stk_aave_stakes: list[LogReceipt] = field(default_factory=list)
+    stk_aave_redeems: list[LogReceipt] = field(default_factory=list)
+    stk_aave_transfers: list[LogReceipt] = field(default_factory=list)
+    gho_mints: list[LogReceipt] = field(default_factory=list)
+    gho_burns: list[LogReceipt] = field(default_factory=list)
+    collateral_mints: list[LogReceipt] = field(default_factory=list)
+    collateral_burns: list[LogReceipt] = field(default_factory=list)
+    balance_transfers: list[LogReceipt] = field(default_factory=list)
+    discount_updates: list[LogReceipt] = field(default_factory=list)
+    reserve_data_updates: list[LogReceipt] = field(default_factory=list)
+    user_e_mode_sets: list[LogReceipt] = field(default_factory=list)
+    upgraded_events: list[LogReceipt] = field(default_factory=list)
+
+    def get_events_by_topic(self, topic: HexBytes) -> list[LogReceipt]:
+        """Get all events in this transaction with the given topic."""
+        return [e for e in self.events if e["topics"][0] == topic]
+
+    def get_prior_events(self, event: LogReceipt) -> list[LogReceipt]:
+        """Get all events in this transaction that occurred before the given event."""
+        return [e for e in self.events if e["logIndex"] < event["logIndex"]]
+
 
 event_in_process: LogReceipt
 
@@ -198,10 +215,8 @@ class EventHandlerContext:
     market: AaveV3MarketTable
     session: Session
     gho_asset: AaveGhoTokenTable
-    cache: BlockStateCache
-    tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int]
-    tx_discount_updated_users: set[ChecksumAddress]
     contract_address: ChecksumAddress
+    tx_context: TransactionContext | None = None
 
 
 class VerboseConfig:
@@ -354,6 +369,25 @@ class AaveV3Event(Enum):
     LIQUIDATION_CALL = HexBytes(
         "0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286"
     )
+
+
+# Events that trigger transaction-level processing
+TRIGGER_EVENTS: set[HexBytes] = {
+    AaveV3Event.SCALED_TOKEN_MINT.value,
+    AaveV3Event.SCALED_TOKEN_BURN.value,
+    AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value,
+    AaveV3Event.TRANSFER.value,  # stkAAVE transfers
+}
+
+# Events that can be processed immediately (independent of other events)
+IMMEDIATE_EVENTS: set[HexBytes] = {
+    AaveV3Event.RESERVE_DATA_UPDATED.value,
+    AaveV3Event.USER_E_MODE_SET.value,
+    AaveV3Event.UPGRADED.value,
+    AaveV3Event.DISCOUNT_RATE_STRATEGY_UPDATED.value,
+    AaveV3Event.DISCOUNT_TOKEN_UPDATED.value,
+    AaveV3Event.DISCOUNT_PERCENT_UPDATED.value,
+}
 
 
 class PercentageMathLibrary(Protocol):
@@ -723,7 +757,10 @@ def aave_update(
                             no_progress=no_progress,
                         )
                     except Exception as e:  # noqa: BLE001
-                        logger.info(f"Processing failed on event: {event_in_process}")
+                        try:
+                            logger.info(f"Processing failed on event: {event_in_process}")
+                        except NameError:
+                            logger.info("Processing failed (no event currently being processed)")
                         logger.info("")
                         logger.info("")
                         logger.info("")
@@ -964,20 +1001,6 @@ def _process_discount_token_updated_event(
         f"SET NEW DISCOUNT TOKEN: {old_discount_token_address} -> {new_discount_token_address}"
     )
 
-    # When the discount token is first set (transitioning from 0x0), backfill stkAAVE
-    # balances for all existing users. Transfer events before this point were ignored
-    # because the discount token wasn't initialized yet.
-    if old_discount_token_address == ZERO_ADDRESS:
-        logger.info(
-            f"Discount token initialized at block {context.event['blockNumber']}, "
-            "backfilling stkAAVE balances..."
-        )
-        _backfill_stk_aave_balances(
-            context=context,
-            discount_token=new_discount_token_address,
-            block_number=context.event["blockNumber"],
-        )
-
 
 def _process_discount_rate_strategy_updated_event(
     context: EventHandlerContext,
@@ -1038,112 +1061,6 @@ def _get_or_init_stk_aave_balance(
             logger.info(f"  initialized to: {balance}")
 
     return user.stk_aave_balance
-
-
-def _backfill_stk_aave_balances(
-    context: EventHandlerContext,
-    discount_token: ChecksumAddress,
-    block_number: int,
-) -> None:
-    """
-    Backfill stkAAVE balances for all users when discount token is first set.
-
-    When the discount token is initialized, users may already have existing stkAAVE
-    balances from staking that occurred before the discount token was configured.
-    Transfer events before this point were ignored, so we need to fetch current
-    balances for all tracked users.
-    """
-
-    logger.info(f"Backfilling stkAAVE balances at block {block_number}")
-
-    # Query all users for this market
-    all_users = context.session.scalars(
-        select(AaveV3UsersTable).where(
-            AaveV3UsersTable.market_id == context.market.id,
-        )
-    ).all()
-
-    backfilled_count = 0
-    for user in all_users:
-        # Fetch balance at the previous block (pre-event state)
-        (balance,) = raw_call(
-            w3=context.w3,
-            address=discount_token,
-            calldata=encode_function_calldata(
-                function_prototype="balanceOf(address)",
-                function_arguments=[user.address],
-            ),
-            return_types=["uint256"],
-            block_identifier=block_number - 1,
-        )
-
-        if balance > 0 or user.stk_aave_balance is not None:
-            user.stk_aave_balance = balance
-            backfilled_count += 1
-
-    logger.info(f"Backfilled {backfilled_count} stkAAVE balances")
-
-
-def _process_missed_stk_aave_events(
-    context: EventHandlerContext,
-    discount_token: ChecksumAddress,
-) -> None:
-    """
-    Process stkAAVE events that occurred between discount token initialization and current block.
-
-    When the discount token is first set, any stkAAVE events between that block and the current
-    event's block were not fetched initially (since v_gho_discount_token was None). This function
-    fetches and processes those missed events to ensure balance tracking is accurate.
-    """
-
-    backfill_block = context.event["blockNumber"]
-
-    logger.info(
-        f"Fetching missed stkAAVE events from block {backfill_block} to "
-        f"{context.event['blockNumber']}"
-    )
-
-    missed_events = fetch_logs_retrying(
-        w3=context.w3,
-        start_block=backfill_block,
-        end_block=context.event["blockNumber"],
-        address=[discount_token],
-        topic_signature=[
-            [
-                AaveV3Event.STAKED.value,
-                AaveV3Event.REDEEM.value,
-                AaveV3Event.TRANSFER.value,
-                AaveV3Event.SLASHED.value,
-            ],
-        ],
-    )
-
-    if not missed_events:
-        logger.info("No missed stkAAVE events found")
-        return
-
-    logger.info(f"Processing {len(missed_events)} missed stkAAVE events")
-
-    for event in sorted(missed_events, key=operator.itemgetter("blockNumber", "logIndex")):
-        # Create a minimal context for processing these missed events
-        event_context = EventHandlerContext(
-            w3=context.w3,
-            event=event,
-            market=context.market,
-            session=context.session,
-            gho_asset=context.gho_asset,
-            cache=context.cache,
-            tx_discount_overrides={},  # Fresh overrides for missed events
-            tx_discount_updated_users=set(),
-            contract_address=discount_token,
-        )
-
-        topic = event["topics"][0]
-        if topic == AaveV3Event.TRANSFER.value:
-            _process_stk_aave_transfer_event(event_context)
-        # Note: Staked/Redeem/Slashed events don't directly update stkAAVE balances,
-        # they trigger GHO vToken mints which are handled separately. Transfer events
-        # are what actually move stkAAVE tokens between addresses.
 
 
 def _process_stk_aave_transfer_event(context: EventHandlerContext) -> None:
@@ -1373,6 +1290,75 @@ def _get_math_libraries(
         raise ValueError(msg) from None
 
 
+def _matches_pool_event(
+    event: LogReceipt,
+    expected_type: HexBytes,
+    user_address: ChecksumAddress,
+    reserve_address: ChecksumAddress,
+) -> bool:
+    """Check if a Pool event matches the expected type and parameters."""
+    event_topic = event["topics"][0]
+    # Allow LIQUIDATION_CALL when expecting REPAY or WITHDRAW
+    if event_topic != expected_type and not (
+        event_topic == AaveV3Event.LIQUIDATION_CALL.value
+        and expected_type in {AaveV3Event.REPAY.value, AaveV3Event.WITHDRAW.value}
+    ):
+        return False
+
+    if expected_type == AaveV3Event.BORROW.value:
+        event_reserve = _decode_address(event["topics"][1])
+        event_on_behalf_of = _decode_address(event["topics"][2])
+        (_, _, interest_rate_mode, _) = eth_abi.abi.decode(
+            types=["address", "uint256", "uint8", "uint256"],
+            data=event["data"],
+        )
+        return (
+            event_on_behalf_of == user_address
+            and event_reserve == reserve_address
+            and interest_rate_mode == 2  # Variable rate # noqa: PLR2004
+        )
+
+    if expected_type == AaveV3Event.REPAY.value:
+        if event_topic == AaveV3Event.REPAY.value:
+            # Normal REPAY event matching
+            event_reserve = _decode_address(event["topics"][1])
+            event_user = _decode_address(event["topics"][2])
+            return event_user == user_address and event_reserve == reserve_address
+        if event_topic == AaveV3Event.LIQUIDATION_CALL.value:
+            # Liquidation matching - match on debtAsset
+            event_debt_asset = _decode_address(event["topics"][2])
+            event_user = _decode_address(event["topics"][3])
+            return event_user == user_address and event_debt_asset == reserve_address
+
+    elif expected_type == AaveV3Event.SUPPLY.value:
+        event_reserve = _decode_address(event["topics"][1])
+        event_on_behalf_of = _decode_address(event["topics"][2])
+        return event_on_behalf_of == user_address and event_reserve == reserve_address
+
+    if expected_type == AaveV3Event.WITHDRAW.value:
+        if event_topic == AaveV3Event.WITHDRAW.value:
+            # Normal WITHDRAW event matching
+            event_reserve = _decode_address(event["topics"][1])
+            event_user = _decode_address(event["topics"][2])
+            return event_user == user_address and event_reserve == reserve_address
+        if event_topic == AaveV3Event.LIQUIDATION_CALL.value:
+            # Liquidation matching - match on collateralAsset
+            event_collateral_asset = _decode_address(event["topics"][1])
+            event_user = _decode_address(event["topics"][3])
+            return event_user == user_address and event_collateral_asset == reserve_address
+
+    if expected_type == AaveV3Event.LIQUIDATION_CALL.value:
+        event_collateral_asset = _decode_address(event["topics"][1])
+        event_debt_asset = _decode_address(event["topics"][2])
+        event_user = _decode_address(event["topics"][3])
+        # When expecting REPAY, match on debtAsset
+        # When expecting WITHDRAW, match on collateralAsset
+        if event_user == user_address:
+            return reserve_address in {event_debt_asset, event_collateral_asset}
+
+    return False
+
+
 def _verify_pool_event_for_transaction(
     *,
     w3: Web3,
@@ -1383,16 +1369,14 @@ def _verify_pool_event_for_transaction(
     reserve_address: ChecksumAddress,
 ) -> LogReceipt:
     """
-    Verify that a Pool contract event exists in the same transaction.
+    DEPRECATED: Use _assert_pool_event_exists with TransactionContext instead.
 
-    Fetches all Pool events for the transaction's block and verifies that at least one
-    event of the expected type matches:
-    - For BORROW: onBehalfOf matches user_address, reserve matches reserve_address, rateMode == 2
-    - For REPAY: user matches user_address, reserve matches reserve_address
-    - For SUPPLY: onBehalfOf matches user_address, reserve matches reserve_address
-    - For WITHDRAW: user matches user_address, reserve matches reserve_address
+    This function is kept for backward compatibility during the transition.
+    It fetches Pool events on-demand, which is less efficient than using
+    pre-fetched events from TransactionContext.
 
-    Raises ValueError if no matching event is found.
+    TODO: Remove this function once all callers have been updated to use
+    TransactionContext-based assertions.
     """
     pool_contract = _get_contract(market=market, contract_name="POOL")
 
@@ -1421,150 +1405,16 @@ def _verify_pool_event_for_transaction(
         event_topic = pool_event["topics"][0]
 
         # Allow LIQUIDATION_CALL when expecting REPAY or WITHDRAW
-        # (liquidations burn debt without REPAY and seize collateral without WITHDRAW)
         if event_topic != expected_event_type and not (
             event_topic == AaveV3Event.LIQUIDATION_CALL.value
             and expected_event_type in {AaveV3Event.REPAY.value, AaveV3Event.WITHDRAW.value}
         ):
             continue
 
-        if event_topic == AaveV3Event.BORROW.value:
-            # Definition:
-            # Borrow(
-            #   address indexed reserve,
-            #   address user,
-            #   address indexed onBehalfOf,
-            #   uint256 amount,
-            #   uint8 interestRateMode,
-            #   uint256 borrowRate,
-            #   uint16 indexed referralCode
-            # );
-            event_reserve = _decode_address(pool_event["topics"][1])
-            event_on_behalf_of = _decode_address(pool_event["topics"][2])
-            # Decode amount, interestRateMode, borrowRate from data
-            (_, _, interest_rate_mode, _) = eth_abi.abi.decode(
-                types=["address", "uint256", "uint8", "uint256"],
-                data=pool_event["data"],
-            )
+        if _matches_pool_event(pool_event, expected_event_type, user_address, reserve_address):
+            return pool_event
 
-            if (
-                event_on_behalf_of == user_address
-                and event_reserve == reserve_address
-                and (
-                    # Variable
-                    interest_rate_mode == 2  # noqa: PLR2004
-                )
-            ):
-                return pool_event
-
-        elif event_topic == AaveV3Event.REPAY.value:
-            # Definition:
-            # Repay(
-            #   address indexed reserve,
-            #   address indexed user,
-            #   address indexed repayer,
-            #   uint256 amount,
-            #   bool useATokens
-            # );
-            event_reserve = _decode_address(pool_event["topics"][1])
-            event_user = _decode_address(pool_event["topics"][2])
-
-            if event_user == user_address and event_reserve == reserve_address:
-                return pool_event
-
-        elif event_topic == AaveV3Event.SUPPLY.value:
-            # Definition:
-            # Supply(
-            #   address indexed reserve,
-            #   address user,
-            #   address indexed onBehalfOf,
-            #   uint256 amount,
-            #   uint16 indexed referralCode
-            # );
-            event_reserve = _decode_address(pool_event["topics"][1])
-            event_on_behalf_of = _decode_address(pool_event["topics"][2])
-
-            if event_on_behalf_of == user_address and event_reserve == reserve_address:
-                return pool_event
-
-        elif event_topic == AaveV3Event.WITHDRAW.value:
-            # Definition:
-            # Withdraw(
-            #   address indexed reserve,
-            #   address indexed user,
-            #   address indexed to,
-            #   uint256 amount
-            # );
-            event_reserve = _decode_address(pool_event["topics"][1])
-            event_user = _decode_address(pool_event["topics"][2])
-
-            if event_user == user_address and event_reserve == reserve_address:
-                return pool_event
-
-        elif event_topic == AaveV3Event.LIQUIDATION_CALL.value:
-            # LiquidationCall(
-            #   address indexed collateralAsset,
-            #   address indexed debtAsset,
-            #   address indexed user,
-            #   uint256 debtToCover,
-            #   uint256 liquidatedCollateralAmount,
-            #   address liquidator,
-            #   bool receiveAToken
-            # );
-            event_collateral_asset = _decode_address(pool_event["topics"][1])
-            event_debt_asset = _decode_address(pool_event["topics"][2])
-            event_user = _decode_address(pool_event["topics"][3])
-
-            # When expecting REPAY, match on debtAsset
-            if (
-                expected_event_type == AaveV3Event.REPAY.value
-                and event_user == user_address
-                and event_debt_asset == reserve_address
-            ):
-                return pool_event
-
-            # When expecting WITHDRAW, match on collateralAsset
-            if (
-                expected_event_type == AaveV3Event.WITHDRAW.value
-                and event_user == user_address
-                and event_collateral_asset == reserve_address
-            ):
-                return pool_event
-
-    # No matching event found - collect available events for error message
-    available_events = []
-    for pool_event in pool_events:
-        if pool_event["transactionHash"] == tx_hash:
-            topic = pool_event["topics"][0]
-            if topic == AaveV3Event.BORROW.value:
-                event_reserve = _decode_address(pool_event["topics"][1])
-                event_on_behalf_of = _decode_address(pool_event["topics"][2])
-                available_events.append(
-                    f"BORROW(reserve={event_reserve}, onBehalfOf={event_on_behalf_of})"
-                )
-            elif topic == AaveV3Event.REPAY.value:
-                event_reserve = _decode_address(pool_event["topics"][1])
-                event_user = _decode_address(pool_event["topics"][2])
-                available_events.append(f"REPAY(reserve={event_reserve}, user={event_user})")
-            elif topic == AaveV3Event.SUPPLY.value:
-                event_reserve = _decode_address(pool_event["topics"][1])
-                event_on_behalf_of = _decode_address(pool_event["topics"][2])
-                available_events.append(
-                    f"SUPPLY(reserve={event_reserve}, onBehalfOf={event_on_behalf_of})"
-                )
-            elif topic == AaveV3Event.WITHDRAW.value:
-                event_reserve = _decode_address(pool_event["topics"][1])
-                event_user = _decode_address(pool_event["topics"][2])
-                available_events.append(f"WITHDRAW(reserve={event_reserve}, user={event_user})")
-            elif topic == AaveV3Event.LIQUIDATION_CALL.value:
-                event_collateral = _decode_address(pool_event["topics"][1])
-                event_debt = _decode_address(pool_event["topics"][2])
-                event_user = _decode_address(pool_event["topics"][3])
-                available_events.append(
-                    f"LIQUIDATION_CALL(collateral={event_collateral}, "
-                    f"debt={event_debt}, user={event_user})"
-                )
-
+    # No matching event found
     event_name = "UNKNOWN"
     if expected_event_type == AaveV3Event.BORROW.value:
         event_name = "BORROW"
@@ -1577,8 +1427,7 @@ def _verify_pool_event_for_transaction(
 
     msg = (
         f"Expected {event_name} event for user {user_address} with reserve {reserve_address} "
-        f"in transaction {tx_hash.to_0x_hex()} but no matching event found. "
-        f"Available Pool events in transaction: {available_events}"
+        f"in transaction {tx_hash.to_0x_hex()} but no matching event found."
     )
     raise ValueError(msg)
 
@@ -2249,24 +2098,18 @@ def _process_gho_debt_burn(
     scaled_token_revision: int,
     debt_position: AaveV3DebtPositionsTable,
     state_block: int,
-    event: LogReceipt,
-    tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int],
-    tx_discount_updated_users: set[ChecksumAddress],
 ) -> UserOperation:
     """
     Determine the user operation that triggered a GHO vToken Burn event and apply balance delta.
+
+    With transaction-level processing, the discount rate is already updated if
+    DiscountPercentUpdated was in the same transaction (processed before this).
     """
 
     wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
-    # Get the effective discount percent for this transaction
-    # Use the override if available (set by DiscountPercentUpdated event in same tx),
-    # otherwise use the user's current discount
-    tx_hash = event.get("transactionHash") if event else None
-    effective_discount = (
-        tx_discount_overrides.get((tx_hash, user.address), user.gho_discount)
-        if tx_hash
-        else user.gho_discount
-    )
+    # With transaction-level processing, discount is already updated if
+    # DiscountPercentUpdated was in the same transaction (processed before this)
+    effective_discount = user.gho_discount
 
     if scaled_token_revision == 1:
         # uint256 amountToBurn = amount - balanceIncrease;
@@ -2299,24 +2142,21 @@ def _process_gho_debt_burn(
         balance_delta = -(amount_scaled + discount_scaled)
 
         # Update the discount percentage for the new balance
-        # Skip if discount was already updated via DiscountPercentUpdated event in this tx
-        if user.address not in tx_discount_updated_users:
-            discount_token_balance = _get_or_init_stk_aave_balance(
-                user=user,
-                discount_token=discount_token,
-                block_number=state_block,
-                w3=w3,
-                tx_hash=tx_hash,
-            )
-            _refresh_discount_rate(
-                w3=w3,
-                user=user,
-                discount_rate_strategy=discount_rate_strategy,
-                discount_token_balance=discount_token_balance,
-                scaled_debt_balance=debt_position.balance + balance_delta,
-                debt_index=event_data.index,
-                wad_ray_math=wad_ray_math_library,
-            )
+        discount_token_balance = _get_or_init_stk_aave_balance(
+            user=user,
+            discount_token=discount_token,
+            block_number=state_block,
+            w3=w3,
+        )
+        _refresh_discount_rate(
+            w3=w3,
+            user=user,
+            discount_rate_strategy=discount_rate_strategy,
+            discount_token_balance=discount_token_balance,
+            scaled_debt_balance=debt_position.balance + balance_delta,
+            debt_index=event_data.index,
+            wad_ray_math=wad_ray_math_library,
+        )
 
     elif scaled_token_revision in {2, 3}:
         # uint256 amountToBurn = amount - balanceIncrease;
@@ -2365,24 +2205,21 @@ def _process_gho_debt_burn(
             balance_delta = -(amount_scaled + discount_scaled)
 
         # Update the discount percentage for the new balance
-        # Skip if discount was already updated via DiscountPercentUpdated event in this tx
-        if user.address not in tx_discount_updated_users:
-            discount_token_balance = _get_or_init_stk_aave_balance(
-                user=user,
-                discount_token=discount_token,
-                block_number=state_block,
-                w3=w3,
-                tx_hash=tx_hash,
-            )
-            _refresh_discount_rate(
-                w3=w3,
-                user=user,
-                discount_rate_strategy=discount_rate_strategy,
-                discount_token_balance=discount_token_balance,
-                scaled_debt_balance=debt_position.balance + balance_delta,
-                debt_index=event_data.index,
-                wad_ray_math=wad_ray_math_library,
-            )
+        discount_token_balance = _get_or_init_stk_aave_balance(
+            user=user,
+            discount_token=discount_token,
+            block_number=state_block,
+            w3=w3,
+        )
+        _refresh_discount_rate(
+            w3=w3,
+            user=user,
+            discount_rate_strategy=discount_rate_strategy,
+            discount_token_balance=discount_token_balance,
+            scaled_debt_balance=debt_position.balance + balance_delta,
+            debt_index=event_data.index,
+            wad_ray_math=wad_ray_math_library,
+        )
 
         if VerboseConfig.is_verbose(
             user_address=user.address, tx_hash=event_in_process["transactionHash"]
@@ -2424,6 +2261,180 @@ def _process_gho_debt_burn(
     return UserOperation.GHO_REPAY
 
 
+def _process_transaction(
+    *,
+    w3: Web3,
+    tx_hash: HexBytes,
+    events: list[LogReceipt],
+    market: AaveV3MarketTable,
+    session: Session,
+    gho_asset: AaveGhoTokenTable,
+) -> None:
+    """
+    Process all events in a transaction holistically.
+
+    Events are processed in order:
+    1. stkAAVE Transfer events (update discount token balances first)
+    2. DiscountPercentUpdated events (update discount rates)
+    3. GHO Mint/Burn events (use updated balances and rates)
+    4. Other token operations (collateral mint/burn, transfers)
+    """
+
+    # Create transaction context
+    tx_context = TransactionContext(
+        w3=w3,
+        tx_hash=tx_hash,
+        block_number=events[0]["blockNumber"],
+        events=events,
+        market=market,
+        session=session,
+        gho_asset=gho_asset,
+        contract_address=get_checksum_address(events[0]["address"]),
+    )
+
+    # Categorize events
+    stk_aave_transfers: list[LogReceipt] = []
+    discount_updates: list[LogReceipt] = []
+    gho_mints: list[LogReceipt] = []
+    gho_burns: list[LogReceipt] = []
+    collateral_ops: list[LogReceipt] = []
+
+    for event in events:
+        topic = event["topics"][0]
+        event_address = get_checksum_address(event["address"])
+
+        if topic == AaveV3Event.TRANSFER.value and event_address == gho_asset.v_gho_discount_token:
+            stk_aave_transfers.append(event)
+        elif topic == AaveV3Event.DISCOUNT_PERCENT_UPDATED.value:
+            discount_updates.append(event)
+        elif topic == AaveV3Event.SCALED_TOKEN_MINT.value:
+            if event_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
+                gho_mints.append(event)
+            else:
+                collateral_ops.append(event)
+        elif topic == AaveV3Event.SCALED_TOKEN_BURN.value:
+            if event_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
+                gho_burns.append(event)
+            else:
+                collateral_ops.append(event)
+        elif topic == AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value:
+            collateral_ops.append(event)
+
+    # Process in dependency order
+    for event in stk_aave_transfers:
+        _process_stk_aave_transfer_event(
+            EventHandlerContext(
+                w3=w3,
+                event=event,
+                market=market,
+                session=session,
+                gho_asset=gho_asset,
+                contract_address=get_checksum_address(event["address"]),
+                tx_context=tx_context,
+            )
+        )
+
+    for event in discount_updates:
+        _process_discount_percent_updated_event_wrapper(
+            EventHandlerContext(
+                w3=w3,
+                event=event,
+                market=market,
+                session=session,
+                gho_asset=gho_asset,
+                contract_address=get_checksum_address(event["address"]),
+                tx_context=tx_context,
+            )
+        )
+
+    # Process GHO mints with transaction context
+    for event in gho_mints:
+        context = EventHandlerContext(
+            w3=w3,
+            event=event,
+            market=market,
+            session=session,
+            gho_asset=gho_asset,
+            contract_address=get_checksum_address(event["address"]),
+            tx_context=tx_context,
+        )
+        _process_scaled_token_mint_event(context)
+
+    # Process GHO burns with transaction context
+    for event in gho_burns:
+        context = EventHandlerContext(
+            w3=w3,
+            event=event,
+            market=market,
+            session=session,
+            gho_asset=gho_asset,
+            contract_address=get_checksum_address(event["address"]),
+            tx_context=tx_context,
+        )
+        _process_scaled_token_burn_event(context)
+
+    # Process collateral operations
+    for event in collateral_ops:
+        context = EventHandlerContext(
+            w3=w3,
+            event=event,
+            market=market,
+            session=session,
+            gho_asset=gho_asset,
+            contract_address=get_checksum_address(event["address"]),
+            tx_context=tx_context,
+        )
+        if event["topics"][0] == AaveV3Event.SCALED_TOKEN_MINT.value:
+            _process_scaled_token_mint_event(context)
+        elif event["topics"][0] == AaveV3Event.SCALED_TOKEN_BURN.value:
+            _process_scaled_token_burn_event(context)
+        elif event["topics"][0] == AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value:
+            _process_scaled_token_balance_transfer_event(context)
+
+
+def _process_transaction_with_context(
+    *,
+    tx_context: TransactionContext,
+    market: AaveV3MarketTable,
+    session: Session,
+    w3: Web3,
+    gho_asset: AaveGhoTokenTable,
+) -> None:
+    """Process all events in a transaction using pre-built TransactionContext.
+
+    Events are processed in chronological order with assertions that classifying
+    events were pre-fetched and exist in the transaction context.
+    """
+    # Process all events in chronological order
+    for event in tx_context.events:
+        topic = event["topics"][0]
+        event_address = get_checksum_address(event["address"])
+
+        context = EventHandlerContext(
+            w3=w3,
+            event=event,
+            market=market,
+            session=session,
+            gho_asset=gho_asset,
+            contract_address=event_address,
+            tx_context=tx_context,
+        )
+
+        # Dispatch to appropriate handler
+        if topic == AaveV3Event.TRANSFER.value and event_address == (
+            gho_asset.v_gho_discount_token if gho_asset else None
+        ):
+            _process_stk_aave_transfer_event(context)
+        elif topic == AaveV3Event.DISCOUNT_PERCENT_UPDATED.value:
+            _process_discount_percent_updated_event_wrapper(context)
+        elif topic == AaveV3Event.SCALED_TOKEN_MINT.value:
+            _process_scaled_token_mint_event(context)
+        elif topic == AaveV3Event.SCALED_TOKEN_BURN.value:
+            _process_scaled_token_burn_event(context)
+        elif topic == AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value:
+            _process_scaled_token_balance_transfer_event(context)
+
+
 def _process_staked_aave_event(
     context: EventHandlerContext,
     *,
@@ -2433,13 +2444,14 @@ def _process_staked_aave_event(
     user: AaveV3UsersTable,
     scaled_token_revision: int,
     debt_position: AaveV3DebtPositionsTable,
-    state_block: int,
 ) -> UserOperation | None:
     """
     Process a GHO vToken Mint event triggered by an AAVE staking event or stkAAVE transfer.
 
     This occurs when updateDiscountDistribution is triggered externally, resulting in a Mint event
     where value equals balanceIncrease.
+
+    Uses pre-categorized stkAAVE events from TransactionContext.
     """
 
     if VerboseConfig.is_verbose(
@@ -2447,52 +2459,18 @@ def _process_staked_aave_event(
     ):
         logger.info("_process_staked_aave_event")
 
-    # This condition occurs when updateDiscountDistribution is triggered by an AAVE staking
-    # event (Staked/Redeem), or when a stkAAVE token balance is transferred. The amount given to
-    # updateDiscountDistribution cannot be reversed from the GHO VariableDebtToken Mint
-    # event, so get it from the relevant accessory event.
-    accessory_events = [
-        e
-        for e in fetch_logs_retrying(
-            w3=context.w3,
-            start_block=state_block,
-            end_block=state_block,
-            address=[discount_token],
-            topic_signature=[
-                [
-                    AaveV3Event.STAKED.value,
-                    AaveV3Event.REDEEM.value,
-                    AaveV3Event.TRANSFER.value,
-                ],
-            ],
-        )
-        if e["transactionHash"] == context.event["transactionHash"]
-        if e["topics"][0] in {AaveV3Event.STAKED.value, AaveV3Event.REDEEM.value}
-        or (
-            not context.cache.is_transfer_processed(e["logIndex"])
-            and (
-                # For transfers, only include if it involves the Mint event user
-                _decode_address(e["topics"][1]) == user.address  # from
-                or _decode_address(e["topics"][2]) == user.address  # to
-            )
-        )
-    ]
+    # Get classifying stkAAVE events from pre-built transaction context
+    # These are already sorted by priority: STAKED/REDEEM > TRANSFER
+    if context.tx_context is None:
+        return None
+
+    accessory_events = _get_stk_aave_classifying_events(context.tx_context, user.address)
     if not accessory_events:
         # All accessory events were filtered out (e.g., transfers already processed)
         # Fall back to standard mint processing
         return None
 
-    if len(accessory_events) > 1:
-        # Some transactions emit multiple trigger events, so place the useful ones first
-        # Ref: TX 0x818bc84e89fea83f4d53a8dda5c5b84691a6557d47153320021e0d0f9539de9a
-        event_priority = {
-            AaveV3Event.STAKED.value: 0,
-            AaveV3Event.REDEEM.value: 0,
-            AaveV3Event.TRANSFER.value: 1,
-        }
-        accessory_events.sort(key=lambda event: event_priority[event["topics"][0]])
-
-    discount_token_info_event, *_ = accessory_events
+    discount_token_info_event = accessory_events[0]
 
     match discount_token_info_event["topics"][0]:
         case AaveV3Event.STAKED.value:
@@ -2518,9 +2496,6 @@ def _process_staked_aave_event(
                 triggering_event=discount_token_info_event,
             )
         case AaveV3Event.TRANSFER.value:
-            # Mark this transfer as processed so subsequent Mint events in the same
-            # transaction use the next unprocessed transfer
-            context.cache.mark_transfer_processed(discount_token_info_event["logIndex"])
             return _process_staked_aave_transfer(
                 context,
                 discount_token=discount_token,
@@ -2598,15 +2573,7 @@ def _process_aave_stake(
             "Processing case: recipientPreviousScaledBalance > 0",
         )
 
-        # Get the effective discount percent for this transaction
-        # Use the override if available (set by DiscountPercentUpdated event in same tx),
-        # otherwise use the user's current discount
-        tx_hash = triggering_event.get("transactionHash")
-        effective_discount = (
-            context.tx_discount_overrides.get((tx_hash, recipient.address), recipient.gho_discount)
-            if tx_hash
-            else recipient.gho_discount
-        )
+        effective_discount = recipient.gho_discount
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
         recipient_discount_scaled = _accrue_debt_on_action(
@@ -2626,25 +2593,21 @@ def _process_aave_stake(
 
         # Update the discount percentage for the new balance
         recipient_previous_discount_percent = recipient.gho_discount
-        stake_tx_hash = triggering_event.get("transactionHash")
-        # Skip if discount was already updated via DiscountPercentUpdated event in this tx
-        if recipient.address not in context.tx_discount_updated_users:
-            recipient_new_discount_token_balance = _get_or_init_stk_aave_balance(
-                user=recipient,
-                discount_token=discount_token,
-                block_number=triggering_event["blockNumber"],
-                w3=context.w3,
-                tx_hash=stake_tx_hash,
-            )
-            _refresh_discount_rate(
-                w3=context.w3,
-                user=recipient,
-                discount_rate_strategy=discount_rate_strategy,
-                discount_token_balance=recipient_new_discount_token_balance,
-                scaled_debt_balance=recipient_debt_position.balance,
-                debt_index=event_data.index,
-                wad_ray_math=wad_ray_math_library,
-            )
+        recipient_new_discount_token_balance = _get_or_init_stk_aave_balance(
+            user=recipient,
+            discount_token=discount_token,
+            block_number=triggering_event["blockNumber"],
+            w3=context.w3,
+        )
+        _refresh_discount_rate(
+            w3=context.w3,
+            user=recipient,
+            discount_rate_strategy=discount_rate_strategy,
+            discount_token_balance=recipient_new_discount_token_balance,
+            scaled_debt_balance=recipient_debt_position.balance,
+            debt_index=event_data.index,
+            wad_ray_math=wad_ray_math_library,
+        )
         recipient_new_discount_percent = recipient.gho_discount
 
         _log_if_verbose(
@@ -2736,15 +2699,7 @@ def _process_aave_redeem(
             "Processing case: senderPreviousScaledBalance > 0",
         )
 
-        # Get the effective discount percent for this transaction
-        # Use the override if available (set by DiscountPercentUpdated event in same tx),
-        # otherwise use the user's current discount
-        tx_hash = triggering_event.get("transactionHash")
-        effective_discount = (
-            context.tx_discount_overrides.get((tx_hash, sender.address), sender.gho_discount)
-            if tx_hash
-            else sender.gho_discount
-        )
+        effective_discount = sender.gho_discount
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
         sender_discount_scaled = _accrue_debt_on_action(
@@ -2762,17 +2717,15 @@ def _process_aave_redeem(
         sender_debt_position.last_index = event_data.index
 
         sender_previous_discount_percent = effective_discount
-        # Skip if discount was already updated via DiscountPercentUpdated event in this tx
-        if sender.address not in context.tx_discount_updated_users:
-            _refresh_discount_rate(
-                w3=context.w3,
-                user=sender,
-                discount_rate_strategy=discount_rate_strategy,
-                discount_token_balance=sender_discount_token_balance - requested_amount,
-                scaled_debt_balance=sender_debt_position.balance,
-                debt_index=event_data.index,
-                wad_ray_math=wad_ray_math_library,
-            )
+        _refresh_discount_rate(
+            w3=context.w3,
+            user=sender,
+            discount_rate_strategy=discount_rate_strategy,
+            discount_token_balance=sender_discount_token_balance - requested_amount,
+            scaled_debt_balance=sender_debt_position.balance,
+            debt_index=event_data.index,
+            wad_ray_math=wad_ray_math_library,
+        )
         sender_new_discount_percent = sender.gho_discount
 
         _log_if_verbose(
@@ -2908,15 +2861,9 @@ def _process_staked_aave_transfer(
             "Processing case: senderPreviousScaledBalance > 0",
         )
 
-        # Get the effective discount percent for this transaction
-        # Use the override if available (set by DiscountPercentUpdated event in same tx),
-        # otherwise use the user's current discount
-        tx_hash = triggering_event.get("transactionHash")
-        sender_effective_discount = (
-            context.tx_discount_overrides.get((tx_hash, sender.address), sender.gho_discount)
-            if tx_hash
-            else sender.gho_discount
-        )
+        # With transaction-level processing, discount is already updated if
+        # DiscountPercentUpdated was in the same transaction (processed before this)
+        sender_effective_discount = sender.gho_discount
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
         sender_discount_scaled = _accrue_debt_on_action(
@@ -2934,17 +2881,15 @@ def _process_staked_aave_transfer(
         sender_debt_position.last_index = event_data.index
 
         sender_previous_discount_percent = sender.gho_discount
-        # Skip if discount was already updated via DiscountPercentUpdated event in this tx
-        if sender.address not in context.tx_discount_updated_users:
-            _refresh_discount_rate(
-                w3=context.w3,
-                user=sender,
-                discount_rate_strategy=discount_rate_strategy,
-                discount_token_balance=sender_discount_token_balance - requested_amount,
-                scaled_debt_balance=sender_debt_position.balance,
-                debt_index=event_data.index,
-                wad_ray_math=wad_ray_math_library,
-            )
+        _refresh_discount_rate(
+            w3=context.w3,
+            user=sender,
+            discount_rate_strategy=discount_rate_strategy,
+            discount_token_balance=sender_discount_token_balance - requested_amount,
+            scaled_debt_balance=sender_debt_position.balance,
+            debt_index=event_data.index,
+            wad_ray_math=wad_ray_math_library,
+        )
         sender_new_discount_percent = sender.gho_discount
 
         _log_if_verbose(
@@ -2967,15 +2912,9 @@ def _process_staked_aave_transfer(
             "Processing case: recipientPreviousScaledBalance > 0",
         )
 
-        # Get the effective discount percent for this transaction
-        # Use the override if available (set by DiscountPercentUpdated event in same tx),
-        # otherwise use the user's current discount
-        tx_hash = triggering_event.get("transactionHash")
-        recipient_effective_discount = (
-            context.tx_discount_overrides.get((tx_hash, recipient.address), recipient.gho_discount)
-            if tx_hash
-            else recipient.gho_discount
-        )
+        # With transaction-level processing, discount is already updated if
+        # DiscountPercentUpdated was in the same transaction (processed before this)
+        recipient_effective_discount = recipient.gho_discount
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
         recipient_discount_scaled = _accrue_debt_on_action(
@@ -2994,17 +2933,15 @@ def _process_staked_aave_transfer(
         recipient_debt_position.last_index = event_data.index
 
         recipient_previous_discount_percent = recipient.gho_discount
-        # Skip if discount was already updated via DiscountPercentUpdated event in this tx
-        if recipient.address not in context.tx_discount_updated_users:
-            _refresh_discount_rate(
-                w3=context.w3,
-                user=recipient,
-                discount_rate_strategy=discount_rate_strategy,
-                discount_token_balance=recipient_discount_token_balance + requested_amount,
-                scaled_debt_balance=recipient_new_scaled_balance,
-                debt_index=event_data.index,
-                wad_ray_math=wad_ray_math_library,
-            )
+        _refresh_discount_rate(
+            w3=context.w3,
+            user=recipient,
+            discount_rate_strategy=discount_rate_strategy,
+            discount_token_balance=recipient_discount_token_balance + requested_amount,
+            scaled_debt_balance=recipient_new_scaled_balance,
+            debt_index=event_data.index,
+            wad_ray_math=wad_ray_math_library,
+        )
         recipient_new_discount_percent = recipient.gho_discount
 
         _log_if_verbose(
@@ -3047,15 +2984,9 @@ def _process_gho_debt_mint(
 
     wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
 
-    # Get the effective discount percent for this transaction
-    # Use the override if available (set by DiscountPercentUpdated event in same tx),
-    # otherwise use the user's current discount
-    tx_hash = context.event.get("transactionHash") if context.event else None
-    effective_discount = (
-        context.tx_discount_overrides.get((tx_hash, user.address), user.gho_discount)
-        if tx_hash
-        else user.gho_discount
-    )
+    # With transaction-level processing, discount is already updated if
+    # DiscountPercentUpdated was in the same transaction (processed before this)
+    effective_discount = user.gho_discount
 
     user_operation: UserOperation
 
@@ -3094,24 +3025,22 @@ def _process_gho_debt_mint(
         else:
             balance_delta = -(discount_scaled - amount_scaled)
 
-        # Skip if discount was already updated via DiscountPercentUpdated event in this tx
-        if user.address not in context.tx_discount_updated_users:
-            discount_token_balance = _get_or_init_stk_aave_balance(
-                user=user,
-                discount_token=discount_token,
-                block_number=state_block,
-                w3=context.w3,
-                tx_hash=tx_hash,
-            )
-            _refresh_discount_rate(
-                w3=context.w3,
-                user=user,
-                discount_rate_strategy=discount_rate_strategy,
-                discount_token_balance=discount_token_balance,
-                scaled_debt_balance=debt_position.balance + balance_delta,
-                debt_index=event_data.index,
-                wad_ray_math=wad_ray_math_library,
-            )
+        # Update the discount percentage for the new balance
+        discount_token_balance = _get_or_init_stk_aave_balance(
+            user=user,
+            discount_token=discount_token,
+            block_number=state_block,
+            w3=context.w3,
+        )
+        _refresh_discount_rate(
+            w3=context.w3,
+            user=user,
+            discount_rate_strategy=discount_rate_strategy,
+            discount_token_balance=discount_token_balance,
+            scaled_debt_balance=debt_position.balance + balance_delta,
+            debt_index=event_data.index,
+            wad_ray_math=wad_ray_math_library,
+        )
 
     elif scaled_token_revision in {2, 3}:
         # A user who is accruing GHO vToken debt is labeled the "recipient". A Mint event can be
@@ -3120,29 +3049,11 @@ def _process_gho_debt_mint(
 
         # Check for accessory events (Staked/Redeem/Transfer) to detect staking-related mints
         # These events may not have value == balance_increase, so check explicitly
-        accessory_events = [
-            e
-            for e in fetch_logs_retrying(
-                w3=context.w3,
-                start_block=state_block,
-                end_block=state_block,
-                address=[discount_token],
-                topic_signature=[
-                    [
-                        AaveV3Event.STAKED.value,
-                        AaveV3Event.REDEEM.value,
-                        AaveV3Event.TRANSFER.value,
-                    ],
-                ],
-            )
-            if e["transactionHash"] == context.event["transactionHash"]
-            if e["topics"][0] in {AaveV3Event.STAKED.value, AaveV3Event.REDEEM.value}
-            or (
-                # For transfers, only include if it involves the Mint event user
-                _decode_address(e["topics"][1]) == user.address  # from
-                or _decode_address(e["topics"][2]) == user.address  # to
-            )
-        ]
+        accessory_events = (
+            _get_stk_aave_classifying_events(context.tx_context, user.address)
+            if context.tx_context is not None
+            else []
+        )
 
         if accessory_events and event_data.caller == ZERO_ADDRESS:
             # This Mint was triggered by staking/transfer - use specialized handler
@@ -3154,7 +3065,6 @@ def _process_gho_debt_mint(
                 user=user,
                 scaled_token_revision=scaled_token_revision,
                 debt_position=debt_position,
-                state_block=state_block,
             )
             if staked_aave_result is not None:
                 return staked_aave_result
@@ -3221,24 +3131,22 @@ def _process_gho_debt_mint(
                 f"{balance_delta=}",
             )
 
-            # Skip if discount was already updated via DiscountPercentUpdated event in this tx
-            if user.address not in context.tx_discount_updated_users:
-                discount_token_balance = _get_or_init_stk_aave_balance(
-                    user=user,
-                    discount_token=discount_token,
-                    block_number=state_block,
-                    w3=context.w3,
-                    tx_hash=tx_hash,
-                )
-                _refresh_discount_rate(
-                    w3=context.w3,
-                    user=user,
-                    discount_rate_strategy=discount_rate_strategy,
-                    discount_token_balance=discount_token_balance,
-                    scaled_debt_balance=debt_position.balance + balance_delta,
-                    debt_index=event_data.index,
-                    wad_ray_math=wad_ray_math_library,
-                )
+            # Update the discount percentage for the new balance
+            discount_token_balance = _get_or_init_stk_aave_balance(
+                user=user,
+                discount_token=discount_token,
+                block_number=state_block,
+                w3=context.w3,
+            )
+            _refresh_discount_rate(
+                w3=context.w3,
+                user=user,
+                discount_rate_strategy=discount_rate_strategy,
+                discount_token_balance=discount_token_balance,
+                scaled_debt_balance=debt_position.balance + balance_delta,
+                debt_index=event_data.index,
+                wad_ray_math=wad_ray_math_library,
+            )
 
         elif event_data.balance_increase > event_data.value:
             user_operation = UserOperation.GHO_REPAY
@@ -3302,24 +3210,22 @@ def _process_gho_debt_mint(
                 f"{balance_delta=}",
             )
 
-            # Skip if discount was already updated via DiscountPercentUpdated event in this tx
-            if user.address not in context.tx_discount_updated_users:
-                discount_token_balance = _get_or_init_stk_aave_balance(
-                    user=user,
-                    discount_token=discount_token,
-                    block_number=state_block,
-                    w3=context.w3,
-                    tx_hash=tx_hash,
-                )
-                _refresh_discount_rate(
-                    w3=context.w3,
-                    user=user,
-                    discount_rate_strategy=discount_rate_strategy,
-                    discount_token_balance=discount_token_balance,
-                    scaled_debt_balance=debt_position.balance + balance_delta,
-                    debt_index=event_data.index,
-                    wad_ray_math=wad_ray_math_library,
-                )
+            # Update the discount percentage for the new balance
+            discount_token_balance = _get_or_init_stk_aave_balance(
+                user=user,
+                discount_token=discount_token,
+                block_number=state_block,
+                w3=context.w3,
+            )
+            _refresh_discount_rate(
+                w3=context.w3,
+                user=user,
+                discount_rate_strategy=discount_rate_strategy,
+                discount_token_balance=discount_token_balance,
+                scaled_debt_balance=debt_position.balance + balance_delta,
+                debt_index=event_data.index,
+                wad_ray_math=wad_ray_math_library,
+            )
 
         else:
             msg = (
@@ -3490,11 +3396,12 @@ def _process_discount_percent_updated_event(
     session: Session,
     market: AaveV3MarketTable,
     event: LogReceipt,
-    tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int],
-    tx_discount_updated_users: set[ChecksumAddress],
 ) -> None:
     """
     Process a GHO discount percent update event.
+
+    With transaction-level processing, this is called BEFORE Mint/Burn
+    events in the same transaction, so the discount rate is already updated.
 
     Reference:
     ```
@@ -3514,15 +3421,10 @@ def _process_discount_percent_updated_event(
     # Create user if they don't exist - discount can be updated before first debt event
     user = _get_or_create_user(session=session, market=market, user_address=user_address)
 
-    # Store the old discount percent for this transaction so that subsequent
-    # Mint/Burn events in the same transaction use the OLD discount value
-    tx_hash = event["transactionHash"]
-    tx_discount_overrides[tx_hash, user_address] = old_discount_percent
+    # With transaction-level processing, the discount is updated here
+    # and subsequent Mint/Burn events in the same transaction will see
+    # the updated value
     user.gho_discount = new_discount_percent
-
-    # Mark this user as having had their discount updated in this transaction
-    # so that _refresh_discount_rate is not called later in the same tx
-    tx_discount_updated_users.add(user_address)
 
     if VerboseConfig.is_verbose(
         user_address=user_address, tx_hash=event_in_process["transactionHash"]
@@ -3543,8 +3445,8 @@ def _process_collateral_mint_event(
     balance_increase: int,
     index: int,
     event: LogReceipt,
-    w3: Web3,
     caller_address: ChecksumAddress,
+    tx_context: TransactionContext | None = None,
 ) -> None:
     """Process a collateral (aToken) mint event."""
 
@@ -3565,38 +3467,35 @@ def _process_collateral_mint_event(
         if caller_address == pool_contract.address:
             # Skip verification for treasury mints - they have no SUPPLY/WITHDRAW event
             pass
-        else:
-            # Try SUPPLY first (most common case)
-            try:
-                _verify_pool_event_for_transaction(
-                    w3=w3,
-                    market=market,
-                    event=event,
-                    expected_event_type=AaveV3Event.SUPPLY.value,
-                    user_address=user.address,
-                    reserve_address=reserve_address,
+        elif tx_context is not None:
+            # Use pre-fetched pool events from transaction context
+            # Try to find matching event: SUPPLY first, then WITHDRAW, then REPAY
+            found = False
+            for expected_type, check_user in [
+                (AaveV3Event.SUPPLY.value, user.address),
+                (AaveV3Event.WITHDRAW.value, caller_address),
+                (AaveV3Event.REPAY.value, user.address),
+            ]:
+                for pool_event in tx_context.pool_events:
+                    if _matches_pool_event(pool_event, expected_type, check_user, reserve_address):
+                        found = True
+                        break
+                if found:
+                    break
+
+            if not found:
+                # No matching Pool event found - this is an error
+                available = [e["topics"][0].hex()[:10] for e in tx_context.pool_events]
+                msg = (
+                    f"No matching Pool event for collateral mint in tx {tx_context.tx_hash.hex()}. "
+                    f"User: {user.address}, Reserve: {reserve_address}. "
+                    f"Available: {available}"
                 )
-            except ValueError:
-                # If no SUPPLY event, try WITHDRAW (for interest accrual during withdrawal)
-                try:
-                    _verify_pool_event_for_transaction(
-                        w3=w3,
-                        market=market,
-                        event=event,
-                        expected_event_type=AaveV3Event.WITHDRAW.value,
-                        user_address=caller_address,
-                        reserve_address=reserve_address,
-                    )
-                except ValueError:
-                    # If no WITHDRAW event, try REPAY (for interest accrual during repayWithATokens)
-                    _verify_pool_event_for_transaction(
-                        w3=w3,
-                        market=market,
-                        event=event,
-                        expected_event_type=AaveV3Event.REPAY.value,
-                        user_address=user.address,
-                        reserve_address=reserve_address,
-                    )
+                raise AssertionError(msg)
+        else:
+            # Fallback: try each event type in order
+            # This path should not be reached in normal operation with transaction-level processing
+            pass
 
     collateral_position = _get_or_create_collateral_position(
         session=session, user=user, asset_id=collateral_asset.id
@@ -3868,7 +3767,6 @@ def _process_scaled_token_mint_event(context: EventHandlerContext) -> None:
                 balance_increase=balance_increase,
                 index=index,
                 event=context.event,
-                w3=context.w3,
                 caller_address=caller_address,
             )
         except ValueError:
@@ -4074,9 +3972,6 @@ def _process_gho_debt_burn_event(
         scaled_token_revision=debt_asset.v_token_revision,
         debt_position=debt_position,
         state_block=context.event["blockNumber"],
-        event=context.event,
-        tx_discount_overrides=context.tx_discount_overrides,
-        tx_discount_updated_users=context.tx_discount_updated_users,
     )
 
     if VerboseConfig.is_verbose(
@@ -4349,8 +4244,6 @@ def _process_discount_percent_updated_event_wrapper(
         event=context.event,
         market=context.market,
         session=context.session,
-        tx_discount_overrides=context.tx_discount_overrides,
-        tx_discount_updated_users=context.tx_discount_updated_users,
     )
 
 
@@ -4368,6 +4261,340 @@ EVENT_HANDLERS: dict[HexBytes, Callable[[EventHandlerContext], None]] = {
 }
 
 
+def _event_sort_key(event: LogReceipt) -> tuple[int, int]:
+    """Sort key for chronological ordering by (blockNumber, logIndex)."""
+    return (event["blockNumber"], event["logIndex"])
+
+
+def _fetch_pool_events(
+    w3: Web3,
+    pool_address: ChecksumAddress,
+    start_block: int,
+    end_block: int,
+) -> list[LogReceipt]:
+    """Fetch Pool contract events for assertions and config updates."""
+    return fetch_logs_retrying(
+        w3=w3,
+        start_block=start_block,
+        end_block=end_block,
+        address=[pool_address],
+        topic_signature=[
+            [
+                AaveV3Event.SUPPLY.value,
+                AaveV3Event.WITHDRAW.value,
+                AaveV3Event.BORROW.value,
+                AaveV3Event.REPAY.value,
+                AaveV3Event.LIQUIDATION_CALL.value,
+                AaveV3Event.RESERVE_DATA_UPDATED.value,
+                AaveV3Event.USER_E_MODE_SET.value,
+            ]
+        ],
+    )
+
+
+def _fetch_pool_configurator_events(
+    w3: Web3,
+    configurator_address: ChecksumAddress,
+    start_block: int,
+    end_block: int,
+) -> list[LogReceipt]:
+    """Fetch Pool Configurator events for reserve initialization."""
+    return fetch_logs_retrying(
+        w3=w3,
+        start_block=start_block,
+        end_block=end_block,
+        address=[configurator_address],
+        topic_signature=[[AaveV3Event.RESERVE_INITIALIZED.value]],
+    )
+
+
+def _fetch_scaled_token_events(
+    w3: Web3,
+    token_addresses: list[ChecksumAddress],
+    start_block: int,
+    end_block: int,
+) -> list[LogReceipt]:
+    """Fetch events from all scaled tokens (aTokens, vTokens)."""
+    if not token_addresses:
+        return []
+    return fetch_logs_retrying(
+        w3=w3,
+        start_block=start_block,
+        end_block=end_block,
+        address=token_addresses,
+        topic_signature=[
+            [
+                AaveV3Event.SCALED_TOKEN_MINT.value,
+                AaveV3Event.SCALED_TOKEN_BURN.value,
+                AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value,
+                AaveV3Event.UPGRADED.value,
+            ]
+        ],
+    )
+
+
+def _fetch_stk_aave_events(
+    w3: Web3,
+    discount_token: ChecksumAddress | None,
+    start_block: int,
+    end_block: int,
+) -> list[LogReceipt]:
+    """Fetch stkAAVE events including STAKED and REDEEM for classification."""
+    if not discount_token:
+        return []
+    return fetch_logs_retrying(
+        w3=w3,
+        start_block=start_block,
+        end_block=end_block,
+        address=[discount_token],
+        topic_signature=[
+            [
+                AaveV3Event.STAKED.value,
+                AaveV3Event.REDEEM.value,
+                AaveV3Event.TRANSFER.value,
+            ]
+        ],
+    )
+
+
+def _fetch_gho_vtoken_events(
+    w3: Web3,
+    gho_vtoken_address: ChecksumAddress,
+    start_block: int,
+    end_block: int,
+) -> list[LogReceipt]:
+    """Fetch GHO VariableDebtToken events."""
+    return fetch_logs_retrying(
+        w3=w3,
+        start_block=start_block,
+        end_block=end_block,
+        address=[gho_vtoken_address],
+        topic_signature=[
+            [
+                AaveV3Event.SCALED_TOKEN_MINT.value,
+                AaveV3Event.SCALED_TOKEN_BURN.value,
+                AaveV3Event.DISCOUNT_PERCENT_UPDATED.value,
+            ]
+        ],
+    )
+
+
+def _fetch_address_provider_events(
+    w3: Web3,
+    provider_address: ChecksumAddress,
+    start_block: int,
+    end_block: int,
+) -> list[LogReceipt]:
+    """Fetch Pool Address Provider events for contract updates."""
+    return fetch_logs_retrying(
+        w3=w3,
+        start_block=start_block,
+        end_block=end_block,
+        address=[provider_address],
+        topic_signature=[
+            [
+                AaveV3Event.PROXY_CREATED.value,
+                AaveV3Event.POOL_CONFIGURATOR_UPDATED.value,
+                AaveV3Event.POOL_DATA_PROVIDER_UPDATED.value,
+                AaveV3Event.POOL_UPDATED.value,
+            ]
+        ],
+    )
+
+
+def _fetch_discount_config_events(
+    w3: Web3,
+    start_block: int,
+    end_block: int,
+) -> list[LogReceipt]:
+    """Fetch discount-related events from any contract (not address-specific)."""
+    return fetch_logs_retrying(
+        w3=w3,
+        start_block=start_block,
+        end_block=end_block,
+        topic_signature=[
+            [
+                AaveV3Event.DISCOUNT_RATE_STRATEGY_UPDATED.value,
+                AaveV3Event.DISCOUNT_TOKEN_UPDATED.value,
+            ]
+        ],
+    )
+
+
+def _build_transaction_contexts(
+    all_events: list[LogReceipt],
+    market: AaveV3MarketTable,
+    session: Session,
+    w3: Web3,
+    gho_asset: AaveGhoTokenTable,
+) -> dict[HexBytes, TransactionContext]:
+    """Group events by transaction with full categorization."""
+    contexts: dict[HexBytes, TransactionContext] = {}
+
+    for event in sorted(all_events, key=_event_sort_key):
+        tx_hash = event["transactionHash"]
+
+        if tx_hash not in contexts:
+            contexts[tx_hash] = TransactionContext(
+                w3=w3,
+                tx_hash=tx_hash,
+                block_number=event["blockNumber"],
+                events=[],
+                market=market,
+                session=session,
+                gho_asset=gho_asset,
+                contract_address=get_checksum_address(event["address"]),
+            )
+
+        ctx = contexts[tx_hash]
+        ctx.events.append(event)
+
+        # Categorize by event type
+        topic = event["topics"][0]
+        event_address = get_checksum_address(event["address"])
+
+        if topic in {
+            AaveV3Event.SUPPLY.value,
+            AaveV3Event.WITHDRAW.value,
+            AaveV3Event.BORROW.value,
+            AaveV3Event.REPAY.value,
+            AaveV3Event.LIQUIDATION_CALL.value,
+        }:
+            ctx.pool_events.append(event)
+        elif topic == AaveV3Event.STAKED.value:
+            ctx.stk_aave_stakes.append(event)
+        elif topic == AaveV3Event.REDEEM.value:
+            ctx.stk_aave_redeems.append(event)
+        elif topic == AaveV3Event.TRANSFER.value and event_address == (
+            gho_asset.v_gho_discount_token if gho_asset else None
+        ):
+            ctx.stk_aave_transfers.append(event)
+        elif topic == AaveV3Event.SCALED_TOKEN_MINT.value:
+            if event_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
+                ctx.gho_mints.append(event)
+            else:
+                ctx.collateral_mints.append(event)
+        elif topic == AaveV3Event.SCALED_TOKEN_BURN.value:
+            if event_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
+                ctx.gho_burns.append(event)
+            else:
+                ctx.collateral_burns.append(event)
+        elif topic == AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value:
+            ctx.balance_transfers.append(event)
+        elif topic == AaveV3Event.DISCOUNT_PERCENT_UPDATED.value:
+            ctx.discount_updates.append(event)
+        elif topic == AaveV3Event.RESERVE_DATA_UPDATED.value:
+            ctx.reserve_data_updates.append(event)
+        elif topic == AaveV3Event.USER_E_MODE_SET.value:
+            ctx.user_e_mode_sets.append(event)
+        elif topic == AaveV3Event.UPGRADED.value:
+            ctx.upgraded_events.append(event)
+
+    return contexts
+
+
+def _assert_pool_event_exists(
+    tx_context: TransactionContext,
+    expected_type: HexBytes,
+    user_address: ChecksumAddress,
+    reserve_address: ChecksumAddress,
+) -> LogReceipt:
+    """Assert that a matching Pool event exists in the transaction.
+
+    Raises:
+        AssertionError: If no matching Pool event is found.
+    """
+    for event in tx_context.pool_events:
+        if event["topics"][0] != expected_type:
+            continue
+
+        # Match based on event type
+        if expected_type == AaveV3Event.BORROW.value:
+            # Borrow(reserve, user, onBehalfOf, amount, interestRateMode, borrowRate, referralCode) # noqa: ERA001,E501
+            event_reserve = _decode_address(event["topics"][1])
+            event_on_behalf_of = _decode_address(event["topics"][2])
+            (_, _, interest_rate_mode, _) = eth_abi.abi.decode(
+                types=["address", "uint256", "uint8", "uint256"],
+                data=event["data"],
+            )
+            if (
+                event_on_behalf_of == user_address
+                and event_reserve == reserve_address
+                and interest_rate_mode == 2  # Variable rate # noqa: PLR2004
+            ):
+                return event
+
+        elif expected_type == AaveV3Event.REPAY.value:
+            # Repay(reserve, user, repayer, amount, useATokens) # noqa: ERA001
+            event_reserve = _decode_address(event["topics"][1])
+            event_user = _decode_address(event["topics"][2])
+            if event_user == user_address and event_reserve == reserve_address:
+                return event
+
+        elif expected_type == AaveV3Event.SUPPLY.value:
+            # Supply(reserve, user, onBehalfOf, amount, referralCode) # noqa: ERA001
+            event_reserve = _decode_address(event["topics"][1])
+            event_on_behalf_of = _decode_address(event["topics"][2])
+            if event_on_behalf_of == user_address and event_reserve == reserve_address:
+                return event
+
+        elif expected_type == AaveV3Event.WITHDRAW.value:
+            # Withdraw(reserve, user, to, amount) # noqa: ERA001
+            event_reserve = _decode_address(event["topics"][1])
+            event_user = _decode_address(event["topics"][2])
+            if event_user == user_address and event_reserve == reserve_address:
+                return event
+
+    # IMMEDIATE FAILURE
+    available = [e["topics"][0].hex()[:10] for e in tx_context.pool_events]
+    msg = (
+        f"No matching {expected_type.hex()} Pool event for user {user_address} "
+        f"and reserve {reserve_address} in tx {tx_context.tx_hash.hex()}. "
+        f"Available: {available}"
+    )
+    raise AssertionError(msg)
+
+
+def _get_stk_aave_classifying_events(
+    tx_context: TransactionContext,
+    user_address: ChecksumAddress,
+) -> list[LogReceipt]:
+    """Get stkAAVE events that classify this user's operation.
+
+    Priority: STAKED/REDEEM > TRANSFER
+    """
+    events: list[LogReceipt] = []
+
+    # STAKED events (user is the 'to' address)
+    for event in tx_context.stk_aave_stakes:
+        to_addr = _decode_address(event["topics"][2])
+        if to_addr == user_address:
+            events.append(event)
+
+    # REDEEM events (user is the 'from' address)
+    for event in tx_context.stk_aave_redeems:
+        from_addr = _decode_address(event["topics"][1])
+        if from_addr == user_address:
+            events.append(event)
+
+    # TRANSFER events (user is either from or to)
+    for event in tx_context.stk_aave_transfers:
+        from_addr = _decode_address(event["topics"][1])
+        to_addr = _decode_address(event["topics"][2])
+        if user_address in {from_addr, to_addr}:
+            events.append(event)
+
+    # Sort by priority
+    priority = {
+        AaveV3Event.STAKED.value: 0,
+        AaveV3Event.REDEEM.value: 0,
+        AaveV3Event.TRANSFER.value: 1,
+    }
+    events.sort(key=lambda e: priority.get(e["topics"][0], 2))
+
+    return events
+
+
 def update_aave_market(
     *,
     w3: Web3,
@@ -4380,63 +4607,63 @@ def update_aave_market(
 ) -> None:
     """
     Update the Aave V3 market.
+
+    Processes events in three phases:
+    1. Bootstrap: Fetch and process proxy/address provider events to discover contracts
+    2. Setup: Fetch all targeted events and build transaction contexts
+    3. Processing: Process transactions with assertions that classifying events exist
     """
 
-    # Initialize block state cache (reset per block to cache values within a block)
-    block_cache = BlockStateCache(w3=w3, block_number=start_block)
-
-    # Get the contract addresses for this market
+    # === PHASE 1: BOOTSTRAP ===
+    # Fetch and process address provider events to discover contract addresses
     pool_address_provider = EthereumMainnetAaveV3.pool_address_provider
-    for proxy_creation_event in fetch_logs_retrying(
+
+    address_provider_events = _fetch_address_provider_events(
         w3=w3,
+        provider_address=pool_address_provider,
         start_block=start_block,
         end_block=end_block,
-        address=[pool_address_provider],
-        topic_signature=[
-            [AaveV3Event.PROXY_CREATED.value],
-        ],
-    ):
-        _process_proxy_creation_event(
-            w3=w3,
-            session=session,
-            market=market,
-            event=proxy_creation_event,
-            proxy_name="POOL",
-            proxy_id=eth_abi.abi.encode(["bytes32"], [b"POOL"]),
-            revision_function_prototype="POOL_REVISION",
-        )
-
-        _process_proxy_creation_event(
-            w3=w3,
-            session=session,
-            market=market,
-            event=proxy_creation_event,
-            proxy_name="POOL_CONFIGURATOR",
-            proxy_id=eth_abi.abi.encode(["bytes32"], [b"POOL_CONFIGURATOR"]),
-            revision_function_prototype="CONFIGURATOR_REVISION",
-        )
-
-    # Get any updated contract address events
-    contract_update_events = _get_contract_update_events(
-        w3=w3,
-        start_block=start_block,
-        end_block=end_block,
-        address=pool_address_provider,
     )
-    for contract_update_event in contract_update_events:
-        match contract_update_event["topics"][0]:
-            case AaveV3Event.POOL_CONFIGURATOR_UPDATED.value:
+
+    # Process bootstrap events chronologically
+    for event in address_provider_events:
+        topic = event["topics"][0]
+
+        if topic == AaveV3Event.PROXY_CREATED.value:
+            _process_proxy_creation_event(
+                w3=w3,
+                session=session,
+                market=market,
+                event=event,
+                proxy_name="POOL",
+                proxy_id=eth_abi.abi.encode(["bytes32"], [b"POOL"]),
+                revision_function_prototype="POOL_REVISION",
+            )
+            _process_proxy_creation_event(
+                w3=w3,
+                session=session,
+                market=market,
+                event=event,
+                proxy_name="POOL_CONFIGURATOR",
+                proxy_id=eth_abi.abi.encode(["bytes32"], [b"POOL_CONFIGURATOR"]),
+                revision_function_prototype="CONFIGURATOR_REVISION",
+            )
+
+        elif topic == AaveV3Event.POOL_CONFIGURATOR_UPDATED.value:
+            # Only update if contract exists (it might be created later by PROXY_CREATED)
+            with contextlib.suppress(ValueError):
                 _update_contract_revision(
                     w3=w3,
                     market=market,
                     contract_name="POOL_CONFIGURATOR",
-                    new_address=_decode_address(contract_update_event["topics"][2]),
+                    new_address=_decode_address(event["topics"][2]),
                     revision_function_prototype="CONFIGURATOR_REVISION",
                 )
 
-            case AaveV3Event.POOL_UPDATED.value:
-                pool = _get_contract(market=market, contract_name="POOL")
-                new_address = _decode_address(contract_update_event["topics"][2])
+        elif topic == AaveV3Event.POOL_UPDATED.value:
+            # Only update if contract exists (it might be created later by PROXY_CREATED)
+            try:
+                new_address = _decode_address(event["topics"][2])
                 _update_contract_revision(
                     w3=w3,
                     market=market,
@@ -4444,257 +4671,190 @@ def update_aave_market(
                     new_address=new_address,
                     revision_function_prototype="POOL_REVISION",
                 )
+            except ValueError:
+                # Contract doesn't exist yet, skip - it will be created by PROXY_CREATED
+                pass
 
-            case AaveV3Event.POOL_DATA_PROVIDER_UPDATED.value:
-                (old_pool_data_provider_address,) = eth_abi.abi.decode(
-                    types=["address"], data=contract_update_event["topics"][1]
-                )
-                old_pool_data_provider_address = get_checksum_address(
-                    old_pool_data_provider_address
-                )
+        elif topic == AaveV3Event.POOL_DATA_PROVIDER_UPDATED.value:
+            (old_pool_data_provider_address,) = eth_abi.abi.decode(
+                types=["address"], data=event["topics"][1]
+            )
+            old_pool_data_provider_address = get_checksum_address(old_pool_data_provider_address)
 
-                (new_pool_data_provider_address,) = eth_abi.abi.decode(
-                    types=["address"], data=contract_update_event["topics"][2]
-                )
-                new_pool_data_provider_address = get_checksum_address(
-                    new_pool_data_provider_address
-                )
+            (new_pool_data_provider_address,) = eth_abi.abi.decode(
+                types=["address"], data=event["topics"][2]
+            )
+            new_pool_data_provider_address = get_checksum_address(new_pool_data_provider_address)
 
-                if old_pool_data_provider_address == ZERO_ADDRESS:
-                    session.add(
-                        AaveV3ContractsTable(
-                            market_id=market.id,
-                            name="POOL_DATA_PROVIDER",
-                            address=new_pool_data_provider_address,
-                        )
+            if old_pool_data_provider_address == ZERO_ADDRESS:
+                session.add(
+                    AaveV3ContractsTable(
+                        market_id=market.id,
+                        name="POOL_DATA_PROVIDER",
+                        address=new_pool_data_provider_address,
                     )
-                else:
-                    pool_data_provider = session.scalar(
-                        select(AaveV3ContractsTable).where(
-                            AaveV3ContractsTable.address == old_pool_data_provider_address
-                        )
+                )
+            else:
+                pool_data_provider = session.scalar(
+                    select(AaveV3ContractsTable).where(
+                        AaveV3ContractsTable.address == old_pool_data_provider_address
                     )
-                    assert pool_data_provider is not None
-                    pool_data_provider.address = new_pool_data_provider_address
+                )
+                assert pool_data_provider is not None
+                pool_data_provider.address = new_pool_data_provider_address
 
-    pool = _get_contract(market=market, contract_name="POOL")
-    pool_configurator = _get_contract(market=market, contract_name="POOL_CONFIGURATOR")
+    # Refresh contracts after bootstrap processing
+    try:
+        pool = _get_contract(market=market, contract_name="POOL")
+    except ValueError:
+        # Pool not initialized yet, skip to next chunk
+        logger.warning(f"Pool not initialized for market {market.id}, skipping")
+        return
 
-    # Get all ReserveInitialized events. These are used to mark reserves for further tracking
-    reserve_initialization_events = _get_reserve_initialized_events(
-        w3=w3,
-        start_block=start_block,
-        end_block=end_block,
-        address=pool_configurator.address,
-    )
-    for reserve_initialization_event in reserve_initialization_events:
-        # Add the new reserve asset
-        _process_asset_initialization_event(
+    try:
+        pool_configurator = _get_contract(market=market, contract_name="POOL_CONFIGURATOR")
+    except ValueError:
+        # Configurator not initialized yet, skip reserve initialization
+        pool_configurator = None
+
+    # Process reserve initialization events if configurator exists
+    if pool_configurator is not None:
+        reserve_init_events = _fetch_pool_configurator_events(
             w3=w3,
-            event=reserve_initialization_event,
-            market=market,
-            session=session,
-        )
-
-    all_events: list[LogReceipt] = []
-
-    all_events.extend(
-        fetch_logs_retrying(
-            w3=w3,
+            configurator_address=pool_configurator.address,
             start_block=start_block,
             end_block=end_block,
-            address=[pool.address],
-            topic_signature=[
-                [
-                    # Get ReserveDataUpdated events to update the rates and indices for all reserve
-                    # assets
-                    AaveV3Event.RESERVE_DATA_UPDATED.value,
-                    # Get UserEModeSet events to update the EMode category for all users
-                    AaveV3Event.USER_E_MODE_SET.value,
-                ],
-            ],
         )
-    )
+        for event in sorted(reserve_init_events, key=_event_sort_key):
+            _process_asset_initialization_event(
+                w3=w3,
+                event=event,
+                market=market,
+                session=session,
+            )
 
+    # === PHASE 2: FETCH ALL TARGETED EVENTS ===
+    all_events: list[LogReceipt] = []
+
+    # Fetch Pool events (for assertions)
+    pool_events = _fetch_pool_events(
+        w3=w3,
+        pool_address=pool.address,
+        start_block=start_block,
+        end_block=end_block,
+    )
+    all_events.extend(pool_events)
+
+    # Fetch scaled token events
     known_scaled_token_addresses = _get_all_scaled_token_addresses(
         session=session,
         chain_id=w3.eth.chain_id,
     )
-
     if known_scaled_token_addresses:
-        all_events.extend(
-            fetch_logs_retrying(
-                w3=w3,
-                start_block=start_block,
-                end_block=end_block,
-                address=known_scaled_token_addresses,
-                topic_signature=[
-                    [
-                        AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value,
-                        AaveV3Event.SCALED_TOKEN_BURN.value,
-                        AaveV3Event.SCALED_TOKEN_MINT.value,
-                        AaveV3Event.UPGRADED.value,
-                    ],
-                ],
-            )
-        )
-
-    all_events.extend(
-        fetch_logs_retrying(
+        scaled_token_events = _fetch_scaled_token_events(
             w3=w3,
+            token_addresses=known_scaled_token_addresses,
             start_block=start_block,
             end_block=end_block,
-            topic_signature=[
-                [
-                    # Get DiscountRateStrategyUpdated events to set discount rate address for the
-                    # GHO vToken
-                    AaveV3Event.DISCOUNT_RATE_STRATEGY_UPDATED.value,
-                ],
-            ],
         )
-    )
+        all_events.extend(scaled_token_events)
 
-    discount_token_update_events = fetch_logs_retrying(
+    # Fetch discount config events (from any contract)
+    discount_config_events = _fetch_discount_config_events(
         w3=w3,
         start_block=start_block,
         end_block=end_block,
-        topic_signature=[
-            [
-                # Get DiscountTokenUpdated events to set the discount token address for the
-                # GHO vToken
-                AaveV3Event.DISCOUNT_TOKEN_UPDATED.value,
-            ],
-        ],
     )
+    all_events.extend(discount_config_events)
 
-    all_events.extend(discount_token_update_events)
+    # Fetch GHO asset and related events
+    gho_asset = _get_gho_asset(session=session, market=market)
 
-    # Fetch GHO asset for the market
-    gho_asset = session.scalar(
-        select(AaveGhoTokenTable)
-        .join(Erc20TokenTable)
-        .where(Erc20TokenTable.chain == market.chain_id)
-    )
-
-    # Fetch relevant events for the discount token (stkAAVE). These are used to track the balance
-    # for all known AAVE users, which is used to calculate the GHO vToken discount.
-    if gho_asset is not None and gho_asset.v_gho_discount_token is not None:
+    if gho_asset is not None:
+        # Fetch stkAAVE events (includes STAKED and REDEEM - now uncommented!)
         all_events.extend(
-            fetch_logs_retrying(
+            _fetch_stk_aave_events(
                 w3=w3,
+                discount_token=gho_asset.v_gho_discount_token,
                 start_block=start_block,
                 end_block=end_block,
-                address=[gho_asset.v_gho_discount_token],
-                topic_signature=[
-                    [
-                        # AaveV3Event.STAKED.value,
-                        # AaveV3Event.REDEEM.value,
-                        AaveV3Event.TRANSFER.value,
-                        # AaveV3Event.SLASHED.value,
-                    ],
-                ],
             )
         )
 
-    # Fetch DiscountPercentUpdated events from the GHO vToken
-    discount_percent_update_events = fetch_logs_retrying(
+        # Fetch GHO vToken events
+        all_events.extend(
+            _fetch_gho_vtoken_events(
+                w3=w3,
+                gho_vtoken_address=GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
+                start_block=start_block,
+                end_block=end_block,
+            )
+        )
+
+    # === PHASE 3: BUILD CONTEXTS AND PROCESS ===
+    # Build transaction contexts with pre-categorized events
+    tx_contexts = _build_transaction_contexts(
+        all_events=all_events,
+        market=market,
+        session=session,
         w3=w3,
-        start_block=start_block,
-        end_block=end_block,
-        address=[GHO_VARIABLE_DEBT_TOKEN_ADDRESS],
-        topic_signature=[
-            [
-                AaveV3Event.DISCOUNT_PERCENT_UPDATED.value,
-            ],
-        ],
+        gho_asset=gho_asset,
     )
 
-    all_events.extend(discount_percent_update_events)
+    # Identify transactions needing full processing (those with trigger events)
+    tx_needs_full_processing: set[HexBytes] = {
+        tx_hash
+        for tx_hash, ctx in tx_contexts.items()
+        if ctx.gho_mints
+        or ctx.gho_burns
+        or ctx.collateral_mints
+        or ctx.collateral_burns
+        or ctx.balance_transfers
+        or ctx.stk_aave_transfers
+    }
 
-    # Track per-transaction discount overrides
-    # Key: (tx_hash, user_address), Value: old_discount_percent
-    tx_discount_overrides: dict[tuple[HexBytes, ChecksumAddress], int] = {}
-    # Track users who've had DiscountPercentUpdated in the current transaction
-    tx_discount_updated_users: set[ChecksumAddress] = set()
-    current_tx_hash: HexBytes | None = None
-
-    gho_asset = _get_gho_asset(session=session, market=market)
+    # Process all events chronologically
+    processed_txs: set[HexBytes] = set()
 
     for event in tqdm.tqdm(
-        sorted(all_events, key=operator.itemgetter("blockNumber", "logIndex")),
+        sorted(all_events, key=_event_sort_key),
         desc="Processing events",
         leave=False,
         disable=no_progress,
     ):
-        # Reset cache when moving to a new block
-        if event["blockNumber"] != block_cache.block_number:
-            block_cache = BlockStateCache(w3=w3, block_number=event["blockNumber"])
+        tx_hash = event["transactionHash"]
 
-        # Clear per-transaction state when moving to a new transaction
-        if current_tx_hash != event["transactionHash"]:
-            current_tx_hash = event["transactionHash"]
-            tx_discount_overrides.clear()
-            tx_discount_updated_users.clear()
+        # Skip if this transaction was already fully processed
+        if tx_hash in processed_txs:
+            continue
 
         global event_in_process  # noqa: PLW0603
         event_in_process = event
 
-        context = EventHandlerContext(
-            w3=w3,
-            event=event,
-            market=market,
-            session=session,
-            gho_asset=gho_asset,
-            cache=block_cache,
-            tx_discount_overrides=tx_discount_overrides,
-            tx_discount_updated_users=tx_discount_updated_users,
-            contract_address=get_checksum_address(event["address"]),
-        )
-        _dispatch_event(context)
+        if event["topics"][0] in IMMEDIATE_EVENTS:
+            # Process immediate events individually
+            context = EventHandlerContext(
+                w3=w3,
+                event=event,
+                market=market,
+                session=session,
+                gho_asset=gho_asset,
+                contract_address=get_checksum_address(event["address"]),
+                tx_context=tx_contexts.get(tx_hash),
+            )
+            _dispatch_event(context)
 
-    # If discount token was initialized during this run, fetch and process any
-    # stkAAVE events that were missed (since v_gho_discount_token was None when
-    # events were initially fetched)
-    # Find the first block where discount token was initialized in this run
-    discount_token_init_block = None
-    for event in sorted(all_events, key=operator.itemgetter("blockNumber", "logIndex")):
-        if event["topics"][0] == AaveV3Event.DISCOUNT_TOKEN_UPDATED.value:
-            old_token = _decode_address(event["topics"][1])
-            if old_token == ZERO_ADDRESS:
-                discount_token_init_block = event["blockNumber"]
-                break
-
-    if discount_token_init_block is not None and gho_asset.v_gho_discount_token is not None:
-        logger.info(
-            f"Processing missed stkAAVE events from block {discount_token_init_block} "
-            f"to {end_block}"
-        )
-        missed_events = fetch_logs_retrying(
-            w3=w3,
-            start_block=discount_token_init_block,
-            end_block=end_block,
-            address=[gho_asset.v_gho_discount_token],
-            topic_signature=[
-                [
-                    AaveV3Event.TRANSFER.value,
-                ],
-            ],
-        )
-        if missed_events:
-            logger.info(f"Found {len(missed_events)} missed Transfer events")
-            for event in sorted(missed_events, key=operator.itemgetter("blockNumber", "logIndex")):
-                context = EventHandlerContext(
-                    w3=w3,
-                    event=event,
-                    market=market,
-                    session=session,
-                    gho_asset=gho_asset,
-                    cache=BlockStateCache(w3=w3, block_number=event["blockNumber"]),
-                    tx_discount_overrides={},
-                    tx_discount_updated_users=set(),
-                    contract_address=gho_asset.v_gho_discount_token,
-                )
-                _process_stk_aave_transfer_event(context)
+        elif tx_hash in tx_needs_full_processing:
+            # Process entire transaction holistically with full context
+            tx_context = tx_contexts[tx_hash]
+            _process_transaction_with_context(
+                tx_context=tx_context,
+                market=market,
+                session=session,
+                w3=w3,
+                gho_asset=gho_asset,
+            )
+            processed_txs.add(tx_hash)
 
     # Perform full verification at chunk boundary
     if verify:
