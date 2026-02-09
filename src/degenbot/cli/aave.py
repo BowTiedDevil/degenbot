@@ -4278,7 +4278,10 @@ def update_aave_market(
     # Phase 1
     for event in _fetch_address_provider_events(
         w3=w3,
-        provider_address=_get_contract(market=market, contract_name="POOL_ADDRESS_PROVIDER"),
+        provider_address=_get_contract(
+            market=market,
+            contract_name="POOL_ADDRESS_PROVIDER",
+        ).address,
         start_block=start_block,
         end_block=end_block,
     ):
