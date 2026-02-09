@@ -11,17 +11,10 @@ For documentation read by humans and agents, see `docs/AGENTS.md`.
 - `uv run mypy` - Type check
 - `uv run maturin develop` - Build Rust extension (degenbot_rs module)
 
-## Lint & Types
-- Avoid `# noqa` / `# type: ignore` tags
-- Resolve `ruff check` warnings
-- Resolve `mypy` warnings
-
-## Type Hints
-Avoid `Any`, use `T | None` instead of `Optional[T]`. Use PEP 695 aliases where the base type is vague:
-```python
-type BlockNumber = int
-type ChainId = int
-```
+## Type Hinting, Checks
+- Never use `Any` type
+- Never use `# noqa` / `# type: ignore` tags
+- Resolve lint and type check warnings before committing
 
 ## Architecture
 - Domain packages: `src/degenbot/uniswap/`, `src/degenbot/curve/`, `src/degenbot/aave/`
@@ -50,15 +43,13 @@ class EVMRevertError(DegenbotError):
 - Catch specific exceptions (`except TimeoutError:`), avoid broad catches
 
 ## Logging
-Use module-level logger from `src/degenbot/logging.py`
+Import and use `logger` from `src/degenbot/logging.py`
 
 ## Testing
+- Add comment to complex tests describing "what" and "why"
 - Create a test double (PascalCase with `Fake` prefix) instead of mocking
-- Comment complex tests
-- Fixtures in `tests/conftest.py`
-- Autouse fixture resets global state
-- Target 90%+ coverage
-- Use `@pytest.mark.arbitrum`, `@pytest.mark.base`, or `@pytest.mark.ethereum` for chain-specific tests
+- Add reusable fixtures in `conftest.py`
+- Add mark for chain-specific tests: `@pytest.mark.arbitrum`, `@pytest.mark.base`, `@pytest.mark.ethereum` 
 
 ## Solidity
 Modules ported from Solidity contracts require integer division. Python `//` operator equals Solidity `/` operator.
@@ -67,7 +58,7 @@ Modules ported from Solidity contracts require integer division. Python `//` ope
 - Group related functionality in packages by domain (`uniswap`, `curve`, `aave`)
 - Keep library functions separate from stateful classes
 - Use type alias modules (`types.py`, `v2_types.py`, `v3_types.py`) for shared types
-- Place specific business logic in domain packages, cross-cutting concerns in core (`src/degenbot/`)
+- Place specific logic in domain packages, cross-cutting concerns in core (`src/degenbot/`)
 
 ## Design Patterns
 - Use `Protocol` for interfaces (`Publisher`, `Subscriber`)
@@ -82,19 +73,11 @@ Modules ported from Solidity contracts require integer division. Python `//` ope
 - Use `scoped_session` for thread safety
 - Migrations via Alembic in `src/degenbot/migrations/`
 
-## Documentation Path References
-- Files in `docs/<category>/` → use `../../src/degenbot/<module>/file.py`
-- Files in `docs/` root → use `../src/degenbot/<module>/file.py`
-- Cross-reference docs → use `../category/file.md`
-- External URLs → use full `https://`
-- Validate: `uv run python scripts/validate_doc_links.py`
-
 ## Editing This File
 AGENTS.md is for AI agents only. When editing it:
-
-- No Markdown links - Use plain paths: `src/degenbot/logging.py`
-- No TOC or index - Read sequentially
-- Minimal examples - Only for non-obvious rules
-- No styling - Omit colors and visual formatting
-- Concise - Give clear direction
+- No styling - omit colors, visual formatting
+- No metadata - omit frontmatter
+- Plain paths from the project root: `path/to/file`
+- Minimal examples - only for non-obvious rules
+- Give concise instruction
 - When writing AGENTS.md files, list items in order of importance, descending
