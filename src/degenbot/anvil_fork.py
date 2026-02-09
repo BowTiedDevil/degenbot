@@ -43,6 +43,7 @@ class AnvilFork:
     def __init__(
         self,
         *,
+        localhost: str = "127.0.0.1",
         fork_url: str,
         fork_block: BlockNumber | None = None,
         fork_transaction_hash: str | None = None,
@@ -113,6 +114,7 @@ class AnvilFork:
         else:
             self.ipc_provider_kwargs = {}
 
+        self.localhost = localhost
         self.port = self._get_free_port_number()
 
         command: AnvilOptions = [
@@ -174,7 +176,7 @@ class AnvilFork:
 
     @property
     def http_url(self) -> str:
-        return f"http://localhost:{self.port}"
+        return f"http://{self.localhost}:{self.port}"
 
     @property
     def ipc_filename(self) -> pathlib.Path:
@@ -190,7 +192,7 @@ class AnvilFork:
 
     @property
     def ws_url(self) -> str:
-        return f"ws://localhost:{self.port}"
+        return f"ws://{self.localhost}:{self.port}"
 
     @staticmethod
     def _get_free_port_number() -> int:

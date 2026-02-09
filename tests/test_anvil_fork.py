@@ -58,8 +58,8 @@ def test_web3_endpoints():
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
         storage_caching=False,
     )
-    assert fork.http_url == f"http://localhost:{fork.port}"
-    assert fork.ws_url == f"ws://localhost:{fork.port}"
+    assert fork.http_url == f"http://127.0.0.1:{fork.port}"
+    assert fork.ws_url == f"ws://127.0.0.1:{fork.port}"
 
     current_block = fork.w3.eth.block_number
     assert web3.Web3(web3.HTTPProvider(fork.http_url)).eth.block_number == current_block
@@ -229,6 +229,7 @@ def test_reset_to_new_transaction_hash():
 
 def test_ipc_kwargs():
     fork = AnvilFork(
+        localhost="127.0.0.1",
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
         storage_caching=False,
         ipc_provider_kwargs={"timeout": None},
