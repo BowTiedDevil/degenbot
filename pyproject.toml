@@ -159,7 +159,9 @@ ignore = [
     "PLR0911",  # too-many-return-statements
     "PLR0912",  # too-many-branches
     "PLR0913",  # too-many-arguments
+    "PLR0914",  # too-many-local-variables
     "PLR0915",  # too-many-statements
+    "RUF067",   # non-empty-init-module
     "S101",     # asserts are used often, but not as input validation
 ]
 logger-objects = [
