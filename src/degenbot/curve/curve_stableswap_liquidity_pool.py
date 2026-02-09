@@ -192,7 +192,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         silent:
             Suppress status output.
         state_cache_depth:
-            How many unique block-state pairs to hold in the state cache.
+            How many states to hold in the cache.
         """
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
