@@ -2184,7 +2184,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 )
                 logger.info("Solved")
                 logger.info(
-                    f"fee_multiplier                        = {[(float(fee[0]), float(fee[1])) for fee in fee_multiplier.value]}"  # noqa: E501
+                    f"fee_multiplier                        = {[(float(fee[0]), float(fee[1])) for fee in (fee_multiplier.value or [])]}"  # noqa: E501
                 )
                 logger.info(
                     f"forward_token_amount                  = {uncompressed_forward_token_amount}"
@@ -2202,13 +2202,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     f"deposits (pool_lo)                    = {deposits[pool_lo_index].value}"
                 )
                 logger.info(
-                    f"reserves_starting (pool_hi)           = {list(compressed_reserves_pre_swap[pool_hi_index].value)}"  # noqa: E501
+                    f"reserves_starting (pool_hi)           = {list(compressed_reserves_pre_swap[pool_hi_index].value or [])}"  # noqa: E501
                 )
                 logger.info(
                     f"reserves_ending   (pool_hi)           = {list(compressed_reserves_post_swap[pool_hi_index].value)}"  # noqa: E501
                 )
                 logger.info(
-                    f"reserves_starting (pool_lo)           = {list(compressed_reserves_pre_swap[pool_lo_index].value)}"  # noqa: E501
+                    f"reserves_starting (pool_lo)           = {list(compressed_reserves_pre_swap[pool_lo_index].value or [])}"  # noqa: E501
                 )
                 logger.info(
                     f"reserves_ending   (pool_lo)           = {list(compressed_reserves_post_swap[pool_lo_index].value)}"  # noqa: E501
