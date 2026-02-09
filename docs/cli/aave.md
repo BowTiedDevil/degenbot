@@ -45,42 +45,24 @@ The system tracks events from:
 
 ## GHO Token Support
 
-GHO is Aave's stablecoin with a special borrowing mechanism that provides discounts based on user's holdings of the discount token (stkAAVE on Ethereum mainnet). The CLI includes dedicated support for GHO:
+GHO is Aave's stablecoin with discounted borrowing based on stkAAVE holdings. The CLI tracks GHO positions with revision-specific logic:
 
-### GHO-Specific Tables
+### GHO Tables
 
-- **`AaveGhoTokenTable`**: Tracks GHO token attributes
-  - `v_gho_discount_token`: Address of the discount token (e.g., stkAAVE)
-  - `v_gho_discount_rate_strategy`: Address of the strategy contract that calculates discount rates
+- **`AaveGhoTokenTable`**: Discount token address and rate strategy
+- **`AaveV3UsersTable.gho_discount`**: User's discount percentage
 
-- **`AaveV3UsersTable.gho_discount`**: Stores the discount percentage for each GHO borrower
+### Revision Differences
 
-### GHO vToken Revisions
+- **Revision 1**: Uses `_accrueDebtOnAction()` for discount accounting
+- **Revision 2**: Uses `_get_discounted_balance()` with enhanced balance calculation
 
-The CLI supports GHO vToken revisions 1 and 2, each with different discount calculation logic:
+### GHO Processing
 
-- **Revision 1**: Simple discount accounting with `_accrueDebtOnAction()`
-- **Revision 2**: Enhanced discount balance calculation using `_get_discounted_balance()` which accounts for the discount in the total balance
-
-### GHO Event Processing
-
-GHO debt events (`Mint` and `Burn` from `GHO_VARIABLE_DEBT_TOKEN_ADDRESS`) use dedicated processors:
-
-- `_process_gho_debt_mint()`: Handles GHO borrow operations, accounting for discount scaling
-- `_process_gho_debt_burn()`: Handles GHO repay operations, including partial and full repayments
-
-These processors:
-1. Calculate the discount-scaled balance
-2. Determine the actual balance delta (amount scaled ± discount scaled)
-3. Update the user's GHO discount rate based on the new balances
-4. Fetch the discount token balance from the contract to calculate the new rate
-
-### Verification
-
-After each block, the CLI verifies GHO discount amounts:
-- Calls `getDiscountPercent(address)` on the GHO vToken contract
-- Compares against stored `gho_discount` value
-- Raises assertion error on mismatch
+Dedicated processors handle GHO Mint/Burn events:
+- Calculate discount-scaled balances
+- Update user discount rates based on position changes
+- Verify against contract after each block
 
 ## Offline Position Calculation
 
@@ -284,97 +266,44 @@ Emitted when user changes their efficiency mode category.
 
 ### Scaled Token Mint (`Mint`)
 
-**Important**: Mint events can originate from three sources, identified by comparing `value` and `balanceIncrease` event parameters:
-
-**Identification Algorithm:**
+Mint events originate from three sources, identified by comparing `value` and `balanceIncrease`:
 
 ```
-if value == balanceIncrease:
-    source = "_transfer" (collateral transfer)
-elif balanceIncrease > value:
-    source = "_burnScaled" (interest earned/accrued)
-elif value > balanceIncrease:
-    source = "_mintScaled" (user supply/borrow action)
+if value == balanceIncrease:     # _transfer - skip (BalanceTransfer handles this)
+elif balanceIncrease > value:    # _burnScaled - interest accrual
+else:                             # _mintScaled - user action (supply/borrow)
 ```
-
-**Source Details:**
-
-1. **`_transfer`**: aToken transfers between users (side effect of transfer operation)
-2. **`_burnScaled`**: Withdrawal where accrued interest exceeds withdrawal amount
-3. **`_mintScaled`**: User supplies collateral or borrows debt
 
 **User Operations:**
 
-The CLI tracks the following user operations through the `UserOperation` type:
+| Operation | Trigger |
+|-----------|---------|
+| `DEPOSIT` | aToken _mintScaled |
+| `WITHDRAW` | aToken _burnScaled (interest > withdrawal) |
+| `BORROW` | vToken _mintScaled |
+| `REPAY` | vToken _burnScaled (interest > repayment) |
+| `GHO BORROW` | GHO vToken mint |
+| `GHO REPAY` | GHO vToken burn |
 
-| Operation | Description |
-|-----------|-------------|
-| `DEPOSIT` | User supplies collateral |
-| `WITHDRAW` | User withdraws collateral |
-| `BORROW` | User borrows debt (standard) |
-| `REPAY` | User repays debt (standard) |
-| `GHO BORROW` | User borrows GHO (with discount) |
-| `GHO REPAY` | User repays GHO (with discount) |
+**Processing:**
+- `_mintScaled`: `amount = value - balanceIncrease`, `amountScaled = ray_div(amount, index)`
+- `_burnScaled`: Add `event_value` directly as interest
+- All sources create user/position if needed
 
-**Storage Effects:**
-- `_mintScaled`: Storage increased by `_mint(amountScaled)`
-- `_burnScaled`: Storage decreased by `_burn(amountScaled)`, interest portion emitted as Mint
-- `_transfer`: No storage change (BalanceTransfer event already handled)
-
-**Processing Rules:**
-
-- `_transfer` events: Skip (BalanceTransfer handled balance movement)
-- `_burnScaled` events: Add `event_value` directly as interest (no conversion)
-- `_mintScaled` events: Calculate user request `amount = value - balanceIncrease`, convert to scaled: `amountScaled = ray_div(amount, index)`
-
-**aTokens** (collateral):
-- `_transfer`: Skip processing
-- `_burnScaled`: Add `event_value` to `AaveV3CollateralPositionsTable.balance`
-- `_mintScaled`: Add `amountScaled` to `AaveV3CollateralPositionsTable.balance`
-
-**vTokens** (debt):
-- `_burnScaled`: Add `event_value` to `AaveV3DebtPositionsTable.balance`
-- `_mintScaled`: Add `amountScaled` to `AaveV3DebtPositionsTable.balance`
-
-**GHO vToken** (special handling):
-- Uses dedicated functions `_process_gho_debt_mint()` and `_process_gho_debt_burn()`
-- Tracks user's discount percentage for GHO borrowing
-- Accounts for discount-scaled balance when calculating delta
-- Updates user's GHO discount rate based on new balances
-- Supports GHO vToken revisions 1 and 2
-
-All sources create user entry and position if not exists.
-
-**Data models updated**: `AaveV3UsersTable`, `AaveV3CollateralPositionsTable` or `AaveV3DebtPositionsTable`, `AaveGhoTokenTable` (for GHO)
+**Data models**: `AaveV3UsersTable`, position tables, `AaveGhoTokenTable` for GHO
 
 ### Scaled Token Burn (`Burn`)
 
-Burn events always originate from `_burnScaled` after the storage is reduced by `_burn(amountScaled)`.
+Burn events always follow `_burn(amountScaled)` storage reduction.
 
-**aTokens** (collateral withdraw):
-- `_burn()` already subtracted `amountScaled` from storage
+**Processing:**
 - Event `value` = `amount - balanceIncrease` (net after interest)
-- To reconstruct the `amount` passed to `_burn()`: `amount = event_value + balance_increase`
-- Convert to scaled: `amountScaled = ray_div(amount, liquidity_index)`
-- Subtract from `AaveV3CollateralPositionsTable.balance` (matches `_burn()` call)
-- Deletes position if balance reaches zero
+- Reconstruct: `amount = event_value + balance_increase`
+- Convert: `amountScaled = ray_div(amount, index)`
+- Subtract `amountScaled` from position balance
+- Delete position if balance reaches zero
 
-**vTokens** (debt repay):
-- `_burn()` already subtracted `amountScaled` from storage
-- Event `value` = `amount - balanceIncrease` (net after interest)
-- To reconstruct the `amount` passed to `_burn()`: `amount = event_value + balance_increase`
-- Convert to scaled: `amountScaled = ray_div(amount, liquidity_index)`
-- Subtract from `AaveV3DebtPositionsTable.balance` (matches `_burn()` call)
-- Deletes position if balance reaches zero
-
-**GHO vToken** (special handling):
-- Uses `_process_gho_debt_burn()` for revision-specific logic
-- Supports revision 1: Simple discount accounting
-- Supports revision 2: Enhanced discount balance calculation with `_get_discounted_balance()`
-- Updates user's GHO discount rate based on remaining balance
-- Accounts for discount-scaled balance when calculating delta
-
-**Data models updated**: `AaveV3CollateralPositionsTable` or `AaveV3DebtPositionsTable`, `AaveV3UsersTable.gho_discount` (for GHO)
+**GHO vToken**: Uses `_process_gho_debt_burn()` with revision-specific logic (1 or 2).
 
 ### Balance Transfer (`BalanceTransfer`)
 
@@ -405,22 +334,6 @@ Emitted when the discount token for GHO vToken changes.
 Emitted when the discount rate strategy for GHO vToken changes. The strategy calculates discount percentages based on user's GHO debt and discount token balances.
 
 **Data model updated**: `AaveGhoTokenTable.v_gho_discount_rate_strategy`
-
-## Data Model Updates
-
-All database models are defined in [`src/degenbot/database/models/aave.py`](../../src/degenbot/database/models/aave.py):
-
-| Table | Fields Updated | Notes |
-|-------|----------------|-------|
-| `AaveV3MarketTable` | `last_update_block` | After each chunk completes |
-| `AaveV3ContractsTable` | `address`, `revision` | New proxy contracts or implementation changes |
-| `AaveV3AssetsTable` | `liquidity_rate`, `borrow_rate`, `liquidity_index`, `borrow_index`, `last_update_block` | From ReserveDataUpdated events |
-| `AaveV3AssetsTable` | `a_token_revision`, `v_token_revision` | From Upgraded events |
-| `AaveV3UsersTable` | `e_mode`, `gho_discount` | From UserEModeSet and GHO events |
-| `AaveV3CollateralPositionsTable` | `balance`, `last_index` | From Mint (3 sources), Burn, BalanceTransfer events |
-| `AaveV3DebtPositionsTable` | `balance`, `last_index` | From Mint (2 sources), Burn events |
-| `AaveGhoTokenTable` | `v_gho_discount_token`, `v_gho_discount_rate_strategy` | From GHO discount events |
-| `Erc20TokenTable` | New rows created | For underlying assets, aTokens, vTokens |
 
 ## Error Handling & Validation
 
@@ -575,181 +488,36 @@ rpc:
 - **Logging**: Click for CLI output, tqdm for progress bars
 - **Token Revisions**: Protocol-based library selection for different Aave V3 token implementations
 
-## Solidity Smart Contract Source Code
+## Solidity Reference
 
-The Aave CLI references and interacts with Solidity smart contract source code located in [`src/degenbot/aave/libraries/`](../../src/degenbot/aave/libraries/). These libraries contain the original Aave V3 smart contract implementations for token management and mathematical operations.
+The CLI interacts with Aave V3 contracts. Key implementation details in [`src/degenbot/aave/libraries/`](../../src/degenbot/aave/libraries/):
 
-### Library Structure
-
-#### `v3_1/` - Aave V3 v3.1 Implementation
-
-Contains the initial Aave V3 token implementations:
-
-- **[WadRayMath.sol](../../src/degenbot/aave/libraries/v3_1/WadRayMath.sol)**: Core mathematical library for fixed-point arithmetic
-  - `wadMul/wadDiv`: Operations on WAD values (18 decimal places)
-  - `rayMul/rayDiv`: Operations on RAY values (27 decimal places)
-  - `rayToWad/wadToRay`: Conversions between precision levels
-  - Used for calculating scaled balances and interest indices
-
-- **[AToken.sol](../../src/degenbot/aave/libraries/v3_1/AToken.sol)**: Interest-bearing token implementation for collateral deposits
-  - `mint()`: Called when users supply collateral
-  - `burn()`: Called when users withdraw collateral
-  - `balanceOf()`: Returns actual balance = scaled_balance * liquidity_index
-  - `transferOnLiquidation()`: Handles token transfers during liquidations
-
-- **[IScaledBalanceToken.sol](../../src/degenbot/aave/libraries/v3_1/IScaledBalanceToken.sol)**: Interface defining scaled balance token behavior
-  - `Mint` event: Emitted on token mint (includes balanceIncrease)
-  - `Burn` event: Emitted on token burn
-  - `scaledBalanceOf()`: Returns scaled balance without index applied
-
-- **[ScaledBalanceTokenBase.sol](../../src/degenbot/aave/libraries/v3_1/ScaledBalanceTokenBase.sol)**: Base implementation for scaled tokens
-  - `_mintScaled()`: Core logic for minting with index adjustment
-  - `_burnScaled()`: Core logic for burning with index adjustment
-  - `_transfer()`: Handles transfers with index updates for both parties
-
-- **[MintableIncentivizedERC20.sol](../../src/degenbot/aave/libraries/v3_1/MintableIncentivizedERC20.sol)**: Incentives-aware ERC20 base
-  - Integrates with Aave incentives controller for reward distribution
-  - **Note**: File exists as `ncentivizedERC20.sol` (missing leading "I" due to filesystem issue)
-
-#### `v3_2/` - Aave V3 v3.2 Implementation
-
-- **[WadRayMath.sol](../../src/degenbot/aave/libraries/v3_2/WadRayMath.sol)**: Enhanced version with additional operations
-
-#### `v3_3/` - Aave V3 v3.3 Implementation
-
-- **[WadRayMath.sol](../../src/degenbot/aave/libraries/v3_3/WadRayMath.sol)**: Enhanced version with additional operations
-
-#### `v3_4/` - Aave V3 v3.4 Implementation
-
-- **[WadRayMath.sol](../../src/degenbot/aave/libraries/v3_4/WadRayMath.sol)**: Enhanced version with expanded math operations
-- **[WadRayMath.t.sol](../../src/degenbot/aave/libraries/v3_4/WadRayMath.t.sol)**: Unit tests for the WadRayMath library
-
-#### `v3_5/` - Aave V3 v3.5 Implementation (Python ports only)
-
-- **[wad_ray_math.py](../../src/degenbot/aave/libraries/v3_5/wad_ray_math.py)**: Python port with explicit rounding control
-  - `@overload` decorators for optional `Rounding` parameter
-  - Matches Solidity rounding behavior exactly
-- **[rounding.py](../../src/degenbot/aave/libraries/v3_5/rounding.py)**: Python enum defining `Rounding` type (CEILING, FLOOR, NONE)
-- **[types.py](../../src/degenbot/aave/libraries/v3_5/types.py)**: Python type aliases for Ray/Wad values
-
-### Key Concepts in Solidity Implementation
-
-#### Events vs Storage Modifications
-
-**Important distinction**: Events are **read-only notifications** that do not modify contract storage. All actual balance changes occur in the `_mint()` and `_burn()` function calls.
+### Scaled Balance Pattern
 
 ```solidity
-// From [ScaledBalanceTokenBase.sol](../../src/degenbot/aave/libraries/v3_1/ScaledBalanceTokenBase.sol)
-
-// Mint operations: _mint() adds to storage
-function _mintScaled(...) internal returns (bool) {
+// From ScaledBalanceTokenBase.sol
+function _mintScaled(...) {
   uint256 amountScaled = amount.rayDiv(index);
-  _mint(onBehalfOf, amountScaled.toUint128());  // <-- STORAGE CHANGE HERE
-  emit Mint(caller, onBehalfOf, amount + balanceIncrease, balanceIncrease, index);
-}
-
-// Burn operations: _burn() subtracts from storage
-function _burnScaled(...) internal {
-  uint256 amountScaled = amount.rayDiv(index);
-  _burn(user, amountScaled.toUint128());  // <-- STORAGE CHANGE HERE
-  
-  if (balanceIncrease > amount) {
-    emit Mint(user, user, balanceIncrease - amount, balanceIncrease, index);
-  } else {
-    emit Burn(user, target, amount - balanceIncrease, balanceIncrease, index);
-  }
+  _mint(onBehalfOf, amountScaled.toUint128());  // Storage change
+  emit Mint(..., amount + balanceIncrease, balanceIncrease, index);  // Event
 }
 ```
 
-**Key insight**: The CLI's `position.balance` field tracks the **scaled balance** that is modified by `_mint()` and `_burn()`. To synchronize correctly, event processing must calculate the exact `amountScaled` that was passed to these storage-modifying functions.
+Events are notifications only. Actual storage changes happen in `_mint()` and `_burn()` calls using `amountScaled`.
 
-- `_mint(amountScaled)` → position.balance += amountScaled
-- `_burn(amountScaled)` → position.balance -= amountScaled
+### Rounding
 
-Where `amountScaled = ray_div(user_requested_amount, index)`.
+Solidity uses half-up rounding: `(a * b + HALF_RAY) / RAY`
 
-#### Scaled Balances
+The Python port in `v3_1/wad_ray_math.py` must match this exactly for correct balance synchronization.
 
-The Solidity contracts use the same scaled balance pattern tracked by the CLI:
+### Event Structure
 
-```solidity
-// From [AToken.sol:129](../../src/degenbot/aave/libraries/v3_1/AToken.sol#L129)
-function balanceOf(address user) public view returns (uint256) {
-  return super.balanceOf(user).rayMul(POOL.getReserveNormalizedIncome(_underlyingAsset));
-}
-```
+Mint/Burn events include:
+- `value`: Emitted amount (not storage amount)
+- `balanceIncrease`: Interest since last action
+- `index`: Current liquidity/borrow index
 
-This matches the CLI calculation (see **Background** section above).
+CLI derives storage amounts: `amountScaled = ray_div(user_amount, index)`
 
-#### Event Signatures
 
-The Solidity contracts emit the same events tracked by the CLI:
-
-```solidity
-// From [IScaledBalanceToken.sol:18](../../src/degenbot/aave/libraries/v3_1/IScaledBalanceToken.sol#L18)
-event Mint(
-  address indexed caller,
-  address indexed onBehalfOf,
-  uint256 value,              // Emitted amount (not directly used for storage)
-  uint256 balanceIncrease,    // Interest accrued since last action
-  uint256 index               // New liquidity index
-);
-
-event Burn(
-  address indexed from,
-  address indexed target,
-  uint256 value,              // Emitted amount (not directly used for storage)
-  uint256 balanceIncrease,    // Interest accrued since last action
-  uint256 index               // New liquidity index
-);
-```
-
-**Critical**: Event `value` is a notification parameter, **not the amount that was changed in storage**. The actual storage change uses `amountScaled = ray_div(amount, index)` where `amount` is the user's requested action amount.
-
-See the **Scaled Token Mint** and **Scaled Token Burn** sections above for the CLI-level calculations that derive `amount` from event parameters and convert to scaled values.
-
-### Rounding Behavior
-
-Solidity implementations use **half-up rounding** by default:
-
-```solidity
-// From [WadRayMath.sol:72](../../src/degenbot/aave/libraries/v3_1/WadRayMath.sol#L72)
-c := div(add(mul(a, b), HALF_RAY), RAY)  // Add 0.5 before division
-```
-
-The CLI's Python port uses `ray_div()` which must match this behavior exactly.
-
-### Reference Implementation
-
-When working with Aave CLI commands, consult these Solidity files to understand:
-1. **Event structure**: What data each event contains
-2. **Index calculation**: How liquidity/borrow indices are applied
-3. **Balance semantics**: When Mint vs Burn events occur
-4. **Transfer logic**: How `BalanceTransfer` events differ from standard transfers
-
-## Development Notes
-
-### Verbose Logging
-
-For debugging, the code includes verbose logging controls:
-- `VERBOSE_USERS`: Set of addresses to trace individually
-- `VERBOSE_ALL`: Global flag for logging all operations
-
-### Verification
-On each new block, the code will perform a verification that asserts the database matches the scaled balance lookup at the Pool contract.
-
-### Position Lifecycle Edge Cases
-
-When processing events that modify positions (Mint, Burn, BalanceTransfer), careful attention must be paid to the order in which events occur within the same block/transaction:
-
-- **BalanceTransfer + Mint sequence**: A BalanceTransfer event may reduce a sender's balance to zero, causing position deletion. If a subsequent Mint event (e.g., interest accrual) in the same block affects that user, the position must be recreated.
-- **Zero balance handling**: Positions with zero balance are deleted to reduce database size. However, any subsequent event affecting that user must recreate the position before applying the balance change.
-- **Event ordering**: All events are sorted by `(blockNumber, logIndex)` to ensure chronological processing within blocks. The Solidity contract event emission order must match this ordering for correct synchronization.
-
-**Current implementation**: The Mint event processor detects `_transfer` source events and skips them (since BalanceTransfer already handled the balance movement), relying on BalanceTransfer to have created or maintained the necessary positions.
-
-### Future Enhancements
-
-TODO comments in source indicate planned features:
-- Scraper for collateral usage enabled events
-- Progress bars for update operations (already partially implemented with tqdm)

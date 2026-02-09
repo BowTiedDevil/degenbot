@@ -76,11 +76,7 @@ degenbot database backup
 #### Example Usage
 
 ```bash
-# Create backup of default database
 degenbot database backup
-
-# Output when backup exists:
-# An existing backup was found at /path/to/database.db.bak. Do you want to remove it and continue? [y/N]:
 ```
 
 #### Backup File Location
@@ -110,10 +106,6 @@ degenbot database reset
 
 ```bash
 degenbot database reset
-
-# Output:
-# The existing database at /path/to/database.db will be removed and a new, empty database will be
-# initialized using the schema included in degenbot version X.Y.Z. Do you want to proceed? [y/N]:
 ```
 
 ### `degenbot database upgrade`
@@ -140,14 +132,8 @@ degenbot database upgrade [--force]
 #### Example Usage
 
 ```bash
-# Interactive upgrade with confirmation
-degenbot database upgrade
-
-# Force upgrade without confirmation
-degenbot database upgrade --force
-
-# Output:
-# The database at /path/to/database.db will be upgraded from version abc123 to def456. Do you want to proceed? [y/N]:
+degenbot database upgrade          # Interactive with confirmation
+degenbot database upgrade --force  # Skip confirmation
 ```
 
 #### Migration Versioning
@@ -181,16 +167,11 @@ degenbot database compact
 
 ```bash
 degenbot database compact
-
-# No output (silent success)
 ```
 
 #### When to Use
 
-- After large data deletions (e.g., removing old exchange data)
-- Before backups to reduce file size
-- When database file has grown significantly with many deletions
-- Periodically for maintenance on frequently updated databases
+Use after large deletions, before backups, or when database has grown significantly with many deletions.
 
 ## Database Initialization
 
@@ -216,91 +197,18 @@ connection.execute(text("VACUUM;"))
 command.stamp(get_alembic_config(), "head")
 ```
 
-## Data Flow
-
-```mermaid
-graph TD
-    subgraph Database_Backup
-        A[database_backup] --> B[Checkpoint WAL]
-        B --> C{Backup exists?}
-        C -->|No| D[Create .bak file]
-        C -->|Yes| E[Show BackupExists error]
-        E --> F{User confirms overwrite?}
-        F -->|Yes| G[Remove existing backup]
-        G --> D
-        F -->|No| H[Abort operation]
-    end
-
-    subgraph Database_Reset
-        I[database_reset] --> J{User confirms?}
-        J -->|No| H
-        J -->|Yes| K[Remove database file]
-        K --> L[Create new database]
-        L --> M[Configure WAL mode]
-        M --> N[Enable auto vacuum]
-        N --> O[Create all tables]
-        O --> P[Initial VACUUM]
-        P --> Q[Stamp Alembic head]
-    end
-
-    subgraph Database_Upgrade
-        R[database_upgrade] --> S{Force flag?}
-        S -->|No| T{User confirms?}
-        T -->|No| H
-        S -->|Yes| U[Run Alembic migrations]
-        T -->|Yes| U
-        U --> V[Apply pending migrations]
-        V --> W[Update alembic_version]
-    end
-
-    subgraph Database_Compact
-        X[database_compact] --> Y[Connect to database]
-        Y --> Z[Execute VACUUM]
-        Z --> AA[Log completion]
-    end
-```
-
 ## Database Schema Changes
-
-### Migration Files
-
-Each migration file in [`src/degenbot/migrations/versions/`](../../src/degenbot/migrations/versions/) contains:
-
-- **Revision ID**: Unique hash identifying the migration
-- **Upgrade script**: `upgrade()` function for applying changes
-- **Downgrade script**: `downgrade()` function for reverting changes
-- **Dependencies**: List of parent revisions
-
-Example migration file:
-```python
-revision = 'abc123def456'
-down_revision = '987654321abc'
-branch_labels = None
-depends_on = None
-
-def upgrade() -> None:
-    # Apply schema changes
-    op.add_column('table_name', sa.Column('new_column', sa.Integer()))
-
-def downgrade() -> None:
-    # Revert schema changes
-    op.drop_column('table_name', 'new_column')
-```
 
 ### Creating New Migrations
 
-To add new database migrations:
+Generate and apply migrations using Alembic:
 
 ```bash
-# Generate a new migration script (run from project root)
 alembic revision --autogenerate -m "description of changes"
-
-# Edit the generated migration file if needed
-# vim src/degenbot/migrations/versions/[new_revision]_description.py
-
-# Apply the migration
 degenbot database upgrade
 ```
+
+Migration files are stored in `src/degenbot/migrations/versions/`.
 
 ## Configuration
 
@@ -313,36 +221,11 @@ settings.database.path  # pathlib.Path to database file
 
 Default database location depends on the platform and configuration.
 
-### SQLite Performance Settings
-
-The database is configured with these SQLite pragmas:
-
-| Pragma | Value | Purpose |
-|--------|-------|---------|
-| `journal_mode` | `WAL` | Allow concurrent reads and writes |
-| `auto_vacuum` | `FULL` | Automatically reclaim free space |
-| `VACUUM` | Run on init/optimize | Defragment and optimize storage |
-
 ## Error Handling
 
-### BackupExists
+**BackupExists**: Raised when backup file already exists. User can choose to overwrite or abort.
 
-Raised by `backup_sqlite_database()` when a backup file already exists at the target path.
-
-```python
-class BackupExists(DegenbotError):
-    def __init__(self, path: pathlib.Path) -> None:
-        self.path = path
-        super().__init__(message=f"A backup at {path} already exists.")
-```
-
-**Resolution**: User can choose to overwrite the existing backup or abort.
-
-### Version Mismatch
-
-Logged as a warning on startup if database version doesn't match the code version.
-
-**Resolution**: Run `degenbot database upgrade` to apply pending migrations.
+**Version Mismatch**: Logged on startup if database version doesn't match code version. Run `degenbot database upgrade` to apply pending migrations.
 
 ## Related Functions
 
@@ -379,85 +262,10 @@ with db_session() as session:
 - **CLI**: Click
 - **Logging**: degenbot logging module
 
-## Development Notes
-
-### Thread Safety
-
-The database session uses `scoped_session` for thread safety:
-
-```python
-return scoped_session(
-    session_factory=sessionmaker(bind=create_engine(...))
-)
-```
-
-This ensures each thread gets its own session while sharing the connection pool.
-
-### WAL Checkpointing
-
-Before creating a backup, the code performs a full WAL checkpoint:
-
-```python
-connection.execute(text("PRAGMA wal_checkpoint(FULL);"))
-```
-
-This ensures all WAL journal entries are flushed to the main database file for a consistent backup.
-
-### Batch Mode Migrations
-
-Alembic is configured with `render_as_batch=True` for batch mode operations, which is required for SQLite's limited ALTER TABLE support.
-
-```python
-context.configure(
-    connection=connection,
-    target_metadata=target_metadata,
-    render_as_batch=True,
-)
-```
-
 ## Example Workflows
 
-### Initial Setup
+**Initial Setup**: Reset database, activate exchanges, then run updates.
 
-```bash
-# 1. Create a new empty database
-degenbot database reset
+**Regular Maintenance**: Backup before updates, then compact if database grew significantly.
 
-# 2. Activate exchanges
-degenbot exchange activate ethereum_uniswap_v3
-degenbot exchange activate base_aerodrome_v2
-
-# 3. Run initial updates
-degenbot pool update
-```
-
-### Regular Maintenance
-
-```bash
-# 1. Create backup before updates
-degenbot database backup
-
-# 2. Run updates
-degenbot pool update
-degenbot aave update
-
-# 3. Compact database if it grew significantly
-degenbot database compact
-```
-
-### Schema Upgrade
-
-```bash
-# After pulling code with new migrations
-degenbot database upgrade --force
-```
-
-### Data Recovery
-
-```bash
-# Restore from backup (manual operation)
-cp database.db.bak database.db
-
-# Verify version matches
-degenbot database info  # (if command exists)
-```
+**Schema Upgrade**: Run `degenbot database upgrade --force` after pulling code with new migrations.
