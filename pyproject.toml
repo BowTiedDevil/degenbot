@@ -207,6 +207,7 @@ markers = [
 dev = [
     "hypothesis",
     "maturin",
+    "mypy",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
@@ -214,6 +215,7 @@ dev = [
     "pytest-sugar",
     "pytest-xdist",
     "python-dotenv",
+    "ruff",
 ]
 
 [tool.uv]
