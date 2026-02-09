@@ -480,6 +480,18 @@ rpc:
   # ... other chain IDs
 ```
 
+## Environment Variables
+
+### Aave Verbose Logging
+
+The Aave CLI also supports selective verbose logging:
+
+| Variable | Values | Description |
+|----------|--------|-------------|
+| `DEGENBOT_VERBOSE_ALL` | `1`, `true`, `yes` | Enable all verbose logging for Aave events |
+| `DEGENBOT_VERBOSE_USERS` | Comma-separated addresses | Enable verbose logging for specific user addresses |
+| `DEGENBOT_VERBOSE_TX` | Comma-separated hashes | Enable verbose logging for specific transaction hashes |
+
 ## Dependencies
 
 - **Database**: SQLAlchemy ORM (see [`src/degenbot/database/models/aave.py`](../../src/degenbot/database/models/aave.py))
