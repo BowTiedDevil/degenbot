@@ -6,9 +6,9 @@ For documentation read by humans and agents, see `docs/AGENTS.md`.
 - `uv run pytest tests/...::test_name` - Run specific test
 - `uv run pytest` - Run all tests
 - `uv run pytest -n0` - Run without parallelization
-- `ruff check` - Lint Python code
-- `ruff format` - Format Python code
-- `mypy` - Type check with strict mode enabled
+- `uv run ruff check` - Lint Python code
+- `uv run ruff format` - Format Python code
+- `uv run mypy` - Type check
 - `uv run maturin develop` - Build Rust extension (degenbot_rs module)
 
 ## Lint & Types
