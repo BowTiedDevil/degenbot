@@ -174,7 +174,9 @@ allow-star-arg-any = true
 "tests/*" = [
     "ANN",      # type annotations for tests are low priority
     "C90",      # high complexity tests are acceptable
+    "PLR0904",  # don't restrict the number of methods for class-based patterns
     "PLR2004",  # many tests compare results against arbitrary values — transforming to named constants is not worthwhile
+    "PLR6301",  # allow tests using class-based patterns 
     "S",        # asserts are expected for testing
     "SLF",      # tests may need to access private attributes to test implementation
     "T20",      # many tests use print
