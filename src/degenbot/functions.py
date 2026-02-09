@@ -238,13 +238,14 @@ def fetch_logs_retrying(
                             )
                         )
                     except Exception:
+                        old_working_span = working_span
                         working_span = _reduce_working_span(
                             working_span=working_span,
                             percent=25,
                         )
                         logger.debug(
                             f"Attempt {attempt.retry_state.attempt_number} timed out "
-                            f"fetching {chunk_end - start_block + 1} blocks. "
+                            f"fetching {old_working_span} blocks. "
                             f"Reducing to {working_span}..."
                         )
                         raise
@@ -327,13 +328,14 @@ async def fetch_logs_retrying_async(
                         )
                         event_logs.extend(logs)
                     except (Timeout, Web3Exception):
+                        old_working_span = working_span
                         working_span = _reduce_working_span(
                             working_span=working_span,
                             percent=25,
                         )
                         logger.debug(
                             f"Attempt {attempt.retry_state.attempt_number} timed out "
-                            f"fetching {chunk_end - start_block + 1} blocks. "
+                            f"fetching {old_working_span} blocks. "
                             f"Reducing to {working_span}..."
                         )
                         raise
