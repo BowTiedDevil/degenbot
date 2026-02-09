@@ -142,7 +142,6 @@ select = [
     "PTH",      # flake8-use-pathlib
     "FLY",      # flynt
     "I",        # isort
-    "C90",      # mccabe
     "NPY",      # numpy-specific
     "N",        # pep8-naming
     "PERF",     # perflint
