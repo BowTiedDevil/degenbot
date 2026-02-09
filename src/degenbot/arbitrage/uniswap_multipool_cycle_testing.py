@@ -28,7 +28,16 @@ from degenbot.logging import logger
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 
-DEBUG_VERIFY_CACHED_PROBLEM = False
+
+class FakeToken: ...
+
+
+class FakePool:
+    token0: FakeToken
+    token1: FakeToken
+    tokens: tuple[FakeToken, FakeToken]
+    fee_token0 = Fraction(3, 1000)
+    fee_token1 = Fraction(3, 1000)
 
 
 def _build_convex_problem(num_pools: int) -> Problem:
@@ -41,15 +50,6 @@ def _build_convex_problem(num_pools: int) -> Problem:
 
     ref: https://www.cvxpy.org/tutorial/dpp/index.html
     """
-
-    class FakePool:
-        token0: "FakeToken"
-        token1: "FakeToken"
-        tokens: tuple["FakeToken", "FakeToken"]
-        fee_token0 = Fraction(3, 1000)
-        fee_token1 = Fraction(3, 1000)
-
-    class FakeToken: ...
 
     num_tokens = num_pools
 
