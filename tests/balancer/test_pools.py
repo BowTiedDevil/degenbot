@@ -1,3 +1,4 @@
+import enum
 import json
 from fractions import Fraction
 
@@ -27,10 +28,10 @@ BALANCER_V2_VAULT_ABI = json.loads(
     """  # noqa:E501
 )
 
-BALANCER_V2_QUERY_CONTRACT_ADDRESS = get_checksum_address(
+BALANCERQUERIES_CONTRACT_ADDRESS = get_checksum_address(
     "0xE39B5e3B6D74016b2F6A9673D7d7493B6DF549d5"
 )
-BALANCER_V2_QUERY_CONTRACT_ABI = json.loads(
+BALANCERQUERIES_CONTRACT_ABI = json.loads(
     """
     [{"inputs":[{"internalType":"contract IVault","name":"_vault","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[{"internalType":"enum IVault.SwapKind","name":"kind","type":"uint8"},{"components":[{"internalType":"bytes32","name":"poolId","type":"bytes32"},{"internalType":"uint256","name":"assetInIndex","type":"uint256"},{"internalType":"uint256","name":"assetOutIndex","type":"uint256"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"bytes","name":"userData","type":"bytes"}],"internalType":"struct IVault.BatchSwapStep[]","name":"swaps","type":"tuple[]"},{"internalType":"contract IAsset[]","name":"assets","type":"address[]"},{"components":[{"internalType":"address","name":"sender","type":"address"},{"internalType":"bool","name":"fromInternalBalance","type":"bool"},{"internalType":"address payable","name":"recipient","type":"address"},{"internalType":"bool","name":"toInternalBalance","type":"bool"}],"internalType":"struct IVault.FundManagement","name":"funds","type":"tuple"}],"name":"queryBatchSwap","outputs":[{"internalType":"int256[]","name":"assetDeltas","type":"int256[]"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"poolId","type":"bytes32"},{"internalType":"address","name":"sender","type":"address"},{"internalType":"address","name":"recipient","type":"address"},{"components":[{"internalType":"contract IAsset[]","name":"assets","type":"address[]"},{"internalType":"uint256[]","name":"minAmountsOut","type":"uint256[]"},{"internalType":"bytes","name":"userData","type":"bytes"},{"internalType":"bool","name":"toInternalBalance","type":"bool"}],"internalType":"struct IVault.ExitPoolRequest","name":"request","type":"tuple"}],"name":"queryExit","outputs":[{"internalType":"uint256","name":"bptIn","type":"uint256"},{"internalType":"uint256[]","name":"amountsOut","type":"uint256[]"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"poolId","type":"bytes32"},{"internalType":"address","name":"sender","type":"address"},{"internalType":"address","name":"recipient","type":"address"},{"components":[{"internalType":"contract IAsset[]","name":"assets","type":"address[]"},{"internalType":"uint256[]","name":"maxAmountsIn","type":"uint256[]"},{"internalType":"bytes","name":"userData","type":"bytes"},{"internalType":"bool","name":"fromInternalBalance","type":"bool"}],"internalType":"struct IVault.JoinPoolRequest","name":"request","type":"tuple"}],"name":"queryJoin","outputs":[{"internalType":"uint256","name":"bptOut","type":"uint256"},{"internalType":"uint256[]","name":"amountsIn","type":"uint256[]"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"internalType":"bytes32","name":"poolId","type":"bytes32"},{"internalType":"enum IVault.SwapKind","name":"kind","type":"uint8"},{"internalType":"contract IAsset","name":"assetIn","type":"address"},{"internalType":"contract IAsset","name":"assetOut","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"bytes","name":"userData","type":"bytes"}],"internalType":"struct IVault.SingleSwap","name":"singleSwap","type":"tuple"},{"components":[{"internalType":"address","name":"sender","type":"address"},{"internalType":"bool","name":"fromInternalBalance","type":"bool"},{"internalType":"address payable","name":"recipient","type":"address"},{"internalType":"bool","name":"toInternalBalance","type":"bool"}],"internalType":"struct IVault.FundManagement","name":"funds","type":"tuple"}],"name":"querySwap","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"vault","outputs":[{"internalType":"contract IVault","name":"","type":"address"}],"stateMutability":"view","type":"function"}]
     """  # noqa:E501
@@ -64,6 +65,10 @@ def test_create_pool(ethereum_balancer_v2_weth_bal_pool: BalancerV2Pool):
     assert lp.weights == (80 * 10**16, 20 * 10**16)
 
 
+class SwapKind(enum.Enum):
+    GIVEN_IN = 0
+    GIVEN_OUT = 1
+
 
 @pytest.mark.xfail(reason="Balancer calculations are WIP", strict=True)
 def test_calculations(
@@ -75,8 +80,7 @@ def test_calculations(
     lp = ethereum_balancer_v2_weth_bal_pool
 
     query_contract = fork_mainnet_full.w3.eth.contract(
-        address=BALANCER_V2_QUERY_CONTRACT_ADDRESS,
-        abi=BALANCER_V2_QUERY_CONTRACT_ABI,
+        address=BALANCERQUERIES_CONTRACT_ADDRESS, abi=BALANCERQUERIES_CONTRACT_ABI
     )
 
     vault_contract = fork_mainnet_full.w3.eth.contract(
@@ -120,9 +124,8 @@ def test_calculations(
             contract_amount_out = query_contract.functions.querySwap(
                 (
                     # singleSwap tuple
-                    #
                     lp.pool_id,  # poolId
-                    0,  # kind - TODO: make EXACT_IN / EXACT_OUT an enum
+                    SwapKind.GIVEN_IN.value,  # swapKind
                     lp.tokens[0].address,  # assetIn
                     lp.tokens[1].address,  # assetOut
                     token_in_amount,  # amount,
@@ -159,9 +162,8 @@ def test_calculations(
             contract_amount_out = query_contract.functions.querySwap(
                 (
                     # singleSwap tuple
-                    #
                     lp.pool_id,  # poolId
-                    0,  # kind - TODO: make EXACT_IN / EXACT_OUT an enum
+                    SwapKind.GIVEN_IN.value,  # swapKind
                     lp.tokens[1].address,  # assetIn
                     lp.tokens[0].address,  # assetOut
                     token_in_amount,  # amount,
