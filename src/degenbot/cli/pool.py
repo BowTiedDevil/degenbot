@@ -14,6 +14,7 @@ from hexbytes import HexBytes
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
 from sqlalchemy.orm import Session
+from tqdm.contrib.logging import logging_redirect_tqdm
 from web3 import Web3
 from web3.types import LogReceipt
 
@@ -50,6 +51,7 @@ from degenbot.functions import (
     get_number_for_block_identifier,
     raw_call,
 )
+from degenbot.logging import logger
 from degenbot.types.aliases import ChainId, Tick, Word
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
@@ -2072,7 +2074,7 @@ def pool_update(chunk_size: int, to_block: str) -> None:
     Update liquidity pool information for activated exchanges.
     """
 
-    with db_session() as session:
+    with db_session() as session, logging_redirect_tqdm(loggers=[logger]):  # noqa:PLR1702
         active_chains = set(
             session.scalars(select(ExchangeTable.chain_id).where(ExchangeTable.active)).all()
         )
