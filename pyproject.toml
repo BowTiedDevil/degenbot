@@ -235,6 +235,9 @@ publish-url = "https://test.pypi.org/legacy/"
 explicit = true
 
 [tool.maturin]
+manifest-path = "rust/Cargo.toml"
+python-source = "src"
+module-name = "degenbot_rs"
 bindings = "pyo3"
 profile = "release"
 features = ["pyo3/extension-module"]
