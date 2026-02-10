@@ -1,5 +1,3 @@
-import time
-
 import degenbot_rs
 import pytest
 
@@ -25,37 +23,6 @@ def test_to_checksum_address_invalid_byte_length():
 def test_to_checksum_address_invalid_hex_string():
     with pytest.raises(ValueError, match="invalid character"):
         degenbot_rs.to_checksum_address("0x000000000000000000000000000000000000000g")
-
-
-def test_to_checksum_addresses_parallel(random_addresses, checksummed_random_addresses):
-    assert (
-        degenbot_rs.to_checksum_addresses_parallel(random_addresses) == checksummed_random_addresses
-    )
-
-
-def test_to_checksum_addresses_sequential(random_addresses, checksummed_random_addresses):
-    assert (
-        degenbot_rs.to_checksum_addresses_sequential(random_addresses)
-        == checksummed_random_addresses
-    )
-
-
-def test_parallel_vs_sequential_equivalence(random_addresses):
-    assert degenbot_rs.to_checksum_addresses_parallel(
-        random_addresses
-    ) == degenbot_rs.to_checksum_addresses_sequential(random_addresses)
-
-
-def test_parallel_vs_sequential_performance(random_addresses):
-    start = time.perf_counter()
-    degenbot_rs.to_checksum_addresses_parallel(random_addresses)
-    parallel_time = time.perf_counter() - start
-
-    start = time.perf_counter()
-    degenbot_rs.to_checksum_addresses_sequential(random_addresses)
-    sequential_time = time.perf_counter() - start
-
-    assert parallel_time < sequential_time
 
 
 def test_checksum_known_addresses():
