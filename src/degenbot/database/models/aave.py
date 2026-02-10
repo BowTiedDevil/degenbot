@@ -23,14 +23,17 @@ class AaveV3MarketTable(Base):
     contracts: Mapped[list["AaveV3ContractsTable"]] = relationship(
         "AaveV3ContractsTable",
         back_populates="market",
+        cascade="all",
     )
     users: Mapped[list["AaveV3UsersTable"]] = relationship(
         "AaveV3UsersTable",
         back_populates="market",
+        cascade="all",
     )
     assets: Mapped[list["AaveV3AssetsTable"]] = relationship(
         "AaveV3AssetsTable",
         back_populates="market",
+        cascade="all",
     )
 
 
@@ -76,10 +79,12 @@ class AaveV3UsersTable(Base):
     collateral_positions: Mapped[list["AaveV3CollateralPositionsTable"]] = relationship(
         "AaveV3CollateralPositionsTable",
         back_populates="user",
+        cascade="all",
     )
     debt_positions: Mapped[list["AaveV3DebtPositionsTable"]] = relationship(
         "AaveV3DebtPositionsTable",
         back_populates="user",
+        cascade="all",
     )
 
 
@@ -134,10 +139,12 @@ class AaveV3AssetsTable(Base):
     collateral_positions: Mapped[list["AaveV3CollateralPositionsTable"]] = relationship(
         "AaveV3CollateralPositionsTable",
         back_populates="asset",
+        cascade="all",
     )
     debt_positions: Mapped[list["AaveV3DebtPositionsTable"]] = relationship(
         "AaveV3DebtPositionsTable",
         back_populates="asset",
+        cascade="all",
     )
 
 
