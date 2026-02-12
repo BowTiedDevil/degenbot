@@ -173,5 +173,5 @@ uv.lock
 
 # Opencode
 opencode.json
-.opencode/**
+.opencode/plans
 .ignore
