@@ -548,21 +548,6 @@ export const find_block = tool({
   },
 })
 
-export const format_bytes32_string = tool({
-  description: "Formats a string into bytes32 encoding",
-  args: {
-    string: tool.schema.string().optional().describe("The string to format into bytes32"),
-  },
-  async execute(args) {
-    const cmd = ["cast", "format-bytes32-string"]
-    if (args.string) {
-      cmd.push(args.string)
-    }
-    const result = await bunRuntime.$`${cmd}`.text()
-    return result.trim()
-  },
-})
-
 export const implementation = tool({
   description: "Fetch the EIP-1967 implementation address for a contract",
   args: {
