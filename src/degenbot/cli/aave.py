@@ -2510,7 +2510,6 @@ def _process_aave_stake(
             if context.tx_context is not None
             else recipient.gho_discount
         )
-        new_discount = recipient.gho_discount
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
         # Use the OLD discount for interest accrual, matching contract behavior
@@ -2528,52 +2527,6 @@ def _process_aave_stake(
         recipient_debt_position.balance -= recipient_discount_scaled
         recipient_new_scaled_balance = recipient_debt_position.balance
         recipient_debt_position.last_index = event_data.index
-
-        # If the discount changed in this transaction, we need to recalculate the scaled
-        # balance to account for the change in accumulated interest at different rates.
-        # The contract recalculates the scaled balance when discount changes, effectively
-        # "catching up" the position to the new discount rate.
-        if (
-            context.tx_context is not None
-            and recipient.address in context.tx_context.discount_updated_users
-        ):
-            # Calculate the balance adjustment due to discount change
-            # This accounts for the difference in accumulated interest at old vs new rates
-            balance_increase = wad_ray_math_library.ray_mul(
-                a=recipient_previous_scaled_balance,
-                b=event_data.index,
-            ) - wad_ray_math_library.ray_mul(
-                a=recipient_previous_scaled_balance,
-                b=recipient_debt_position.last_index or 0,
-            )
-
-            # Calculate the difference in discount applied
-            old_discount_amount = percentage_math_library.percent_mul(
-                value=balance_increase,
-                percentage=old_discount,
-            )
-            new_discount_amount = percentage_math_library.percent_mul(
-                value=balance_increase,
-                percentage=new_discount,
-            )
-            discount_diff = old_discount_amount - new_discount_amount
-
-            # Convert the discount difference to scaled units
-            if discount_diff > 0:
-                discount_diff_scaled = wad_ray_math_library.ray_div(
-                    a=discount_diff,
-                    b=event_data.index,
-                )
-                # Adjust the balance to match the contract's recalculation
-                recipient_debt_position.balance -= discount_diff_scaled
-                recipient_new_scaled_balance = recipient_debt_position.balance
-
-                _log_if_verbose(
-                    recipient.address,
-                    event_in_process["transactionHash"],
-                    f"Discount change adjustment: -{discount_diff_scaled} "
-                    f"(old={old_discount}, new={new_discount})",
-                )
 
         # Update the discount percentage for the new balance
         recipient_previous_discount_percent = old_discount
@@ -2692,7 +2645,6 @@ def _process_aave_redeem(
             if context.tx_context is not None
             else sender.gho_discount
         )
-        new_discount = sender.gho_discount
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
         # Use the OLD discount for interest accrual, matching contract behavior
@@ -2709,51 +2661,6 @@ def _process_aave_redeem(
         # _burn(recipient, discountScaled.toUint128()) # noqa: ERA001
         sender_debt_position.balance -= sender_discount_scaled
         sender_debt_position.last_index = event_data.index
-
-        # If the discount changed in this transaction, we need to recalculate the scaled
-        # balance to account for the change in accumulated interest at different rates.
-        # The contract recalculates the scaled balance when discount changes, effectively
-        # "catching up" the position to the new discount rate.
-        if (
-            context.tx_context is not None
-            and sender.address in context.tx_context.discount_updated_users
-        ):
-            # Calculate the balance adjustment due to discount change
-            # This accounts for the difference in accumulated interest at old vs new rates
-            balance_increase = wad_ray_math_library.ray_mul(
-                a=sender_previous_scaled_balance,
-                b=event_data.index,
-            ) - wad_ray_math_library.ray_mul(
-                a=sender_previous_scaled_balance,
-                b=sender_debt_position.last_index or 0,
-            )
-
-            # Calculate the difference in discount applied
-            old_discount_amount = percentage_math_library.percent_mul(
-                value=balance_increase,
-                percentage=old_discount,
-            )
-            new_discount_amount = percentage_math_library.percent_mul(
-                value=balance_increase,
-                percentage=new_discount,
-            )
-            discount_diff = old_discount_amount - new_discount_amount
-
-            # Convert the discount difference to scaled units
-            if discount_diff > 0:
-                discount_diff_scaled = wad_ray_math_library.ray_div(
-                    a=discount_diff,
-                    b=event_data.index,
-                )
-                # Adjust the balance to match the contract's recalculation
-                sender_debt_position.balance -= discount_diff_scaled
-
-                _log_if_verbose(
-                    sender.address,
-                    event_in_process["transactionHash"],
-                    f"Discount change adjustment: -{discount_diff_scaled} "
-                    f"(old={old_discount}, new={new_discount})",
-                )
 
         sender_previous_discount_percent = old_discount
         # Skip discount refresh if there's a DiscountPercentUpdated event for sender
@@ -2916,7 +2823,6 @@ def _process_staked_aave_transfer(
             if context.tx_context is not None
             else sender.gho_discount
         )
-        sender_new_discount = sender.gho_discount
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
         # Use the OLD discount for interest accrual, matching contract behavior
@@ -2933,44 +2839,6 @@ def _process_staked_aave_transfer(
         # _burn(sender, discountScaled.toUint128()) # noqa: ERA001
         sender_debt_position.balance -= sender_discount_scaled
         sender_debt_position.last_index = event_data.index
-
-        # If the discount changed in this transaction, we need to recalculate the scaled
-        # balance to account for the change in accumulated interest at different rates.
-        if (
-            context.tx_context is not None
-            and sender.address in context.tx_context.discount_updated_users
-        ):
-            balance_increase = wad_ray_math_library.ray_mul(
-                a=sender_previous_scaled_balance,
-                b=event_data.index,
-            ) - wad_ray_math_library.ray_mul(
-                a=sender_previous_scaled_balance,
-                b=sender_debt_position.last_index or 0,
-            )
-
-            old_discount_amount = percentage_math_library.percent_mul(
-                value=balance_increase,
-                percentage=sender_old_discount,
-            )
-            new_discount_amount = percentage_math_library.percent_mul(
-                value=balance_increase,
-                percentage=sender_new_discount,
-            )
-            discount_diff = old_discount_amount - new_discount_amount
-
-            if discount_diff > 0:
-                discount_diff_scaled = wad_ray_math_library.ray_div(
-                    a=discount_diff,
-                    b=event_data.index,
-                )
-                sender_debt_position.balance -= discount_diff_scaled
-
-                _log_if_verbose(
-                    sender.address,
-                    event_in_process["transactionHash"],
-                    f"Sender discount change adjustment: -{discount_diff_scaled} "
-                    f"(old={sender_old_discount}, new={sender_new_discount})",
-                )
 
         sender_previous_discount_percent = sender_old_discount
         # Skip discount refresh if there's a DiscountPercentUpdated event for sender
@@ -3016,7 +2884,6 @@ def _process_staked_aave_transfer(
             if context.tx_context is not None
             else recipient.gho_discount
         )
-        recipient_new_discount = recipient.gho_discount
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
         # Use the OLD discount for interest accrual, matching contract behavior
@@ -3034,45 +2901,6 @@ def _process_staked_aave_transfer(
         recipient_debt_position.balance -= recipient_discount_scaled
         recipient_new_scaled_balance = recipient_debt_position.balance
         recipient_debt_position.last_index = event_data.index
-
-        # If the discount changed in this transaction, we need to recalculate the scaled
-        # balance to account for the change in accumulated interest at different rates.
-        if (
-            context.tx_context is not None
-            and recipient.address in context.tx_context.discount_updated_users
-        ):
-            balance_increase = wad_ray_math_library.ray_mul(
-                a=recipient_previous_scaled_balance,
-                b=event_data.index,
-            ) - wad_ray_math_library.ray_mul(
-                a=recipient_previous_scaled_balance,
-                b=recipient_debt_position.last_index or 0,
-            )
-
-            old_discount_amount = percentage_math_library.percent_mul(
-                value=balance_increase,
-                percentage=recipient_old_discount,
-            )
-            new_discount_amount = percentage_math_library.percent_mul(
-                value=balance_increase,
-                percentage=recipient_new_discount,
-            )
-            discount_diff = old_discount_amount - new_discount_amount
-
-            if discount_diff > 0:
-                discount_diff_scaled = wad_ray_math_library.ray_div(
-                    a=discount_diff,
-                    b=event_data.index,
-                )
-                recipient_debt_position.balance -= discount_diff_scaled
-                recipient_new_scaled_balance = recipient_debt_position.balance
-
-                _log_if_verbose(
-                    recipient.address,
-                    event_in_process["transactionHash"],
-                    f"Recipient discount change adjustment: -{discount_diff_scaled} "
-                    f"(old={recipient_old_discount}, new={recipient_new_discount})",
-                )
 
         recipient_previous_discount_percent = recipient_old_discount
         # Skip discount refresh if there's a DiscountPercentUpdated event for recipient
@@ -3410,6 +3238,10 @@ def _process_gho_debt_mint(
             previous_scaled_balance = debt_position.balance
 
             # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
+            # When stkAAVE is redeemed and discount changes, the contract:
+            # 1. Accrues interest using the OLD discount rate
+            # 2. Burns the discount amount from the scaled balance
+            # 3. The net effect is the balance decreases by discount_scaled
             discount_scaled = _accrue_debt_on_action(
                 debt_position=debt_position,
                 percentage_math=percentage_math_library,
@@ -3420,12 +3252,8 @@ def _process_gho_debt_mint(
                 token_revision=scaled_token_revision,
             )
 
-            # The net balance increase is the interest minus discount
-            # balanceIncrease (from event) = interest accrued
-            # discount = balanceIncrease.percentMul(discountPercent) # noqa: ERA001
-            # discount_scaled = discount.rayDiv(index) # noqa: ERA001
-            # Net scaled increase = (balanceIncrease - discount).rayDiv(index) = discount_scaled
-            balance_delta = discount_scaled
+            # The balance decreases by the discount amount (burned by contract)
+            balance_delta = -discount_scaled
 
             _log_if_verbose(
                 user.address,
