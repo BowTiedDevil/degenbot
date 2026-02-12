@@ -304,7 +304,7 @@ export const concat_hex = tool({
 })
 
 export const decode_abi = tool({
-  description: "Decode ABI-encoded input or output data.",
+  description: "Decode ABI-encoded input or output data",
   args: {
     sig: tool.schema.string().describe("The function signature in the format `<name>(<in-types>)(<out-types>)`"),
     calldata: tool.schema.string().describe("The ABI-encoded calldata"),
@@ -320,7 +320,7 @@ export const decode_abi = tool({
 })
 
 export const decode_calldata = tool({
-  description: "Decode ABI-encoded input data.",
+  description: "Decode ABI-encoded input data",
   args: {
     sig: tool.schema.string().describe("The function signature in the format `<name>(<in-types>)(<out-types>)`"),
     calldata: tool.schema.string().optional().describe("The ABI-encoded calldata"),
@@ -367,7 +367,7 @@ export const decode_event = tool({
 })
 
 export const decode_string = tool({
-  description: "Decode ABI-encoded string.",
+  description: "Decode ABI-encoded string",
   args: {
     data: tool.schema.string().describe("The ABI-encoded string"),
   },
@@ -564,7 +564,7 @@ export const format_bytes32_string = tool({
 })
 
 export const implementation = tool({
-  description: "Fetch the EIP-1967 implementation address for a contract.",
+  description: "Fetch the EIP-1967 implementation address for a contract",
   args: {
     who: tool.schema.string().describe("The address for which the implementation will be fetched"),
     block: tool.schema.string().optional().describe("The block height to query at. Can also be the tags earliest, finalized, safe, latest, or pending."),
@@ -659,7 +659,7 @@ export const logs = tool({
 })
 
 export const pretty_calldata = tool({
-  description: "Pretty print calldata.",
+  description: "Pretty print calldata",
   args: {
     calldata: tool.schema.string().optional().describe("The calldata to pretty print"),
   },
