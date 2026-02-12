@@ -4,7 +4,7 @@ agent: build
 model: synthetic/hf:moonshotai/Kimi-K2.5
 ---
 
-!`uv run degenbot aave update --no-progress-bar --one-chunk`
+!`DEGENBOT_VERBOSE_USERS=$ARGUMENTS uv run degenbot aave update --no-progress-bar --one-chunk 2>&1`
 
 ## DIRECTION: Investigate and debug this failed Aave update command
 
