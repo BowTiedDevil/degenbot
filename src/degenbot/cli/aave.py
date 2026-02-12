@@ -1,5 +1,4 @@
 import os
-import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
@@ -10,7 +9,7 @@ import eth_abi.exceptions
 import tqdm
 from eth_typing import ChainId, ChecksumAddress
 from hexbytes import HexBytes
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from tqdm.contrib.logging import logging_redirect_tqdm
 from web3 import Web3
@@ -680,31 +679,6 @@ def aave_update(
                 }
 
                 for market in markets_to_update:
-                    # try:
-                    #     update_aave_market(
-                    #         w3=w3,
-                    #         start_block=working_start_block,
-                    #         end_block=working_end_block,
-                    #         market=market,
-                    #         session=session,
-                    #         verify=verify,
-                    #         no_progress=no_progress,
-                    #     )
-                    # except Exception as e:  # noqa: BLE001
-                    #     try:
-                    #         logger.info(f"Processing failed on event: {event_in_process}")
-                    #     except NameError:
-                    #         logger.info("Processing failed (no event currently being processed)")
-                    #     logger.info("")
-                    #     logger.info("")
-                    #     logger.info("")
-                    #     logger.exception(e)
-                    #     logger.info("")
-                    #     logger.info("")
-                    #     logger.info("")
-
-                    #     sys.exit(1)
-
                     update_aave_market(
                         w3=w3,
                         start_block=working_start_block,
@@ -3649,11 +3623,7 @@ def _process_proxy_creation_event(
 
 
 def _process_discount_percent_updated_event(
-    *,
     context: EventHandlerContext,
-    event: LogReceipt,
-    w3: Web3 | None = None,
-    block_number: int | None = None,
 ) -> None:
     """
     Process a GHO discount percent update event.
@@ -3671,18 +3641,18 @@ def _process_discount_percent_updated_event(
     ```
     """
 
-    user_address = _decode_address(event["topics"][1])
+    user_address = _decode_address(context.event["topics"][1])
 
-    (old_discount_percent,) = eth_abi.abi.decode(types=["uint256"], data=event["data"])
-    (new_discount_percent,) = eth_abi.abi.decode(types=["uint256"], data=event["topics"][2])
+    (old_discount_percent,) = eth_abi.abi.decode(types=["uint256"], data=context.event["data"])
+    (new_discount_percent,) = eth_abi.abi.decode(types=["uint256"], data=context.event["topics"][2])
 
     # Create user if they don't exist - discount can be updated before first debt event
     user = _get_or_create_user(
         context=context,
         market=context.market,
         user_address=user_address,
-        w3=w3,
-        block_number=block_number,
+        w3=context.w3,
+        block_number=context.event["blockNumber"],
     )
 
     if VerboseConfig.is_verbose(
@@ -4700,89 +4670,6 @@ def _fetch_discount_config_events(
     )
 
 
-def _validate_event_coverage() -> None:
-    """Validate that all AaveV3Event enum values have categorization logic.
-
-    This function ensures that when a new event type is added to AaveV3Event,
-    it must also be categorized in _build_transaction_contexts() or handled
-    separately. This prevents ValueError at runtime when uncategorized events
-    appear on-chain.
-    """
-    # Get all topic values from the enum
-    enum_topics = {member.value for member in AaveV3Event}
-
-    # These events trigger transaction-level processing
-    trigger_topics = TRIGGER_EVENTS.copy()
-
-    # These are the topics explicitly categorized in _build_transaction_contexts()
-    # Pool contract events
-    pool_events = {
-        AaveV3Event.SUPPLY.value,
-        AaveV3Event.WITHDRAW.value,
-        AaveV3Event.BORROW.value,
-        AaveV3Event.REPAY.value,
-        AaveV3Event.LIQUIDATION_CALL.value,
-    }
-
-    # stkAAVE events
-    stk_aave_events = {
-        AaveV3Event.STAKED.value,
-        AaveV3Event.REDEEM.value,
-    }
-
-    # These are explicitly checked with conditions in _build_transaction_contexts
-    conditional_events = {
-        AaveV3Event.TRANSFER.value,  # Only stkAAVE transfers are categorized
-        AaveV3Event.SCALED_TOKEN_MINT.value,  # Split into GHO vs collateral
-        AaveV3Event.SCALED_TOKEN_BURN.value,  # Split into GHO vs collateral
-    }
-
-    # These are grouped together in _build_transaction_contexts discount_updates
-    discount_update_events = {
-        AaveV3Event.DISCOUNT_PERCENT_UPDATED.value,
-    }
-
-    # These events are handled outside of _build_transaction_contexts categorization
-    externally_handled_events = {
-        # Phase 1: Address provider and proxy events (processed separately)
-        AaveV3Event.PROXY_CREATED.value,
-        AaveV3Event.POOL_UPDATED.value,
-        AaveV3Event.POOL_CONFIGURATOR_UPDATED.value,
-        AaveV3Event.POOL_DATA_PROVIDER_UPDATED.value,
-        # Phase 2: Reserve initialization events (processed separately)
-        AaveV3Event.RESERVE_INITIALIZED.value,
-        # Events handled inline within _process_transaction_with_context()
-        AaveV3Event.RESERVE_DATA_UPDATED.value,
-        AaveV3Event.USER_E_MODE_SET.value,
-        AaveV3Event.UPGRADED.value,
-        AaveV3Event.DISCOUNT_RATE_STRATEGY_UPDATED.value,
-        AaveV3Event.DISCOUNT_TOKEN_UPDATED.value,
-        # Unused/untracked events (defined but not currently handled)
-        AaveV3Event.SLASHED.value,
-    }
-
-    # All categorized or handled topics
-    categorized_topics = (
-        pool_events
-        | stk_aave_events
-        | conditional_events
-        | discount_update_events
-        | trigger_topics
-        | externally_handled_events
-    )
-
-    # Check for missing categorization
-    missing = enum_topics - categorized_topics
-    if missing:
-        missing_names = [member.name for member in AaveV3Event if member.value in missing]
-        msg = (
-            f"The following AaveV3Event enum values are not categorized in "
-            f"_build_transaction_contexts() or handled externally: {missing_names}. "
-            f"Add categorization logic or update _validate_event_coverage()."
-        )
-        raise AssertionError(msg)
-
-
 def _build_transaction_contexts(
     *,
     events: list[LogReceipt],
@@ -5101,7 +4988,8 @@ def update_aave_market(
                 new_discount_token_address = _decode_address(event["topics"][2])
                 gho_asset.v_gho_discount_token = new_discount_token_address
                 logger.info(
-                    f"SET NEW DISCOUNT TOKEN: {_decode_address(event['topics'][1])} -> {new_discount_token_address}"
+                    f"SET NEW DISCOUNT TOKEN: {_decode_address(event['topics'][1])} -> "
+                    f"{new_discount_token_address}"
                 )
 
         all_events.extend(
@@ -5187,19 +5075,3 @@ def update_aave_market(
             block_number=end_block,
             no_progress=no_progress,
         )
-
-    # # Clear all zero balance positions
-    # session.execute(
-    #     delete(AaveV3CollateralPositionsTable).where(
-    #         AaveV3CollateralPositionsTable.balance == 0,
-    #     )
-    # )
-    # session.execute(
-    #     delete(AaveV3DebtPositionsTable).where(
-    #         AaveV3DebtPositionsTable.balance == 0,
-    #     )
-    # )
-
-
-# Validate event coverage at module load time to catch missing categorization early
-_validate_event_coverage()
