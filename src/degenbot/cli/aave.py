@@ -1347,18 +1347,6 @@ def _get_or_create_user(
     from the contract to properly initialize their gho_discount value.
     """
 
-    # First, check the session's identity map for pending users
-    # to avoid creating duplicates within the same transaction
-    for obj in context.session.identity_map.values():
-        if (
-            isinstance(obj, AaveV3UsersTable)
-            and obj.address == user_address
-            and obj.market_id == market.id
-        ):
-            if user_address == "0x360FA2900CB094688f5f9c0CE875df56CB8B0639":
-                logger.info(f"USER FOUND IN IDENTITY MAP: {user_address} id={obj.id}")
-            return obj
-
     user = context.session.scalar(
         select(AaveV3UsersTable).where(
             AaveV3UsersTable.address == user_address,
@@ -1403,6 +1391,7 @@ def _get_or_create_user(
             gho_discount=gho_discount,
         )
         market.users.append(user)
+        context.session.add(user)
         context.session.flush()
 
         if user_address == "0x360FA2900CB094688f5f9c0CE875df56CB8B0639":
@@ -1559,15 +1548,9 @@ def _verify_gho_discount_amounts(
     if gho_asset.v_gho_discount_token is None:
         return
 
-    # Get users from the identity map only, to avoid SQLAlchemy expiring and
-    # reloading objects from the database (which would overwrite pending changes)
-    # The identity map contains all users that have been accessed in this session
-    all_users_by_address: dict[ChecksumAddress, AaveV3UsersTable] = {}
-    for obj in session.identity_map.values():
-        if isinstance(obj, AaveV3UsersTable) and obj.market_id == market.id:
-            all_users_by_address[obj.address] = obj
-
-    all_users = list(all_users_by_address.values())
+    all_users = session.scalars(
+        select(AaveV3UsersTable).where(AaveV3UsersTable.market_id == market.id)
+    ).all()
 
     for user in tqdm.tqdm(
         all_users,
@@ -1611,15 +1594,12 @@ def _verify_stk_aave_balances(
 
     discount_token = gho_asset.v_gho_discount_token
 
-    # Get users from the identity map only, to avoid SQLAlchemy expiring and
-    # reloading objects from the database (which would overwrite pending changes)
-    all_users = [
-        obj
-        for obj in session.identity_map.values()
-        if isinstance(obj, AaveV3UsersTable)
-        and obj.market_id == market.id
-        and obj.stk_aave_balance is not None
-    ]
+    all_users = session.scalars(
+        select(AaveV3UsersTable).where(
+            AaveV3UsersTable.market_id == market.id,
+            AaveV3UsersTable.stk_aave_balance.is_not(None),
+        )
+    ).all()
 
     for user in tqdm.tqdm(
         all_users,
@@ -4871,6 +4851,7 @@ def update_aave_market(
 
     # Perform full verification at chunk boundary
     if verify:
+        session.flush()
         _verify_scaled_token_positions(
             w3=w3,
             market=market,
