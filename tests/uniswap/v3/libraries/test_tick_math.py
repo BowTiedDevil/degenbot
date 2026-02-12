@@ -117,7 +117,7 @@ def test_get_tick_at_sqrt_ratio() -> None:
     )
 )
 def test_get_sqrt_ratio_at_tick_rs(tick: int):
-    assert get_sqrt_ratio_at_tick(tick) == degenbot_rs.get_sqrt_ratio_at_tick_alloy_translator(tick)
+    assert get_sqrt_ratio_at_tick(tick) == degenbot_rs.get_sqrt_ratio_at_tick(tick)
 
 
 @hypothesis.given(
@@ -127,9 +127,9 @@ def test_get_sqrt_ratio_at_tick_rs(tick: int):
     )
 )
 def test_get_tick_at_sqrt_ratio_rs(sqrt_price_x96: int):
-    assert get_tick_at_sqrt_ratio(
+    assert get_tick_at_sqrt_ratio(sqrt_price_x96) == degenbot_rs.get_tick_at_sqrt_ratio(
         sqrt_price_x96
-    ) == degenbot_rs.get_tick_at_sqrt_ratio_alloy_translator(sqrt_price_x96)
+    )
 
 
 @pytest.fixture(scope="session")
