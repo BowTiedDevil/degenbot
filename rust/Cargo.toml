@@ -2,17 +2,35 @@
 authors = ["BowTiedDevil <devil@bowtieddevil.com>"]
 name = "degenbot_rs"
 description = "Rust implementations used by the degenbot Python package."
-edition = "2024"
+edition = "2021"
 publish = false
 repository = "https://github.com/BowTiedDevil/degenbot"
 license = "MIT"
 
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+missing_errors_doc = "allow"  # Allow missing docs for error types since we use module-level doc
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
 [lib]
 name = "degenbot_rs"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 alloy-primitives = { version = "1.5" }
 num-bigint = { version = "0.4" }
-pyo3 = { version = "0.27", features = [ "abi3-py312", "extension-module", "num-bigint"] }
-rayon = { version = "1.11" }
+pyo3 = { version = "0.28", features = [ "abi3-py312", "extension-module", "num-bigint"] }
+thiserror = { version = "2.0" }
+
+[dev-dependencies]
+proptest = "1.5"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "tick_math_bench"
+harness = false
