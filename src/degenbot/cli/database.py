@@ -41,16 +41,20 @@ def database_backup() -> None:
 
 
 @database.command("reset")
-def database_reset() -> None:
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
+def database_reset(*, force: bool) -> None:
     """
     Remove and recreate the database.
     """
 
-    user_confirm = click.confirm(
+    if force or click.confirm(
         f"The existing database at {settings.database.path} will be removed and a new, empty database will be created and initialized using the schema included in {__package__} version {__version__}. Do you want to proceed?",  # noqa: E501
         default=False,
-    )
-    if user_confirm:
+    ):
         settings.database.path.unlink()
         create_new_sqlite_database(settings.database.path)
     else:
