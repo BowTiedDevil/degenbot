@@ -4,8 +4,8 @@ import { resolveRpcUrl } from "./utils/rpc-resolver"
 // @ts-ignore  
 const bunRuntime = Bun as any
 
-export const _4byte = tool({
-  description: "Get the function signatures for the given selector from <https://openchain.xyz>",
+export const four_byte = tool({
+  description: "Get the function signature for the given selector",
   args: {
     selector: tool.schema.string().describe("The function selector"),
   },
@@ -17,8 +17,8 @@ export const _4byte = tool({
   },
 })
 
-export const _4byte_calldata = tool({
-  description: "Decode ABI-encoded calldata using <https://openchain.xyz>",
+export const four_byte_calldata = tool({
+  description: "Decode ABI-encoded calldata",
   args: {
     calldata: tool.schema.string().describe("The ABI-encoded calldata"),
   },
@@ -30,8 +30,8 @@ export const _4byte_calldata = tool({
   },
 })
 
-export const _4byte_event = tool({
-  description: "Get the event signature for a given topic 0 from <https://openchain.xyz>",
+export const four_byte_event = tool({
+  description: "Get the event signature for a given topic0",
   args: {
     topic0: tool.schema.string().describe("Topic 0"),
   },
