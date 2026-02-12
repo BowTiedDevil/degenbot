@@ -1394,12 +1394,6 @@ def _get_or_create_user(
         context.session.add(user)
         context.session.flush()
 
-        if user_address == "0x360FA2900CB094688f5f9c0CE875df56CB8B0639":
-            logger.info(
-                f"USER CREATED AND FLUSHED: {user_address} id={user.id} "
-                f"gho_discount={user.gho_discount}"
-            )
-
     return user
 
 
