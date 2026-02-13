@@ -204,7 +204,7 @@ def fetch_logs_retrying(
 
     # The working block span is dynamic. It will be reduced quickly if timeouts occur, and increased
     # slowly following successful fetches
-    working_span = 100
+    working_span = max_blocks_per_request
 
     retrier = Retrying(
         stop=stop_after_attempt(max_retries),
@@ -252,7 +252,7 @@ def fetch_logs_retrying(
                     else:
                         working_span = _increase_working_span(
                             working_span=working_span,
-                            percent=1,
+                            percent=5,
                             ceiling=max_blocks_per_request,
                         )
 
@@ -284,7 +284,9 @@ async def fetch_logs_retrying_async(
     if max_blocks_per_request is None:
         max_blocks_per_request = 5_000
 
-    working_span = 100
+    # The working block span is dynamic. It will be reduced quickly if timeouts occur, and increased
+    # slowly following successful fetches
+    working_span = max_blocks_per_request
 
     event_logs: list[LogReceipt] = []
 
@@ -343,7 +345,7 @@ async def fetch_logs_retrying_async(
                         pbar.update(chunk_end - start_block + 1)
                         working_span = _increase_working_span(
                             working_span=working_span,
-                            percent=1,
+                            percent=5,
                             ceiling=max_blocks_per_request,
                         )
 
