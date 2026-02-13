@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass, field
 from enum import Enum
+from operator import itemgetter
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
 import click
@@ -114,6 +115,13 @@ class TransactionContext:
     # Key: user address, Value: discount percent at transaction start
     user_discounts: dict[ChecksumAddress, int] = field(default_factory=dict)
 
+    # Track discount percent updates by log index for transactions with multiple updates.
+    # Key: user address, Value: list of (log_index, old_discount_percent) tuples sorted by
+    # log_index. This allows determining the discount in effect at any point in the transaction.
+    discount_updates_by_log_index: dict[ChecksumAddress, list[tuple[int, int]]] = field(
+        default_factory=dict
+    )
+
     # Set of user addresses that have DiscountPercentUpdated events in this transaction
     # Used to skip _refresh_discount_rate calls when the event provides the authoritative value
     discount_updated_users: set[ChecksumAddress] = field(default_factory=set)
@@ -129,6 +137,42 @@ class TransactionContext:
     def get_prior_events(self, event: LogReceipt) -> list[LogReceipt]:
         """Get all events in this transaction that occurred before the given event."""
         return [e for e in self.events if e["logIndex"] < event["logIndex"]]
+
+    def get_effective_discount_at_log_index(
+        self,
+        user_address: ChecksumAddress,
+        log_index: int,
+        default_discount: int,
+    ) -> int:
+        """
+        Get the discount percent in effect at a specific log index.
+
+        When a user has multiple DiscountPercentUpdated events in a transaction,
+        each Mint/Burn event must use the discount that was in effect at that
+        specific point in time (before any subsequent discount updates).
+
+        Args:
+            user_address: The user's address
+            log_index: The log index to check
+            default_discount: The fallback discount if no updates occurred before this log_index
+
+        Returns:
+            The discount percent in effect at the given log index
+        """
+        updates = self.discount_updates_by_log_index.get(user_address, [])
+        if not updates:
+            return default_discount
+
+        # Find the most recent discount update before this log_index
+        # updates is a list of (log_index, old_discount_percent) tuples sorted by log_index
+        effective_discount = default_discount
+        for update_log_index, old_discount in updates:
+            if update_log_index < log_index:
+                effective_discount = old_discount
+            else:
+                break
+
+        return effective_discount
 
 
 event_in_process: LogReceipt
@@ -2242,14 +2286,25 @@ def _process_transaction_with_context(
     # This ensures calculations use the discount in effect at the start of the transaction
 
     # First, build a map of discount updates in this transaction to get old values
-    discount_updates_in_tx: dict[ChecksumAddress, int] = {}
+    # Track all updates with their log indices to handle multiple updates per transaction
     for event in tx_context.events:
         topic = event["topics"][0]
         if topic == AaveV3Event.DISCOUNT_PERCENT_UPDATED.value:
             user_address = _decode_address(event["topics"][1])
             (old_discount_percent,) = eth_abi.abi.decode(types=["uint256"], data=event["data"])
-            discount_updates_in_tx[user_address] = old_discount_percent
             tx_context.discount_updated_users.add(user_address)
+
+            # Store update with its log index to track discount changes over time
+            if user_address not in tx_context.discount_updates_by_log_index:
+                tx_context.discount_updates_by_log_index[user_address] = []
+            tx_context.discount_updates_by_log_index[user_address].append((
+                event["logIndex"],
+                old_discount_percent,
+            ))
+
+    # Sort updates by log index for each user
+    for user_address in tx_context.discount_updates_by_log_index:
+        tx_context.discount_updates_by_log_index[user_address].sort(key=itemgetter(0))
 
     for event in tx_context.events:
         topic = event["topics"][0]
@@ -2271,34 +2326,39 @@ def _process_transaction_with_context(
             else:  # SCALED_TOKEN_BURN
                 user_address = _decode_address(event["topics"][1])
             if user_address not in tx_context.user_discounts:
-                # If there's a DiscountPercentUpdated event for this user in this
-                # transaction, use the OLD discount value from that event
-                if user_address in discount_updates_in_tx:
-                    tx_context.user_discounts[user_address] = discount_updates_in_tx[user_address]
-                else:
-                    user = session.scalar(
-                        select(AaveV3UsersTable).where(
-                            AaveV3UsersTable.address == user_address,
-                            AaveV3UsersTable.market_id == market.id,
+                # If there are DiscountPercentUpdated events for this user in this
+                # transaction, use the OLD discount value that was in effect at the
+                # start of the transaction (before any updates in this tx)
+                user = session.scalar(
+                    select(AaveV3UsersTable).where(
+                        AaveV3UsersTable.address == user_address,
+                        AaveV3UsersTable.market_id == market.id,
+                    )
+                )
+                if user is not None:
+                    # Get discount that was in effect at this specific log index
+                    tx_context.user_discounts[user_address] = (
+                        tx_context.get_effective_discount_at_log_index(
+                            user_address=user_address,
+                            log_index=event["logIndex"],
+                            default_discount=user.gho_discount,
                         )
                     )
-                    if user is not None:
-                        tx_context.user_discounts[user_address] = user.gho_discount
-                    else:
-                        # User doesn't exist in database yet - fetch discount from contract
-                        # This happens when a user with an existing GHO debt position
-                        # is first encountered during event processing
-                        (discount_percent,) = raw_call(
-                            w3=w3,
-                            address=GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
-                            calldata=encode_function_calldata(
-                                function_prototype="getDiscountPercent(address)",
-                                function_arguments=[user_address],
-                            ),
-                            return_types=["uint256"],
-                            block_identifier=tx_context.block_number,
-                        )
-                        tx_context.user_discounts[user_address] = discount_percent
+                else:
+                    # User doesn't exist in database yet - fetch discount from contract
+                    # This happens when a user with an existing GHO debt position
+                    # is first encountered during event processing
+                    (discount_percent,) = raw_call(
+                        w3=w3,
+                        address=GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
+                        calldata=encode_function_calldata(
+                            function_prototype="getDiscountPercent(address)",
+                            function_arguments=[user_address],
+                        ),
+                        return_types=["uint256"],
+                        block_identifier=tx_context.block_number,
+                    )
+                    tx_context.user_discounts[user_address] = discount_percent
 
     # Process all events in chronological order
     for event in tx_context.events:
