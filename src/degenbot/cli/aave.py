@@ -4644,7 +4644,7 @@ def update_aave_market(
     3. User Event Processing: Process transactions with assertions that classifying events exist
     """
 
-    logger.info(f"Updating market {market.id}: block range {start_block}-{end_block}")
+    logger.info(f"Updating market {market.id}: block range {start_block:,}-{end_block:,}")
 
     # Phase 1
     for event in _fetch_address_provider_events(
