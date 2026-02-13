@@ -1428,7 +1428,9 @@ def _get_or_create_position[T: AaveV3CollateralPositionsTable | AaveV3DebtPositi
     position_table: type[T],
 ) -> T:
     """
-    Get existing position or create new one with zero balance.
+    Get an existing position or create a new one with zero balance.
+
+    This function is generic with respect to the position type.
     """
 
     for position in positions:
