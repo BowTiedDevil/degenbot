@@ -174,6 +174,46 @@ class TransactionContext:
 
         return effective_discount
 
+    def get_pending_stk_aave_delta_at_log_index(
+        self,
+        user_address: ChecksumAddress,
+        log_index: int,
+    ) -> int:
+        """
+        Calculate the net pending stkAAVE balance delta for a user at a specific log index.
+
+        When stkAAVE transfer events occur after the current event (higher log index),
+        but the transfer was initiated before the current event (due to reentrancy),
+        the GHO debt token contract uses the post-transfer balance. This method
+        calculates the net delta from pending transfers to determine the balance
+        that was used by the contract.
+
+        Args:
+            user_address: The user's address
+            log_index: The current log index being processed
+
+        Returns:
+            The net pending balance delta (positive for incoming, negative for outgoing)
+        """
+        net_delta = 0
+
+        for transfer_event in self.stk_aave_transfers:
+            transfer_log_index = transfer_event["logIndex"]
+            # Only consider transfers that occur AFTER the current event
+            if transfer_log_index <= log_index:
+                continue
+
+            from_addr = _decode_address(transfer_event["topics"][1])
+            to_addr = _decode_address(transfer_event["topics"][2])
+            (value,) = _decode_uint_values(event=transfer_event, num_values=1)
+
+            if from_addr == user_address:
+                net_delta -= value
+            if to_addr == user_address:
+                net_delta += value
+
+        return net_delta
+
 
 event_in_process: LogReceipt
 
@@ -416,6 +456,59 @@ def _decode_uint_values(
         num_values = len(event["data"]) // 32
     types = ["uint256"] * num_values
     return eth_abi.abi.decode(types=types, data=event["data"])
+
+
+def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress]:
+    """
+    Extract user addresses from an Aave event.
+
+    Returns a set of all user addresses (senders, recipients, onBehalfOf, etc.)
+    that are involved in the event.
+    """
+    user_addresses: set[ChecksumAddress] = set()
+    topic = event["topics"][0]
+
+    if topic == AaveV3Event.SCALED_TOKEN_MINT.value:
+        user_addresses.add(_decode_address(event["topics"][2]))
+
+    elif topic == AaveV3Event.SCALED_TOKEN_BURN.value:
+        user_addresses.add(_decode_address(event["topics"][1]))
+
+    elif topic == AaveV3Event.SCALED_TOKEN_BALANCE_TRANSFER.value:
+        user_addresses.add(_decode_address(event["topics"][1]))
+        user_addresses.add(_decode_address(event["topics"][2]))
+
+    elif topic == AaveV3Event.TRANSFER.value:
+        from_addr = _decode_address(event["topics"][1])
+        to_addr = _decode_address(event["topics"][2])
+        if from_addr != ZERO_ADDRESS:
+            user_addresses.add(from_addr)
+        if to_addr != ZERO_ADDRESS:
+            user_addresses.add(to_addr)
+
+    elif topic in {
+        AaveV3Event.DISCOUNT_PERCENT_UPDATED.value,
+        AaveV3Event.USER_E_MODE_SET.value,
+        AaveV3Event.DEFICIT_CREATED.value,
+    }:
+        user_addresses.add(_decode_address(event["topics"][1]))
+
+    elif topic in {
+        AaveV3Event.BORROW.value,
+        AaveV3Event.REPAY.value,
+        AaveV3Event.SUPPLY.value,
+        AaveV3Event.WITHDRAW.value,
+    }:
+        user_addresses.add(_decode_address(event["topics"][2]))
+
+    elif topic == AaveV3Event.LIQUIDATION_CALL.value:
+        user_addresses.add(_decode_address(event["topics"][3]))
+
+    elif topic in {AaveV3Event.STAKED.value, AaveV3Event.REDEEM.value}:
+        user_addresses.add(_decode_address(event["topics"][1]))
+        user_addresses.add(_decode_address(event["topics"][2]))
+
+    return user_addresses
 
 
 @cli.group
@@ -953,12 +1046,19 @@ def _get_or_init_stk_aave_balance(
     block_number: int,
     w3: Web3,
     skip_init: bool = False,
+    tx_context: TransactionContext | None = None,
+    log_index: int | None = None,
 ) -> int:
     """
     Get user's last-known stkAAVE balance.
 
     If the balance is unknown, perform a contract call at the previous block to ensure
     the balance check is performed before any events in the current block are processed.
+
+    When tx_context and log_index are provided and there are pending stkAAVE transfers
+    for this user (transfers with log_index > current log_index), returns the predicted
+    balance including the pending delta. This handles the reentrancy case where the GHO
+    debt token contract sees the post-transfer balance before the Transfer event is emitted.
 
     skip_init is unused but kept for API compatibility.
     """
@@ -994,6 +1094,21 @@ def _get_or_init_stk_aave_balance(
 
     # At this point, stk_aave_balance should always be set
     assert user.stk_aave_balance is not None
+
+    # Check if we need to account for pending transfers due to reentrancy
+    # This happens when stkAAVE is transferred during GHO discount updates,
+    # and the GHO contract sees the post-transfer balance before the Transfer event
+    if (
+        tx_context is not None
+        and log_index is not None
+        and user.address in tx_context.stk_aave_transfer_users
+    ):
+        pending_delta = tx_context.get_pending_stk_aave_delta_at_log_index(
+            user_address=user.address,
+            log_index=log_index,
+        )
+        return user.stk_aave_balance + pending_delta
+
     return user.stk_aave_balance
 
 
@@ -1601,20 +1716,29 @@ def _verify_gho_discount_amounts(
     gho_asset: AaveGhoTokenTable,
     block_number: int,
     no_progress: bool,
+    user_addresses: set[ChecksumAddress] | None = None,
 ) -> None:
     """
-    Verify that all GHO discount values in the database match the contract.
+    Verify that GHO discount values in the database match the contract.
+
+    If user_addresses is provided, only verifies those specific users.
+    Otherwise, verifies all users in the market.
     """
 
     if gho_asset.v_gho_discount_token is None:
         return
 
-    all_users = session.scalars(
-        select(AaveV3UsersTable).where(AaveV3UsersTable.market_id == market.id)
-    ).all()
+    if user_addresses is not None and len(user_addresses) == 0:
+        return
+
+    stmt = select(AaveV3UsersTable).where(AaveV3UsersTable.market_id == market.id)
+    if user_addresses is not None:
+        stmt = stmt.where(AaveV3UsersTable.address.in_(user_addresses))
+
+    users_to_verify = session.scalars(stmt).all()
 
     for user in tqdm.tqdm(
-        all_users,
+        users_to_verify,
         desc="Verifying GHO discount amounts",
         leave=False,
         disable=no_progress,
@@ -1645,25 +1769,34 @@ def _verify_stk_aave_balances(
     gho_asset: AaveGhoTokenTable,
     block_number: int,
     no_progress: bool,
+    user_addresses: set[ChecksumAddress] | None = None,
 ) -> None:
     """
-    Verify that all tracked stkAAVE balances in the database match the contract.
+    Verify that tracked stkAAVE balances in the database match the contract.
+
+    If user_addresses is provided, only verifies those specific users.
+    Otherwise, verifies all users in the market.
     """
 
     if gho_asset.v_gho_discount_token is None:
         return
 
+    if user_addresses is not None and len(user_addresses) == 0:
+        return
+
     discount_token = gho_asset.v_gho_discount_token
 
-    all_users = session.scalars(
-        select(AaveV3UsersTable).where(
-            AaveV3UsersTable.market_id == market.id,
-            AaveV3UsersTable.stk_aave_balance.is_not(None),
-        )
-    ).all()
+    stmt = select(AaveV3UsersTable).where(
+        AaveV3UsersTable.market_id == market.id,
+        AaveV3UsersTable.stk_aave_balance.is_not(None),
+    )
+    if user_addresses is not None:
+        stmt = stmt.where(AaveV3UsersTable.address.in_(user_addresses))
+
+    users_to_verify = session.scalars(stmt).all()
 
     for user in tqdm.tqdm(
-        all_users,
+        users_to_verify,
         desc="Verifying stkAAVE balances",
         leave=False,
         disable=no_progress,
@@ -1746,9 +1879,13 @@ def _verify_scaled_token_positions(
     position_table: type[AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable],
     block_number: int,
     no_progress: bool,
+    user_addresses: set[ChecksumAddress] | None = None,
 ) -> None:
     """
-    Verify that all database position balances match the contract.
+    Verify that database position balances match the contract.
+
+    If user_addresses is provided, only verifies positions for those specific users.
+    Otherwise, verifies all users in the market.
     """
 
     desc = (
@@ -1757,13 +1894,18 @@ def _verify_scaled_token_positions(
         else "Verifying debt positions"
     )
 
-    # Query all users for this market
-    all_users = session.scalars(
-        select(AaveV3UsersTable).where(AaveV3UsersTable.market_id == market.id)
-    ).all()
+    if user_addresses is not None and len(user_addresses) == 0:
+        return
+
+    # Query users for this market
+    stmt = select(AaveV3UsersTable).where(AaveV3UsersTable.market_id == market.id)
+    if user_addresses is not None:
+        stmt = stmt.where(AaveV3UsersTable.address.in_(user_addresses))
+
+    users_to_verify = session.scalars(stmt).all()
 
     for user in tqdm.tqdm(
-        all_users,
+        users_to_verify,
         desc=desc,
         leave=False,
         disable=no_progress,
@@ -2172,6 +2314,8 @@ def _process_gho_debt_burn(
     state_block: int,
     effective_discount: int,
     skip_discount_refresh: bool = False,
+    tx_context: TransactionContext | None = None,
+    log_index: int | None = None,
 ) -> UserOperation:
     """
     Determine the user operation that triggered a GHO vToken Burn event and apply balance delta.
@@ -2179,6 +2323,10 @@ def _process_gho_debt_burn(
     The effective_discount should be the discount percent in effect at the start of the
     transaction, not the potentially updated value from a DiscountPercentUpdated event
     in the same transaction.
+
+    When tx_context and log_index are provided, accounts for pending stkAAVE transfers
+    that may have occurred due to reentrancy (where the GHO contract sees post-transfer
+    balances before the Transfer event is emitted).
     """
 
     wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
@@ -2222,6 +2370,8 @@ def _process_gho_debt_burn(
                 discount_token=discount_token,
                 block_number=state_block,
                 w3=w3,
+                tx_context=tx_context,
+                log_index=log_index,
             )
             _refresh_discount_rate(
                 w3=w3,
@@ -2289,6 +2439,8 @@ def _process_gho_debt_burn(
                 discount_token=discount_token,
                 block_number=state_block,
                 w3=w3,
+                tx_context=tx_context,
+                log_index=log_index,
             )
             _refresh_discount_rate(
                 w3=w3,
@@ -2646,6 +2798,8 @@ def _process_aave_stake(
                 discount_token=discount_token,
                 block_number=triggering_event["blockNumber"],
                 w3=context.w3,
+                tx_context=context.tx_context,
+                log_index=context.event["logIndex"],
             )
             _refresh_discount_rate(
                 w3=context.w3,
@@ -2725,6 +2879,8 @@ def _process_aave_redeem(
         discount_token=discount_token,
         block_number=triggering_event["blockNumber"],
         w3=context.w3,
+        tx_context=context.tx_context,
+        log_index=context.event["logIndex"],
     )
 
     _log_if_verbose(
@@ -2875,12 +3031,16 @@ def _process_staked_aave_transfer(
         discount_token=discount_token,
         block_number=triggering_event["blockNumber"],
         w3=context.w3,
+        tx_context=context.tx_context,
+        log_index=context.event["logIndex"],
     )
     recipient_discount_token_balance = _get_or_init_stk_aave_balance(
         user=recipient,
         discount_token=discount_token,
         block_number=triggering_event["blockNumber"],
         w3=context.w3,
+        tx_context=context.tx_context,
+        log_index=context.event["logIndex"],
     )
 
     _log_if_verbose(
@@ -2956,7 +3116,7 @@ def _process_staked_aave_transfer(
                 w3=context.w3,
                 user=sender,
                 discount_rate_strategy=discount_rate_strategy,
-                discount_token_balance=sender_discount_token_balance - requested_amount,
+                discount_token_balance=sender_discount_token_balance,
                 scaled_debt_balance=sender_debt_position.balance,
                 debt_index=event_data.index,
                 wad_ray_math=wad_ray_math_library,
@@ -3010,15 +3170,19 @@ def _process_staked_aave_transfer(
         recipient_debt_position.last_index = event_data.index
 
         recipient_previous_discount_percent = recipient_old_discount
-        # Skip discount refresh if there's a DiscountPercentUpdated event for recipient
+        # Skip discount refresh if there's a DiscountPercentUpdated event for recipient,
+        # unless they were also involved in a stkAAVE transfer (balance changed, needs recalc)
         if recipient.address not in (
             context.tx_context.discount_updated_users if context.tx_context else set()
+        ) or (
+            context.tx_context is not None
+            and recipient.address in context.tx_context.stk_aave_transfer_users
         ):
             _refresh_discount_rate(
                 w3=context.w3,
                 user=recipient,
                 discount_rate_strategy=discount_rate_strategy,
-                discount_token_balance=recipient_discount_token_balance + requested_amount,
+                discount_token_balance=recipient_discount_token_balance,
                 scaled_debt_balance=recipient_new_scaled_balance,
                 debt_index=event_data.index,
                 wad_ray_math=wad_ray_math_library,
@@ -3118,6 +3282,8 @@ def _process_gho_debt_mint(
                 discount_token=discount_token,
                 block_number=state_block,
                 w3=context.w3,
+                tx_context=context.tx_context,
+                log_index=context.event["logIndex"],
             )
             _refresh_discount_rate(
                 w3=context.w3,
@@ -3235,6 +3401,8 @@ def _process_gho_debt_mint(
                     discount_token=discount_token,
                     block_number=state_block,
                     w3=context.w3,
+                    tx_context=context.tx_context,
+                    log_index=context.event["logIndex"],
                 )
                 _refresh_discount_rate(
                     w3=context.w3,
@@ -3318,6 +3486,8 @@ def _process_gho_debt_mint(
                     discount_token=discount_token,
                     block_number=state_block,
                     w3=context.w3,
+                    tx_context=context.tx_context,
+                    log_index=context.event["logIndex"],
                 )
                 _refresh_discount_rate(
                     w3=context.w3,
@@ -3382,6 +3552,8 @@ def _process_gho_debt_mint(
                     discount_token=discount_token,
                     block_number=state_block,
                     w3=context.w3,
+                    tx_context=context.tx_context,
+                    log_index=context.event["logIndex"],
                 )
                 _refresh_discount_rate(
                     w3=context.w3,
@@ -4188,6 +4360,8 @@ def _process_gho_debt_burn_event(
         state_block=context.event["blockNumber"],
         effective_discount=effective_discount,
         skip_discount_refresh=skip_discount_refresh,
+        tx_context=context.tx_context,
+        log_index=context.event["logIndex"],
     )
 
     if VerboseConfig.is_verbose(
@@ -4410,12 +4584,9 @@ def _process_scaled_token_balance_transfer_event(
             AaveV3CollateralPositionsTable.asset_id == aave_asset.id,
         )
     )
-
-    # Zero-amount transfers can be performed by users who don't have a position, so skip further
-    # processing
-    # ref: TX 0x37CB48358CE4E26AC1193415003A33538B239E7D6D5FB826998666912937B71D
     if from_user_position is None:
         return
+    #    assert from_user_position, f"{from_address}: TX {context.event['transactionHash'].to_0x_hex()}"
 
     # Always update last_index (even for zero-amount transfers)
     from_user_position.last_index = index
@@ -4949,6 +5120,11 @@ def update_aave_market(
             )
         )
 
+    # Extract all user addresses involved in events for targeted verification
+    users_in_chunk: set[ChecksumAddress] = set()
+    for event in all_events:
+        users_in_chunk.update(_extract_user_addresses_from_event(event))
+
     # Group the events into transaction bundles with a shared context
     tx_contexts = _build_transaction_contexts(
         events=all_events,
@@ -4989,7 +5165,7 @@ def update_aave_market(
         )
         processed_txs.add(tx_hash)
 
-    # Perform full verification at chunk boundary
+    # Perform verification at chunk boundary for users involved in this chunk
     if verify:
         session.flush()
         _verify_scaled_token_positions(
@@ -4999,6 +5175,7 @@ def update_aave_market(
             position_table=AaveV3CollateralPositionsTable,
             block_number=end_block,
             no_progress=no_progress,
+            user_addresses=users_in_chunk,
         )
         _verify_scaled_token_positions(
             w3=w3,
@@ -5007,14 +5184,7 @@ def update_aave_market(
             position_table=AaveV3DebtPositionsTable,
             block_number=end_block,
             no_progress=no_progress,
-        )
-        _verify_gho_discount_amounts(
-            w3=w3,
-            session=session,
-            market=market,
-            gho_asset=gho_asset,
-            block_number=end_block,
-            no_progress=no_progress,
+            user_addresses=users_in_chunk,
         )
         _verify_stk_aave_balances(
             w3=w3,
@@ -5023,9 +5193,18 @@ def update_aave_market(
             gho_asset=gho_asset,
             block_number=end_block,
             no_progress=no_progress,
+            user_addresses=users_in_chunk,
         )
-
-    # Cleanup: Delete zero-balance positions after verification
+        _verify_gho_discount_amounts(
+            w3=w3,
+            session=session,
+            market=market,
+            gho_asset=gho_asset,
+            block_number=end_block,
+            no_progress=no_progress,
+            user_addresses=users_in_chunk,
+        )
+        # Cleanup: Delete zero-balance positions after verification
     _cleanup_zero_balance_positions(
         session=session,
         market=market,
